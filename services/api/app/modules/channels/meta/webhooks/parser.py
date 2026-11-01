@@ -38,6 +38,11 @@ def _parse_whatsapp(payload: dict) -> list[dict]:
                 else None
             )
             for msg in value.get("messages", []):
+                msg_type = msg.get("type") or ""
+                # Captions ride inside the type payload, not `text`. Hoisting
+                # them here makes an image/document with a caption behave
+                # exactly like a typed question through the whole pipeline.
+                type_payload = msg.get(msg_type) or {}
                 events.append(
                     {
                         "external_asset_id": phone_number_id,
@@ -47,7 +52,10 @@ def _parse_whatsapp(payload: dict) -> list[dict]:
                         "data": {
                             "from": msg.get("from"),
                             "msg_type": msg.get("type"),
-                            "text": ((msg.get("text") or {}).get("body")),
+                            "text": (
+                                ((msg.get("text") or {}).get("body"))
+                                or type_payload.get("caption")
+                            ),
                             "context": msg.get("context"),
                             # The sender's WhatsApp profile name, so the inbox
                             # shows "Ahmed Khan" instead of a bare number.
@@ -57,7 +65,7 @@ def _parse_whatsapp(payload: dict) -> list[dict]:
                             # Type-specific payload: for audio/voice notes this
                             # holds {id, mime_type, voice, duration}, which the
                             # consumer needs to fetch and transcribe the media.
-                            "media": msg.get(msg.get("type") or "") or {},
+                            "media": type_payload,
                         },
                     }
                 )

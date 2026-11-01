@@ -129,6 +129,10 @@ class ChannelMessageResponse(BaseModel):
     # Local removal marker. The content is intentionally blank in the API.
     deleted_at: str | None = None
     deleted: bool = False
+    # Authenticated attachment route; never a public storage URL.
+    media_url: str | None = None
+    media_mime_type: str | None = None
+    media_filename: str | None = None
     created_at: str
 
 

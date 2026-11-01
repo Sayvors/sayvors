@@ -18,6 +18,8 @@ import {
   sendInboxMessage,
   sendInboxLocation,
   sendInboxContact,
+  sendInboxDocument,
+  sendInboxSticker,
   setInboxThreadMode,
   reactToInboxMessage,
   removeInboxMessage,
@@ -28,6 +30,7 @@ import {
 } from "@/lib/api-inbox";
 import { useAuth } from "@/lib/auth-context";
 import { platformMeta } from "@/lib/platform";
+import { resolveMediaUrl } from "@/lib/media-url";
 import { setActiveThread } from "@/lib/active-thread";
 import {
   clearThreadTyping,
@@ -316,7 +319,9 @@ export default function InboxView() {
   const [replyTo, setReplyTo] = useState<InboxMessage | null>(null);
   const [reactingTo, setReactingTo] = useState<string | null>(null);
   const [reactBusy, setReactBusy] = useState(false);
-  const [richComposer, setRichComposer] = useState<"location" | "contact" | null>(null);
+  const [richComposer, setRichComposer] = useState<
+    "location" | "contact" | "document" | "sticker" | null
+  >(null);
   const [richBusy, setRichBusy] = useState(false);
   const [locName, setLocName] = useState("");
   const [locAddress, setLocAddress] = useState("");
@@ -326,6 +331,9 @@ export default function InboxView() {
   const [cardName, setCardName] = useState("");
   const [cardPhone, setCardPhone] = useState("");
   const [cardEmail, setCardEmail] = useState("");
+  const [docFile, setDocFile] = useState<File | null>(null);
+  const [docCaption, setDocCaption] = useState("");
+  const [stickerFile, setStickerFile] = useState<File | null>(null);
   const [assigneeBusy, setAssigneeBusy] = useState(false);
   const [assigneeError, setAssigneeError] = useState<string | null>(null);
   // The escalation clock is live: while an escalated thread is open, tick
@@ -472,7 +480,9 @@ export default function InboxView() {
     }
   };
 
-  const openRichComposer = (kind: "location" | "contact") => {
+  const openRichComposer = (
+    kind: "location" | "contact" | "document" | "sticker",
+  ) => {
     setRichComposer(kind);
     setSendError(null);
     if (kind === "location") {
@@ -481,10 +491,15 @@ export default function InboxView() {
       setLocLat("");
       setLocLng("");
       setLocMaps("");
-    } else {
+    } else if (kind === "contact") {
       setCardName("");
       setCardPhone("");
       setCardEmail("");
+    } else if (kind === "document") {
+      setDocFile(null);
+      setDocCaption("");
+    } else {
+      setStickerFile(null);
     }
   };
 
@@ -557,6 +572,63 @@ export default function InboxView() {
       setRichComposer(null);
     } catch (e) {
       setSendError(e instanceof Error ? e.message : "Could not send the contact card.");
+    } finally {
+      setRichBusy(false);
+    }
+  };
+
+  const sendDocumentFile = async () => {
+    const thread = target;
+    if (!thread?.contact_phone || richBusy) return;
+    if (!docFile) {
+      setSendError("Choose a document to send.");
+      return;
+    }
+    setRichBusy(true);
+    setSendError(null);
+    try {
+      const result = await sendInboxDocument({
+        channelId: thread.channel_id,
+        contactPhone: thread.contact_phone,
+        file: docFile,
+        caption: docCaption.trim() || null,
+      });
+      if (!result.sent) {
+        setSendError(result.error || "WhatsApp rejected the document.");
+        return;
+      }
+      appendRichMessage(result.message);
+      setRichComposer(null);
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : "Could not send the document.");
+    } finally {
+      setRichBusy(false);
+    }
+  };
+
+  const sendStickerFile = async () => {
+    const thread = target;
+    if (!thread?.contact_phone || richBusy) return;
+    if (!stickerFile) {
+      setSendError("Choose a WebP sticker to send.");
+      return;
+    }
+    setRichBusy(true);
+    setSendError(null);
+    try {
+      const result = await sendInboxSticker({
+        channelId: thread.channel_id,
+        contactPhone: thread.contact_phone,
+        file: stickerFile,
+      });
+      if (!result.sent) {
+        setSendError(result.error || "WhatsApp rejected the sticker.");
+        return;
+      }
+      appendRichMessage(result.message);
+      setRichComposer(null);
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : "Could not send the sticker.");
     } finally {
       setRichBusy(false);
     }
@@ -917,6 +989,9 @@ export default function InboxView() {
       contact_phone: e.contact_phone ?? null,
       contact_name: e.contact_name ?? null,
       reply_to_message_id: e.reply_to_message_id ?? null,
+      media_url: e.media_url ?? null,
+      media_mime_type: e.media_mime_type ?? null,
+      media_filename: e.media_filename ?? null,
       created_at: e.created_at ?? new Date().toISOString(),
     };
     if (open) {
@@ -1572,6 +1647,33 @@ export default function InboxView() {
                           (x) => x.platform_message_id === m.reply_to_message_id,
                         ) ?? null
                       : null;
+                    const mediaSrc = resolveMediaUrl(m.media_url);
+                    const isImageAttachment =
+                      !!mediaSrc &&
+                      (m.content_type === "image" || m.content_type === "sticker");
+                    const isDocumentAttachment =
+                      !!mediaSrc && m.content_type === "document";
+                    const isPlaceholder = /^\[[a-z]+ message\]$/.test(m.content);
+                    const missingMediaLabel =
+                      m.content_type === "image"
+                        ? "Image attachment could not be loaded"
+                        : m.content_type === "document"
+                          ? "Document attachment could not be loaded"
+                          : m.content_type === "sticker"
+                            ? "Sticker could not be loaded"
+                            : m.content_type === "video"
+                              ? "Video message"
+                              : m.content;
+                    const attachmentText =
+                      m.content_type === "sticker" && mediaSrc
+                        ? ""
+                        : isDocumentAttachment && m.content === m.media_filename
+                          ? ""
+                          : isPlaceholder
+                            ? mediaSrc
+                              ? ""
+                              : missingMediaLabel
+                            : m.content;
                     if (m.content_type === "reaction") {
                       if (!m.content) return null;
                       const emoji = m.content.startsWith("[") ? "👍" : m.content;
@@ -1644,7 +1746,12 @@ export default function InboxView() {
                                     >
                                       {quotedMessage.deleted
                                         ? "Message removed"
-                                        : quotedMessage.content || "…"}
+                                        : quotedMessage.media_url
+                                          ? quotedMessage.media_filename ||
+                                            (quotedMessage.content_type === "sticker"
+                                              ? "Sticker"
+                                              : "Attachment")
+                                          : quotedMessage.content || "…"}
                                     </p>
                                   </div>
                                 )}
@@ -1663,9 +1770,62 @@ export default function InboxView() {
                                       : "Contact card"}
                                   </p>
                                 ) : null}
-                                <p className="whitespace-pre-wrap break-words text-[13px]">
-                                  {m.content}
-                                </p>
+                                {isImageAttachment && mediaSrc ? (
+                                  <a
+                                    href={mediaSrc}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="mb-1 block"
+                                  >
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img
+                                      src={mediaSrc}
+                                      alt={
+                                        m.media_filename ||
+                                        (m.content_type === "sticker"
+                                          ? "Sticker"
+                                          : "Image attachment")
+                                      }
+                                      className={
+                                        m.content_type === "sticker"
+                                          ? "h-32 w-32 object-contain"
+                                          : "max-h-72 w-auto max-w-full rounded-lg object-contain"
+                                      }
+                                    />
+                                  </a>
+                                ) : null}
+                                {isDocumentAttachment && mediaSrc ? (
+                                  <a
+                                    href={mediaSrc}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    download={m.media_filename ?? undefined}
+                                    className={`mb-1 flex max-w-full items-center gap-2 rounded-lg px-2.5 py-2 ${
+                                      mine
+                                        ? "bg-white/15 text-white"
+                                        : "bg-white/70 text-ink dark:bg-ink/40 dark:text-fog"
+                                    }`}
+                                  >
+                                    <span aria-hidden className="text-[18px]">📄</span>
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block truncate text-[12px] font-semibold">
+                                        {m.media_filename || "Document"}
+                                      </span>
+                                      <span
+                                        className={`text-[10px] ${
+                                          mine ? "text-white/70" : "text-ink/50 dark:text-fog/50"
+                                        }`}
+                                      >
+                                        Download document
+                                      </span>
+                                    </span>
+                                  </a>
+                                ) : null}
+                                {attachmentText ? (
+                                  <p className="whitespace-pre-wrap break-words text-[13px]">
+                                    {attachmentText}
+                                  </p>
+                                ) : null}
                               </>
                             )}
                             <p
@@ -1791,7 +1951,7 @@ export default function InboxView() {
                   ))}
                 </div>
                 {target?.platform === "whatsapp" && (
-                  <div className="mb-2 flex gap-2">
+                  <div className="mb-2 flex flex-wrap gap-2">
                     <button
                       type="button"
                       onClick={() => openRichComposer("location")}
@@ -1805,6 +1965,20 @@ export default function InboxView() {
                       className="rounded-full border border-ink/[0.08] px-2.5 py-1 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet/40 hover:text-deep-violet dark:border-fog/[0.1] dark:text-fog/60"
                     >
                       👤 Send contact
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openRichComposer("document")}
+                      className="rounded-full border border-ink/[0.08] px-2.5 py-1 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet/40 hover:text-deep-violet dark:border-fog/[0.1] dark:text-fog/60"
+                    >
+                      📎 Send document
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openRichComposer("sticker")}
+                      className="rounded-full border border-ink/[0.08] px-2.5 py-1 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet/40 hover:text-deep-violet dark:border-fog/[0.1] dark:text-fog/60"
+                    >
+                      🩷 Send sticker
                     </button>
                   </div>
                 )}
@@ -2063,12 +2237,22 @@ export default function InboxView() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl dark:bg-ink">
             <h2 className="text-[15px] font-bold text-ink dark:text-fog">
-              {richComposer === "location" ? "Send a location" : "Send a contact card"}
+              {richComposer === "location"
+                ? "Send a location"
+                : richComposer === "contact"
+                  ? "Send a contact card"
+                  : richComposer === "document"
+                    ? "Send a document"
+                    : "Send a sticker"}
             </h2>
             <p className="mt-1 text-[12px] text-ink/55 dark:text-fog/55">
               {richComposer === "location"
                 ? "The customer gets a native map card, not a link."
-                : "The customer gets a native contact card they can save."}
+                : richComposer === "contact"
+                  ? "The customer gets a native contact card they can save."
+                  : richComposer === "document"
+                    ? "The customer gets the file as a native WhatsApp document."
+                    : "WebP only, under 500 KB — WhatsApp's sticker format."}
             </p>
 
             {richComposer === "location" ? (
@@ -2131,7 +2315,7 @@ export default function InboxView() {
                   </label>
                 </div>
               </div>
-            ) : (
+            ) : richComposer === "contact" ? (
               <div className="mt-3 space-y-2">
                 <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
                   Name
@@ -2162,6 +2346,48 @@ export default function InboxView() {
                   />
                 </label>
               </div>
+            ) : richComposer === "document" ? (
+              <div className="mt-3 space-y-2">
+                <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
+                  File (PDF, invoice, menu, spreadsheet — under 32 MB)
+                  <input
+                    type="file"
+                    onChange={(e) => setDocFile(e.target.files?.[0] ?? null)}
+                    className="mt-1 block w-full text-[12px] text-ink/70 file:mr-2 file:rounded-full file:border-0 file:bg-deep-violet/[0.08] file:px-3 file:py-1.5 file:text-[11px] file:font-semibold file:text-deep-violet dark:text-fog/70 dark:file:bg-fog/[0.1] dark:file:text-fog"
+                  />
+                </label>
+                {docFile && (
+                  <p className="text-[11px] text-ink/50 dark:text-fog/50">
+                    {docFile.name} · {(docFile.size / (1024 * 1024)).toFixed(1)} MB
+                  </p>
+                )}
+                <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
+                  Caption (optional)
+                  <input
+                    value={docCaption}
+                    onChange={(e) => setDocCaption(e.target.value)}
+                    placeholder="Your invoice for order #1234"
+                    className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                  />
+                </label>
+              </div>
+            ) : (
+              <div className="mt-3 space-y-2">
+                <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
+                  Sticker file (.webp, 512×512, under 500 KB)
+                  <input
+                    type="file"
+                    accept="image/webp,.webp"
+                    onChange={(e) => setStickerFile(e.target.files?.[0] ?? null)}
+                    className="mt-1 block w-full text-[12px] text-ink/70 file:mr-2 file:rounded-full file:border-0 file:bg-deep-violet/[0.08] file:px-3 file:py-1.5 file:text-[11px] file:font-semibold file:text-deep-violet dark:text-fog/70 dark:file:bg-fog/[0.1] dark:file:text-fog"
+                  />
+                </label>
+                {stickerFile && (
+                  <p className="text-[11px] text-ink/50 dark:text-fog/50">
+                    {stickerFile.name} · {(stickerFile.size / 1024).toFixed(0)} KB
+                  </p>
+                )}
+              </div>
             )}
 
             <div className="mt-4 flex justify-end gap-2">
@@ -2178,7 +2404,11 @@ export default function InboxView() {
                 onClick={() =>
                   void (richComposer === "location"
                     ? sendLocationCard()
-                    : sendContactCard())
+                    : richComposer === "contact"
+                      ? sendContactCard()
+                      : richComposer === "document"
+                        ? sendDocumentFile()
+                        : sendStickerFile())
                 }
                 className="rounded-full bg-deep-violet px-4 py-1.5 text-[12px] font-bold text-white disabled:opacity-50"
               >

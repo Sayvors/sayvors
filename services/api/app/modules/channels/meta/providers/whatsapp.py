@@ -227,6 +227,59 @@ class WhatsAppAdapter(MetaProviderAdapter):
         msgs = data.get("messages", [])
         return msgs[0].get("id", "") if msgs else ""
 
+    async def send_document(
+        self,
+        phone_number_id: str,
+        token: str,
+        to: str,
+        media_id: str,
+        filename: str | None = None,
+        caption: str | None = None,
+    ) -> str:
+        """Send an uploaded document by media id. Returns the wamid."""
+        document: dict = {"id": media_id}
+        if filename:
+            document["filename"] = filename[:240]
+        if caption:
+            document["caption"] = caption[:1024]
+        resp = await self._graph(
+            "POST",
+            f"/{phone_number_id}/messages",
+            token,
+            json={
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": "document",
+                "document": document,
+            },
+        )
+        data = resp.json()
+        msgs = data.get("messages", [])
+        return msgs[0].get("id", "") if msgs else ""
+
+    async def send_sticker(
+        self,
+        phone_number_id: str,
+        token: str,
+        to: str,
+        media_id: str,
+    ) -> str:
+        """Send an uploaded WebP sticker by media id. Returns the wamid."""
+        resp = await self._graph(
+            "POST",
+            f"/{phone_number_id}/messages",
+            token,
+            json={
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": "sticker",
+                "sticker": {"id": media_id},
+            },
+        )
+        data = resp.json()
+        msgs = data.get("messages", [])
+        return msgs[0].get("id", "") if msgs else ""
+
     async def send_location(
         self,
         phone_number_id: str,
@@ -404,14 +457,19 @@ class WhatsAppAdapter(MetaProviderAdapter):
         return resp.json().get("data", [])
 
     async def upload_media(
-        self, phone_number_id: str, token: str, data: bytes, mime_type: str
+        self,
+        phone_number_id: str,
+        token: str,
+        data: bytes,
+        mime_type: str,
+        filename: str = "media",
     ) -> str:
         """Upload media for this number; returns the media id for sends."""
         resp = await self._http.post(
             f"{graph_base()}/{phone_number_id}/media",
             headers={"Authorization": f"Bearer {token}"},
             data={"messaging_product": "whatsapp", "type": mime_type},
-            files={"file": ("photo", data, mime_type)},
+            files={"file": (filename or "media", data, mime_type)},
         )
         if resp.status_code >= 400:
             raise MetaAPIError(

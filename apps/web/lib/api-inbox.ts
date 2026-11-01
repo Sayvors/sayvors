@@ -106,6 +106,10 @@ export interface InboxMessage {
   /** Locally removed from this inbox; the customer still has it. */
   deleted_at?: string | null;
   deleted?: boolean;
+  /** Authenticated inbox route for a stored attachment. */
+  media_url?: string | null;
+  media_mime_type?: string | null;
+  media_filename?: string | null;
   created_at: string;
 }
 
@@ -280,6 +284,40 @@ export async function sendInboxContact(params: {
       phone: params.phone,
       email: params.email ?? null,
     }),
+  })) as InboxSendResult;
+}
+
+/** Send a document (PDF, invoice, menu) as a native WhatsApp attachment. */
+export async function sendInboxDocument(params: {
+  channelId: string;
+  contactPhone: string;
+  file: File;
+  caption?: string | null;
+}): Promise<InboxSendResult> {
+  const form = new FormData();
+  form.append("channel_id", params.channelId);
+  form.append("contact_phone", params.contactPhone);
+  form.append("caption", params.caption ?? "");
+  form.append("file", params.file);
+  return (await apiFetch("/api/v1/inbox/send-document", {
+    method: "POST",
+    body: form,
+  })) as InboxSendResult;
+}
+
+/** Send a WebP sticker. */
+export async function sendInboxSticker(params: {
+  channelId: string;
+  contactPhone: string;
+  file: File;
+}): Promise<InboxSendResult> {
+  const form = new FormData();
+  form.append("channel_id", params.channelId);
+  form.append("contact_phone", params.contactPhone);
+  form.append("file", params.file);
+  return (await apiFetch("/api/v1/inbox/send-sticker", {
+    method: "POST",
+    body: form,
   })) as InboxSendResult;
 }
 

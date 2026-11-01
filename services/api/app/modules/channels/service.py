@@ -25,6 +25,12 @@ from .schemas import ChannelCreate, ChannelMessageSend
 
 logger = logging.getLogger(__name__)
 
+# Outbound attachments are bounded before they reach memory or Meta. A 32 MB
+# ceiling covers invoices, menus and scanned PDFs while keeping one request
+# from pinning an API worker; a sticker is a small WebP by design.
+MAX_OUTBOUND_DOCUMENT_BYTES = 32 * 1024 * 1024
+MAX_OUTBOUND_STICKER_BYTES = 500 * 1024
+
 
 def encrypt_token(token: str) -> str:
     """Encrypt an OAuth token at rest."""
@@ -744,6 +750,210 @@ async def send_contact_message(
             outbound.platform_message_id = (
                 await WhatsAppAdapter().send_contacts(
                     phone_number_id, token, to, [card]
+                )
+            )[:200] or None
+    except MetaAPIError as exc:
+        error = str(exc)
+    except Exception as exc:  # noqa: BLE001 - recorded on the row
+        error = str(exc)
+
+    if error:
+        outbound.status = "failed"
+        outbound.error = error[:500]
+    db.add(outbound)
+    await db.commit()
+    await db.refresh(outbound)
+    if outbound.status != "failed":
+        await _mark_human_owned(db, user, channel_id, to)
+    return outbound
+
+
+async def send_document_message(
+    channel_id: str,
+    contact_phone: str,
+    *,
+    data: bytes,
+    filename: str,
+    mime_type: str,
+    caption: str | None,
+    user: User,
+    db: AsyncSession,
+) -> ChannelMessage:
+    """Upload a document and send it as a native WhatsApp attachment.
+
+    The bytes are written to the private store first so the inbox can show the
+    exact file that went out. A storage failure records a failed row and never
+    calls Meta — the customer must not receive a file this inbox cannot show.
+    """
+    from .attachments import display_name, normalize_mime, storage_suffix
+
+    channel = await get_channel(channel_id, user, db)
+    if not channel:
+        raise ValueError("Channel not found")
+    if channel.platform != "whatsapp":
+        raise ValueError("Documents are only available on WhatsApp")
+    to = (contact_phone or "").strip()
+    if not to:
+        raise ValueError("A recipient phone number is required to send")
+    if not data:
+        raise ValueError("The document is empty")
+    if len(data) > MAX_OUTBOUND_DOCUMENT_BYTES:
+        raise ValueError("Documents must be under 32 MB")
+
+    mime = normalize_mime(mime_type, filename)
+    suffix = storage_suffix(mime, filename)
+    name = display_name(filename, suffix)
+    body = (caption or "").strip()[:1024]
+    key = f"{uuid.uuid4().hex}{suffix}"
+
+    outbound = ChannelMessage(
+        id=str(uuid.uuid4()),
+        channel_id=channel_id,
+        direction="outbound",
+        content=encrypt_message_content(body or name),
+        content_type="document",
+        status="sent",
+        contact_phone=encrypt_contact_phone(to),
+        contact_phone_hash=hash_contact_phone(to),
+        handled_by="human",
+        media_key=key,
+        media_mime_type=mime,
+        media_filename=name,
+    )
+
+    from ...core.storage import put_doc
+
+    try:
+        put_doc(f"inbox-{tenant_id_of(user)}", key, data)
+    except Exception as exc:  # noqa: BLE001 - recorded on the row
+        logger.warning(
+            "Outbound document store failed channel=%s: %s: %s",
+            channel_id, type(exc).__name__, str(exc)[:200],
+        )
+        outbound.status = "failed"
+        outbound.error = "The document could not be stored; nothing was sent."
+        # No URL may point at bytes that were never written.
+        outbound.media_key = None
+        db.add(outbound)
+        await db.commit()
+        await db.refresh(outbound)
+        return outbound
+
+    from .meta.providers.base import MetaAPIError
+    from .meta.providers.whatsapp import WhatsAppAdapter
+
+    error = ""
+    try:
+        phone_number_id, token, error = await _whatsapp_credentials(db, user, channel)
+        if not error:
+            adapter = WhatsAppAdapter()
+            media_id = await adapter.upload_media(
+                phone_number_id, token, data, mime, filename=name
+            )
+            if not media_id:
+                raise MetaAPIError("WhatsApp returned no media id for the document")
+            outbound.platform_message_id = (
+                await adapter.send_document(
+                    phone_number_id, token, to, media_id,
+                    filename=name, caption=body or None,
+                )
+            )[:200] or None
+    except MetaAPIError as exc:
+        error = str(exc)
+    except Exception as exc:  # noqa: BLE001 - recorded on the row
+        error = str(exc)
+
+    if error:
+        outbound.status = "failed"
+        outbound.error = error[:500]
+    db.add(outbound)
+    await db.commit()
+    await db.refresh(outbound)
+    if outbound.status != "failed":
+        await _mark_human_owned(db, user, channel_id, to)
+    return outbound
+
+
+async def send_sticker_message(
+    channel_id: str,
+    contact_phone: str,
+    *,
+    data: bytes,
+    filename: str,
+    mime_type: str,
+    user: User,
+    db: AsyncSession,
+) -> ChannelMessage:
+    """Upload and send a WhatsApp sticker (WebP, bounded by Meta's limit)."""
+    from .attachments import normalize_mime, storage_suffix
+
+    channel = await get_channel(channel_id, user, db)
+    if not channel:
+        raise ValueError("Channel not found")
+    if channel.platform != "whatsapp":
+        raise ValueError("Stickers are only available on WhatsApp")
+    to = (contact_phone or "").strip()
+    if not to:
+        raise ValueError("A recipient phone number is required to send")
+    if not data:
+        raise ValueError("The sticker is empty")
+    mime = normalize_mime(mime_type, filename)
+    if mime != "image/webp":
+        raise ValueError("Stickers must be a WebP image")
+    if len(data) > MAX_OUTBOUND_STICKER_BYTES:
+        raise ValueError("Stickers must be under 500 KB")
+
+    suffix = storage_suffix(mime, filename)
+    key = f"{uuid.uuid4().hex}{suffix}"
+    outbound = ChannelMessage(
+        id=str(uuid.uuid4()),
+        channel_id=channel_id,
+        direction="outbound",
+        content=encrypt_message_content("Sticker"),
+        content_type="sticker",
+        status="sent",
+        contact_phone=encrypt_contact_phone(to),
+        contact_phone_hash=hash_contact_phone(to),
+        handled_by="human",
+        media_key=key,
+        media_mime_type=mime,
+        media_filename=f"sticker{suffix}",
+    )
+
+    from ...core.storage import put_doc
+
+    try:
+        put_doc(f"inbox-{tenant_id_of(user)}", key, data)
+    except Exception as exc:  # noqa: BLE001 - recorded on the row
+        logger.warning(
+            "Outbound sticker store failed channel=%s: %s: %s",
+            channel_id, type(exc).__name__, str(exc)[:200],
+        )
+        outbound.status = "failed"
+        outbound.error = "The sticker could not be stored; nothing was sent."
+        # No URL may point at bytes that were never written.
+        outbound.media_key = None
+        db.add(outbound)
+        await db.commit()
+        await db.refresh(outbound)
+        return outbound
+
+    from .meta.providers.base import MetaAPIError
+    from .meta.providers.whatsapp import WhatsAppAdapter
+
+    error = ""
+    try:
+        phone_number_id, token, error = await _whatsapp_credentials(db, user, channel)
+        if not error:
+            adapter = WhatsAppAdapter()
+            media_id = await adapter.upload_media(
+                phone_number_id, token, data, mime, filename=f"sticker{suffix}"
+            )
+            if not media_id:
+                raise MetaAPIError("WhatsApp returned no media id for the sticker")
+            outbound.platform_message_id = (
+                await adapter.send_sticker(
+                    phone_number_id, token, to, media_id
                 )
             )[:200] or None
     except MetaAPIError as exc:

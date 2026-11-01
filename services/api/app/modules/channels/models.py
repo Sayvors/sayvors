@@ -130,6 +130,11 @@ class ChannelMessage(Base):
         DateTime(timezone=True), nullable=True
     )
     deleted_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # Private attachment storage. Customer receipts/screenshots must not be
+    # public URLs; the API serves them through an authenticated inbox route.
+    media_key: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    media_mime_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    media_filename: Mapped[str | None] = mapped_column(String(500), nullable=True)
     # Who the message is with, in the platform's own addressing. Inbound rows
     # carry the sender; outbound rows carry the recipient, which is what lets a
     # reply be threaded under the same contact as the question it answers.

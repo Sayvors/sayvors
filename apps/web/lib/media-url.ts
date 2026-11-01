@@ -20,6 +20,13 @@ export function resolveMediaUrl(
   url: string | null | undefined,
 ): string | null {
   if (!url) return null;
+  // Inbox attachments are served by an authenticated API route, never by the
+  // public media bucket. They arrive relative on purpose; prefix the API base
+  // so the request reaches the API origin in production instead of the SPA's
+  // /api rewrite (which points at localhost there).
+  if (url.startsWith("/api/v1/inbox/media/")) {
+    return `${API_BASE.replace(/\/$/, "")}${url}`;
+  }
   if (
     url.startsWith("data:") ||
     url.startsWith("blob:") ||

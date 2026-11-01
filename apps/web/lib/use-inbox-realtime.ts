@@ -65,6 +65,9 @@ export interface InboxRealtimeEvent {
   contact_phone?: string | null;
   contact_name?: string | null;
   reply_to_message_id?: string | null;
+  media_url?: string | null;
+  media_mime_type?: string | null;
+  media_filename?: string | null;
   created_at?: string;
   /* typing events — who is composing in this thread right now */
   typing?: boolean;

@@ -2,7 +2,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,6 +53,8 @@ from .schemas import (
 )
 from .service import (
     UNKNOWN_THREAD_KEY,
+    MAX_OUTBOUND_DOCUMENT_BYTES,
+    MAX_OUTBOUND_STICKER_BYTES,
     create_channel,
     decrypt_contact_phone,
     decrypt_message_content,
@@ -69,6 +71,8 @@ from .service import (
     send_interactive_message,
     send_location_message,
     send_contact_message,
+    send_document_message,
+    send_sticker_message,
     soft_delete_message,
     whatsapp_number_health,
     list_whatsapp_qr_codes,
@@ -1353,6 +1357,11 @@ def _message_out(m: ChannelMessage) -> ChannelMessageResponse:
         reply_to_message_id=m.reply_to_message_id,
         deleted_at=m.deleted_at.isoformat() if m.deleted_at else None,
         deleted=deleted,
+        media_url=(
+            f"/api/v1/inbox/media/{m.id}" if m.media_key and not deleted else None
+        ),
+        media_mime_type=m.media_mime_type,
+        media_filename=m.media_filename,
         created_at=m.created_at.isoformat(),
     )
 
@@ -1395,8 +1404,82 @@ async def _publish_outbound_message(tenant_id: str, msg: ChannelMessage) -> None
         "contact_phone": decrypt_contact_phone(msg.contact_phone),
         "contact_name": msg.contact_name,
         "reply_to_message_id": msg.reply_to_message_id,
+        "media_url": (
+            f"/api/v1/inbox/media/{msg.id}"
+            if msg.media_key and msg.deleted_at is None else None
+        ),
+        "media_mime_type": msg.media_mime_type,
+        "media_filename": msg.media_filename,
         "created_at": msg.created_at,
     })
+
+
+@_inbox_router.get("/media/{message_id}")
+async def inbox_message_media(
+    message_id: str,
+    ctx: TenantContext = Depends(require_perm("inbox.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Serve one stored attachment to an authorized inbox viewer.
+
+    The bytes live in the private document store; this route is the only way
+    to read them. A message outside the caller's channels is a 404, not a 403,
+    so an id cannot be probed for existence.
+    """
+    from pathlib import Path
+    from urllib.parse import quote
+
+    from ...core.storage import get_doc
+
+    row = (
+        await db.execute(
+            select(ChannelMessage).where(ChannelMessage.id == message_id)
+        )
+    ).scalar_one_or_none()
+    if (
+        row is None
+        or not row.media_key
+        or row.deleted_at is not None
+        or ctx.channel_level(row.channel_id) == "none"
+    ):
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    # The message id is global; ownership and per-member channel access both
+    # have to agree before a byte is served.
+    if await get_channel(row.channel_id, ctx.user, db) is None:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    try:
+        blob = get_doc(f"inbox-{ctx.tenant_id}", row.media_key)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Attachment is no longer available") from None
+
+    mime = (row.media_mime_type or "application/octet-stream").lower()
+    # Only raster images are rendered in place. PDFs and every other document
+    # download, so an untrusted file is never handed to a browser viewer on the
+    # API origin. SVG is excluded on purpose (it can carry script).
+    inline = mime.startswith("image/") and mime != "image/svg+xml"
+    if not inline:
+        mime = "application/octet-stream"
+
+    name = row.media_filename or f"attachment{Path(row.media_key).suffix}"
+    ascii_name = "".join(
+        ch if (ch.isascii() and (ch.isalnum() or ch in "._-")) else "_"
+        for ch in name
+    )[:120] or "attachment"
+    disposition = "inline" if inline else "attachment"
+    return Response(
+        content=blob,
+        media_type=mime,
+        headers={
+            "Content-Disposition": (
+                f"{disposition}; filename=\"{ascii_name}\"; "
+                f"filename*=UTF-8''{quote(name)}"
+            ),
+            "Cache-Control": "private, max-age=300",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
 
 
 @_inbox_router.post("/send", response_model=InboxSendResponse)
@@ -1439,6 +1522,98 @@ async def inbox_send(
     return InboxSendResponse(
         message=_message_out(msg),
         sent=not failed,
+        error=msg.error,
+    )
+
+
+@_inbox_router.post("/send-document", response_model=InboxSendResponse)
+async def inbox_send_document(
+    channel_id: str = Form(...),
+    contact_phone: str = Form(...),
+    caption: str = Form(""),
+    file: UploadFile = File(...),
+    ctx: TenantContext = Depends(require_perm("inbox.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Send a PDF, invoice, menu or other document as a native attachment."""
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    await _ensure_messaging_quota(ctx, db)
+
+    # Read one byte past the ceiling so an oversized upload is rejected without
+    # buffering the whole file first.
+    data = await file.read(MAX_OUTBOUND_DOCUMENT_BYTES + 1)
+    await file.close()
+    if not data:
+        raise HTTPException(status_code=422, detail="The document is empty")
+    if len(data) > MAX_OUTBOUND_DOCUMENT_BYTES:
+        raise HTTPException(status_code=413, detail="Documents must be under 32 MB")
+
+    try:
+        msg = await send_document_message(
+            channel_id,
+            contact_phone,
+            data=data,
+            filename=file.filename or "document",
+            mime_type=file.content_type or "application/octet-stream",
+            caption=caption,
+            user=ctx.user,
+            db=db,
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        raise HTTPException(
+            status_code=404 if detail == "Channel not found" else 422,
+            detail=detail,
+        ) from exc
+    await _publish_outbound_message(ctx.tenant_id, msg)
+    return InboxSendResponse(
+        message=_message_out(msg),
+        sent=msg.status != "failed",
+        error=msg.error,
+    )
+
+
+@_inbox_router.post("/send-sticker", response_model=InboxSendResponse)
+async def inbox_send_sticker(
+    channel_id: str = Form(...),
+    contact_phone: str = Form(...),
+    file: UploadFile = File(...),
+    ctx: TenantContext = Depends(require_perm("inbox.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Send a WebP sticker (WhatsApp's only sticker format)."""
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    await _ensure_messaging_quota(ctx, db)
+
+    data = await file.read(MAX_OUTBOUND_STICKER_BYTES + 1)
+    await file.close()
+    if not data:
+        raise HTTPException(status_code=422, detail="The sticker is empty")
+    if len(data) > MAX_OUTBOUND_STICKER_BYTES:
+        raise HTTPException(status_code=413, detail="Stickers must be under 500 KB")
+
+    try:
+        msg = await send_sticker_message(
+            channel_id,
+            contact_phone,
+            data=data,
+            filename=file.filename or "sticker.webp",
+            mime_type=file.content_type or "image/webp",
+            user=ctx.user,
+            db=db,
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        raise HTTPException(
+            status_code=404 if detail == "Channel not found" else 422,
+            detail=detail,
+        ) from exc
+    await _publish_outbound_message(ctx.tenant_id, msg)
+    return InboxSendResponse(
+        message=_message_out(msg),
+        sent=msg.status != "failed",
         error=msg.error,
     )
 
