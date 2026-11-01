@@ -35,6 +35,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from ..models import Lead, LeadDigestSend
+from .lead_engine import category_label
 from .lead_escalation import _send_email, load_settings
 
 logger = logging.getLogger(__name__)
@@ -180,8 +181,12 @@ def compose_digest(leads: list[Lead], local: datetime, truncated: int = 0) -> tu
         "",
     ]
     for lead in leads:
+        label = _label(lead)
+        category = category_label(getattr(lead, "category", None))
+        if category:
+            label = f"{label} [{category}]"
         bits = [
-            _label(lead),
+            label,
             f"({lead.platform}, waiting { _waited_for(lead, local) })",
         ]
         if lead.priority == "important":

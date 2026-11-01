@@ -124,6 +124,15 @@ class ChannelMessageResponse(BaseModel):
     error: str | None = None
     contact_phone: str | None = None
     contact_name: str | None = None
+    # The wamid this message quotes, when it is a contextual reply.
+    reply_to_message_id: str | None = None
+    # Local removal marker. The content is intentionally blank in the API.
+    deleted_at: str | None = None
+    deleted: bool = False
+    # Authenticated attachment route; never a public storage URL.
+    media_url: str | None = None
+    media_mime_type: str | None = None
+    media_filename: str | None = None
     created_at: str
 
 
@@ -151,6 +160,26 @@ class ThreadStateOut(BaseModel):
     opt_in_at: str | None = None
     opt_in_source: str | None = None
     opted_out: bool = False
+    # Escalation clock (BUG-4). Stored on the lead, not the thread: the mode
+    # says the AI is muted, these say why and until when. Without them a long
+    # automatic-escalation window is indistinguishable from a hung bot.
+    priority: str = "normal"
+    ai_miss_count: int = 0
+    # Canonical lead label, refreshed with the thread state so the header is
+    # correct even when the list row predates the capture.
+    lead_category: str | None = None
+    # Who owns the conversation. NULL means nobody claimed it yet.
+    assigned_to: str | None = None
+    assigned_at: str | None = None
+    assignee_name: str | None = None
+    priority_since: str | None = None
+    escalated_at: str | None = None
+    escalation_reminder_at: str | None = None
+    handover_sent_at: str | None = None
+    # Derived from priority_since + the tenant's escalation_resume_hours, the
+    # same arithmetic run_resume_sweep uses. NULL unless the lead is escalated.
+    resume_at: str | None = None
+    escalation_resume_hours: int = 24
 
 
 class ChannelMessageListResponse(BaseModel):
@@ -185,6 +214,15 @@ class InboxThread(BaseModel):
     message_count: int
     category: str | None = None
     priority: str | None = None
+    # Canonical lead label for this conversation (wholesale | retail | booking
+    # | quote | support | info), when a lead exists. Separate from `category`
+    # above, which is the per-message conversation category (complaint, ...).
+    lead_category: str | None = None
+    # The human owner. The inbox "mine" filter reads assigned_to; the name is
+    # denormalised into the response so a row renders without a second fetch.
+    assigned_to: str | None = None
+    assigned_at: str | None = None
+    assignee_name: str | None = None
     # Who answers this conversation: "ai" (default) or "human". "human" means
     # the AI is muted, whoever set it.
     mode: str = "ai"
@@ -218,6 +256,31 @@ class InboxSendRequest(BaseModel):
     contact_phone: str = Field(..., min_length=1, max_length=32)
     contact_name: str | None = Field(None, max_length=120)
     content: str = Field(..., min_length=1, max_length=10000)
+    # Our ChannelMessage id; the service resolves it to the provider wamid
+    # inside the same conversation before sending.
+    reply_to_message_id: str | None = Field(None, max_length=36)
+
+
+class InboxReactionRequest(BaseModel):
+    # Empty removes this business's reaction.
+    emoji: str = Field("", max_length=16)
+
+
+class InboxLocationSendRequest(BaseModel):
+    channel_id: str = Field(..., min_length=1)
+    contact_phone: str = Field(..., min_length=1, max_length=32)
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
+    name: str | None = Field(None, max_length=200)
+    address: str | None = Field(None, max_length=500)
+
+
+class InboxContactSendRequest(BaseModel):
+    channel_id: str = Field(..., min_length=1)
+    contact_phone: str = Field(..., min_length=1, max_length=32)
+    name: str = Field(..., min_length=1, max_length=120)
+    phone: str = Field(..., min_length=7, max_length=32)
+    email: str | None = Field(None, max_length=200)
 
 
 class InboxSendResponse(BaseModel):
@@ -319,6 +382,8 @@ class LeadOut(BaseModel):
     contact_username: str | None = None
     language: str = "en"
     intent: str | None = None
+    # Canonical label: wholesale | retail | booking | quote | support | info.
+    category: str | None = None
     request: str | None = None
     # From contact_profiles when a cached avatar exists — temporary CDN
     # URL, refreshed on inbound traffic like the inbox's.
@@ -336,6 +401,10 @@ class LeadOut(BaseModel):
     ai_miss_count: int = 0
     priority_since: str | None = None
     thread_key: str | None = None
+    # Who owns the lead (mirrored from the conversation thread).
+    assigned_to: str | None = None
+    assigned_at: str | None = None
+    assignee_name: str | None = None
     last_message_at: str | None = None
     created_at: str
     updated_at: str
@@ -348,6 +417,9 @@ class LeadListResponse(BaseModel):
 
 class LeadUpdate(BaseModel):
     stage: str | None = Field(None, pattern="^(new|qualified|follow_up|converted|lost)$")
+    category: str | None = Field(
+        None, pattern="^(wholesale|retail|booking|quote|support|info)$"
+    )
     summary: str | None = Field(None, max_length=2000)
 
 
@@ -372,6 +444,8 @@ class LeadSettingsOut(BaseModel):
     digest_enabled: bool
     digest_hour: int
     digest_max_leads: int
+    # Per-tenant stage rule: which canonical categories auto-qualify a lead.
+    qualified_categories: list[str] = []
     review_issue_subcategories: list[str] = []
 
 
@@ -395,4 +469,5 @@ class LeadSettingsUpdate(BaseModel):
     digest_enabled: bool | None = None
     digest_hour: int | None = None
     digest_max_leads: int | None = None
+    qualified_categories: list[str] | None = Field(None, max_length=6)
     review_issue_subcategories: list[str] | None = Field(None, max_length=40)

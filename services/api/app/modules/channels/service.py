@@ -2,8 +2,11 @@ import hashlib
 import hmac
 import json
 import logging
+import math
+import secrets
 import uuid
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 from fastapi import Request
 from sqlalchemy import case, func, select, tuple_
@@ -16,11 +19,17 @@ from ...core.crypto import encrypt_secret as _encrypt_secret
 from ...core.crypto import get_fernet as _get_fernet
 from ..team.context import tenant_id_of
 from ..users.models import User
-from .models import Channel, ChannelMessage, ChannelThread, ContactProfile
+from .models import Channel, ChannelMessage, ChannelThread, ContactProfile, Lead, WhatsAppQrCode
 from . import thread_maintenance  # noqa: F401  registers event listeners
 from .schemas import ChannelCreate, ChannelMessageSend
 
 logger = logging.getLogger(__name__)
+
+# Outbound attachments are bounded before they reach memory or Meta. A 32 MB
+# ceiling covers invoices, menus and scanned PDFs while keeping one request
+# from pinning an API worker; a sticker is a small WebP by design.
+MAX_OUTBOUND_DOCUMENT_BYTES = 32 * 1024 * 1024
+MAX_OUTBOUND_STICKER_BYTES = 500 * 1024
 
 
 def encrypt_token(token: str) -> str:
@@ -340,7 +349,12 @@ async def delete_channel(channel_id: str, user: User, db: AsyncSession) -> bool:
 
 
 async def send_message(
-    channel_id: str, body: ChannelMessageSend, user: User, db: AsyncSession
+    channel_id: str,
+    body: ChannelMessageSend,
+    user: User,
+    db: AsyncSession,
+    *,
+    reply_to_message_id: str | None = None,
 ) -> ChannelMessage:
     """Send a message to a contact and record the result.
 
@@ -357,6 +371,25 @@ async def send_message(
     if not contact_phone:
         raise ValueError("A recipient phone number is required to send")
 
+    # Resolve the quote inside the same conversation, never from a bare id the
+    # browser sent. A target with no provider id cannot be quoted.
+    quoted_wamid: str | None = None
+    if reply_to_message_id and channel.platform == "whatsapp":
+        target = (
+            await db.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.id == reply_to_message_id,
+                    ChannelMessage.channel_id == channel_id,
+                    ChannelMessage.contact_phone_hash
+                    == hash_contact_phone(contact_phone),
+                    ChannelMessage.deleted_at.is_(None),
+                )
+            )
+        ).scalar_one_or_none()
+        if target is None or not target.platform_message_id:
+            raise ValueError("That message cannot be quoted in this conversation.")
+        quoted_wamid = target.platform_message_id
+
     outbound = ChannelMessage(
         id=str(uuid.uuid4()),
         channel_id=channel_id,
@@ -368,6 +401,7 @@ async def send_message(
         contact_phone_hash=hash_contact_phone(contact_phone),
         contact_name=body.contact_name or None,
         handled_by="human",
+        reply_to_message_id=quoted_wamid,
     )
 
     try:
@@ -377,7 +411,8 @@ async def send_message(
             )
         else:
             provider_msg_id, error = await _dispatch_whatsapp(
-                db, user, channel, contact_phone, body.content
+                db, user, channel, contact_phone, body.content,
+                context_message_id=quoted_wamid,
             )
     except Exception as exc:  # noqa: BLE001 - recorded on the row, not raised
         provider_msg_id, error = "", str(exc)[:500]
@@ -419,12 +454,532 @@ async def send_message(
     return outbound
 
 
+async def react_to_message(
+    channel_id: str,
+    message_id: str,
+    emoji: str,
+    user: User,
+    db: AsyncSession,
+) -> ChannelMessage:
+    """React to one message. An empty emoji removes the reaction.
+
+    Reactions are supported by the Cloud API; unlike a reply they do not
+    change conversation ownership or mute the AI.
+    """
+    channel = await get_channel(channel_id, user, db)
+    if not channel:
+        raise ValueError("Channel not found")
+    if channel.platform != "whatsapp":
+        raise ValueError("Reactions are only available on WhatsApp")
+
+    target = (
+        await db.execute(
+            select(ChannelMessage).where(
+                ChannelMessage.id == message_id,
+                ChannelMessage.channel_id == channel_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if target is None:
+        raise ValueError("Message not found")
+    if not target.platform_message_id:
+        raise ValueError("This message has no WhatsApp id to react to")
+    to = decrypt_contact_phone(target.contact_phone)
+    if not to:
+        raise ValueError("This message has no contact to reply to")
+
+    value = (emoji or "").strip()
+    if len(value) > 16:
+        raise ValueError("A reaction must be a single emoji")
+
+    outbound = ChannelMessage(
+        id=str(uuid.uuid4()),
+        channel_id=channel_id,
+        direction="outbound",
+        content=encrypt_message_content(value),
+        content_type="reaction",
+        status="sent",
+        contact_phone=target.contact_phone,
+        contact_phone_hash=target.contact_phone_hash,
+        contact_name=target.contact_name,
+        handled_by="human",
+        reply_to_message_id=target.platform_message_id,
+    )
+
+    from .meta.providers.base import MetaAPIError
+    from .meta.providers.whatsapp import WhatsAppAdapter
+
+    try:
+        phone_number_id, token, error = await _whatsapp_credentials(
+            db, user, channel
+        )
+        if error:
+            raise ValueError(error)
+        outbound.platform_message_id = (
+            await WhatsAppAdapter().send_reaction(
+                phone_number_id, token, to, target.platform_message_id, value
+            )
+        )[:200] or None
+    except (ValueError, MetaAPIError) as exc:
+        outbound.status = "failed"
+        outbound.error = str(exc)[:500]
+    except Exception as exc:  # noqa: BLE001 - recorded on the row
+        outbound.status = "failed"
+        outbound.error = str(exc)[:500]
+
+    db.add(outbound)
+    await db.commit()
+    await db.refresh(outbound)
+    return outbound
+
+
+async def soft_delete_message(
+    channel_id: str,
+    message_id: str,
+    user: User,
+    db: AsyncSession,
+) -> ChannelMessage:
+    """Hide one outbound message from this inbox.
+
+    This is NOT a WhatsApp retraction: the Cloud API has no delete-for-
+    everyone endpoint for business messages. The row stays for audit, is
+    excluded from AI history, and the UI labels it as removed locally.
+    """
+    channel = await get_channel(channel_id, user, db)
+    if not channel:
+        raise ValueError("Channel not found")
+    target = (
+        await db.execute(
+            select(ChannelMessage).where(
+                ChannelMessage.id == message_id,
+                ChannelMessage.channel_id == channel_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if target is None:
+        raise ValueError("Message not found")
+    if target.direction != "outbound":
+        raise ValueError("Only messages this business sent can be removed")
+    if target.deleted_at is not None:
+        return target
+
+    target.deleted_at = datetime.now(timezone.utc)
+    target.deleted_by = user.id
+    db.add(target)
+
+    # If the removed message was the thread's newest, the list preview must
+    # not keep showing its text. The row stays for audit; the preview becomes
+    # the same neutral marker the thread view uses.
+    thread = (
+        await db.execute(
+            select(ChannelThread).where(
+                ChannelThread.channel_id == channel_id,
+                ChannelThread.contact_phone_hash == target.contact_phone_hash,
+            )
+        )
+    ).scalar_one_or_none()
+    if thread is not None and thread.last_message_at is not None:
+        last = thread.last_message_at
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        created = target.created_at
+        if created is not None and created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        if created is None or created >= last:
+            thread.last_message_preview = encrypt_message_content(
+                "Message removed from inbox"
+            )
+            db.add(thread)
+
+    await db.commit()
+    await db.refresh(target)
+    return target
+
+
+async def _mark_human_owned(
+    db: AsyncSession, user: User, channel_id: str, contact_phone: str
+) -> None:
+    """A human sent something: mute the AI for this thread. Best-effort."""
+    from .conversation_mode import MODE_HUMAN, set_mode
+
+    try:
+        await set_mode(
+            db,
+            tenant_id=tenant_id_of(user),
+            channel_id=channel_id,
+            contact_phone=contact_phone,
+            mode=MODE_HUMAN,
+            by=user.id or "human_reply",
+            reason="human_reply",
+        )
+    except Exception as exc:  # noqa: BLE001 - the message already landed
+        logger.warning(
+            "conversation mode switch failed after human send "
+            "channel=%s: %s", channel_id, exc,
+        )
+
+
+async def send_location_message(
+    channel_id: str,
+    contact_phone: str,
+    latitude: float,
+    longitude: float,
+    *,
+    name: str | None,
+    address: str | None,
+    user: User,
+    db: AsyncSession,
+) -> ChannelMessage:
+    """Send a native WhatsApp location card and store the outbound row."""
+    channel = await get_channel(channel_id, user, db)
+    if not channel:
+        raise ValueError("Channel not found")
+    if channel.platform != "whatsapp":
+        raise ValueError("Location messages are only available on WhatsApp")
+    to = (contact_phone or "").strip()
+    if not to:
+        raise ValueError("A recipient phone number is required to send")
+    if not (math.isfinite(latitude) and -90 <= latitude <= 90):
+        raise ValueError("Latitude must be between -90 and 90")
+    if not (math.isfinite(longitude) and -180 <= longitude <= 180):
+        raise ValueError("Longitude must be between -180 and 180")
+
+    label = (name or "").strip()[:200]
+    place = (address or "").strip()[:500]
+    lines = [part for part in (label, place) if part]
+    lines.append(f"https://maps.google.com/?q={latitude},{longitude}")
+    outbound = ChannelMessage(
+        id=str(uuid.uuid4()),
+        channel_id=channel_id,
+        direction="outbound",
+        content=encrypt_message_content("\n".join(lines)),
+        content_type="location",
+        status="sent",
+        contact_phone=encrypt_contact_phone(to),
+        contact_phone_hash=hash_contact_phone(to),
+        handled_by="human",
+    )
+
+    from .meta.providers.base import MetaAPIError
+    from .meta.providers.whatsapp import WhatsAppAdapter
+
+    error = ""
+    try:
+        phone_number_id, token, error = await _whatsapp_credentials(
+            db, user, channel
+        )
+        if not error:
+            outbound.platform_message_id = (
+                await WhatsAppAdapter().send_location(
+                    phone_number_id, token, to, latitude, longitude,
+                    name=label or None, address=place or None,
+                )
+            )[:200] or None
+    except MetaAPIError as exc:
+        error = str(exc)
+    except Exception as exc:  # noqa: BLE001 - recorded on the row
+        error = str(exc)
+
+    if error:
+        outbound.status = "failed"
+        outbound.error = error[:500]
+    db.add(outbound)
+    await db.commit()
+    await db.refresh(outbound)
+    if outbound.status != "failed":
+        await _mark_human_owned(db, user, channel_id, to)
+    return outbound
+
+
+async def send_contact_message(
+    channel_id: str,
+    contact_phone: str,
+    *,
+    name: str,
+    phone: str,
+    email: str | None,
+    user: User,
+    db: AsyncSession,
+) -> ChannelMessage:
+    """Send a WhatsApp contact card and store the outbound row."""
+    channel = await get_channel(channel_id, user, db)
+    if not channel:
+        raise ValueError("Channel not found")
+    if channel.platform != "whatsapp":
+        raise ValueError("Contact cards are only available on WhatsApp")
+    to = (contact_phone or "").strip()
+    if not to:
+        raise ValueError("A recipient phone number is required to send")
+    label = (name or "").strip()[:120]
+    if not label:
+        raise ValueError("A contact card needs a name")
+    number = (phone or "").strip()[:32]
+    digits = "".join(ch for ch in number if ch.isdigit())
+    if len(digits) < 7:
+        raise ValueError("A contact card needs a valid phone number")
+    mail = (email or "").strip()[:200]
+
+    card: dict = {
+        "name": {"formatted_name": label},
+        "phones": [{"phone": number, "type": "WORK"}],
+    }
+    if mail:
+        card["emails"] = [{"email": mail, "type": "WORK"}]
+
+    outbound = ChannelMessage(
+        id=str(uuid.uuid4()),
+        channel_id=channel_id,
+        direction="outbound",
+        content=encrypt_message_content(f"{label} — {number}"),
+        content_type="contact",
+        status="sent",
+        contact_phone=encrypt_contact_phone(to),
+        contact_phone_hash=hash_contact_phone(to),
+        handled_by="human",
+    )
+
+    from .meta.providers.base import MetaAPIError
+    from .meta.providers.whatsapp import WhatsAppAdapter
+
+    error = ""
+    try:
+        phone_number_id, token, error = await _whatsapp_credentials(
+            db, user, channel
+        )
+        if not error:
+            outbound.platform_message_id = (
+                await WhatsAppAdapter().send_contacts(
+                    phone_number_id, token, to, [card]
+                )
+            )[:200] or None
+    except MetaAPIError as exc:
+        error = str(exc)
+    except Exception as exc:  # noqa: BLE001 - recorded on the row
+        error = str(exc)
+
+    if error:
+        outbound.status = "failed"
+        outbound.error = error[:500]
+    db.add(outbound)
+    await db.commit()
+    await db.refresh(outbound)
+    if outbound.status != "failed":
+        await _mark_human_owned(db, user, channel_id, to)
+    return outbound
+
+
+async def send_document_message(
+    channel_id: str,
+    contact_phone: str,
+    *,
+    data: bytes,
+    filename: str,
+    mime_type: str,
+    caption: str | None,
+    user: User,
+    db: AsyncSession,
+) -> ChannelMessage:
+    """Upload a document and send it as a native WhatsApp attachment.
+
+    The bytes are written to the private store first so the inbox can show the
+    exact file that went out. A storage failure records a failed row and never
+    calls Meta — the customer must not receive a file this inbox cannot show.
+    """
+    from .attachments import display_name, normalize_mime, storage_suffix
+
+    channel = await get_channel(channel_id, user, db)
+    if not channel:
+        raise ValueError("Channel not found")
+    if channel.platform != "whatsapp":
+        raise ValueError("Documents are only available on WhatsApp")
+    to = (contact_phone or "").strip()
+    if not to:
+        raise ValueError("A recipient phone number is required to send")
+    if not data:
+        raise ValueError("The document is empty")
+    if len(data) > MAX_OUTBOUND_DOCUMENT_BYTES:
+        raise ValueError("Documents must be under 32 MB")
+
+    mime = normalize_mime(mime_type, filename)
+    suffix = storage_suffix(mime, filename)
+    name = display_name(filename, suffix)
+    body = (caption or "").strip()[:1024]
+    key = f"{uuid.uuid4().hex}{suffix}"
+
+    outbound = ChannelMessage(
+        id=str(uuid.uuid4()),
+        channel_id=channel_id,
+        direction="outbound",
+        content=encrypt_message_content(body or name),
+        content_type="document",
+        status="sent",
+        contact_phone=encrypt_contact_phone(to),
+        contact_phone_hash=hash_contact_phone(to),
+        handled_by="human",
+        media_key=key,
+        media_mime_type=mime,
+        media_filename=name,
+    )
+
+    from ...core.storage import put_doc
+
+    try:
+        put_doc(f"inbox-{tenant_id_of(user)}", key, data)
+    except Exception as exc:  # noqa: BLE001 - recorded on the row
+        logger.warning(
+            "Outbound document store failed channel=%s: %s: %s",
+            channel_id, type(exc).__name__, str(exc)[:200],
+        )
+        outbound.status = "failed"
+        outbound.error = "The document could not be stored; nothing was sent."
+        # No URL may point at bytes that were never written.
+        outbound.media_key = None
+        db.add(outbound)
+        await db.commit()
+        await db.refresh(outbound)
+        return outbound
+
+    from .meta.providers.base import MetaAPIError
+    from .meta.providers.whatsapp import WhatsAppAdapter
+
+    error = ""
+    try:
+        phone_number_id, token, error = await _whatsapp_credentials(db, user, channel)
+        if not error:
+            adapter = WhatsAppAdapter()
+            media_id = await adapter.upload_media(
+                phone_number_id, token, data, mime, filename=name
+            )
+            if not media_id:
+                raise MetaAPIError("WhatsApp returned no media id for the document")
+            outbound.platform_message_id = (
+                await adapter.send_document(
+                    phone_number_id, token, to, media_id,
+                    filename=name, caption=body or None,
+                )
+            )[:200] or None
+    except MetaAPIError as exc:
+        error = str(exc)
+    except Exception as exc:  # noqa: BLE001 - recorded on the row
+        error = str(exc)
+
+    if error:
+        outbound.status = "failed"
+        outbound.error = error[:500]
+    db.add(outbound)
+    await db.commit()
+    await db.refresh(outbound)
+    if outbound.status != "failed":
+        await _mark_human_owned(db, user, channel_id, to)
+    return outbound
+
+
+async def send_sticker_message(
+    channel_id: str,
+    contact_phone: str,
+    *,
+    data: bytes,
+    filename: str,
+    mime_type: str,
+    user: User,
+    db: AsyncSession,
+) -> ChannelMessage:
+    """Upload and send a WhatsApp sticker (WebP, bounded by Meta's limit)."""
+    from .attachments import normalize_mime, storage_suffix
+
+    channel = await get_channel(channel_id, user, db)
+    if not channel:
+        raise ValueError("Channel not found")
+    if channel.platform != "whatsapp":
+        raise ValueError("Stickers are only available on WhatsApp")
+    to = (contact_phone or "").strip()
+    if not to:
+        raise ValueError("A recipient phone number is required to send")
+    if not data:
+        raise ValueError("The sticker is empty")
+    mime = normalize_mime(mime_type, filename)
+    if mime != "image/webp":
+        raise ValueError("Stickers must be a WebP image")
+    if len(data) > MAX_OUTBOUND_STICKER_BYTES:
+        raise ValueError("Stickers must be under 500 KB")
+
+    suffix = storage_suffix(mime, filename)
+    key = f"{uuid.uuid4().hex}{suffix}"
+    outbound = ChannelMessage(
+        id=str(uuid.uuid4()),
+        channel_id=channel_id,
+        direction="outbound",
+        content=encrypt_message_content("Sticker"),
+        content_type="sticker",
+        status="sent",
+        contact_phone=encrypt_contact_phone(to),
+        contact_phone_hash=hash_contact_phone(to),
+        handled_by="human",
+        media_key=key,
+        media_mime_type=mime,
+        media_filename=f"sticker{suffix}",
+    )
+
+    from ...core.storage import put_doc
+
+    try:
+        put_doc(f"inbox-{tenant_id_of(user)}", key, data)
+    except Exception as exc:  # noqa: BLE001 - recorded on the row
+        logger.warning(
+            "Outbound sticker store failed channel=%s: %s: %s",
+            channel_id, type(exc).__name__, str(exc)[:200],
+        )
+        outbound.status = "failed"
+        outbound.error = "The sticker could not be stored; nothing was sent."
+        # No URL may point at bytes that were never written.
+        outbound.media_key = None
+        db.add(outbound)
+        await db.commit()
+        await db.refresh(outbound)
+        return outbound
+
+    from .meta.providers.base import MetaAPIError
+    from .meta.providers.whatsapp import WhatsAppAdapter
+
+    error = ""
+    try:
+        phone_number_id, token, error = await _whatsapp_credentials(db, user, channel)
+        if not error:
+            adapter = WhatsAppAdapter()
+            media_id = await adapter.upload_media(
+                phone_number_id, token, data, mime, filename=f"sticker{suffix}"
+            )
+            if not media_id:
+                raise MetaAPIError("WhatsApp returned no media id for the sticker")
+            outbound.platform_message_id = (
+                await adapter.send_sticker(
+                    phone_number_id, token, to, media_id
+                )
+            )[:200] or None
+    except MetaAPIError as exc:
+        error = str(exc)
+    except Exception as exc:  # noqa: BLE001 - recorded on the row
+        error = str(exc)
+
+    if error:
+        outbound.status = "failed"
+        outbound.error = error[:500]
+    db.add(outbound)
+    await db.commit()
+    await db.refresh(outbound)
+    if outbound.status != "failed":
+        await _mark_human_owned(db, user, channel_id, to)
+    return outbound
+
+
 async def _dispatch_whatsapp(
     db: AsyncSession,
     user: User,
     channel: Channel,
     to: str,
     text: str,
+    *,
+    context_message_id: str | None = None,
 ) -> tuple[str, str]:
     """(provider_message_id, error). Exactly one of the two is meaningful.
 
@@ -441,7 +996,8 @@ async def _dispatch_whatsapp(
 
     try:
         provider_msg_id = await WhatsAppAdapter().send_text_message(
-            phone_number_id, token, to, text
+            phone_number_id, token, to, text,
+            context_message_id=context_message_id,
         )
     except MetaAPIError as exc:
         detail = f"{exc.status_code}: {exc}" if exc.status_code else str(exc)
@@ -640,6 +1196,57 @@ async def whatsapp_number_health(
     return await WhatsAppAdapter().get_number_health(phone_number_id, token)
 
 
+_QR_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
+_QR_CODE_LENGTH = 8
+
+
+async def _whatsapp_qr_phone(db: AsyncSession, user: User, channel: Channel) -> str:
+    """The number a customer scans into, from the connected Meta asset.
+
+    Never inferred from the channel name: a wrong number prints a QR that
+    reaches a stranger. A connected number always has its asset row, so a
+    missing phone means the connection needs refreshing.
+    """
+    from .meta.models import MetaAsset
+
+    row = (
+        await db.execute(
+            select(MetaAsset.phone, MetaAsset.active)
+            .where(
+                MetaAsset.tenant_id == tenant_id_of(user),
+                MetaAsset.provider == "whatsapp",
+                MetaAsset.external_asset_id == channel.platform_user_id,
+            )
+            .limit(1)
+        )
+    ).first()
+    if row is None or not row.phone:
+        raise ValueError(
+            "This number has no display phone on record. Reconnect WhatsApp "
+            "to refresh it."
+        )
+    if not row.active:
+        raise ValueError("This WhatsApp number is not active.")
+    digits = "".join(ch for ch in row.phone if ch.isdigit())
+    if not digits:
+        raise ValueError(
+            "This number has no display phone on record. Reconnect WhatsApp "
+            "to refresh it."
+        )
+    return digits
+
+
+def _qr_payload(row: WhatsAppQrCode) -> dict:
+    return {
+        "code": row.code,
+        "prefilled_message": row.prefilled_message,
+        "deep_link_url": row.deep_link_url,
+        # Kept in the shape for older clients; the QR image is rendered in the
+        # browser from the deep link, so no remote image is needed.
+        "qr_image_url": None,
+    }
+
+
 async def list_whatsapp_qr_codes(
     channel_id: str, user: User, db: AsyncSession
 ) -> list[dict]:
@@ -648,12 +1255,17 @@ async def list_whatsapp_qr_codes(
         raise ValueError("Channel not found")
     if channel.platform != "whatsapp":
         raise ValueError("QR codes are only available on WhatsApp")
-    phone_number_id, token, error = await _whatsapp_credentials(db, user, channel)
-    if error:
-        raise ValueError(error)
-    from .meta.providers.whatsapp import WhatsAppAdapter
-
-    return await WhatsAppAdapter().list_qr_codes(phone_number_id, token)
+    rows = (
+        await db.execute(
+            select(WhatsAppQrCode)
+            .where(
+                WhatsAppQrCode.tenant_id == tenant_id_of(user),
+                WhatsAppQrCode.channel_id == channel_id,
+            )
+            .order_by(WhatsAppQrCode.created_at.desc())
+        )
+    ).scalars().all()
+    return [_qr_payload(row) for row in rows]
 
 
 async def create_whatsapp_qr_code(
@@ -664,19 +1276,72 @@ async def create_whatsapp_qr_code(
     *,
     image_format: str = "PNG",
 ) -> dict:
+    """Create a local `wa.me` link. No Meta permission and no expiry.
+
+    `image_format` is accepted for the existing API shape; the image is
+    rendered client-side, so the value does not matter.
+    """
+    message = (prefilled_message or "").strip()
+    if not message:
+        raise ValueError("a QR code needs a pre-filled message")
+    if len(message) > 140:
+        raise ValueError("the pre-filled message must be 140 characters or fewer")
+
     channel = await get_channel(channel_id, user, db)
     if not channel:
         raise ValueError("Channel not found")
     if channel.platform != "whatsapp":
         raise ValueError("QR codes are only available on WhatsApp")
-    phone_number_id, token, error = await _whatsapp_credentials(db, user, channel)
-    if error:
-        raise ValueError(error)
-    from .meta.providers.whatsapp import WhatsAppAdapter
 
-    return await WhatsAppAdapter().create_qr_code(
-        phone_number_id, token, prefilled_message, image_format=image_format
+    # A repeated create with the same wording should not litter the list.
+    existing = (
+        await db.execute(
+            select(WhatsAppQrCode)
+            .where(
+                WhatsAppQrCode.tenant_id == tenant_id_of(user),
+                WhatsAppQrCode.channel_id == channel_id,
+                WhatsAppQrCode.prefilled_message == message,
+            )
+            .order_by(WhatsAppQrCode.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return _qr_payload(existing)
+
+    phone = await _whatsapp_qr_phone(db, user, channel)
+    deep_link = f"https://wa.me/{phone}?text={quote(message, safe='')}"
+
+    code = "".join(secrets.choice(_QR_ALPHABET) for _ in range(_QR_CODE_LENGTH))
+    for _ in range(5):
+        taken = (
+            await db.execute(
+                select(WhatsAppQrCode.id)
+                .where(
+                    WhatsAppQrCode.tenant_id == tenant_id_of(user),
+                    WhatsAppQrCode.code == code,
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if taken is None:
+            break
+        code = "".join(
+            secrets.choice(_QR_ALPHABET) for _ in range(_QR_CODE_LENGTH)
+        )
+
+    row = WhatsAppQrCode(
+        tenant_id=tenant_id_of(user),
+        channel_id=channel_id,
+        code=code,
+        prefilled_message=message,
+        deep_link_url=deep_link,
+        created_by=user.id,
     )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return _qr_payload(row)
 
 
 async def delete_whatsapp_qr_code(
@@ -687,12 +1352,20 @@ async def delete_whatsapp_qr_code(
         raise ValueError("Channel not found")
     if channel.platform != "whatsapp":
         raise ValueError("QR codes are only available on WhatsApp")
-    phone_number_id, token, error = await _whatsapp_credentials(db, user, channel)
-    if error:
-        raise ValueError(error)
-    from .meta.providers.whatsapp import WhatsAppAdapter
-
-    return await WhatsAppAdapter().delete_qr_code(phone_number_id, token, code)
+    row = (
+        await db.execute(
+            select(WhatsAppQrCode).where(
+                WhatsAppQrCode.tenant_id == tenant_id_of(user),
+                WhatsAppQrCode.channel_id == channel_id,
+                WhatsAppQrCode.code == code,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        return False
+    await db.delete(row)
+    await db.commit()
+    return True
 
 
 async def _dispatch_instagram(
@@ -853,12 +1526,75 @@ async def _thread_profiles(
     return {(r.platform, r.contact_id): r for r in rows}
 
 
+async def _thread_lead_categories(
+    db: AsyncSession,
+    tenant_id: str,
+    pairs: set[tuple[str, str]],
+) -> dict[tuple[str, str], str]:
+    """Canonical lead label for a page of threads, in one indexed query.
+
+    The inbox row stores the per-message conversation category (complaint,
+    question); the lead's own category lives on `leads`. Loading it here
+    keeps the inbox labels identical to the lead card, digest and escalation
+    email instead of re-deriving a label in the browser.
+    """
+    if not pairs:
+        return {}
+    rows = (
+        await db.execute(
+            select(Lead.channel_id, Lead.contact_id, Lead.category).where(
+                Lead.tenant_id == tenant_id,
+                Lead.merged_into_id.is_(None),
+                tuple_(Lead.channel_id, Lead.contact_id).in_(pairs),
+            )
+        )
+    ).all()
+    return {
+        (channel_id, contact_id): category
+        for channel_id, contact_id, category in rows
+        if category
+    }
+
+
+def _thread_lead_pairs(threads: list[ChannelThread]) -> set[tuple[str, str]]:
+    pairs: set[tuple[str, str]] = set()
+    for t in threads:
+        if t.contact_phone is None:
+            continue
+        phone = decrypt_contact_phone(t.contact_phone)
+        if phone:
+            pairs.add((t.channel_id, phone))
+    return pairs
+
+
+async def _thread_assignee_names(
+    db: AsyncSession, threads: list[ChannelThread]
+) -> dict[str, str]:
+    """Display names for the owners on a page of threads, in one query."""
+    ids = {t.assigned_to for t in threads if t.assigned_to}
+    if not ids:
+        return {}
+    rows = (
+        await db.execute(select(User).where(User.id.in_(ids)))
+    ).scalars().all()
+    return {
+        u.id: (
+            f"{u.first_name or ''} {u.last_name or ''}".strip() or u.email
+        )
+        for u in rows
+    }
+
+
 def _thread_payloads(
     threads: list[ChannelThread],
     by_id: dict[str, Channel],
     profiles: dict,
+    lead_categories: dict[tuple[str, str], str] | None = None,
+    assignee_names: dict[str, str] | None = None,
 ) -> list[dict]:
     """Serialise thread rows for the inbox response."""
+    lead_categories = lead_categories or {}
+    assignee_names = assignee_names or {}
     out: list[dict] = []
     for t in threads:
         ch = by_id.get(t.channel_id)
@@ -899,6 +1635,20 @@ def _thread_payloads(
                 "is_unknown": phone is None,
                 "category": category,
                 "priority": priority,
+                "lead_category": (
+                    lead_categories.get((t.channel_id, decrypted_phone))
+                    if decrypted_phone is not None
+                    else None
+                ),
+                "assigned_to": t.assigned_to,
+                "assigned_at": (
+                    t.assigned_at.isoformat() if t.assigned_at else None
+                ),
+                "assignee_name": (
+                    assignee_names.get(t.assigned_to)
+                    if t.assigned_to
+                    else None
+                ),
                 "important": is_important(priority, category),
                 "can_reply": ch.platform != "google_reviews" and phone is not None,
                 "archived": t.archived_at is not None,
@@ -942,7 +1692,10 @@ async def _search_threads(
                     ChannelMessage.content,
                     ChannelMessage.created_at,
                 )
-                .where(ChannelMessage.channel_id == channel_id)
+                .where(
+                    ChannelMessage.channel_id == channel_id,
+                    ChannelMessage.deleted_at.is_(None),
+                )
                 .order_by(ChannelMessage.created_at.desc())
                 .limit(per_channel)
             )
@@ -1107,7 +1860,11 @@ async def list_inbox_threads(
             filtered_summaries = []
             for phone_hash, phone, channel_id, last_at, total in summaries:
                 msgs = msgs_by_thread.get((channel_id, phone_hash), [])
-                if any(needle in (decrypt_message_content(m.content) or "").lower() for m in msgs):
+                if any(
+                    m.deleted_at is None
+                    and needle in (decrypt_message_content(m.content) or "").lower()
+                    for m in msgs
+                ):
                     filtered_summaries.append((phone_hash, phone, channel_id, last_at, total))
             summaries = filtered_summaries
             if not summaries:
@@ -1130,6 +1887,17 @@ async def list_inbox_threads(
                 )
             ).scalars().all()
             profiles = {(r.platform, r.contact_id): r for r in rows}
+
+        lead_pairs: set[tuple[str, str]] = set()
+        for _phone_hash, phone, cid, _la, _t in summaries:
+            if phone is None:
+                continue
+            decrypted = decrypt_contact_phone(phone)
+            if decrypted:
+                lead_pairs.add((cid, decrypted))
+        lead_categories = await _thread_lead_categories(
+            db, tenant_id_of(user), lead_pairs
+        )
 
         out: list[dict] = []
         for phone_hash, phone, channel_id, last_at, total in summaries:
@@ -1181,6 +1949,11 @@ async def list_inbox_threads(
                     "is_unknown": phone is None,
                     "category": category,
                     "priority": priority,
+                    "lead_category": (
+                        lead_categories.get((channel_id, decrypted_phone))
+                        if decrypted_phone is not None
+                        else None
+                    ),
                     "important": is_important(priority, category),
                     "can_reply": platform != "google_reviews" and phone is not None,
                     # No thread row exists on this path, so nothing has ever
@@ -1198,7 +1971,13 @@ async def list_inbox_threads(
         if not threads:
             return []
         profiles = await _thread_profiles(db, tenant_id_of(user), threads, by_id)
-        return _thread_payloads(threads, by_id, profiles)
+        lead_categories = await _thread_lead_categories(
+            db, tenant_id_of(user), _thread_lead_pairs(threads)
+        )
+        assignee_names = await _thread_assignee_names(db, threads)
+        return _thread_payloads(
+            threads, by_id, profiles, lead_categories, assignee_names
+        )
 
     # --- Fast path: read from denormalized thread table (1 query) ---
     t_stmt = (
@@ -1223,7 +2002,13 @@ async def list_inbox_threads(
         return []
 
     profiles = await _thread_profiles(db, tenant_id_of(user), threads, by_id)
-    return _thread_payloads(threads, by_id, profiles)
+    lead_categories = await _thread_lead_categories(
+        db, tenant_id_of(user), _thread_lead_pairs(threads)
+    )
+    assignee_names = await _thread_assignee_names(db, threads)
+    return _thread_payloads(
+        threads, by_id, profiles, lead_categories, assignee_names
+    )
 
 
 async def list_thread_messages(

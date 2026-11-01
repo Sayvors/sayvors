@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { QRCodeCanvas } from "qrcode.react";
 import { fetchWhatsAppUsage, type WaUsage } from "@/lib/api-whatsapp-profile";
 import { getProfile, updateResponseStyle, updateVoiceReplies } from "@/lib/api-profile";
 import {
@@ -155,7 +156,11 @@ export default function WhatsAppSettings({
     setQrError(null);
     try {
       const created = await createWhatsAppQrCode(channelId, qrMessage.trim());
-      setQrCodes((prev) => [created, ...prev]);
+      setQrCodes((prev) =>
+        prev.some((qr) => qr.code === created.code)
+          ? prev
+          : [created, ...prev],
+      );
       setQrMessage("");
     } catch (e) {
       setQrError(e instanceof Error ? e.message : "Could not create the QR code.");
@@ -176,6 +181,19 @@ export default function WhatsAppSettings({
     } finally {
       setQrBusy(false);
     }
+  };
+
+  const downloadQr = (qr: WhatsAppQrCode) => {
+    // The canvas is drawn at 220px even though it is displayed small, so the
+    // downloaded file prints cleanly at counter size.
+    const canvas = document.getElementById(
+      `qr-canvas-${qr.code}`,
+    ) as HTMLCanvasElement | null;
+    if (!canvas) return;
+    const link = document.createElement("a");
+    link.download = `whatsapp-qr-${qr.code}.png`;
+    link.href = canvas.toDataURL("image/png");
+    link.click();
   };
 
   const chooseResponseStyle = async (style: string) => {
@@ -335,10 +353,16 @@ export default function WhatsAppSettings({
           <ul className="mt-3 space-y-2">
             {qrCodes.map((qr) => (
               <li key={qr.code} className="flex items-start gap-3 rounded-[8px] bg-[var(--wa-panel-2,rgba(0,0,0,0.03))] px-3 py-2">
-                {qr.qr_image_url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={qr.qr_image_url} alt={`QR ${qr.code}`} className="h-14 w-14 shrink-0 rounded bg-white object-contain" />
-                ) : null}
+                <QRCodeCanvas
+                  id={`qr-canvas-${qr.code}`}
+                  value={qr.deep_link_url}
+                  size={220}
+                  bgColor="#ffffff"
+                  fgColor="#14101F"
+                  level="M"
+                  aria-label={`QR code for ${qr.prefilled_message}`}
+                  className="h-16 w-16 shrink-0 rounded bg-white p-1"
+                />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[12px] font-semibold text-[var(--wa-text)]">{qr.prefilled_message}</p>
                   <a
@@ -351,11 +375,19 @@ export default function WhatsAppSettings({
                   </a>
                 </div>
                 <button
+                  onClick={() => downloadQr(qr)}
+                  disabled={qrBusy}
+                  className="shrink-0 text-[11px] font-semibold text-[var(--wa-accent)] underline disabled:opacity-50"
+                >
+                  Download
+                </button>
+                <button
                   onClick={() => removeQr(qr.code)}
                   disabled={qrBusy}
+                  title="Remove from this list. A printed copy still opens the chat."
                   className="shrink-0 text-[11px] font-semibold text-[var(--wa-text-3)] underline disabled:opacity-50"
                 >
-                  Delete
+                  Remove
                 </button>
               </li>
             ))}

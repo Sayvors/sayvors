@@ -29,6 +29,7 @@ export default function SearchPalette({ onClose }: { onClose: () => void }) {
       { label: t.nav.reviews, hint: "", keywords: "ratings replies comments stars feedback respond", href: "/dashboard/reviews", section: "pages" },
       { label: t.nav.verification, hint: "", keywords: "verify business verification badge", href: "/dashboard/verification", section: "pages" },
       { label: t.nav.databank, hint: "", keywords: "knowledge docs documents upload brain faq", href: "/dashboard/databank", section: "pages" },
+      { label: t.nav.memory, hint: "", keywords: "memory lessons learned resolved review approve queue facts cumulative", href: "/dashboard/memory", section: "pages" },
       { label: t.nav.connect, hint: "", keywords: "channels google facebook instagram connect link automations automatic replies autopilot approval queue tone model", href: "/dashboard/channels", section: "pages" },
       { label: t.nav.outbox, hint: "", keywords: "drafts approve pending failed outbox publish queue", href: "/dashboard/outbox", section: "pages" },
       { label: t.nav.usage, hint: "", keywords: "tokens billing costs limits usage", href: "/dashboard/usage", section: "pages" },

@@ -7,10 +7,20 @@ def normalize(
     provider: str,
     tenant_id: str | None,
     connection_id: str | None,
+    *,
+    webhook_event_id: str | None = None,
 ) -> dict:
-    """Build the envelope the rest of Sayvors consumes (Phase 2)."""
+    """Build the envelope the rest of Sayvors consumes (Phase 2).
+
+    ``webhook_event_id`` ties the normalized event back to the raw
+    ``meta_webhook_events`` row, so the worker can close that row's status
+    after it processes (or permanently rejects) the event. Without it the
+    retention sweep never sees a terminal status and the raw ledger grows
+    forever.
+    """
     return {
         "event_id": str(uuid.uuid4()),
+        "webhook_event_id": webhook_event_id,
         "tenant_id": tenant_id,
         "connection_id": connection_id,
         "provider": provider,

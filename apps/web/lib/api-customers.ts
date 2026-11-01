@@ -26,6 +26,7 @@ export interface Customer {
   important?: boolean;
   can_reply?: boolean;
   lead_stage?: string | null;
+  lead_category?: string | null;
   intent?: string | null;
   has_review?: boolean;
 }
@@ -49,6 +50,7 @@ export interface CustomerIdentity {
 export interface CustomerLead {
   id: string;
   stage: string;
+  category: string | null;
   intent: string | null;
   request: string | null;
   summary: string | null;

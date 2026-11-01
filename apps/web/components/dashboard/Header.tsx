@@ -11,6 +11,7 @@ import { apiFetch } from "@/lib/api-rag";
 import AutoPilotDialog from "@/components/dashboard/AutoPilotDialog";
 import NotificationsBell from "@/components/dashboard/NotificationsBell";
 import SearchPalette from "@/components/dashboard/SearchPalette";
+import UserAvatar from "@/components/dashboard/UserAvatar";
 import { useTour } from "@/components/tour/TourProvider";
 import { toggleChat, useChatOpen } from "@/lib/chat-store";
 import {
@@ -275,14 +276,12 @@ export default function Header() {
             title={t.account.menu}
             className="flex h-10 items-center gap-2 rounded-[2px] ps-1 pe-1.5 outline-none transition hover:bg-deep-violet/[0.05] focus-visible:ring-2 focus-visible:ring-deep-violet/40 md:h-9 dark:hover:bg-fog/[0.06]"
           >
-            <span className="flex h-7 w-7 items-center justify-center overflow-hidden rounded-[2px] bg-deep-violet text-[10px] font-semibold tracking-wide text-white">
-              {user?.avatar_url ? (
-                // eslint-disable-next-line @next/next/no-img-element -- provider/upload URL is runtime data
-                <img src={user.avatar_url} alt="" className="h-full w-full object-cover" />
-              ) : (
-                initials
-              )}
-            </span>
+            <UserAvatar
+              url={user?.avatar_url}
+              initials={initials}
+              className="h-7 w-7"
+              textClassName="text-[10px] tracking-wide"
+            />
             <span className="hidden max-w-[124px] truncate text-[12.5px] font-medium text-ink/70 xl:block dark:text-fog/70">
               {displayName}
             </span>
@@ -309,14 +308,12 @@ export default function Header() {
                 onClick={closeMenu}
                 className="flex items-center gap-2.5 border-b border-deep-violet/[0.06] px-3 py-3 outline-none transition hover:bg-deep-violet/[0.04] focus-visible:bg-deep-violet/[0.04] dark:border-fog/[0.07] dark:hover:bg-fog/[0.05]"
               >
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-[2px] bg-deep-violet text-[11px] font-semibold text-white">
-                  {user?.avatar_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element -- provider/upload URL is runtime data
-                    <img src={user.avatar_url} alt="" className="h-full w-full object-cover" />
-                  ) : (
-                    initials
-                  )}
-                </span>
+                <UserAvatar
+                  url={user?.avatar_url}
+                  initials={initials}
+                  className="h-8 w-8"
+                  textClassName="text-[11px]"
+                />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13px] font-semibold text-ink dark:text-fog">{displayName}</span>
                   <span className="block truncate text-[11px] text-ink/45 dark:text-fog/45">{user?.email ?? ""}</span>

@@ -31,6 +31,7 @@ from .modules.channels.meta.webhooks.router import router as meta_webhooks_route
 from .modules.redis.router import router as redis_router
 from .modules.kafka.router import router as kafka_router
 from .modules.rag.router import router as rag_router
+from .modules.memory.router import router as memory_router
 from .modules.analytics.router import router as analytics_router
 from .modules.analytics.abuse_router import router as analytics_abuse_router
 from .modules.profile.router import router as profile_router
@@ -554,6 +555,7 @@ app.include_router(analytics_abuse_router)
 app.include_router(redis_router)
 app.include_router(kafka_router)
 app.include_router(rag_router)
+app.include_router(memory_router)
 app.include_router(profile_router)
 app.include_router(onboarding_router)
 app.include_router(localith_router)

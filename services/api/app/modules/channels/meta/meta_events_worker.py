@@ -30,7 +30,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from ....config import settings
 from ....database import async_session
 from ....modules.kafka.client import mark_kafka_unavailable
-from ..meta.models import MetaAsset
+from ..meta.models import MetaAsset, MetaWebhookEvent
 from ..models import Channel, ChannelMessage
 from .providers.base import MetaAPIError
 from .consumer import (
@@ -156,6 +156,7 @@ async def _process_event(db, event_data: Dict[str, Any]) -> bool:
     event_type = event_data["event_type"]
     payload = event_data["payload"]
     topic = event_data["topic"]
+    webhook_event_id: str | None = None
 
     try:
         # Parse the payload if it's a string
@@ -164,10 +165,11 @@ async def _process_event(db, event_data: Dict[str, Any]) -> bool:
 
         provider = payload.get("provider", "")
         event_type = payload.get("event_type", "")
+        webhook_event_id = payload.get("webhook_event_id")
 
         if not _event_type_handled(provider, event_type):
             # Mark as sent (ignored)
-            await _mark_event_sent(db, event_id)
+            await _mark_event_sent(db, event_id, webhook_event_id)
             return True
 
         # Every handler in consumer.py takes (event, data): the normalized
@@ -206,41 +208,99 @@ async def _process_event(db, event_data: Dict[str, Any]) -> bool:
                 await _handle_facebook_comment(payload, data)
 
         # Mark as sent
-        await _mark_event_sent(db, event_id)
+        await _mark_event_sent(db, event_id, webhook_event_id)
         return True
 
     except _AmbiguousError:
         # Delivery unknown - don't retry
-        await _mark_event_ambiguous(db, event_id)
+        await _mark_event_ambiguous(db, event_id, webhook_event_id)
         return False
     except _PermanentError as e:
-        await _mark_event_failed(db, event_id, str(e), retry=False)
+        await _mark_event_failed(
+            db, event_id, str(e), retry=False,
+            webhook_event_id=webhook_event_id,
+        )
         return False
     except Exception as e:
         logger.exception("Failed processing meta event %s: %s", event_id, e)
-        await _mark_event_failed(db, event_id, str(e), retry=True)
+        await _mark_event_failed(
+            db, event_id, str(e), retry=True,
+            webhook_event_id=webhook_event_id,
+        )
         return False
 
 
-async def _mark_event_sent(db, event_id: str) -> None:
+async def _mark_webhook_event(
+    db, webhook_event_id: str | None, status: str, error: str | None = None
+) -> None:
+    """Close the raw webhook row that produced this outbox event.
+
+    Best-effort on purpose: a failure here must never reopen the outbox event
+    (the customer may already have the reply). The row keeps a non-terminal
+    status and the short orphan window retires it.
+    """
+    if not webhook_event_id:
+        return
+    try:
+        # ORM update rather than raw SQL: `status` is a Postgres enum, and
+        # letting SQLAlchemy bind it keeps the type cast correct everywhere.
+        await db.execute(
+            update(MetaWebhookEvent)
+            .where(
+                MetaWebhookEvent.id == webhook_event_id,
+                MetaWebhookEvent.status.in_(["received", "unresolved"]),
+            )
+            .values(
+                status=status,
+                error=error[:500] if error else None,
+            )
+        )
+        await db.commit()
+    except Exception as exc:  # noqa: BLE001 - retention bookkeeping only
+        logger.warning(
+            "Could not close webhook event %s as %s: %s: %s",
+            webhook_event_id, status, type(exc).__name__, str(exc)[:200],
+        )
+        await db.rollback()
+
+
+async def _mark_event_sent(
+    db, event_id: str, webhook_event_id: str | None = None
+) -> None:
     """Mark event as successfully sent."""
     await db.execute(
         text("UPDATE event_outbox SET status = 'sent', last_error = NULL, lease_owner = NULL, lease_expires_at = NULL WHERE id = :id"),
         {"id": event_id}
     )
     await db.commit()
+    await _mark_webhook_event(db, webhook_event_id, "processed")
 
 
-async def _mark_event_ambiguous(db, event_id: str) -> None:
+async def _mark_event_ambiguous(
+    db, event_id: str, webhook_event_id: str | None = None
+) -> None:
     """Mark event as ambiguous (delivered but not confirmed)."""
     await db.execute(
         text("UPDATE event_outbox SET status = 'ambiguous', lease_owner = NULL, lease_expires_at = NULL WHERE id = :id"),
         {"id": event_id}
     )
     await db.commit()
+    # Ambiguous is terminal for this worker (a retry could double-send), but
+    # the outcome is genuinely unknown — keep the row out of "processed" and
+    # let the short orphan window retire it.
+    await _mark_webhook_event(
+        db, webhook_event_id, "unresolved",
+        "delivery outcome ambiguous; not retried",
+    )
 
 
-async def _mark_event_failed(db, event_id: str, error: str, retry: bool = True) -> None:
+async def _mark_event_failed(
+    db,
+    event_id: str,
+    error: str,
+    retry: bool = True,
+    webhook_event_id: str | None = None,
+) -> None:
     """Mark event as failed, schedule retry with exponential backoff.
 
     Retries use exponential backoff (RETRY_BASE_SECONDS ** attempts, capped at
@@ -268,12 +328,16 @@ async def _mark_event_failed(db, event_id: str, error: str, retry: bool = True) 
              "next_retry": datetime.now(timezone.utc) + timedelta(seconds=backoff),
              "attempts": attempts},
         )
-    else:
-        await db.execute(
-            text("UPDATE event_outbox SET status = 'dead', attempts = :attempts, last_error = :error, lease_owner = NULL, lease_expires_at = NULL WHERE id = :id"),
-            {"id": event_id, "error": str(error)[:500], "attempts": attempts},
-        )
+        await db.commit()
+        # Still retrying: the raw row must remain readable for the retry.
+        return
+
+    await db.execute(
+        text("UPDATE event_outbox SET status = 'dead', attempts = :attempts, last_error = :error, lease_owner = NULL, lease_expires_at = NULL WHERE id = :id"),
+        {"id": event_id, "error": str(error)[:500], "attempts": attempts},
+    )
     await db.commit()
+    await _mark_webhook_event(db, webhook_event_id, "rejected", str(error))
 
 
 async def run_meta_events_worker() -> None:

@@ -26,6 +26,9 @@ export interface ReviewIssue {
   needs_attention: boolean;
   summary: string | null;
   status: string;
+  /** The owner. NULL = nobody has picked this ticket up. */
+  assigned_to: string | null;
+  assigned_at: string | null;
   reviewer_name: string | null;
   review_text: string | null;
   created_at: string;
@@ -63,6 +66,8 @@ export type ReviewIssuePatch = {
   primary_category?: string;
   priority?: string;
   needs_attention?: boolean;
+  /** null explicitly unassigns; omit to leave the owner alone. */
+  assigned_to?: string | null;
 };
 
 export const updateReviewIssue = (id: string, patch: ReviewIssuePatch): Promise<ReviewIssue> =>

@@ -7,6 +7,7 @@ import {
   type AvatarSource,
   type Profile,
 } from "@/lib/api-profile";
+import { resolveMediaUrl } from "@/lib/media-url";
 import { DeviceMark, FacebookMark, GoogleMark } from "./ProviderMarks";
 
 export type ProfileImageKind = "avatar" | "cover";
@@ -273,7 +274,7 @@ export default function AccountHero({
         {coverSrc && (
           // eslint-disable-next-line @next/next/no-img-element -- user media is a runtime URL, not a build-time asset
           <img
-            src={coverSrc}
+            src={resolveMediaUrl(coverSrc) ?? ""}
             alt=""
             className="absolute inset-0 h-full w-full object-cover"
             onError={() => setFailedCover(profile.cover_url)}
@@ -316,7 +317,7 @@ export default function AccountHero({
                 {avatarSrc ? (
                   // eslint-disable-next-line @next/next/no-img-element -- provider/upload URL is runtime data
                   <img
-                    src={avatarSrc}
+                    src={resolveMediaUrl(avatarSrc) ?? ""}
                     alt={`${fullName(profile)} profile photo`}
                     className="h-full w-full object-cover"
                     onError={() => setFailedAvatar(profile.avatar_url)}

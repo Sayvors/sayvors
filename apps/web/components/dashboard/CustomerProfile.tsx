@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import PlatformMark from "@/components/channels/PlatformMark";
+import { leadCategoryLabel } from "@/lib/lead-labels";
 import { updateCustomerCategory } from "@/lib/api-customers";
 import type { Customer, CustomerProfile as CustomerProfileData } from "@/lib/api-customers";
 
@@ -139,8 +140,8 @@ export default function CustomerProfile({
                 {profile.lead.stage}
               </span>
             </div>
-            {profile.lead.intent && (
-              <div><span className={`font-semibold ${INK}`}>Intent: </span><span className={INK2}>{profile.lead.intent}</span></div>
+            {profile.lead.category && (
+              <div><span className={`font-semibold ${INK}`}>Type: </span><span className={INK2}>{leadCategoryLabel(profile.lead.category)}</span></div>
             )}
             {profile.lead.request && (
               <div><span className={`font-semibold ${INK}`}>Request: </span><span className={INK2}>{profile.lead.request}</span></div>

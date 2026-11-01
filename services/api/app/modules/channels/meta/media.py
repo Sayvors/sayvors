@@ -1,4 +1,4 @@
-"""Download a WhatsApp media object (voice notes, audio) for transcription.
+"""Download a WhatsApp media object (voice notes, images, documents, stickers).
 
 The Cloud API exposes media in two steps: `GET /{media_id}` returns a
 short-lived URL plus the mime type, and that URL itself requires the same
@@ -6,9 +6,9 @@ access token. Both calls are made here, with the same bounded streaming the
 STT provider uses — a customer supplies the bytes, so their size must never
 be trusted.
 
-This module deliberately does not store the audio: a voice note is
-transcribed once, inline, and the transcript is what the inbox and the
-assistant keep.
+This module deliberately does not store anything: a voice note is transcribed
+once and the transcript is kept, while the consumer stores images and
+documents in the private document backend.
 """
 
 from __future__ import annotations
@@ -39,11 +39,16 @@ async def download_whatsapp_media(
     *,
     max_bytes: int = MAX_MEDIA_BYTES,
     timeout_seconds: float = 45.0,
+    fallback_mime: str = "audio/ogg",
 ) -> tuple[bytes, str]:
-    """Return (audio bytes, mime type) for a WhatsApp media id.
+    """Return (bytes, mime type) for a WhatsApp media id.
 
     Raises MediaDownloadError on any failure; the caller decides whether the
     customer gets a "couldn't hear that" reply. No token or URL is logged.
+
+    ``fallback_mime`` only applies when Meta's lookup omits the type. Voice
+    notes keep the historic audio/ogg default; documents pass their declared
+    type so a missing lookup field never yields a file served as audio.
     """
     if not media_id or not token:
         raise MediaDownloadError("media id or access token missing")
@@ -67,7 +72,7 @@ async def download_whatsapp_media(
             raise MediaDownloadError("media lookup returned non-JSON") from e
 
         url = meta.get("url")
-        mime = meta.get("mime_type") or "audio/ogg"
+        mime = meta.get("mime_type") or fallback_mime
         if not url:
             raise MediaDownloadError("media lookup returned no URL")
 
@@ -96,10 +101,10 @@ async def download_whatsapp_media(
         except httpx.HTTPError as e:
             raise MediaDownloadError(f"media download failed: {type(e).__name__}") from e
 
-    audio = b"".join(chunks)
-    if not audio:
+    blob = b"".join(chunks)
+    if not blob:
         raise MediaDownloadError("media download returned no bytes")
     logger.info(
-        "WhatsApp media downloaded: bytes=%d mime=%s", len(audio), mime[:60]
+        "WhatsApp media downloaded: bytes=%d mime=%s", len(blob), mime[:60]
     )
-    return audio, mime
+    return blob, mime

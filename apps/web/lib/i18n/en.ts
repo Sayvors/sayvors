@@ -14,6 +14,7 @@ const en = {
     insights: "Insights",
     growth: "Growth",
     databank: "Databank",
+    memory: "Memory",
     connect: "Connect",
     channels: "Channels",
     manage: "Manage",

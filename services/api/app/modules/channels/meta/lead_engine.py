@@ -35,17 +35,45 @@ LEAD_PROMPT_BLOCK = (
     "buying or booking interest, asked for pricing, described what they "
     "need, or shared their name or phone number, END YOUR REPLY with ONE "
     "final line exactly like:\n"
-    'LEAD: {"intent": "buying|booking|quote|info", "request": "<what they '
-    'need, in their words>", "summary": "<one short sentence: what THIS '
-    'customer wants so far>", "name": "<name if they gave it>", "phone": '
-    '"<phone only if the customer typed it>", "confidence": <0.0-1.0>}\n'
-    "Keep summary current with the WHOLE conversation, not just this "
-    "message, and include it whenever the chat has any substance. Omit "
+    'LEAD: {"category": "wholesale|retail|booking|quote|support|info", '
+    '"intent": "buying|booking|quote|info", "request": "<what they need, '
+    'in their words>", "summary": "<one short sentence: what THIS customer '
+    'wants so far>", "name": "<name if they gave it>", "phone": "<phone '
+    'only if the customer typed it>", "confidence": <0.0-1.0>}\n'
+    "category is the ONE label a human should see: wholesale = buying in "
+    "bulk to resell or for a business, retail = one person buying for "
+    "themselves, booking = an appointment or reservation, quote = asked "
+    "for a price but not yet clearly retail or wholesale, support = an "
+    "existing customer needs help or complains, info = just asking or "
+    "exploring. Keep summary current with the WHOLE conversation, not just "
+    "this message, and include it whenever the chat has any substance. Omit "
     "any other field you were not given. Omit the whole line when there "
     "is nothing to record. Never invent facts. Never mention this line."
 )
 
 _LEAD_ALLOWED_INTENTS = ("buying", "booking", "quote", "info")
+
+# One canonical taxonomy for every surface. `intent` could not express
+# wholesale, so the UI grew ad-hoc labels; these values are stored once and
+# rendered verbatim by the inbox, lead card, digest and escalation email.
+LEAD_CATEGORIES = ("wholesale", "retail", "booking", "quote", "support", "info")
+LEAD_CATEGORY_LABELS = {
+    "wholesale": "Wholesale",
+    "retail": "Retail",
+    "booking": "Booking",
+    "quote": "Quote",
+    "support": "Support",
+    "info": "Info",
+}
+# Categories that count as a sales opportunity by default. info and support
+# are tracked but stay `new`: a question and a complaint are not a deal.
+DEFAULT_QUALIFIED_CATEGORIES = ("retail", "wholesale", "booking", "quote")
+_LEAD_ALLOWED_CATEGORIES = frozenset(LEAD_CATEGORIES)
+
+
+def category_label(category: str | None) -> str | None:
+    """Display form of a stored category; None when unset or unknown."""
+    return LEAD_CATEGORY_LABELS.get((category or "").strip().lower())
 
 # ── tenant settings ──────────────────────────────────────────────────
 # Conservative defaults per the brief: first nudge inside 5-15 minutes,
@@ -80,6 +108,10 @@ SETTINGS_DEFAULTS = {
     # How many leads one digest may list, so a large tenant gets a summary
     # rather than a wall of names.
     "digest_max_leads": 20,
+    # Categories that auto-qualify a captured lead. This is the per-tenant
+    # stage rule: a tenant that only sells wholesale can drop retail/booking
+    # from the set without renaming a single label.
+    "qualified_categories": list(DEFAULT_QUALIFIED_CATEGORIES),
     "review_issue_subcategories": [],
 }
 
@@ -130,6 +162,9 @@ def normalize_lead_settings(raw: dict | None) -> dict:
     are not settings, so they are simply dropped here.
     """
     settings = dict(SETTINGS_DEFAULTS)
+    # The default list is shared by every call; copy it so a caller that
+    # mutates the returned settings cannot change the module defaults.
+    settings["qualified_categories"] = list(DEFAULT_QUALIFIED_CATEGORIES)
     if not isinstance(raw, dict):
         return settings
     settings["enabled"] = bool(raw.get("enabled", True))
@@ -173,6 +208,23 @@ def normalize_lead_settings(raw: dict | None) -> dict:
         # Sorted + de-duplicated so two runs with the same input send the same
         # mail, and capped so a tenant cannot mail a whole address book.
         settings["escalation_emails"] = sorted(set(cleaned))[:10]
+    raw_qualified = raw.get("qualified_categories")
+    if isinstance(raw_qualified, list):
+        cleaned_categories: list[str] = []
+        seen_categories: set[str] = set()
+        for value in raw_qualified:
+            if not isinstance(value, str):
+                continue
+            key = value.strip().lower()
+            if key in _LEAD_ALLOWED_CATEGORIES and key not in seen_categories:
+                seen_categories.add(key)
+                cleaned_categories.append(key)
+        # An empty or wholly invalid list is a misconfiguration, not a
+        # request to stop qualifying every lead. Falling back to the defaults
+        # keeps one bad save from silently disabling the whole lead pipeline.
+        settings["qualified_categories"] = (
+            cleaned_categories or list(DEFAULT_QUALIFIED_CATEGORIES)
+        )
     return settings
 
 
@@ -199,7 +251,7 @@ def split_reply_and_lead(raw: str | None) -> tuple[str, dict | None]:
 
 
 def _parse_lead_delta(tail: str | None) -> dict | None:
-    """Whitelisted {intent, request, name, phone, confidence} or None.
+    """Whitelisted {category, intent, request, name, phone, confidence} or None.
 
     Everything else the model may have put in the JSON is dropped on the
     floor: model output is data, never configuration.
@@ -216,6 +268,9 @@ def _parse_lead_delta(tail: str | None) -> dict | None:
     if not isinstance(data, dict):
         return None
     delta: dict = {}
+    category = str(data.get("category") or "").strip().lower()
+    if category in _LEAD_ALLOWED_CATEGORIES:
+        delta["category"] = category
     intent = str(data.get("intent") or "").strip().lower()
     if intent in _LEAD_ALLOWED_INTENTS:
         delta["intent"] = intent
@@ -291,10 +346,121 @@ def _extract_phone_candidate(text: str | None) -> str | None:
 _INTENT_RE = re.compile(
     r"\b(price|pricing|cost|how much|quote|order|buy|purchase|book|booking|"
     r"appointment|available|availability|discount|website|web ?site|"
-    r"e-?commerce|web ?store|online store|landing page|shop|store|app)\b|"
+    r"e-?commerce|web ?store|online store|landing page|shop|store|app|sell)\b|"
     r"(سعر|أسعار|حجز|موعد|طلب|شراء|عرض سعر|موقع|متجر)",
     re.IGNORECASE,
 )
+
+# ── canonical category signals (deterministic, no LLM) ───────────────
+#
+# Order matters in detect_category: a complaint about an order is support
+# even though "order" reads as buying; "50 boxes" is wholesale even when the
+# same message asks for a price. Each pattern is deliberately narrow — a bare
+# "help" or "late" would misfile ordinary questions as support.
+
+_WHOLESALE_RE = re.compile(
+    r"\b(wholesale|bulk(?: order| purchase)?|resell(?:er|ing)?|distributor|"
+    r"dealer|trade (?:price|account)|b2b|cartons?|pallets?|dozens?|"
+    r"per unit|unit price)\b"
+    r"|\b\d{2,}\s*(?:pcs|pieces|units|items|boxes|cartons?|pallets?|kg|tons?)\b|"
+    r"(بالجملة|الجملة|موزع|وكيل|كمية كبيرة|كرتون|كراتين|بالة|طن)",
+    re.IGNORECASE,
+)
+
+_RETAIL_RE = re.compile(
+    r"\b(retail|single (?:piece|item|unit)|just one|one piece|for myself|"
+    r"personal use)\b|(تجزئة|قطعة واحدة|للاستخدام الشخصي)",
+    re.IGNORECASE,
+)
+
+_BOOKING_RE = re.compile(
+    r"\b(book\s+(?:a|an|the|my|us)\b|booking\b|appointment|reserve|"
+    r"reservation|schedule (?:a|an|my)|slot|table for|room for)\b|"
+    r"(حجز|احجز|موعد|طاولة|غرفة)",
+    re.IGNORECASE,
+)
+
+_SUPPORT_RE = re.compile(
+    r"\b(complaint|complain|refund|warranty|broken|damaged|defective|faulty|"
+    r"not working|doesn'?t work|wrong (?:order|item)|missing (?:order|item)|"
+    r"problem with|issue with|cancel my order|"
+    r"my (?:order|delivery|shipment) (?:is )?(?:late|delayed|missing))\b|"
+    r"(شكوى|اشتكي|استرجاع|مرتجع|ضمان|عطل|تالف|مشكلة|تأخير)",
+    re.IGNORECASE,
+)
+
+_QUOTE_RE = re.compile(
+    r"\b(price|pricing|cost|how much|quote|quotation|estimate|rate|"
+    r"discount|special offer)\b|(سعر|أسعار|تسعير|عرض سعر|كم|خصم|عرض)",
+    re.IGNORECASE,
+)
+
+_BUY_SIGNAL_RE = re.compile(
+    r"\b(i (?:want|need|would like|'d like)|we (?:want|need|would like)|"
+    r"looking (?:for|to buy)|interested in|can you (?:make|build|supply|provide)|"
+    r"do you (?:make|build|supply|provide|sell))\b|"
+    r"(أريد|اريد|أحتاج|احتاج|محتاج|نريد|مهتم)",
+    re.IGNORECASE,
+)
+
+_INFO_RE = re.compile(
+    r"\b(hours?|open(?:ing)?|location|address|where are you|directions|"
+    r"deliver(?:y)?|shipping|website|about|information|info|"
+    r"what do you (?:do|sell)|do you (?:sell|offer|deliver))\b|"
+    r"(ساعات|مفتوح|موقع|عنوان|توصيل|شحن|معلومات|ماذا تبيعون)",
+    re.IGNORECASE,
+)
+
+_INTENT_CATEGORY = {
+    "buying": "retail",
+    "booking": "booking",
+    "quote": "quote",
+    "info": "info",
+}
+
+# How specific a label is. A higher rank may replace a lower one even at a
+# lower confidence ("actually I need 500 units" upgrades retail -> wholesale);
+# a same-rank change still obeys the confidence rule, so noise cannot flip
+# retail <-> booking on every message.
+_CATEGORY_RANK = {
+    "info": 0,
+    "quote": 1,
+    "support": 1,
+    "retail": 2,
+    "booking": 2,
+    "wholesale": 3,
+}
+
+
+def detect_category(text: str | None, intent: str | None = None) -> str | None:
+    """Canonical lead label for a message, without an LLM round-trip.
+
+    This is the fallback for a reply that captured a request but omitted the
+    category, and the only classifier on the no-extraction path. It never
+    invents a segment: when no signal matches, the raw intent is the best
+    available answer, and `capture_lead` defaults an unlabelled lead to info
+    (which never auto-qualifies).
+    """
+    if not text:
+        return _INTENT_CATEGORY.get((intent or "").strip().lower())
+    if _SUPPORT_RE.search(text):
+        return "support"
+    if _WHOLESALE_RE.search(text):
+        return "wholesale"
+    if _BOOKING_RE.search(text):
+        return "booking"
+    if _RETAIL_RE.search(text):
+        return "retail"
+    if _QUOTE_RE.search(text):
+        return "quote"
+    if (
+        _BUY_SIGNAL_RE.search(text)
+        and (intent or "").strip().lower() == "buying"
+    ):
+        return "retail"
+    if _INFO_RE.search(text):
+        return "info"
+    return _INTENT_CATEGORY.get((intent or "").strip().lower())
 
 _OPT_OUT_RE = re.compile(
     r"\b(stop|unsubscribe|opt ?out|remove (my|us)|do not (contact|message|text)|"
@@ -320,14 +486,25 @@ _LEAD_INTENTS = ("buying", "booking", "quote")
 
 
 def has_lead_substance(text: str | None, delta: dict | None = None) -> bool:
-    """True when this message shows someone the team should sell to."""
+    """True when this message shows someone the team should sell to (or help).
+
+    A support complaint is stored too: it is a real customer issue, it gets
+    the canonical `support` label, and it stays out of the qualified pipeline.
+    """
     if delta:
         intent = str(delta.get("intent") or "").strip().lower()
         if intent in _LEAD_INTENTS:
             return True
         if str(delta.get("request") or "").strip():
             return True
-    return detect_intent(text) == "buying"
+    category = detect_category(text, detect_intent(text))
+    return detect_intent(text) == "buying" or category in (
+        "wholesale",
+        "retail",
+        "booking",
+        "quote",
+        "support",
+    )
 
 
 def detect_opt_out(text: str | None) -> bool:
@@ -337,6 +514,26 @@ def detect_opt_out(text: str | None) -> bool:
 def is_open_question(text: str | None) -> bool:
     """The reply genuinely asks the customer something (Latin ? or Arabic ؟)."""
     return bool(text) and text.rstrip().endswith(("?", "؟"))
+
+
+async def _qualified_categories(db, tenant_id: str) -> tuple[str, ...]:
+    """The tenant's auto-qualify set. Never raises; defaults on a read error.
+
+    Called only when a `new` lead has enough substance to move, so the common
+    already-qualified path costs no settings query.
+    """
+    from ...users.models import User
+
+    try:
+        raw = (
+            await db.execute(
+                select(User.lead_settings).where(User.id == tenant_id)
+            )
+        ).scalar_one_or_none()
+    except Exception as e:  # noqa: BLE001 - a read failure must not drop a lead
+        logger.warning("lead settings read failed for %s: %s", tenant_id, e)
+        raw = None
+    return tuple(normalize_lead_settings(raw)["qualified_categories"])
 
 
 # ── capture: create/merge the lead ───────────────────────────────────
@@ -367,6 +564,12 @@ async def capture_lead(
     substance: a pure information request stays an inbox conversation instead
     of becoming a CRM entry. A lead that already exists is always returned and
     kept up to date, so a returning customer is never demoted to a stranger.
+
+    A lead becomes `qualified` only when its canonical category is in the
+    tenant's `qualified_categories` (default: wholesale, retail, booking,
+    quote). Before HAND-5 any captured request moved the stage, so "where are
+    you located?" and a complaint both read as sales-qualified; that is what
+    made the board and reports coarse.
     """
     try:
         lead = (await db.execute(
@@ -418,6 +621,42 @@ async def capture_lead(
             setattr(lead, column, value)
             return True
 
+        def _merge_category(value: str | None, source_conf: float) -> bool:
+            """Merge a category with specificity as well as confidence.
+
+            The plain `_merge` treats every label as equal, so a deterministic
+            "50 boxes" hit at 0.5 could never correct an earlier retail guess
+            at 0.9. A strictly more specific label may upgrade; a sideways move
+            (retail <-> booking) still needs at least the old confidence.
+            """
+            if value not in _LEAD_ALLOWED_CATEGORIES:
+                return False
+            prev = prov.get("category") or {}
+            prev_value = lead.category
+            prev_conf = float(prev.get("confidence") or 0.0)
+            # A human correction is final until a human changes it. Without
+            # this, the specificity rule below would let a deterministic
+            # "wholesale" hit overwrite an operator's "support" label.
+            if prev_conf >= 1.0:
+                return False
+            if prev_value and prev_value != value:
+                new_rank = _CATEGORY_RANK.get(value, 0)
+                prev_rank = _CATEGORY_RANK.get(prev_value, 0)
+                if new_rank < prev_rank:
+                    return False
+                if new_rank == prev_rank and source_conf < prev_conf:
+                    return False
+            elif prev_value == value and source_conf < prev_conf:
+                return False
+            prov["category"] = {
+                "value": value,
+                "confidence": round(source_conf, 2),
+                "source_message_id": source,
+                "at": now.isoformat(),
+            }
+            lead.category = value
+            return True
+
         # Platform ground truth: on WhatsApp the sender address IS a phone
         # number Meta has verified — store it (status "verified") unless the
         # customer later states a specific number with higher confidence.
@@ -429,6 +668,7 @@ async def capture_lead(
         if delta:
             _merge("name", "contact_name", delta.get("name"), confidence)
             _merge("intent", "intent", delta.get("intent"), confidence)
+            _merge_category(delta.get("category"), confidence)
             _merge("request", "request", delta.get("request"), confidence)
             if delta.get("phone") and _merge(
                 "phone", "phone_number", delta["phone"], confidence
@@ -447,6 +687,20 @@ async def capture_lead(
             if candidate and _merge("phone", "phone_number", candidate, 0.4):
                 prov["phone"]["status"] = "stated"
 
+        # The model may capture a request but omit the label, and the
+        # no-extraction path has no label at all. Deterministic classification
+        # fills it; `info` is the honest default for "captured, not yet
+        # classifiable", and it never auto-qualifies.
+        effective_intent = lead.intent or detect_intent(inbound_text)
+        detected_category = detect_category(inbound_text, effective_intent)
+        if detected_category:
+            _merge_category(
+                detected_category,
+                0.5 if detected_category != "info" else 0.3,
+            )
+        if lead.category is None:
+            _merge_category("info", 0.2)
+
         if contact_name and not lead.contact_name:
             lead.contact_name = contact_name[:120]
         if username and not lead.contact_username:
@@ -456,9 +710,12 @@ async def capture_lead(
             if base:
                 lead.summary = base.strip()[:300]
 
-        # Deterministic stage transitions only.
+        # Deterministic stage transitions only. `qualified` now means "a
+        # sellable category was captured", not "the AI stored any sentence".
         if lead.stage == "new" and (lead.intent or lead.request):
-            lead.stage = "qualified"
+            qualified_categories = await _qualified_categories(db, tenant_id)
+            if lead.category in qualified_categories:
+                lead.stage = "qualified"
 
         # Opt-out: customer said stop — flip the flag and kill the queue.
         if detect_opt_out(inbound_text) and not lead.opt_out:

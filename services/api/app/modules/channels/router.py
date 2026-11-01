@@ -2,7 +2,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +33,9 @@ from .schemas import (
     ChannelMessageSend,
     ChannelResponse,
     InboxSendRequest,
+    InboxLocationSendRequest,
+    InboxContactSendRequest,
+    InboxReactionRequest,
     InteractiveSend,
     QrCodeCreate,    InboxSendResponse,
     InboxThread,
@@ -50,6 +53,8 @@ from .schemas import (
 )
 from .service import (
     UNKNOWN_THREAD_KEY,
+    MAX_OUTBOUND_DOCUMENT_BYTES,
+    MAX_OUTBOUND_STICKER_BYTES,
     create_channel,
     decrypt_contact_phone,
     decrypt_message_content,
@@ -61,8 +66,14 @@ from .service import (
     list_inbox_threads,
     list_messages,
     list_thread_messages,
+    react_to_message,
     send_message,
     send_interactive_message,
+    send_location_message,
+    send_contact_message,
+    send_document_message,
+    send_sticker_message,
+    soft_delete_message,
     whatsapp_number_health,
     list_whatsapp_qr_codes,
     create_whatsapp_qr_code,
@@ -374,19 +385,7 @@ async def send_to_channel(
             raise HTTPException(status_code=404, detail=message)
         # A missing recipient is a bad request, not a missing channel.
         raise HTTPException(status_code=422, detail=message)
-    return ChannelMessageResponse(
-        id=msg.id,
-        channel_id=msg.channel_id,
-        platform_message_id=msg.platform_message_id,
-        direction=msg.direction,
-        content=decrypt_message_content(msg.content),
-        content_type=msg.content_type,
-        status=msg.status,
-        error=msg.error,
-        contact_phone=decrypt_contact_phone(msg.contact_phone),
-        contact_name=msg.contact_name,
-        created_at=msg.created_at.isoformat(),
-    )
+    return _message_out(msg)
 
 
 @router.post(
@@ -448,19 +447,7 @@ async def send_interactive_to_channel(
             raise HTTPException(status_code=404, detail=message)
         raise HTTPException(status_code=422, detail=message)
 
-    return ChannelMessageResponse(
-        id=msg.id,
-        channel_id=msg.channel_id,
-        platform_message_id=msg.platform_message_id,
-        direction=msg.direction,
-        content=decrypt_message_content(msg.content),
-        content_type=msg.content_type,
-        status=msg.status,
-        error=msg.error,
-        contact_phone=decrypt_contact_phone(msg.contact_phone),
-        contact_name=msg.contact_name,
-        created_at=msg.created_at.isoformat(),
-    )
+    return _message_out(msg)
 
 
 @router.get("/{channel_id}/whatsapp/health", response_model=dict)
@@ -544,7 +531,7 @@ async def remove_whatsapp_qr_code(
             detail=message,
         )
     if not deleted:
-        raise HTTPException(status_code=502, detail="Meta did not confirm the deletion")
+        raise HTTPException(status_code=404, detail="QR code not found")
     return {"deleted": True, "code": code}
 
 
@@ -561,19 +548,7 @@ async def get_channel_messages(
     msgs, total = await list_messages(channel_id, ctx.user, db, limit, offset)
     return ChannelMessageListResponse(
         messages=[
-            ChannelMessageResponse(
-                id=m.id,
-                channel_id=m.channel_id,
-                platform_message_id=m.platform_message_id,
-                direction=m.direction,
-                content=decrypt_message_content(m.content),
-                content_type=m.content_type,
-                status=m.status,
-                error=m.error,
-                contact_phone=decrypt_contact_phone(m.contact_phone),
-                contact_name=m.contact_name,
-                created_at=m.created_at.isoformat(),
-            )
+            _message_out(m)
             for m in msgs
         ],
         total=total,
@@ -794,19 +769,7 @@ async def inbox_thread_messages(
         thread_state = await _thread_state(db, ctx.tenant_id, channel_id, phone)
     return ChannelMessageListResponse(
         messages=[
-            ChannelMessageResponse(
-                id=m.id,
-                channel_id=m.channel_id,
-                platform_message_id=m.platform_message_id,
-                direction=m.direction,
-                content=decrypt_message_content(m.content),
-                content_type=m.content_type,
-                status=m.status,
-                error=m.error,
-                contact_phone=decrypt_contact_phone(m.contact_phone),
-                contact_name=m.contact_name,
-                created_at=m.created_at.isoformat(),
-            )
+            _message_out(m)
             for m in msgs
         ],
         total=len(msgs),
@@ -814,11 +777,24 @@ async def inbox_thread_messages(
     )
 
 
-async def _thread_state(db, tenant_id: str, channel_id: str, phone: str) -> ThreadStateOut:
-    """Mode, newest summary, window and consent for one thread.
+def _as_utc(value):
+    """Naive timestamps are UTC (SQLite drops tzinfo); make that explicit.
 
-    Both reads are indexed and bounded; a read failure degrades to the safe
-    default (AI owns) rather than failing the whole thread view.
+    The resume clock subtracts from an aware `now` in the sweep, so a naive
+    value read back from SQLite would raise if used directly here too.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+async def _thread_state(db, tenant_id: str, channel_id: str, phone: str) -> ThreadStateOut:
+    """Mode, newest summary, window, consent and escalation clock for one thread.
+
+    The reads are indexed and bounded; a read failure degrades to the safe
+    default (AI owns, no escalation) rather than failing the whole thread view.
     """
     from datetime import datetime, timedelta, timezone
 
@@ -826,9 +802,27 @@ async def _thread_state(db, tenant_id: str, channel_id: str, phone: str) -> Thre
 
     from .conversation_context import latest
     from .conversation_mode import get_state
+    from .meta.lead_escalation import load_settings
     from .models import ChannelMessage, Lead
 
     state = await get_state(db, channel_id, phone)
+    assignee_name = None
+    if state.get("assigned_to"):
+        try:
+            assignee = (
+                await db.execute(
+                    select(User).where(User.id == state["assigned_to"])
+                )
+            ).scalar_one_or_none()
+            if assignee is not None:
+                assignee_name = (
+                    f"{assignee.first_name or ''} {assignee.last_name or ''}".strip()
+                    or assignee.email
+                )
+        except Exception as e:  # noqa: BLE001 - the card is an enhancement
+            logger.warning(
+                "thread assignee read failed channel=%s: %s", channel_id, e
+            )
     context = None
     try:
         row = await latest(db, channel_id=channel_id, contact_phone=phone)
@@ -845,6 +839,20 @@ async def _thread_state(db, tenant_id: str, channel_id: str, phone: str) -> Thre
         logger.warning(
             "thread context read failed channel=%s: %s", channel_id, e
         )
+
+    # The escalation clock. Defaults describe "not escalated", which is the
+    # safe side: the UI shows no countdown and no reminder state.
+    escalation: dict = {
+        "priority": "normal",
+        "ai_miss_count": 0,
+        "lead_category": None,
+        "priority_since": None,
+        "escalated_at": None,
+        "escalation_reminder_at": None,
+        "handover_sent_at": None,
+        "resume_at": None,
+        "escalation_resume_hours": 24,
+    }
 
     # Meta's window and the template consent basis. A failure here must not
     # hide the thread: the fields simply read as "closed / no consent", which
@@ -872,7 +880,11 @@ async def _thread_state(db, tenant_id: str, channel_id: str, phone: str) -> Thre
         lead = (
             await db.execute(
                 select(Lead)
-                .where(Lead.channel_id == channel_id, Lead.contact_id == phone)
+                .where(
+                    Lead.tenant_id == tenant_id,
+                    Lead.channel_id == channel_id,
+                    Lead.contact_id == phone,
+                )
                 .order_by(Lead.created_at.asc())
                 .limit(1)
             )
@@ -885,17 +897,131 @@ async def _thread_state(db, tenant_id: str, channel_id: str, phone: str) -> Thre
             )
             opt_in_source = lead.whatsapp_opt_in_source
             opted_out = bool(lead.opt_out)
+
+            # Window length is a tenant setting; read it through the same
+            # loader the resume sweep uses so the UI cannot promise a
+            # different resume time than the sweep will act on. Bypass the
+            # sweep cache so a just-edited setting is reflected immediately.
+            resume_hours = int(
+                (await load_settings(db, tenant_id, use_cache=False)).get(
+                    "escalation_resume_hours", 24
+                )
+            )
+            priority_since = _as_utc(lead.priority_since)
+            escalation = {
+                "priority": lead.priority or "normal",
+                "ai_miss_count": int(lead.ai_miss_count or 0),
+                "lead_category": lead.category,
+                "priority_since": (
+                    priority_since.isoformat() if priority_since else None
+                ),
+                "escalated_at": (
+                    _as_utc(lead.escalated_at).isoformat()
+                    if lead.escalated_at
+                    else None
+                ),
+                "escalation_reminder_at": (
+                    _as_utc(lead.escalation_reminder_at).isoformat()
+                    if lead.escalation_reminder_at
+                    else None
+                ),
+                "handover_sent_at": (
+                    _as_utc(lead.handover_sent_at).isoformat()
+                    if lead.handover_sent_at
+                    else None
+                ),
+                "escalation_resume_hours": resume_hours,
+                "resume_at": None,
+            }
+            # Same arithmetic as run_resume_sweep: the clock only runs while
+            # the lead is actually escalated and has a start time.
+            if escalation["priority"] == "important" and priority_since:
+                escalation["resume_at"] = (
+                    priority_since + timedelta(hours=resume_hours)
+                ).isoformat()
     except Exception as e:  # noqa: BLE001 - see above
         logger.warning("thread window/consent read failed channel=%s: %s", channel_id, e)
 
     return ThreadStateOut(
         **state,
+        assignee_name=assignee_name,
         context=context,
         reply_window_open=window_open,
         opt_in_at=opt_in_at,
         opt_in_source=opt_in_source,
         opted_out=opted_out,
+        **escalation,
     )
+
+
+class ThreadAssigneeUpdate(BaseModel):
+    # None (or omitted) unassigns. The service validates that the id belongs
+    # to an active teammate who can actually work this channel.
+    assigned_to: str | None = Field(None, max_length=36)
+
+
+@_inbox_router.get("/assignees")
+async def inbox_assignees(
+    channel_id: str = Query(..., max_length=36),
+    ctx: TenantContext = Depends(require_perm("channels.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """People who can own a conversation on this channel.
+
+    The picker needs names and ids; computing the eligible set server-side
+    keeps tenant scope and channel access in one place instead of trusting
+    whatever the browser sends back.
+    """
+    from .assignment import AssignmentError, assignable_users
+
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    try:
+        people = await assignable_users(db, ctx.tenant_id, channel_id)
+    except AssignmentError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"assignees": people}
+
+
+@_inbox_router.patch(
+    "/threads/{channel_id}/{contact_phone}/assignee",
+    response_model=ThreadStateOut,
+)
+async def inbox_thread_set_assignee(
+    channel_id: str,
+    contact_phone: str,
+    body: ThreadAssigneeUpdate,
+    ctx: TenantContext = Depends(require_perm("inbox.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Claim a conversation for a teammate, or clear the owner.
+
+    Assignment is independent of `conversation_mode`: claiming an escalated
+    thread does not silently hand the AI back, and handing the AI back does
+    not erase who was working it.
+    """
+    from .assignment import AssignmentError, assign_thread
+
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    phone = None if contact_phone == UNKNOWN_THREAD_KEY else contact_phone
+    if phone is None:
+        raise HTTPException(
+            status_code=422,
+            detail="An unattributed thread has nobody to assign.",
+        )
+    try:
+        await assign_thread(
+            db,
+            tenant_id=ctx.tenant_id,
+            channel_id=channel_id,
+            contact_phone=phone,
+            assignee_id=body.assigned_to or None,
+            actor=ctx.user,
+        )
+    except AssignmentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return await _thread_state(db, ctx.tenant_id, channel_id, phone)
 
 
 class ThreadModeUpdate(BaseModel):
@@ -1017,13 +1143,27 @@ async def inbox_thread_resolve(
             status_code=409, detail="Could not open this conversation thread."
         )
 
-    await generate(
+    context_row = await generate(
         db,
         tenant_id=ctx.tenant_id,
         channel_id=channel_id,
         contact_phone=phone,
         reason="resolve",
     )
+
+    # Cumulative memory: the resolved thread's summary becomes a pending,
+    # scrubbed lesson. Nothing reaches the AI until a human approves it in
+    # the review queue, so this cannot silently change future answers.
+    if context_row is not None:
+        from ..memory.service import capture_from_resolution
+
+        await capture_from_resolution(
+            db,
+            tenant_id=ctx.tenant_id,
+            channel_id=channel_id,
+            contact_phone=phone,
+            context=context_row,
+        )
 
     from .realtime import publish_inbox_event
 
@@ -1196,6 +1336,152 @@ async def inbox_thread_pin(
     return {"channel_id": channel_id, "contact_phone": phone, "pinned": pinned}
 
 
+def _message_out(m: ChannelMessage) -> ChannelMessageResponse:
+    """One message shape for every inbox endpoint.
+
+    A locally removed message keeps its row but never returns its text: the
+    browser is told `deleted` and shows the removal marker instead.
+    """
+    deleted = m.deleted_at is not None
+    return ChannelMessageResponse(
+        id=m.id,
+        channel_id=m.channel_id,
+        platform_message_id=m.platform_message_id,
+        direction=m.direction,
+        content="" if deleted else (decrypt_message_content(m.content) or ""),
+        content_type=m.content_type,
+        status=m.status,
+        error=m.error,
+        contact_phone=decrypt_contact_phone(m.contact_phone),
+        contact_name=m.contact_name,
+        reply_to_message_id=m.reply_to_message_id,
+        deleted_at=m.deleted_at.isoformat() if m.deleted_at else None,
+        deleted=deleted,
+        media_url=(
+            f"/api/v1/inbox/media/{m.id}" if m.media_key and not deleted else None
+        ),
+        media_mime_type=m.media_mime_type,
+        media_filename=m.media_filename,
+        created_at=m.created_at.isoformat(),
+    )
+
+
+async def _ensure_messaging_quota(ctx: TenantContext, db: AsyncSession) -> None:
+    """The plan gate every outbound conversation message shares."""
+    from ..billing.entitlements import (
+        ENTITLEMENT_DENIED_HEADER,
+        count_messages_this_month,
+        entitlement_403,
+        get_entitlements,
+    )
+    from ..team.context import tenant_id_of
+
+    tid = tenant_id_of(ctx.user)
+    ent = await get_entitlements(tid, db)
+    if not ent.has_feature("messaging"):
+        raise entitlement_403("Messaging is not included in your plan.", "messaging")
+    used = await count_messages_this_month(tid, db)
+    if not ent.message_quota_ok(used):
+        raise HTTPException(
+            status_code=429,
+            detail=f"Monthly message limit reached for plan '{ent.plan_slug}'. Upgrade to send more.",
+            headers={ENTITLEMENT_DENIED_HEADER: "quota"},
+        )
+
+
+async def _publish_outbound_message(tenant_id: str, msg: ChannelMessage) -> None:
+    from .realtime import publish_inbox_event
+
+    await publish_inbox_event(tenant_id, {
+        "type": "message",
+        "id": msg.id,
+        "channel_id": msg.channel_id,
+        "platform": None,
+        "direction": "outbound",
+        "content": decrypt_message_content(msg.content),
+        "content_type": msg.content_type,
+        "status": msg.status,
+        "contact_phone": decrypt_contact_phone(msg.contact_phone),
+        "contact_name": msg.contact_name,
+        "reply_to_message_id": msg.reply_to_message_id,
+        "media_url": (
+            f"/api/v1/inbox/media/{msg.id}"
+            if msg.media_key and msg.deleted_at is None else None
+        ),
+        "media_mime_type": msg.media_mime_type,
+        "media_filename": msg.media_filename,
+        "created_at": msg.created_at,
+    })
+
+
+@_inbox_router.get("/media/{message_id}")
+async def inbox_message_media(
+    message_id: str,
+    ctx: TenantContext = Depends(require_perm("inbox.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Serve one stored attachment to an authorized inbox viewer.
+
+    The bytes live in the private document store; this route is the only way
+    to read them. A message outside the caller's channels is a 404, not a 403,
+    so an id cannot be probed for existence.
+    """
+    from pathlib import Path
+    from urllib.parse import quote
+
+    from ...core.storage import get_doc
+
+    row = (
+        await db.execute(
+            select(ChannelMessage).where(ChannelMessage.id == message_id)
+        )
+    ).scalar_one_or_none()
+    if (
+        row is None
+        or not row.media_key
+        or row.deleted_at is not None
+        or ctx.channel_level(row.channel_id) == "none"
+    ):
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    # The message id is global; ownership and per-member channel access both
+    # have to agree before a byte is served.
+    if await get_channel(row.channel_id, ctx.user, db) is None:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    try:
+        blob = get_doc(f"inbox-{ctx.tenant_id}", row.media_key)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Attachment is no longer available") from None
+
+    mime = (row.media_mime_type or "application/octet-stream").lower()
+    # Only raster images are rendered in place. PDFs and every other document
+    # download, so an untrusted file is never handed to a browser viewer on the
+    # API origin. SVG is excluded on purpose (it can carry script).
+    inline = mime.startswith("image/") and mime != "image/svg+xml"
+    if not inline:
+        mime = "application/octet-stream"
+
+    name = row.media_filename or f"attachment{Path(row.media_key).suffix}"
+    ascii_name = "".join(
+        ch if (ch.isascii() and (ch.isalnum() or ch in "._-")) else "_"
+        for ch in name
+    )[:120] or "attachment"
+    disposition = "inline" if inline else "attachment"
+    return Response(
+        content=blob,
+        media_type=mime,
+        headers={
+            "Content-Disposition": (
+                f"{disposition}; filename=\"{ascii_name}\"; "
+                f"filename*=UTF-8''{quote(name)}"
+            ),
+            "Cache-Control": "private, max-age=300",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+
 @_inbox_router.post("/send", response_model=InboxSendResponse)
 async def inbox_send(
     body: InboxSendRequest,
@@ -1210,25 +1496,7 @@ async def inbox_send(
     """
     if not ctx.can_edit_channel(body.channel_id):
         raise HTTPException(status_code=403, detail="No edit access to this channel")
-    # Plan entitlements: feature gate + monthly message cap (fail closed).
-    from ..billing.entitlements import count_messages_this_month, get_entitlements
-    from ..team.context import tenant_id_of
-
-    tid = tenant_id_of(ctx.user)
-    ent = await get_entitlements(tid, db)
-    from ..billing.entitlements import entitlement_403
-
-    if not ent.has_feature("messaging"):
-        raise entitlement_403("Messaging is not included in your plan.", "messaging")
-    used = await count_messages_this_month(tid, db)
-    if not ent.message_quota_ok(used):
-        from ..billing.entitlements import ENTITLEMENT_DENIED_HEADER
-
-        raise HTTPException(
-            status_code=429,
-            detail=f"Monthly message limit reached for plan '{ent.plan_slug}'. Upgrade to send more.",
-            headers={ENTITLEMENT_DENIED_HEADER: "quota"},
-        )
+    await _ensure_messaging_quota(ctx, db)
     try:
         msg = await send_message(
             body.channel_id,
@@ -1240,6 +1508,7 @@ async def inbox_send(
             ),
             ctx.user,
             db,
+            reply_to_message_id=body.reply_to_message_id,
         )
     except ValueError as exc:
         message = str(exc)
@@ -1248,40 +1517,229 @@ async def inbox_send(
         raise HTTPException(status_code=422, detail=message)
 
     failed = msg.status == "failed"
-
-    from .realtime import publish_inbox_event
-
-    await publish_inbox_event(ctx.tenant_id, {
-        "type": "message",
-        "id": msg.id,
-        "channel_id": msg.channel_id,
-        "platform": None,
-        "direction": "outbound",
-        "content": decrypt_message_content(msg.content),
-        "content_type": msg.content_type,
-        "status": msg.status,
-        "contact_phone": decrypt_contact_phone(msg.contact_phone),
-        "contact_name": msg.contact_name,
-        "created_at": msg.created_at,
-    })
+    await _publish_outbound_message(ctx.tenant_id, msg)
 
     return InboxSendResponse(
-        message=ChannelMessageResponse(
-            id=msg.id,
-            channel_id=msg.channel_id,
-            platform_message_id=msg.platform_message_id,
-            direction=msg.direction,
-            content=decrypt_message_content(msg.content),
-            content_type=msg.content_type,
-            status=msg.status,
-            error=msg.error,
-            contact_phone=decrypt_contact_phone(msg.contact_phone),
-            contact_name=msg.contact_name,
-            created_at=msg.created_at.isoformat(),
-        ),
+        message=_message_out(msg),
         sent=not failed,
         error=msg.error,
     )
+
+
+@_inbox_router.post("/send-document", response_model=InboxSendResponse)
+async def inbox_send_document(
+    channel_id: str = Form(...),
+    contact_phone: str = Form(...),
+    caption: str = Form(""),
+    file: UploadFile = File(...),
+    ctx: TenantContext = Depends(require_perm("inbox.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Send a PDF, invoice, menu or other document as a native attachment."""
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    await _ensure_messaging_quota(ctx, db)
+
+    # Read one byte past the ceiling so an oversized upload is rejected without
+    # buffering the whole file first.
+    data = await file.read(MAX_OUTBOUND_DOCUMENT_BYTES + 1)
+    await file.close()
+    if not data:
+        raise HTTPException(status_code=422, detail="The document is empty")
+    if len(data) > MAX_OUTBOUND_DOCUMENT_BYTES:
+        raise HTTPException(status_code=413, detail="Documents must be under 32 MB")
+
+    try:
+        msg = await send_document_message(
+            channel_id,
+            contact_phone,
+            data=data,
+            filename=file.filename or "document",
+            mime_type=file.content_type or "application/octet-stream",
+            caption=caption,
+            user=ctx.user,
+            db=db,
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        raise HTTPException(
+            status_code=404 if detail == "Channel not found" else 422,
+            detail=detail,
+        ) from exc
+    await _publish_outbound_message(ctx.tenant_id, msg)
+    return InboxSendResponse(
+        message=_message_out(msg),
+        sent=msg.status != "failed",
+        error=msg.error,
+    )
+
+
+@_inbox_router.post("/send-sticker", response_model=InboxSendResponse)
+async def inbox_send_sticker(
+    channel_id: str = Form(...),
+    contact_phone: str = Form(...),
+    file: UploadFile = File(...),
+    ctx: TenantContext = Depends(require_perm("inbox.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Send a WebP sticker (WhatsApp's only sticker format)."""
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    await _ensure_messaging_quota(ctx, db)
+
+    data = await file.read(MAX_OUTBOUND_STICKER_BYTES + 1)
+    await file.close()
+    if not data:
+        raise HTTPException(status_code=422, detail="The sticker is empty")
+    if len(data) > MAX_OUTBOUND_STICKER_BYTES:
+        raise HTTPException(status_code=413, detail="Stickers must be under 500 KB")
+
+    try:
+        msg = await send_sticker_message(
+            channel_id,
+            contact_phone,
+            data=data,
+            filename=file.filename or "sticker.webp",
+            mime_type=file.content_type or "image/webp",
+            user=ctx.user,
+            db=db,
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        raise HTTPException(
+            status_code=404 if detail == "Channel not found" else 422,
+            detail=detail,
+        ) from exc
+    await _publish_outbound_message(ctx.tenant_id, msg)
+    return InboxSendResponse(
+        message=_message_out(msg),
+        sent=msg.status != "failed",
+        error=msg.error,
+    )
+
+
+@_inbox_router.post("/send-location", response_model=InboxSendResponse)
+async def inbox_send_location(
+    body: InboxLocationSendRequest,
+    ctx: TenantContext = Depends(require_perm("inbox.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Send a native WhatsApp location card (lat/lng, name and address)."""
+    if not ctx.can_edit_channel(body.channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    await _ensure_messaging_quota(ctx, db)
+    try:
+        msg = await send_location_message(
+            body.channel_id,
+            body.contact_phone,
+            body.latitude,
+            body.longitude,
+            name=body.name,
+            address=body.address,
+            user=ctx.user,
+            db=db,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    await _publish_outbound_message(ctx.tenant_id, msg)
+    return InboxSendResponse(
+        message=_message_out(msg),
+        sent=msg.status != "failed",
+        error=msg.error,
+    )
+
+
+@_inbox_router.post("/send-contact", response_model=InboxSendResponse)
+async def inbox_send_contact(
+    body: InboxContactSendRequest,
+    ctx: TenantContext = Depends(require_perm("inbox.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Send a native WhatsApp contact card."""
+    if not ctx.can_edit_channel(body.channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    await _ensure_messaging_quota(ctx, db)
+    try:
+        msg = await send_contact_message(
+            body.channel_id,
+            body.contact_phone,
+            name=body.name,
+            phone=body.phone,
+            email=body.email,
+            user=ctx.user,
+            db=db,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    await _publish_outbound_message(ctx.tenant_id, msg)
+    return InboxSendResponse(
+        message=_message_out(msg),
+        sent=msg.status != "failed",
+        error=msg.error,
+    )
+
+
+@_inbox_router.post(
+    "/messages/{message_id}/reaction", response_model=InboxSendResponse
+)
+async def inbox_react_to_message(
+    message_id: str,
+    body: InboxReactionRequest,
+    ctx: TenantContext = Depends(require_perm("inbox.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """React to one message (empty emoji removes the reaction)."""
+    target = (
+        await db.execute(
+            select(ChannelMessage).where(ChannelMessage.id == message_id)
+        )
+    ).scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if not ctx.can_edit_channel(target.channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    try:
+        msg = await react_to_message(
+            target.channel_id, message_id, body.emoji, ctx.user, db
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return InboxSendResponse(
+        message=_message_out(msg),
+        sent=msg.status != "failed",
+        error=msg.error,
+    )
+
+
+@_inbox_router.delete(
+    "/messages/{message_id}", response_model=ChannelMessageResponse
+)
+async def inbox_remove_message(
+    message_id: str,
+    ctx: TenantContext = Depends(require_perm("inbox.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove a message from this inbox. Not a WhatsApp retraction.
+
+    Meta's Cloud API has no delete-for-everyone endpoint for business
+    messages, so the row is kept for audit and the UI labels it as removed.
+    """
+    target = (
+        await db.execute(
+            select(ChannelMessage).where(ChannelMessage.id == message_id)
+        )
+    ).scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if not ctx.can_edit_channel(target.channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    try:
+        msg = await soft_delete_message(
+            target.channel_id, message_id, ctx.user, db
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return _message_out(msg)
 
 
 # ── Webhooks (no auth — platform sends these) ──────────────────────────

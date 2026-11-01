@@ -6,7 +6,14 @@ is the tenant scope from the team context, never a client-passed id.
 The Instagram hub's Leads tab is the first consumer: list, filter, move
 a lead through new -> qualified -> follow_up -> converted/lost, and set
 the tenant's follow-up knobs (clamped by the engine before storing).
+
+`category` is the one human-facing lead label. The router returns it as
+stored; the engine is the only classifier. An operator may correct it here,
+which is recorded at confidence 1.0 so a later model extraction cannot
+silently undo the correction.
 """
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +34,7 @@ from .meta.lead_engine import normalize_lead_settings
 router = APIRouter(prefix="/api/v1/leads", tags=["leads"])
 
 _STAGES = ("new", "qualified", "follow_up", "converted", "lost")
+_CATEGORY_PATTERN = "^(wholesale|retail|booking|quote|support|info)$"
 
 
 async def _avatar_for(db: AsyncSession, tenant_id: str, platform: str, contact_id: str) -> str | None:
@@ -42,7 +50,24 @@ async def _avatar_for(db: AsyncSession, tenant_id: str, platform: str, contact_i
     ).scalar_one_or_none()
 
 
-def _lead_out(lead: Lead, avatar_url: str | None) -> LeadOut:
+async def _assignee_names(db: AsyncSession, ids: set[str]) -> dict[str, str]:
+    """Display names for lead owners, one query per page."""
+    if not ids:
+        return {}
+    rows = (
+        await db.execute(select(User).where(User.id.in_(ids)))
+    ).scalars().all()
+    return {
+        u.id: (
+            f"{u.first_name or ''} {u.last_name or ''}".strip() or u.email
+        )
+        for u in rows
+    }
+
+
+def _lead_out(
+    lead: Lead, avatar_url: str | None, assignee_name: str | None = None
+) -> LeadOut:
     return LeadOut(
         id=lead.id,
         channel_id=lead.channel_id,
@@ -52,6 +77,7 @@ def _lead_out(lead: Lead, avatar_url: str | None) -> LeadOut:
         contact_username=lead.contact_username,
         language=lead.language or "en",
         intent=lead.intent,
+        category=lead.category,
         request=lead.request,
         avatar_url=avatar_url,
         # UI summary falls back to the captured request.
@@ -69,6 +95,11 @@ def _lead_out(lead: Lead, avatar_url: str | None) -> LeadOut:
             lead.priority_since.isoformat() if lead.priority_since else None
         ),
         thread_key=lead.thread_key,
+        assigned_to=lead.assigned_to,
+        assigned_at=(
+            lead.assigned_at.isoformat() if lead.assigned_at else None
+        ),
+        assignee_name=assignee_name,
         last_message_at=(
             lead.last_message_at.isoformat() if lead.last_message_at else None
         ),
@@ -117,6 +148,7 @@ async def update_lead_settings(
 async def list_leads(
     platform: str | None = Query(None, max_length=20),
     stage_filter: str | None = Query(None, alias="stage", pattern="^(new|qualified|follow_up|converted|lost)$"),
+    category_filter: str | None = Query(None, alias="category", pattern=_CATEGORY_PATTERN),
     priority_filter: str | None = Query(None, alias="priority", pattern="^(normal|important)$"),
     priority_first: bool = Query(
         False,
@@ -133,6 +165,8 @@ async def list_leads(
         conds.append(Lead.platform == platform)
     if stage_filter:
         conds.append(Lead.stage == stage_filter)
+    if category_filter:
+        conds.append(Lead.category == category_filter)
     if priority_filter:
         conds.append(Lead.priority == priority_filter)
 
@@ -163,8 +197,18 @@ async def list_leads(
             .limit(limit)
         )
     ).all()
+    assignee_names = await _assignee_names(
+        db, {lead.assigned_to for lead, _ in rows if lead.assigned_to}
+    )
     return LeadListResponse(
-        leads=[_lead_out(lead, avatar) for lead, avatar in rows],
+        leads=[
+            _lead_out(
+                lead,
+                avatar,
+                assignee_names.get(lead.assigned_to) if lead.assigned_to else None,
+            )
+            for lead, avatar in rows
+        ],
         total=total,
     )
 
@@ -188,12 +232,29 @@ async def update_lead(
     # treats converted/lost as terminal for scheduled actions.
     if body.stage is not None:
         lead.stage = body.stage
+    if body.category is not None:
+        lead.category = body.category
+        # A human correction outranks every model extraction. The engine's
+        # category merge reads this confidence, so without the 1.0 a later
+        # 0.9 "retail" guess would overwrite the operator's "wholesale".
+        prov = dict(lead.field_provenance or {})
+        prov["category"] = {
+            "value": body.category,
+            "confidence": 1.0,
+            "source_message_id": None,
+            "at": datetime.now(timezone.utc).isoformat(),
+        }
+        lead.field_provenance = prov
     if body.summary is not None:
         lead.summary = body.summary.strip() or None
     db.add(lead)
     await db.commit()
     await db.refresh(lead)
+    names = await _assignee_names(
+        db, {lead.assigned_to} if lead.assigned_to else set()
+    )
     return _lead_out(
         lead,
         await _avatar_for(db, lead.tenant_id, lead.platform, lead.contact_id),
+        names.get(lead.assigned_to) if lead.assigned_to else None,
     )

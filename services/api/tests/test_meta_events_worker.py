@@ -17,11 +17,15 @@ If a handler signature changes, this fails instead of the pipeline.
 """
 
 import inspect
+from datetime import datetime, timezone
 
 import pytest
+from sqlalchemy import select
 
 from app.modules.channels.meta import consumer as meta_consumer
 from app.modules.channels.meta import meta_events_worker as worker
+from app.modules.channels.meta.models import MetaWebhookEvent
+from app.modules.outbox.models import EventOutbox
 
 ROUTED_HANDLERS = [
     "_handle_message_received",
@@ -120,7 +124,7 @@ async def test_event_is_split_into_envelope_and_nested_payload(
 
             return R()
 
-    async def mark_sent(db, event_id):
+    async def mark_sent(db, event_id, webhook_event_id=None):
         sent.append(event_id)
 
     monkeypatch.setattr(worker, "_mark_event_sent", mark_sent)
@@ -154,7 +158,7 @@ async def test_instagram_echo_is_history_not_an_auto_reply(monkeypatch):
             return R()
 
     monkeypatch.setattr(
-        worker, "_mark_event_sent", lambda db, eid: _noop()
+        worker, "_mark_event_sent", lambda db, eid, webhook_event_id=None: _noop()
     )
 
     async def _noop():
@@ -174,3 +178,121 @@ async def test_instagram_echo_is_history_not_an_auto_reply(monkeypatch):
     await worker._process_event(FakeDB(), row({"raw": {"message": {"is_echo": False}}}))
 
     assert routed == ["echo", "message"]
+
+
+def _event_row(event_id: str, *, attempts: int = 0) -> EventOutbox:
+    return EventOutbox(
+        id=event_id,
+        event_type="meta.message.received",
+        payload={},
+        topic="meta-events",
+        status="processing",
+        attempts=attempts,
+        next_retry_at=datetime.now(timezone.utc),
+    )
+
+
+def _webhook_row(event_id: str, *, status: str = "received") -> MetaWebhookEvent:
+    return MetaWebhookEvent(
+        id=event_id,
+        provider="whatsapp",
+        external_event_id=f"wamid.{event_id}",
+        event_type="message.received",
+        raw_payload={"entry": []},
+        status=status,
+    )
+
+
+async def _stored(db, model, row_id: str):
+    row = (
+        await db.execute(select(model).where(model.id == row_id))
+    ).scalar_one()
+    # The worker writes with raw SQL, so the identity-map copy still has the
+    # pre-update status until it is refreshed.
+    await db.refresh(row)
+    return row
+
+
+@pytest.mark.asyncio
+async def test_sent_event_closes_the_raw_webhook_row(db):
+    """The worker's success must be visible to the retention sweep."""
+    outbox = _event_row("evt-close-sent")
+    hook = _webhook_row("wh-close-sent")
+    db.add_all([outbox, hook])
+    await db.commit()
+
+    await worker._mark_event_sent(db, outbox.id, hook.id)
+
+    assert (await _stored(db, EventOutbox, outbox.id)).status == "sent"
+    assert (await _stored(db, MetaWebhookEvent, hook.id)).status == "processed"
+
+
+@pytest.mark.asyncio
+async def test_retry_keeps_the_raw_row_open_and_dead_rejects_it(db):
+    retrying = _event_row("evt-retry-open")
+    retry_hook = _webhook_row("wh-retry-open")
+    dying = _event_row("evt-dead-reject", attempts=worker.MAX_RETRIES - 1)
+    dead_hook = _webhook_row("wh-dead-reject")
+    db.add_all([retrying, retry_hook, dying, dead_hook])
+    await db.commit()
+
+    await worker._mark_event_failed(
+        db, retrying.id, "temporary", retry=True,
+        webhook_event_id=retry_hook.id,
+    )
+    await worker._mark_event_failed(
+        db, dying.id, "permanent", retry=True,
+        webhook_event_id=dead_hook.id,
+    )
+
+    assert (await _stored(db, EventOutbox, retrying.id)).status == "failed"
+    assert (await _stored(db, MetaWebhookEvent, retry_hook.id)).status == "received"
+    assert (await _stored(db, EventOutbox, dying.id)).status == "dead"
+    rejected = await _stored(db, MetaWebhookEvent, dead_hook.id)
+    assert rejected.status == "rejected"
+    assert rejected.error == "permanent"
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_event_is_unresolved_not_processed(db):
+    outbox = _event_row("evt-ambiguous")
+    hook = _webhook_row("wh-ambiguous")
+    db.add_all([outbox, hook])
+    await db.commit()
+
+    await worker._mark_event_ambiguous(db, outbox.id, hook.id)
+
+    assert (await _stored(db, EventOutbox, outbox.id)).status == "ambiguous"
+    stored = await _stored(db, MetaWebhookEvent, hook.id)
+    assert stored.status == "unresolved"
+    assert "ambiguous" in (stored.error or "")
+
+
+@pytest.mark.asyncio
+async def test_process_event_carries_the_webhook_link(db, monkeypatch):
+    """The normalized envelope is what lets _process_event close the raw row."""
+    outbox = _event_row("evt-linked")
+    hook = _webhook_row("wh-linked")
+    db.add_all([outbox, hook])
+    await db.commit()
+
+    async def _handled(event, data):
+        return None
+
+    monkeypatch.setattr(worker, "_handle_message_received", _handled)
+    row = {
+        "id": outbox.id,
+        "event_type": "meta.message.received",
+        "topic": "meta-events",
+        "attempts": 0,
+        "next_retry_at": None,
+        "payload": {
+            "webhook_event_id": hook.id,
+            "provider": "whatsapp",
+            "event_type": "message.received",
+            "payload": {"from": "9665", "text": "hi"},
+        },
+    }
+
+    assert await worker._process_event(db, row) is True
+    assert (await _stored(db, MetaWebhookEvent, hook.id)).status == "processed"

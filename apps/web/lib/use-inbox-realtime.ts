@@ -49,6 +49,7 @@ export interface InboxRealtimeEvent {
     | "notification"
     | "review_issue"
     | "typing"
+    | "assignment"
     | "mode"
     | "ping";
   notification?: NotificationPayload;
@@ -63,14 +64,32 @@ export interface InboxRealtimeEvent {
   error?: string | null;
   contact_phone?: string | null;
   contact_name?: string | null;
+  reply_to_message_id?: string | null;
+  media_url?: string | null;
+  media_mime_type?: string | null;
+  media_filename?: string | null;
   created_at?: string;
   /* typing events — who is composing in this thread right now */
   typing?: boolean;
   typing_source?: "ai" | "agent";
-  /* conversation-mode events — another tab switched AI/human */
+  /* conversation-mode events — another tab switched AI/human, or the
+     escalation system did. The clock fields are present only on system
+     events; a manual change always clears them. */
   mode?: "ai" | "human";
   mode_changed_at?: string | null;
   mode_changed_by?: string | null;
+  /* assignment events — who owns the conversation now */
+  assigned_to?: string | null;
+  assignee_name?: string | null;
+  assigned_at?: string | null;
+  priority?: "normal" | "important";
+  ai_miss_count?: number;
+  priority_since?: string | null;
+  escalated_at?: string | null;
+  escalation_reminder_at?: string | null;
+  handover_sent_at?: string | null;
+  resume_at?: string | null;
+  escalation_resume_hours?: number;
   /* comment events */
   comment_id?: string | null;
   parent_comment_id?: string | null;

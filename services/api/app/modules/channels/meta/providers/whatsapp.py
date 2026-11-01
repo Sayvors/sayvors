@@ -137,18 +137,57 @@ class WhatsAppAdapter(MetaProviderAdapter):
         await self._graph("POST", f"/{phone_number_id}/register", token, json=body)
 
     async def send_text_message(
-        self, phone_number_id: str, token: str, to: str, text: str
+        self,
+        phone_number_id: str,
+        token: str,
+        to: str,
+        text: str,
+        *,
+        context_message_id: str | None = None,
     ) -> str:
-        """Send a session (24h-window) text message. Returns provider message id."""
+        """Send a session (24h-window) text message. Returns provider message id.
+
+        `context_message_id` is the wamid the customer will see quoted above
+        the reply. The Cloud API has no edit/delete endpoints, but contextual
+        replies and reactions are supported.
+        """
+        payload: dict = {
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "text",
+            "text": {"body": text[:4000]},
+        }
+        if context_message_id:
+            payload["context"] = {"message_id": context_message_id}
+        resp = await self._graph(
+            "POST",
+            f"/{phone_number_id}/messages",
+            token,
+            json=payload,
+        )
+        data = resp.json()
+        msgs = data.get("messages", [])
+        return msgs[0].get("id", "") if msgs else ""
+
+    async def send_reaction(
+        self,
+        phone_number_id: str,
+        token: str,
+        to: str,
+        message_id: str,
+        emoji: str,
+    ) -> str:
+        """React to a message. An empty emoji removes the reaction."""
         resp = await self._graph(
             "POST",
             f"/{phone_number_id}/messages",
             token,
             json={
                 "messaging_product": "whatsapp",
+                "recipient_type": "individual",
                 "to": to,
-                "type": "text",
-                "text": {"body": text[:4000]},
+                "type": "reaction",
+                "reaction": {"message_id": message_id, "emoji": emoji},
             },
         )
         data = resp.json()
@@ -182,6 +221,113 @@ class WhatsAppAdapter(MetaProviderAdapter):
                 "to": to,
                 "type": "image",
                 "image": image,
+            },
+        )
+        data = resp.json()
+        msgs = data.get("messages", [])
+        return msgs[0].get("id", "") if msgs else ""
+
+    async def send_document(
+        self,
+        phone_number_id: str,
+        token: str,
+        to: str,
+        media_id: str,
+        filename: str | None = None,
+        caption: str | None = None,
+    ) -> str:
+        """Send an uploaded document by media id. Returns the wamid."""
+        document: dict = {"id": media_id}
+        if filename:
+            document["filename"] = filename[:240]
+        if caption:
+            document["caption"] = caption[:1024]
+        resp = await self._graph(
+            "POST",
+            f"/{phone_number_id}/messages",
+            token,
+            json={
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": "document",
+                "document": document,
+            },
+        )
+        data = resp.json()
+        msgs = data.get("messages", [])
+        return msgs[0].get("id", "") if msgs else ""
+
+    async def send_sticker(
+        self,
+        phone_number_id: str,
+        token: str,
+        to: str,
+        media_id: str,
+    ) -> str:
+        """Send an uploaded WebP sticker by media id. Returns the wamid."""
+        resp = await self._graph(
+            "POST",
+            f"/{phone_number_id}/messages",
+            token,
+            json={
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": "sticker",
+                "sticker": {"id": media_id},
+            },
+        )
+        data = resp.json()
+        msgs = data.get("messages", [])
+        return msgs[0].get("id", "") if msgs else ""
+
+    async def send_location(
+        self,
+        phone_number_id: str,
+        token: str,
+        to: str,
+        latitude: float,
+        longitude: float,
+        name: str | None = None,
+        address: str | None = None,
+    ) -> str:
+        """Send a native location card. Returns the provider message id."""
+        location: dict = {"latitude": latitude, "longitude": longitude}
+        if name:
+            location["name"] = name[:255]
+        if address:
+            location["address"] = address[:255]
+        resp = await self._graph(
+            "POST",
+            f"/{phone_number_id}/messages",
+            token,
+            json={
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": "location",
+                "location": location,
+            },
+        )
+        data = resp.json()
+        msgs = data.get("messages", [])
+        return msgs[0].get("id", "") if msgs else ""
+
+    async def send_contacts(
+        self,
+        phone_number_id: str,
+        token: str,
+        to: str,
+        contacts: list[dict],
+    ) -> str:
+        """Send one or more contact cards. Returns the provider message id."""
+        resp = await self._graph(
+            "POST",
+            f"/{phone_number_id}/messages",
+            token,
+            json={
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": "contacts",
+                "contacts": contacts,
             },
         )
         data = resp.json()
@@ -311,14 +457,19 @@ class WhatsAppAdapter(MetaProviderAdapter):
         return resp.json().get("data", [])
 
     async def upload_media(
-        self, phone_number_id: str, token: str, data: bytes, mime_type: str
+        self,
+        phone_number_id: str,
+        token: str,
+        data: bytes,
+        mime_type: str,
+        filename: str = "media",
     ) -> str:
         """Upload media for this number; returns the media id for sends."""
         resp = await self._http.post(
             f"{graph_base()}/{phone_number_id}/media",
             headers={"Authorization": f"Bearer {token}"},
             data={"messaging_product": "whatsapp", "type": mime_type},
-            files={"file": ("photo", data, mime_type)},
+            files={"file": (filename or "media", data, mime_type)},
         )
         if resp.status_code >= 400:
             raise MetaAPIError(
@@ -533,46 +684,6 @@ class WhatsAppAdapter(MetaProviderAdapter):
             "account_mode": data.get("account_mode"),
             "platform_type": data.get("platform_type"),
         }
-
-    async def list_qr_codes(self, phone_number_id: str, token: str) -> list[dict]:
-        resp = await self._graph(
-            "GET", f"/{phone_number_id}/message_qrdls", token,
-            params={"fields": "code,prefilled_message,deep_link_url,qr_image_url"},
-        )
-        data = resp.json().get("data") or []
-        return [row for row in data if isinstance(row, dict)]
-
-    async def create_qr_code(
-        self,
-        phone_number_id: str,
-        token: str,
-        prefilled_message: str,
-        *,
-        image_format: str = "PNG",
-    ) -> dict:
-        """Create a short link + QR image. Pre-filled message max 140 chars."""
-        message = (prefilled_message or "").strip()
-        if not message:
-            raise ValueError("a QR code needs a pre-filled message")
-        if len(message) > 140:
-            raise ValueError("the pre-filled message must be 140 characters or fewer")
-        fmt = (image_format or "PNG").upper()
-        if fmt not in ("PNG", "SVG"):
-            raise ValueError("image format must be PNG or SVG")
-        resp = await self._graph(
-            "POST",
-            f"/{phone_number_id}/message_qrdls",
-            token,
-            json={"prefilled_message": message, "generate_qr_image": fmt},
-        )
-        return resp.json() or {}
-
-    async def delete_qr_code(self, phone_number_id: str, token: str, code: str) -> bool:
-        """Retire a code; later scans show it as expired."""
-        resp = await self._graph(
-            "DELETE", f"/{phone_number_id}/message_qrdls/{code}", token
-        )
-        return bool((resp.json() or {}).get("success"))
 
     async def get_business_profile(self, phone_number_id: str, token: str) -> dict:
         """Fetch the WhatsApp business profile for a number.

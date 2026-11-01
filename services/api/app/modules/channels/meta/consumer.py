@@ -488,6 +488,7 @@ async def _generate_reply(
     db, channel, tenant_id: str, text: str, platform: str = "WhatsApp",
     context: str | None = None,
     contact: str | None = None,
+    attachment_note: str | None = None,
 ) -> str:
     """Generate an AI reply from THIS CONTACT's conversation + business profile.
 
@@ -532,6 +533,10 @@ async def _generate_reply(
                 .where(
                     ChannelMessage.channel_id == channel.id,
                     ChannelMessage.contact_phone_hash == hash_contact_phone(contact),
+                    # A locally removed message is not part of the AI's memory:
+                    # the customer still has it, but this inbox chose to forget
+                    # it (WA-4's honest half of "delete").
+                    ChannelMessage.deleted_at.is_(None),
                 )
                 .order_by(ChannelMessage.created_at.desc())
                 .limit(_HISTORY_MESSAGES)
@@ -678,6 +683,22 @@ async def _generate_reply(
         allow_image=(platform == "WhatsApp"),
     )
 
+    # Approved cumulative memory: lessons from earlier resolved conversations.
+    # Only approved rows are returned; the tenant toggle is read from the
+    # owner row already loaded above, so this adds no settings query.
+    memory = ""
+    try:
+        from ...memory.service import reply_block as memory_reply_block
+
+        memory = await memory_reply_block(
+            db,
+            tenant_id=tenant_id,
+            query=text,
+            enabled=bool(getattr(user, "ai_memory_enabled", True)),
+        )
+    except Exception as e:  # noqa: BLE001 - never cost the reply
+        logger.warning("memory skipped channel=%s: %s", channel.id, e)
+
     # The customer's explicit language choice, when they made one on the
     # first-contact buttons. It outranks the detected language in the prompt.
     lang_block = ""
@@ -698,9 +719,10 @@ async def _generate_reply(
     # One line per reply makes "why didn't it know X?" answerable: the sizes
     # prove whether the facts/databank were actually in the prompt.
     logger.info(
-        "Reply context channel=%s facts=%d card=%d grounding=%d catalog=%d stored=%d",
+        "Reply context channel=%s facts=%d card=%d grounding=%d catalog=%d memory=%d stored=%d",
         channel.id, len(facts_block or ""), len(business_card or ""),
-        len(grounding or ""), len(catalog or ""), len(stored_block or ""),
+        len(grounding or ""), len(catalog or ""), len(memory or ""),
+        len(stored_block or ""),
     )
 
     system_prompt = (
@@ -715,8 +737,10 @@ async def _generate_reply(
         + (f"\n\n{facts_block}" if facts_block else "")
         + (f"\n\n{grounding}" if grounding else "")
         + (f"\n\n{catalog}" if catalog else "")
+        + (f"\n\n{memory}" if memory else "")
         + stored_block
         + (f"\n\n{context}" if context else "")
+        + (f"\n\n{attachment_note}" if attachment_note else "")
         + f"\n\n{LEAD_PROMPT_BLOCK}"
     )
 
@@ -897,6 +921,10 @@ async def _publish_inbound_row(db, tenant_id: str, channel_id: str, row) -> None
         "status": row.status,
         "contact_phone": decrypt_contact_phone(row.contact_phone),
         "contact_name": row.contact_name,
+        "reply_to_message_id": row.reply_to_message_id,
+        "media_url": f"/api/v1/inbox/media/{row.id}" if row.media_key else None,
+        "media_mime_type": row.media_mime_type,
+        "media_filename": row.media_filename,
         "created_at": row.created_at,
     })
     await _publish_message_notification(db, tenant_id, row, "whatsapp")
@@ -909,6 +937,96 @@ VOICE_UNREADABLE_TEXT = {
     "ar": "لم أتمكن من سماع الرسالة الصوتية بوضوح — أرسلها مرة أخرى أو اكتب سؤالك.",
     "en": "I couldn't hear that voice note clearly — could you send it again or type your question?",
 }
+
+# Inbound attachments rendered in the inbox. Video is deliberately excluded
+# until the pipeline stores and renders it end to end.
+INBOUND_MEDIA_TYPES = ("image", "document", "sticker")
+
+# One file is pulled into memory for the private store, so the ceiling bounds
+# the worker's worst-case memory. WhatsApp permits larger documents; past this
+# the inbox keeps the placeholder and the customer is asked to resend or type.
+INBOUND_MEDIA_MAX_BYTES = 32 * 1024 * 1024
+
+# A caption is the customer's actual question, so an image/document without one
+# gets an honest deterministic line instead of a model guessing at unseen bytes.
+ATTACHMENT_NEEDS_CONTEXT_TEXT = {
+    "ar": "وصلني الملف. اكتب لي طلبك وسأتابعه مباشرة.",
+    "en": "Thanks — I've got the file. Tell me what you need and I'll take care of it.",
+}
+ATTACHMENT_UNREADABLE_TEXT = {
+    "ar": "وصلتني رسالة بملف لكن تعذّر فتحه — أعد إرساله أو اكتب سؤالك.",
+    "en": "I couldn't open the file you sent — could you send it again or type your question?",
+}
+
+# The model only ever receives the caption, never the bytes. This note stops it
+# from claiming it opened a receipt or read a PDF it cannot see.
+ATTACHMENT_PROMPT_NOTE = (
+    "The customer's latest message included an attachment (image or document). "
+    "You cannot see its contents. Answer the text they wrote. If the request "
+    "depends on what is inside the file, ask them to type the relevant details. "
+    "Never claim to have opened, read or reviewed the attachment."
+)
+
+# The customer's filename is display-only and never becomes a path segment.
+async def _store_inbound_media(
+    row,
+    *,
+    tenant_id: str,
+    data: dict,
+    token: str,
+    wamid: str,
+) -> bool:
+    """Download and privately store one inbound attachment.
+
+    Returns False when the bytes could not be fetched or written; the message
+    row still exists (the inbox shows the type placeholder), and the caller
+    can tell the customer honestly that the file could not be opened.
+    """
+    from ....core.storage import put_doc
+    from ..attachments import display_name, normalize_mime, storage_suffix
+    from .media import MediaDownloadError, download_whatsapp_media
+
+    media = data.get("media") or {}
+    media_id = str(media.get("id") or "")
+    if not media_id or not token:
+        return False
+
+    declared = str(media.get("mime_type") or "").strip()
+    try:
+        blob, mime = await download_whatsapp_media(
+            media_id,
+            token,
+            max_bytes=INBOUND_MEDIA_MAX_BYTES,
+            fallback_mime=declared or "application/octet-stream",
+        )
+    except MediaDownloadError as exc:
+        logger.warning(
+            "WhatsApp inbound media download failed type=%s wamid=%s: %s",
+            row.content_type, wamid[:32], exc,
+        )
+        return False
+
+    mime = normalize_mime(mime or declared, media.get("filename"))
+    extension = storage_suffix(mime, media.get("filename"))
+    key = f"{row.id}{extension}"
+    try:
+        put_doc(f"inbox-{tenant_id}", key, blob)
+    except Exception as exc:  # noqa: BLE001 - the message still belongs in the inbox
+        logger.warning(
+            "WhatsApp inbound media store failed type=%s wamid=%s: %s: %s",
+            row.content_type, wamid[:32], type(exc).__name__, str(exc)[:200],
+        )
+        return False
+
+    row.media_key = key
+    row.media_mime_type = mime
+    row.media_filename = display_name(media.get("filename"), extension)
+    logger.info(
+        "WhatsApp inbound media stored type=%s mime=%s bytes=%d tenant=%s",
+        row.content_type, mime[:60], len(blob), tenant_id,
+    )
+    return True
+
 
 
 async def _transcribe_voice_note(
@@ -995,7 +1113,7 @@ async def _meter_asr(tenant_id: str, duration_ms: int, wamid: str) -> None:
         logger.warning("Voice note metering failed wamid=%s: %s", wamid[:32], e)
 
 
-async def _reply_voice_note_unreadable(
+async def _send_system_text(
     db,
     adapter,
     phone_number_id: str,
@@ -1003,18 +1121,19 @@ async def _reply_voice_note_unreadable(
     from_wa: str,
     channel_id: str,
     tenant_id: str,
-    language: str | None,
+    text: str,
+    *,
+    log_label: str,
 ) -> None:
-    """Tell the customer we could not hear the note, and stop."""
+    """Send and persist one non-AI system line, best-effort."""
     from ..models import ChannelMessage
 
-    text = VOICE_UNREADABLE_TEXT["ar" if (language or "").lower().startswith("ar") else "en"]
     try:
         provider_id = await adapter.send_text_message(
             phone_number_id, token, from_wa, text
         )
-    except Exception as e:  # noqa: BLE001 - the note is already stored
-        logger.warning("Voice unreadable reply failed from=+%s: %s", from_wa[-6:], e)
+    except Exception as e:  # noqa: BLE001 - the customer message is already stored
+        logger.warning("%s reply failed from=+%s: %s", log_label, from_wa[-6:], e)
         return
     row = ChannelMessage(
         id=str(uuid.uuid4()),
@@ -1032,6 +1151,45 @@ async def _reply_voice_note_unreadable(
     db.add(row)
     await db.commit()
     await _publish_inbound_row_text(db, tenant_id, channel_id, row, from_wa)
+
+
+async def _reply_voice_note_unreadable(
+    db,
+    adapter,
+    phone_number_id: str,
+    token: str,
+    from_wa: str,
+    channel_id: str,
+    tenant_id: str,
+    language: str | None,
+) -> None:
+    """Tell the customer we could not hear the note, and stop."""
+    text = VOICE_UNREADABLE_TEXT["ar" if (language or "").lower().startswith("ar") else "en"]
+    await _send_system_text(
+        db, adapter, phone_number_id, token, from_wa, channel_id, tenant_id, text,
+        log_label="Voice unreadable",
+    )
+
+
+async def _reply_attachment_needs_context(
+    db,
+    adapter,
+    phone_number_id: str,
+    token: str,
+    from_wa: str,
+    channel_id: str,
+    tenant_id: str,
+    language: str | None,
+    *,
+    unreadable: bool,
+) -> None:
+    """Answer an attachment without a caption without guessing its contents."""
+    messages = ATTACHMENT_UNREADABLE_TEXT if unreadable else ATTACHMENT_NEEDS_CONTEXT_TEXT
+    text = messages["ar" if (language or "").lower().startswith("ar") else "en"]
+    await _send_system_text(
+        db, adapter, phone_number_id, token, from_wa, channel_id, tenant_id, text,
+        log_label="Attachment",
+    )
 
 
 async def _publish_inbound_row_text(db, tenant_id: str, channel_id: str, row, contact: str) -> None:
@@ -1266,6 +1424,25 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 wamid[:32], type(e).__name__, str(e)[:200],
             )
 
+        # Attachments are stored before the auto-reply switch: a screenshot or
+        # receipt IS the customer's question, and the team must be able to open
+        # it even when the AI is off. Bytes live in the private store; the inbox
+        # route authorizes every read.
+        token = decrypt_connection_token(asset.connection) if asset.connection else None
+        attachment_stored: bool | None = None
+        if msg_type in INBOUND_MEDIA_TYPES:
+            if token:
+                attachment_stored = await _store_inbound_media(
+                    row, tenant_id=tenant_id, data=data, token=token, wamid=wamid
+                )
+                await db.commit()
+            else:
+                attachment_stored = False
+                logger.info(
+                    "WhatsApp inbound media skipped (no access token) "
+                    "type=%s wamid=%s", msg_type, wamid[:32],
+                )
+
         # Auto-reply switch. Off means the message is kept and shown to the
         # team, but the AI stays out of the thread entirely — including the
         # escalation counter, which only exists to measure AI misses.
@@ -1285,7 +1462,6 @@ async def _handle_message_received(event: dict, data: dict) -> None:
         if msg_type not in ("audio", "voice"):
             await _publish_inbound_row(db, tenant_id, channel.id, row)
 
-        token = decrypt_connection_token(asset.connection) if asset.connection else None
         if not token:
             if msg_type in ("audio", "voice"):
                 await _publish_inbound_row(db, tenant_id, channel.id, row)
@@ -1305,10 +1481,19 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 wamid[:32],
             )
             return
-        # Voice notes pass through untranscribed here: the download needs the
-        # token and must not happen for a stale event, so it runs below. Every
-        # other non-text type is stored and not answered.
-        if msg_type not in ("audio", "voice") and (not text or msg_type != "text"):
+        # Stickers are a social gesture, not a request; video is intentionally
+        # not stored or answered yet. Neither ever gets an AI reply.
+        if msg_type in ("sticker", "video"):
+            logger.info(
+                "WhatsApp AI reply skipped for message type=%s wamid=%s",
+                msg_type, wamid[:32],
+            )
+            return
+        # A caption makes an image/document a typed question, so it flows
+        # through the normal pipeline. Without one the attachment is stored and
+        # published, then answered deterministically after the language gate —
+        # the model is never asked to guess at bytes it cannot see.
+        if msg_type not in ("audio", "voice", "text", "image", "document"):
             logger.info(
                 "WhatsApp AI reply skipped for non-text message type=%s wamid=%s",
                 msg_type, wamid[:32],
@@ -1446,6 +1631,18 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             await _reply_voice_note_unreadable(
                 db, adapter, phone_number_id, token, from_wa, channel.id,
                 tenant_id, preferred_language or getattr(state, "language", None),
+            )
+            return
+
+        # An image/document with no caption carries no question the model can
+        # answer. One deterministic line asks what the customer needs (or says
+        # the file could not be opened) instead of inventing its contents.
+        if msg_type in ("image", "document") and not text:
+            await _reply_attachment_needs_context(
+                db, adapter, phone_number_id, token, from_wa, channel.id,
+                tenant_id,
+                preferred_language or getattr(state, "language", None),
+                unreadable=attachment_stored is False,
             )
             return
 
@@ -1689,10 +1886,14 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             return
 
         try:
+            reply_kwargs: dict = {
+                "context": _handoff_context(handoff_match),
+                "contact": from_wa or None,
+            }
+            if msg_type in ("image", "document"):
+                reply_kwargs["attachment_note"] = ATTACHMENT_PROMPT_NOTE
             raw_reply = await _generate_reply(
-                db, channel, tenant_id, text,
-                context=_handoff_context(handoff_match),
-                contact=from_wa or None,
+                db, channel, tenant_id, text, **reply_kwargs,
             )
         except Exception as e:
             logger.warning(

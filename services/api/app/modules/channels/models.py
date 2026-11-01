@@ -116,6 +116,25 @@ class ChannelMessage(Base):
         default="sent",
     )
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The wamid this message quotes, for contextual replies. Stored because
+    # the inbox renders the quoted bubble from the thread, and because the API
+    # needs it to prove the target was in this conversation before sending.
+    reply_to_message_id: Mapped[str | None] = mapped_column(
+        String(200), nullable=True
+    )
+    # Local removal from the inbox. Meta's Cloud API has no endpoint to delete
+    # a sent message for the customer, so this is deliberately internal: the
+    # row stays for audit, is excluded from AI history, and the UI says it was
+    # removed rather than pretending it was retracted.
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    deleted_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # Private attachment storage. Customer receipts/screenshots must not be
+    # public URLs; the API serves them through an authenticated inbox route.
+    media_key: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    media_mime_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    media_filename: Mapped[str | None] = mapped_column(String(500), nullable=True)
     # Who the message is with, in the platform's own addressing. Inbound rows
     # carry the sender; outbound rows carry the recipient, which is what lets a
     # reply be threaded under the same contact as the question it answers.
@@ -238,6 +257,17 @@ class ChannelThread(Base):
     )
     mode_changed_by: Mapped[str | None] = mapped_column(
         String(64), nullable=True, default=None
+    )
+    # Who owns this conversation right now. NULL = unassigned (the normal
+    # state until someone claims an escalated thread). Distinct from
+    # conversation_mode: mode says whether the AI may answer, assignment says
+    # which human is responsible. Indexed for the "mine" filter; the writer is
+    # channels/assignment.py, which also mirrors it onto the lead row.
+    assigned_to: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    assigned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
     )
     channel = relationship("Channel", back_populates="threads")
 
@@ -453,6 +483,43 @@ class ContactProfile(Base):
     )
 
 
+class WhatsAppQrCode(Base):
+    """A locally generated click-to-chat QR, owned by one WhatsApp channel.
+
+    Deliberately not Meta's `message_qrdls`: that endpoint needs the
+    `whatsapp_business_management` permission, and a missing permission made
+    the settings page show "Failed to fetch" with no way forward. The link is
+    the canonical `https://wa.me/<number>?text=<message>`, which works for
+    every connected number and never expires. The QR image itself is rendered
+    in the browser from this link.
+    """
+
+    __tablename__ = "whatsapp_qr_codes"
+    __table_args__ = (
+        # The code is the list/delete key; scoped to the tenant so two tenants
+        # can never collide on the same short code.
+        UniqueConstraint(
+            "tenant_id", "code", name="uq_whatsapp_qr_tenant_code"
+        ),
+        Index("ix_whatsapp_qr_channel", "channel_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: uuid.uuid4().hex
+    )
+    tenant_id: Mapped[str] = mapped_column(String(36), index=True)
+    channel_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("channels.id", ondelete="CASCADE")
+    )
+    code: Mapped[str] = mapped_column(String(16))
+    prefilled_message: Mapped[str] = mapped_column(String(140))
+    deep_link_url: Mapped[str] = mapped_column(Text)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
 class Lead(Base):
     """A customer the messaging loop is converting.
 
@@ -464,10 +531,13 @@ class Lead(Base):
     field keeps its provenance in field_provenance.
 
     stage is the deterministic pipeline state — new -> qualified ->
-    follow_up -> converted/lost. The engine moves it; the tenant can
-    override to won/lost at any point. opt_out suppresses every scheduled
-    action regardless of stage. thread_key is the unified-inbox thread
-    identifier, so the UI can walk from the lead into the conversation.
+    follow_up -> converted/lost. `qualified` means the captured category is
+    sellable (wholesale/retail/booking/quote by default), not merely that the
+    lead has a request; info and support leads stay `new` until they show a
+    commercial signal. The engine moves it; the tenant can override to
+    won/lost at any point. opt_out suppresses every scheduled action
+    regardless of stage. thread_key is the unified-inbox thread identifier,
+    so the UI can walk from the lead into the conversation.
     """
 
     __tablename__ = "leads"
@@ -476,6 +546,10 @@ class Lead(Base):
         # step's open-lead lookup (channel, contact) — one index each.
         Index("ix_leads_tenant_created", "tenant_id", "created_at"),
         Index("ix_leads_channel_contact", "channel_id", "contact_id"),
+        # Category filter + recency, the leads board's reporting query.
+        Index("ix_leads_tenant_category", "tenant_id", "category", "created_at"),
+        # "My leads" scans by owner; tenant first so it stays tenant-scoped.
+        Index("ix_leads_tenant_assigned", "tenant_id", "assigned_to"),
         # Board sort: WHERE tenant_id=? ORDER BY priority DESC, updated_at DESC.
         # Stored (not derived in SQL) so this stays an index scan rather than
         # a full sort of the lead table. See lead_escalation.py.
@@ -502,6 +576,19 @@ class Lead(Base):
     language: Mapped[str] = mapped_column(String(16), default="en")
     # Buying intent, one of "buying" | "booking" | "quote" | "info".
     intent: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # The canonical lead label shown in every surface (inbox, lead card,
+    # digest, escalation email): wholesale | retail | booking | quote |
+    # support | info. Classification is one place (`lead_engine.detect_category`
+    # plus the reply extraction); the surfaces only render the stored value.
+    # `intent` above remains the raw buying signal and is never shown as a
+    # label - it cannot express wholesale.
+    category: Mapped[str | None] = mapped_column(
+        Enum(
+            "wholesale", "retail", "booking", "quote", "support", "info",
+            name="lead_category",
+        ),
+        nullable=True,
+    )
     # What they need, in the customer's own words.
     request: Mapped[str | None] = mapped_column(Text, nullable=True)
     # One-line UI summary (falls back to request in the API when unset).
@@ -558,6 +645,15 @@ class Lead(Base):
     handover_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Unified-inbox thread key, for the lead -> conversation deep link.
     thread_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # The human owner of this lead, mirrored from the conversation thread by
+    # channels/assignment.py. Stored here as well so the leads board, digest
+    # and escalation email do not need a join to answer "whose is this?".
+    assigned_to: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    assigned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
     # ── WhatsApp opt-in (Meta requires a recorded basis before any template) ──
     # Set when the customer explicitly agrees to WhatsApp messages: the
     # Instagram bridge (they tapped and wrote), or an operator recording a
@@ -892,6 +988,8 @@ class ReviewIssue(Base):
         # Ticket queue scans: tenant + status / priority / review.
         Index("ix_review_issues_tenant_status", "tenant_id", "status"),
         Index("ix_review_issues_tenant_priority", "tenant_id", "priority"),
+        # "My tickets" scans by owner.
+        Index("ix_review_issues_tenant_assigned", "tenant_id", "assigned_to"),
         Index("ix_review_issues_tenant_review_id", "tenant_id", "review_id"),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -912,6 +1010,16 @@ class ReviewIssue(Base):
     needs_attention: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False, index=True)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="new", server_default="new")
+    # The teammate who owns this ticket. NULL = nobody picked it up yet, which
+    # is the state every escalated review starts in. Written by the reviews
+    # router through channels/assignment.py so the same person is validated
+    # against the same channel-access rules as an inbox assignment.
+    assigned_to: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    assigned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
     reviewer_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     review_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     extractor_version: Mapped[str | None] = mapped_column(String(40), nullable=True)

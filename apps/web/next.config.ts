@@ -24,6 +24,13 @@ const nextConfig: NextConfig = {
         source: "/api/:path*",
         destination: "http://localhost:8000/api/:path*",
       },
+      {
+        // Same-origin proxy for uploaded avatars/covers when the browser is
+        // on an https dev tunnel: the API's own origin is http://localhost,
+        // which the page would otherwise block as mixed content.
+        source: "/media-files/:path*",
+        destination: "http://localhost:8000/media-files/:path*",
+      },
     ];
   },
   images: {

@@ -1,4 +1,5 @@
 import { apiFetch } from "@/lib/api-rag";
+import type { LeadCategory } from "@/lib/lead-labels";
 
 /*
  * Leads: people the messaging engine is converting while chatting on the
@@ -21,6 +22,8 @@ export type Lead = {
   contact_username: string | null;
   language: string;
   intent: string | null;
+  /** Canonical label: wholesale | retail | booking | quote | support | info. */
+  category: LeadCategory | null;
   request: string | null;
   avatar_url: string | null;
   summary: string | null;
@@ -35,6 +38,10 @@ export type Lead = {
   priority_since: string | null;
   /** Unified-inbox thread key — deep-links the lead to its conversation. */
   thread_key: string | null;
+  /** Who owns the lead (mirrored from the conversation thread). */
+  assigned_to: string | null;
+  assigned_at: string | null;
+  assignee_name: string | null;
   last_message_at: string | null;
   created_at: string;
   updated_at: string;
@@ -61,6 +68,8 @@ export type LeadSettings = {
   digest_enabled: boolean;
   digest_hour: number;
   digest_max_leads: number;
+  /** Which canonical lead types auto-qualify (the per-tenant stage rule). */
+  qualified_categories: LeadCategory[];
   review_issue_subcategories?: string[];
 };
 
@@ -68,6 +77,7 @@ export async function fetchLeads(
   params?: {
     platform?: string;
     stage?: LeadStage;
+    category?: LeadCategory;
     priority?: LeadPriority;
     priorityFirst?: boolean;
     limit?: number;
@@ -77,6 +87,7 @@ export async function fetchLeads(
   const qs = new URLSearchParams();
   if (params?.platform) qs.set("platform", params.platform);
   if (params?.stage) qs.set("stage", params.stage);
+  if (params?.category) qs.set("category", params.category);
   if (params?.priority) qs.set("priority", params.priority);
   if (params?.priorityFirst) qs.set("priority_first", "true");
   if (params?.limit) qs.set("limit", String(params.limit));
@@ -87,7 +98,7 @@ export async function fetchLeads(
 
 export async function updateLead(
   id: string,
-  patch: { stage?: LeadStage; summary?: string },
+  patch: { stage?: LeadStage; category?: LeadCategory; summary?: string },
 ): Promise<Lead> {
   return apiFetch(`/api/v1/leads/${encodeURIComponent(id)}`, {
     method: "PATCH",

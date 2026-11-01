@@ -72,6 +72,7 @@ async def _transcript(db, *, channel_id: str, contact_phone: str) -> list[tuple[
             .where(
                 ChannelMessage.channel_id == channel_id,
                 ChannelMessage.contact_phone_hash == hash_contact_phone(contact_phone),
+                ChannelMessage.deleted_at.is_(None),
             )
             .order_by(ChannelMessage.created_at.desc())
             .limit(TRANSCRIPT_MESSAGES)

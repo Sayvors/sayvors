@@ -10,17 +10,27 @@ import {
   fetchInboxThreads,
   fetchThreadMessages,
   archiveInboxThread,
+  assignInboxThread,
   deleteInboxThread,
+  fetchAssignees,
   pinInboxThread,
   resolveInboxThread,
   sendInboxMessage,
+  sendInboxLocation,
+  sendInboxContact,
+  sendInboxDocument,
+  sendInboxSticker,
   setInboxThreadMode,
+  reactToInboxMessage,
+  removeInboxMessage,
   UNKNOWN_THREAD_KEY,
   type InboxMessage,
   type InboxThread,
   type ThreadState,
 } from "@/lib/api-inbox";
+import { useAuth } from "@/lib/auth-context";
 import { platformMeta } from "@/lib/platform";
+import { resolveMediaUrl } from "@/lib/media-url";
 import { setActiveThread } from "@/lib/active-thread";
 import {
   clearThreadTyping,
@@ -28,6 +38,7 @@ import {
   setCustomerAwaiting,
   useTypingSource,
 } from "@/lib/inbox-typing";
+import { leadCategoryLabel } from "@/lib/lead-labels";
 import { useInboxRealtime, type InboxRealtimeEvent } from "@/lib/use-inbox-realtime";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import TypingIndicator from "@/components/inbox/TypingIndicator";
@@ -38,7 +49,7 @@ import {
   type WhatsAppTemplate,
 } from "@/lib/api-whatsapp-templates";
 
-type Filter = "all" | "unread" | "important" | "unknown";
+type Filter = "all" | "unread" | "important" | "mine" | "unknown";
 
 const QUICK_REPLIES = [
   "Thanks for reaching out! How can I help?",
@@ -46,6 +57,8 @@ const QUICK_REPLIES = [
   "Could you share more details?",
   "All set — anything else I can do for you?",
 ];
+
+const REACTION_EMOJIS = ["👍", "❤️", "😂", "🙏", "🎉", "👀"];
 
 /** Cap on the in-memory thread message buffer. Older entries are dropped on
  *  overflow; the server stays the source of truth and the thread is
@@ -143,6 +156,65 @@ function relative(iso: string | null): string {
   return new Date(iso).toLocaleDateString("en", { month: "short", day: "numeric" });
 }
 
+/** Time until an ISO instant, for the auto-resume countdown. Unlike
+ *  `relative` this counts forward, and "due now" is meaningful: the sweep may
+ *  simply not have run yet, so it must not read as if the AI already resumed. */
+function remaining(iso: string | null): string {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
+  const mins = Math.round((then - Date.now()) / 60000);
+  if (mins <= 0) return "due now";
+  if (mins < 60) return `in ${mins}m`;
+  const hours = Math.floor(mins / 60);
+  const rest = mins % 60;
+  if (hours < 24) return `in ${hours}h${rest ? ` ${rest}m` : ""}`;
+  const days = Math.floor(hours / 24);
+  const rem = hours % 24;
+  return `in ${days}d${rem ? ` ${rem}h` : ""}`;
+}
+
+/** Elapsed time for the escalation chip. `relative` returns a bare magnitude
+ *  used elsewhere ("12m"), which would read "now ago" here. */
+function ago(iso: string | null): string {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
+  const mins = Math.round((Date.now() - then) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+/** Reminder state for an escalated thread. A NULL reminder next to a sent
+ *  escalation means the reminder already fired — the sweep nulls it — not that
+ *  none was ever armed. */
+function reminderLabel(state: ThreadState): string {
+  if (!state.escalated_at) return "Escalation email not delivered";
+  const at = state.escalation_reminder_at;
+  if (!at) return "Reminder already sent";
+  return remaining(at) === "due now" ? "Reminder due" : `Reminder ${remaining(at)}`;
+}
+
+/** Extract lat/lng from the common Google Maps link shapes. */
+function coordsFromMapsLink(link: string): { lat: number; lng: number } | null {
+  const patterns = [
+    /@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/,
+    /[?&]q=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/,
+    /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/,
+  ];
+  for (const pattern of patterns) {
+    const match = link.match(pattern);
+    if (!match) continue;
+    const lat = Number(match[1]);
+    const lng = Number(match[2]);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+  }
+  return null;
+}
+
 function clockTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
@@ -224,6 +296,7 @@ function replyWindowOpen(thread: InboxThread | null): boolean {
 
 export default function InboxView() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const [threads, setThreads] = useState<InboxThread[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -243,6 +316,38 @@ export default function InboxView() {
   const [threadState, setThreadState] = useState<ThreadState | null>(null);
   const [modeBusy, setModeBusy] = useState(false);
   const [modeError, setModeError] = useState<string | null>(null);
+  const [replyTo, setReplyTo] = useState<InboxMessage | null>(null);
+  const [reactingTo, setReactingTo] = useState<string | null>(null);
+  const [reactBusy, setReactBusy] = useState(false);
+  const [richComposer, setRichComposer] = useState<
+    "location" | "contact" | "document" | "sticker" | null
+  >(null);
+  const [richBusy, setRichBusy] = useState(false);
+  const [locName, setLocName] = useState("");
+  const [locAddress, setLocAddress] = useState("");
+  const [locLat, setLocLat] = useState("");
+  const [locLng, setLocLng] = useState("");
+  const [locMaps, setLocMaps] = useState("");
+  const [cardName, setCardName] = useState("");
+  const [cardPhone, setCardPhone] = useState("");
+  const [cardEmail, setCardEmail] = useState("");
+  const [docFile, setDocFile] = useState<File | null>(null);
+  const [docCaption, setDocCaption] = useState("");
+  const [stickerFile, setStickerFile] = useState<File | null>(null);
+  const [assigneeBusy, setAssigneeBusy] = useState(false);
+  const [assigneeError, setAssigneeError] = useState<string | null>(null);
+  // The escalation clock is live: while an escalated thread is open, tick
+  // every 30s so "AI resumes in 23h 48m" does not freeze at whatever it said
+  // when the thread was opened.
+  const [, setEscalationTick] = useState(0);
+  useEffect(() => {
+    if (threadState?.priority !== "important") return;
+    const id = window.setInterval(
+      () => setEscalationTick((n) => n + 1),
+      30_000,
+    );
+    return () => window.clearInterval(id);
+  }, [threadState?.priority]);
   // Templates: the only legal send once Meta's 24h window has closed.
   const [templates, setTemplates] = useState<WhatsAppTemplate[] | null>(null);
   const [templateOpen, setTemplateOpen] = useState(false);
@@ -325,10 +430,208 @@ export default function InboxView() {
               mode: state.mode,
               mode_changed_at: state.mode_changed_at,
               mode_changed_by: state.mode_changed_by,
+              assigned_to: state.assigned_to ?? null,
+              assigned_at: state.assigned_at ?? null,
+              assignee_name: state.assignee_name ?? null,
             }
           : t,
       ),
     );
+  };
+
+  const react = async (message: InboxMessage, emoji: string) => {
+    if (reactBusy) return;
+    setReactBusy(true);
+    setSendError(null);
+    try {
+      const result = await reactToInboxMessage(message.id, emoji);
+      setMessages((prev) =>
+        prev.some((m) => m.id === result.message.id)
+          ? prev
+          : [...prev, result.message],
+      );
+      setReactingTo(null);
+      if (!result.sent) {
+        setSendError(result.error || "WhatsApp rejected the reaction.");
+      }
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : "Could not send the reaction.");
+    } finally {
+      setReactBusy(false);
+    }
+  };
+
+  const removeMessage = async (message: InboxMessage) => {
+    if (
+      !window.confirm(
+        "Remove this message from the inbox? The customer will still see it on their phone.",
+      )
+    ) {
+      return;
+    }
+    setSendError(null);
+    try {
+      const updated = await removeInboxMessage(message.id);
+      setMessages((prev) =>
+        prev.map((m) => (m.id === updated.id ? updated : m)),
+      );
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : "Could not remove the message.");
+    }
+  };
+
+  const openRichComposer = (
+    kind: "location" | "contact" | "document" | "sticker",
+  ) => {
+    setRichComposer(kind);
+    setSendError(null);
+    if (kind === "location") {
+      setLocName("");
+      setLocAddress("");
+      setLocLat("");
+      setLocLng("");
+      setLocMaps("");
+    } else if (kind === "contact") {
+      setCardName("");
+      setCardPhone("");
+      setCardEmail("");
+    } else if (kind === "document") {
+      setDocFile(null);
+      setDocCaption("");
+    } else {
+      setStickerFile(null);
+    }
+  };
+
+  const appendRichMessage = (message: InboxMessage) => {
+    setMessages((prev) =>
+      prev.some((m) => m.id === message.id) ? prev : [...prev, message],
+    );
+    void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] });
+  };
+
+  const sendLocationCard = async () => {
+    const thread = target;
+    if (!thread?.contact_phone || richBusy) return;
+    const lat = Number(locLat);
+    const lng = Number(locLng);
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+      setSendError("Enter a latitude between -90 and 90.");
+      return;
+    }
+    if (!Number.isFinite(lng) || lng < -180 || lng > 180) {
+      setSendError("Enter a longitude between -180 and 180.");
+      return;
+    }
+    setRichBusy(true);
+    setSendError(null);
+    try {
+      const result = await sendInboxLocation({
+        channelId: thread.channel_id,
+        contactPhone: thread.contact_phone,
+        latitude: lat,
+        longitude: lng,
+        name: locName.trim() || null,
+        address: locAddress.trim() || null,
+      });
+      if (!result.sent) {
+        setSendError(result.error || "WhatsApp rejected the location.");
+        return;
+      }
+      appendRichMessage(result.message);
+      setRichComposer(null);
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : "Could not send the location.");
+    } finally {
+      setRichBusy(false);
+    }
+  };
+
+  const sendContactCard = async () => {
+    const thread = target;
+    if (!thread?.contact_phone || richBusy) return;
+    if (!cardName.trim() || !cardPhone.trim()) {
+      setSendError("A contact card needs a name and a phone number.");
+      return;
+    }
+    setRichBusy(true);
+    setSendError(null);
+    try {
+      const result = await sendInboxContact({
+        channelId: thread.channel_id,
+        contactPhone: thread.contact_phone,
+        name: cardName.trim(),
+        phone: cardPhone.trim(),
+        email: cardEmail.trim() || null,
+      });
+      if (!result.sent) {
+        setSendError(result.error || "WhatsApp rejected the contact card.");
+        return;
+      }
+      appendRichMessage(result.message);
+      setRichComposer(null);
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : "Could not send the contact card.");
+    } finally {
+      setRichBusy(false);
+    }
+  };
+
+  const sendDocumentFile = async () => {
+    const thread = target;
+    if (!thread?.contact_phone || richBusy) return;
+    if (!docFile) {
+      setSendError("Choose a document to send.");
+      return;
+    }
+    setRichBusy(true);
+    setSendError(null);
+    try {
+      const result = await sendInboxDocument({
+        channelId: thread.channel_id,
+        contactPhone: thread.contact_phone,
+        file: docFile,
+        caption: docCaption.trim() || null,
+      });
+      if (!result.sent) {
+        setSendError(result.error || "WhatsApp rejected the document.");
+        return;
+      }
+      appendRichMessage(result.message);
+      setRichComposer(null);
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : "Could not send the document.");
+    } finally {
+      setRichBusy(false);
+    }
+  };
+
+  const sendStickerFile = async () => {
+    const thread = target;
+    if (!thread?.contact_phone || richBusy) return;
+    if (!stickerFile) {
+      setSendError("Choose a WebP sticker to send.");
+      return;
+    }
+    setRichBusy(true);
+    setSendError(null);
+    try {
+      const result = await sendInboxSticker({
+        channelId: thread.channel_id,
+        contactPhone: thread.contact_phone,
+        file: stickerFile,
+      });
+      if (!result.sent) {
+        setSendError(result.error || "WhatsApp rejected the sticker.");
+        return;
+      }
+      appendRichMessage(result.message);
+      setRichComposer(null);
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : "Could not send the sticker.");
+    } finally {
+      setRichBusy(false);
+    }
   };
 
   const handleModeChange = async (thread: InboxThread, next: "ai" | "human") => {
@@ -351,8 +654,31 @@ export default function InboxView() {
     }
   };
 
-  const handleResolve = async (thread: InboxThread) => {
-    if (modeBusy) return;
+  const handleAssignee = async (
+    thread: InboxThread,
+    assignedTo: string | null,
+  ) => {
+    if (assigneeBusy || !thread.contact_phone) return;
+    setAssigneeBusy(true);
+    setAssigneeError(null);
+    try {
+      const state = await assignInboxThread(
+        thread.channel_id,
+        thread.contact_phone,
+        assignedTo,
+      );
+      applyThreadState(thread, state);
+      void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] });
+    } catch (e) {
+      setAssigneeError(
+        e instanceof Error ? e.message : "Could not assign this conversation.",
+      );
+    } finally {
+      setAssigneeBusy(false);
+    }
+  };
+
+  const handleResolve = async (thread: InboxThread) => {    if (modeBusy) return;
     setModeBusy(true);
     setModeError(null);
     try {
@@ -536,6 +862,21 @@ export default function InboxView() {
     [templates],
   );
   const selectedTemplate = approvedTemplates.find((t) => t.id === templateId) ?? null;
+  // Eligible owners for the open conversation. Fetched per channel because
+  // channel access is per teammate; the picker never offers someone who
+  // cannot open the thread.
+  const assigneesQuery = useQuery({
+    queryKey: ["inbox", "assignees", target?.channel_id ?? ""],
+    queryFn: () => fetchAssignees(target!.channel_id),
+    enabled: !!target && !target.is_unknown,
+    staleTime: 60_000,
+  });
+  const assignees = assigneesQuery.data ?? [];
+  const currentAssignee = threadState?.assigned_to ?? target?.assigned_to ?? null;
+  const currentAssigneeName = threadState?.assignee_name ?? target?.assignee_name ?? null;
+  const assigneeNotInList =
+    !!currentAssignee &&
+    !assignees.some((a) => a.user_id === currentAssignee);
   const targetKeyRef = useRef<string | null>(null);
   useEffect(() => {
     targetKeyRef.current = targetKey;
@@ -558,6 +899,26 @@ export default function InboxView() {
       setAiTyping(e.channel_id, e.contact_phone ?? UNKNOWN_THREAD_KEY, e.typing !== false);
       return;
     }
+    // Another tab assigned (or unassigned) the conversation. Update the row
+    // and, when it is the open thread, the owner picker itself.
+    if (e.type === "assignment" && e.channel_id) {
+      const key = e.contact_phone ?? UNKNOWN_THREAD_KEY;
+      const composite = `${e.channel_id}:${key}`;
+      const patch = {
+        assigned_to: e.assigned_to ?? null,
+        assigned_at: e.assigned_at ?? null,
+        assignee_name: e.assignee_name ?? null,
+      };
+      setThreads((prev) =>
+        prev.map((t) =>
+          `${t.channel_id}:${t.key}` === composite ? { ...t, ...patch } : t,
+        ),
+      );
+      if (composite === targetKeyRef.current) {
+        setThreadState((prev) => (prev ? { ...prev, ...patch } : prev));
+      }
+      return;
+    }
     // Another tab switched the conversation between AI and human. Update the
     // row and, when it is the open thread, the mode switch itself.
     if (e.type === "mode" && e.channel_id) {
@@ -577,11 +938,32 @@ export default function InboxView() {
           ),
         );
         if (composite === targetKeyRef.current) {
+          // A system event carries the escalation clock; a manual change on
+          // another tab cleared it (resume_lead or takeover), so fall back to
+          // the defaults rather than leaving a stale countdown on screen.
+          const withClock = e.priority !== undefined;
           setThreadState((prev) => ({
+            ...(prev ?? {
+              mode: e.mode!,
+              mode_changed_at: null,
+              mode_changed_by: null,
+              context: null,
+            }),
             mode: e.mode!,
             mode_changed_at: e.mode_changed_at ?? prev?.mode_changed_at ?? null,
             mode_changed_by: e.mode_changed_by ?? prev?.mode_changed_by ?? null,
-            context: prev?.context ?? null,
+            priority: withClock ? e.priority : "normal",
+            ai_miss_count: withClock ? e.ai_miss_count ?? 0 : 0,
+            priority_since: withClock ? e.priority_since ?? null : null,
+            escalated_at: withClock ? e.escalated_at ?? null : null,
+            escalation_reminder_at: withClock
+              ? e.escalation_reminder_at ?? null
+              : null,
+            handover_sent_at: withClock ? e.handover_sent_at ?? null : null,
+            resume_at: withClock ? e.resume_at ?? null : null,
+            escalation_resume_hours: withClock
+              ? e.escalation_resume_hours ?? 24
+              : 24,
           }));
         }
       }
@@ -606,6 +988,10 @@ export default function InboxView() {
       error: e.error ?? null,
       contact_phone: e.contact_phone ?? null,
       contact_name: e.contact_name ?? null,
+      reply_to_message_id: e.reply_to_message_id ?? null,
+      media_url: e.media_url ?? null,
+      media_mime_type: e.media_mime_type ?? null,
+      media_filename: e.media_filename ?? null,
       created_at: e.created_at ?? new Date().toISOString(),
     };
     if (open) {
@@ -670,6 +1056,9 @@ export default function InboxView() {
         if (!cancelled && requestedKey.current === targetKey) {
           setMessages([]);
           setThreadState(null);
+          setReplyTo(null);
+          setReactingTo(null);
+          setRichComposer(null);
           setLoadedKey(targetKey);
           setError(e instanceof Error ? e.message : "Could not load this conversation.");
         }
@@ -704,6 +1093,7 @@ export default function InboxView() {
     if (!showArchived) rows = rows.filter((t) => !t.archived);
     if (filter === "unread") rows = rows.filter((t) => t.unread > 0);
     if (filter === "important") rows = rows.filter((t) => t.important);
+    if (filter === "mine") rows = rows.filter((t) => !!user && t.assigned_to === user.id);
     if (filter === "unknown") rows = rows.filter((t) => t.is_unknown);
     if (platformFilter !== "all") rows = rows.filter((t) => t.platform === platformFilter);
     return [...rows].sort((a, b) => {
@@ -729,6 +1119,10 @@ export default function InboxView() {
     () => threads.filter((t) => t.important).length,
     [threads],
   );
+  const mineTotal = useMemo(
+    () => (user ? threads.filter((t) => t.assigned_to === user.id).length : 0),
+    [threads, user],
+  );
 
   const threadView = useMemo(() => {
     const q = threadQuery.trim().toLowerCase();
@@ -748,8 +1142,10 @@ export default function InboxView() {
         contactPhone: thread.contact_phone ?? "",
         contactName: thread.display_name,
         content: text,
+        replyToMessageId: replyTo?.id ?? null,
       });
       setDraft("");
+      if (result.sent) setReplyTo(null);
       // The agent answered, so nothing is pending on either side. The realtime
       // socket would clear this too, but a failed send never produces an
       // outbound event — clear here so a rejected message cannot strand dots.
@@ -826,6 +1222,7 @@ export default function InboxView() {
                 { key: "all", label: "All" },
                 { key: "unread", label: `Unread${unreadTotal ? ` (${unreadTotal})` : ""}` },
                 { key: "important", label: `Important${importantTotal ? ` (${importantTotal})` : ""}` },
+                { key: "mine", label: `Mine${mineTotal ? ` (${mineTotal})` : ""}` },
                 { key: "unknown", label: "Unknown" },
               ] as { key: Filter; label: string }[]).map((f) => (
                 <button
@@ -903,6 +1300,25 @@ export default function InboxView() {
                                 <span className="truncate text-[13px] font-semibold text-ink dark:text-fog">
                                   {t.display_name || "Unknown sender"}
                                 </span>
+                                {t.lead_category && (
+                                  <span className="shrink-0 rounded-full border border-ink/[0.08] px-1.5 py-0.5 text-[9px] font-semibold text-ink/60 dark:border-fog/[0.12] dark:text-fog/60">
+                                    {leadCategoryLabel(t.lead_category)}
+                                  </span>
+                                )}
+                                {t.assigned_to && (
+                                  <span
+                                    title={
+                                      t.assigned_to === user?.id
+                                        ? "Assigned to you"
+                                        : `Assigned to ${t.assignee_name ?? "a teammate"}`
+                                    }
+                                    className="shrink-0 text-[9px] font-semibold text-ink/40 dark:text-fog/40"
+                                  >
+                                    {t.assigned_to === user?.id
+                                      ? "You"
+                                      : t.assignee_name ?? "Assigned"}
+                                  </span>
+                                )}
                                 {t.important && (
                                   <span
                                     className="shrink-0 rounded-full bg-[#FF4F6E]/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[#C4304B] dark:bg-[#FF4F6E]/20 dark:text-[#FF8FA3]"
@@ -991,8 +1407,17 @@ export default function InboxView() {
                     <PlatformBadge platform={target.platform} />
                   </Avatar>
                   <span className="min-w-0 flex-1">
-                    <p className="truncate text-[14px] font-semibold text-ink dark:text-fog">
-                      {target.display_name || "Unknown sender"}
+                    <p className="flex min-w-0 items-center gap-1.5 text-[14px] font-semibold text-ink dark:text-fog">
+                      <span className="truncate">
+                        {target.display_name || "Unknown sender"}
+                      </span>
+                      {(threadState?.lead_category ?? target.lead_category) && (
+                        <span className="shrink-0 rounded-full border border-ink/[0.08] px-1.5 py-0.5 text-[9px] font-semibold text-ink/55 dark:border-fog/[0.12] dark:text-fog/55">
+                          {leadCategoryLabel(
+                            threadState?.lead_category ?? target.lead_category,
+                          )}
+                        </span>
+                      )}
                     </p>
                     <p className="truncate text-[11px] text-ink/45 dark:text-fog/45">
                       {/* An IGSID is not a phone number — no formatting. */}
@@ -1003,6 +1428,42 @@ export default function InboxView() {
                     </p>
                   </span>
                 </button>
+                {!target.is_unknown && (
+                  <label className="flex shrink-0 items-center gap-1.5">
+                    <span className="text-[9px] font-bold uppercase tracking-wide text-ink/35 dark:text-fog/35">
+                      Owner
+                    </span>
+                    <select
+                      value={currentAssignee ?? ""}
+                      onChange={(e) =>
+                        void handleAssignee(target, e.target.value || null)
+                      }
+                      disabled={assigneeBusy}
+                      aria-label="Conversation owner"
+                      className="h-7 max-w-[160px] rounded-full border border-ink/[0.08] bg-white px-2 text-[10px] font-semibold text-ink disabled:opacity-50 dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                    >
+                      <option value="">Unassigned</option>
+                      {assigneeNotInList && currentAssignee && (
+                        <option value={currentAssignee}>
+                          {currentAssigneeName ?? "Assigned"}
+                        </option>
+                      )}
+                      {assignees.map((a) => (
+                        <option key={a.user_id} value={a.user_id}>
+                          {a.user_id === user?.id ? `${a.name} (you)` : a.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {assigneeError && (
+                  <span
+                    role="alert"
+                    className="text-[10px] font-medium text-[#C4304B] dark:text-[#FF8FA3]"
+                  >
+                    {assigneeError}
+                  </span>
+                )}
                 {/* Who answers: the same switch the backend uses to mute the
                     AI. Segmented so both states are visible at once — a
                     toggle would hide the fact that a human took over. */}
@@ -1060,24 +1521,81 @@ export default function InboxView() {
                   summary of what has happened so far. The summary is what the
                   AI resumes with, so the human reads the same page. */}
               {activeMode === "human" && (
-                <div className="flex items-center gap-2 border-b border-ink/[0.04] bg-fog/60 px-4 py-2 dark:border-fog/[0.04] dark:bg-fog/[0.05]">
-                  <span className="rounded-full bg-deep-violet px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">
-                    Human
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-[11px] text-ink/60 dark:text-fog/60">
-                    The AI is paused on this conversation.
-                    {threadState?.mode_changed_by === "system"
-                      ? " It was escalated automatically."
-                      : ""}
-                  </span>
-                  <button
-                    type="button"
-                    disabled={modeBusy}
-                    onClick={() => void handleResolve(target)}
-                    className="shrink-0 rounded-full border border-deep-violet/25 px-2.5 py-1 text-[10px] font-bold text-deep-violet transition hover:bg-deep-violet/10 disabled:opacity-50 dark:border-fog/20 dark:text-fog"
-                  >
-                    Resolve
-                  </button>
+                <div className="border-b border-ink/[0.04] bg-fog/60 dark:border-fog/[0.04] dark:bg-fog/[0.05]">
+                  <div className="flex items-center gap-2 px-4 py-2">
+                    <span className="rounded-full bg-deep-violet px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">
+                      Human
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-[11px] text-ink/60 dark:text-fog/60">
+                      The AI is paused on this conversation.
+                      {threadState?.mode_changed_by === "system"
+                        ? " It was escalated automatically."
+                        : ""}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={modeBusy}
+                      onClick={() => void handleResolve(target)}
+                      className="shrink-0 rounded-full border border-deep-violet/25 px-2.5 py-1 text-[10px] font-bold text-deep-violet transition hover:bg-deep-violet/10 disabled:opacity-50 dark:border-fog/20 dark:text-fog"
+                    >
+                      Resolve
+                    </button>
+                  </div>
+
+                  {/* The escalation clock. The mode switch says the AI is
+                      muted; this says why, whether the humans were told, and
+                      exactly when the sweep will hand the thread back — so a
+                      24h window cannot look like a dead bot. */}
+                  {threadState?.priority === "important" && (
+                    <div className="mx-3 mb-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-500/30 dark:bg-amber-500/10">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span
+                          title={
+                            threadState.handover_sent_at
+                              ? "The customer was told a human is taking over."
+                              : "The holding line has not been delivered to the customer."
+                          }
+                          className="rounded-full bg-amber-200/70 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-900 dark:bg-amber-400/20 dark:text-amber-200"
+                        >
+                          Escalated
+                        </span>
+                        <span className="text-[11px] font-medium text-amber-900 dark:text-amber-200">
+                          {threadState.priority_since
+                            ? ago(threadState.priority_since)
+                            : "time unknown"}
+                          {threadState.ai_miss_count
+                            ? ` · ${threadState.ai_miss_count} missed ${
+                                threadState.ai_miss_count === 1 ? "turn" : "turns"
+                              }`
+                            : " · flagged urgent"}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={modeBusy}
+                          onClick={() => void handleModeChange(target, "ai")}
+                          title="Skip the scheduled resume and hand this thread back to the AI now."
+                          className="ml-auto shrink-0 rounded-full bg-deep-violet px-3 py-1 text-[10px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-50"
+                        >
+                          Resume AI now
+                        </button>
+                      </div>
+                      <p className="mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-amber-900/80 dark:text-amber-200/80">
+                        <span>{reminderLabel(threadState)}</span>
+                        <span aria-hidden>·</span>
+                        <span>
+                          {threadState.resume_at
+                            ? `AI resumes automatically ${remaining(threadState.resume_at)}`
+                            : "No automatic resume scheduled"}
+                        </span>
+                        {threadState.resume_at && (
+                          <>
+                            <span aria-hidden>·</span>
+                            <span>{threadState.escalation_resume_hours ?? 24}h window</span>
+                          </>
+                        )}
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1124,7 +1642,40 @@ export default function InboxView() {
                       i === 0 ||
                       new Date(threadView[i - 1].created_at).toDateString() !== new Date(m.created_at).toDateString();
                     const mine = m.direction === "outbound";
+                    const quotedMessage = m.reply_to_message_id
+                      ? messages.find(
+                          (x) => x.platform_message_id === m.reply_to_message_id,
+                        ) ?? null
+                      : null;
+                    const mediaSrc = resolveMediaUrl(m.media_url);
+                    const isImageAttachment =
+                      !!mediaSrc &&
+                      (m.content_type === "image" || m.content_type === "sticker");
+                    const isDocumentAttachment =
+                      !!mediaSrc && m.content_type === "document";
+                    const isPlaceholder = /^\[[a-z]+ message\]$/.test(m.content);
+                    const missingMediaLabel =
+                      m.content_type === "image"
+                        ? "Image attachment could not be loaded"
+                        : m.content_type === "document"
+                          ? "Document attachment could not be loaded"
+                          : m.content_type === "sticker"
+                            ? "Sticker could not be loaded"
+                            : m.content_type === "video"
+                              ? "Video message"
+                              : m.content;
+                    const attachmentText =
+                      m.content_type === "sticker" && mediaSrc
+                        ? ""
+                        : isDocumentAttachment && m.content === m.media_filename
+                          ? ""
+                          : isPlaceholder
+                            ? mediaSrc
+                              ? ""
+                              : missingMediaLabel
+                            : m.content;
                     if (m.content_type === "reaction") {
+                      if (!m.content) return null;
                       const emoji = m.content.startsWith("[") ? "👍" : m.content;
                       return (
                         <div key={m.id}>
@@ -1145,13 +1696,13 @@ export default function InboxView() {
                       );
                     }
                     return (
-                      <div key={m.id}>
+                      <div key={m.id} className="group">
                         {showDay && (
                           <p className="my-3 text-center text-[11px] font-semibold text-ink/30 dark:text-fog/30">
                             {dayLabel(m.created_at)}
                           </p>
                         )}
-                        <div className={`mb-2 flex ${mine ? "justify-end" : "justify-start"}`}>
+                        <div className={`mb-1 flex ${mine ? "justify-end" : "justify-start"}`}>
                           <div
                             className={`max-w-[78%] rounded-2xl px-3 py-2 ${
                               mine
@@ -1161,7 +1712,122 @@ export default function InboxView() {
                                 : "bg-ink/[0.05] text-ink dark:bg-fog/[0.08] dark:text-fog"
                             }`}
                           >
-                            <p className="whitespace-pre-wrap break-words text-[13px]">{m.content}</p>
+                            {m.deleted ? (
+                              <p className="text-[12px] italic opacity-60">
+                                Message removed from this inbox
+                              </p>
+                            ) : (
+                              <>
+                                {quotedMessage && (
+                                  <div
+                                    className={`mb-1.5 rounded-lg border-l-2 px-2 py-1 ${
+                                      mine
+                                        ? "border-white/40 bg-white/10"
+                                        : "border-deep-violet/30 bg-deep-violet/[0.06]"
+                                    }`}
+                                  >
+                                    <p
+                                      className={`text-[10px] font-bold ${
+                                        mine
+                                          ? "text-white/70"
+                                          : "text-deep-violet/70 dark:text-fog/60"
+                                      }`}
+                                    >
+                                      {quotedMessage.direction === "outbound"
+                                        ? "You"
+                                        : target?.display_name || "Customer"}
+                                    </p>
+                                    <p
+                                      className={`truncate text-[11px] ${
+                                        mine
+                                          ? "text-white/70"
+                                          : "text-ink/55 dark:text-fog/55"
+                                      }`}
+                                    >
+                                      {quotedMessage.deleted
+                                        ? "Message removed"
+                                        : quotedMessage.media_url
+                                          ? quotedMessage.media_filename ||
+                                            (quotedMessage.content_type === "sticker"
+                                              ? "Sticker"
+                                              : "Attachment")
+                                          : quotedMessage.content || "…"}
+                                    </p>
+                                  </div>
+                                )}
+                                {m.content_type === "location" ||
+                                m.content_type === "contact" ||
+                                m.content_type === "contacts" ? (
+                                  <p
+                                    className={`mb-1 text-[10px] font-bold uppercase tracking-wide ${
+                                      mine
+                                        ? "text-white/70"
+                                        : "text-ink/45 dark:text-fog/45"
+                                    }`}
+                                  >
+                                    {m.content_type === "location"
+                                      ? "Location"
+                                      : "Contact card"}
+                                  </p>
+                                ) : null}
+                                {isImageAttachment && mediaSrc ? (
+                                  <a
+                                    href={mediaSrc}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="mb-1 block"
+                                  >
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img
+                                      src={mediaSrc}
+                                      alt={
+                                        m.media_filename ||
+                                        (m.content_type === "sticker"
+                                          ? "Sticker"
+                                          : "Image attachment")
+                                      }
+                                      className={
+                                        m.content_type === "sticker"
+                                          ? "h-32 w-32 object-contain"
+                                          : "max-h-72 w-auto max-w-full rounded-lg object-contain"
+                                      }
+                                    />
+                                  </a>
+                                ) : null}
+                                {isDocumentAttachment && mediaSrc ? (
+                                  <a
+                                    href={mediaSrc}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    download={m.media_filename ?? undefined}
+                                    className={`mb-1 flex max-w-full items-center gap-2 rounded-lg px-2.5 py-2 ${
+                                      mine
+                                        ? "bg-white/15 text-white"
+                                        : "bg-white/70 text-ink dark:bg-ink/40 dark:text-fog"
+                                    }`}
+                                  >
+                                    <span aria-hidden className="text-[18px]">📄</span>
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block truncate text-[12px] font-semibold">
+                                        {m.media_filename || "Document"}
+                                      </span>
+                                      <span
+                                        className={`text-[10px] ${
+                                          mine ? "text-white/70" : "text-ink/50 dark:text-fog/50"
+                                        }`}
+                                      >
+                                        Download document
+                                      </span>
+                                    </span>
+                                  </a>
+                                ) : null}
+                                {attachmentText ? (
+                                  <p className="whitespace-pre-wrap break-words text-[13px]">
+                                    {attachmentText}
+                                  </p>
+                                ) : null}
+                              </>
+                            )}
                             <p
                               className={`mt-1 flex items-center justify-end gap-1 text-[10px] ${
                                 mine ? (m.status === "failed" ? "text-red-500" : "text-white/70") : "text-ink/35 dark:text-fog/35"
@@ -1178,6 +1844,60 @@ export default function InboxView() {
                             )}
                           </div>
                         </div>
+                        {!m.deleted && (
+                          <div
+                            className={`mb-2 flex items-center gap-1 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100 ${
+                              mine ? "justify-end" : "justify-start"
+                            }`}
+                          >
+                            {target?.platform === "whatsapp" && (
+                              <button
+                                type="button"
+                                onClick={() => setReplyTo(m)}
+                                className="rounded-full px-2 py-0.5 text-[10px] font-semibold text-ink/45 transition hover:bg-ink/[0.05] hover:text-ink dark:text-fog/45 dark:hover:bg-fog/[0.08] dark:hover:text-fog"
+                              >
+                                Reply
+                              </button>
+                            )}
+                            {!mine && target?.platform === "whatsapp" && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setReactingTo(reactingTo === m.id ? null : m.id)
+                                }
+                                className="rounded-full px-2 py-0.5 text-[10px] font-semibold text-ink/45 transition hover:bg-ink/[0.05] hover:text-ink dark:text-fog/45 dark:hover:bg-fog/[0.08] dark:hover:text-fog"
+                              >
+                                React
+                              </button>
+                            )}
+                            {mine && (
+                              <button
+                                type="button"
+                                onClick={() => void removeMessage(m)}
+                                title="Removes it from this inbox only — the customer still has it."
+                                className="rounded-full px-2 py-0.5 text-[10px] font-semibold text-ink/45 transition hover:bg-red-50 hover:text-red-600 dark:text-fog/45 dark:hover:bg-red-950/30 dark:hover:text-red-300"
+                              >
+                                Remove
+                              </button>
+                            )}
+                          </div>
+                        )}
+                        {reactingTo === m.id && !mine && (
+                          <div className="mb-2 flex justify-start gap-1">
+                            {REACTION_EMOJIS.map((emoji) => (
+                              <button
+                                key={emoji}
+                                type="button"
+                                disabled={reactBusy}
+                                onClick={() => void react(m, emoji)}
+                                aria-label={`React with ${emoji}`}
+                                className="rounded-full border border-ink/[0.08] bg-white px-2 py-1 text-[16px] leading-5 transition hover:bg-ink/[0.04] disabled:opacity-50 dark:border-fog/[0.12] dark:bg-ink"
+                              >
+                                {emoji}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     );
                   })
@@ -1196,6 +1916,29 @@ export default function InboxView() {
                     {sendError}
                   </p>
                 )}
+                {replyTo && (
+                  <div className="mb-2 flex items-start gap-2 rounded-xl border-l-2 border-deep-violet bg-deep-violet/[0.05] px-3 py-2 dark:bg-fog/[0.06]">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[9px] font-bold uppercase tracking-wide text-deep-violet/70 dark:text-fog/60">
+                        Replying to{" "}
+                        {replyTo.direction === "outbound"
+                          ? "your message"
+                          : target?.display_name || "the customer"}
+                      </p>
+                      <p className="truncate text-[11px] text-ink/60 dark:text-fog/60">
+                        {replyTo.content || "…"}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setReplyTo(null)}
+                      aria-label="Cancel reply"
+                      className="shrink-0 rounded-full px-1.5 text-[14px] leading-5 text-ink/40 hover:text-ink dark:text-fog/40 dark:hover:text-fog"
+                    >
+                      ×
+                    </button>
+                  </div>
+                )}
                 <div className="mb-2 flex gap-1.5 overflow-x-auto">
                   {QUICK_REPLIES.map((q) => (
                     <button
@@ -1207,6 +1950,38 @@ export default function InboxView() {
                     </button>
                   ))}
                 </div>
+                {target?.platform === "whatsapp" && (
+                  <div className="mb-2 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => openRichComposer("location")}
+                      className="rounded-full border border-ink/[0.08] px-2.5 py-1 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet/40 hover:text-deep-violet dark:border-fog/[0.1] dark:text-fog/60"
+                    >
+                      📍 Send location
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openRichComposer("contact")}
+                      className="rounded-full border border-ink/[0.08] px-2.5 py-1 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet/40 hover:text-deep-violet dark:border-fog/[0.1] dark:text-fog/60"
+                    >
+                      👤 Send contact
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openRichComposer("document")}
+                      className="rounded-full border border-ink/[0.08] px-2.5 py-1 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet/40 hover:text-deep-violet dark:border-fog/[0.1] dark:text-fog/60"
+                    >
+                      📎 Send document
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openRichComposer("sticker")}
+                      className="rounded-full border border-ink/[0.08] px-2.5 py-1 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet/40 hover:text-deep-violet dark:border-fog/[0.1] dark:text-fog/60"
+                    >
+                      🩷 Send sticker
+                    </button>
+                  </div>
+                )}
                 {target.is_unknown ? (
                   <p className="text-[12px] text-ink/45 dark:text-fog/45">
                     These messages predate contact tracking, so there is no number to reply to.
@@ -1453,6 +2228,191 @@ export default function InboxView() {
                 className="rounded-[2px] bg-red-600 px-3 py-1.5 text-[12px] font-bold text-white"
               >
                 Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {richComposer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl dark:bg-ink">
+            <h2 className="text-[15px] font-bold text-ink dark:text-fog">
+              {richComposer === "location"
+                ? "Send a location"
+                : richComposer === "contact"
+                  ? "Send a contact card"
+                  : richComposer === "document"
+                    ? "Send a document"
+                    : "Send a sticker"}
+            </h2>
+            <p className="mt-1 text-[12px] text-ink/55 dark:text-fog/55">
+              {richComposer === "location"
+                ? "The customer gets a native map card, not a link."
+                : richComposer === "contact"
+                  ? "The customer gets a native contact card they can save."
+                  : richComposer === "document"
+                    ? "The customer gets the file as a native WhatsApp document."
+                    : "WebP only, under 500 KB — WhatsApp's sticker format."}
+            </p>
+
+            {richComposer === "location" ? (
+              <div className="mt-3 space-y-2">
+                <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
+                  Google Maps link (optional — fills the coordinates)
+                  <input
+                    value={locMaps}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setLocMaps(value);
+                      const coords = coordsFromMapsLink(value);
+                      if (coords) {
+                        setLocLat(String(coords.lat));
+                        setLocLng(String(coords.lng));
+                      }
+                    }}
+                    placeholder="https://maps.google.com/.../@24.7136,46.6753,17z"
+                    className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                  />
+                </label>
+                <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
+                  Place name
+                  <input
+                    value={locName}
+                    onChange={(e) => setLocName(e.target.value)}
+                    placeholder="Aster Coffee — Olaya"
+                    className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                  />
+                </label>
+                <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
+                  Address
+                  <input
+                    value={locAddress}
+                    onChange={(e) => setLocAddress(e.target.value)}
+                    placeholder="Olaya St, Riyadh"
+                    className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                  />
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
+                    Latitude
+                    <input
+                      value={locLat}
+                      onChange={(e) => setLocLat(e.target.value)}
+                      inputMode="decimal"
+                      placeholder="24.7136"
+                      className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] tabular-nums text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                    />
+                  </label>
+                  <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
+                    Longitude
+                    <input
+                      value={locLng}
+                      onChange={(e) => setLocLng(e.target.value)}
+                      inputMode="decimal"
+                      placeholder="46.6753"
+                      className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] tabular-nums text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                    />
+                  </label>
+                </div>
+              </div>
+            ) : richComposer === "contact" ? (
+              <div className="mt-3 space-y-2">
+                <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
+                  Name
+                  <input
+                    value={cardName}
+                    onChange={(e) => setCardName(e.target.value)}
+                    placeholder="Aster Coffee"
+                    className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                  />
+                </label>
+                <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
+                  Phone
+                  <input
+                    value={cardPhone}
+                    onChange={(e) => setCardPhone(e.target.value)}
+                    placeholder="+966 50 000 0000"
+                    className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                  />
+                </label>
+                <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
+                  Email (optional)
+                  <input
+                    value={cardEmail}
+                    onChange={(e) => setCardEmail(e.target.value)}
+                    type="email"
+                    placeholder="hello@example.com"
+                    className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                  />
+                </label>
+              </div>
+            ) : richComposer === "document" ? (
+              <div className="mt-3 space-y-2">
+                <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
+                  File (PDF, invoice, menu, spreadsheet — under 32 MB)
+                  <input
+                    type="file"
+                    onChange={(e) => setDocFile(e.target.files?.[0] ?? null)}
+                    className="mt-1 block w-full text-[12px] text-ink/70 file:mr-2 file:rounded-full file:border-0 file:bg-deep-violet/[0.08] file:px-3 file:py-1.5 file:text-[11px] file:font-semibold file:text-deep-violet dark:text-fog/70 dark:file:bg-fog/[0.1] dark:file:text-fog"
+                  />
+                </label>
+                {docFile && (
+                  <p className="text-[11px] text-ink/50 dark:text-fog/50">
+                    {docFile.name} · {(docFile.size / (1024 * 1024)).toFixed(1)} MB
+                  </p>
+                )}
+                <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
+                  Caption (optional)
+                  <input
+                    value={docCaption}
+                    onChange={(e) => setDocCaption(e.target.value)}
+                    placeholder="Your invoice for order #1234"
+                    className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                  />
+                </label>
+              </div>
+            ) : (
+              <div className="mt-3 space-y-2">
+                <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
+                  Sticker file (.webp, 512×512, under 500 KB)
+                  <input
+                    type="file"
+                    accept="image/webp,.webp"
+                    onChange={(e) => setStickerFile(e.target.files?.[0] ?? null)}
+                    className="mt-1 block w-full text-[12px] text-ink/70 file:mr-2 file:rounded-full file:border-0 file:bg-deep-violet/[0.08] file:px-3 file:py-1.5 file:text-[11px] file:font-semibold file:text-deep-violet dark:text-fog/70 dark:file:bg-fog/[0.1] dark:file:text-fog"
+                  />
+                </label>
+                {stickerFile && (
+                  <p className="text-[11px] text-ink/50 dark:text-fog/50">
+                    {stickerFile.name} · {(stickerFile.size / 1024).toFixed(0)} KB
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setRichComposer(null)}
+                className="rounded-full border border-[var(--ui-line)] px-3 py-1.5 text-[12px] font-medium text-ink/70 dark:text-fog/70"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={richBusy}
+                onClick={() =>
+                  void (richComposer === "location"
+                    ? sendLocationCard()
+                    : richComposer === "contact"
+                      ? sendContactCard()
+                      : richComposer === "document"
+                        ? sendDocumentFile()
+                        : sendStickerFile())
+                }
+                className="rounded-full bg-deep-violet px-4 py-1.5 text-[12px] font-bold text-white disabled:opacity-50"
+              >
+                {richBusy ? "Sending…" : "Send"}
               </button>
             </div>
           </div>

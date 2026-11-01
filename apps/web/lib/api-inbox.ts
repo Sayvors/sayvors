@@ -28,7 +28,12 @@ export interface InboxThread {
   category?: string | null;
   /** urgent | high | normal | low */
   priority?: string | null;
-  /** Who answers this conversation. "human" mutes the AI. */
+  /** Canonical lead label for the conversation, when a lead exists. */
+  lead_category?: string | null;
+  /** The human owner. NULL = unassigned. */
+  assigned_to?: string | null;
+  assigned_at?: string | null;
+  assignee_name?: string | null;  /** Who answers this conversation. "human" mutes the AI. */
   mode?: "ai" | "human";
   mode_changed_at?: string | null;
   /** "system" for the automatic escalation, otherwise the acting user id. */
@@ -67,6 +72,22 @@ export interface ThreadState {
   opt_in_at?: string | null;
   opt_in_source?: string | null;
   opted_out?: boolean;
+  /** Escalation clock — why the AI stopped and when it takes over again. */
+  priority?: "normal" | "important";
+  ai_miss_count?: number;
+  /** Canonical lead label, refreshed with the thread state. */
+  lead_category?: string | null;
+  /** Who owns the conversation. */
+  assigned_to?: string | null;
+  assigned_at?: string | null;
+  assignee_name?: string | null;
+  priority_since?: string | null;
+  escalated_at?: string | null;
+  escalation_reminder_at?: string | null;
+  handover_sent_at?: string | null;
+  /** priority_since + escalation_resume_hours; null unless escalated. */
+  resume_at?: string | null;
+  escalation_resume_hours?: number;
 }
 
 export interface InboxMessage {
@@ -80,6 +101,15 @@ export interface InboxMessage {
   error: string | null;
   contact_phone: string | null;
   contact_name: string | null;
+  /** The wamid this message quotes, when it is a contextual reply. */
+  reply_to_message_id?: string | null;
+  /** Locally removed from this inbox; the customer still has it. */
+  deleted_at?: string | null;
+  deleted?: boolean;
+  /** Authenticated inbox route for a stored attachment. */
+  media_url?: string | null;
+  media_mime_type?: string | null;
+  media_filename?: string | null;
   created_at: string;
 }
 
@@ -151,6 +181,15 @@ export async function setInboxThreadMode(
   )) as ThreadState;
 }
 
+/** One eligible owner for a channel, as returned by the assignee picker. */
+export interface Assignee {
+  user_id: string;
+  name: string;
+  email: string;
+  role_name: string;
+  is_owner: boolean;
+}
+
 /** Close the human session and hand the thread back to the AI. */
 export async function resolveInboxThread(
   channelId: string,
@@ -163,12 +202,36 @@ export async function resolveInboxThread(
   )) as ThreadState;
 }
 
+/** People who can own a conversation on this channel (owner first). */
+export async function fetchAssignees(channelId: string): Promise<Assignee[]> {
+  const data = (await apiFetch(
+    `/api/v1/inbox/assignees?channel_id=${encodeURIComponent(channelId)}`,
+  )) as { assignees?: Assignee[] };
+  return data.assignees ?? [];
+}
+
+/** Set or clear the conversation owner. Null unassigns. */
+export async function assignInboxThread(
+  channelId: string,
+  contactPhone: string,
+  assignedTo: string | null,
+): Promise<ThreadState> {
+  return (await apiFetch(
+    `/api/v1/inbox/threads/${encodeURIComponent(channelId)}/${encodeURIComponent(contactPhone)}/assignee`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ assigned_to: assignedTo }),
+    },
+  )) as ThreadState;
+}
+
 /** Throws with the provider's reason so the thread can show it as failed. */
 export async function sendInboxMessage(params: {
   channelId: string;
   contactPhone: string;
   contactName?: string | null;
   content: string;
+  replyToMessageId?: string | null;
 }): Promise<InboxSendResult> {
   return (await apiFetch("/api/v1/inbox/send", {
     method: "POST",
@@ -177,6 +240,107 @@ export async function sendInboxMessage(params: {
       contact_phone: params.contactPhone,
       contact_name: params.contactName ?? null,
       content: params.content,
+      reply_to_message_id: params.replyToMessageId ?? null,
     }),
   })) as InboxSendResult;
+}
+
+/** Send a native WhatsApp location card. */
+export async function sendInboxLocation(params: {
+  channelId: string;
+  contactPhone: string;
+  latitude: number;
+  longitude: number;
+  name?: string | null;
+  address?: string | null;
+}): Promise<InboxSendResult> {
+  return (await apiFetch("/api/v1/inbox/send-location", {
+    method: "POST",
+    body: JSON.stringify({
+      channel_id: params.channelId,
+      contact_phone: params.contactPhone,
+      latitude: params.latitude,
+      longitude: params.longitude,
+      name: params.name ?? null,
+      address: params.address ?? null,
+    }),
+  })) as InboxSendResult;
+}
+
+/** Send a native WhatsApp contact card. */
+export async function sendInboxContact(params: {
+  channelId: string;
+  contactPhone: string;
+  name: string;
+  phone: string;
+  email?: string | null;
+}): Promise<InboxSendResult> {
+  return (await apiFetch("/api/v1/inbox/send-contact", {
+    method: "POST",
+    body: JSON.stringify({
+      channel_id: params.channelId,
+      contact_phone: params.contactPhone,
+      name: params.name,
+      phone: params.phone,
+      email: params.email ?? null,
+    }),
+  })) as InboxSendResult;
+}
+
+/** Send a document (PDF, invoice, menu) as a native WhatsApp attachment. */
+export async function sendInboxDocument(params: {
+  channelId: string;
+  contactPhone: string;
+  file: File;
+  caption?: string | null;
+}): Promise<InboxSendResult> {
+  const form = new FormData();
+  form.append("channel_id", params.channelId);
+  form.append("contact_phone", params.contactPhone);
+  form.append("caption", params.caption ?? "");
+  form.append("file", params.file);
+  return (await apiFetch("/api/v1/inbox/send-document", {
+    method: "POST",
+    body: form,
+  })) as InboxSendResult;
+}
+
+/** Send a WebP sticker. */
+export async function sendInboxSticker(params: {
+  channelId: string;
+  contactPhone: string;
+  file: File;
+}): Promise<InboxSendResult> {
+  const form = new FormData();
+  form.append("channel_id", params.channelId);
+  form.append("contact_phone", params.contactPhone);
+  form.append("file", params.file);
+  return (await apiFetch("/api/v1/inbox/send-sticker", {
+    method: "POST",
+    body: form,
+  })) as InboxSendResult;
+}
+
+/** React to a message; an empty emoji removes this business's reaction. */
+export async function reactToInboxMessage(
+  messageId: string,
+  emoji: string,
+): Promise<InboxSendResult> {
+  return (await apiFetch(
+    `/api/v1/inbox/messages/${encodeURIComponent(messageId)}/reaction`,
+    {
+      method: "POST",
+      body: JSON.stringify({ emoji }),
+    },
+  )) as InboxSendResult;
+}
+
+/** Remove one message from this inbox. Not a WhatsApp retraction. */
+export async function removeInboxMessage(
+  messageId: string,
+): Promise<InboxMessage> {
+  return (await apiFetch(
+    `/api/v1/inbox/messages/${encodeURIComponent(messageId)}`,
+    { method: "DELETE" },
+  )) as InboxMessage;
 }
