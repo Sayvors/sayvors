@@ -239,6 +239,17 @@ class ChannelThread(Base):
     mode_changed_by: Mapped[str | None] = mapped_column(
         String(64), nullable=True, default=None
     )
+    # Who owns this conversation right now. NULL = unassigned (the normal
+    # state until someone claims an escalated thread). Distinct from
+    # conversation_mode: mode says whether the AI may answer, assignment says
+    # which human is responsible. Indexed for the "mine" filter; the writer is
+    # channels/assignment.py, which also mirrors it onto the lead row.
+    assigned_to: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    assigned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
     channel = relationship("Channel", back_populates="threads")
 
 
@@ -481,6 +492,8 @@ class Lead(Base):
         Index("ix_leads_channel_contact", "channel_id", "contact_id"),
         # Category filter + recency, the leads board's reporting query.
         Index("ix_leads_tenant_category", "tenant_id", "category", "created_at"),
+        # "My leads" scans by owner; tenant first so it stays tenant-scoped.
+        Index("ix_leads_tenant_assigned", "tenant_id", "assigned_to"),
         # Board sort: WHERE tenant_id=? ORDER BY priority DESC, updated_at DESC.
         # Stored (not derived in SQL) so this stays an index scan rather than
         # a full sort of the lead table. See lead_escalation.py.
@@ -576,6 +589,15 @@ class Lead(Base):
     handover_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Unified-inbox thread key, for the lead -> conversation deep link.
     thread_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # The human owner of this lead, mirrored from the conversation thread by
+    # channels/assignment.py. Stored here as well so the leads board, digest
+    # and escalation email do not need a join to answer "whose is this?".
+    assigned_to: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    assigned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
     # ── WhatsApp opt-in (Meta requires a recorded basis before any template) ──
     # Set when the customer explicitly agrees to WhatsApp messages: the
     # Instagram bridge (they tapped and wrote), or an operator recording a
@@ -910,6 +932,8 @@ class ReviewIssue(Base):
         # Ticket queue scans: tenant + status / priority / review.
         Index("ix_review_issues_tenant_status", "tenant_id", "status"),
         Index("ix_review_issues_tenant_priority", "tenant_id", "priority"),
+        # "My tickets" scans by owner.
+        Index("ix_review_issues_tenant_assigned", "tenant_id", "assigned_to"),
         Index("ix_review_issues_tenant_review_id", "tenant_id", "review_id"),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -930,6 +954,16 @@ class ReviewIssue(Base):
     needs_attention: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False, index=True)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="new", server_default="new")
+    # The teammate who owns this ticket. NULL = nobody picked it up yet, which
+    # is the state every escalated review starts in. Written by the reviews
+    # router through channels/assignment.py so the same person is validated
+    # against the same channel-access rules as an inbox assignment.
+    assigned_to: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    assigned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
     reviewer_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     review_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     extractor_version: Mapped[str | None] = mapped_column(String(40), nullable=True)

@@ -37,6 +37,9 @@ class ReviewIssueOut(BaseModel):
     needs_attention: bool
     summary: str | None = None
     status: str
+    # The owner. NULL = the escalated review nobody has picked up yet.
+    assigned_to: str | None = None
+    assigned_at: str | None = None
     reviewer_name: str | None = None
     review_text: str | None = None
     created_at: str
@@ -71,6 +74,10 @@ def _to_out(r) -> ReviewIssueOut:
         needs_attention=bool(r.needs_attention),
         summary=r.summary,
         status=r.status,
+        assigned_to=r.assigned_to,
+        assigned_at=(
+            r.assigned_at.isoformat() if r.assigned_at else None
+        ),
         reviewer_name=r.reviewer_name,
         review_text=r.review_text,
         created_at=r.created_at.isoformat() if r.created_at else "",
@@ -124,6 +131,9 @@ class IssueUpdate(BaseModel):
     primary_category: str | None = None
     priority: str | None = None
     needs_attention: bool | None = None
+    # Distinguish "leave the owner alone" (field omitted) from "unassign"
+    # (field present and null). The router checks model_fields_set.
+    assigned_to: str | None = None
 
 
 # Validated against review_engine.classification's own tuples rather than a
@@ -225,6 +235,21 @@ async def update_review_issue(
         row.subcategory = body.subcategory.strip() or "other"
     if body.needs_attention is not None:
         row.needs_attention = bool(body.needs_attention)
+    if "assigned_to" in body.model_fields_set:
+        from .assignment import AssignmentError, assign_review_issue
+
+        try:
+            await assign_review_issue(
+                db,
+                tenant_id=ctx.tenant_id,
+                issue=row,
+                assignee_id=body.assigned_to or None,
+                actor=ctx.user,
+            )
+        except AssignmentError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
+            )
     db.add(row)
     await db.commit()
     await db.refresh(row)

@@ -49,6 +49,7 @@ export interface InboxRealtimeEvent {
     | "notification"
     | "review_issue"
     | "typing"
+    | "assignment"
     | "mode"
     | "ping";
   notification?: NotificationPayload;
@@ -73,6 +74,10 @@ export interface InboxRealtimeEvent {
   mode?: "ai" | "human";
   mode_changed_at?: string | null;
   mode_changed_by?: string | null;
+  /* assignment events — who owns the conversation now */
+  assigned_to?: string | null;
+  assignee_name?: string | null;
+  assigned_at?: string | null;
   priority?: "normal" | "important";
   ai_miss_count?: number;
   priority_since?: string | null;

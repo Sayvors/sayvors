@@ -894,14 +894,34 @@ def _thread_lead_pairs(threads: list[ChannelThread]) -> set[tuple[str, str]]:
     return pairs
 
 
+async def _thread_assignee_names(
+    db: AsyncSession, threads: list[ChannelThread]
+) -> dict[str, str]:
+    """Display names for the owners on a page of threads, in one query."""
+    ids = {t.assigned_to for t in threads if t.assigned_to}
+    if not ids:
+        return {}
+    rows = (
+        await db.execute(select(User).where(User.id.in_(ids)))
+    ).scalars().all()
+    return {
+        u.id: (
+            f"{u.first_name or ''} {u.last_name or ''}".strip() or u.email
+        )
+        for u in rows
+    }
+
+
 def _thread_payloads(
     threads: list[ChannelThread],
     by_id: dict[str, Channel],
     profiles: dict,
     lead_categories: dict[tuple[str, str], str] | None = None,
+    assignee_names: dict[str, str] | None = None,
 ) -> list[dict]:
     """Serialise thread rows for the inbox response."""
     lead_categories = lead_categories or {}
+    assignee_names = assignee_names or {}
     out: list[dict] = []
     for t in threads:
         ch = by_id.get(t.channel_id)
@@ -945,6 +965,15 @@ def _thread_payloads(
                 "lead_category": (
                     lead_categories.get((t.channel_id, decrypted_phone))
                     if decrypted_phone is not None
+                    else None
+                ),
+                "assigned_to": t.assigned_to,
+                "assigned_at": (
+                    t.assigned_at.isoformat() if t.assigned_at else None
+                ),
+                "assignee_name": (
+                    assignee_names.get(t.assigned_to)
+                    if t.assigned_to
                     else None
                 ),
                 "important": is_important(priority, category),
@@ -1265,7 +1294,10 @@ async def list_inbox_threads(
         lead_categories = await _thread_lead_categories(
             db, tenant_id_of(user), _thread_lead_pairs(threads)
         )
-        return _thread_payloads(threads, by_id, profiles, lead_categories)
+        assignee_names = await _thread_assignee_names(db, threads)
+        return _thread_payloads(
+            threads, by_id, profiles, lead_categories, assignee_names
+        )
 
     # --- Fast path: read from denormalized thread table (1 query) ---
     t_stmt = (
@@ -1293,7 +1325,10 @@ async def list_inbox_threads(
     lead_categories = await _thread_lead_categories(
         db, tenant_id_of(user), _thread_lead_pairs(threads)
     )
-    return _thread_payloads(threads, by_id, profiles, lead_categories)
+    assignee_names = await _thread_assignee_names(db, threads)
+    return _thread_payloads(
+        threads, by_id, profiles, lead_categories, assignee_names
+    )
 
 
 async def list_thread_messages(

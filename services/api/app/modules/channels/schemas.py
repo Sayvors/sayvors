@@ -159,6 +159,10 @@ class ThreadStateOut(BaseModel):
     # Canonical lead label, refreshed with the thread state so the header is
     # correct even when the list row predates the capture.
     lead_category: str | None = None
+    # Who owns the conversation. NULL means nobody claimed it yet.
+    assigned_to: str | None = None
+    assigned_at: str | None = None
+    assignee_name: str | None = None
     priority_since: str | None = None
     escalated_at: str | None = None
     escalation_reminder_at: str | None = None
@@ -205,6 +209,11 @@ class InboxThread(BaseModel):
     # | quote | support | info), when a lead exists. Separate from `category`
     # above, which is the per-message conversation category (complaint, ...).
     lead_category: str | None = None
+    # The human owner. The inbox "mine" filter reads assigned_to; the name is
+    # denormalised into the response so a row renders without a second fetch.
+    assigned_to: str | None = None
+    assigned_at: str | None = None
+    assignee_name: str | None = None
     # Who answers this conversation: "ai" (default) or "human". "human" means
     # the AI is muted, whoever set it.
     mode: str = "ai"
@@ -358,6 +367,10 @@ class LeadOut(BaseModel):
     ai_miss_count: int = 0
     priority_since: str | None = None
     thread_key: str | None = None
+    # Who owns the lead (mirrored from the conversation thread).
+    assigned_to: str | None = None
+    assigned_at: str | None = None
+    assignee_name: str | None = None
     last_message_at: str | None = None
     created_at: str
     updated_at: str

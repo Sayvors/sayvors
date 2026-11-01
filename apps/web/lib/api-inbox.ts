@@ -30,6 +30,10 @@ export interface InboxThread {
   priority?: string | null;
   /** Canonical lead label for the conversation, when a lead exists. */
   lead_category?: string | null;
+  /** The human owner. NULL = unassigned. */
+  assigned_to?: string | null;
+  assigned_at?: string | null;
+  assignee_name?: string | null;
   /** Who answers this conversation. "human" mutes the AI. */
   mode?: "ai" | "human";
   mode_changed_at?: string | null;
@@ -74,6 +78,10 @@ export interface ThreadState {
   ai_miss_count?: number;
   /** Canonical lead label, refreshed with the thread state. */
   lead_category?: string | null;
+  /** Who owns the conversation. */
+  assigned_to?: string | null;
+  assigned_at?: string | null;
+  assignee_name?: string | null;
   priority_since?: string | null;
   escalated_at?: string | null;
   escalation_reminder_at?: string | null;
@@ -165,6 +173,15 @@ export async function setInboxThreadMode(
   )) as ThreadState;
 }
 
+/** One eligible owner for a channel, as returned by the assignee picker. */
+export interface Assignee {
+  user_id: string;
+  name: string;
+  email: string;
+  role_name: string;
+  is_owner: boolean;
+}
+
 /** Close the human session and hand the thread back to the AI. */
 export async function resolveInboxThread(
   channelId: string,
@@ -174,6 +191,29 @@ export async function resolveInboxThread(
   return (await apiFetch(
     `/api/v1/inbox/threads/${encodeURIComponent(channelId)}/${encodeURIComponent(key)}/resolve`,
     { method: "POST" },
+  )) as ThreadState;
+}
+
+/** People who can own a conversation on this channel (owner first). */
+export async function fetchAssignees(channelId: string): Promise<Assignee[]> {
+  const data = (await apiFetch(
+    `/api/v1/inbox/assignees?channel_id=${encodeURIComponent(channelId)}`,
+  )) as { assignees?: Assignee[] };
+  return data.assignees ?? [];
+}
+
+/** Set or clear the conversation owner. Null unassigns. */
+export async function assignInboxThread(
+  channelId: string,
+  contactPhone: string,
+  assignedTo: string | null,
+): Promise<ThreadState> {
+  return (await apiFetch(
+    `/api/v1/inbox/threads/${encodeURIComponent(channelId)}/${encodeURIComponent(contactPhone)}/assignee`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ assigned_to: assignedTo }),
+    },
   )) as ThreadState;
 }
 

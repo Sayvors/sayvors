@@ -10,7 +10,9 @@ import {
   fetchInboxThreads,
   fetchThreadMessages,
   archiveInboxThread,
+  assignInboxThread,
   deleteInboxThread,
+  fetchAssignees,
   pinInboxThread,
   resolveInboxThread,
   sendInboxMessage,
@@ -20,6 +22,7 @@ import {
   type InboxThread,
   type ThreadState,
 } from "@/lib/api-inbox";
+import { useAuth } from "@/lib/auth-context";
 import { platformMeta } from "@/lib/platform";
 import { setActiveThread } from "@/lib/active-thread";
 import {
@@ -39,7 +42,7 @@ import {
   type WhatsAppTemplate,
 } from "@/lib/api-whatsapp-templates";
 
-type Filter = "all" | "unread" | "important" | "unknown";
+type Filter = "all" | "unread" | "important" | "mine" | "unknown";
 
 const QUICK_REPLIES = [
   "Thanks for reaching out! How can I help?",
@@ -267,6 +270,7 @@ function replyWindowOpen(thread: InboxThread | null): boolean {
 
 export default function InboxView() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const [threads, setThreads] = useState<InboxThread[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -286,6 +290,8 @@ export default function InboxView() {
   const [threadState, setThreadState] = useState<ThreadState | null>(null);
   const [modeBusy, setModeBusy] = useState(false);
   const [modeError, setModeError] = useState<string | null>(null);
+  const [assigneeBusy, setAssigneeBusy] = useState(false);
+  const [assigneeError, setAssigneeError] = useState<string | null>(null);
   // The escalation clock is live: while an escalated thread is open, tick
   // every 30s so "AI resumes in 23h 48m" does not freeze at whatever it said
   // when the thread was opened.
@@ -380,6 +386,9 @@ export default function InboxView() {
               mode: state.mode,
               mode_changed_at: state.mode_changed_at,
               mode_changed_by: state.mode_changed_by,
+              assigned_to: state.assigned_to ?? null,
+              assigned_at: state.assigned_at ?? null,
+              assignee_name: state.assignee_name ?? null,
             }
           : t,
       ),
@@ -406,8 +415,31 @@ export default function InboxView() {
     }
   };
 
-  const handleResolve = async (thread: InboxThread) => {
-    if (modeBusy) return;
+  const handleAssignee = async (
+    thread: InboxThread,
+    assignedTo: string | null,
+  ) => {
+    if (assigneeBusy || !thread.contact_phone) return;
+    setAssigneeBusy(true);
+    setAssigneeError(null);
+    try {
+      const state = await assignInboxThread(
+        thread.channel_id,
+        thread.contact_phone,
+        assignedTo,
+      );
+      applyThreadState(thread, state);
+      void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] });
+    } catch (e) {
+      setAssigneeError(
+        e instanceof Error ? e.message : "Could not assign this conversation.",
+      );
+    } finally {
+      setAssigneeBusy(false);
+    }
+  };
+
+  const handleResolve = async (thread: InboxThread) => {    if (modeBusy) return;
     setModeBusy(true);
     setModeError(null);
     try {
@@ -591,6 +623,21 @@ export default function InboxView() {
     [templates],
   );
   const selectedTemplate = approvedTemplates.find((t) => t.id === templateId) ?? null;
+  // Eligible owners for the open conversation. Fetched per channel because
+  // channel access is per teammate; the picker never offers someone who
+  // cannot open the thread.
+  const assigneesQuery = useQuery({
+    queryKey: ["inbox", "assignees", target?.channel_id ?? ""],
+    queryFn: () => fetchAssignees(target!.channel_id),
+    enabled: !!target && !target.is_unknown,
+    staleTime: 60_000,
+  });
+  const assignees = assigneesQuery.data ?? [];
+  const currentAssignee = threadState?.assigned_to ?? target?.assigned_to ?? null;
+  const currentAssigneeName = threadState?.assignee_name ?? target?.assignee_name ?? null;
+  const assigneeNotInList =
+    !!currentAssignee &&
+    !assignees.some((a) => a.user_id === currentAssignee);
   const targetKeyRef = useRef<string | null>(null);
   useEffect(() => {
     targetKeyRef.current = targetKey;
@@ -611,6 +658,26 @@ export default function InboxView() {
     // below, which requires an id and would drop this.
     if (e.type === "typing" && e.channel_id) {
       setAiTyping(e.channel_id, e.contact_phone ?? UNKNOWN_THREAD_KEY, e.typing !== false);
+      return;
+    }
+    // Another tab assigned (or unassigned) the conversation. Update the row
+    // and, when it is the open thread, the owner picker itself.
+    if (e.type === "assignment" && e.channel_id) {
+      const key = e.contact_phone ?? UNKNOWN_THREAD_KEY;
+      const composite = `${e.channel_id}:${key}`;
+      const patch = {
+        assigned_to: e.assigned_to ?? null,
+        assigned_at: e.assigned_at ?? null,
+        assignee_name: e.assignee_name ?? null,
+      };
+      setThreads((prev) =>
+        prev.map((t) =>
+          `${t.channel_id}:${t.key}` === composite ? { ...t, ...patch } : t,
+        ),
+      );
+      if (composite === targetKeyRef.current) {
+        setThreadState((prev) => (prev ? { ...prev, ...patch } : prev));
+      }
       return;
     }
     // Another tab switched the conversation between AI and human. Update the
@@ -780,6 +847,7 @@ export default function InboxView() {
     if (!showArchived) rows = rows.filter((t) => !t.archived);
     if (filter === "unread") rows = rows.filter((t) => t.unread > 0);
     if (filter === "important") rows = rows.filter((t) => t.important);
+    if (filter === "mine") rows = rows.filter((t) => !!user && t.assigned_to === user.id);
     if (filter === "unknown") rows = rows.filter((t) => t.is_unknown);
     if (platformFilter !== "all") rows = rows.filter((t) => t.platform === platformFilter);
     return [...rows].sort((a, b) => {
@@ -804,6 +872,10 @@ export default function InboxView() {
   const importantTotal = useMemo(
     () => threads.filter((t) => t.important).length,
     [threads],
+  );
+  const mineTotal = useMemo(
+    () => (user ? threads.filter((t) => t.assigned_to === user.id).length : 0),
+    [threads, user],
   );
 
   const threadView = useMemo(() => {
@@ -902,6 +974,7 @@ export default function InboxView() {
                 { key: "all", label: "All" },
                 { key: "unread", label: `Unread${unreadTotal ? ` (${unreadTotal})` : ""}` },
                 { key: "important", label: `Important${importantTotal ? ` (${importantTotal})` : ""}` },
+                { key: "mine", label: `Mine${mineTotal ? ` (${mineTotal})` : ""}` },
                 { key: "unknown", label: "Unknown" },
               ] as { key: Filter; label: string }[]).map((f) => (
                 <button
@@ -982,6 +1055,20 @@ export default function InboxView() {
                                 {t.lead_category && (
                                   <span className="shrink-0 rounded-full border border-ink/[0.08] px-1.5 py-0.5 text-[9px] font-semibold text-ink/60 dark:border-fog/[0.12] dark:text-fog/60">
                                     {leadCategoryLabel(t.lead_category)}
+                                  </span>
+                                )}
+                                {t.assigned_to && (
+                                  <span
+                                    title={
+                                      t.assigned_to === user?.id
+                                        ? "Assigned to you"
+                                        : `Assigned to ${t.assignee_name ?? "a teammate"}`
+                                    }
+                                    className="shrink-0 text-[9px] font-semibold text-ink/40 dark:text-fog/40"
+                                  >
+                                    {t.assigned_to === user?.id
+                                      ? "You"
+                                      : t.assignee_name ?? "Assigned"}
                                   </span>
                                 )}
                                 {t.important && (
@@ -1093,6 +1180,42 @@ export default function InboxView() {
                     </p>
                   </span>
                 </button>
+                {!target.is_unknown && (
+                  <label className="flex shrink-0 items-center gap-1.5">
+                    <span className="text-[9px] font-bold uppercase tracking-wide text-ink/35 dark:text-fog/35">
+                      Owner
+                    </span>
+                    <select
+                      value={currentAssignee ?? ""}
+                      onChange={(e) =>
+                        void handleAssignee(target, e.target.value || null)
+                      }
+                      disabled={assigneeBusy}
+                      aria-label="Conversation owner"
+                      className="h-7 max-w-[160px] rounded-full border border-ink/[0.08] bg-white px-2 text-[10px] font-semibold text-ink disabled:opacity-50 dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                    >
+                      <option value="">Unassigned</option>
+                      {assigneeNotInList && currentAssignee && (
+                        <option value={currentAssignee}>
+                          {currentAssigneeName ?? "Assigned"}
+                        </option>
+                      )}
+                      {assignees.map((a) => (
+                        <option key={a.user_id} value={a.user_id}>
+                          {a.user_id === user?.id ? `${a.name} (you)` : a.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {assigneeError && (
+                  <span
+                    role="alert"
+                    className="text-[10px] font-medium text-[#C4304B] dark:text-[#FF8FA3]"
+                  >
+                    {assigneeError}
+                  </span>
+                )}
                 {/* Who answers: the same switch the backend uses to mute the
                     AI. Segmented so both states are visible at once — a
                     toggle would hide the fact that a human took over. */}

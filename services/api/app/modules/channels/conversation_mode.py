@@ -87,13 +87,20 @@ async def get_state(db, channel_id: str, contact_phone: str) -> dict:
         )
         thread = None
     if thread is None:
-        return {"mode": MODE_AI, "mode_changed_at": None, "mode_changed_by": None}
+        return {
+            "mode": MODE_AI, "mode_changed_at": None, "mode_changed_by": None,
+            "assigned_to": None, "assigned_at": None,
+        }
     return {
         "mode": normalize_mode(thread.conversation_mode),
         "mode_changed_at": (
             thread.mode_changed_at.isoformat() if thread.mode_changed_at else None
         ),
         "mode_changed_by": thread.mode_changed_by,
+        "assigned_to": thread.assigned_to,
+        "assigned_at": (
+            thread.assigned_at.isoformat() if thread.assigned_at else None
+        ),
     }
 
 

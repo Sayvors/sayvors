@@ -50,7 +50,24 @@ async def _avatar_for(db: AsyncSession, tenant_id: str, platform: str, contact_i
     ).scalar_one_or_none()
 
 
-def _lead_out(lead: Lead, avatar_url: str | None) -> LeadOut:
+async def _assignee_names(db: AsyncSession, ids: set[str]) -> dict[str, str]:
+    """Display names for lead owners, one query per page."""
+    if not ids:
+        return {}
+    rows = (
+        await db.execute(select(User).where(User.id.in_(ids)))
+    ).scalars().all()
+    return {
+        u.id: (
+            f"{u.first_name or ''} {u.last_name or ''}".strip() or u.email
+        )
+        for u in rows
+    }
+
+
+def _lead_out(
+    lead: Lead, avatar_url: str | None, assignee_name: str | None = None
+) -> LeadOut:
     return LeadOut(
         id=lead.id,
         channel_id=lead.channel_id,
@@ -78,6 +95,11 @@ def _lead_out(lead: Lead, avatar_url: str | None) -> LeadOut:
             lead.priority_since.isoformat() if lead.priority_since else None
         ),
         thread_key=lead.thread_key,
+        assigned_to=lead.assigned_to,
+        assigned_at=(
+            lead.assigned_at.isoformat() if lead.assigned_at else None
+        ),
+        assignee_name=assignee_name,
         last_message_at=(
             lead.last_message_at.isoformat() if lead.last_message_at else None
         ),
@@ -175,8 +197,18 @@ async def list_leads(
             .limit(limit)
         )
     ).all()
+    assignee_names = await _assignee_names(
+        db, {lead.assigned_to for lead, _ in rows if lead.assigned_to}
+    )
     return LeadListResponse(
-        leads=[_lead_out(lead, avatar) for lead, avatar in rows],
+        leads=[
+            _lead_out(
+                lead,
+                avatar,
+                assignee_names.get(lead.assigned_to) if lead.assigned_to else None,
+            )
+            for lead, avatar in rows
+        ],
         total=total,
     )
 
@@ -218,7 +250,11 @@ async def update_lead(
     db.add(lead)
     await db.commit()
     await db.refresh(lead)
+    names = await _assignee_names(
+        db, {lead.assigned_to} if lead.assigned_to else set()
+    )
     return _lead_out(
         lead,
         await _avatar_for(db, lead.tenant_id, lead.platform, lead.contact_id),
+        names.get(lead.assigned_to) if lead.assigned_to else None,
     )

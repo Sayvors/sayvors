@@ -15,6 +15,8 @@ import {
   type ReviewIssue,
 } from "@/lib/api-review-issues";
 import { useInboxRealtime } from "@/lib/use-inbox-realtime";
+import { fetchAssignees, type Assignee } from "@/lib/api-inbox";
+import { useAuth } from "@/lib/auth-context";
 
 /**
  * Review tickets — one row per classified Google review that opened a ticket.
@@ -47,10 +49,13 @@ function Chip({ strong, children }: { strong?: boolean; children: React.ReactNod
 }
 
 export default function ReviewTicketsPage() {
+  const { user } = useAuth();
   const [statusFilter, setStatusFilter] = useState("");
+  const [assigneeFilter, setAssigneeFilter] = useState<"all" | "mine">("all");
   const [q, setQ] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
   const [waPhone, setWaPhone] = useState<string | null>(null);
+  const [assignees, setAssignees] = useState<Assignee[]>([]);
 
   // `silent` keeps the list mounted during a realtime refresh: a ticket
   // appearing must not blank the page the merchant is reading. TanStack Query
@@ -126,13 +131,16 @@ export default function ReviewTicketsPage() {
     return issues
       .filter((i) => {
         if (statusFilter && i.status !== statusFilter) return false;
+        if (assigneeFilter === "mine" && (!user || i.assigned_to !== user.id)) {
+          return false;
+        }
         if (!needle) return true;
         return [i.ticket_number, i.handoff_code, i.reviewer_name, i.review_text, i.summary, i.primary_category, i.subcategory, i.subcategory_detail]
           .filter(Boolean)
           .some((v) => (v as string).toLowerCase().includes(needle));
       })
       .sort((a, b) => (priorityRank[a.priority] ?? 2) - (priorityRank[b.priority] ?? 2));
-  }, [issues, statusFilter, q]);
+  }, [issues, statusFilter, assigneeFilter, user, q]);
 
   const listRef = useRef<HTMLDivElement>(null);
   const rowVirtualizer = useVirtualizer({
@@ -143,6 +151,27 @@ export default function ReviewTicketsPage() {
   });
 
   const open = openId ? issues.find((i) => i.id === openId) ?? null : null;
+  const openChannel = open?.channel_id ?? null;
+
+  // Eligible owners for the open ticket's channel. The drawer needs names and
+  // ids; the server filters out teammates who cannot work that channel.
+  useEffect(() => {
+    if (!openChannel) {
+      setAssignees([]);
+      return;
+    }
+    let cancelled = false;
+    fetchAssignees(openChannel)
+      .then((people) => {
+        if (!cancelled) setAssignees(people);
+      })
+      .catch(() => {
+        if (!cancelled) setAssignees([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [openChannel]);
 
   return (
     <div className="team-ui h-full overflow-y-auto px-6 py-6 pb-24">
@@ -201,6 +230,20 @@ export default function ReviewTicketsPage() {
               </option>
             ))}
           </select>
+          <button
+            type="button"
+            onClick={() =>
+              setAssigneeFilter((v) => (v === "mine" ? "all" : "mine"))
+            }
+            aria-pressed={assigneeFilter === "mine"}
+            className={`ui-btn px-3 py-2 text-[13px] font-semibold ${
+              assigneeFilter === "mine"
+                ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
+                : "bg-[var(--ui-surface)] text-[var(--ui-ink)]"
+            }`}
+          >
+            Mine
+          </button>
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -265,6 +308,16 @@ export default function ReviewTicketsPage() {
                     </p>
                     <p className="mt-0.5 text-[12px] text-[var(--ui-ink-2)]">
                       {label(i.primary_category)} · {label(i.subcategory)}
+                      {i.assigned_to ? (
+                        <>
+                          {" · "}
+                          <span className="font-semibold text-[var(--ui-ink)]">
+                            {i.assigned_to === user?.id ? "you" : "assigned"}
+                          </span>
+                        </>
+                      ) : (
+                        " · unassigned"
+                      )}
                       {i.handoff_code && <> · code <span className="font-semibold tabular-nums text-[var(--ui-ink)]">#{i.handoff_code}</span></>}
                     </p>
                   </button>
@@ -279,6 +332,7 @@ export default function ReviewTicketsPage() {
         <TicketDrawer
           issue={open}
           waPhone={waPhone}
+          assignees={assignees}
           onClose={() => setOpenId(null)}
           onChanged={(row) =>
             queryClient.setQueryData(queryKeys.reviewIssues.list("", true, 200), (old: { issues: ReviewIssue[]; total: number } | undefined) =>
@@ -313,16 +367,19 @@ function describeExpiry(iso: string | null): string | null {
 function TicketDrawer({
   issue,
   waPhone,
+  assignees,
   onClose,
   onChanged,
 }: {
   issue: ReviewIssue;
   waPhone: string | null;
+  assignees: Assignee[];
   onClose: () => void;
   onChanged: (row: ReviewIssue) => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { user } = useAuth();
   const updateIssue = useUpdateReviewIssue();
   const [code, setCode] = useState<string | null>(issue.handoff_code);
   const [expiresAt, setExpiresAt] = useState<string | null>(
@@ -346,6 +403,26 @@ function TicketDrawer({
       setBusy(null);
     }
   }
+
+  async function setAssignee(assignedTo: string | null) {
+    setBusy("assignee");
+    setError(null);
+    try {
+      const row = await updateIssue.mutateAsync({
+        id: issue.id,
+        patch: { assigned_to: assignedTo },
+      });
+      onChanged(row);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not assign the ticket.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const assigneeMissing =
+    !!issue.assigned_to &&
+    !assignees.some((a) => a.user_id === issue.assigned_to);
 
   async function mint() {
     setBusy("code");
@@ -440,6 +517,32 @@ function TicketDrawer({
               </div>
             ))}
           </dl>
+        </div>
+
+        <div className="ui-panel mt-3 px-4 py-3">
+          <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">Owner</div>
+          <p className="mt-1.5 text-[12px] leading-relaxed text-[var(--ui-ink-2)]">
+            Assign the ticket to the teammate who owns the follow-up. They get
+            one notification; the owner is visible on the queue.
+          </p>
+          <select
+            value={issue.assigned_to ?? ""}
+            disabled={busy !== null}
+            onChange={(e) => void setAssignee(e.target.value || null)}
+            aria-label="Ticket owner"
+            className="ui-input mt-2 w-full bg-[var(--ui-surface)] px-3 py-2 text-[13px] font-semibold text-[var(--ui-ink)] disabled:opacity-40"
+          >
+            <option value="">Unassigned</option>
+            {assigneeMissing && issue.assigned_to && (
+              <option value={issue.assigned_to}>Assigned</option>
+            )}
+            {assignees.map((a) => (
+              <option key={a.user_id} value={a.user_id}>
+                {a.name}
+                {a.user_id === user?.id ? " (you)" : ""}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="ui-panel mt-3 px-4 py-3">

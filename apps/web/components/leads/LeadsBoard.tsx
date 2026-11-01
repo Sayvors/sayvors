@@ -8,6 +8,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
 import PlatformMark, { platformLabel } from "@/components/channels/PlatformMark";
 import { fetchLeads, updateLead, type Lead, type LeadStage } from "@/lib/api-leads";
+import { useAuth } from "@/lib/auth-context";
 import {
   LEAD_CATEGORIES,
   LEAD_CATEGORY_LABELS,
@@ -168,6 +169,11 @@ function LeadCard({
               {timeAgo(lead.created_at)}
             </time>
             {lead.contact_username && <span>· @{lead.contact_username}</span>}
+            {lead.assigned_to && (
+              <span title="Conversation owner">
+                · {lead.assignee_name ?? "Assigned"}
+              </span>
+            )}
           </p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
@@ -299,9 +305,11 @@ function LeadCard({
 
 export default function LeadsBoard({ platform }: { platform?: string }) {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const [priorityFirst, setPriorityFirst] = useState(true);
   const [stageFilter, setStageFilter] = useState<"all" | LeadStage>("all");
   const [categoryFilter, setCategoryFilter] = useState<"all" | LeadCategory>("all");
+  const [assigneeFilter, setAssigneeFilter] = useState<"all" | "mine">("all");
   const [priorityFilter, setPriorityFilter] = useState<"all" | "important">("all");
   const [channelFilter, setChannelFilter] = useState<string>("all");
   const [age, setAge] = useState<AgeKey>("any");
@@ -442,6 +450,9 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
   if (categoryFilter !== "all") {
     rows = rows.filter((l) => l.category === categoryFilter);
   }
+  if (assigneeFilter === "mine") {
+    rows = rows.filter((l) => !!user && l.assigned_to === user.id);
+  }
   if (priorityFilter === "important") {
     rows = rows.filter((l) => l.priority === "important");
   }
@@ -480,6 +491,19 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
             </button>
           ))}
         </div>
+
+        <button
+          type="button"
+          onClick={() => setAssigneeFilter((v) => (v === "mine" ? "all" : "mine"))}
+          aria-pressed={assigneeFilter === "mine"}
+          className={`rounded-[6px] border px-3 py-1 text-[12px] font-semibold ${FOCUS} ${
+            assigneeFilter === "mine"
+              ? "border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink)]"
+              : "border-transparent text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
+          }`}
+        >
+          Mine
+        </button>
 
         <label className="flex cursor-pointer items-center gap-2 text-[12px] font-semibold text-ink/60">
           <input

@@ -843,6 +843,23 @@ async def _thread_state(db, tenant_id: str, channel_id: str, phone: str) -> Thre
     from .models import ChannelMessage, Lead
 
     state = await get_state(db, channel_id, phone)
+    assignee_name = None
+    if state.get("assigned_to"):
+        try:
+            assignee = (
+                await db.execute(
+                    select(User).where(User.id == state["assigned_to"])
+                )
+            ).scalar_one_or_none()
+            if assignee is not None:
+                assignee_name = (
+                    f"{assignee.first_name or ''} {assignee.last_name or ''}".strip()
+                    or assignee.email
+                )
+        except Exception as e:  # noqa: BLE001 - the card is an enhancement
+            logger.warning(
+                "thread assignee read failed channel=%s: %s", channel_id, e
+            )
     context = None
     try:
         row = await latest(db, channel_id=channel_id, contact_phone=phone)
@@ -964,6 +981,7 @@ async def _thread_state(db, tenant_id: str, channel_id: str, phone: str) -> Thre
 
     return ThreadStateOut(
         **state,
+        assignee_name=assignee_name,
         context=context,
         reply_window_open=window_open,
         opt_in_at=opt_in_at,
@@ -971,6 +989,76 @@ async def _thread_state(db, tenant_id: str, channel_id: str, phone: str) -> Thre
         opted_out=opted_out,
         **escalation,
     )
+
+
+class ThreadAssigneeUpdate(BaseModel):
+    # None (or omitted) unassigns. The service validates that the id belongs
+    # to an active teammate who can actually work this channel.
+    assigned_to: str | None = Field(None, max_length=36)
+
+
+@_inbox_router.get("/assignees")
+async def inbox_assignees(
+    channel_id: str = Query(..., max_length=36),
+    ctx: TenantContext = Depends(require_perm("channels.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """People who can own a conversation on this channel.
+
+    The picker needs names and ids; computing the eligible set server-side
+    keeps tenant scope and channel access in one place instead of trusting
+    whatever the browser sends back.
+    """
+    from .assignment import AssignmentError, assignable_users
+
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    try:
+        people = await assignable_users(db, ctx.tenant_id, channel_id)
+    except AssignmentError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"assignees": people}
+
+
+@_inbox_router.patch(
+    "/threads/{channel_id}/{contact_phone}/assignee",
+    response_model=ThreadStateOut,
+)
+async def inbox_thread_set_assignee(
+    channel_id: str,
+    contact_phone: str,
+    body: ThreadAssigneeUpdate,
+    ctx: TenantContext = Depends(require_perm("inbox.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Claim a conversation for a teammate, or clear the owner.
+
+    Assignment is independent of `conversation_mode`: claiming an escalated
+    thread does not silently hand the AI back, and handing the AI back does
+    not erase who was working it.
+    """
+    from .assignment import AssignmentError, assign_thread
+
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    phone = None if contact_phone == UNKNOWN_THREAD_KEY else contact_phone
+    if phone is None:
+        raise HTTPException(
+            status_code=422,
+            detail="An unattributed thread has nobody to assign.",
+        )
+    try:
+        await assign_thread(
+            db,
+            tenant_id=ctx.tenant_id,
+            channel_id=channel_id,
+            contact_phone=phone,
+            assignee_id=body.assigned_to or None,
+            actor=ctx.user,
+        )
+    except AssignmentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return await _thread_state(db, ctx.tenant_id, channel_id, phone)
 
 
 class ThreadModeUpdate(BaseModel):

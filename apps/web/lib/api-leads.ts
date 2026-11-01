@@ -38,6 +38,10 @@ export type Lead = {
   priority_since: string | null;
   /** Unified-inbox thread key — deep-links the lead to its conversation. */
   thread_key: string | null;
+  /** Who owns the lead (mirrored from the conversation thread). */
+  assigned_to: string | null;
+  assigned_at: string | null;
+  assignee_name: string | null;
   last_message_at: string | null;
   created_at: string;
   updated_at: string;
