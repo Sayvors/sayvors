@@ -5,6 +5,7 @@ import logging
 import math
 import secrets
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from urllib.parse import quote
 
@@ -30,6 +31,26 @@ logger = logging.getLogger(__name__)
 # from pinning an API worker; a sticker is a small WebP by design.
 MAX_OUTBOUND_DOCUMENT_BYTES = 32 * 1024 * 1024
 MAX_OUTBOUND_STICKER_BYTES = 500 * 1024
+
+
+@asynccontextmanager
+async def _one_shot_whatsapp_adapter():
+    """A WhatsApp adapter for a single request, closed on exit.
+
+    The process-level adapter used by the consumer is a singleton and must
+    stay open. These request-scoped sends used to instantiate an adapter and
+    leave its httpx client (and connection tasks) behind, one leak per send.
+    """
+    from .meta.providers.whatsapp import WhatsAppAdapter
+
+    adapter = WhatsAppAdapter()
+    try:
+        yield adapter
+    finally:
+        try:
+            await adapter.close()
+        except Exception:  # noqa: BLE001 - cleanup must not mask the result
+            pass
 
 
 def encrypt_token(token: str) -> str:
@@ -507,7 +528,6 @@ async def react_to_message(
     )
 
     from .meta.providers.base import MetaAPIError
-    from .meta.providers.whatsapp import WhatsAppAdapter
 
     try:
         phone_number_id, token, error = await _whatsapp_credentials(
@@ -515,11 +535,12 @@ async def react_to_message(
         )
         if error:
             raise ValueError(error)
-        outbound.platform_message_id = (
-            await WhatsAppAdapter().send_reaction(
-                phone_number_id, token, to, target.platform_message_id, value
-            )
-        )[:200] or None
+        async with _one_shot_whatsapp_adapter() as adapter:
+            outbound.platform_message_id = (
+                await adapter.send_reaction(
+                    phone_number_id, token, to, target.platform_message_id, value
+                )
+            )[:200] or None
     except (ValueError, MetaAPIError) as exc:
         outbound.status = "failed"
         outbound.error = str(exc)[:500]
@@ -661,7 +682,6 @@ async def send_location_message(
     )
 
     from .meta.providers.base import MetaAPIError
-    from .meta.providers.whatsapp import WhatsAppAdapter
 
     error = ""
     try:
@@ -669,12 +689,13 @@ async def send_location_message(
             db, user, channel
         )
         if not error:
-            outbound.platform_message_id = (
-                await WhatsAppAdapter().send_location(
-                    phone_number_id, token, to, latitude, longitude,
-                    name=label or None, address=place or None,
-                )
-            )[:200] or None
+            async with _one_shot_whatsapp_adapter() as adapter:
+                outbound.platform_message_id = (
+                    await adapter.send_location(
+                        phone_number_id, token, to, latitude, longitude,
+                        name=label or None, address=place or None,
+                    )
+                )[:200] or None
     except MetaAPIError as exc:
         error = str(exc)
     except Exception as exc:  # noqa: BLE001 - recorded on the row
@@ -739,7 +760,6 @@ async def send_contact_message(
     )
 
     from .meta.providers.base import MetaAPIError
-    from .meta.providers.whatsapp import WhatsAppAdapter
 
     error = ""
     try:
@@ -747,11 +767,12 @@ async def send_contact_message(
             db, user, channel
         )
         if not error:
-            outbound.platform_message_id = (
-                await WhatsAppAdapter().send_contacts(
-                    phone_number_id, token, to, [card]
-                )
-            )[:200] or None
+            async with _one_shot_whatsapp_adapter() as adapter:
+                outbound.platform_message_id = (
+                    await adapter.send_contacts(
+                        phone_number_id, token, to, [card]
+                    )
+                )[:200] or None
     except MetaAPIError as exc:
         error = str(exc)
     except Exception as exc:  # noqa: BLE001 - recorded on the row
@@ -840,24 +861,23 @@ async def send_document_message(
         return outbound
 
     from .meta.providers.base import MetaAPIError
-    from .meta.providers.whatsapp import WhatsAppAdapter
 
     error = ""
     try:
         phone_number_id, token, error = await _whatsapp_credentials(db, user, channel)
         if not error:
-            adapter = WhatsAppAdapter()
-            media_id = await adapter.upload_media(
-                phone_number_id, token, data, mime, filename=name
-            )
-            if not media_id:
-                raise MetaAPIError("WhatsApp returned no media id for the document")
-            outbound.platform_message_id = (
-                await adapter.send_document(
-                    phone_number_id, token, to, media_id,
-                    filename=name, caption=body or None,
+            async with _one_shot_whatsapp_adapter() as adapter:
+                media_id = await adapter.upload_media(
+                    phone_number_id, token, data, mime, filename=name
                 )
-            )[:200] or None
+                if not media_id:
+                    raise MetaAPIError("WhatsApp returned no media id for the document")
+                outbound.platform_message_id = (
+                    await adapter.send_document(
+                        phone_number_id, token, to, media_id,
+                        filename=name, caption=body or None,
+                    )
+                )[:200] or None
     except MetaAPIError as exc:
         error = str(exc)
     except Exception as exc:  # noqa: BLE001 - recorded on the row
@@ -939,23 +959,22 @@ async def send_sticker_message(
         return outbound
 
     from .meta.providers.base import MetaAPIError
-    from .meta.providers.whatsapp import WhatsAppAdapter
 
     error = ""
     try:
         phone_number_id, token, error = await _whatsapp_credentials(db, user, channel)
         if not error:
-            adapter = WhatsAppAdapter()
-            media_id = await adapter.upload_media(
-                phone_number_id, token, data, mime, filename=f"sticker{suffix}"
-            )
-            if not media_id:
-                raise MetaAPIError("WhatsApp returned no media id for the sticker")
-            outbound.platform_message_id = (
-                await adapter.send_sticker(
-                    phone_number_id, token, to, media_id
+            async with _one_shot_whatsapp_adapter() as adapter:
+                media_id = await adapter.upload_media(
+                    phone_number_id, token, data, mime, filename=f"sticker{suffix}"
                 )
-            )[:200] or None
+                if not media_id:
+                    raise MetaAPIError("WhatsApp returned no media id for the sticker")
+                outbound.platform_message_id = (
+                    await adapter.send_sticker(
+                        phone_number_id, token, to, media_id
+                    )
+                )[:200] or None
     except MetaAPIError as exc:
         error = str(exc)
     except Exception as exc:  # noqa: BLE001 - recorded on the row
@@ -1001,14 +1020,21 @@ async def set_contact_blocked(
     from .meta.providers.base import MetaAPIError
     from .meta.providers.whatsapp import WhatsAppAdapter
 
+    adapter = WhatsAppAdapter()
     try:
-        adapter = WhatsAppAdapter()
         if blocked:
             await adapter.block_user(phone_number_id, token, to)
         else:
             await adapter.unblock_user(phone_number_id, token, to)
     except MetaAPIError as exc:
         raise ValueError(str(exc)) from exc
+    finally:
+        # A one-shot adapter owns its own httpx client; leaving it open keeps
+        # a connection (and its tasks) alive after the request.
+        try:
+            await adapter.close()
+        except Exception:  # noqa: BLE001 - cleanup must not mask the result
+            pass
 
     from .conversation_mode import _ensure_thread
 
@@ -1042,17 +1068,17 @@ async def _dispatch_whatsapp(
     before we use its credentials.
     """
     from .meta.providers.base import MetaAPIError
-    from .meta.providers.whatsapp import WhatsAppAdapter
 
     phone_number_id, token, error = await _whatsapp_credentials(db, user, channel)
     if error:
         return "", error
 
     try:
-        provider_msg_id = await WhatsAppAdapter().send_text_message(
-            phone_number_id, token, to, text,
-            context_message_id=context_message_id,
-        )
+        async with _one_shot_whatsapp_adapter() as adapter:
+            provider_msg_id = await adapter.send_text_message(
+                phone_number_id, token, to, text,
+                context_message_id=context_message_id,
+            )
     except MetaAPIError as exc:
         detail = f"{exc.status_code}: {exc}" if exc.status_code else str(exc)
         return "", detail[:500]
@@ -1136,6 +1162,11 @@ async def _dispatch_whatsapp_interactive(
         return "", detail[:500]
     except ValueError as exc:
         return "", str(exc)[:500]
+    finally:
+        try:
+            await adapter.close()
+        except Exception:  # noqa: BLE001 - cleanup must not mask the result
+            pass
     if not provider_msg_id:
         return "", "WhatsApp accepted the request but returned no message id."
     return provider_msg_id, ""
@@ -1245,9 +1276,9 @@ async def whatsapp_number_health(
     phone_number_id, token, error = await _whatsapp_credentials(db, user, channel)
     if error:
         raise ValueError(error)
-    from .meta.providers.whatsapp import WhatsAppAdapter
 
-    return await WhatsAppAdapter().get_number_health(phone_number_id, token)
+    async with _one_shot_whatsapp_adapter() as adapter:
+        return await adapter.get_number_health(phone_number_id, token)
 
 
 _QR_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
