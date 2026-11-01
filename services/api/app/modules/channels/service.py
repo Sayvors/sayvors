@@ -2,8 +2,10 @@ import hashlib
 import hmac
 import json
 import logging
+import secrets
 import uuid
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 from fastapi import Request
 from sqlalchemy import case, func, select, tuple_
@@ -16,7 +18,7 @@ from ...core.crypto import encrypt_secret as _encrypt_secret
 from ...core.crypto import get_fernet as _get_fernet
 from ..team.context import tenant_id_of
 from ..users.models import User
-from .models import Channel, ChannelMessage, ChannelThread, ContactProfile, Lead
+from .models import Channel, ChannelMessage, ChannelThread, ContactProfile, Lead, WhatsAppQrCode
 from . import thread_maintenance  # noqa: F401  registers event listeners
 from .schemas import ChannelCreate, ChannelMessageSend
 
@@ -640,6 +642,57 @@ async def whatsapp_number_health(
     return await WhatsAppAdapter().get_number_health(phone_number_id, token)
 
 
+_QR_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
+_QR_CODE_LENGTH = 8
+
+
+async def _whatsapp_qr_phone(db: AsyncSession, user: User, channel: Channel) -> str:
+    """The number a customer scans into, from the connected Meta asset.
+
+    Never inferred from the channel name: a wrong number prints a QR that
+    reaches a stranger. A connected number always has its asset row, so a
+    missing phone means the connection needs refreshing.
+    """
+    from .meta.models import MetaAsset
+
+    row = (
+        await db.execute(
+            select(MetaAsset.phone, MetaAsset.active)
+            .where(
+                MetaAsset.tenant_id == tenant_id_of(user),
+                MetaAsset.provider == "whatsapp",
+                MetaAsset.external_asset_id == channel.platform_user_id,
+            )
+            .limit(1)
+        )
+    ).first()
+    if row is None or not row.phone:
+        raise ValueError(
+            "This number has no display phone on record. Reconnect WhatsApp "
+            "to refresh it."
+        )
+    if not row.active:
+        raise ValueError("This WhatsApp number is not active.")
+    digits = "".join(ch for ch in row.phone if ch.isdigit())
+    if not digits:
+        raise ValueError(
+            "This number has no display phone on record. Reconnect WhatsApp "
+            "to refresh it."
+        )
+    return digits
+
+
+def _qr_payload(row: WhatsAppQrCode) -> dict:
+    return {
+        "code": row.code,
+        "prefilled_message": row.prefilled_message,
+        "deep_link_url": row.deep_link_url,
+        # Kept in the shape for older clients; the QR image is rendered in the
+        # browser from the deep link, so no remote image is needed.
+        "qr_image_url": None,
+    }
+
+
 async def list_whatsapp_qr_codes(
     channel_id: str, user: User, db: AsyncSession
 ) -> list[dict]:
@@ -648,12 +701,17 @@ async def list_whatsapp_qr_codes(
         raise ValueError("Channel not found")
     if channel.platform != "whatsapp":
         raise ValueError("QR codes are only available on WhatsApp")
-    phone_number_id, token, error = await _whatsapp_credentials(db, user, channel)
-    if error:
-        raise ValueError(error)
-    from .meta.providers.whatsapp import WhatsAppAdapter
-
-    return await WhatsAppAdapter().list_qr_codes(phone_number_id, token)
+    rows = (
+        await db.execute(
+            select(WhatsAppQrCode)
+            .where(
+                WhatsAppQrCode.tenant_id == tenant_id_of(user),
+                WhatsAppQrCode.channel_id == channel_id,
+            )
+            .order_by(WhatsAppQrCode.created_at.desc())
+        )
+    ).scalars().all()
+    return [_qr_payload(row) for row in rows]
 
 
 async def create_whatsapp_qr_code(
@@ -664,19 +722,72 @@ async def create_whatsapp_qr_code(
     *,
     image_format: str = "PNG",
 ) -> dict:
+    """Create a local `wa.me` link. No Meta permission and no expiry.
+
+    `image_format` is accepted for the existing API shape; the image is
+    rendered client-side, so the value does not matter.
+    """
+    message = (prefilled_message or "").strip()
+    if not message:
+        raise ValueError("a QR code needs a pre-filled message")
+    if len(message) > 140:
+        raise ValueError("the pre-filled message must be 140 characters or fewer")
+
     channel = await get_channel(channel_id, user, db)
     if not channel:
         raise ValueError("Channel not found")
     if channel.platform != "whatsapp":
         raise ValueError("QR codes are only available on WhatsApp")
-    phone_number_id, token, error = await _whatsapp_credentials(db, user, channel)
-    if error:
-        raise ValueError(error)
-    from .meta.providers.whatsapp import WhatsAppAdapter
 
-    return await WhatsAppAdapter().create_qr_code(
-        phone_number_id, token, prefilled_message, image_format=image_format
+    # A repeated create with the same wording should not litter the list.
+    existing = (
+        await db.execute(
+            select(WhatsAppQrCode)
+            .where(
+                WhatsAppQrCode.tenant_id == tenant_id_of(user),
+                WhatsAppQrCode.channel_id == channel_id,
+                WhatsAppQrCode.prefilled_message == message,
+            )
+            .order_by(WhatsAppQrCode.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return _qr_payload(existing)
+
+    phone = await _whatsapp_qr_phone(db, user, channel)
+    deep_link = f"https://wa.me/{phone}?text={quote(message, safe='')}"
+
+    code = "".join(secrets.choice(_QR_ALPHABET) for _ in range(_QR_CODE_LENGTH))
+    for _ in range(5):
+        taken = (
+            await db.execute(
+                select(WhatsAppQrCode.id)
+                .where(
+                    WhatsAppQrCode.tenant_id == tenant_id_of(user),
+                    WhatsAppQrCode.code == code,
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if taken is None:
+            break
+        code = "".join(
+            secrets.choice(_QR_ALPHABET) for _ in range(_QR_CODE_LENGTH)
+        )
+
+    row = WhatsAppQrCode(
+        tenant_id=tenant_id_of(user),
+        channel_id=channel_id,
+        code=code,
+        prefilled_message=message,
+        deep_link_url=deep_link,
+        created_by=user.id,
     )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return _qr_payload(row)
 
 
 async def delete_whatsapp_qr_code(
@@ -687,12 +798,20 @@ async def delete_whatsapp_qr_code(
         raise ValueError("Channel not found")
     if channel.platform != "whatsapp":
         raise ValueError("QR codes are only available on WhatsApp")
-    phone_number_id, token, error = await _whatsapp_credentials(db, user, channel)
-    if error:
-        raise ValueError(error)
-    from .meta.providers.whatsapp import WhatsAppAdapter
-
-    return await WhatsAppAdapter().delete_qr_code(phone_number_id, token, code)
+    row = (
+        await db.execute(
+            select(WhatsAppQrCode).where(
+                WhatsAppQrCode.tenant_id == tenant_id_of(user),
+                WhatsAppQrCode.channel_id == channel_id,
+                WhatsAppQrCode.code == code,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        return False
+    await db.delete(row)
+    await db.commit()
+    return True
 
 
 async def _dispatch_instagram(

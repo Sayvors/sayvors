@@ -464,6 +464,43 @@ class ContactProfile(Base):
     )
 
 
+class WhatsAppQrCode(Base):
+    """A locally generated click-to-chat QR, owned by one WhatsApp channel.
+
+    Deliberately not Meta's `message_qrdls`: that endpoint needs the
+    `whatsapp_business_management` permission, and a missing permission made
+    the settings page show "Failed to fetch" with no way forward. The link is
+    the canonical `https://wa.me/<number>?text=<message>`, which works for
+    every connected number and never expires. The QR image itself is rendered
+    in the browser from this link.
+    """
+
+    __tablename__ = "whatsapp_qr_codes"
+    __table_args__ = (
+        # The code is the list/delete key; scoped to the tenant so two tenants
+        # can never collide on the same short code.
+        UniqueConstraint(
+            "tenant_id", "code", name="uq_whatsapp_qr_tenant_code"
+        ),
+        Index("ix_whatsapp_qr_channel", "channel_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: uuid.uuid4().hex
+    )
+    tenant_id: Mapped[str] = mapped_column(String(36), index=True)
+    channel_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("channels.id", ondelete="CASCADE")
+    )
+    code: Mapped[str] = mapped_column(String(16))
+    prefilled_message: Mapped[str] = mapped_column(String(140))
+    deep_link_url: Mapped[str] = mapped_column(Text)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
 class Lead(Base):
     """A customer the messaging loop is converting.
 

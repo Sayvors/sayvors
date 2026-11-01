@@ -544,7 +544,7 @@ async def remove_whatsapp_qr_code(
             detail=message,
         )
     if not deleted:
-        raise HTTPException(status_code=502, detail="Meta did not confirm the deletion")
+        raise HTTPException(status_code=404, detail="QR code not found")
     return {"deleted": True, "code": code}
 
 
