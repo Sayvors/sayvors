@@ -181,6 +181,11 @@ function LeadCard({
               </span>
             )}
           </p>
+          {lead.ticket_number && (
+            <p className={`mt-0.5 text-[10px] font-semibold uppercase tracking-wide ${INK2}`}>
+              {lead.ticket_number} · {lead.ticket_status.replace("_", " ")}
+            </p>
+          )}
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
           {lead.priority === "important" && (

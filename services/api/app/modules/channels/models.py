@@ -570,6 +570,10 @@ class Lead(Base):
         # Stored (not derived in SQL) so this stays an index scan rather than
         # a full sort of the lead table. See lead_escalation.py.
         Index("ix_leads_tenant_priority", "tenant_id", "priority", "updated_at"),
+        # Ticket identity. A lead IS the ticket record for WhatsApp; the lead
+        # fields below are the sales qualification inside it.
+        Index("ix_leads_tenant_ticket", "tenant_id", "ticket_number", unique=True),
+        Index("ix_leads_tenant_ticket_status", "tenant_id", "ticket_status"),
         # ix_leads_pending_reminder is a partial index (WHERE
         # priority='important') and cannot be expressed in __table_args__.
         # It is registered as a PostgreSQL-only after_create hook below so a
@@ -612,6 +616,21 @@ class Lead(Base):
     stage: Mapped[str] = mapped_column(
         Enum("new", "qualified", "follow_up", "converted", "lost", name="lead_stage"),
         default="new",
+    )
+    # ── Ticket identity (the primary work object) ─────────────────────
+    # Every lead is a ticket. The number is human-facing and stable; the
+    # status is the work lifecycle, independent from the sales `stage`.
+    ticket_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    ticket_status: Mapped[str] = mapped_column(
+        String(20), default="new", server_default="new", nullable=False
+    )
+    # whatsapp_support | whatsapp_sales | whatsapp_info | whatsapp_general
+    ticket_kind: Mapped[str] = mapped_column(
+        String(30), default="whatsapp_general",
+        server_default="whatsapp_general", nullable=False,
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     # A phone number the customer TYPED (never the Meta sender identity,
     # which lives in contact_id). "stated" = validated shape only;

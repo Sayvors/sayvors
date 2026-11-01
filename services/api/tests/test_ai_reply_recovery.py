@@ -27,6 +27,7 @@ from app.modules.channels.meta.native_cards import (
 from app.modules.channels.models import (
     Channel,
     ChannelMessage,
+    Lead,
     WhatsAppThreadState,
 )
 from app.modules.channels.service import (
@@ -475,3 +476,30 @@ async def test_ai_contact_marker_sends_a_native_card(
     }]]
     outbound = await _outbound()
     assert {row.content_type for row in outbound} == {"text", "contact"}
+
+
+@pytest.mark.asyncio
+async def test_open_ticket_marker_creates_a_ticket(
+    db, user_id, monkeypatch
+):
+    await _seed(db, user_id)
+    adapter = _Adapter()
+    _wire(monkeypatch, adapter)
+
+    async def _gen(*a, **k):
+        return "Done — I've opened a ticket.\nOPEN_TICKET"
+
+    monkeypatch.setattr(consumer, "_generate_reply", _gen)
+
+    event, data = _event()
+    await consumer._handle_message_received(event, data)
+
+    lead = (
+        await db.execute(
+            select(Lead).where(Lead.contact_id == CUSTOMER)
+        )
+    ).scalar_one()
+    assert lead.ticket_number.startswith("WA-")
+    assert lead.ticket_status == "open"
+    assert lead.ticket_kind in ("whatsapp_info", "whatsapp_general")
+    assert adapter.sent == ["Done — I've opened a ticket."]

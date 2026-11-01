@@ -154,6 +154,9 @@ async def update_escalation_state(db, lead, *, confused: bool = False, urgent: b
         _clear_escalation_state(lead)
         lead.priority = "important"
         lead.priority_since = _now()
+        from ..tickets import apply_ticket_stage
+
+        apply_ticket_stage(lead)
         await on_escalate(db, lead, tenant_settings, reason="urgent" if urgent else "confused")
         return
 
@@ -163,6 +166,9 @@ async def update_escalation_state(db, lead, *, confused: bool = False, urgent: b
         lead.priority = "normal"
         lead.ai_miss_count = 0
         _clear_escalation_state(lead)
+        from ..tickets import apply_ticket_stage
+
+        apply_ticket_stage(lead)
 
 
 # Urgency markers: English and the Arabic/Urdu forms customers actually type.

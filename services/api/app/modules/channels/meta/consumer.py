@@ -385,14 +385,21 @@ def _system_prompt(
         "nothing further. The request is saved as a ticket for the team "
         "the moment they tell you; do not keep chatting after the "
         "confirmation beyond a goodbye.",
-        # Honest handoff: every conversation is already logged as a lead
-        # for the team — there is no separate transfer step to promise.
-        "Everything the customer tells you (their name, what they need, "
-        "contact details) is logged for the team automatically — there is "
-        "no separate handoff step. Never promise a call, email or message "
-        "to a different number, and never say someone will reach out "
-        "elsewhere. If the customer wants a human, say the team will "
-        "follow up with them right here in this chat.",
+        # Ticket vs lead: the lead row IS the ticket. The lead fields are only
+        # the sales qualification inside it, and the customer never hears the
+        # word "lead".
+        "A ticket is the work object for this conversation. A lead is only "
+        "the sales qualification inside a sales-kind ticket. Never use the "
+        "word lead with the customer; say ticket or request.",
+        # Honest handoff: only a ticket means a human owes this customer a
+        # reply. The LATEST TICKET block below says whether one exists.
+        "Only say a ticket is open, or that the team will follow up, when the "
+        "LATEST TICKET block shows a ticket. If it says none, do not promise "
+        "either. If the customer wants one, ask a short yes/no question; "
+        "when they say yes, end your reply with OPEN_TICKET.",
+        "Never promise a call, email or message to a different number, and "
+        "never say someone will reach out elsewhere. If a ticket exists, say "
+        "the team will follow up with them right here in this chat.",
         "Never ask for a detail the customer already gave — name, "
         "requirement, budget or number. Re-asking reads as not listening.",
         "If the request is outside what we offer: acknowledge it kindly in "
@@ -498,6 +505,7 @@ async def _generate_reply(
     context: str | None = None,
     contact: str | None = None,
     attachment_note: str | None = None,
+    ticket=None,
 ) -> str:
     """Generate an AI reply from THIS CONTACT's conversation + business profile.
 
@@ -664,6 +672,15 @@ async def _generate_reply(
         else ""
     )
 
+    # Ticket identity for this conversation. The lead row is the ticket; the
+    # block tells the model whether a human actually owes this customer a
+    # reply and whether the sales qualification exists.
+    ticket_block = ""
+    if platform == "WhatsApp":
+        from ..tickets import prompt_block as ticket_prompt_block
+
+        ticket_block = ticket_prompt_block(ticket)
+
     # Databank grounding: retrieve the passages that match THIS message, so a
     # price, a spec or a policy comes from the business's own documents instead
     # of being guessed. Bounded (2.5s, 4 passages) and best-effort — the reply
@@ -748,6 +765,7 @@ async def _generate_reply(
         + (f"\n\n{catalog}" if catalog else "")
         + (f"\n\n{memory}" if memory else "")
         + stored_block
+        + (f"\n\n{ticket_block}" if ticket_block else "")
         + (f"\n\n{context}" if context else "")
         + (f"\n\n{attachment_note}" if attachment_note else "")
         + f"\n\n{LEAD_PROMPT_BLOCK}"
@@ -2128,6 +2146,7 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
             reply_kwargs: dict = {
                 "context": _handoff_context(handoff_match),
                 "contact": from_wa or None,
+                "ticket": inbound_lead,
             }
             if msg_type in ("image", "document"):
                 reply_kwargs["attachment_note"] = ATTACHMENT_PROMPT_NOTE
@@ -2175,6 +2194,43 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
         from .native_cards import split_native_card_request
 
         reply, native_card = split_native_card_request(reply)
+
+        # A customer who said yes to opening a ticket gets one. The marker is
+        # stripped; the lead row is the ticket, so create/qualify it here.
+        from ..tickets import (
+            split_ticket_request,
+            ticket_kind_for,
+        )
+
+        reply, open_ticket = split_ticket_request(reply)
+        if open_ticket:
+            if inbound_lead is None:
+                from .lead_engine import capture_lead as _capture_ticket
+
+                inbound_lead = await _capture_ticket(
+                    db,
+                    tenant_id=tenant_id,
+                    channel_id=channel.id,
+                    platform="whatsapp",
+                    contact_id=from_wa,
+                    contact_name=data.get("profile_name"),
+                    message_id=wamid[:200] or None,
+                    inbound_text=text or "Customer requested a ticket",
+                    require_intent=False,
+                )
+            if inbound_lead is not None:
+                inbound_lead.ticket_status = "open"
+                inbound_lead.ticket_kind = ticket_kind_for(
+                    inbound_lead.category, inbound_lead.intent
+                )
+                db.add(inbound_lead)
+                await db.commit()
+            if not reply:
+                reply = (
+                    "Done — I've opened a ticket for the team. They'll follow up here."
+                    if inbound_lead is not None
+                    else "I couldn't open a ticket right now. Could you try again in a moment?"
+                )
 
         if not reply and not native_card:
             logger.warning(

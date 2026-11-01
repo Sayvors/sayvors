@@ -393,6 +393,11 @@ class LeadOut(BaseModel):
     avatar_url: str | None = None
     summary: str | None = None
     stage: str
+    # Ticket identity: the lead row IS the ticket; stage is the sales view.
+    ticket_number: str | None = None
+    ticket_status: str = "new"
+    ticket_kind: str = "whatsapp_general"
+    resolved_at: str | None = None
     phone_number: str | None = None
     phone_status: str | None = None
     opt_out: bool = False
