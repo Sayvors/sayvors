@@ -8,6 +8,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
 import PlatformMark, { platformLabel } from "@/components/channels/PlatformMark";
 import { fetchLeads, updateLead, type Lead, type LeadStage } from "@/lib/api-leads";
+import { resolveMediaUrl } from "@/lib/media-url";
 import { useAuth } from "@/lib/auth-context";
 import {
   LEAD_CATEGORIES,
@@ -105,7 +106,7 @@ function Avatar({ lead }: { lead: Lead }) {
   if (lead.avatar_url && !failed) {
     return (
       <Image
-        src={lead.avatar_url}
+        src={resolveMediaUrl(lead.avatar_url) ?? ""}
         alt=""
         width={44}
         height={44}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { resolveMediaUrl } from "@/lib/media-url";
 
 /**
  * Avatar with an initials fallback.
@@ -22,6 +23,7 @@ export default function UserAvatar({
   textClassName?: string;
 }) {
   const [failed, setFailed] = useState(false);
+  const resolved = resolveMediaUrl(url);
 
   // A new URL deserves a fresh attempt; the previous failure says nothing
   // about a replacement upload or a re-authenticated provider picture.
@@ -33,10 +35,10 @@ export default function UserAvatar({
     <span
       className={`flex shrink-0 items-center justify-center overflow-hidden rounded-[2px] bg-deep-violet font-semibold text-white ${className}`}
     >
-      {url && !failed ? (
+      {resolved && !failed ? (
         // eslint-disable-next-line @next/next/no-img-element -- runtime provider/upload URL
         <img
-          src={url}
+          src={resolved}
           alt=""
           referrerPolicy="no-referrer"
           className="h-full w-full object-cover"
