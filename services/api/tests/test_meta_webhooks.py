@@ -347,6 +347,14 @@ async def test_ingress_resolved_enqueues_outbox(client, engine, db):
     assert outbox.payload["tenant_id"] == "test-user-0000-0000-0000-000000000001"
     assert outbox.payload["external_asset_id"] == "pn-outbox"
     assert outbox.payload["payload"]["text"] == "hello outbox"
+    # The worker closes this raw row after processing; without the link the
+    # retention sweep can never see a terminal status.
+    webhook_row = (await db.execute(
+        select(MetaWebhookEvent).where(
+            MetaWebhookEvent.external_event_id == "wamid.outbox.1"
+        )
+    )).scalar_one()
+    assert outbox.payload["webhook_event_id"] == webhook_row.id
 
 
 @pytest.mark.asyncio

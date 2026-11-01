@@ -141,7 +141,10 @@ async def _store_event(
         if conn is not None:
             conn.last_webhook_received_at = datetime.now(timezone.utc)
             db.add(conn)
-        normalized = normalize(raw, provider, tenant_id, connection_id)
+        normalized = normalize(
+            raw, provider, tenant_id, connection_id,
+            webhook_event_id=row.id,
+        )
         db.add(
             EventOutbox(
                 id=str(uuid.uuid4()),

@@ -30,6 +30,11 @@ logger = logging.getLogger(__name__)
 
 # Retention periods (days). Configurable via env if needed.
 WEBHOOK_EVENT_RETENTION_DAYS = 30
+# A webhook row that never reached a terminal status is an orphan: an unknown
+# asset was parked as unresolved, or an outbox event died before the worker
+# could close the row. It carries no operational value after the retry window,
+# so it goes sooner than a terminal row.
+WEBHOOK_EVENT_ORPHAN_RETENTION_DAYS = 7
 NOTIFICATION_RETENTION_DAYS = 90
 USAGE_EVENT_RETENTION_DAYS = 90
 # The jobs table is the execution record and grows with every AI reply,
@@ -71,15 +76,31 @@ async def _batched_delete(db, model, *conditions) -> int:
 
 
 async def cleanup_webhook_events() -> int:
-    """Delete processed/rejected webhook events older than retention period."""
-    cutoff = datetime.now(timezone.utc) - timedelta(days=WEBHOOK_EVENT_RETENTION_DAYS)
+    """Delete terminal webhook events, plus stale non-terminal orphans.
+
+    Terminal rows (processed / duplicate / rejected) are history and go after
+    the full window. ``received`` / ``unresolved`` rows only appear here when
+    no consumer ever closed them — an unknown asset or a lost outbox event —
+    and a short window keeps those from becoming the unbounded table this
+    sweep exists to prevent.
+    """
+    now = datetime.now(timezone.utc)
     async with async_session() as db:
-        return await _batched_delete(
+        terminal = await _batched_delete(
             db,
             MetaWebhookEvent,
-            MetaWebhookEvent.created_at < cutoff,
+            MetaWebhookEvent.created_at
+            < now - timedelta(days=WEBHOOK_EVENT_RETENTION_DAYS),
             MetaWebhookEvent.status.in_(["processed", "duplicate", "rejected"]),
         )
+        orphaned = await _batched_delete(
+            db,
+            MetaWebhookEvent,
+            MetaWebhookEvent.created_at
+            < now - timedelta(days=WEBHOOK_EVENT_ORPHAN_RETENTION_DAYS),
+            MetaWebhookEvent.status.in_(["received", "unresolved"]),
+        )
+    return terminal + orphaned
 
 
 async def cleanup_notifications() -> int:
