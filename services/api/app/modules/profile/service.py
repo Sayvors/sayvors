@@ -168,10 +168,20 @@ def _serialize(user: User, feedback: dict[str, int]) -> dict:
     }
 
 
-async def get_profile(user_id: str, db: AsyncSession) -> dict:
-    cached = await _cache_get(_profile_key(user_id))
-    if cached:
-        return cached
+async def get_profile(
+    user_id: str, db: AsyncSession, *, use_cache: bool = True
+) -> dict:
+    """The profile payload.
+
+    `use_cache=False` is for mutations. They must return what the database
+    now holds, not a cached row from before the write: an upload that deletes
+    the superseded file would otherwise hand the client a URL to a file that
+    no longer exists, while `/auth/me` (uncached) showed the new one.
+    """
+    if use_cache:
+        cached = await _cache_get(_profile_key(user_id))
+        if cached:
+            return cached
 
     user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
     if not user:
@@ -222,7 +232,7 @@ async def update_profile(user_id: str, data: dict, db: AsyncSession) -> dict:
         metadata={"fields": sorted(patch.keys())},
     )
 
-    return await get_profile(user_id, db)
+    return await get_profile(user_id, db, use_cache=False)
 
 
 async def _locked_user(user_id: str, db: AsyncSession) -> User:
@@ -340,7 +350,7 @@ async def save_profile_image(
 
     await _cache_delete(_profile_key(user_id))
     await _emit(event, user_id, email=user.email, metadata={"kind": kind})
-    return await get_profile(user_id, db)
+    return await get_profile(user_id, db, use_cache=False)
 
 
 async def update_avatar_source(user_id: str, source: str, db: AsyncSession) -> dict:
@@ -373,7 +383,7 @@ async def update_avatar_source(user_id: str, source: str, db: AsyncSession) -> d
     await _cache_delete(_profile_key(user_id))
     await _emit("avatar.source_updated", user_id, email=user.email,
                 metadata={"source": source})
-    return await get_profile(user_id, db)
+    return await get_profile(user_id, db, use_cache=False)
 
 
 async def remove_cover(user_id: str, db: AsyncSession) -> dict:
@@ -391,7 +401,7 @@ async def remove_cover(user_id: str, db: AsyncSession) -> dict:
 
     await _cache_delete(_profile_key(user_id))
     await _emit("cover.removed", user_id, email=user.email)
-    return await get_profile(user_id, db)
+    return await get_profile(user_id, db, use_cache=False)
 
 
 async def update_preferences(user_id: str, theme: str, language: str, db: AsyncSession) -> dict:
@@ -413,7 +423,7 @@ async def update_preferences(user_id: str, theme: str, language: str, db: AsyncS
         metadata={"theme": theme, "language": language},
     )
 
-    return await get_profile(user_id, db)
+    return await get_profile(user_id, db, use_cache=False)
 
 
 async def update_response_style(user_id: str, response_style: str, db: AsyncSession) -> dict:
@@ -436,7 +446,7 @@ async def update_response_style(user_id: str, response_style: str, db: AsyncSess
         metadata={"response_style": response_style},
     )
 
-    return await get_profile(user_id, db)
+    return await get_profile(user_id, db, use_cache=False)
 
 
 async def update_voice_replies(user_id: str, voice_replies: str, db: AsyncSession) -> dict:
@@ -459,7 +469,7 @@ async def update_voice_replies(user_id: str, voice_replies: str, db: AsyncSessio
         metadata={"voice_replies": voice_replies},
     )
 
-    return await get_profile(user_id, db)
+    return await get_profile(user_id, db, use_cache=False)
 
 
 async def update_typing_indicator(user_id: str, enabled: bool, db: AsyncSession) -> dict:
@@ -483,7 +493,7 @@ async def update_typing_indicator(user_id: str, enabled: bool, db: AsyncSession)
         metadata={"typing_indicator": enabled},
     )
 
-    return await get_profile(user_id, db)
+    return await get_profile(user_id, db, use_cache=False)
 
 
 async def get_usage(user_id: str, db: AsyncSession) -> dict:

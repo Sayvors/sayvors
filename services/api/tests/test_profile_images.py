@@ -176,6 +176,24 @@ async def test_upload_avatar_sets_the_device_source(
     assert body["avatar_url"].endswith((".png", ".jpg", ".webp"))
 
 
+async def test_upload_response_never_comes_from_a_stale_profile_cache(
+    client, db, user_id, monkeypatch
+):
+    """The upload deleted the previous file; returning a cached old URL would
+    hand the client an image that no longer exists."""
+    await _seed(db, user_id)
+
+    async def _must_not_read(_key):
+        raise AssertionError("upload response must bypass the profile cache")
+
+    monkeypatch.setattr(profile_service, "_cache_get", _must_not_read)
+
+    res = _upload(client, "/api/v1/profile/avatar", "me.png", PNG, "image/png")
+
+    assert res.status_code == 200, res.text
+    assert res.json()["avatar_source"] == "upload"
+
+
 async def test_upload_rejects_a_renamed_non_image(client, db, user_id):
     await _seed(db, user_id)
 
