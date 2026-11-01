@@ -678,6 +678,22 @@ async def _generate_reply(
         allow_image=(platform == "WhatsApp"),
     )
 
+    # Approved cumulative memory: lessons from earlier resolved conversations.
+    # Only approved rows are returned; the tenant toggle is read from the
+    # owner row already loaded above, so this adds no settings query.
+    memory = ""
+    try:
+        from ...memory.service import reply_block as memory_reply_block
+
+        memory = await memory_reply_block(
+            db,
+            tenant_id=tenant_id,
+            query=text,
+            enabled=bool(getattr(user, "ai_memory_enabled", True)),
+        )
+    except Exception as e:  # noqa: BLE001 - never cost the reply
+        logger.warning("memory skipped channel=%s: %s", channel.id, e)
+
     # The customer's explicit language choice, when they made one on the
     # first-contact buttons. It outranks the detected language in the prompt.
     lang_block = ""
@@ -698,9 +714,10 @@ async def _generate_reply(
     # One line per reply makes "why didn't it know X?" answerable: the sizes
     # prove whether the facts/databank were actually in the prompt.
     logger.info(
-        "Reply context channel=%s facts=%d card=%d grounding=%d catalog=%d stored=%d",
+        "Reply context channel=%s facts=%d card=%d grounding=%d catalog=%d memory=%d stored=%d",
         channel.id, len(facts_block or ""), len(business_card or ""),
-        len(grounding or ""), len(catalog or ""), len(stored_block or ""),
+        len(grounding or ""), len(catalog or ""), len(memory or ""),
+        len(stored_block or ""),
     )
 
     system_prompt = (
@@ -715,6 +732,7 @@ async def _generate_reply(
         + (f"\n\n{facts_block}" if facts_block else "")
         + (f"\n\n{grounding}" if grounding else "")
         + (f"\n\n{catalog}" if catalog else "")
+        + (f"\n\n{memory}" if memory else "")
         + stored_block
         + (f"\n\n{context}" if context else "")
         + f"\n\n{LEAD_PROMPT_BLOCK}"

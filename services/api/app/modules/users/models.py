@@ -46,6 +46,14 @@ class User(Base):
     # per conversation. Boolean rather than a tier: there is no third state
     # worth a value, and unlike response_style this has no variants coming.
     typing_indicator: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    # Cumulative memory: learn reusable, scrubbed business facts from resolved
+    # conversations and let them ground future replies once a human approves
+    # them in the review queue. On by default because pending memories change
+    # nothing; only approved rows reach the prompt, and the queue can be
+    # ignored. Turning this off stops both capture and retrieval.
+    ai_memory_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true"
+    )
     # Lead-conversion knobs, validated/clamped by
     # lead_engine.normalize_lead_settings (NULL = safe defaults). JSON, not
     # columns: a handful of numeric windows, and new knobs must not need a

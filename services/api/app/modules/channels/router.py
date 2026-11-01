@@ -1180,13 +1180,27 @@ async def inbox_thread_resolve(
             status_code=409, detail="Could not open this conversation thread."
         )
 
-    await generate(
+    context_row = await generate(
         db,
         tenant_id=ctx.tenant_id,
         channel_id=channel_id,
         contact_phone=phone,
         reason="resolve",
     )
+
+    # Cumulative memory: the resolved thread's summary becomes a pending,
+    # scrubbed lesson. Nothing reaches the AI until a human approves it in
+    # the review queue, so this cannot silently change future answers.
+    if context_row is not None:
+        from ..memory.service import capture_from_resolution
+
+        await capture_from_resolution(
+            db,
+            tenant_id=ctx.tenant_id,
+            channel_id=channel_id,
+            contact_phone=phone,
+            context=context_row,
+        )
 
     from .realtime import publish_inbox_event
 

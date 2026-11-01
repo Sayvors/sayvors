@@ -25,6 +25,7 @@ const MAIN_ITEMS: NavItem[] = [
   { key: "customers", icon: <UsersIcon />, href: "/dashboard/customers" },
   { key: "reviews", icon: <StarIcon />, href: "/dashboard/reviews" },
   { key: "databank", icon: <DatabaseIcon />, href: "/dashboard/databank" },
+  { key: "memory", icon: <MemoryIcon />, href: "/dashboard/memory" },
 ];
 
 const ADVANCED_ITEMS: NavItem[] = [
@@ -660,6 +661,17 @@ function DatabaseIcon() {
       <ellipse cx="12" cy="5.5" rx="8" ry="3" />
       <path d="M4 5.5v13c0 1.66 3.58 3 8 3s8-1.34 8-3v-13" />
       <path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3" />
+    </svg>
+  );
+}
+
+function MemoryIcon() {
+  // A lightbulb: a lesson that was reviewed, not a database.
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
+      <path d="M9 18h6" />
+      <path d="M10 21h4" />
+      <path d="M12 3a6 6 0 0 0-3.5 10.9V16h7v-2.1A6 6 0 0 0 12 3Z" />
     </svg>
   );
 }
