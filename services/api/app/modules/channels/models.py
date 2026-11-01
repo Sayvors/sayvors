@@ -135,6 +135,13 @@ class ChannelMessage(Base):
     media_key: Mapped[str | None] = mapped_column(String(300), nullable=True)
     media_mime_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     media_filename: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # AI reply lifecycle for an inbound row. `pending` means a reply is owed:
+    # a crash or transient provider failure leaves it pending, and the next
+    # delivery of the same wamid re-drives instead of deduping to a silent
+    # success. `sent` / `skipped` / `failed` are terminal.
+    ai_reply_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    ai_reply_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    ai_reply_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Who the message is with, in the platform's own addressing. Inbound rows
     # carry the sender; outbound rows carry the recipient, which is what lets a
     # reply be threaded under the same contact as the question it answers.
