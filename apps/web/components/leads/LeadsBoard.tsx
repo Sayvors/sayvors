@@ -98,7 +98,11 @@ function timeAgo(iso: string): string {
 }
 
 function Avatar({ lead }: { lead: Lead }) {
-  if (lead.avatar_url) {
+  // Provider CDN URLs expire; fall back to initials rather than a broken icon.
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [lead.avatar_url]);
+
+  if (lead.avatar_url && !failed) {
     return (
       <Image
         src={lead.avatar_url}
@@ -107,6 +111,7 @@ function Avatar({ lead }: { lead: Lead }) {
         height={44}
         className="h-11 w-11 shrink-0 rounded-full border border-[var(--ui-line)] object-cover"
         unoptimized
+        onError={() => setFailed(true)}
       />
     );
   }
