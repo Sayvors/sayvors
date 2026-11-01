@@ -104,6 +104,45 @@ export const registerWhatsAppNumber = (
     body: JSON.stringify({ pin }),
   });
 
+/** Ask Meta to send the number-verification code. */
+export const requestWhatsAppCode = (
+  phoneNumberId: string,
+  codeMethod: "SMS" | "VOICE" = "SMS",
+  language = "en_US"
+): Promise<{ sent: boolean; code_method: string; language: string }> =>
+  apiFetch(`/api/v1/meta/whatsapp/${encodeURIComponent(phoneNumberId)}/request-code`, {
+    method: "POST",
+    body: JSON.stringify({ code_method: codeMethod, language }),
+  });
+
+/** Submit the code Meta sent to the number. */
+export const verifyWhatsAppCode = (
+  phoneNumberId: string,
+  code: string
+): Promise<{ verified: boolean; phone_number_id: string }> =>
+  apiFetch(`/api/v1/meta/whatsapp/${encodeURIComponent(phoneNumberId)}/verify-code`, {
+    method: "POST",
+    body: JSON.stringify({ code }),
+  });
+
+/** Remove the number from the Cloud API (sending stops immediately). */
+export const deregisterWhatsAppNumber = (
+  phoneNumberId: string
+): Promise<{ deregistered: boolean; phone_number_id: string }> =>
+  apiFetch(`/api/v1/meta/whatsapp/${encodeURIComponent(phoneNumberId)}/deregister`, {
+    method: "POST",
+  });
+
+/** Set or change the number's two-step-verification PIN. */
+export const setWhatsAppTwoStepPin = (
+  phoneNumberId: string,
+  pin: string
+): Promise<{ updated: boolean; phone_number_id: string }> =>
+  apiFetch(`/api/v1/meta/whatsapp/${encodeURIComponent(phoneNumberId)}/two-step`, {
+    method: "POST",
+    body: JSON.stringify({ pin }),
+  });
+
 export const fetchMetaAssets = (
   provider: MetaProvider
 ): Promise<{ assets: MetaAsset[] }> => apiFetch(`/api/v1/meta/${provider}/assets`);
