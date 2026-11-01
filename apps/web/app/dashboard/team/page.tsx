@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api-rag";
+import { resolveMediaUrl } from "@/lib/media-url";
 import PlatformMark, { platformLabel } from "@/components/channels/PlatformMark";
 
 /* Team management — members, roles and per-channel access. */
@@ -19,6 +20,7 @@ interface TeamMemberRow {
   invited_at?: string | null;
   accepted_at?: string | null;
   channels?: Record<string, string> | null;
+  avatar_url?: string | null;
 }
 interface TeamContextInfo {
   business_name?: string | null;
@@ -130,10 +132,39 @@ function RoleBadge({ name, isOwner }: { name?: string; isOwner?: boolean }) {
   return <span className="ui-chip shrink-0 px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)]">{name || "No role"}</span>;
 }
 
-function Initial({ label, owner }: { label: string; owner?: boolean }) {
+function Initial({
+  label,
+  owner,
+  avatarUrl,
+}: {
+  label: string;
+  owner?: boolean;
+  avatarUrl?: string | null;
+}) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [avatarUrl]);
+  const src = resolveMediaUrl(avatarUrl);
+
   return (
-    <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[12px] font-bold ${owner ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]" : "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"}`}>
-      {(label || "?").trim().charAt(0).toUpperCase()}
+    <div
+      className={`flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full text-[12px] font-bold ${
+        owner
+          ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
+          : "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
+      }`}
+    >
+      {src && !failed ? (
+        // eslint-disable-next-line @next/next/no-img-element -- runtime provider/upload URL
+        <img
+          src={src}
+          alt=""
+          referrerPolicy="no-referrer"
+          className="h-full w-full object-cover"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        (label || "?").trim().charAt(0).toUpperCase()
+      )}
     </div>
   );
 }
@@ -1128,7 +1159,7 @@ export default function TeamPage() {
                         className="grid items-center gap-3 py-4 lg:grid-cols-[minmax(0,1fr)_280px_auto]"
                       >
                       <div className="flex min-w-0 items-center gap-3">
-                        <Initial label={m.name || m.email} owner={isOwner} />
+                        <Initial label={m.name || m.email} owner={isOwner} avatarUrl={m.avatar_url} />
                         <div className="min-w-0">
                           <p className="truncate text-[13px] font-semibold text-[var(--ui-ink)]">{m.email}</p>
                           <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[12px] text-[var(--ui-ink-2)]">

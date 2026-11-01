@@ -28,6 +28,7 @@ async def _make_owner(db):
     db.add(User(
         id=OWNER_ID, email="owner@acme.com", first_name="Ola", last_name="Owner",
         password_hash="x", business_name="Acme", onboarded=True,
+        avatar_url="https://cdn.example/owner.png",
     ))
     await db.commit()
 
@@ -36,6 +37,7 @@ async def _make_member_user(db, email="sara@acme.com", tenant_id=None):
     u = User(
         email=email, first_name="Sara", last_name="S",
         password_hash="x", tenant_id=tenant_id,
+        avatar_url="https://cdn.example/sara.png",
     )
     db.add(u)
     await db.commit()
@@ -219,6 +221,19 @@ async def test_owner_cannot_be_locked_out_by_role_edits(client, db):
     client.patch(
         f"/api/v1/team/roles/{admin_id}", json={"permissions": admin_next["permissions"]},
     )
+
+
+@pytest.mark.asyncio
+async def test_members_expose_profile_pictures(client, db):
+    """The team page shows the same effective avatar as the header."""
+    await _seed_member(db)
+
+    rows = client.get("/api/v1/team/members").json()["members"]
+    owner = next(m for m in rows if m["is_owner"])
+    member = next(m for m in rows if not m["is_owner"])
+
+    assert owner["avatar_url"] == "https://cdn.example/owner.png"
+    assert member["avatar_url"] == "https://cdn.example/sara.png"
 
 
 @pytest.mark.asyncio

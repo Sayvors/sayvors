@@ -289,6 +289,7 @@ async def list_members(
             "id": None, "email": owner.email, "name": f"{owner.first_name} {owner.last_name}".strip(),
             "role_name": "Owner", "role_id": None, "is_owner": True, "status": "active",
             "invited_at": None, "accepted_at": None, "channels": None,
+            "avatar_url": owner.avatar_url,
         })
     member_entries = []
     for m in members:
@@ -302,6 +303,9 @@ async def list_members(
             "invited_at": m.invited_at.isoformat() if m.invited_at else None,
             "accepted_at": m.accepted_at.isoformat() if m.accepted_at else None,
             "channels": {},  # filled below from team_member_channels
+            # A pending invite has no user row yet, so there is no picture to
+            # show; accepted members use the same effective avatar as the header.
+            "avatar_url": u.avatar_url if u else None,
         }
         out.append(entry)
         member_entries.append(entry)
