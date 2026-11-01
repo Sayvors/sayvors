@@ -137,18 +137,57 @@ class WhatsAppAdapter(MetaProviderAdapter):
         await self._graph("POST", f"/{phone_number_id}/register", token, json=body)
 
     async def send_text_message(
-        self, phone_number_id: str, token: str, to: str, text: str
+        self,
+        phone_number_id: str,
+        token: str,
+        to: str,
+        text: str,
+        *,
+        context_message_id: str | None = None,
     ) -> str:
-        """Send a session (24h-window) text message. Returns provider message id."""
+        """Send a session (24h-window) text message. Returns provider message id.
+
+        `context_message_id` is the wamid the customer will see quoted above
+        the reply. The Cloud API has no edit/delete endpoints, but contextual
+        replies and reactions are supported.
+        """
+        payload: dict = {
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "text",
+            "text": {"body": text[:4000]},
+        }
+        if context_message_id:
+            payload["context"] = {"message_id": context_message_id}
+        resp = await self._graph(
+            "POST",
+            f"/{phone_number_id}/messages",
+            token,
+            json=payload,
+        )
+        data = resp.json()
+        msgs = data.get("messages", [])
+        return msgs[0].get("id", "") if msgs else ""
+
+    async def send_reaction(
+        self,
+        phone_number_id: str,
+        token: str,
+        to: str,
+        message_id: str,
+        emoji: str,
+    ) -> str:
+        """React to a message. An empty emoji removes the reaction."""
         resp = await self._graph(
             "POST",
             f"/{phone_number_id}/messages",
             token,
             json={
                 "messaging_product": "whatsapp",
+                "recipient_type": "individual",
                 "to": to,
-                "type": "text",
-                "text": {"body": text[:4000]},
+                "type": "reaction",
+                "reaction": {"message_id": message_id, "emoji": emoji},
             },
         )
         data = resp.json()

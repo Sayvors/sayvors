@@ -64,6 +64,7 @@ export interface InboxRealtimeEvent {
   error?: string | null;
   contact_phone?: string | null;
   contact_name?: string | null;
+  reply_to_message_id?: string | null;
   created_at?: string;
   /* typing events — who is composing in this thread right now */
   typing?: boolean;

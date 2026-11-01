@@ -116,6 +116,20 @@ class ChannelMessage(Base):
         default="sent",
     )
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The wamid this message quotes, for contextual replies. Stored because
+    # the inbox renders the quoted bubble from the thread, and because the API
+    # needs it to prove the target was in this conversation before sending.
+    reply_to_message_id: Mapped[str | None] = mapped_column(
+        String(200), nullable=True
+    )
+    # Local removal from the inbox. Meta's Cloud API has no endpoint to delete
+    # a sent message for the customer, so this is deliberately internal: the
+    # row stays for audit, is excluded from AI history, and the UI says it was
+    # removed rather than pretending it was retracted.
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    deleted_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     # Who the message is with, in the platform's own addressing. Inbound rows
     # carry the sender; outbound rows carry the recipient, which is what lets a
     # reply be threaded under the same contact as the question it answers.

@@ -33,6 +33,7 @@ from .schemas import (
     ChannelMessageSend,
     ChannelResponse,
     InboxSendRequest,
+    InboxReactionRequest,
     InteractiveSend,
     QrCodeCreate,    InboxSendResponse,
     InboxThread,
@@ -61,8 +62,10 @@ from .service import (
     list_inbox_threads,
     list_messages,
     list_thread_messages,
+    react_to_message,
     send_message,
     send_interactive_message,
+    soft_delete_message,
     whatsapp_number_health,
     list_whatsapp_qr_codes,
     create_whatsapp_qr_code,
@@ -374,19 +377,7 @@ async def send_to_channel(
             raise HTTPException(status_code=404, detail=message)
         # A missing recipient is a bad request, not a missing channel.
         raise HTTPException(status_code=422, detail=message)
-    return ChannelMessageResponse(
-        id=msg.id,
-        channel_id=msg.channel_id,
-        platform_message_id=msg.platform_message_id,
-        direction=msg.direction,
-        content=decrypt_message_content(msg.content),
-        content_type=msg.content_type,
-        status=msg.status,
-        error=msg.error,
-        contact_phone=decrypt_contact_phone(msg.contact_phone),
-        contact_name=msg.contact_name,
-        created_at=msg.created_at.isoformat(),
-    )
+    return _message_out(msg)
 
 
 @router.post(
@@ -448,19 +439,7 @@ async def send_interactive_to_channel(
             raise HTTPException(status_code=404, detail=message)
         raise HTTPException(status_code=422, detail=message)
 
-    return ChannelMessageResponse(
-        id=msg.id,
-        channel_id=msg.channel_id,
-        platform_message_id=msg.platform_message_id,
-        direction=msg.direction,
-        content=decrypt_message_content(msg.content),
-        content_type=msg.content_type,
-        status=msg.status,
-        error=msg.error,
-        contact_phone=decrypt_contact_phone(msg.contact_phone),
-        contact_name=msg.contact_name,
-        created_at=msg.created_at.isoformat(),
-    )
+    return _message_out(msg)
 
 
 @router.get("/{channel_id}/whatsapp/health", response_model=dict)
@@ -561,19 +540,7 @@ async def get_channel_messages(
     msgs, total = await list_messages(channel_id, ctx.user, db, limit, offset)
     return ChannelMessageListResponse(
         messages=[
-            ChannelMessageResponse(
-                id=m.id,
-                channel_id=m.channel_id,
-                platform_message_id=m.platform_message_id,
-                direction=m.direction,
-                content=decrypt_message_content(m.content),
-                content_type=m.content_type,
-                status=m.status,
-                error=m.error,
-                contact_phone=decrypt_contact_phone(m.contact_phone),
-                contact_name=m.contact_name,
-                created_at=m.created_at.isoformat(),
-            )
+            _message_out(m)
             for m in msgs
         ],
         total=total,
@@ -794,19 +761,7 @@ async def inbox_thread_messages(
         thread_state = await _thread_state(db, ctx.tenant_id, channel_id, phone)
     return ChannelMessageListResponse(
         messages=[
-            ChannelMessageResponse(
-                id=m.id,
-                channel_id=m.channel_id,
-                platform_message_id=m.platform_message_id,
-                direction=m.direction,
-                content=decrypt_message_content(m.content),
-                content_type=m.content_type,
-                status=m.status,
-                error=m.error,
-                contact_phone=decrypt_contact_phone(m.contact_phone),
-                contact_name=m.contact_name,
-                created_at=m.created_at.isoformat(),
-            )
+            _message_out(m)
             for m in msgs
         ],
         total=len(msgs),
@@ -1373,6 +1328,31 @@ async def inbox_thread_pin(
     return {"channel_id": channel_id, "contact_phone": phone, "pinned": pinned}
 
 
+def _message_out(m: ChannelMessage) -> ChannelMessageResponse:
+    """One message shape for every inbox endpoint.
+
+    A locally removed message keeps its row but never returns its text: the
+    browser is told `deleted` and shows the removal marker instead.
+    """
+    deleted = m.deleted_at is not None
+    return ChannelMessageResponse(
+        id=m.id,
+        channel_id=m.channel_id,
+        platform_message_id=m.platform_message_id,
+        direction=m.direction,
+        content="" if deleted else (decrypt_message_content(m.content) or ""),
+        content_type=m.content_type,
+        status=m.status,
+        error=m.error,
+        contact_phone=decrypt_contact_phone(m.contact_phone),
+        contact_name=m.contact_name,
+        reply_to_message_id=m.reply_to_message_id,
+        deleted_at=m.deleted_at.isoformat() if m.deleted_at else None,
+        deleted=deleted,
+        created_at=m.created_at.isoformat(),
+    )
+
+
 @_inbox_router.post("/send", response_model=InboxSendResponse)
 async def inbox_send(
     body: InboxSendRequest,
@@ -1417,6 +1397,7 @@ async def inbox_send(
             ),
             ctx.user,
             db,
+            reply_to_message_id=body.reply_to_message_id,
         )
     except ValueError as exc:
         message = str(exc)
@@ -1439,26 +1420,78 @@ async def inbox_send(
         "status": msg.status,
         "contact_phone": decrypt_contact_phone(msg.contact_phone),
         "contact_name": msg.contact_name,
+        "reply_to_message_id": msg.reply_to_message_id,
         "created_at": msg.created_at,
     })
 
     return InboxSendResponse(
-        message=ChannelMessageResponse(
-            id=msg.id,
-            channel_id=msg.channel_id,
-            platform_message_id=msg.platform_message_id,
-            direction=msg.direction,
-            content=decrypt_message_content(msg.content),
-            content_type=msg.content_type,
-            status=msg.status,
-            error=msg.error,
-            contact_phone=decrypt_contact_phone(msg.contact_phone),
-            contact_name=msg.contact_name,
-            created_at=msg.created_at.isoformat(),
-        ),
+        message=_message_out(msg),
         sent=not failed,
         error=msg.error,
     )
+
+
+@_inbox_router.post(
+    "/messages/{message_id}/reaction", response_model=InboxSendResponse
+)
+async def inbox_react_to_message(
+    message_id: str,
+    body: InboxReactionRequest,
+    ctx: TenantContext = Depends(require_perm("inbox.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """React to one message (empty emoji removes the reaction)."""
+    target = (
+        await db.execute(
+            select(ChannelMessage).where(ChannelMessage.id == message_id)
+        )
+    ).scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if not ctx.can_edit_channel(target.channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    try:
+        msg = await react_to_message(
+            target.channel_id, message_id, body.emoji, ctx.user, db
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return InboxSendResponse(
+        message=_message_out(msg),
+        sent=msg.status != "failed",
+        error=msg.error,
+    )
+
+
+@_inbox_router.delete(
+    "/messages/{message_id}", response_model=ChannelMessageResponse
+)
+async def inbox_remove_message(
+    message_id: str,
+    ctx: TenantContext = Depends(require_perm("inbox.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove a message from this inbox. Not a WhatsApp retraction.
+
+    Meta's Cloud API has no delete-for-everyone endpoint for business
+    messages, so the row is kept for audit and the UI labels it as removed.
+    """
+    target = (
+        await db.execute(
+            select(ChannelMessage).where(ChannelMessage.id == message_id)
+        )
+    ).scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if not ctx.can_edit_channel(target.channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    try:
+        msg = await soft_delete_message(
+            target.channel_id, message_id, ctx.user, db
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return _message_out(msg)
 
 
 # ── Webhooks (no auth — platform sends these) ──────────────────────────

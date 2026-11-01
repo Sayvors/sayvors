@@ -532,6 +532,10 @@ async def _generate_reply(
                 .where(
                     ChannelMessage.channel_id == channel.id,
                     ChannelMessage.contact_phone_hash == hash_contact_phone(contact),
+                    # A locally removed message is not part of the AI's memory:
+                    # the customer still has it, but this inbox chose to forget
+                    # it (WA-4's honest half of "delete").
+                    ChannelMessage.deleted_at.is_(None),
                 )
                 .order_by(ChannelMessage.created_at.desc())
                 .limit(_HISTORY_MESSAGES)

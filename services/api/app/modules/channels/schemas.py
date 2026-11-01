@@ -124,6 +124,11 @@ class ChannelMessageResponse(BaseModel):
     error: str | None = None
     contact_phone: str | None = None
     contact_name: str | None = None
+    # The wamid this message quotes, when it is a contextual reply.
+    reply_to_message_id: str | None = None
+    # Local removal marker. The content is intentionally blank in the API.
+    deleted_at: str | None = None
+    deleted: bool = False
     created_at: str
 
 
@@ -247,6 +252,14 @@ class InboxSendRequest(BaseModel):
     contact_phone: str = Field(..., min_length=1, max_length=32)
     contact_name: str | None = Field(None, max_length=120)
     content: str = Field(..., min_length=1, max_length=10000)
+    # Our ChannelMessage id; the service resolves it to the provider wamid
+    # inside the same conversation before sending.
+    reply_to_message_id: str | None = Field(None, max_length=36)
+
+
+class InboxReactionRequest(BaseModel):
+    # Empty removes this business's reaction.
+    emoji: str = Field("", max_length=16)
 
 
 class InboxSendResponse(BaseModel):

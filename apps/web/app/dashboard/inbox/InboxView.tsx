@@ -17,6 +17,8 @@ import {
   resolveInboxThread,
   sendInboxMessage,
   setInboxThreadMode,
+  reactToInboxMessage,
+  removeInboxMessage,
   UNKNOWN_THREAD_KEY,
   type InboxMessage,
   type InboxThread,
@@ -50,6 +52,8 @@ const QUICK_REPLIES = [
   "Could you share more details?",
   "All set — anything else I can do for you?",
 ];
+
+const REACTION_EMOJIS = ["👍", "❤️", "😂", "🙏", "🎉", "👀"];
 
 /** Cap on the in-memory thread message buffer. Older entries are dropped on
  *  overflow; the server stays the source of truth and the thread is
@@ -290,6 +294,9 @@ export default function InboxView() {
   const [threadState, setThreadState] = useState<ThreadState | null>(null);
   const [modeBusy, setModeBusy] = useState(false);
   const [modeError, setModeError] = useState<string | null>(null);
+  const [replyTo, setReplyTo] = useState<InboxMessage | null>(null);
+  const [reactingTo, setReactingTo] = useState<string | null>(null);
+  const [reactBusy, setReactBusy] = useState(false);
   const [assigneeBusy, setAssigneeBusy] = useState(false);
   const [assigneeError, setAssigneeError] = useState<string | null>(null);
   // The escalation clock is live: while an escalated thread is open, tick
@@ -393,6 +400,47 @@ export default function InboxView() {
           : t,
       ),
     );
+  };
+
+  const react = async (message: InboxMessage, emoji: string) => {
+    if (reactBusy) return;
+    setReactBusy(true);
+    setSendError(null);
+    try {
+      const result = await reactToInboxMessage(message.id, emoji);
+      setMessages((prev) =>
+        prev.some((m) => m.id === result.message.id)
+          ? prev
+          : [...prev, result.message],
+      );
+      setReactingTo(null);
+      if (!result.sent) {
+        setSendError(result.error || "WhatsApp rejected the reaction.");
+      }
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : "Could not send the reaction.");
+    } finally {
+      setReactBusy(false);
+    }
+  };
+
+  const removeMessage = async (message: InboxMessage) => {
+    if (
+      !window.confirm(
+        "Remove this message from the inbox? The customer will still see it on their phone.",
+      )
+    ) {
+      return;
+    }
+    setSendError(null);
+    try {
+      const updated = await removeInboxMessage(message.id);
+      setMessages((prev) =>
+        prev.map((m) => (m.id === updated.id ? updated : m)),
+      );
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : "Could not remove the message.");
+    }
   };
 
   const handleModeChange = async (thread: InboxThread, next: "ai" | "human") => {
@@ -749,6 +797,7 @@ export default function InboxView() {
       error: e.error ?? null,
       contact_phone: e.contact_phone ?? null,
       contact_name: e.contact_name ?? null,
+      reply_to_message_id: e.reply_to_message_id ?? null,
       created_at: e.created_at ?? new Date().toISOString(),
     };
     if (open) {
@@ -813,6 +862,8 @@ export default function InboxView() {
         if (!cancelled && requestedKey.current === targetKey) {
           setMessages([]);
           setThreadState(null);
+          setReplyTo(null);
+          setReactingTo(null);
           setLoadedKey(targetKey);
           setError(e instanceof Error ? e.message : "Could not load this conversation.");
         }
@@ -896,8 +947,10 @@ export default function InboxView() {
         contactPhone: thread.contact_phone ?? "",
         contactName: thread.display_name,
         content: text,
+        replyToMessageId: replyTo?.id ?? null,
       });
       setDraft("");
+      if (result.sent) setReplyTo(null);
       // The agent answered, so nothing is pending on either side. The realtime
       // socket would clear this too, but a failed send never produces an
       // outbound event — clear here so a rejected message cannot strand dots.
@@ -1394,7 +1447,13 @@ export default function InboxView() {
                       i === 0 ||
                       new Date(threadView[i - 1].created_at).toDateString() !== new Date(m.created_at).toDateString();
                     const mine = m.direction === "outbound";
+                    const quotedMessage = m.reply_to_message_id
+                      ? messages.find(
+                          (x) => x.platform_message_id === m.reply_to_message_id,
+                        ) ?? null
+                      : null;
                     if (m.content_type === "reaction") {
+                      if (!m.content) return null;
                       const emoji = m.content.startsWith("[") ? "👍" : m.content;
                       return (
                         <div key={m.id}>
@@ -1415,13 +1474,13 @@ export default function InboxView() {
                       );
                     }
                     return (
-                      <div key={m.id}>
+                      <div key={m.id} className="group">
                         {showDay && (
                           <p className="my-3 text-center text-[11px] font-semibold text-ink/30 dark:text-fog/30">
                             {dayLabel(m.created_at)}
                           </p>
                         )}
-                        <div className={`mb-2 flex ${mine ? "justify-end" : "justify-start"}`}>
+                        <div className={`mb-1 flex ${mine ? "justify-end" : "justify-start"}`}>
                           <div
                             className={`max-w-[78%] rounded-2xl px-3 py-2 ${
                               mine
@@ -1431,7 +1490,49 @@ export default function InboxView() {
                                 : "bg-ink/[0.05] text-ink dark:bg-fog/[0.08] dark:text-fog"
                             }`}
                           >
-                            <p className="whitespace-pre-wrap break-words text-[13px]">{m.content}</p>
+                            {m.deleted ? (
+                              <p className="text-[12px] italic opacity-60">
+                                Message removed from this inbox
+                              </p>
+                            ) : (
+                              <>
+                                {quotedMessage && (
+                                  <div
+                                    className={`mb-1.5 rounded-lg border-l-2 px-2 py-1 ${
+                                      mine
+                                        ? "border-white/40 bg-white/10"
+                                        : "border-deep-violet/30 bg-deep-violet/[0.06]"
+                                    }`}
+                                  >
+                                    <p
+                                      className={`text-[10px] font-bold ${
+                                        mine
+                                          ? "text-white/70"
+                                          : "text-deep-violet/70 dark:text-fog/60"
+                                      }`}
+                                    >
+                                      {quotedMessage.direction === "outbound"
+                                        ? "You"
+                                        : target?.display_name || "Customer"}
+                                    </p>
+                                    <p
+                                      className={`truncate text-[11px] ${
+                                        mine
+                                          ? "text-white/70"
+                                          : "text-ink/55 dark:text-fog/55"
+                                      }`}
+                                    >
+                                      {quotedMessage.deleted
+                                        ? "Message removed"
+                                        : quotedMessage.content || "…"}
+                                    </p>
+                                  </div>
+                                )}
+                                <p className="whitespace-pre-wrap break-words text-[13px]">
+                                  {m.content}
+                                </p>
+                              </>
+                            )}
                             <p
                               className={`mt-1 flex items-center justify-end gap-1 text-[10px] ${
                                 mine ? (m.status === "failed" ? "text-red-500" : "text-white/70") : "text-ink/35 dark:text-fog/35"
@@ -1448,6 +1549,60 @@ export default function InboxView() {
                             )}
                           </div>
                         </div>
+                        {!m.deleted && (
+                          <div
+                            className={`mb-2 flex items-center gap-1 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100 ${
+                              mine ? "justify-end" : "justify-start"
+                            }`}
+                          >
+                            {target?.platform === "whatsapp" && (
+                              <button
+                                type="button"
+                                onClick={() => setReplyTo(m)}
+                                className="rounded-full px-2 py-0.5 text-[10px] font-semibold text-ink/45 transition hover:bg-ink/[0.05] hover:text-ink dark:text-fog/45 dark:hover:bg-fog/[0.08] dark:hover:text-fog"
+                              >
+                                Reply
+                              </button>
+                            )}
+                            {!mine && target?.platform === "whatsapp" && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setReactingTo(reactingTo === m.id ? null : m.id)
+                                }
+                                className="rounded-full px-2 py-0.5 text-[10px] font-semibold text-ink/45 transition hover:bg-ink/[0.05] hover:text-ink dark:text-fog/45 dark:hover:bg-fog/[0.08] dark:hover:text-fog"
+                              >
+                                React
+                              </button>
+                            )}
+                            {mine && (
+                              <button
+                                type="button"
+                                onClick={() => void removeMessage(m)}
+                                title="Removes it from this inbox only — the customer still has it."
+                                className="rounded-full px-2 py-0.5 text-[10px] font-semibold text-ink/45 transition hover:bg-red-50 hover:text-red-600 dark:text-fog/45 dark:hover:bg-red-950/30 dark:hover:text-red-300"
+                              >
+                                Remove
+                              </button>
+                            )}
+                          </div>
+                        )}
+                        {reactingTo === m.id && !mine && (
+                          <div className="mb-2 flex justify-start gap-1">
+                            {REACTION_EMOJIS.map((emoji) => (
+                              <button
+                                key={emoji}
+                                type="button"
+                                disabled={reactBusy}
+                                onClick={() => void react(m, emoji)}
+                                aria-label={`React with ${emoji}`}
+                                className="rounded-full border border-ink/[0.08] bg-white px-2 py-1 text-[16px] leading-5 transition hover:bg-ink/[0.04] disabled:opacity-50 dark:border-fog/[0.12] dark:bg-ink"
+                              >
+                                {emoji}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     );
                   })
@@ -1465,6 +1620,29 @@ export default function InboxView() {
                   <p role="status" className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-[12px] text-red-700 dark:bg-red-950/40 dark:text-red-300">
                     {sendError}
                   </p>
+                )}
+                {replyTo && (
+                  <div className="mb-2 flex items-start gap-2 rounded-xl border-l-2 border-deep-violet bg-deep-violet/[0.05] px-3 py-2 dark:bg-fog/[0.06]">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[9px] font-bold uppercase tracking-wide text-deep-violet/70 dark:text-fog/60">
+                        Replying to{" "}
+                        {replyTo.direction === "outbound"
+                          ? "your message"
+                          : target?.display_name || "the customer"}
+                      </p>
+                      <p className="truncate text-[11px] text-ink/60 dark:text-fog/60">
+                        {replyTo.content || "…"}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setReplyTo(null)}
+                      aria-label="Cancel reply"
+                      className="shrink-0 rounded-full px-1.5 text-[14px] leading-5 text-ink/40 hover:text-ink dark:text-fog/40 dark:hover:text-fog"
+                    >
+                      ×
+                    </button>
+                  </div>
                 )}
                 <div className="mb-2 flex gap-1.5 overflow-x-auto">
                   {QUICK_REPLIES.map((q) => (

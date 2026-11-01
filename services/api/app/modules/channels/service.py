@@ -342,7 +342,12 @@ async def delete_channel(channel_id: str, user: User, db: AsyncSession) -> bool:
 
 
 async def send_message(
-    channel_id: str, body: ChannelMessageSend, user: User, db: AsyncSession
+    channel_id: str,
+    body: ChannelMessageSend,
+    user: User,
+    db: AsyncSession,
+    *,
+    reply_to_message_id: str | None = None,
 ) -> ChannelMessage:
     """Send a message to a contact and record the result.
 
@@ -359,6 +364,25 @@ async def send_message(
     if not contact_phone:
         raise ValueError("A recipient phone number is required to send")
 
+    # Resolve the quote inside the same conversation, never from a bare id the
+    # browser sent. A target with no provider id cannot be quoted.
+    quoted_wamid: str | None = None
+    if reply_to_message_id and channel.platform == "whatsapp":
+        target = (
+            await db.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.id == reply_to_message_id,
+                    ChannelMessage.channel_id == channel_id,
+                    ChannelMessage.contact_phone_hash
+                    == hash_contact_phone(contact_phone),
+                    ChannelMessage.deleted_at.is_(None),
+                )
+            )
+        ).scalar_one_or_none()
+        if target is None or not target.platform_message_id:
+            raise ValueError("That message cannot be quoted in this conversation.")
+        quoted_wamid = target.platform_message_id
+
     outbound = ChannelMessage(
         id=str(uuid.uuid4()),
         channel_id=channel_id,
@@ -370,6 +394,7 @@ async def send_message(
         contact_phone_hash=hash_contact_phone(contact_phone),
         contact_name=body.contact_name or None,
         handled_by="human",
+        reply_to_message_id=quoted_wamid,
     )
 
     try:
@@ -379,7 +404,8 @@ async def send_message(
             )
         else:
             provider_msg_id, error = await _dispatch_whatsapp(
-                db, user, channel, contact_phone, body.content
+                db, user, channel, contact_phone, body.content,
+                context_message_id=quoted_wamid,
             )
     except Exception as exc:  # noqa: BLE001 - recorded on the row, not raised
         provider_msg_id, error = "", str(exc)[:500]
@@ -421,12 +447,156 @@ async def send_message(
     return outbound
 
 
+async def react_to_message(
+    channel_id: str,
+    message_id: str,
+    emoji: str,
+    user: User,
+    db: AsyncSession,
+) -> ChannelMessage:
+    """React to one message. An empty emoji removes the reaction.
+
+    Reactions are supported by the Cloud API; unlike a reply they do not
+    change conversation ownership or mute the AI.
+    """
+    channel = await get_channel(channel_id, user, db)
+    if not channel:
+        raise ValueError("Channel not found")
+    if channel.platform != "whatsapp":
+        raise ValueError("Reactions are only available on WhatsApp")
+
+    target = (
+        await db.execute(
+            select(ChannelMessage).where(
+                ChannelMessage.id == message_id,
+                ChannelMessage.channel_id == channel_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if target is None:
+        raise ValueError("Message not found")
+    if not target.platform_message_id:
+        raise ValueError("This message has no WhatsApp id to react to")
+    to = decrypt_contact_phone(target.contact_phone)
+    if not to:
+        raise ValueError("This message has no contact to reply to")
+
+    value = (emoji or "").strip()
+    if len(value) > 16:
+        raise ValueError("A reaction must be a single emoji")
+
+    outbound = ChannelMessage(
+        id=str(uuid.uuid4()),
+        channel_id=channel_id,
+        direction="outbound",
+        content=encrypt_message_content(value),
+        content_type="reaction",
+        status="sent",
+        contact_phone=target.contact_phone,
+        contact_phone_hash=target.contact_phone_hash,
+        contact_name=target.contact_name,
+        handled_by="human",
+        reply_to_message_id=target.platform_message_id,
+    )
+
+    from .meta.providers.base import MetaAPIError
+    from .meta.providers.whatsapp import WhatsAppAdapter
+
+    try:
+        phone_number_id, token, error = await _whatsapp_credentials(
+            db, user, channel
+        )
+        if error:
+            raise ValueError(error)
+        outbound.platform_message_id = (
+            await WhatsAppAdapter().send_reaction(
+                phone_number_id, token, to, target.platform_message_id, value
+            )
+        )[:200] or None
+    except (ValueError, MetaAPIError) as exc:
+        outbound.status = "failed"
+        outbound.error = str(exc)[:500]
+    except Exception as exc:  # noqa: BLE001 - recorded on the row
+        outbound.status = "failed"
+        outbound.error = str(exc)[:500]
+
+    db.add(outbound)
+    await db.commit()
+    await db.refresh(outbound)
+    return outbound
+
+
+async def soft_delete_message(
+    channel_id: str,
+    message_id: str,
+    user: User,
+    db: AsyncSession,
+) -> ChannelMessage:
+    """Hide one outbound message from this inbox.
+
+    This is NOT a WhatsApp retraction: the Cloud API has no delete-for-
+    everyone endpoint for business messages. The row stays for audit, is
+    excluded from AI history, and the UI labels it as removed locally.
+    """
+    channel = await get_channel(channel_id, user, db)
+    if not channel:
+        raise ValueError("Channel not found")
+    target = (
+        await db.execute(
+            select(ChannelMessage).where(
+                ChannelMessage.id == message_id,
+                ChannelMessage.channel_id == channel_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if target is None:
+        raise ValueError("Message not found")
+    if target.direction != "outbound":
+        raise ValueError("Only messages this business sent can be removed")
+    if target.deleted_at is not None:
+        return target
+
+    target.deleted_at = datetime.now(timezone.utc)
+    target.deleted_by = user.id
+    db.add(target)
+
+    # If the removed message was the thread's newest, the list preview must
+    # not keep showing its text. The row stays for audit; the preview becomes
+    # the same neutral marker the thread view uses.
+    thread = (
+        await db.execute(
+            select(ChannelThread).where(
+                ChannelThread.channel_id == channel_id,
+                ChannelThread.contact_phone_hash == target.contact_phone_hash,
+            )
+        )
+    ).scalar_one_or_none()
+    if thread is not None and thread.last_message_at is not None:
+        last = thread.last_message_at
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        created = target.created_at
+        if created is not None and created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        if created is None or created >= last:
+            thread.last_message_preview = encrypt_message_content(
+                "Message removed from inbox"
+            )
+            db.add(thread)
+
+    await db.commit()
+    await db.refresh(target)
+    return target
+
+
 async def _dispatch_whatsapp(
     db: AsyncSession,
     user: User,
     channel: Channel,
     to: str,
     text: str,
+    *,
+    context_message_id: str | None = None,
 ) -> tuple[str, str]:
     """(provider_message_id, error). Exactly one of the two is meaningful.
 
@@ -443,7 +613,8 @@ async def _dispatch_whatsapp(
 
     try:
         provider_msg_id = await WhatsAppAdapter().send_text_message(
-            phone_number_id, token, to, text
+            phone_number_id, token, to, text,
+            context_message_id=context_message_id,
         )
     except MetaAPIError as exc:
         detail = f"{exc.status_code}: {exc}" if exc.status_code else str(exc)
@@ -1138,7 +1309,10 @@ async def _search_threads(
                     ChannelMessage.content,
                     ChannelMessage.created_at,
                 )
-                .where(ChannelMessage.channel_id == channel_id)
+                .where(
+                    ChannelMessage.channel_id == channel_id,
+                    ChannelMessage.deleted_at.is_(None),
+                )
                 .order_by(ChannelMessage.created_at.desc())
                 .limit(per_channel)
             )
@@ -1303,7 +1477,11 @@ async def list_inbox_threads(
             filtered_summaries = []
             for phone_hash, phone, channel_id, last_at, total in summaries:
                 msgs = msgs_by_thread.get((channel_id, phone_hash), [])
-                if any(needle in (decrypt_message_content(m.content) or "").lower() for m in msgs):
+                if any(
+                    m.deleted_at is None
+                    and needle in (decrypt_message_content(m.content) or "").lower()
+                    for m in msgs
+                ):
                     filtered_summaries.append((phone_hash, phone, channel_id, last_at, total))
             summaries = filtered_summaries
             if not summaries:

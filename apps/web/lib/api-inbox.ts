@@ -33,8 +33,7 @@ export interface InboxThread {
   /** The human owner. NULL = unassigned. */
   assigned_to?: string | null;
   assigned_at?: string | null;
-  assignee_name?: string | null;
-  /** Who answers this conversation. "human" mutes the AI. */
+  assignee_name?: string | null;  /** Who answers this conversation. "human" mutes the AI. */
   mode?: "ai" | "human";
   mode_changed_at?: string | null;
   /** "system" for the automatic escalation, otherwise the acting user id. */
@@ -102,6 +101,11 @@ export interface InboxMessage {
   error: string | null;
   contact_phone: string | null;
   contact_name: string | null;
+  /** The wamid this message quotes, when it is a contextual reply. */
+  reply_to_message_id?: string | null;
+  /** Locally removed from this inbox; the customer still has it. */
+  deleted_at?: string | null;
+  deleted?: boolean;
   created_at: string;
 }
 
@@ -223,6 +227,7 @@ export async function sendInboxMessage(params: {
   contactPhone: string;
   contactName?: string | null;
   content: string;
+  replyToMessageId?: string | null;
 }): Promise<InboxSendResult> {
   return (await apiFetch("/api/v1/inbox/send", {
     method: "POST",
@@ -231,6 +236,31 @@ export async function sendInboxMessage(params: {
       contact_phone: params.contactPhone,
       contact_name: params.contactName ?? null,
       content: params.content,
+      reply_to_message_id: params.replyToMessageId ?? null,
     }),
   })) as InboxSendResult;
+}
+
+/** React to a message; an empty emoji removes this business's reaction. */
+export async function reactToInboxMessage(
+  messageId: string,
+  emoji: string,
+): Promise<InboxSendResult> {
+  return (await apiFetch(
+    `/api/v1/inbox/messages/${encodeURIComponent(messageId)}/reaction`,
+    {
+      method: "POST",
+      body: JSON.stringify({ emoji }),
+    },
+  )) as InboxSendResult;
+}
+
+/** Remove one message from this inbox. Not a WhatsApp retraction. */
+export async function removeInboxMessage(
+  messageId: string,
+): Promise<InboxMessage> {
+  return (await apiFetch(
+    `/api/v1/inbox/messages/${encodeURIComponent(messageId)}`,
+    { method: "DELETE" },
+  )) as InboxMessage;
 }
