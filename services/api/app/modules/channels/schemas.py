@@ -262,6 +262,23 @@ class InboxReactionRequest(BaseModel):
     emoji: str = Field("", max_length=16)
 
 
+class InboxLocationSendRequest(BaseModel):
+    channel_id: str = Field(..., min_length=1)
+    contact_phone: str = Field(..., min_length=1, max_length=32)
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
+    name: str | None = Field(None, max_length=200)
+    address: str | None = Field(None, max_length=500)
+
+
+class InboxContactSendRequest(BaseModel):
+    channel_id: str = Field(..., min_length=1)
+    contact_phone: str = Field(..., min_length=1, max_length=32)
+    name: str = Field(..., min_length=1, max_length=120)
+    phone: str = Field(..., min_length=7, max_length=32)
+    email: str | None = Field(None, max_length=200)
+
+
 class InboxSendResponse(BaseModel):
     message: ChannelMessageResponse
     # False means the row is stored as failed; `error` explains why. The UI

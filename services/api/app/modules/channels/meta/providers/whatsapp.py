@@ -227,6 +227,60 @@ class WhatsAppAdapter(MetaProviderAdapter):
         msgs = data.get("messages", [])
         return msgs[0].get("id", "") if msgs else ""
 
+    async def send_location(
+        self,
+        phone_number_id: str,
+        token: str,
+        to: str,
+        latitude: float,
+        longitude: float,
+        name: str | None = None,
+        address: str | None = None,
+    ) -> str:
+        """Send a native location card. Returns the provider message id."""
+        location: dict = {"latitude": latitude, "longitude": longitude}
+        if name:
+            location["name"] = name[:255]
+        if address:
+            location["address"] = address[:255]
+        resp = await self._graph(
+            "POST",
+            f"/{phone_number_id}/messages",
+            token,
+            json={
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": "location",
+                "location": location,
+            },
+        )
+        data = resp.json()
+        msgs = data.get("messages", [])
+        return msgs[0].get("id", "") if msgs else ""
+
+    async def send_contacts(
+        self,
+        phone_number_id: str,
+        token: str,
+        to: str,
+        contacts: list[dict],
+    ) -> str:
+        """Send one or more contact cards. Returns the provider message id."""
+        resp = await self._graph(
+            "POST",
+            f"/{phone_number_id}/messages",
+            token,
+            json={
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": "contacts",
+                "contacts": contacts,
+            },
+        )
+        data = resp.json()
+        msgs = data.get("messages", [])
+        return msgs[0].get("id", "") if msgs else ""
+
     async def _send_interactive(
         self, phone_number_id: str, token: str, to: str, interactive: dict
     ) -> str:

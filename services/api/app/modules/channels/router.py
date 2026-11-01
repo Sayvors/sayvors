@@ -33,6 +33,8 @@ from .schemas import (
     ChannelMessageSend,
     ChannelResponse,
     InboxSendRequest,
+    InboxLocationSendRequest,
+    InboxContactSendRequest,
     InboxReactionRequest,
     InteractiveSend,
     QrCodeCreate,    InboxSendResponse,
@@ -65,6 +67,8 @@ from .service import (
     react_to_message,
     send_message,
     send_interactive_message,
+    send_location_message,
+    send_contact_message,
     soft_delete_message,
     whatsapp_number_health,
     list_whatsapp_qr_codes,
@@ -1353,6 +1357,48 @@ def _message_out(m: ChannelMessage) -> ChannelMessageResponse:
     )
 
 
+async def _ensure_messaging_quota(ctx: TenantContext, db: AsyncSession) -> None:
+    """The plan gate every outbound conversation message shares."""
+    from ..billing.entitlements import (
+        ENTITLEMENT_DENIED_HEADER,
+        count_messages_this_month,
+        entitlement_403,
+        get_entitlements,
+    )
+    from ..team.context import tenant_id_of
+
+    tid = tenant_id_of(ctx.user)
+    ent = await get_entitlements(tid, db)
+    if not ent.has_feature("messaging"):
+        raise entitlement_403("Messaging is not included in your plan.", "messaging")
+    used = await count_messages_this_month(tid, db)
+    if not ent.message_quota_ok(used):
+        raise HTTPException(
+            status_code=429,
+            detail=f"Monthly message limit reached for plan '{ent.plan_slug}'. Upgrade to send more.",
+            headers={ENTITLEMENT_DENIED_HEADER: "quota"},
+        )
+
+
+async def _publish_outbound_message(tenant_id: str, msg: ChannelMessage) -> None:
+    from .realtime import publish_inbox_event
+
+    await publish_inbox_event(tenant_id, {
+        "type": "message",
+        "id": msg.id,
+        "channel_id": msg.channel_id,
+        "platform": None,
+        "direction": "outbound",
+        "content": decrypt_message_content(msg.content),
+        "content_type": msg.content_type,
+        "status": msg.status,
+        "contact_phone": decrypt_contact_phone(msg.contact_phone),
+        "contact_name": msg.contact_name,
+        "reply_to_message_id": msg.reply_to_message_id,
+        "created_at": msg.created_at,
+    })
+
+
 @_inbox_router.post("/send", response_model=InboxSendResponse)
 async def inbox_send(
     body: InboxSendRequest,
@@ -1367,25 +1413,7 @@ async def inbox_send(
     """
     if not ctx.can_edit_channel(body.channel_id):
         raise HTTPException(status_code=403, detail="No edit access to this channel")
-    # Plan entitlements: feature gate + monthly message cap (fail closed).
-    from ..billing.entitlements import count_messages_this_month, get_entitlements
-    from ..team.context import tenant_id_of
-
-    tid = tenant_id_of(ctx.user)
-    ent = await get_entitlements(tid, db)
-    from ..billing.entitlements import entitlement_403
-
-    if not ent.has_feature("messaging"):
-        raise entitlement_403("Messaging is not included in your plan.", "messaging")
-    used = await count_messages_this_month(tid, db)
-    if not ent.message_quota_ok(used):
-        from ..billing.entitlements import ENTITLEMENT_DENIED_HEADER
-
-        raise HTTPException(
-            status_code=429,
-            detail=f"Monthly message limit reached for plan '{ent.plan_slug}'. Upgrade to send more.",
-            headers={ENTITLEMENT_DENIED_HEADER: "quota"},
-        )
+    await _ensure_messaging_quota(ctx, db)
     try:
         msg = await send_message(
             body.channel_id,
@@ -1406,27 +1434,72 @@ async def inbox_send(
         raise HTTPException(status_code=422, detail=message)
 
     failed = msg.status == "failed"
-
-    from .realtime import publish_inbox_event
-
-    await publish_inbox_event(ctx.tenant_id, {
-        "type": "message",
-        "id": msg.id,
-        "channel_id": msg.channel_id,
-        "platform": None,
-        "direction": "outbound",
-        "content": decrypt_message_content(msg.content),
-        "content_type": msg.content_type,
-        "status": msg.status,
-        "contact_phone": decrypt_contact_phone(msg.contact_phone),
-        "contact_name": msg.contact_name,
-        "reply_to_message_id": msg.reply_to_message_id,
-        "created_at": msg.created_at,
-    })
+    await _publish_outbound_message(ctx.tenant_id, msg)
 
     return InboxSendResponse(
         message=_message_out(msg),
         sent=not failed,
+        error=msg.error,
+    )
+
+
+@_inbox_router.post("/send-location", response_model=InboxSendResponse)
+async def inbox_send_location(
+    body: InboxLocationSendRequest,
+    ctx: TenantContext = Depends(require_perm("inbox.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Send a native WhatsApp location card (lat/lng, name and address)."""
+    if not ctx.can_edit_channel(body.channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    await _ensure_messaging_quota(ctx, db)
+    try:
+        msg = await send_location_message(
+            body.channel_id,
+            body.contact_phone,
+            body.latitude,
+            body.longitude,
+            name=body.name,
+            address=body.address,
+            user=ctx.user,
+            db=db,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    await _publish_outbound_message(ctx.tenant_id, msg)
+    return InboxSendResponse(
+        message=_message_out(msg),
+        sent=msg.status != "failed",
+        error=msg.error,
+    )
+
+
+@_inbox_router.post("/send-contact", response_model=InboxSendResponse)
+async def inbox_send_contact(
+    body: InboxContactSendRequest,
+    ctx: TenantContext = Depends(require_perm("inbox.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Send a native WhatsApp contact card."""
+    if not ctx.can_edit_channel(body.channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    await _ensure_messaging_quota(ctx, db)
+    try:
+        msg = await send_contact_message(
+            body.channel_id,
+            body.contact_phone,
+            name=body.name,
+            phone=body.phone,
+            email=body.email,
+            user=ctx.user,
+            db=db,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    await _publish_outbound_message(ctx.tenant_id, msg)
+    return InboxSendResponse(
+        message=_message_out(msg),
+        sent=msg.status != "failed",
         error=msg.error,
     )
 

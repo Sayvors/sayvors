@@ -16,6 +16,8 @@ import {
   pinInboxThread,
   resolveInboxThread,
   sendInboxMessage,
+  sendInboxLocation,
+  sendInboxContact,
   setInboxThreadMode,
   reactToInboxMessage,
   removeInboxMessage,
@@ -193,6 +195,23 @@ function reminderLabel(state: ThreadState): string {
   return remaining(at) === "due now" ? "Reminder due" : `Reminder ${remaining(at)}`;
 }
 
+/** Extract lat/lng from the common Google Maps link shapes. */
+function coordsFromMapsLink(link: string): { lat: number; lng: number } | null {
+  const patterns = [
+    /@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/,
+    /[?&]q=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/,
+    /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/,
+  ];
+  for (const pattern of patterns) {
+    const match = link.match(pattern);
+    if (!match) continue;
+    const lat = Number(match[1]);
+    const lng = Number(match[2]);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+  }
+  return null;
+}
+
 function clockTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
@@ -297,6 +316,16 @@ export default function InboxView() {
   const [replyTo, setReplyTo] = useState<InboxMessage | null>(null);
   const [reactingTo, setReactingTo] = useState<string | null>(null);
   const [reactBusy, setReactBusy] = useState(false);
+  const [richComposer, setRichComposer] = useState<"location" | "contact" | null>(null);
+  const [richBusy, setRichBusy] = useState(false);
+  const [locName, setLocName] = useState("");
+  const [locAddress, setLocAddress] = useState("");
+  const [locLat, setLocLat] = useState("");
+  const [locLng, setLocLng] = useState("");
+  const [locMaps, setLocMaps] = useState("");
+  const [cardName, setCardName] = useState("");
+  const [cardPhone, setCardPhone] = useState("");
+  const [cardEmail, setCardEmail] = useState("");
   const [assigneeBusy, setAssigneeBusy] = useState(false);
   const [assigneeError, setAssigneeError] = useState<string | null>(null);
   // The escalation clock is live: while an escalated thread is open, tick
@@ -440,6 +469,96 @@ export default function InboxView() {
       );
     } catch (e) {
       setSendError(e instanceof Error ? e.message : "Could not remove the message.");
+    }
+  };
+
+  const openRichComposer = (kind: "location" | "contact") => {
+    setRichComposer(kind);
+    setSendError(null);
+    if (kind === "location") {
+      setLocName("");
+      setLocAddress("");
+      setLocLat("");
+      setLocLng("");
+      setLocMaps("");
+    } else {
+      setCardName("");
+      setCardPhone("");
+      setCardEmail("");
+    }
+  };
+
+  const appendRichMessage = (message: InboxMessage) => {
+    setMessages((prev) =>
+      prev.some((m) => m.id === message.id) ? prev : [...prev, message],
+    );
+    void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] });
+  };
+
+  const sendLocationCard = async () => {
+    const thread = target;
+    if (!thread?.contact_phone || richBusy) return;
+    const lat = Number(locLat);
+    const lng = Number(locLng);
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+      setSendError("Enter a latitude between -90 and 90.");
+      return;
+    }
+    if (!Number.isFinite(lng) || lng < -180 || lng > 180) {
+      setSendError("Enter a longitude between -180 and 180.");
+      return;
+    }
+    setRichBusy(true);
+    setSendError(null);
+    try {
+      const result = await sendInboxLocation({
+        channelId: thread.channel_id,
+        contactPhone: thread.contact_phone,
+        latitude: lat,
+        longitude: lng,
+        name: locName.trim() || null,
+        address: locAddress.trim() || null,
+      });
+      if (!result.sent) {
+        setSendError(result.error || "WhatsApp rejected the location.");
+        return;
+      }
+      appendRichMessage(result.message);
+      setRichComposer(null);
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : "Could not send the location.");
+    } finally {
+      setRichBusy(false);
+    }
+  };
+
+  const sendContactCard = async () => {
+    const thread = target;
+    if (!thread?.contact_phone || richBusy) return;
+    if (!cardName.trim() || !cardPhone.trim()) {
+      setSendError("A contact card needs a name and a phone number.");
+      return;
+    }
+    setRichBusy(true);
+    setSendError(null);
+    try {
+      const result = await sendInboxContact({
+        channelId: thread.channel_id,
+        contactPhone: thread.contact_phone,
+        name: cardName.trim(),
+        phone: cardPhone.trim(),
+        email: cardEmail.trim() || null,
+      });
+      if (!result.sent) {
+        setSendError(result.error || "WhatsApp rejected the contact card.");
+        return;
+      }
+      appendRichMessage(result.message);
+      setRichComposer(null);
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : "Could not send the contact card.");
+    } finally {
+      setRichBusy(false);
     }
   };
 
@@ -864,6 +983,7 @@ export default function InboxView() {
           setThreadState(null);
           setReplyTo(null);
           setReactingTo(null);
+          setRichComposer(null);
           setLoadedKey(targetKey);
           setError(e instanceof Error ? e.message : "Could not load this conversation.");
         }
@@ -1528,6 +1648,21 @@ export default function InboxView() {
                                     </p>
                                   </div>
                                 )}
+                                {m.content_type === "location" ||
+                                m.content_type === "contact" ||
+                                m.content_type === "contacts" ? (
+                                  <p
+                                    className={`mb-1 text-[10px] font-bold uppercase tracking-wide ${
+                                      mine
+                                        ? "text-white/70"
+                                        : "text-ink/45 dark:text-fog/45"
+                                    }`}
+                                  >
+                                    {m.content_type === "location"
+                                      ? "Location"
+                                      : "Contact card"}
+                                  </p>
+                                ) : null}
                                 <p className="whitespace-pre-wrap break-words text-[13px]">
                                   {m.content}
                                 </p>
@@ -1655,6 +1790,24 @@ export default function InboxView() {
                     </button>
                   ))}
                 </div>
+                {target?.platform === "whatsapp" && (
+                  <div className="mb-2 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => openRichComposer("location")}
+                      className="rounded-full border border-ink/[0.08] px-2.5 py-1 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet/40 hover:text-deep-violet dark:border-fog/[0.1] dark:text-fog/60"
+                    >
+                      📍 Send location
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openRichComposer("contact")}
+                      className="rounded-full border border-ink/[0.08] px-2.5 py-1 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet/40 hover:text-deep-violet dark:border-fog/[0.1] dark:text-fog/60"
+                    >
+                      👤 Send contact
+                    </button>
+                  </div>
+                )}
                 {target.is_unknown ? (
                   <p className="text-[12px] text-ink/45 dark:text-fog/45">
                     These messages predate contact tracking, so there is no number to reply to.
@@ -1901,6 +2054,135 @@ export default function InboxView() {
                 className="rounded-[2px] bg-red-600 px-3 py-1.5 text-[12px] font-bold text-white"
               >
                 Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {richComposer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl dark:bg-ink">
+            <h2 className="text-[15px] font-bold text-ink dark:text-fog">
+              {richComposer === "location" ? "Send a location" : "Send a contact card"}
+            </h2>
+            <p className="mt-1 text-[12px] text-ink/55 dark:text-fog/55">
+              {richComposer === "location"
+                ? "The customer gets a native map card, not a link."
+                : "The customer gets a native contact card they can save."}
+            </p>
+
+            {richComposer === "location" ? (
+              <div className="mt-3 space-y-2">
+                <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
+                  Google Maps link (optional — fills the coordinates)
+                  <input
+                    value={locMaps}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setLocMaps(value);
+                      const coords = coordsFromMapsLink(value);
+                      if (coords) {
+                        setLocLat(String(coords.lat));
+                        setLocLng(String(coords.lng));
+                      }
+                    }}
+                    placeholder="https://maps.google.com/.../@24.7136,46.6753,17z"
+                    className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                  />
+                </label>
+                <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
+                  Place name
+                  <input
+                    value={locName}
+                    onChange={(e) => setLocName(e.target.value)}
+                    placeholder="Aster Coffee — Olaya"
+                    className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                  />
+                </label>
+                <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
+                  Address
+                  <input
+                    value={locAddress}
+                    onChange={(e) => setLocAddress(e.target.value)}
+                    placeholder="Olaya St, Riyadh"
+                    className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                  />
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
+                    Latitude
+                    <input
+                      value={locLat}
+                      onChange={(e) => setLocLat(e.target.value)}
+                      inputMode="decimal"
+                      placeholder="24.7136"
+                      className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] tabular-nums text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                    />
+                  </label>
+                  <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
+                    Longitude
+                    <input
+                      value={locLng}
+                      onChange={(e) => setLocLng(e.target.value)}
+                      inputMode="decimal"
+                      placeholder="46.6753"
+                      className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] tabular-nums text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                    />
+                  </label>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-3 space-y-2">
+                <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
+                  Name
+                  <input
+                    value={cardName}
+                    onChange={(e) => setCardName(e.target.value)}
+                    placeholder="Aster Coffee"
+                    className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                  />
+                </label>
+                <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
+                  Phone
+                  <input
+                    value={cardPhone}
+                    onChange={(e) => setCardPhone(e.target.value)}
+                    placeholder="+966 50 000 0000"
+                    className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                  />
+                </label>
+                <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
+                  Email (optional)
+                  <input
+                    value={cardEmail}
+                    onChange={(e) => setCardEmail(e.target.value)}
+                    type="email"
+                    placeholder="hello@example.com"
+                    className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                  />
+                </label>
+              </div>
+            )}
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setRichComposer(null)}
+                className="rounded-full border border-[var(--ui-line)] px-3 py-1.5 text-[12px] font-medium text-ink/70 dark:text-fog/70"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={richBusy}
+                onClick={() =>
+                  void (richComposer === "location"
+                    ? sendLocationCard()
+                    : sendContactCard())
+                }
+                className="rounded-full bg-deep-violet px-4 py-1.5 text-[12px] font-bold text-white disabled:opacity-50"
+              >
+                {richBusy ? "Sending…" : "Send"}
               </button>
             </div>
           </div>

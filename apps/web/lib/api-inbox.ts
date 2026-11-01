@@ -241,6 +241,48 @@ export async function sendInboxMessage(params: {
   })) as InboxSendResult;
 }
 
+/** Send a native WhatsApp location card. */
+export async function sendInboxLocation(params: {
+  channelId: string;
+  contactPhone: string;
+  latitude: number;
+  longitude: number;
+  name?: string | null;
+  address?: string | null;
+}): Promise<InboxSendResult> {
+  return (await apiFetch("/api/v1/inbox/send-location", {
+    method: "POST",
+    body: JSON.stringify({
+      channel_id: params.channelId,
+      contact_phone: params.contactPhone,
+      latitude: params.latitude,
+      longitude: params.longitude,
+      name: params.name ?? null,
+      address: params.address ?? null,
+    }),
+  })) as InboxSendResult;
+}
+
+/** Send a native WhatsApp contact card. */
+export async function sendInboxContact(params: {
+  channelId: string;
+  contactPhone: string;
+  name: string;
+  phone: string;
+  email?: string | null;
+}): Promise<InboxSendResult> {
+  return (await apiFetch("/api/v1/inbox/send-contact", {
+    method: "POST",
+    body: JSON.stringify({
+      channel_id: params.channelId,
+      contact_phone: params.contactPhone,
+      name: params.name,
+      phone: params.phone,
+      email: params.email ?? null,
+    }),
+  })) as InboxSendResult;
+}
+
 /** React to a message; an empty emoji removes this business's reaction. */
 export async function reactToInboxMessage(
   messageId: string,

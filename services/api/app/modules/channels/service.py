@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import secrets
 import uuid
 from datetime import datetime, timezone
@@ -587,6 +588,178 @@ async def soft_delete_message(
     await db.commit()
     await db.refresh(target)
     return target
+
+
+async def _mark_human_owned(
+    db: AsyncSession, user: User, channel_id: str, contact_phone: str
+) -> None:
+    """A human sent something: mute the AI for this thread. Best-effort."""
+    from .conversation_mode import MODE_HUMAN, set_mode
+
+    try:
+        await set_mode(
+            db,
+            tenant_id=tenant_id_of(user),
+            channel_id=channel_id,
+            contact_phone=contact_phone,
+            mode=MODE_HUMAN,
+            by=user.id or "human_reply",
+            reason="human_reply",
+        )
+    except Exception as exc:  # noqa: BLE001 - the message already landed
+        logger.warning(
+            "conversation mode switch failed after human send "
+            "channel=%s: %s", channel_id, exc,
+        )
+
+
+async def send_location_message(
+    channel_id: str,
+    contact_phone: str,
+    latitude: float,
+    longitude: float,
+    *,
+    name: str | None,
+    address: str | None,
+    user: User,
+    db: AsyncSession,
+) -> ChannelMessage:
+    """Send a native WhatsApp location card and store the outbound row."""
+    channel = await get_channel(channel_id, user, db)
+    if not channel:
+        raise ValueError("Channel not found")
+    if channel.platform != "whatsapp":
+        raise ValueError("Location messages are only available on WhatsApp")
+    to = (contact_phone or "").strip()
+    if not to:
+        raise ValueError("A recipient phone number is required to send")
+    if not (math.isfinite(latitude) and -90 <= latitude <= 90):
+        raise ValueError("Latitude must be between -90 and 90")
+    if not (math.isfinite(longitude) and -180 <= longitude <= 180):
+        raise ValueError("Longitude must be between -180 and 180")
+
+    label = (name or "").strip()[:200]
+    place = (address or "").strip()[:500]
+    lines = [part for part in (label, place) if part]
+    lines.append(f"https://maps.google.com/?q={latitude},{longitude}")
+    outbound = ChannelMessage(
+        id=str(uuid.uuid4()),
+        channel_id=channel_id,
+        direction="outbound",
+        content=encrypt_message_content("\n".join(lines)),
+        content_type="location",
+        status="sent",
+        contact_phone=encrypt_contact_phone(to),
+        contact_phone_hash=hash_contact_phone(to),
+        handled_by="human",
+    )
+
+    from .meta.providers.base import MetaAPIError
+    from .meta.providers.whatsapp import WhatsAppAdapter
+
+    error = ""
+    try:
+        phone_number_id, token, error = await _whatsapp_credentials(
+            db, user, channel
+        )
+        if not error:
+            outbound.platform_message_id = (
+                await WhatsAppAdapter().send_location(
+                    phone_number_id, token, to, latitude, longitude,
+                    name=label or None, address=place or None,
+                )
+            )[:200] or None
+    except MetaAPIError as exc:
+        error = str(exc)
+    except Exception as exc:  # noqa: BLE001 - recorded on the row
+        error = str(exc)
+
+    if error:
+        outbound.status = "failed"
+        outbound.error = error[:500]
+    db.add(outbound)
+    await db.commit()
+    await db.refresh(outbound)
+    if outbound.status != "failed":
+        await _mark_human_owned(db, user, channel_id, to)
+    return outbound
+
+
+async def send_contact_message(
+    channel_id: str,
+    contact_phone: str,
+    *,
+    name: str,
+    phone: str,
+    email: str | None,
+    user: User,
+    db: AsyncSession,
+) -> ChannelMessage:
+    """Send a WhatsApp contact card and store the outbound row."""
+    channel = await get_channel(channel_id, user, db)
+    if not channel:
+        raise ValueError("Channel not found")
+    if channel.platform != "whatsapp":
+        raise ValueError("Contact cards are only available on WhatsApp")
+    to = (contact_phone or "").strip()
+    if not to:
+        raise ValueError("A recipient phone number is required to send")
+    label = (name or "").strip()[:120]
+    if not label:
+        raise ValueError("A contact card needs a name")
+    number = (phone or "").strip()[:32]
+    digits = "".join(ch for ch in number if ch.isdigit())
+    if len(digits) < 7:
+        raise ValueError("A contact card needs a valid phone number")
+    mail = (email or "").strip()[:200]
+
+    card: dict = {
+        "name": {"formatted_name": label},
+        "phones": [{"phone": number, "type": "WORK"}],
+    }
+    if mail:
+        card["emails"] = [{"email": mail, "type": "WORK"}]
+
+    outbound = ChannelMessage(
+        id=str(uuid.uuid4()),
+        channel_id=channel_id,
+        direction="outbound",
+        content=encrypt_message_content(f"{label} — {number}"),
+        content_type="contact",
+        status="sent",
+        contact_phone=encrypt_contact_phone(to),
+        contact_phone_hash=hash_contact_phone(to),
+        handled_by="human",
+    )
+
+    from .meta.providers.base import MetaAPIError
+    from .meta.providers.whatsapp import WhatsAppAdapter
+
+    error = ""
+    try:
+        phone_number_id, token, error = await _whatsapp_credentials(
+            db, user, channel
+        )
+        if not error:
+            outbound.platform_message_id = (
+                await WhatsAppAdapter().send_contacts(
+                    phone_number_id, token, to, [card]
+                )
+            )[:200] or None
+    except MetaAPIError as exc:
+        error = str(exc)
+    except Exception as exc:  # noqa: BLE001 - recorded on the row
+        error = str(exc)
+
+    if error:
+        outbound.status = "failed"
+        outbound.error = error[:500]
+    db.add(outbound)
+    await db.commit()
+    await db.refresh(outbound)
+    if outbound.status != "failed":
+        await _mark_human_owned(db, user, channel_id, to)
+    return outbound
 
 
 async def _dispatch_whatsapp(

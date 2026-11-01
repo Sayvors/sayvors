@@ -1834,7 +1834,7 @@ from users where id = '&lt;tenant id&gt;';</code></pre>
     <tr><td class="num">WA-2</td><td><strong>Inbound image / document / video</strong></td><td>Currently stored as <code>[image message]</code> - the same class of silent gap voice notes had. Customers send screenshots, receipts and PDFs constantly.</td><td>S-M</td></tr>
     <tr><td class="num">WA-3</td><td><strong>Outbound media</strong> - video, document, sticker, audio file</td><td>Invoices, menus, PDFs and quotes; today only image and voice note exist.</td><td>S</td></tr>
     <tr><td class="num">WA-4 <span class="chip warn">Partial</span></td><td><strong>Quoted reply + reactions shipped; edit/delete is a Meta platform limit.</strong> Agents can quote a specific message and react to it. The Cloud API has no edit or delete-for-everyone endpoint for business messages, so a wrong send is corrected with a quoted follow-up and can be removed from this inbox only — never presented as a customer-side retraction.</td><td>Agents answer the exact message instead of guessing; a wrong send gets a threaded correction. True edit/delete becomes available only if Meta adds the endpoint.</td><td>S</td></tr>
-    <tr><td class="num">WA-5</td><td><strong>Location + contact card</strong></td><td>"Send me your location" and sharing a contact are routine in service chats.</td><td>S</td></tr>
+    <tr><td class="num">WA-5 <span class="chip ok">Fixed</span></td><td><strong>Location + contact card</strong></td><td>"Send me your location" and sharing a contact are routine in service chats.</td><td>S</td></tr>
     <tr><td class="num">WA-6</td><td><strong>Block / unblock user</strong></td><td>Abuse handling without leaving the dashboard.</td><td>S</td></tr>
   </table></div>
 
@@ -1915,7 +1915,7 @@ from users where id = '&lt;tenant id&gt;';</code></pre>
 <section id="scoped-audit-2026-10-31">
   <div class="eyebrow">&sect;&sect; 22 - Google Reviews + WhatsApp scoped readiness - 2026-10-31</div>
   <h2>Google Reviews and WhatsApp only - how ready are we, really</h2>
-  <p>This is a deliberately narrow audit: only the two channels a tenant is sold today. Everything was re-verified against the working tree (<strong>146 migrations, single head <code>f6a2d9c4e713805b</code></strong>; <strong>1,956 tests collected across 148 files</strong>; the last full run was 1,880 passed / 4 skipped / 3 failed, and all three were test seeds fixed afterwards). Percentages are judgment anchored to verified code and open items, not a marketing score.</p>
+  <p>This is a deliberately narrow audit: only the two channels a tenant is sold today. Everything was re-verified against the working tree (<strong>146 migrations, single head <code>f6a2d9c4e713805b</code></strong>; <strong>1,961 tests collected across 148 files</strong>; the last full run was 1,880 passed / 4 skipped / 3 failed, and all three were test seeds fixed afterwards). Percentages are judgment anchored to verified code and open items, not a marketing score.</p>
 
   <h3>Headline percentages</h3>
   <div class="scroll"><table>
@@ -1964,6 +1964,7 @@ from users where id = '&lt;tenant id&gt;';</code></pre>
     <tr><td>Escalation / modes</td><td>Confusion counter (default off), urgent holding line, notification + email, resume sweep, AI/human switch and resolve in the inbox, snapshots on transitions.</td></tr>
     <tr><td>QR + health (WA-7, WA-9)</td><td>QR codes are generated locally as <code>https://wa.me/&lt;number&gt;?text=&lt;message&gt;</code> (stored in <code>whatsapp_qr_codes</code>, migration <code>a1f4c8e2d9b7035</code>), rendered in the browser with <code>qrcode.react</code>, and downloadable as a 220px PNG for printing. This replaced Meta's <code>message_qrdls</code>, which needs <code>whatsapp_business_management</code> and made the settings page fail with "Failed to fetch" when the token lacked it. Number quality/limit remains the Meta health card. 6 tests.</td></tr>
     <tr><td>Message actions (WA-4, partial)</td><td>Quoted replies send <code>context.message_id</code>; reactions use the documented <code>type: "reaction"</code> payload; both persist as message rows and render in the inbox (quote preview, reply picker, emoji picker). A local "Remove from inbox" stores <code>deleted_at/by</code> (migration <code>f6a2d9c4e713805b</code>), excludes the row from AI history/context and never claims a customer-side retraction. Meta's Cloud API has no edit/delete-for-everyone endpoint, so edit is not offered. 7 tests.</td></tr>
+    <tr><td>Location + contact cards (WA-5)</td><td>Native WhatsApp location (latitude, longitude, name, address) and contact cards (formatted name, work phone, optional email) send from the inbox composer. A pasted Google Maps link fills the coordinates; the message stores as <code>content_type="location"</code> or <code>"contact"</code>, publishes realtime, and shares the plan quota gate. 5 tests.</td></tr>
     <tr><td>Pricing</td><td><code>pricing_rates</code> (migration <code>227dac0fa4926579</code>); LLM per-family + ASR per-minute through the durable ledger; Operations &rarr; Pricing page.</td></tr>
     <tr><td>Cross-channel</td><td>IG &rarr; WhatsApp <code>wa.me</code> bridge with identity merge and context carry; review &rarr; WhatsApp handoff codes.</td></tr>
   </table></div>
@@ -1975,7 +1976,7 @@ from users where id = '&lt;tenant id&gt;';</code></pre>
     <tr><td class="num">WA-2</td><td>Inbound image / document / video stored as <code>[image message]</code>, never answered.</td><td>The same silent-gap class voice notes had: screenshots, receipts and PDFs are how customers ask for help.</td><td>S-M</td></tr>
     <tr><td class="num">WA-3</td><td>No outbound video, document, sticker or audio file (only image + voice note).</td><td>Invoices, menus, PDFs and quotes cannot be sent.</td><td>S</td></tr>
     <tr><td class="num">WA-4 <span class="chip warn">Partial</span></td><td>No quoted reply or reaction; edit/delete impossible via the Cloud API.</td><td>Agents can now answer a specific message and react. A wrong send can only be corrected with a quoted follow-up or removed from this inbox; Meta provides no customer-side retraction.</td><td>S</td></tr>
-    <tr><td class="num">WA-5</td><td>No location or contact-card messages.</td><td>"Send me your location" is routine in service chats.</td><td>S</td></tr>
+    <tr><td class="num">WA-5 <span class="chip ok">Fixed</span></td><td>Location and contact cards are sent from the inbox composer: native location with lat/lng/name/address (with a Google Maps link parser) and a contact card with name/phone/email.</td><td>Both persist as <code>content_type</code> location/contact, publish realtime, and share the messaging quota gate.</td><td>S</td></tr>
     <tr><td class="num">WA-6</td><td>No block / unblock user.</td><td>Abuse handling requires the dashboard.</td><td>S</td></tr>
   </table></div>
   <h4>Account &amp; operations</h4>

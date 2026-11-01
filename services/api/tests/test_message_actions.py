@@ -197,6 +197,133 @@ async def test_reaction_endpoint_persists_the_sent_reaction(
 
 
 @pytest.mark.asyncio
+async def test_location_and_contact_payloads(monkeypatch):
+    calls: list[dict] = []
+
+    class _Resp:
+        def json(self):
+            return {"messages": [{"id": f"wamid.{len(calls)}"}]}
+
+    async def _graph(self, method, path, token, **kwargs):
+        calls.append(kwargs["json"])
+        return _Resp()
+
+    monkeypatch.setattr(WhatsAppAdapter, "_graph", _graph)
+
+    await WhatsAppAdapter().send_location(
+        "pn", "tok", "+966500000040", 24.7136, 46.6753,
+        name="Aster Coffee", address="Olaya, Riyadh",
+    )
+    assert calls[0]["type"] == "location"
+    assert calls[0]["location"] == {
+        "latitude": 24.7136,
+        "longitude": 46.6753,
+        "name": "Aster Coffee",
+        "address": "Olaya, Riyadh",
+    }
+
+    await WhatsAppAdapter().send_contacts(
+        "pn", "tok", "+966500000040",
+        [{
+            "name": {"formatted_name": "Aster"},
+            "phones": [{"phone": "+966500000000", "type": "WORK"}],
+        }],
+    )
+    assert calls[1]["type"] == "contacts"
+    assert calls[1]["contacts"][0]["phones"][0]["phone"] == "+966500000000"
+
+
+@pytest.mark.asyncio
+async def test_send_location_endpoint_stores_a_location_message(
+    client, db, user_id, monkeypatch
+):
+    channel, _target = await _seed(db, user_id)
+    _credentials(monkeypatch)
+
+    async def _send(self, phone_number_id, token, to, lat, lng, **kwargs):
+        assert (lat, lng) == (24.7136, 46.6753)
+        assert kwargs["name"] == "Aster Coffee"
+        return "wamid.location.sent"
+
+    monkeypatch.setattr(WhatsAppAdapter, "send_location", _send)
+
+    res = client.post("/api/v1/inbox/send-location", json={
+        "channel_id": channel.id,
+        "contact_phone": PHONE,
+        "latitude": 24.7136,
+        "longitude": 46.6753,
+        "name": "Aster Coffee",
+        "address": "Olaya, Riyadh",
+    })
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["sent"] is True
+    assert body["message"]["content_type"] == "location"
+    assert "https://maps.google.com/?q=24.7136,46.6753" in body["message"]["content"]
+
+
+@pytest.mark.asyncio
+async def test_send_contact_endpoint_stores_a_contact_card(
+    client, db, user_id, monkeypatch
+):
+    channel, _target = await _seed(db, user_id)
+    _credentials(monkeypatch)
+
+    async def _send(self, phone_number_id, token, to, contacts):
+        card = contacts[0]
+        assert card["name"]["formatted_name"] == "Aster"
+        assert card["phones"][0]["phone"] == "+966500000000"
+        return "wamid.contact.sent"
+
+    monkeypatch.setattr(WhatsAppAdapter, "send_contacts", _send)
+
+    res = client.post("/api/v1/inbox/send-contact", json={
+        "channel_id": channel.id,
+        "contact_phone": PHONE,
+        "name": "Aster",
+        "phone": "+966500000000",
+    })
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["sent"] is True
+    assert body["message"]["content_type"] == "contact"
+    assert "Aster" in body["message"]["content"]
+
+
+@pytest.mark.asyncio
+async def test_location_coordinates_are_validated(client, db, user_id):
+    channel, _target = await _seed(db, user_id)
+    res = client.post("/api/v1/inbox/send-location", json={
+        "channel_id": channel.id,
+        "contact_phone": PHONE,
+        "latitude": 91,
+        "longitude": 46.6753,
+    })
+    assert res.status_code == 422, res.text
+
+
+@pytest.mark.asyncio
+async def test_rich_messages_are_whatsapp_only(client, db, user_id):
+    channel = Channel(
+        id=f"chan-ig-{uuid.uuid4().hex[:8]}", user_id=user_id,
+        platform="instagram", platform_user_id="ig-1",
+        display_name="IG", status="active",
+    )
+    db.add(channel)
+    await db.commit()
+
+    res = client.post("/api/v1/inbox/send-location", json={
+        "channel_id": channel.id,
+        "contact_phone": PHONE,
+        "latitude": 24.7,
+        "longitude": 46.6,
+    })
+    assert res.status_code == 422, res.text
+
+
+@pytest.mark.asyncio
 async def test_remove_is_local_and_never_claims_a_retraction(
     client, db, user_id
 ):
