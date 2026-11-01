@@ -315,7 +315,7 @@ async def test_a_human_outbound_message_switches_the_thread(db, monkeypatch):
     lead, channel = await _seed(db)
     user = await db.get(User, lead.tenant_id)
 
-    async def _fake_dispatch(db_, user_, channel_, to, text):
+    async def _fake_dispatch(db_, user_, channel_, to, text, **kwargs):
         return "wamid-human-1", ""
 
     monkeypatch.setattr(channel_service, "_dispatch_whatsapp", _fake_dispatch)
@@ -345,7 +345,7 @@ async def test_a_failed_human_send_does_not_mute_the_ai(db, monkeypatch):
     lead, channel = await _seed(db)
     user = await db.get(User, lead.tenant_id)
 
-    async def _failing_dispatch(db_, user_, channel_, to, text):
+    async def _failing_dispatch(db_, user_, channel_, to, text, **kwargs):
         return "", "outside the 24h window"
 
     monkeypatch.setattr(channel_service, "_dispatch_whatsapp", _failing_dispatch)

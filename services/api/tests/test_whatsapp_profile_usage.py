@@ -210,22 +210,25 @@ async def _seed_channel_with_messages(db, tenant_id=TENANT, external="pn-usage")
     db.add(channel)
     await db.flush()
     now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     rows = [
         # 2 outbound this month count (sent + failed both cost).
         ChannelMessage(id=str(uuid.uuid4()), channel_id=channel.id,
                        direction="outbound", content="a", content_type="text",
-                       status="sent", created_at=now - timedelta(days=1)),
+                       status="sent", created_at=now),
         ChannelMessage(id=str(uuid.uuid4()), channel_id=channel.id,
                        direction="outbound", content="b", content_type="text",
-                       status="failed", created_at=now - timedelta(days=2)),
+                       status="failed", created_at=now),
         # Inbound never counts.
         ChannelMessage(id=str(uuid.uuid4()), channel_id=channel.id,
                        direction="inbound", content="c", content_type="text",
-                       status="delivered", created_at=now - timedelta(days=1)),
-        # Last month's outbound does not count.
+                       status="delivered", created_at=now),
+        # Last month's outbound does not count. Anchored to the month boundary
+        # so the test does not fail on the 1st (now - 40 days can still be the
+        # same calendar month in February).
         ChannelMessage(id=str(uuid.uuid4()), channel_id=channel.id,
                        direction="outbound", content="d", content_type="text",
-                       status="sent", created_at=now - timedelta(days=40)),
+                       status="sent", created_at=month_start - timedelta(days=1)),
     ]
     db.add_all(rows)
     await db.commit()
