@@ -441,6 +441,15 @@ def _system_prompt(
             "never shows it to the customer. Never add it for yes/no, for a "
             "single option, or when you are closing the conversation."
         )
+        lines.append(
+            "When the customer asks where you are or for directions, include "
+            "one final line exactly SEND_LOCATION. When they ask for your "
+            "phone number or a contact card, include one final line exactly "
+            "SEND_CONTACT. The pipeline strips the line and sends the native "
+            "card in addition to your text. Only use a marker when the facts "
+            "above contain that detail; never invent a phone number or a "
+            "location."
+        )
     if voice_enabled:
         lines.append(
             "If the customer seems frustrated or confused: acknowledge it, "
@@ -1247,6 +1256,106 @@ async def _reply_attachment_needs_context(
     )
 
 
+async def _send_native_card(
+    db,
+    adapter,
+    channel,
+    *,
+    tenant_id: str,
+    phone_number_id: str,
+    token: str,
+    to: str,
+    kind: str,
+    wamid: str,
+) -> None:
+    """Send one native location/contact card requested by the model.
+
+    Best-effort: the text answer has already gone out, so a card failure must
+    never turn a delivered reply into a retry. A missing phone or coordinates
+    is logged and skipped; the prose answer remains correct.
+    """
+    from ..models import ChannelMessage
+    from .native_cards import primary_card
+
+    card = await primary_card(db, tenant_id)
+    if card is None:
+        logger.info("Native %s card skipped: no saved location", kind)
+        return
+
+    try:
+        if kind == "location":
+            if card.latitude is None or card.longitude is None:
+                logger.info(
+                    "Native location card skipped: no coordinates in maps_url"
+                )
+                return
+            lines = [part for part in (card.name, card.address) if part]
+            lines.append(
+                f"https://maps.google.com/?q={card.latitude},{card.longitude}"
+            )
+            provider_id = await adapter.send_location(
+                phone_number_id, token, to,
+                card.latitude, card.longitude,
+                name=card.name, address=card.address,
+                context_message_id=wamid,
+            )
+            content_type = "location"
+            content = "\n".join(lines)
+        else:
+            if not card.phone:
+                logger.info("Native contact card skipped: no saved phone")
+                return
+            name = card.name or "Contact"
+            provider_id = await adapter.send_contacts(
+                phone_number_id, token, to,
+                [{
+                    "name": {"formatted_name": name},
+                    "phones": [{"phone": card.phone, "type": "WORK"}],
+                }],
+                context_message_id=wamid,
+            )
+            content_type = "contact"
+            content = f"{name} — {card.phone}"
+    except Exception as exc:  # noqa: BLE001 - the text reply already landed
+        logger.warning(
+            "Native %s card send failed from=+%s: %s: %s",
+            kind, to[-6:], type(exc).__name__, str(exc)[:200],
+        )
+        return
+
+    row = ChannelMessage(
+        id=str(uuid.uuid4()),
+        channel_id=channel.id,
+        platform_message_id=(provider_id or "")[:200] or None,
+        direction="outbound",
+        content=encrypt_message_content(content),
+        content_type=content_type,
+        status="sent",
+        contact_phone=encrypt_contact_phone(to or None),
+        contact_phone_hash=hash_contact_phone(to or None),
+        is_ai=True,
+        handled_by="ai",
+        reply_to_message_id=wamid[:200] or None,
+    )
+    db.add(row)
+    await db.commit()
+    from ...channels.realtime import publish_inbox_event
+
+    await publish_inbox_event(tenant_id, {
+        "type": "message",
+        "id": row.id,
+        "channel_id": channel.id,
+        "platform": "whatsapp",
+        "direction": "outbound",
+        "content": decrypt_message_content(row.content),
+        "content_type": content_type,
+        "status": "sent",
+        "contact_phone": decrypt_contact_phone(row.contact_phone),
+        "reply_to_message_id": row.reply_to_message_id,
+        "created_at": row.created_at,
+    })
+
+
 async def _publish_inbound_row_text(db, tenant_id: str, channel_id: str, row, contact: str) -> None:
     """Publish an outbound system line (same shape as the AI replies)."""
     from ...channels.realtime import publish_inbox_event
@@ -1931,7 +2040,8 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                 # the agent staring at a conversation that looks unanswered.
                 try:
                     provider_msg_id = await adapter.send_text_message(
-                        phone_number_id, token, from_wa, canned
+                        phone_number_id, token, from_wa, canned,
+                        context_message_id=wamid,
                     )
                 except MetaAPIError as e:
                     logger.error(
@@ -1961,6 +2071,7 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                     contact_phone_hash=hash_contact_phone(from_wa or None),
                     is_ai=True,
                     handled_by="ai",
+                    reply_to_message_id=wamid[:200] or None,
                 )
                 db.add(row)
                 await db.commit()
@@ -2059,7 +2170,13 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
 
         reply, choices = split_choices(reply)
 
-        if not reply:
+        # Hidden native-card marker (SEND_LOCATION / SEND_CONTACT). Stripped
+        # before the empty check so a card-only reply is still deliverable.
+        from .native_cards import split_native_card_request
+
+        reply, native_card = split_native_card_request(reply)
+
+        if not reply and not native_card:
             logger.warning(
                 "WhatsApp AI reply was empty — retrying wamid=%s from=+%s",
                 wamid[:32], from_wa[-6:],
@@ -2194,7 +2311,7 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
             choices = []
 
         messages: list[str] = []
-        if not voice_sent:
+        if not voice_sent and reply:
             # Tenant response style decides text delivery — one message, or
             # a short natural sequence. Rendering happens after reasoning
             # and never touches it: same agent, same reply, different shape.
@@ -2215,14 +2332,19 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
             for index, part in enumerate(messages):
                 is_last = index == len(messages) - 1
                 use_buttons = bool(choices) and is_last
+                # Quote the inbound once, on the first bubble. Quoting every
+                # part of a human-style split is noise.
+                quote_id = wamid if index == 0 else None
                 try:
                     if use_buttons:
                         provider_msg_id = await adapter.send_interactive_buttons(
-                            phone_number_id, token, from_wa, part, choices
+                            phone_number_id, token, from_wa, part, choices,
+                            context_message_id=quote_id,
                         )
                     else:
                         provider_msg_id = await adapter.send_text_message(
-                            phone_number_id, token, from_wa, part
+                            phone_number_id, token, from_wa, part,
+                            context_message_id=quote_id,
                         )
                 except (MetaAPIError, ValueError) as e:
                     # A rejected interactive payload must not cost the
@@ -2234,7 +2356,8 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                         )
                         try:
                             provider_msg_id = await adapter.send_text_message(
-                                phone_number_id, token, from_wa, part
+                                phone_number_id, token, from_wa, part,
+                                context_message_id=quote_id,
                             )
                         except MetaAPIError as fallback_error:
                             e = fallback_error
@@ -2292,6 +2415,9 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                         contact_phone_hash=hash_contact_phone(from_wa or None),
                         is_ai=True,  # drives the escalation counter
                         handled_by="ai",
+                        reply_to_message_id=(
+                            quote_id[:200] if quote_id else None
+                        ),
                     )
                 db.add(row)
                 await db.commit()
@@ -2320,6 +2446,19 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                 from_wa, send_item_id,
             )
 
+        # Native card the model requested (location / contact). Sent after the
+        # text so a card failure never costs the customer the answer.
+        if native_card:
+            await _send_native_card(
+                db, adapter, channel,
+                tenant_id=tenant_id,
+                phone_number_id=phone_number_id,
+                token=token,
+                to=from_wa,
+                kind=native_card,
+                wamid=wamid,
+            )
+
         # Lead engine, send side: merge whatever the reply call extracted,
         # then arm the durable follow-up when the reply ended with a
         # question. Scheduling happens only after the reply actually went
@@ -2340,8 +2479,8 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
             require_intent=True,
         )
         if lead is not None:
-            final_text = reply if voice_sent else messages[-1]
-            if is_open_question(final_text):
+            final_text = reply if voice_sent or not messages else messages[-1]
+            if final_text and is_open_question(final_text):
                 await schedule_followup(
                     db,
                     lead=lead,

@@ -90,6 +90,7 @@ async def get_state(db, channel_id: str, contact_phone: str) -> dict:
         return {
             "mode": MODE_AI, "mode_changed_at": None, "mode_changed_by": None,
             "assigned_to": None, "assigned_at": None,
+            "blocked_at": None, "blocked_by": None,
         }
     return {
         "mode": normalize_mode(thread.conversation_mode),
@@ -101,6 +102,10 @@ async def get_state(db, channel_id: str, contact_phone: str) -> dict:
         "assigned_at": (
             thread.assigned_at.isoformat() if thread.assigned_at else None
         ),
+        "blocked_at": (
+            thread.blocked_at.isoformat() if thread.blocked_at else None
+        ),
+        "blocked_by": thread.blocked_by,
     }
 
 

@@ -972,6 +972,60 @@ async def send_sticker_message(
     return outbound
 
 
+async def set_contact_blocked(
+    channel_id: str,
+    contact_phone: str,
+    blocked: bool,
+    user: User,
+    db: AsyncSession,
+) -> ChannelThread:
+    """Block or unblock a customer on the provider, then mirror the state.
+
+    WhatsApp owns the block. The thread columns are only a cache so the inbox
+    can render the correct button without a Graph call per thread; a provider
+    rejection is raised and leaves the cache untouched.
+    """
+    channel = await get_channel(channel_id, user, db)
+    if not channel:
+        raise ValueError("Channel not found")
+    if channel.platform != "whatsapp":
+        raise ValueError("Blocking is only available on WhatsApp")
+    to = (contact_phone or "").strip()
+    if not to:
+        raise ValueError("A contact phone number is required")
+
+    phone_number_id, token, error = await _whatsapp_credentials(db, user, channel)
+    if error:
+        raise ValueError(error)
+
+    from .meta.providers.base import MetaAPIError
+    from .meta.providers.whatsapp import WhatsAppAdapter
+
+    try:
+        adapter = WhatsAppAdapter()
+        if blocked:
+            await adapter.block_user(phone_number_id, token, to)
+        else:
+            await adapter.unblock_user(phone_number_id, token, to)
+    except MetaAPIError as exc:
+        raise ValueError(str(exc)) from exc
+
+    from .conversation_mode import _ensure_thread
+
+    thread = await _ensure_thread(
+        db, tenant_id=tenant_id_of(user), channel_id=channel_id,
+        contact_phone=to,
+    )
+    if thread is None:
+        raise ValueError("Could not update this conversation")
+    thread.blocked_at = datetime.now(timezone.utc) if blocked else None
+    thread.blocked_by = (user.id or None) if blocked else None
+    db.add(thread)
+    await db.commit()
+    await db.refresh(thread)
+    return thread
+
+
 async def _dispatch_whatsapp(
     db: AsyncSession,
     user: User,

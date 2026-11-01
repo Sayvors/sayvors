@@ -135,7 +135,7 @@ async def test_urgent_handover_uses_its_own_line(db, monkeypatch):
     sent: list[str] = []
 
     class _Adapter:
-        async def send_text_message(self, phone_number_id, token, to, text):
+        async def send_text_message(self, phone_number_id, token, to, text, **kwargs):
             sent.append(text)
             return "wamp-urgent"
 
@@ -169,7 +169,7 @@ async def test_escalation_broadcasts_the_clock_to_open_tabs(db, monkeypatch):
     lead_escalation.clear_settings_cache()
 
     class _Adapter:
-        async def send_text_message(self, phone_number_id, token, to, text):
+        async def send_text_message(self, phone_number_id, token, to, text, **kwargs):
             return "wamp-clock"
 
     lead = await _seed_thread(

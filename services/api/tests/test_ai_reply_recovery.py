@@ -20,6 +20,10 @@ from app.modules.channels.meta import service as meta_service
 from app.modules.channels.meta.credentials import encrypt_credential
 from app.modules.channels.meta.models import MetaAsset, MetaConnection
 from app.modules.channels.meta.providers.base import MetaAPIError
+from app.modules.channels.meta.native_cards import (
+    coordinates_from_maps_url,
+    split_native_card_request,
+)
 from app.modules.channels.models import (
     Channel,
     ChannelMessage,
@@ -30,6 +34,7 @@ from app.modules.channels.service import (
     encrypt_message_content,
     hash_contact_phone,
 )
+from app.modules.localith.models import LocalithConnection
 from app.modules.outbox import service as outbox_service
 from app.modules.outbox.models import EventOutbox
 from app.modules.users.models import User
@@ -49,18 +54,35 @@ class _Adapter:
     def __init__(self) -> None:
         self.sent: list[str] = []
         self.typing: list[str] = []
+        self.contexts: list[str | None] = []
+        self.locations: list[tuple] = []
+        self.contacts: list[list[dict]] = []
         self.fail_with: MetaAPIError | None = None
         self.fail_times = 0
 
-    async def send_text_message(self, phone_number_id, token, to, text):
+    async def send_text_message(self, phone_number_id, token, to, text, **kwargs):
         if self.fail_with is not None and self.fail_times != 0:
             self.fail_times -= 1
             raise self.fail_with
+        self.contexts.append(kwargs.get("context_message_id"))
         self.sent.append(text)
         return f"wamid.out.{len(self.sent)}"
 
     async def send_typing_indicator(self, phone_number_id, token, wamid):
         self.typing.append(wamid)
+
+    async def send_location(
+        self, phone_number_id, token, to, latitude, longitude,
+        name=None, address=None, **kwargs,
+    ):
+        self.locations.append((latitude, longitude, name, address))
+        return "wamid.location"
+
+    async def send_contacts(
+        self, phone_number_id, token, to, contacts, **kwargs,
+    ):
+        self.contacts.append(contacts)
+        return "wamid.contact"
 
 
 async def _seed(db, user_id):
@@ -94,6 +116,15 @@ async def _seed(db, user_id):
         contact_phone_hash=hash_contact_phone(CUSTOMER),
         language="en",
         preferred_language="en",
+    ))
+    db.add(LocalithConnection(
+        id=str(uuid.uuid4()),
+        user_id=user_id,
+        listing_id="loc-1",
+        listing_name="Aster Coffee",
+        address="Olaya St, Riyadh",
+        phone_number="+966500000000",
+        maps_url="https://www.google.com/maps/@24.7136,46.6753,17z",
     ))
     await db.commit()
     return channel
@@ -194,9 +225,11 @@ async def test_llm_failure_leaves_pending_and_the_retry_sends_once(
     assert row.ai_reply_status == "sent"
     assert row.ai_reply_attempts >= 2
     assert adapter.sent == ["Thanks for waiting — I'm back."]
+    assert adapter.contexts == [WAMID]
     outbound = await _outbound()
     assert len(outbound) == 1
     assert outbound[0].status == "sent"
+    assert outbound[0].reply_to_message_id == WAMID
 
 
 @pytest.mark.asyncio
@@ -367,3 +400,78 @@ async def test_outbox_fallback_marks_a_handler_failure_failed(
         assert row.status == "failed"
         assert row.attempts == 1
         assert "handler exploded" in (row.last_error or "")
+
+
+def test_native_card_marker_is_stripped_from_the_reply():
+    text, kind = split_native_card_request("We're on Olaya St.\nSEND_LOCATION")
+    assert kind == "location"
+    assert text == "We're on Olaya St."
+
+    text, kind = split_native_card_request("Call us.\nSEND_CONTACT")
+    assert kind == "contact"
+    assert text == "Call us."
+
+    text, kind = split_native_card_request("No marker here")
+    assert kind is None
+    assert text == "No marker here"
+
+
+def test_maps_coordinates_parse_common_google_shapes():
+    assert coordinates_from_maps_url(
+        "https://www.google.com/maps/@24.7136,46.6753,17z"
+    ) == (24.7136, 46.6753)
+    assert coordinates_from_maps_url(
+        "https://maps.google.com/?q=24.7136,46.6753"
+    ) == (24.7136, 46.6753)
+    assert coordinates_from_maps_url(
+        "https://maps.google.com/place/!3d24.7136!4d46.6753"
+    ) == (24.7136, 46.6753)
+    assert coordinates_from_maps_url("https://maps.google.com/?cid=123") is None
+
+
+@pytest.mark.asyncio
+async def test_ai_location_marker_sends_a_native_card(
+    db, user_id, monkeypatch
+):
+    await _seed(db, user_id)
+    adapter = _Adapter()
+    _wire(monkeypatch, adapter)
+
+    async def _gen(*a, **k):
+        return "We're on Olaya St.\nSEND_LOCATION"
+
+    monkeypatch.setattr(consumer, "_generate_reply", _gen)
+
+    event, data = _event()
+    await consumer._handle_message_received(event, data)
+
+    assert adapter.locations == [
+        (24.7136, 46.6753, "Aster Coffee", "Olaya St, Riyadh")
+    ]
+    outbound = await _outbound()
+    assert {row.content_type for row in outbound} == {"text", "location"}
+    assert all(row.reply_to_message_id == WAMID for row in outbound)
+
+
+@pytest.mark.asyncio
+async def test_ai_contact_marker_sends_a_native_card(
+    db, user_id, monkeypatch
+):
+    await _seed(db, user_id)
+    adapter = _Adapter()
+    _wire(monkeypatch, adapter)
+
+    async def _gen(*a, **k):
+        return "You can save our number.\nSEND_CONTACT"
+
+    monkeypatch.setattr(consumer, "_generate_reply", _gen)
+
+    event, data = _event()
+    await consumer._handle_message_received(event, data)
+
+    assert adapter.contacts == [[{
+        "name": {"formatted_name": "Aster Coffee"},
+        "phones": [{"phone": "+966500000000", "type": "WORK"}],
+    }]]
+    outbound = await _outbound()
+    assert {row.content_type for row in outbound} == {"text", "contact"}

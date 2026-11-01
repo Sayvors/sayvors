@@ -180,6 +180,9 @@ class ThreadStateOut(BaseModel):
     # same arithmetic run_resume_sweep uses. NULL unless the lead is escalated.
     resume_at: str | None = None
     escalation_resume_hours: int = 24
+    # Provider-side WhatsApp block, mirrored after the last successful action.
+    blocked_at: str | None = None
+    blocked_by: str | None = None
 
 
 class ChannelMessageListResponse(BaseModel):

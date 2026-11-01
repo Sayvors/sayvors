@@ -136,7 +136,7 @@ async def test_unreadable_reply_matches_the_thread_language(db, channel_id):
     sent: list[str] = []
 
     class _Adapter:
-        async def send_text_message(self, phone_number_id, token, to, text):
+        async def send_text_message(self, phone_number_id, token, to, text, **kwargs):
             sent.append(text)
             return "wamid-out-1"
 

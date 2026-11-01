@@ -189,7 +189,7 @@ async def test_attachment_without_caption_gets_an_honest_line(db, channel_id):
     sent: list[str] = []
 
     class _Adapter:
-        async def send_text_message(self, phone_number_id, token, to, text):
+        async def send_text_message(self, phone_number_id, token, to, text, **kwargs):
             sent.append(text)
             return "wamid-out-media"
 
@@ -218,7 +218,7 @@ async def test_unreadable_attachment_says_so(db, channel_id):
     sent: list[str] = []
 
     class _Adapter:
-        async def send_text_message(self, phone_number_id, token, to, text):
+        async def send_text_message(self, phone_number_id, token, to, text, **kwargs):
             sent.append(text)
             return "wamid-out-media"
 

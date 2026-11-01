@@ -709,7 +709,7 @@ class _FakeWaAdapter:
     sent: list[str] = []
     error: Exception | None = None
 
-    async def send_text_message(self, phone_number_id, token, to, text):
+    async def send_text_message(self, phone_number_id, token, to, text, **kwargs):
         if _FakeWaAdapter.error is not None:
             raise _FakeWaAdapter.error
         _FakeWaAdapter.sent.append(text)
@@ -934,7 +934,7 @@ class _VoiceAdapter:
         self.typing: list[str] = []
         self._fail_voice = fail_voice
 
-    async def send_text_message(self, phone_number_id, token, to, text):
+    async def send_text_message(self, phone_number_id, token, to, text, **kwargs):
         self.sent.append(text)
         return f"wamp-{len(self.sent)}"
 

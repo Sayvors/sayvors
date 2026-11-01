@@ -265,6 +265,15 @@ class ChannelThread(Base):
     mode_changed_by: Mapped[str | None] = mapped_column(
         String(64), nullable=True, default=None
     )
+    # Provider-side block. NULL = not blocked. The WhatsApp Cloud API owns the
+    # actual state; these columns mirror it so the inbox can show the button
+    # state without a Graph call per thread.
+    blocked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    blocked_by: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, default=None
+    )
     # Who owns this conversation right now. NULL = unassigned (the normal
     # state until someone claims an escalated thread). Distinct from
     # conversation_mode: mode says whether the AI may answer, assignment says

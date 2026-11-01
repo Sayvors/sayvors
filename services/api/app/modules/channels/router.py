@@ -73,6 +73,7 @@ from .service import (
     send_contact_message,
     send_document_message,
     send_sticker_message,
+    set_contact_blocked,
     soft_delete_message,
     whatsapp_number_health,
     list_whatsapp_qr_codes,
@@ -1097,6 +1098,86 @@ async def inbox_thread_set_mode(
         "contact_phone": phone,
         "mode": body.mode,
         "mode_changed_by": ctx.user.id,
+    })
+    return await _thread_state(db, ctx.tenant_id, channel_id, phone)
+
+
+@_inbox_router.post(
+    "/threads/{channel_id}/{contact_phone}/block",
+    response_model=ThreadStateOut,
+)
+async def inbox_thread_block(
+    channel_id: str,
+    contact_phone: str,
+    ctx: TenantContext = Depends(require_perm("inbox.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Block this customer on the WhatsApp number."""
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    if await get_channel(channel_id, ctx.user, db) is None:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    phone = None if contact_phone == UNKNOWN_THREAD_KEY else contact_phone
+    if phone is None:
+        raise HTTPException(
+            status_code=422, detail="An unattributed thread has nobody to block."
+        )
+    try:
+        thread = await set_contact_blocked(
+            channel_id, phone, True, ctx.user, db
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    from .realtime import publish_inbox_event
+
+    await publish_inbox_event(ctx.tenant_id, {
+        "type": "blocked",
+        "channel_id": channel_id,
+        "contact_phone": phone,
+        "blocked_at": (
+            thread.blocked_at.isoformat() if thread.blocked_at else None
+        ),
+        "blocked_by": thread.blocked_by,
+    })
+    return await _thread_state(db, ctx.tenant_id, channel_id, phone)
+
+
+@_inbox_router.delete(
+    "/threads/{channel_id}/{contact_phone}/block",
+    response_model=ThreadStateOut,
+)
+async def inbox_thread_unblock(
+    channel_id: str,
+    contact_phone: str,
+    ctx: TenantContext = Depends(require_perm("inbox.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove a WhatsApp block for this customer."""
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    if await get_channel(channel_id, ctx.user, db) is None:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    phone = None if contact_phone == UNKNOWN_THREAD_KEY else contact_phone
+    if phone is None:
+        raise HTTPException(
+            status_code=422, detail="An unattributed thread has nobody to unblock."
+        )
+    try:
+        thread = await set_contact_blocked(
+            channel_id, phone, False, ctx.user, db
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    from .realtime import publish_inbox_event
+
+    await publish_inbox_event(ctx.tenant_id, {
+        "type": "blocked",
+        "channel_id": channel_id,
+        "contact_phone": phone,
+        "blocked_at": None,
+        "blocked_by": None,
     })
     return await _thread_state(db, ctx.tenant_id, channel_id, phone)
 

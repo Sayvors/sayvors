@@ -21,6 +21,7 @@ import {
   sendInboxDocument,
   sendInboxSticker,
   setInboxThreadMode,
+  setInboxThreadBlocked,
   reactToInboxMessage,
   removeInboxMessage,
   UNKNOWN_THREAD_KEY,
@@ -316,6 +317,8 @@ export default function InboxView() {
   const [threadState, setThreadState] = useState<ThreadState | null>(null);
   const [modeBusy, setModeBusy] = useState(false);
   const [modeError, setModeError] = useState<string | null>(null);
+  const [blockBusy, setBlockBusy] = useState(false);
+  const [blockError, setBlockError] = useState<string | null>(null);
   const [replyTo, setReplyTo] = useState<InboxMessage | null>(null);
   const [reactingTo, setReactingTo] = useState<string | null>(null);
   const [reactBusy, setReactBusy] = useState(false);
@@ -699,6 +702,30 @@ export default function InboxView() {
     if (data.thread) setThreadState(data.thread);
   };
 
+  const handleBlockToggle = async (thread: InboxThread, blocked: boolean) => {
+    if (blockBusy) return;
+    setBlockBusy(true);
+    setBlockError(null);
+    try {
+      const state = await setInboxThreadBlocked(
+        thread.channel_id,
+        thread.contact_phone,
+        blocked,
+      );
+      applyThreadState(thread, state);
+    } catch (e) {
+      setBlockError(
+        e instanceof Error
+          ? e.message
+          : blocked
+            ? "Could not block this customer."
+            : "Could not unblock this customer.",
+      );
+    } finally {
+      setBlockBusy(false);
+    }
+  };
+
   const openTemplatePicker = async (thread: InboxThread) => {
     setTemplateError(null);
     setTemplateOpen(true);
@@ -966,6 +993,22 @@ export default function InboxView() {
               : 24,
           }));
         }
+      }
+      return;
+    }
+    if (e.type === "blocked" && e.channel_id) {
+      const key = e.contact_phone ?? UNKNOWN_THREAD_KEY;
+      const composite = `${e.channel_id}:${key}`;
+      if (composite === targetKeyRef.current) {
+        setThreadState((prev) =>
+          prev
+            ? {
+                ...prev,
+                blocked_at: e.blocked_at ?? null,
+                blocked_by: e.blocked_by ?? null,
+              }
+            : prev,
+        );
       }
       return;
     }
@@ -2197,6 +2240,41 @@ export default function InboxView() {
                   <dd className="font-semibold text-ink dark:text-fog">{relative(target.last_message_at)}</dd>
                 </div>
               </dl>
+              {target.platform === "whatsapp" && (
+                <div className="rounded-xl border border-ink/[0.08] p-3 dark:border-fog/[0.1]">
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-ink/45 dark:text-fog/45">
+                    Customer access
+                  </p>
+                  <p className="mt-1 text-[12px] text-ink/60 dark:text-fog/60">
+                    {threadState?.blocked_at
+                      ? "This customer is blocked on WhatsApp."
+                      : "This customer can message this number."}
+                  </p>
+                  <button
+                    type="button"
+                    disabled={blockBusy}
+                    onClick={() =>
+                      void handleBlockToggle(target, !threadState?.blocked_at)
+                    }
+                    className={`mt-2 w-full rounded-full px-3 py-1.5 text-[12px] font-bold transition disabled:opacity-50 ${
+                      threadState?.blocked_at
+                        ? "border border-[var(--ui-line)] text-ink/70 dark:text-fog/70"
+                        : "bg-red-600 text-white"
+                    }`}
+                  >
+                    {blockBusy
+                      ? "Working…"
+                      : threadState?.blocked_at
+                        ? "Unblock customer"
+                        : "Block customer"}
+                  </button>
+                  {blockError && (
+                    <p role="status" className="mt-2 text-[11px] text-red-600">
+                      {blockError}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </aside>
