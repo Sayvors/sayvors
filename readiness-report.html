@@ -1837,6 +1837,9 @@ from users where id = '&lt;tenant id&gt;';</code></pre>
     <tr><td class="num">WA-4 <span class="chip warn">Partial</span></td><td><strong>Quoted reply + reactions shipped; edit/delete is a Meta platform limit.</strong> Agents can quote a specific message and react to it. The Cloud API has no edit or delete-for-everyone endpoint for business messages, so a wrong send is corrected with a quoted follow-up and can be removed from this inbox only — never presented as a customer-side retraction.</td><td>Agents answer the exact message instead of guessing; a wrong send gets a threaded correction. True edit/delete becomes available only if Meta adds the endpoint.</td><td>S</td></tr>
     <tr><td class="num">WA-5 <span class="chip ok">Fixed</span></td><td><strong>Location + contact card</strong></td><td>"Send me your location" and sharing a contact are routine in service chats.</td><td>S</td></tr>
     <tr><td class="num">WA-6</td><td><strong>Block / unblock user</strong></td><td>Abuse handling without leaving the dashboard.</td><td>S</td></tr>
+    <tr><td class="num">WA-14</td><td><strong>AI stickers + reactions</strong></td><td>Humans can send stickers and reactions; the AI cannot. A fixed original sticker pack (OK / Thanks / Done) chosen by a hidden marker, plus a &#128077; reaction for bare acknowledgements, makes the assistant feel native. Never model-generated art; a failed sticker falls back to text.</td><td>S-M</td></tr>
+    <tr><td class="num">WA-15</td><td><strong>AI quoted replies</strong></td><td>The adapter supports <code>context.message_id</code> and humans can quote, but the AI answers without quoting. Quoting the exact message it is answering keeps busy threads readable.</td><td>S</td></tr>
+    <tr><td class="num">WA-16</td><td><strong>AI location + contact cards</strong></td><td>Humans can send native location/contact cards; the AI still writes the address or phone as prose. Wire the Locations data (coordinates, phone, email) so "where are you?" and "what's your number?" get the same native cards.</td><td>S-M</td></tr>
   </table></div>
 
   <h3>Missing - account &amp; operations</h3>
@@ -1857,6 +1860,7 @@ from users where id = '&lt;tenant id&gt;';</code></pre>
     <li><strong>WA-7 + WA-9</strong> - <span class="chip ok">shipped</span> QR codes and the number-health card.</li>
     <li><strong>WA-10 + WA-8</strong> - template authoring and number lifecycle remove the WhatsApp Manager detour.</li>
     <li><strong>WA-4/5/6</strong> - quoted replies/reactions, location/contact cards (shipped), then block/unblock.</li>
+    <li><strong>WA-14 + WA-15 + WA-16</strong> - AI-native conversational actions: fixed sticker pack + reactions, quoted replies, then location/contact cards from Locations data.</li>
     <li><strong>WA-11 + WA-12</strong> - commerce and Flows, product decisions first.</li>
     <li><strong>WA-13</strong> - calling, separate project.</li>
   </ol>
@@ -1981,6 +1985,9 @@ from users where id = '&lt;tenant id&gt;';</code></pre>
     <tr><td class="num">WA-4 <span class="chip warn">Partial</span></td><td>No quoted reply or reaction; edit/delete impossible via the Cloud API.</td><td>Agents can now answer a specific message and react. A wrong send can only be corrected with a quoted follow-up or removed from this inbox; Meta provides no customer-side retraction.</td><td>S</td></tr>
     <tr><td class="num">WA-5 <span class="chip ok">Fixed</span></td><td>Location and contact cards are sent from the inbox composer: native location with lat/lng/name/address (with a Google Maps link parser) and a contact card with name/phone/email.</td><td>Both persist as <code>content_type</code> location/contact, publish realtime, and share the messaging quota gate.</td><td>S</td></tr>
     <tr><td class="num">WA-6</td><td>No block / unblock user.</td><td>Abuse handling requires the dashboard.</td><td>S</td></tr>
+    <tr><td class="num">WA-14</td><td>AI cannot send stickers or reactions (human-only today).</td><td>Bare acknowledgements ("ok", "thanks") still get a text reply. A fixed sticker pack plus reactions would match how people actually chat.</td><td>S-M</td></tr>
+    <tr><td class="num">WA-15</td><td>AI does not use quoted replies.</td><td>In a busy thread the customer cannot tell which message an answer refers to.</td><td>S</td></tr>
+    <tr><td class="num">WA-16</td><td>AI sends location/contact as prose, not native cards.</td><td>The native card is one tap to navigate or save; the prose is copy-and-paste.</td><td>S-M</td></tr>
   </table></div>
   <h4>Account &amp; operations</h4>
   <div class="scroll"><table>
