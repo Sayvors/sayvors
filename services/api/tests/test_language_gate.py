@@ -136,7 +136,7 @@ async def test_prompt_falls_back_to_text_when_buttons_are_rejected(db, channel_i
         async def send_interactive_buttons(self, *a, **k):
             raise RuntimeError("Meta rejected the payload")
 
-        async def send_text_message(self, phone_number_id, token, to, text):
+        async def send_text_message(self, phone_number_id, token, to, text, **kwargs):
             return "wamid-lang-2"
 
     await consumer._send_language_prompt(
@@ -161,7 +161,7 @@ async def test_confirmation_uses_the_chosen_language(db, channel_id):
     from app.modules.channels.service import decrypt_message_content
 
     class _Adapter:
-        async def send_text_message(self, phone_number_id, token, to, text):
+        async def send_text_message(self, phone_number_id, token, to, text, **kwargs):
             return "wamid-confirm"
 
     await consumer._send_language_confirmation(

@@ -234,7 +234,7 @@ class _FakeAdapter:
         self.sent: list[str] = []
         self._fail_on = fail_on  # 1-based index of a call that must raise
 
-    async def send_text_message(self, phone_number_id, token, to, text):
+    async def send_text_message(self, phone_number_id, token, to, text, **kwargs):
         if len(self.sent) + 1 == self._fail_on:
             from app.modules.channels.meta.providers.base import MetaAPIError
 

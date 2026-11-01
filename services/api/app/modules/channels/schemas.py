@@ -180,6 +180,9 @@ class ThreadStateOut(BaseModel):
     # same arithmetic run_resume_sweep uses. NULL unless the lead is escalated.
     resume_at: str | None = None
     escalation_resume_hours: int = 24
+    # Provider-side WhatsApp block, mirrored after the last successful action.
+    blocked_at: str | None = None
+    blocked_by: str | None = None
 
 
 class ChannelMessageListResponse(BaseModel):
@@ -390,6 +393,11 @@ class LeadOut(BaseModel):
     avatar_url: str | None = None
     summary: str | None = None
     stage: str
+    # Ticket identity: the lead row IS the ticket; stage is the sales view.
+    ticket_number: str | None = None
+    ticket_status: str = "new"
+    ticket_kind: str = "whatsapp_general"
+    resolved_at: str | None = None
     phone_number: str | None = None
     phone_status: str | None = None
     opt_out: bool = False

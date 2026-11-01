@@ -1,5 +1,6 @@
 """Meta integration API schemas."""
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, HttpUrl
 
@@ -88,6 +89,25 @@ class MetaWhatsAppSession(BaseModel):
 
 class MetaRegisterNumberRequest(BaseModel):
     """Retry number registration — Meta allows this for 14 days after signup."""
+
+    pin: str = Field(..., pattern=r"^\d{6}$")
+
+
+class MetaRequestCodeRequest(BaseModel):
+    """Ask Meta to send the number-verification code."""
+
+    code_method: Literal["SMS", "VOICE"] = "SMS"
+    language: str = Field("en_US", pattern=r"^[a-z]{2}(_[A-Z]{2})?$")
+
+
+class MetaVerifyCodeRequest(BaseModel):
+    """The six-digit code Meta just sent to the business number."""
+
+    code: str = Field(..., pattern=r"^\d{6}$")
+
+
+class MetaTwoStepPinRequest(BaseModel):
+    """Set or change the number's two-step-verification PIN."""
 
     pin: str = Field(..., pattern=r"^\d{6}$")
 

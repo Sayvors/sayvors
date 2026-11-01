@@ -28,6 +28,11 @@ export type Lead = {
   avatar_url: string | null;
   summary: string | null;
   stage: LeadStage;
+  /** Human-facing ticket id; the lead row is the ticket. */
+  ticket_number: string | null;
+  ticket_status: "new" | "open" | "in_progress" | "resolved" | "closed";
+  ticket_kind: string;
+  resolved_at: string | null;
   phone_number: string | null;
   phone_status: "stated" | "verified" | null;
   opt_out: boolean;

@@ -286,7 +286,7 @@ async def test_handover_line_sent_exactly_once(db, monkeypatch):
     sent: list[str] = []
 
     class _Adapter:
-        async def send_text_message(self, phone_number_id, token, to, text):
+        async def send_text_message(self, phone_number_id, token, to, text, **kwargs):
             sent.append(text)
             return "wamp-1"
 

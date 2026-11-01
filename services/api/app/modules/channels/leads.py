@@ -83,6 +83,12 @@ def _lead_out(
         # UI summary falls back to the captured request.
         summary=lead.summary or lead.request,
         stage=lead.stage,
+        ticket_number=lead.ticket_number,
+        ticket_status=lead.ticket_status or "new",
+        ticket_kind=lead.ticket_kind or "whatsapp_general",
+        resolved_at=(
+            lead.resolved_at.isoformat() if lead.resolved_at else None
+        ),
         phone_number=lead.phone_number,
         phone_status=lead.phone_status,
         opt_out=bool(lead.opt_out),
@@ -232,6 +238,9 @@ async def update_lead(
     # treats converted/lost as terminal for scheduled actions.
     if body.stage is not None:
         lead.stage = body.stage
+        from .tickets import apply_ticket_stage
+
+        apply_ticket_stage(lead)
     if body.category is not None:
         lead.category = body.category
         # A human correction outranks every model extraction. The engine's

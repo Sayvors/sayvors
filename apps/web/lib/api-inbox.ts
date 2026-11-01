@@ -88,6 +88,9 @@ export interface ThreadState {
   /** priority_since + escalation_resume_hours; null unless escalated. */
   resume_at?: string | null;
   escalation_resume_hours?: number;
+  /** Provider-side WhatsApp block mirrored on the thread. */
+  blocked_at?: string | null;
+  blocked_by?: string | null;
 }
 
 export interface InboxMessage {
@@ -178,6 +181,19 @@ export async function setInboxThreadMode(
       method: "PATCH",
       body: JSON.stringify({ mode }),
     },
+  )) as ThreadState;
+}
+
+/** Block or unblock this customer on the WhatsApp number. */
+export async function setInboxThreadBlocked(
+  channelId: string,
+  contactPhone: string | null,
+  blocked: boolean,
+): Promise<ThreadState> {
+  const key = contactPhone ?? UNKNOWN_THREAD_KEY;
+  return (await apiFetch(
+    `/api/v1/inbox/threads/${encodeURIComponent(channelId)}/${encodeURIComponent(key)}/block`,
+    { method: blocked ? "POST" : "DELETE" },
   )) as ThreadState;
 }
 

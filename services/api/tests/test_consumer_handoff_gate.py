@@ -39,7 +39,7 @@ class _Adapter:
         self.sent: list[str] = []
         self.typing: list[str] = []
 
-    async def send_text_message(self, phone_number_id, token, to, text):
+    async def send_text_message(self, phone_number_id, token, to, text, **kwargs):
         self.sent.append(text)
         return "wamid-out-1"
 

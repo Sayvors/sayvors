@@ -23,6 +23,7 @@ from sqlalchemy import select
 
 from ...channels.service import hash_contact_phone
 from ..models import ChannelMessage, Lead, LeadAction
+from ..tickets import apply_ticket_stage, new_ticket_number, ticket_kind_for
 
 logger = logging.getLogger(__name__)
 
@@ -595,6 +596,9 @@ async def capture_lead(
                 opt_out=False,
                 thread_key=contact_id,
                 source_message_id=(message_id or None),
+                ticket_number=new_ticket_number(),
+                ticket_status="new",
+                ticket_kind="whatsapp_general",
             )
             db.add(lead)
         prov = dict(lead.field_provenance or {})
@@ -729,6 +733,13 @@ async def capture_lead(
         # Write the merged provenance back — downgrade protection on the
         # next capture reads exactly this.
         lead.field_provenance = prov
+        # A lead is the sales qualification inside a ticket. Keep the ticket
+        # identity in step with the category/stage the deterministic engine
+        # just produced — one work object, two views.
+        lead.ticket_kind = ticket_kind_for(lead.category, lead.intent)
+        apply_ticket_stage(lead)
+        if not lead.ticket_number:
+            lead.ticket_number = new_ticket_number()
         db.add(lead)
         # The honest handoff: when a lead gains substance, the team is
         # actually TOLD (once per transition) — no "connecting you" theater.

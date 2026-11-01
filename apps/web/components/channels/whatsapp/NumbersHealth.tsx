@@ -1,9 +1,19 @@
 "use client";
 
 import { useState } from "react";
-import { registerWhatsAppNumber, validateMeta, type MetaAsset } from "@/lib/api-meta";
+import {
+  deregisterWhatsAppNumber,
+  registerWhatsAppNumber,
+  requestWhatsAppCode,
+  setWhatsAppTwoStepPin,
+  validateMeta,
+  verifyWhatsAppCode,
+  type MetaAsset,
+} from "@/lib/api-meta";
 
 type RegState = "idle" | "registering" | "success" | "error";
+type CodeState = "idle" | "sending" | "sent" | "verifying" | "verified";
+type PinState = "idle" | "saving" | "saved";
 
 export default function NumbersHealth({
   numbers,
@@ -18,7 +28,17 @@ export default function NumbersHealth({
   const [pin, setPin] = useState<Record<string, string>>({});
   const [reg, setReg] = useState<Record<string, RegState>>({});
   const [regError, setRegError] = useState<Record<string, string>>({});
+  const [method, setMethod] = useState<Record<string, "SMS" | "VOICE">>({});
+  const [code, setCode] = useState<Record<string, string>>({});
+  const [codeState, setCodeState] = useState<Record<string, CodeState>>({});
+  const [codeError, setCodeError] = useState<Record<string, string>>({});
+  const [twoStepPin, setTwoStepPin] = useState<Record<string, string>>({});
+  const [twoStepState, setTwoStepState] = useState<Record<string, PinState>>({});
+  const [twoStepError, setTwoStepError] = useState<Record<string, string>>({});
+  const [deregistering, setDeregistering] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+
+  const sixDigits = (value: string) => value.replace(/\D/g, "").slice(0, 6);
 
   const register = async (id: string) => {
     const p = (pin[id] ?? "").trim();
@@ -33,7 +53,6 @@ export default function NumbersHealth({
       await registerWhatsAppNumber(id, p);
       setReg((s) => ({ ...s, [id]: "success" }));
       setMsg(null);
-      // The row flips to registered only after the parent list reloads.
       await onRefresh();
     } catch (e) {
       setRegError((m) => ({
@@ -41,6 +60,80 @@ export default function NumbersHealth({
         [id]: e instanceof Error ? e.message.slice(0, 200) : "Registration failed — try again.",
       }));
       setReg((s) => ({ ...s, [id]: "error" }));
+    }
+  };
+
+  const sendCode = async (id: string) => {
+    setCodeState((s) => ({ ...s, [id]: "sending" }));
+    setCodeError((m) => ({ ...m, [id]: "" }));
+    try {
+      await requestWhatsAppCode(id, method[id] ?? "SMS");
+      setCodeState((s) => ({ ...s, [id]: "sent" }));
+    } catch (e) {
+      setCodeError((m) => ({
+        ...m,
+        [id]: e instanceof Error ? e.message.slice(0, 200) : "Could not request a code.",
+      }));
+      setCodeState((s) => ({ ...s, [id]: "idle" }));
+    }
+  };
+
+  const verify = async (id: string) => {
+    const value = (code[id] ?? "").trim();
+    if (!/^\d{6}$/.test(value)) {
+      setCodeError((m) => ({ ...m, [id]: "The code is 6 digits." }));
+      return;
+    }
+    setCodeState((s) => ({ ...s, [id]: "verifying" }));
+    setCodeError((m) => ({ ...m, [id]: "" }));
+    try {
+      await verifyWhatsAppCode(id, value);
+      setCodeState((s) => ({ ...s, [id]: "verified" }));
+      await onRefresh();
+    } catch (e) {
+      setCodeError((m) => ({
+        ...m,
+        [id]: e instanceof Error ? e.message.slice(0, 200) : "Verification failed.",
+      }));
+      setCodeState((s) => ({ ...s, [id]: "sent" }));
+    }
+  };
+
+  const saveTwoStep = async (id: string) => {
+    const value = (twoStepPin[id] ?? "").trim();
+    if (!/^\d{6}$/.test(value)) {
+      setTwoStepError((m) => ({ ...m, [id]: "PIN must be exactly 6 digits." }));
+      return;
+    }
+    setTwoStepState((s) => ({ ...s, [id]: "saving" }));
+    setTwoStepError((m) => ({ ...m, [id]: "" }));
+    try {
+      await setWhatsAppTwoStepPin(id, value);
+      setTwoStepState((s) => ({ ...s, [id]: "saved" }));
+      setTwoStepPin((p) => ({ ...p, [id]: "" }));
+    } catch (e) {
+      setTwoStepError((m) => ({
+        ...m,
+        [id]: e instanceof Error ? e.message.slice(0, 200) : "Could not update the PIN.",
+      }));
+      setTwoStepState((s) => ({ ...s, [id]: "idle" }));
+    }
+  };
+
+  const deregister = async (id: string) => {
+    if (!window.confirm("Deregister this number? Sending stops immediately until it is registered again.")) {
+      return;
+    }
+    setDeregistering(id);
+    setMsg(null);
+    try {
+      await deregisterWhatsAppNumber(id);
+      await onRefresh();
+      setMsg("Number deregistered. Register it again when you are ready.");
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message.slice(0, 200) : "Deregistration failed.");
+    } finally {
+      setDeregistering(null);
     }
   };
 
@@ -62,6 +155,8 @@ export default function NumbersHealth({
       {msg && <p role="status" className="mx-auto max-w-md rounded-lg bg-[var(--wa-warn-bg)] px-4 py-2.5 text-[13px] text-[var(--wa-warn-text)] shadow">{msg}</p>}
       {numbers.map((n) => {
         const state = reg[n.external_asset_id] ?? "idle";
+        const cState = codeState[n.external_asset_id] ?? "idle";
+        const pState = twoStepState[n.external_asset_id] ?? "idle";
         return (
           <div key={n.external_asset_id} className={`rounded-lg bg-[var(--wa-panel)] p-4 shadow-[0_1px_2px_rgba(0,0,0,0.15)] ${n.external_asset_id === activeId ? "ring-2 ring-[var(--wa-accent)]" : ""}`}>
             <div className="flex flex-wrap items-center gap-3">
@@ -74,40 +169,139 @@ export default function NumbersHealth({
                 {busy === "all" ? "Checking…" : "Refresh"}
               </button>
             </div>
-            {!n.active && (
-              <div className="mt-3 rounded-xl bg-[var(--wa-warn-bg)] p-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <input
-                    value={pin[n.external_asset_id] ?? ""}
-                    onChange={(e) => setPin((p) => ({ ...p, [n.external_asset_id]: e.target.value.replace(/\D/g, "").slice(0, 6) }))}
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    maxLength={6}
-                    placeholder="6-digit PIN"
-                    aria-label={`PIN for ${n.phone ?? n.external_asset_id}`}
-                    className="min-h-11 w-36 rounded-xl border border-[var(--wa-input-border)] bg-[var(--wa-input-bg)] px-3 text-[13px] tracking-widest text-[var(--wa-text)]"
-                  />
-                  <button
-                    onClick={() => register(n.external_asset_id)}
-                    disabled={state === "registering"}
-                    className="min-h-11 rounded-full bg-[var(--wa-accent)] px-5 text-[12px] font-semibold text-white disabled:opacity-50"
-                  >
-                    {state === "registering" ? "Registering…" : "Register"}
-                  </button>
-                  {state === "success" && (
-                    <span role="status" className="text-[12px] font-semibold text-[var(--wa-ok-text)]">
-                      Registered — this number can send now.
-                    </span>
+
+            <details className="mt-3 rounded-xl border border-[var(--wa-border)] p-3">
+              <summary className="cursor-pointer text-[12px] font-bold text-[var(--wa-text)]">
+                Number lifecycle
+              </summary>
+
+              <div className="mt-3 space-y-3">
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--wa-text-2)]">
+                    1 · Verify the number
+                  </p>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <select
+                      value={method[n.external_asset_id] ?? "SMS"}
+                      onChange={(e) => setMethod((m) => ({ ...m, [n.external_asset_id]: e.target.value as "SMS" | "VOICE" }))}
+                      aria-label={`Code delivery method for ${n.phone ?? n.external_asset_id}`}
+                      className="min-h-11 rounded-xl border border-[var(--wa-input-border)] bg-[var(--wa-input-bg)] px-3 text-[13px] text-[var(--wa-text)]"
+                    >
+                      <option value="SMS">SMS</option>
+                      <option value="VOICE">Voice call</option>
+                    </select>
+                    <button
+                      onClick={() => sendCode(n.external_asset_id)}
+                      disabled={cState === "sending" || cState === "verifying"}
+                      className="min-h-11 rounded-full border border-[var(--wa-border)] px-4 text-[12px] font-semibold text-[var(--wa-text)] disabled:opacity-50"
+                    >
+                      {cState === "sending" ? "Requesting…" : "Request code"}
+                    </button>
+                    {(cState === "sent" || cState === "verifying" || cState === "verified") && (
+                      <>
+                        <input
+                          value={code[n.external_asset_id] ?? ""}
+                          onChange={(e) => setCode((c) => ({ ...c, [n.external_asset_id]: sixDigits(e.target.value) }))}
+                          inputMode="numeric"
+                          maxLength={6}
+                          placeholder="6-digit code"
+                          aria-label={`Verification code for ${n.phone ?? n.external_asset_id}`}
+                          className="min-h-11 w-36 rounded-xl border border-[var(--wa-input-border)] bg-[var(--wa-input-bg)] px-3 text-[13px] tracking-widest text-[var(--wa-text)]"
+                        />
+                        <button
+                          onClick={() => verify(n.external_asset_id)}
+                          disabled={cState === "verifying" || cState === "verified"}
+                          className="min-h-11 rounded-full bg-[var(--wa-accent)] px-4 text-[12px] font-semibold text-white disabled:opacity-50"
+                        >
+                          {cState === "verified" ? "Verified" : cState === "verifying" ? "Verifying…" : "Verify"}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                  {codeError[n.external_asset_id] && (
+                    <p role="alert" className="mt-1 text-[12px] font-medium text-[var(--wa-danger)]">{codeError[n.external_asset_id]}</p>
                   )}
                 </div>
-                {state === "error" && regError[n.external_asset_id] && (
-                  <p role="alert" className="mt-2 text-[12px] font-medium text-[var(--wa-danger)]">{regError[n.external_asset_id]}</p>
-                )}
-                <p className="mt-2 text-[11px] text-[var(--wa-warn-text)]">
-                  Meta allows re-registration for 14 days after signup; later needs a fresh Embedded Signup.
-                </p>
+
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--wa-text-2)]">
+                    2 · Register with the 6-digit PIN
+                  </p>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <input
+                      value={pin[n.external_asset_id] ?? ""}
+                      onChange={(e) => setPin((p) => ({ ...p, [n.external_asset_id]: sixDigits(e.target.value) }))}
+                      inputMode="numeric"
+                      maxLength={6}
+                      placeholder="6-digit PIN"
+                      aria-label={`PIN for ${n.phone ?? n.external_asset_id}`}
+                      className="min-h-11 w-36 rounded-xl border border-[var(--wa-input-border)] bg-[var(--wa-input-bg)] px-3 text-[13px] tracking-widest text-[var(--wa-text)]"
+                    />
+                    <button
+                      onClick={() => register(n.external_asset_id)}
+                      disabled={state === "registering"}
+                      className="min-h-11 rounded-full bg-[var(--wa-accent)] px-5 text-[12px] font-semibold text-white disabled:opacity-50"
+                    >
+                      {state === "registering" ? "Registering…" : "Register"}
+                    </button>
+                    {state === "success" && (
+                      <span role="status" className="text-[12px] font-semibold text-[var(--wa-ok-text)]">
+                        Registered — this number can send now.
+                      </span>
+                    )}
+                  </div>
+                  {state === "error" && regError[n.external_asset_id] && (
+                    <p role="alert" className="mt-1 text-[12px] font-medium text-[var(--wa-danger)]">{regError[n.external_asset_id]}</p>
+                  )}
+                  <p className="mt-1 text-[11px] text-[var(--wa-text-2)]">
+                    Meta allows re-registration for 14 days after signup; later needs a fresh Embedded Signup.
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--wa-text-2)]">
+                    3 · Two-step verification PIN
+                  </p>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <input
+                      value={twoStepPin[n.external_asset_id] ?? ""}
+                      onChange={(e) => setTwoStepPin((p) => ({ ...p, [n.external_asset_id]: sixDigits(e.target.value) }))}
+                      inputMode="numeric"
+                      maxLength={6}
+                      placeholder="New 6-digit PIN"
+                      aria-label={`Two-step PIN for ${n.phone ?? n.external_asset_id}`}
+                      className="min-h-11 w-40 rounded-xl border border-[var(--wa-input-border)] bg-[var(--wa-input-bg)] px-3 text-[13px] tracking-widest text-[var(--wa-text)]"
+                    />
+                    <button
+                      onClick={() => saveTwoStep(n.external_asset_id)}
+                      disabled={pState === "saving"}
+                      className="min-h-11 rounded-full border border-[var(--wa-border)] px-4 text-[12px] font-semibold text-[var(--wa-text)] disabled:opacity-50"
+                    >
+                      {pState === "saving" ? "Saving…" : pState === "saved" ? "Saved" : "Save PIN"}
+                    </button>
+                  </div>
+                  {twoStepError[n.external_asset_id] && (
+                    <p role="alert" className="mt-1 text-[12px] font-medium text-[var(--wa-danger)]">{twoStepError[n.external_asset_id]}</p>
+                  )}
+                  <p className="mt-1 text-[11px] text-[var(--wa-text-2)]">
+                    Meta has no endpoint to disable two-step verification; changing the PIN is the supported path.
+                  </p>
+                </div>
+
+                <div className="border-t border-[var(--wa-border)] pt-3">
+                  <button
+                    onClick={() => deregister(n.external_asset_id)}
+                    disabled={deregistering === n.external_asset_id}
+                    className="min-h-11 rounded-full border border-[var(--wa-danger)] px-4 text-[12px] font-semibold text-[var(--wa-danger)] disabled:opacity-50"
+                  >
+                    {deregistering === n.external_asset_id ? "Deregistering…" : "Deregister number"}
+                  </button>
+                  <p className="mt-1 text-[11px] text-[var(--wa-text-2)]">
+                    Deregistering stops sending immediately. The number can be registered again later.
+                  </p>
+                </div>
               </div>
-            )}
+            </details>
           </div>
         );
       })}

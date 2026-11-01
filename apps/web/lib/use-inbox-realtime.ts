@@ -51,6 +51,7 @@ export interface InboxRealtimeEvent {
     | "typing"
     | "assignment"
     | "mode"
+    | "blocked"
     | "ping";
   notification?: NotificationPayload;
   id?: string;
@@ -78,6 +79,9 @@ export interface InboxRealtimeEvent {
   mode?: "ai" | "human";
   mode_changed_at?: string | null;
   mode_changed_by?: string | null;
+  /* provider-side block mirror (WA-6) */
+  blocked_at?: string | null;
+  blocked_by?: string | null;
   /* assignment events — who owns the conversation now */
   assigned_to?: string | null;
   assignee_name?: string | null;

@@ -126,7 +126,7 @@ class WhatsAppAdapter(MetaProviderAdapter):
     async def register_number(self, phone_number_id: str, token: str, pin: str | None = None) -> None:
         """Register the number on the Cloud API (idempotent).
 
-        Meta REQUIRES a 6-digit two-step-verification PIN here — without it
+        Meta REQUIRES a 6-digit two-step-verification PIN here - without it
         the call fails with an onboarding error and the number cannot send
         until registration succeeds. The PIN is the tenant's own, supplied
         during Embedded Signup or via the register-retry endpoint.
@@ -135,6 +135,73 @@ class WhatsAppAdapter(MetaProviderAdapter):
         if pin:
             body["pin"] = pin
         await self._graph("POST", f"/{phone_number_id}/register", token, json=body)
+
+    async def request_verification_code(
+        self,
+        phone_number_id: str,
+        token: str,
+        *,
+        code_method: str = "SMS",
+        language: str = "en_US",
+    ) -> bool:
+        """Ask Meta to send the number-verification code."""
+        resp = await self._graph(
+            "POST",
+            f"/{phone_number_id}/request_code",
+            token,
+            params={"code_method": code_method, "language": language},
+        )
+        try:
+            return bool(resp.json().get("success", True))
+        except ValueError:
+            return True
+
+    async def verify_number_code(
+        self, phone_number_id: str, token: str, code: str
+    ) -> bool:
+        """Submit the code from request_verification_code."""
+        resp = await self._graph(
+            "POST",
+            f"/{phone_number_id}/verify_code",
+            token,
+            json={"code": code},
+        )
+        try:
+            return bool(resp.json().get("success", True))
+        except ValueError:
+            return True
+
+    async def deregister_number(self, phone_number_id: str, token: str) -> bool:
+        """Remove the number from the Cloud API (sends stop immediately)."""
+        resp = await self._graph(
+            "POST",
+            f"/{phone_number_id}/deregister",
+            token,
+            json={"messaging_product": "whatsapp"},
+        )
+        try:
+            return bool(resp.json().get("success", True))
+        except ValueError:
+            return True
+
+    async def set_two_step_pin(
+        self, phone_number_id: str, token: str, pin: str
+    ) -> bool:
+        """Set or change the two-step-verification PIN.
+
+        Meta exposes no disable endpoint: once a PIN is set, the only way to
+        remove it is a new number registration.
+        """
+        resp = await self._graph(
+            "POST",
+            f"/{phone_number_id}",
+            token,
+            json={"pin": pin},
+        )
+        try:
+            return bool(resp.json().get("success", True))
+        except ValueError:
+            return True
 
     async def send_text_message(
         self,
@@ -289,6 +356,8 @@ class WhatsAppAdapter(MetaProviderAdapter):
         longitude: float,
         name: str | None = None,
         address: str | None = None,
+        *,
+        context_message_id: str | None = None,
     ) -> str:
         """Send a native location card. Returns the provider message id."""
         location: dict = {"latitude": latitude, "longitude": longitude}
@@ -296,16 +365,19 @@ class WhatsAppAdapter(MetaProviderAdapter):
             location["name"] = name[:255]
         if address:
             location["address"] = address[:255]
+        payload: dict = {
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "location",
+            "location": location,
+        }
+        if context_message_id:
+            payload["context"] = {"message_id": context_message_id}
         resp = await self._graph(
             "POST",
             f"/{phone_number_id}/messages",
             token,
-            json={
-                "messaging_product": "whatsapp",
-                "to": to,
-                "type": "location",
-                "location": location,
-            },
+            json=payload,
         )
         data = resp.json()
         msgs = data.get("messages", [])
@@ -317,36 +389,80 @@ class WhatsAppAdapter(MetaProviderAdapter):
         token: str,
         to: str,
         contacts: list[dict],
+        *,
+        context_message_id: str | None = None,
     ) -> str:
         """Send one or more contact cards. Returns the provider message id."""
+        payload: dict = {
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "contacts",
+            "contacts": contacts,
+        }
+        if context_message_id:
+            payload["context"] = {"message_id": context_message_id}
         resp = await self._graph(
             "POST",
             f"/{phone_number_id}/messages",
             token,
-            json={
-                "messaging_product": "whatsapp",
-                "to": to,
-                "type": "contacts",
-                "contacts": contacts,
-            },
+            json=payload,
         )
         data = resp.json()
         msgs = data.get("messages", [])
         return msgs[0].get("id", "") if msgs else ""
 
+    async def block_user(
+        self, phone_number_id: str, token: str, user_id: str
+    ) -> dict:
+        """Block one WhatsApp user for this business number."""
+        resp = await self._graph(
+            "POST",
+            f"/{phone_number_id}/block_users",
+            token,
+            json={
+                "messaging_product": "whatsapp",
+                "block_users": [{"user": user_id}],
+            },
+        )
+        return resp.json()
+
+    async def unblock_user(
+        self, phone_number_id: str, token: str, user_id: str
+    ) -> dict:
+        """Remove a block for one WhatsApp user."""
+        resp = await self._graph(
+            "DELETE",
+            f"/{phone_number_id}/block_users",
+            token,
+            json={
+                "messaging_product": "whatsapp",
+                "block_users": [{"user": user_id}],
+            },
+        )
+        return resp.json()
+
     async def _send_interactive(
-        self, phone_number_id: str, token: str, to: str, interactive: dict
+        self,
+        phone_number_id: str,
+        token: str,
+        to: str,
+        interactive: dict,
+        *,
+        context_message_id: str | None = None,
     ) -> str:
+        payload: dict = {
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "interactive",
+            "interactive": interactive,
+        }
+        if context_message_id:
+            payload["context"] = {"message_id": context_message_id}
         resp = await self._graph(
             "POST",
             f"/{phone_number_id}/messages",
             token,
-            json={
-                "messaging_product": "whatsapp",
-                "to": to,
-                "type": "interactive",
-                "interactive": interactive,
-            },
+            json=payload,
         )
         data = resp.json()
         msgs = data.get("messages", [])
@@ -362,12 +478,16 @@ class WhatsAppAdapter(MetaProviderAdapter):
         *,
         header: str | None = None,
         footer: str | None = None,
+        context_message_id: str | None = None,
     ) -> str:
         """Reply buttons (1-3). The tap returns the title as customer text."""
         from ..interactive import build_buttons
 
         interactive = build_buttons(body, titles, header=header, footer=footer)
-        return await self._send_interactive(phone_number_id, token, to, interactive)
+        return await self._send_interactive(
+            phone_number_id, token, to, interactive,
+            context_message_id=context_message_id,
+        )
 
     async def send_interactive_list(
         self,
@@ -380,6 +500,7 @@ class WhatsAppAdapter(MetaProviderAdapter):
         *,
         header: str | None = None,
         footer: str | None = None,
+        context_message_id: str | None = None,
     ) -> str:
         """List menu (up to 10 rows). Rows arrive back as their title."""
         from ..interactive import build_list
@@ -387,7 +508,10 @@ class WhatsAppAdapter(MetaProviderAdapter):
         interactive = build_list(
             body, button_text, sections, header=header, footer=footer
         )
-        return await self._send_interactive(phone_number_id, token, to, interactive)
+        return await self._send_interactive(
+            phone_number_id, token, to, interactive,
+            context_message_id=context_message_id,
+        )
 
     async def send_cta_url_message(
         self,

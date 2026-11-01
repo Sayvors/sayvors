@@ -385,14 +385,21 @@ def _system_prompt(
         "nothing further. The request is saved as a ticket for the team "
         "the moment they tell you; do not keep chatting after the "
         "confirmation beyond a goodbye.",
-        # Honest handoff: every conversation is already logged as a lead
-        # for the team — there is no separate transfer step to promise.
-        "Everything the customer tells you (their name, what they need, "
-        "contact details) is logged for the team automatically — there is "
-        "no separate handoff step. Never promise a call, email or message "
-        "to a different number, and never say someone will reach out "
-        "elsewhere. If the customer wants a human, say the team will "
-        "follow up with them right here in this chat.",
+        # Ticket vs lead: the lead row IS the ticket. The lead fields are only
+        # the sales qualification inside it, and the customer never hears the
+        # word "lead".
+        "A ticket is the work object for this conversation. A lead is only "
+        "the sales qualification inside a sales-kind ticket. Never use the "
+        "word lead with the customer; say ticket or request.",
+        # Honest handoff: only a ticket means a human owes this customer a
+        # reply. The LATEST TICKET block below says whether one exists.
+        "Only say a ticket is open, or that the team will follow up, when the "
+        "LATEST TICKET block shows a ticket. If it says none, do not promise "
+        "either. If the customer wants one, ask a short yes/no question; "
+        "when they say yes, end your reply with OPEN_TICKET.",
+        "Never promise a call, email or message to a different number, and "
+        "never say someone will reach out elsewhere. If a ticket exists, say "
+        "the team will follow up with them right here in this chat.",
         "Never ask for a detail the customer already gave — name, "
         "requirement, budget or number. Re-asking reads as not listening.",
         "If the request is outside what we offer: acknowledge it kindly in "
@@ -440,6 +447,15 @@ def _system_prompt(
             "pipeline turns that line into tappable WhatsApp buttons and "
             "never shows it to the customer. Never add it for yes/no, for a "
             "single option, or when you are closing the conversation."
+        )
+        lines.append(
+            "When the customer asks where you are or for directions, include "
+            "one final line exactly SEND_LOCATION. When they ask for your "
+            "phone number or a contact card, include one final line exactly "
+            "SEND_CONTACT. The pipeline strips the line and sends the native "
+            "card in addition to your text. Only use a marker when the facts "
+            "above contain that detail; never invent a phone number or a "
+            "location."
         )
     if voice_enabled:
         lines.append(
@@ -489,6 +505,7 @@ async def _generate_reply(
     context: str | None = None,
     contact: str | None = None,
     attachment_note: str | None = None,
+    ticket=None,
 ) -> str:
     """Generate an AI reply from THIS CONTACT's conversation + business profile.
 
@@ -655,6 +672,15 @@ async def _generate_reply(
         else ""
     )
 
+    # Ticket identity for this conversation. The lead row is the ticket; the
+    # block tells the model whether a human actually owes this customer a
+    # reply and whether the sales qualification exists.
+    ticket_block = ""
+    if platform == "WhatsApp":
+        from ..tickets import prompt_block as ticket_prompt_block
+
+        ticket_block = ticket_prompt_block(ticket)
+
     # Databank grounding: retrieve the passages that match THIS message, so a
     # price, a spec or a policy comes from the business's own documents instead
     # of being guessed. Bounded (2.5s, 4 passages) and best-effort — the reply
@@ -739,6 +765,7 @@ async def _generate_reply(
         + (f"\n\n{catalog}" if catalog else "")
         + (f"\n\n{memory}" if memory else "")
         + stored_block
+        + (f"\n\n{ticket_block}" if ticket_block else "")
         + (f"\n\n{context}" if context else "")
         + (f"\n\n{attachment_note}" if attachment_note else "")
         + f"\n\n{LEAD_PROMPT_BLOCK}"
@@ -928,6 +955,61 @@ async def _publish_inbound_row(db, tenant_id: str, channel_id: str, row) -> None
         "created_at": row.created_at,
     })
     await _publish_message_notification(db, tenant_id, row, "whatsapp")
+
+
+async def _has_outbound_reply(db, row) -> bool:
+    """Whether a successful outbound landed after this inbound was stored.
+
+    The check spans human and AI sends on purpose: either one means the
+    customer is no longer waiting. Only successful rows count — a failed send
+    is an attempt, not a reply.
+    """
+    from ..models import ChannelMessage
+
+    found = (
+        await db.execute(
+            select(ChannelMessage.id)
+            .where(
+                ChannelMessage.channel_id == row.channel_id,
+                ChannelMessage.direction == "outbound",
+                ChannelMessage.contact_phone_hash == row.contact_phone_hash,
+                ChannelMessage.status.in_(["sent", "delivered", "read"]),
+                ChannelMessage.created_at >= row.created_at,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return found is not None
+
+
+async def _close_inbound_reply_state(wamid: str) -> None:
+    """Mark a normally-finished inbound row's AI reply as terminal.
+
+    Called only after the handler returns without raising. An exception leaves
+    the row ``pending`` so the worker's retry re-drives it. If a reply was
+    already delivered (crash between send and this bookkeeping), the row is
+    marked ``sent`` instead of silently re-sending.
+    """
+    if not wamid:
+        return
+    from ..models import ChannelMessage
+
+    async with async_session() as db:
+        row = (
+            await db.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.platform_message_id == wamid[:200],
+                )
+            )
+        ).scalar_one_or_none()
+        if row is None or row.ai_reply_status != "pending":
+            return
+        replied = await _has_outbound_reply(db, row)
+        row.ai_reply_status = "sent" if replied else "skipped"
+        if replied:
+            row.ai_reply_error = None
+        db.add(row)
+        await db.commit()
 
 
 # A voice note we could not transcribe must be answered honestly. Feeding the
@@ -1192,6 +1274,106 @@ async def _reply_attachment_needs_context(
     )
 
 
+async def _send_native_card(
+    db,
+    adapter,
+    channel,
+    *,
+    tenant_id: str,
+    phone_number_id: str,
+    token: str,
+    to: str,
+    kind: str,
+    wamid: str,
+) -> None:
+    """Send one native location/contact card requested by the model.
+
+    Best-effort: the text answer has already gone out, so a card failure must
+    never turn a delivered reply into a retry. A missing phone or coordinates
+    is logged and skipped; the prose answer remains correct.
+    """
+    from ..models import ChannelMessage
+    from .native_cards import primary_card
+
+    card = await primary_card(db, tenant_id)
+    if card is None:
+        logger.info("Native %s card skipped: no saved location", kind)
+        return
+
+    try:
+        if kind == "location":
+            if card.latitude is None or card.longitude is None:
+                logger.info(
+                    "Native location card skipped: no coordinates in maps_url"
+                )
+                return
+            lines = [part for part in (card.name, card.address) if part]
+            lines.append(
+                f"https://maps.google.com/?q={card.latitude},{card.longitude}"
+            )
+            provider_id = await adapter.send_location(
+                phone_number_id, token, to,
+                card.latitude, card.longitude,
+                name=card.name, address=card.address,
+                context_message_id=wamid,
+            )
+            content_type = "location"
+            content = "\n".join(lines)
+        else:
+            if not card.phone:
+                logger.info("Native contact card skipped: no saved phone")
+                return
+            name = card.name or "Contact"
+            provider_id = await adapter.send_contacts(
+                phone_number_id, token, to,
+                [{
+                    "name": {"formatted_name": name},
+                    "phones": [{"phone": card.phone, "type": "WORK"}],
+                }],
+                context_message_id=wamid,
+            )
+            content_type = "contact"
+            content = f"{name} — {card.phone}"
+    except Exception as exc:  # noqa: BLE001 - the text reply already landed
+        logger.warning(
+            "Native %s card send failed from=+%s: %s: %s",
+            kind, to[-6:], type(exc).__name__, str(exc)[:200],
+        )
+        return
+
+    row = ChannelMessage(
+        id=str(uuid.uuid4()),
+        channel_id=channel.id,
+        platform_message_id=(provider_id or "")[:200] or None,
+        direction="outbound",
+        content=encrypt_message_content(content),
+        content_type=content_type,
+        status="sent",
+        contact_phone=encrypt_contact_phone(to or None),
+        contact_phone_hash=hash_contact_phone(to or None),
+        is_ai=True,
+        handled_by="ai",
+        reply_to_message_id=wamid[:200] or None,
+    )
+    db.add(row)
+    await db.commit()
+    from ...channels.realtime import publish_inbox_event
+
+    await publish_inbox_event(tenant_id, {
+        "type": "message",
+        "id": row.id,
+        "channel_id": channel.id,
+        "platform": "whatsapp",
+        "direction": "outbound",
+        "content": decrypt_message_content(row.content),
+        "content_type": content_type,
+        "status": "sent",
+        "contact_phone": decrypt_contact_phone(row.contact_phone),
+        "reply_to_message_id": row.reply_to_message_id,
+        "created_at": row.created_at,
+    })
+
+
 async def _publish_inbound_row_text(db, tenant_id: str, channel_id: str, row, contact: str) -> None:
     """Publish an outbound system line (same shape as the AI replies)."""
     from ...channels.realtime import publish_inbox_event
@@ -1317,6 +1499,18 @@ async def _send_language_confirmation(
 
 
 async def _handle_message_received(event: dict, data: dict) -> None:
+    """Process one inbound message and close its AI-reply state.
+
+    Only a normal return marks the row terminal. Any exception (LLM outage,
+    transient Meta failure, process crash) leaves ``ai_reply_status="pending"``
+    so the worker's retry reaches the dedupe path and re-drives instead of
+    returning as if the reply had been sent.
+    """
+    await _process_inbound_message(event, data)
+    await _close_inbound_reply_state(event.get("external_event_id") or "")
+
+
+async def _process_inbound_message(event: dict, data: dict) -> None:
     """Persist the inbound message, then AI-reply + send when possible."""
     from ..models import ChannelMessage
     from ..service import categorize_message as _categorize
@@ -1345,7 +1539,9 @@ async def _handle_message_received(event: dict, data: dict) -> None:
         tenant_id = asset.tenant_id
         connection_id = asset.connection_id
 
-        # Idempotent replay: Kafka redelivery must not twin the row.
+        # Idempotent replay. A terminal row is a no-op. A pending row is an
+        # owed reply (the row committed before a crash / LLM outage / send
+        # failure), so re-drive it instead of returning a false success.
         existing = (
             await db.execute(
                 select(ChannelMessage).where(
@@ -1353,27 +1549,57 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 )
             )
         ).scalar_one_or_none()
+        resuming = False
         if existing is not None:
-            return
+            if (
+                existing.direction != "inbound"
+                or existing.ai_reply_status != "pending"
+            ):
+                return
+            # A previous attempt may have delivered a reply and crashed before
+            # recording it. Never send a second one.
+            if await _has_outbound_reply(db, existing):
+                existing.ai_reply_status = "sent"
+                existing.ai_reply_error = None
+                db.add(existing)
+                await db.commit()
+                return
+            resuming = True
+            row = existing
+            row.ai_reply_attempts = (row.ai_reply_attempts or 0) + 1
+            db.add(row)
+            await db.commit()
 
         channel = await _channel_for(
             db, tenant_id, phone_number_id, asset.phone
         )
-        row = ChannelMessage(
-                id=str(uuid.uuid4()),
-                channel_id=channel.id,
-                platform_message_id=wamid[:200] or None,
-                direction="inbound",
-                content=encrypt_message_content(text if text else f"[{msg_type} message]"),
-                content_type=msg_type,
-                status="delivered",
-                contact_phone=encrypt_contact_phone(from_wa or None),
-                contact_phone_hash=hash_contact_phone(from_wa or None),
-                contact_name=data.get("profile_name") or None,
-                category=_categorize(text)[0],
-                priority=_categorize(text)[1],
+        if resuming and row.channel_id != channel.id:
+            logger.warning(
+                "WhatsApp reply resume skipped: channel changed wamid=%s "
+                "row_channel=%s resolved=%s",
+                wamid[:32], row.channel_id, channel.id,
             )
-        db.add(row)
+            return
+        if not resuming:
+            row = ChannelMessage(
+                    id=str(uuid.uuid4()),
+                    channel_id=channel.id,
+                    platform_message_id=wamid[:200] or None,
+                    direction="inbound",
+                    content=encrypt_message_content(text if text else f"[{msg_type} message]"),
+                    content_type=msg_type,
+                    status="delivered",
+                    contact_phone=encrypt_contact_phone(from_wa or None),
+                    contact_phone_hash=hash_contact_phone(from_wa or None),
+                    contact_name=data.get("profile_name") or None,
+                    category=_categorize(text)[0],
+                    priority=_categorize(text)[1],
+                    ai_reply_status="pending",
+                    ai_reply_attempts=0,
+                )
+            db.add(row)
+
+        inbound_row = row
         # Cache the free profile name for the inbox/contacts lists.
         await _upsert_whatsapp_profile_name(
             db, tenant_id, from_wa, data.get("profile_name")
@@ -1431,7 +1657,11 @@ async def _handle_message_received(event: dict, data: dict) -> None:
         token = decrypt_connection_token(asset.connection) if asset.connection else None
         attachment_stored: bool | None = None
         if msg_type in INBOUND_MEDIA_TYPES:
-            if token:
+            if row.media_key:
+                # Already downloaded on the first attempt; a resume must not
+                # fetch the same bytes again.
+                attachment_stored = True
+            elif token:
                 attachment_stored = await _store_inbound_media(
                     row, tenant_id=tenant_id, data=data, token=token, wamid=wamid
                 )
@@ -1469,6 +1699,10 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 "WhatsApp AI reply skipped (no access token on connection %s) "
                 "wamid=%s from=+%s", connection_id, wamid[:32], from_wa[-6:],
             )
+            inbound_row.ai_reply_status = "failed"
+            inbound_row.ai_reply_error = "WhatsApp access token is missing"
+            db.add(inbound_row)
+            await db.commit()
             return
         # Deselected asset: the message is kept (history returns when the
         # tenant re-selects the asset) but the AI must not speak for a page
@@ -1480,6 +1714,10 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 "WhatsApp AI reply skipped (asset deselected) wamid=%s",
                 wamid[:32],
             )
+            inbound_row.ai_reply_status = "failed"
+            inbound_row.ai_reply_error = "WhatsApp asset is deselected"
+            db.add(inbound_row)
+            await db.commit()
             return
         # Stickers are a social gesture, not a request; video is intentionally
         # not stored or answered yet. Neither ever gets an AI reply.
@@ -1528,29 +1766,36 @@ async def _handle_message_received(event: dict, data: dict) -> None:
         # is answered honestly and never fed to the model as a placeholder.
         voice_unreadable = False
         if msg_type in ("audio", "voice"):
-            media_id = str((data.get("media") or {}).get("id") or "")
-            transcript, voice_duration_ms = (
-                await _transcribe_voice_note(
-                    media_id=media_id,
-                    token=token,
-                    wamid=wamid,
-                )
-                if media_id
-                else ("", 0)
-            )
-            if transcript:
-                text = transcript
+            # A resumed attempt that already stored the transcript must not
+            # download or bill the same note twice.
+            stored_transcript = decrypt_message_content(row.content or "") or ""
+            if resuming and stored_transcript and not stored_transcript.startswith("["):
+                text = stored_transcript
                 msg_type = "text"
-                row.content = encrypt_message_content(text)
-                row.category, row.priority = _categorize(text)
-                await db.commit()
-                await _meter_asr(tenant_id, voice_duration_ms, wamid)
             else:
-                voice_unreadable = True
-                logger.info(
-                    "WhatsApp voice note unreadable wamid=%s from=+%s",
-                    wamid[:32], from_wa[-6:],
+                media_id = str((data.get("media") or {}).get("id") or "")
+                transcript, voice_duration_ms = (
+                    await _transcribe_voice_note(
+                        media_id=media_id,
+                        token=token,
+                        wamid=wamid,
+                    )
+                    if media_id
+                    else ("", 0)
                 )
+                if transcript:
+                    text = transcript
+                    msg_type = "text"
+                    row.content = encrypt_message_content(text)
+                    row.category, row.priority = _categorize(text)
+                    await db.commit()
+                    await _meter_asr(tenant_id, voice_duration_ms, wamid)
+                else:
+                    voice_unreadable = True
+                    logger.info(
+                        "WhatsApp voice note unreadable wamid=%s from=+%s",
+                        wamid[:32], from_wa[-6:],
+                    )
             await _publish_inbound_row(db, tenant_id, channel.id, row)
 
         # Conversation mode is checked before the typing indicator: showing
@@ -1813,7 +2058,8 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 # the agent staring at a conversation that looks unanswered.
                 try:
                     provider_msg_id = await adapter.send_text_message(
-                        phone_number_id, token, from_wa, canned
+                        phone_number_id, token, from_wa, canned,
+                        context_message_id=wamid,
                     )
                 except MetaAPIError as e:
                     logger.error(
@@ -1821,6 +2067,16 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                         from_wa[-6:], e.status_code, str(e)[:200],
                     )
                     await _publish_typing(tenant_id, channel.id, from_wa, False)
+                    if e.status_code == 429 or e.status_code >= 500:
+                        inbound_row.ai_reply_status = "pending"
+                        inbound_row.ai_reply_error = str(e)[:300]
+                        db.add(inbound_row)
+                        await db.commit()
+                        raise
+                    inbound_row.ai_reply_status = "failed"
+                    inbound_row.ai_reply_error = str(e)[:500]
+                    db.add(inbound_row)
+                    await db.commit()
                     return
                 row = ChannelMessage(
                     id=str(uuid.uuid4()),
@@ -1833,6 +2089,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                     contact_phone_hash=hash_contact_phone(from_wa or None),
                     is_ai=True,
                     handled_by="ai",
+                    reply_to_message_id=wamid[:200] or None,
                 )
                 db.add(row)
                 await db.commit()
@@ -1889,6 +2146,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             reply_kwargs: dict = {
                 "context": _handoff_context(handoff_match),
                 "contact": from_wa or None,
+                "ticket": inbound_lead,
             }
             if msg_type in ("image", "document"):
                 reply_kwargs["attachment_note"] = ATTACHMENT_PROMPT_NOTE
@@ -1900,8 +2158,15 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 "WhatsApp AI reply generation failed wamid=%s: %s: %s",
                 wamid[:32], type(e).__name__, str(e)[:200],
             )
+            # Leave the row pending and let the event retry. Marking it
+            # terminal here is exactly the silent loss LAUNCH-B2 fixed.
+            inbound_row.ai_reply_status = "pending"
+            inbound_row.ai_reply_attempts = (inbound_row.ai_reply_attempts or 0) + 1
+            inbound_row.ai_reply_error = f"{type(e).__name__}: {str(e)[:300]}"
+            db.add(inbound_row)
+            await db.commit()
             await _publish_typing(tenant_id, channel.id, from_wa, False)
-            return
+            raise
 
         # The reply call may carry a silent LEAD extraction line — split it
         # off here so the customer never sees it. No LEAD line (tests,
@@ -1924,13 +2189,60 @@ async def _handle_message_received(event: dict, data: dict) -> None:
 
         reply, choices = split_choices(reply)
 
-        if not reply:
+        # Hidden native-card marker (SEND_LOCATION / SEND_CONTACT). Stripped
+        # before the empty check so a card-only reply is still deliverable.
+        from .native_cards import split_native_card_request
+
+        reply, native_card = split_native_card_request(reply)
+
+        # A customer who said yes to opening a ticket gets one. The marker is
+        # stripped; the lead row is the ticket, so create/qualify it here.
+        from ..tickets import (
+            split_ticket_request,
+            ticket_kind_for,
+        )
+
+        reply, open_ticket = split_ticket_request(reply)
+        if open_ticket:
+            if inbound_lead is None:
+                from .lead_engine import capture_lead as _capture_ticket
+
+                inbound_lead = await _capture_ticket(
+                    db,
+                    tenant_id=tenant_id,
+                    channel_id=channel.id,
+                    platform="whatsapp",
+                    contact_id=from_wa,
+                    contact_name=data.get("profile_name"),
+                    message_id=wamid[:200] or None,
+                    inbound_text=text or "Customer requested a ticket",
+                    require_intent=False,
+                )
+            if inbound_lead is not None:
+                inbound_lead.ticket_status = "open"
+                inbound_lead.ticket_kind = ticket_kind_for(
+                    inbound_lead.category, inbound_lead.intent
+                )
+                db.add(inbound_lead)
+                await db.commit()
+            if not reply:
+                reply = (
+                    "Done — I've opened a ticket for the team. They'll follow up here."
+                    if inbound_lead is not None
+                    else "I couldn't open a ticket right now. Could you try again in a moment?"
+                )
+
+        if not reply and not native_card:
             logger.warning(
-                "WhatsApp AI reply was empty — skipping send wamid=%s from=+%s",
+                "WhatsApp AI reply was empty — retrying wamid=%s from=+%s",
                 wamid[:32], from_wa[-6:],
             )
+            inbound_row.ai_reply_status = "pending"
+            inbound_row.ai_reply_error = "model returned an empty reply"
+            db.add(inbound_row)
+            await db.commit()
             await _publish_typing(tenant_id, channel.id, from_wa, False)
-            return
+            raise RuntimeError("AI reply was empty")
 
         # Tenant delivery config — one indexed read for both knobs: response
         # style (text shape) and voice replies tier (voice notes when the
@@ -2055,7 +2367,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             choices = []
 
         messages: list[str] = []
-        if not voice_sent:
+        if not voice_sent and reply:
             # Tenant response style decides text delivery — one message, or
             # a short natural sequence. Rendering happens after reasoning
             # and never touches it: same agent, same reply, different shape.
@@ -2064,22 +2376,31 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             )
             if not messages:
                 logger.warning(
-                    "WhatsApp AI reply rendered to zero messages — skipping "
-                    "send wamid=%s from=+%s", wamid[:32], from_wa[-6:],
+                    "WhatsApp AI reply rendered to zero messages — retrying "
+                    "wamid=%s from=+%s", wamid[:32], from_wa[-6:],
                 )
-                return
+                inbound_row.ai_reply_status = "pending"
+                inbound_row.ai_reply_error = "render_response returned zero messages"
+                db.add(inbound_row)
+                await db.commit()
+                raise RuntimeError("AI reply rendered to zero messages")
 
             for index, part in enumerate(messages):
                 is_last = index == len(messages) - 1
                 use_buttons = bool(choices) and is_last
+                # Quote the inbound once, on the first bubble. Quoting every
+                # part of a human-style split is noise.
+                quote_id = wamid if index == 0 else None
                 try:
                     if use_buttons:
                         provider_msg_id = await adapter.send_interactive_buttons(
-                            phone_number_id, token, from_wa, part, choices
+                            phone_number_id, token, from_wa, part, choices,
+                            context_message_id=quote_id,
                         )
                     else:
                         provider_msg_id = await adapter.send_text_message(
-                            phone_number_id, token, from_wa, part
+                            phone_number_id, token, from_wa, part,
+                            context_message_id=quote_id,
                         )
                 except (MetaAPIError, ValueError) as e:
                     # A rejected interactive payload must not cost the
@@ -2091,7 +2412,8 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                         )
                         try:
                             provider_msg_id = await adapter.send_text_message(
-                                phone_number_id, token, from_wa, part
+                                phone_number_id, token, from_wa, part,
+                                context_message_id=quote_id,
                             )
                         except MetaAPIError as fallback_error:
                             e = fallback_error
@@ -2104,6 +2426,20 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                             from_wa[-6:], getattr(e, "status_code", ""),
                             str(e)[:200],
                         )
+                        status_code = getattr(e, "status_code", 422)
+                        if status_code == 429 or status_code >= 500:
+                            # Transient: the customer may still get this reply
+                            # on the event retry. Keep the inbound row pending.
+                            inbound_row.ai_reply_status = "pending"
+                            inbound_row.ai_reply_attempts = (
+                                inbound_row.ai_reply_attempts or 0
+                            ) + 1
+                            inbound_row.ai_reply_error = str(e)[:300]
+                            db.add(inbound_row)
+                            await db.commit()
+                            raise
+                        # Permanent (bad payload, invalid number, 24h window):
+                        # show the failed row and stop retrying this reply.
                         db.add(
                             ChannelMessage(
                                 id=str(uuid.uuid4()),
@@ -2116,6 +2452,9 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                                 contact_phone_hash=hash_contact_phone(from_wa or None),
                             )
                         )
+                        inbound_row.ai_reply_status = "failed"
+                        inbound_row.ai_reply_error = str(e)[:500]
+                        db.add(inbound_row)
                         await db.commit()
                         # Later parts would land without their context — stop.
                         return
@@ -2132,6 +2471,9 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                         contact_phone_hash=hash_contact_phone(from_wa or None),
                         is_ai=True,  # drives the escalation counter
                         handled_by="ai",
+                        reply_to_message_id=(
+                            quote_id[:200] if quote_id else None
+                        ),
                     )
                 db.add(row)
                 await db.commit()
@@ -2160,6 +2502,19 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 from_wa, send_item_id,
             )
 
+        # Native card the model requested (location / contact). Sent after the
+        # text so a card failure never costs the customer the answer.
+        if native_card:
+            await _send_native_card(
+                db, adapter, channel,
+                tenant_id=tenant_id,
+                phone_number_id=phone_number_id,
+                token=token,
+                to=from_wa,
+                kind=native_card,
+                wamid=wamid,
+            )
+
         # Lead engine, send side: merge whatever the reply call extracted,
         # then arm the durable follow-up when the reply ended with a
         # question. Scheduling happens only after the reply actually went
@@ -2180,8 +2535,8 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             require_intent=True,
         )
         if lead is not None:
-            final_text = reply if voice_sent else messages[-1]
-            if is_open_question(final_text):
+            final_text = reply if voice_sent or not messages else messages[-1]
+            if final_text and is_open_question(final_text):
                 await schedule_followup(
                     db,
                     lead=lead,
@@ -3139,9 +3494,15 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
         )
 
 
-async def _process_message(value: bytes | None) -> None:
+async def _process_message(value: bytes | None) -> str | None:
+    """Process one envelope. Returns an error string on failure, else None.
+
+    The Kafka loop ignores the value (it cannot retry an individual message),
+    but the outbox fallback needs it: marking an event sent after a swallowed
+    handler failure is the same retry laundering LAUNCH-B2 fixed.
+    """
     if value is None:
-        return
+        return None
     # The consumer's value_deserializer already parses JSON into a dict.
     # Handle both raw bytes and pre-parsed dicts for robustness.
     if isinstance(value, dict):
@@ -3151,10 +3512,10 @@ async def _process_message(value: bytes | None) -> None:
             event = json.loads(value.decode("utf-8") if isinstance(value, (bytes, bytearray)) else value)
         except (json.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
             logger.warning("Discarding malformed event: %s", e)
-            return
+            return None
     else:
         logger.warning("Unexpected event value type: %s", type(value))
-        return
+        return None
     # The outbox worker sends the normalized envelope raw; accept the wrapped
     # {"event_type": "meta...", "payload": envelope} shape defensively too.
     if event.get("event_type", "").startswith("meta."):
@@ -3208,6 +3569,8 @@ async def _process_message(value: bytes | None) -> None:
             logger.debug("Ignoring non-whatsapp meta event %r", event_type)
     except Exception as e:
         logger.exception("Failed processing %s event: %s", event_type, e)
+        return f"{type(e).__name__}: {str(e)[:300]}"
+    return None
 
 
 async def _drain_outbox_events() -> int:
@@ -3238,8 +3601,14 @@ async def _drain_outbox_events() -> int:
     for event in events:
         try:
             # Kafka carries event.payload (the envelope) raw — same here.
-            await _process_message(json.dumps(event.payload).encode("utf-8"))
-            sent_ids.append(event.id)
+            error = await _process_message(
+                json.dumps(event.payload).encode("utf-8")
+            )
+            if error is None:
+                sent_ids.append(event.id)
+            else:
+                logger.warning("Outbox event %s failed: %s", event.id, error)
+                await mark_failed(event.id, error)
         except Exception as e:
             logger.warning("Outbox event %s failed: %s", event.id, e)
             await mark_failed(event.id, str(e))

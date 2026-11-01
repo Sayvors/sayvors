@@ -61,7 +61,10 @@ from .schemas import (
     MetaConnectionListResponse,
     MetaConnectionOut,
     MetaRegisterNumberRequest,
+    MetaRequestCodeRequest,
+    MetaTwoStepPinRequest,
     MetaValidateResponse,
+    MetaVerifyCodeRequest,
     MetaWhatsAppSession,
     WhatsAppProfileOut,
     WhatsAppProfileUpdate,
@@ -654,6 +657,36 @@ async def whatsapp_session(
     }
 
 
+async def _whatsapp_asset_and_token(db, user, phone_number_id: str):
+    """Resolve one tenant phone number and its decrypted access token."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from .credentials import decrypt_connection_token
+    from .models import MetaAsset
+
+    asset = (
+        await db.execute(
+            select(MetaAsset)
+            .options(selectinload(MetaAsset.connection))
+            .where(
+                MetaAsset.tenant_id == tenant_id_of(user),
+                MetaAsset.provider == "whatsapp",
+                MetaAsset.asset_type == "phone_number",
+                MetaAsset.external_asset_id == phone_number_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Number not found for this account")
+    token = decrypt_connection_token(asset.connection) if asset.connection else None
+    if not token:
+        raise HTTPException(
+            status_code=409, detail="Reconnect WhatsApp — the access token is missing"
+        )
+    return asset, token
+
+
 @router.post("/whatsapp/{phone_number_id}/register")
 async def register_whatsapp_number(
     phone_number_id: str,
@@ -712,8 +745,131 @@ async def register_whatsapp_number(
 
     _remember_pin(asset, body.pin)
     asset.status = "registered"
+    # A registered number is usable again; the selection flag follows.
+    asset.active = True
     await db.commit()
     return {"registered": True, "phone_number_id": phone_number_id}
+
+
+@router.post("/whatsapp/{phone_number_id}/request-code")
+async def request_whatsapp_verification_code(
+    phone_number_id: str,
+    body: MetaRequestCodeRequest,
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ask Meta to send the number-verification code (SMS or voice)."""
+    if not settings.TESTING and not await rate_limit(
+        f"wa:request-code:{user.id}:{phone_number_id}", 3, 600
+    ):
+        raise HTTPException(
+            status_code=429, detail="Too many code requests — try again later"
+        )
+    _asset, token = await _whatsapp_asset_and_token(db, user, phone_number_id)
+    adapter = _service.get_adapter("whatsapp")
+    try:
+        sent = await adapter.request_verification_code(
+            phone_number_id, token,
+            code_method=body.code_method, language=body.language,
+        )
+    except MetaAPIError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    return {
+        "sent": bool(sent),
+        "code_method": body.code_method,
+        "language": body.language,
+    }
+
+
+@router.post("/whatsapp/{phone_number_id}/verify-code")
+async def verify_whatsapp_number_code(
+    phone_number_id: str,
+    body: MetaVerifyCodeRequest,
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Verify the code Meta sent before registering the number."""
+    if not settings.TESTING and not await rate_limit(
+        f"wa:verify-code:{user.id}:{phone_number_id}", 5, 600
+    ):
+        raise HTTPException(
+            status_code=429, detail="Too many verification attempts — try again later"
+        )
+    asset, token = await _whatsapp_asset_and_token(db, user, phone_number_id)
+    adapter = _service.get_adapter("whatsapp")
+    try:
+        verified = await adapter.verify_number_code(
+            phone_number_id, token, body.code
+        )
+    except MetaAPIError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    if verified:
+        asset.status = "verified"
+        await db.commit()
+    return {"verified": bool(verified), "phone_number_id": phone_number_id}
+
+
+@router.post("/whatsapp/{phone_number_id}/deregister")
+async def deregister_whatsapp_number(
+    phone_number_id: str,
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove the number from the Cloud API; sending stops immediately."""
+    if not settings.TESTING and not await rate_limit(
+        f"wa:deregister:{user.id}:{phone_number_id}", 2, 600
+    ):
+        raise HTTPException(
+            status_code=429, detail="Too many attempts — try again later"
+        )
+    asset, token = await _whatsapp_asset_and_token(db, user, phone_number_id)
+    adapter = _service.get_adapter("whatsapp")
+    try:
+        deregistered = await adapter.deregister_number(phone_number_id, token)
+    except MetaAPIError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    if deregistered:
+        asset.status = "deregistered"
+        # A deregistered number cannot send or receive; stop routing to it
+        # until it is registered again.
+        asset.active = False
+        await db.commit()
+    return {
+        "deregistered": bool(deregistered),
+        "phone_number_id": phone_number_id,
+    }
+
+
+@router.post("/whatsapp/{phone_number_id}/two-step")
+async def set_whatsapp_two_step_pin(
+    phone_number_id: str,
+    body: MetaTwoStepPinRequest,
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set or change the number's two-step-verification PIN."""
+    if not settings.TESTING and not await rate_limit(
+        f"wa:two-step:{user.id}:{phone_number_id}", 5, 600
+    ):
+        raise HTTPException(
+            status_code=429, detail="Too many attempts — try again later"
+        )
+    asset, token = await _whatsapp_asset_and_token(db, user, phone_number_id)
+    adapter = _service.get_adapter("whatsapp")
+    try:
+        updated = await adapter.set_two_step_pin(
+            phone_number_id, token, body.pin
+        )
+    except MetaAPIError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    if updated:
+        _remember_pin(asset, body.pin)
+        await db.commit()
+    return {"updated": bool(updated), "phone_number_id": phone_number_id}
 
 
 @router.get("/whatsapp/{phone_number_id}/profile", response_model=WhatsAppProfileOut)

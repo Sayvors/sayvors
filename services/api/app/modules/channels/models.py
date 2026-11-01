@@ -135,6 +135,13 @@ class ChannelMessage(Base):
     media_key: Mapped[str | None] = mapped_column(String(300), nullable=True)
     media_mime_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     media_filename: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # AI reply lifecycle for an inbound row. `pending` means a reply is owed:
+    # a crash or transient provider failure leaves it pending, and the next
+    # delivery of the same wamid re-drives instead of deduping to a silent
+    # success. `sent` / `skipped` / `failed` are terminal.
+    ai_reply_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    ai_reply_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    ai_reply_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Who the message is with, in the platform's own addressing. Inbound rows
     # carry the sender; outbound rows carry the recipient, which is what lets a
     # reply be threaded under the same contact as the question it answers.
@@ -257,6 +264,15 @@ class ChannelThread(Base):
     )
     mode_changed_by: Mapped[str | None] = mapped_column(
         String(64), nullable=True, default=None
+    )
+    # Provider-side block. NULL = not blocked. The WhatsApp Cloud API owns the
+    # actual state; these columns mirror it so the inbox can show the button
+    # state without a Graph call per thread.
+    blocked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    blocked_by: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, default=None
     )
     # Who owns this conversation right now. NULL = unassigned (the normal
     # state until someone claims an escalated thread). Distinct from
@@ -554,6 +570,10 @@ class Lead(Base):
         # Stored (not derived in SQL) so this stays an index scan rather than
         # a full sort of the lead table. See lead_escalation.py.
         Index("ix_leads_tenant_priority", "tenant_id", "priority", "updated_at"),
+        # Ticket identity. A lead IS the ticket record for WhatsApp; the lead
+        # fields below are the sales qualification inside it.
+        Index("ix_leads_tenant_ticket", "tenant_id", "ticket_number", unique=True),
+        Index("ix_leads_tenant_ticket_status", "tenant_id", "ticket_status"),
         # ix_leads_pending_reminder is a partial index (WHERE
         # priority='important') and cannot be expressed in __table_args__.
         # It is registered as a PostgreSQL-only after_create hook below so a
@@ -596,6 +616,21 @@ class Lead(Base):
     stage: Mapped[str] = mapped_column(
         Enum("new", "qualified", "follow_up", "converted", "lost", name="lead_stage"),
         default="new",
+    )
+    # ── Ticket identity (the primary work object) ─────────────────────
+    # Every lead is a ticket. The number is human-facing and stable; the
+    # status is the work lifecycle, independent from the sales `stage`.
+    ticket_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    ticket_status: Mapped[str] = mapped_column(
+        String(20), default="new", server_default="new", nullable=False
+    )
+    # whatsapp_support | whatsapp_sales | whatsapp_info | whatsapp_general
+    ticket_kind: Mapped[str] = mapped_column(
+        String(30), default="whatsapp_general",
+        server_default="whatsapp_general", nullable=False,
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     # A phone number the customer TYPED (never the Meta sender identity,
     # which lives in contact_id). "stated" = validated shape only;
