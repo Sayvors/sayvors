@@ -38,6 +38,7 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     title: "Intelligence",
     items: [
       { href: "/llms", label: "LLMs", desc: "Providers & models", icon: "llms" },
+      { href: "/personas", label: "AI personas", desc: "Sarah & team voices", icon: "voice" },
       { href: "/embeddings", label: "Embeddings", desc: "RAG vector API", icon: "embeddings" },
       { href: "/voice", label: "Voice models", desc: "WhatsApp voice TTS", icon: "voice" },
       { href: "/asr", label: "Speech-to-text", desc: "ASR provider & keys", icon: "voice" },

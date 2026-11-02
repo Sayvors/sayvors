@@ -49,6 +49,7 @@ from .modules.email.router import router as email_router
 from .modules.review_engine.router import router as review_engine_router
 from .modules.review_engine.csv_router import router as csv_router
 from .modules.assistant.router import router as assistant_router
+from .modules.assistant import personas as assistant_personas  # noqa: F401
 from .modules.notifications.router import router as notifications_router
 from .modules.billing.router import router as billing_router
 from .modules.jobs.router import router as jobs_router, admin_router as jobs_admin_router

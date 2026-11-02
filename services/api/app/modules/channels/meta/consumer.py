@@ -331,8 +331,12 @@ def _system_prompt(
     platform: str = "WhatsApp",
     voice_enabled: bool = False,
     bridge_enabled: bool = False,
+    persona=None,
 ) -> str:
     """Assistant prompt grounded in the tenant's business profile.
+
+    ``persona`` is the admin-selected AI persona (name, gender, notes). When it
+    is absent the built-in Sarah fallback keeps the assistant working.
 
     ``voice_enabled`` is the WhatsApp voice tier, already resolved by the
     caller. ``bridge_enabled`` says whether an active WhatsApp number exists to
@@ -341,8 +345,11 @@ def _system_prompt(
     broken promise is discovered by the customer immediately.
     """
     name = (user.business_name or f"{user.first_name} {user.last_name}").strip()
+    persona_name = (getattr(persona, "name", None) or "Sarah").strip()[:80]
+    gender = (getattr(persona, "gender", None) or "female").strip().lower()
     lines = [
-        f"You are the customer assistant for {name}, replying on {platform}.",
+        f"You are {persona_name}, a customer support team member at {name}, "
+        f"replying on {platform}.",
     ]
     if user.business_description:
         lines.append(f"About the business: {user.business_description}")
@@ -363,9 +370,27 @@ def _system_prompt(
         "automation, or a text-based system, and never say you can only "
         "send text or cannot send voice notes. You are a member of the "
         "team chatting on this channel.",
-        "If the customer asks directly whether you are a bot or an AI, "
-        "answer honestly in one short sentence, then return to helping "
-        "them. Never volunteer it.",
+        (
+            "You are a woman; where the language marks gender (Arabic "
+            "adjectives and verb forms, Urdu forms), use feminine "
+            "first-person wording."
+            if gender == "female"
+            else (
+                "You are a man; where the language marks gender (Arabic "
+                "adjectives and verb forms, Urdu forms), use masculine "
+                "first-person wording."
+                if gender == "male"
+                else "Use gender-neutral first-person wording; do not guess "
+                "the customer's gender or your own."
+            )
+        ),
+        f"If the customer asks who you are, say you're {persona_name} from "
+        "the team and return to helping. Never volunteer or invent a job "
+        "title, and never describe yourself as software.",
+        "When you need information you don't have, say you're bringing in a "
+        "colleague from the team. That means another team member joining "
+        "the conversation — never a separate 'human support' escalation "
+        "and never a hint that you are software.",
         "Every reply moves the chat forward: after answering, ask ONE short "
         "question that helps the customer — e.g. 'What are you looking to "
         "build?', 'What's your budget?', 'What features do you need?'. A "
@@ -497,6 +522,12 @@ def _system_prompt(
                 "promise a WhatsApp link or a move to WhatsApp — help them "
                 "here instead."
             )
+    notes = (getattr(persona, "instructions", None) or "").strip()
+    if notes:
+        lines.append(
+            "PERSONA NOTES (tone/voice guidance from the team; follow it, "
+            "never quote it):\n" + notes[:2000]
+        )
     return "\n".join(lines)
 
 
@@ -751,12 +782,17 @@ async def _generate_reply(
         len(stored_block or ""),
     )
 
+    from ...assistant.personas import get_active_persona
+
+    persona = await get_active_persona(db)
+
     system_prompt = (
         _system_prompt(
             user,
             platform=platform,
             voice_enabled=voice_enabled,
             bridge_enabled=bridge_enabled,
+            persona=persona,
         )
         + (f"\n\n{lang_block}" if lang_block else "")
         + (f"\n\n{business_card}" if business_card else "")

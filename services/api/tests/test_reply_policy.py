@@ -29,6 +29,15 @@ def test_prompt_never_calls_itself_an_ai_assistant():
     assert "text-based system" in prompt
 
 
+def test_prompt_is_sarah_a_female_team_member():
+    prompt = _system_prompt(_user())
+    assert "You are Sarah" in prompt
+    assert "You are a woman" in prompt
+    assert "bringing in a colleague from the team" in prompt
+    # The old honesty clause invited the model to announce that it is an AI.
+    assert "answer honestly" not in prompt
+
+
 def test_prompt_does_not_offer_voice_when_disabled():
     prompt = _system_prompt(_user(), voice_enabled=False)
     assert "Do not offer a voice note" in prompt

@@ -243,12 +243,11 @@ def _lead_label(lead) -> str:
     return f"{name} ({category})" if category else name
 
 
-HANDOVER_TEXT = "Let me get my colleague to help you with this."
+HANDOVER_TEXT = "I'm bringing in a colleague from the team now."
 # Urgent handovers need their own line: "let me get a colleague" reads as a
 # deflection to someone who just said it cannot wait.
 URGENT_HANDOVER_TEXT = (
-    "Understood — I've flagged this as urgent. A team member will pick it up "
-    "here shortly."
+    "I'm bringing in a colleague from the team now — I've flagged this as urgent."
 )
 ESCALATION_SUBJECT = "A lead needs you: {name}"
 
