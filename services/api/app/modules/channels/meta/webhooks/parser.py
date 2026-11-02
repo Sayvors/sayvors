@@ -22,6 +22,23 @@ def parse(payload: dict) -> tuple[str, list[dict]]:
     return "unknown", []
 
 
+def _reply_label(msg_type: str, payload: dict) -> str | None:
+    """Text carried by a quick-reply button or an interactive list/button tap.
+
+    Meta sends the label inside the type payload, not in `text`. Without this
+    the language picker saw `[interactive message]` and never answered the tap.
+    """
+    if msg_type == "interactive":
+        interactive = payload or {}
+        return (
+            (interactive.get("button_reply") or {}).get("title")
+            or (interactive.get("list_reply") or {}).get("title")
+        )
+    if msg_type == "button":
+        return (payload or {}).get("text")
+    return None
+
+
 def _parse_whatsapp(payload: dict) -> list[dict]:
     events: list[dict] = []
     for entry in payload.get("entry", []):
@@ -55,6 +72,7 @@ def _parse_whatsapp(payload: dict) -> list[dict]:
                             "text": (
                                 ((msg.get("text") or {}).get("body"))
                                 or type_payload.get("caption")
+                                or _reply_label(msg_type, type_payload)
                             ),
                             "context": msg.get("context"),
                             # The sender's WhatsApp profile name, so the inbox

@@ -1729,9 +1729,20 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
             return
         # A caption makes an image/document a typed question, so it flows
         # through the normal pipeline. Without one the attachment is stored and
-        # published, then answered deterministically after the language gate —
+        # published, then answered deterministically after the language gate -
         # the model is never asked to guess at bytes it cannot see.
-        if msg_type not in ("audio", "voice", "text", "image", "document"):
+        # Interactive/button taps carry their label in `text` (hoisted by the
+        # parser), so they must reach the language gate and the AI.
+        if msg_type in ("interactive", "button") and not text:
+            logger.info(
+                "WhatsApp interactive tap had no label wamid=%s type=%s",
+                wamid[:32], msg_type,
+            )
+            return
+        if msg_type not in (
+            "audio", "voice", "text", "image", "document",
+            "interactive", "button",
+        ):
             logger.info(
                 "WhatsApp AI reply skipped for non-text message type=%s wamid=%s",
                 msg_type, wamid[:32],

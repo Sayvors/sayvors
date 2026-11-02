@@ -86,7 +86,7 @@ class _Adapter:
         return "wamid.contact"
 
 
-async def _seed(db, user_id):
+async def _seed(db, user_id, *, preferred_language: str | None = "en"):
     db.add(User(
         id=user_id, first_name="Test", last_name="Owner",
         email=f"{user_id}@example.com", password_hash="x",
@@ -116,7 +116,7 @@ async def _seed(db, user_id):
         contact_phone=encrypt_contact_phone(CUSTOMER),
         contact_phone_hash=hash_contact_phone(CUSTOMER),
         language="en",
-        preferred_language="en",
+        preferred_language=preferred_language,
     ))
     db.add(LocalithConnection(
         id=str(uuid.uuid4()),
@@ -503,3 +503,41 @@ async def test_open_ticket_marker_creates_a_ticket(
     assert lead.ticket_status == "open"
     assert lead.ticket_kind in ("whatsapp_info", "whatsapp_general")
     assert adapter.sent == ["Done — I've opened a ticket."]
+
+
+@pytest.mark.asyncio
+async def test_language_button_reply_is_answered_immediately(
+    db, user_id, monkeypatch
+):
+    """A tapped language button is text, not a silent [interactive message]."""
+    from app.modules.channels.meta.language_gate import CONFIRMATION
+
+    await _seed(db, user_id, preferred_language=None)
+    adapter = _Adapter()
+    _wire(monkeypatch, adapter)
+
+    generated = {"called": False}
+
+    async def _gen(*a, **k):
+        generated["called"] = True
+        return "Should not be called"
+
+    monkeypatch.setattr(consumer, "_generate_reply", _gen)
+
+    event, data = _event()
+    data = {**data, "msg_type": "interactive", "text": "English"}
+    await consumer._handle_message_received(event, data)
+
+    assert generated["called"] is False
+    assert adapter.sent == [CONFIRMATION["en"]]
+
+    state = (
+        await db.execute(
+            select(WhatsAppThreadState).where(
+                WhatsAppThreadState.contact_phone_hash
+                == hash_contact_phone(CUSTOMER)
+            )
+        )
+    ).scalar_one()
+    await db.refresh(state)
+    assert state.preferred_language == "en"
