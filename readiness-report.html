@@ -186,7 +186,7 @@
 
 <div class="top">
   <span class="name">Sayvors 1M-User Readiness</span>
-  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 28 open (2 blockers · 17 majors · 9 medium) · INS: 3 open · original audit: 2 open (OPS-1, OPS-4) · 36 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 8 open (2 high · 4 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span>
+  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 27 open (1 blocker · 17 majors · 9 medium) · INS: 3 open · original audit: 2 open (OPS-1, OPS-4) · 36 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 8 open (2 high · 4 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,052 passed / 3 skipped (post-shim, 2026-11-02)</span>
   <nav class="topnav">
     <a href="#blockers">Blockers</a>
     <a href="#pass-2026-10-25">Oct 25 pass</a>
@@ -224,7 +224,7 @@
   <div class="stat"><div class="n amber">Live</div><div class="l">billing &amp; plans — wallet hotfix + durable ledger + 5 plans + admin plan CRUD + tenant grant-plan + entitlements service + enforcement at channel-connect/message-send/LLM; deployed to staging 2026-10-28, schema caught up from 5 migrations behind to <code>h4b5c6d7e8f9</code> head. Plan comparison + request-upgrade UI shipped (<a href="#billing">§6b</a>)</div></div>
   <div class="stat"><div class="n calm">1,645</div><div class="l">backend tests (2 skipped in CI where pgvector runs; 4 skipped locally without Postgres) — CI gates every staging deploy on them; staging CI run #77 passed on <code>d82d800</code></div></div>
   <div class="stat"><div class="n amber">3</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new findings still open: INS-3, INS-4, INS-5 (INS-1, INS-2, INS-6, INS-7 fixed)</div></div>
-  <div class="stat"><div class="n">28</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 2 blockers · 17 majors · 9 medium batches open; three are ~1-line fixes (P4, S7, S12). Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
+  <div class="stat"><div class="n">27</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 1 blocker · 17 majors · 9 medium batches open; three are ~1-line fixes (P4, S7, S12). Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
   <div class="stat"><div class="n">8</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — Review Intelligence + Analytics "actual facts" gaps: listing Q&amp;A, competitor deltas, grid rank, AI-answer visibility. Strategy rule: every number a tenant sees must be verifiable on Google Maps or carry a named source</div></div>
 </div>
 
@@ -356,11 +356,11 @@
       <td class="num"><span class="chip ok">Done</span></td>
     </tr>
     <tr>
-      <td class="num">LAUNCH-B3</td><td><span class="chip crit">Blocker</span></td>
-      <td><strong>No retry/DLQ on sends toward Meta.</strong> <code>_graph</code> makes exactly one attempt (20s timeout, raises on ≥400); the consumer catches <code>MetaAPIError</code>, records a <code>status="failed"</code> row, and returns. No retry, no backoff, no dead-letter for replies. Combined with B2, one transient Meta 5xx during an outage = a permanently unanswered customer. The EventOutbox retry taxonomy (transient/permanent/ambiguous) already exists — the send path just doesn't use it.</td>
-      <td class="path">channels/meta/providers/base.py:59-71; consumer.py:1905-1942</td>
-      <td>Route sends through the existing outbox retry taxonomy (bounded attempts, capped backoff, DLQ for terminal failures).</td>
-      <td class="num">~1 day</td>
+      <td class="num">LAUNCH-B3</td><td><span class="chip ok">Fixed</span></td>
+      <td><strong>No retry/DLQ on sends toward Meta.</strong> <code>_graph</code> makes exactly one attempt (20s timeout, raises on ≥400); the consumer catches <code>MetaAPIError</code>, records a <code>status="failed"</code> row, and returns. No retry, no backoff, no dead-letter for replies. Combined with B2, one transient Meta 5xx during an outage = a permanently unanswered customer. <strong>Fixed 2026-11-02:</strong> the transport layer now classifies failures the way the existing outbox retry taxonomy needs. Connect-phase failures (the request provably never left) are retried in place — 3 attempts, 0.5s/1.5s base with jitter — then surface as <code>MetaTransportError</code> with status pinned to 503, so every existing <code>status &gt;= 500</code> transient branch treats them as retryable: the consumer's pending-row re-drive (B2), the lead-action worker's bounded backoff, the events worker's exponential retry (300s × 2ⁿ capped 2h, 5 attempts → <code>dead</code> — the DLQ). Mid-flight failures (read timeout, broken response, write error) raise <code>MetaAmbiguousError</code>: the request may have landed and Meta's send API has no idempotency key, so they are never auto-retried — the WhatsApp reply loop parks the row <code>pending</code> and re-raises so the events worker files the event <code>ambiguous</code> (terminal), and the lead-action worker marks the action <code>ambiguous</code> for a human. The ambiguous branch deliberately sits outside the interactive-buttons→text fallback so the fallback cannot double-send. HTTP 429/5xx stay plain <code>MetaAPIError</code> with their existing caller-specific handling. The worker's error classes moved to <code>providers.base</code> so consumer and worker catch the exact same classes (identity-pinned by a test). 10 new tests: transport contract on a real <code>httpx.MockTransport</code>, recovery behavior for both new error types, worker identity pin.</td>
+      <td class="path">channels/meta/providers/base.py; consumer.py; lead_action_worker.py; meta_events_worker.py</td>
+      <td>Done: transport classification + bounded connect retry + ambiguous doctrine on all send sites. Residuals: multi-part WA re-drive is all-or-nothing (a transient failure on part 2 of 3 loses parts 2/3 — pre-existing); Instagram transient failures still close as failed rows (IG has no re-drive machinery — retrying would hit the dedupe wall and mark a lost reply as sent, worse); Retry-After plumbing skipped on purpose (worker backoff base already exceeds Meta rate-limit granularity); operator replay of dead/ambiguous events remains a follow-up alongside B2's recovery-sweep residual.</td>
+      <td class="num"><span class="chip ok">Done</span></td>
     </tr>
     <tr>
       <td class="num">LAUNCH-B5</td><td><span class="chip crit">Blocker</span></td>
@@ -564,6 +564,90 @@
   </table></div>
 
   <p class="note">Suggested order: P4 → S2 → S7 → S4 → S12 (all ≤1 hr, highest ratio of risk removed to effort) → B3 (send-path retry/DLQ) → B5 → S1/S3/S10/S11 → the rest. Infra rows (S8/S9/S14) can land any time on the current box; they stop being optional the day a second replica or real customers arrive.</p>
+</section>
+
+<section id="pass-2026-11-02">
+  <div class="eyebrow">§§ 3c</div>
+  <h2>Nov 2 pass — "actual facts" audit: Review Intelligence + Analytics</h2>
+  <p>Product-track audit (2026-11-02), not launch-track. The strategy: every number on the dashboard must survive one test — <strong>the tenant opens Google Maps and sees the same thing</strong>, or the card carries a named source. No invented insight scores, no unlabeled AI claims. Three classes of fact count: (1) traceable to Google directly (GBP/Places APIs), (2) computed from synced data with the formula shown, (3) cited benchmarks (survey or the tenant's own cohort). Paid-tool pricing from the same-day research proves the demand: Birdeye ~$300/mo, Podium ~$289/mo, ReviewTrackers ~$109/mo, Local Falcon $24.95–$99.95/mo, Whitespark grid scans from $10/mo — the differentiator is not more charts, it is <em>verifiability</em>.</p>
+
+  <h3>Already factual — do not rebuild (verified 2026-11-02)</h3>
+  <div class="scroll"><table>
+    <tr><th>Fact</th><th>Where it lives</th><th>Why it matters</th></tr>
+    <tr><td><strong>Google visibility + acquisition + search keywords</strong> (impressions, calls, direction requests, website clicks, keyword impressions w/ trend)</td><td class="path">analytics/performance.py (daily sync worker, never persists mock data) → /visibility, /acquisition, /growth/keywords → Growth tab (app/dashboard/growth/page.tsx:191-195)</td><td>The Performance API was assumed missing in the chat report — it is not. This is Google's own traffic truth, already visible in the tenant's GBP dashboard, so zero trust-barrier.</td></tr>
+    <tr><td><strong>Response rate + average response seconds + velocity ratio</strong></td><td class="path">analytics/service.py:101-189</td><td>Computed from the synced review stream; candidates for median + distribution display (FACT-8).</td></tr>
+    <tr><td><strong>Reputation / health scores as explicit formulas</strong> (avg_rating/5 × 50 + response_rate × 25 + positive_ratio × 25)</td><td class="path">analytics/service.py:25-37</td><td>Published arithmetic, not vibes — display the formula next to the score and the "facts" claim becomes credible.</td></tr>
+    <tr><td><strong>Review edit &amp; removal tracking</strong> (previousRating / previousText, "Edited" tab)</td><td class="path">apps/web/app/dashboard/reviews/page.tsx</td><td>Market-unique fact — almost no paid tool shows "3 customers edited their reviews this month". Lead with it in marketing.</td></tr>
+    <tr><td><strong>Request→review click tracking</strong> (tokenized links)</td><td class="path">analytics/router.py:703 (/review-requests/{token}/click)</td><td>The funnel fact exists in data; only the conversion-rate display is missing (FACT-7).</td></tr>
+    <tr><td><strong>Competitor snapshots via Places Text Search</strong> (idempotent upserts + stale sweep)</td><td class="path">analytics/competitors.py:31-165, /benchmark/external + refresh</td><td>Point-in-time peer ratings exist; the <em>delta</em> fact is the missing piece (FACT-2).</td></tr>
+    <tr><td><strong>Tenant cohort benchmarks</strong> (branch breakdowns, medians, market rank)</td><td class="path">analytics/benchmark.py</td><td>The raw material for the Saudi Regional Index (FACT-6) — the only regional review benchmark in existence.</td></tr>
+  </table></div>
+
+  <h3>Gaps — make the dashboard undeniable</h3>
+  <div class="scroll"><table>
+    <tr><th>ID</th><th>Sev</th><th>Finding</th><th>Evidence</th><th>Fix</th><th>Effort</th></tr>
+    <tr>
+      <td class="num">FACT-1</td><td><span class="chip high">High</span></td>
+      <td><strong>Google listing Q&amp;A is completely unsynced.</strong> Maps Q&amp;A is public, appears in search results, and is frequently answered by strangers or nobody — unanswered questions cost conversions daily. No endpoint in the analytics router and no Q&amp;A surface in the GBP client touches it (grep across <code>app/modules</code>: zero hits — all "questions" code is review-text analysis). A tenant literally cannot see their own listing's questions in the dashboard.</td>
+      <td class="path">channels/google_reviews.py (GBP client — no questions endpoints); analytics/router.py (no /questions route)</td>
+      <td>Sync listing Q&amp;A alongside reviews; unanswered-question card; draft answers through the existing reply-engine approval flow (same need_approval UX).</td>
+      <td class="num">2–3 days</td>
+    </tr>
+    <tr>
+      <td class="num">FACT-2</td><td><span class="chip high">High</span></td>
+      <td><strong>Competitor trend deltas are computed but never rendered.</strong> <code>CompetitorSnapshot</code> rows refresh idempotently, but the benchmark tab shows point-in-time values and a manual refresh button — the fact "your rating moved +0.1 this month while the local median moved −0.05" never surfaces. Time-series data is being overwritten into a single row per refresh; deltas are the entire value of tracking competitors.</td>
+      <td class="path">analytics/competitors.py:94-163 (upsert, stale sweep); app/dashboard/benchmark/page.tsx:62 (refresh button only)</td>
+      <td>Keep per-cycle history (history table or SCD rows) and render delta cards: rating Δ, review-count Δ, velocity vs. each tracked peer.</td>
+      <td class="num">1–2 days</td>
+    </tr>
+    <tr>
+      <td class="num">FACT-3</td><td><span class="chip med">Med</span></td>
+      <td><strong>No "verify on Maps" source link on fact cards.</strong> The verifiability strategy dies if the tenant can't check. Review rows carry <code>reviewUrl</code>, but competitor, visibility, keyword and insight cards show numbers with no source line and no deep link — indistinguishable from the invented "insight scores" this audit is trying to kill.</td>
+      <td class="path">apps/web components/analytics/* (OverviewPanel, GrowthPage, BenchmarkPage cards)</td>
+      <td>Every fact card gets a source line ("Google Business Profile · updated hourly") + a Maps/GBP-dashboard deep link. Cheap, and it is the whole brand claim.</td>
+      <td class="num">1–2 days</td>
+    </tr>
+    <tr>
+      <td class="num">FACT-4</td><td><span class="chip med">Med</span></td>
+      <td><strong>Geo-grid rank absent — the one killer fact official APIs cannot produce.</strong> "You rank #1–3 at 9 of 14 grid points for 'café riyadh'" is the most persuasive local fact in the industry (Local Falcon built a business on it), but grid scanning hits Maps' internal ranking from many geo-points — not something Places API returns. <strong>Buy, don't build.</strong></td>
+      <td class="path">—</td>
+      <td>Integrate a vendor: Local Falcon partner API ($24.95–$99.95/mo) or Whitespark grids (from $10/mo); store scan history; render per-keyword grid heat + trend. Phase 2, after launch.</td>
+      <td class="num">2–3 days integration</td>
+    </tr>
+    <tr>
+      <td class="num">FACT-5</td><td><span class="chip med">Med</span></td>
+      <td><strong>AI-answer visibility absent.</strong> "Does ChatGPT recommend your restaurant?" is the new fact class (45% of consumers expected to use AI for business recommendations — BrightLocal AI-trust research); Birdeye/Yext Scout already sell it per location. For an AI-native product this fact is on-brand. Caveat to design for: API-completions ≠ consumer ChatGPT-with-search, so label accordingly.</td>
+      <td class="path">—</td>
+      <td>Spike: per-vertical prompt set ("best [category] in [city]"), run through hosted models with web search, store mention/position; card + trend. Or evaluate buy-side (Otterly, Peec, Birdeye Scout). Phase 3.</td>
+      <td class="num">1-week spike</td>
+    </tr>
+    <tr>
+      <td class="num">FACT-6</td><td><span class="chip med">Med</span></td>
+      <td><strong>The Saudi Regional Index is not packaged — and it is the moat.</strong> Every published review benchmark is US/UK (BrightLocal: 42% trust reviews as much as personal recommendations, down from 79% in 2020; 31% will only use 4.5★+ businesses in the 2026 survey). The cohort medians that would answer "what's normal for a Riyadh café?" already compute internally — they are just never surfaced as a named, citable index.</td>
+      <td class="path">analytics/benchmark.py (cohort medians); analytics/router.py:248 (/market-benchmarks)</td>
+      <td>Package cohort stats as the "Sayvors Regional Index" (min cohort size to avoid leaking a single tenant), show it on benchmark cards, publish quarterly. Becomes the cited source = the "actual facts" position.</td>
+      <td class="num">2–3 days</td>
+    </tr>
+    <tr>
+      <td class="num">FACT-7</td><td><span class="chip low">Low</span></td>
+      <td><strong>Request→review funnel tracked but not rendered as a rate.</strong> Tokenized click tracking and the request log exist; the conversion fact "42 of 100 requests → click → review" — the number that justifies the whole review-request feature — is never displayed.</td>
+      <td class="path">analytics/router.py:703; components/dashboard/ReviewRequestLog</td>
+      <td>Funnel card per campaign: sent → clicked → reviewed, with rate and trend.</td>
+      <td class="num">1 day</td>
+    </tr>
+    <tr>
+      <td class="num">FACT-8</td><td><span class="chip low">Low</span></td>
+      <td><strong>Response SLA shows average only; scores show no formula.</strong> <code>avg_response_seconds</code> exists but medians and distributions don't (averages lie with outliers), and reputation/health scores render as bare numbers even though their arithmetic is already explicit in code — showing it costs one tooltip.</td>
+      <td class="path">analytics/service.py:25-37, 189</td>
+      <td>Add median response time + distribution to the review metrics; render the score formula in a tooltip/footnote ("50% rating · 25% response · 25% sentiment").</td>
+      <td class="num">1 day</td>
+    </tr>
+  </table></div>
+
+  <p class="note">Order: FACT-2 → FACT-3 (fastest to land, biggest credibility win) → FACT-1 → FACT-7/FACT-8 (one page-touch each) → FACT-6 → FACT-4 (buy, phase 2) → FACT-5 (spike, phase 3). Every row here is product-track — none of it blocks the Phase 1 launch; FACT-2/FACT-3/FACT-7/FACT-8 are each ≤2 days and compound into the "we show facts, not vibes" position the paid-tool market (Birdeye $300/mo, Podium $289/mo) currently leaves open.</p>
+
+  <h3>Also fixed 2026-11-02 — the test harness itself was down</h3>
+  <p>Found while verifying LAUNCH-B3: since the billing-plans commit (<code>d6669aa</code>, 2026-10-27) every test using the db/client fixtures errored at setup — the launch-plan model declares its feature matrix as Postgres <code>JSONB</code>, SQLite has no JSONB renderer, and the in-memory test engine's <code>create_all</code> crashed on the <code>plans</code> table before a single test could run. That is not a local quirk: CI runs the same SQLite conftest, so the pytest gate (and therefore the staging deploy gate that waits on it) has been unable to pass since Oct 28. Fixed with a test-only shim in <code>tests/conftest.py</code> — <code>JSONB</code> renders as plain <code>JSON</code> (TEXT affinity) on the sqlite dialect; production runs Postgres and never takes that path. Scoped verification after the shim: the four B3 test files went from 38 passed / 16 setup errors to <strong>57 passed / 0 errors</strong>, and a 23-test db-heavy file (<code>test_api.py</code>) went from 23 errors to 23 passed. Post-shim full suite: <strong>2,052 passed / 3 skipped</strong> (the skips are the pgvector integration tests, which skip by design without a Postgres <code>DATABASE_URL</code>), exit 0, 2m07s — superseding the "2,042 passed / 4 skipped" claim recorded earlier the same morning. Lesson recorded: a fixture that every test shares is production infrastructure; when a shared-model change lands, the fixture must compile too.</p>
 </section>
 
 <section id="buybuild">
@@ -1750,6 +1834,19 @@
   <div class="eyebrow">§§ 16 · infra plan — 2026-10-26</div>
   <h2>GCP MVP checklist + what it supports</h2>
   <p><strong>MVP scope decision (2026-10-26): Google + WhatsApp only.</strong> IG/FB stay built but out of MVP onboarding (Meta app-review lead time); they come back behind plan entitlements. GCP fits because the config already supports GCS natively (<code>GCS_PUBLIC_BUCKET</code>/<code>GCS_PRIVATE_BUCKET</code>) and Cloud Run’s scale-to-1 retires the t3.small OOM problem (INS-5).</p>
+
+  <h3>2026-11-02 update — purchase decided; supersedes the tier specifics below where they conflict</h3>
+  <p>The MVP tier below was a plan (<strong>Cloud Run, me-central1, $60–110/mo</strong>). The actual purchase, negotiated through the <strong>CNTXT reseller</strong> (Wassim Zalwia) with a Google Cloud pricing-calculator estimate shared 2026-11-01, is a lift-and-shift <strong>Compute Engine</strong> topology — same <code>docker-compose.prod.yml</code> as staging, no container platform:</p>
+  <div class="scroll"><table>
+    <tr><th>Line</th><th>What</th><th>~/mo</th></tr>
+    <tr><td>Compute</td><td>2× e2-custom (2 vCPU / 10 GB) + 40 GB balanced disks each, <strong>me-central2 Dammam</strong> (data residency + latency — supersedes me-central1). VM 1: api + web + caddy + cloudflared; VM 2: worker lanes + Kafka. <strong>Kafka is a container on the VM, not a bill line</strong> (single broker at launch; 3-broker stays a later item — the Postgres jobs table carries the critical path)</td><td class="num">$123.85 <span class="chip code">1-yr CUD</span></td></tr>
+    <tr><td>Cloud SQL PostgreSQL 16</td><td>Enterprise, zonal (HA off), 2 vCPU / 7.5 GB, 100 GB SSD, <strong>no Extended Support</strong>; PITR included → closes the infra half of <a href="#blockers">OPS-1</a> the day it exists (row 13 restore rehearsal still required)</td><td class="num">$145.57 <span class="chip code">1-yr CUD</span></td></tr>
+    <tr><td>Memorystore Redis</td><td>Basic 1 GB, Dammam (noeviction)</td><td class="num">$57.23</td></tr>
+    <tr><td>Cloud Storage</td><td>Standard 100 GB, Dammam</td><td class="num">$3.00</td></tr>
+    <tr><td>Secret Manager</td><td>~20 active versions, ~1k access ops (JWT, Fernet, DB/Redis/OAuth/tunnel secrets)</td><td class="num">$1.44</td></tr>
+    <tr><td><strong>Total</strong></td><td><strong>1-year CUD on compute + Cloud SQL</strong> (exit Nov 2027); pay-as-you-go ≈ $380. <strong>3-year CUD rejected</strong>: non-cancellable to Nov 2029 and interacts badly with Google for Startups credits — re-decide the term at renewal once credits/usage are known</td><td class="num"><strong>$331.10</strong></td></tr>
+  </table></div>
+  <p class="note"><strong>Status &amp; next steps.</strong> Wassim looped in Erkut &amp; Mariam (CNTXT authorized partner) on 2026-11-01 to provision the billing account. The blocker: the <strong>Billing Account ID</strong>, needed for the <strong>Google for Startups</strong> application. CR / VAT / National Address documents are ready to send the same day they ask. When the partner requests project access, grant the minimum (<span class="chip code">Billing Account User/Creator</span> — not project Owner; get any Owner claim confirmed in writing). Growth framing already sent: $330/mo at launch → $1–2k/mo within 12 months as tenants onboard. The MVP capacity table and 1M tier below stay directionally valid; the sizing lever (plan-level message quotas) is unchanged.</p>
 
   <h3>What this setup supports (honest numbers)</h3>
   <div class="scroll"><table>
