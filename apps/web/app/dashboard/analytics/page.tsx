@@ -5,8 +5,8 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import OverviewPanel from "@/components/analytics/OverviewPanel";
+import InsightsPanel from "@/components/analytics/InsightsPanel";
 import BenchmarkPage from "../benchmark/page";
-import InsightsPage from "../insights/page";
 import GrowthPage from "../growth/page";
 
 /* Analytics shell: header, tab bar, tab switch. The tab panels live in
@@ -66,7 +66,7 @@ function AnalyticsShell() {
       </div>
       <div className="mt-3 min-h-0 flex-1">
         {tab === "overview" && <OverviewPanel />}
-        {tab === "insights" && <InsightsPage />}
+        {tab === "insights" && <InsightsPanel embedded />}
         {tab === "growth" && <GrowthPage />}
         {tab === "benchmark" && <BenchmarkPage />}
       </div>
