@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   adminFetch,
   fetchAdminHealth,
@@ -170,7 +170,7 @@ export default function AdminOverviewPage() {
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [barsIn, setBarsIn] = useState(false);
 
-  const liveInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+
 
   // ── derived ─────────────────────────────────────────────────────────────
   const statsStale = stats !== null && stats.window !== statWindow;
@@ -259,35 +259,24 @@ export default function AdminOverviewPage() {
     };
   }, [statWindow, liveMinutes, fetchOverview, fetchStats, fetchLive, fetchHealth]);
 
-  // Stats refires when the window pill changes.
+  // Live poll — 15s, skip when document.hidden. Its own interval: sharing one
+  // ref with the health poll meant the second effect cleared the first, so the
+  // live card only refreshed on load or a manual refresh.
   useEffect(() => {
-    void (async () => {
-      await fetchStats(statWindow);
-    })();
-  }, [statWindow, fetchStats]);
-
-  // Live poll — 15s, skip when document.hidden.
-  useEffect(() => {
-    if (liveInterval.current) clearInterval(liveInterval.current);
-    liveInterval.current = setInterval(() => {
+    const id = setInterval(() => {
       if (document.hidden) return;
       void fetchLive(liveMinutes);
     }, 15_000);
-    return () => {
-      if (liveInterval.current) clearInterval(liveInterval.current);
-    };
+    return () => clearInterval(id);
   }, [liveMinutes, fetchLive]);
 
-  // Health poll — 15s cycle.
+  // Health poll — its own 15s cycle, independent of the live card.
   useEffect(() => {
-    if (liveInterval.current) clearInterval(liveInterval.current);
-    liveInterval.current = setInterval(() => {
+    const id = setInterval(() => {
       if (document.hidden) return;
       void fetchHealth();
     }, 15_000);
-    return () => {
-      if (liveInterval.current) clearInterval(liveInterval.current);
-    };
+    return () => clearInterval(id);
   }, [fetchHealth]);
 
   // Funnel bars draw in after first paint.
@@ -542,25 +531,29 @@ export default function AdminOverviewPage() {
           <div className="panel p-4 border-l-2 border-l-violet-500 bg-violet/5">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-1.5">
-                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                <p className="text-[11px] font-bold uppercase tracking-widest text-violet-700">Live</p>
+                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse motion-reduce:animate-none"></span>
+                <p className="text-[11px] font-bold uppercase tracking-widest text-violet-800">Live</p>
               </div>
               <div className="flex gap-0.5">
                 <button
+                  type="button"
                   onClick={() => setLiveMinutes(30)}
+                  aria-pressed={liveMinutes === 30}
                   className={`text-[10px] font-bold px-1.5 py-0.5 rounded transition ${
                     liveMinutes === 30
-                      ? "bg-violet-200 text-violet-800"
+                      ? "bg-deep-violet text-white"
                       : "text-ink/40 hover:text-ink"
                   }`}
                 >
                   30m
                 </button>
                 <button
+                  type="button"
                   onClick={() => setLiveMinutes(60)}
+                  aria-pressed={liveMinutes === 60}
                   className={`text-[10px] font-bold px-1.5 py-0.5 rounded transition ${
                     liveMinutes === 60
-                      ? "bg-violet-200 text-violet-800"
+                      ? "bg-deep-violet text-white"
                       : "text-ink/40 hover:text-ink"
                   }`}
                 >
@@ -572,23 +565,26 @@ export default function AdminOverviewPage() {
               {fmtNum(live?.messages_in)}
             </p>
             <p className="mt-0.5 text-[11px] tabular-nums text-ink/40">
-              {fmtNum(live?.messages_in)} sent · {fmtNum(live?.ai_replies)} AI
+              {fmtNum(live?.messages_out)} sent · {fmtNum(live?.ai_replies)} AI
             </p>
             <p className="mt-0 text-[11px] tabular-nums text-ink/40">
               +{fmtNum(live?.new_reviews)} reviews · +{fmtNum(live?.new_users)} users
             </p>
             <p className="mt-0.5 text-[11px]">
-              <span className={`font-bold ${(live?.businesses_connected ?? 0) > 0 ? "text-emerald-300" : "text-amber-300"}`}>
+              <span className={`font-bold ${(live?.businesses_connected ?? 0) > 0 ? "text-emerald-700" : "text-amber-700"}`}>
                 {fmtNum(live?.businesses_connected)}
               </span>{" "}
-              connected /{" "}
-              <span className={`font-bold ${(live?.businesses_disconnected ?? 0) > 0 ? "text-amber-300" : "text-emerald-300"}`}>
+              listings connected /{" "}
+              <span className={`font-bold ${(live?.businesses_disconnected ?? 0) > 0 ? "text-amber-700" : "text-emerald-700"}`}>
                 {fmtNum(live?.businesses_disconnected)}
               </span>{" "}
               disconnected
             </p>
             <p className="mt-0.5 text-[11px] text-ink/40">
-              Top: {live?.top_platform ?? "—"}
+              Top:{" "}
+              {PLATFORM_ROWS.find((p) => p.slug === live?.top_platform)?.label ??
+                live?.top_platform ??
+                "—"}
             </p>
             <p className="mt-1 text-[10px] text-ink/30">
               {liveUpdatedAt
