@@ -84,7 +84,8 @@ jobs:
       - name: Run pytest
         # Parallelism and testpaths come from services/api/pyproject.toml
         # (`addopts = "-ra -n auto --dist loadscope"`), so local and CI run the
-        # same suite the same way.
+        # same suite the same way. Deliberately no `-q`: keep pytest's
+        # worker/percentage progress visible in the Actions log.
         env:
           DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/sayvors
           DATABASE_READER_URL: ""
