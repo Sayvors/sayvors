@@ -38,6 +38,28 @@ def test_prompt_is_sarah_a_female_team_member():
     assert "answer honestly" not in prompt
 
 
+def test_prompt_has_the_conversation_flow_rules():
+    prompt = _system_prompt(_user())
+    assert "a question is not a lead" in prompt
+    assert "Opening a new conversation" in prompt
+    assert "English, Arabic and Urdu" in prompt
+    assert "Use the customer's name occasionally" in prompt
+    assert "At most one emoji" in prompt
+    assert "Voice notes may contain filler words" in prompt
+    assert "either/or question" in prompt
+    assert "Never promise a time frame" in prompt
+
+
+def test_human_request_is_detected_in_english_arabic_and_urdu():
+    from app.modules.channels.meta.lead_escalation import detect_human_request
+
+    assert detect_human_request("I want to talk to a human")
+    assert detect_human_request("can I speak to a real person?")
+    assert detect_human_request("أريد التحدث مع موظف")
+    assert detect_human_request("kisi insaan se baat karni hai")
+    assert not detect_human_request("what are your hours?")
+
+
 def test_prompt_does_not_offer_voice_when_disabled():
     prompt = _system_prompt(_user(), voice_enabled=False)
     assert "Do not offer a voice note" in prompt

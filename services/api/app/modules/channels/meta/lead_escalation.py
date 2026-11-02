@@ -200,6 +200,28 @@ def detect_urgency(text: str | None) -> bool:
     return any(re.search(pattern, lowered) for pattern in _URGENT_PATTERNS)
 
 
+# A customer asking for a person is a different signal from urgency: they do
+# not want a faster answer, they want a teammate. Both stop the AI, but the
+# wording and the notification reason should not pretend it was an emergency.
+_HUMAN_PATTERNS = (
+    r"\b(human|real\s+person|human\s+agent|human\s+being|"
+    r"customer\s+service|representative|speak\s+to\s+someone|"
+    r"talk\s+to\s+someone|speak\s+to\s+a\s+person|"
+    r"talk\s+to\s+a\s+person|manager|supervisor)\b",
+    r"(بشري|شخص\s+حقيقي|موظف\s+خدمة|خدمة\s+العملاء|أريد\s+التحدث\s+مع|"
+    r"أكلم\s+حد|مدير|مشرف)",
+    r"(insaan|asli\s+banda|kisi\s+se\s+baat|agent|manager|supervisor)",
+)
+
+
+def detect_human_request(text: str | None) -> bool:
+    """True when the customer explicitly asks for a person/teammate."""
+    if not text:
+        return False
+    lowered = text.lower()
+    return any(re.search(pattern, lowered) for pattern in _HUMAN_PATTERNS)
+
+
 def should_ai_reply(lead, mode: str = "ai") -> bool:
     """False while a human owns the thread or an escalation is unresolved.
 
