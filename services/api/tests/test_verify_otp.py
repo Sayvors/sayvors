@@ -56,8 +56,9 @@ async def test_verified_user_cannot_mint_session_with_any_code(client, db, allow
     assert "access_token" not in body
     # No session may be established via cookies either.
     assert not any("refresh_token=" in c for c in resp.headers.get_list("set-cookie"))
-    # The message routes the legit user to password sign-in.
-    assert "already verified" in body["detail"].lower()
+    # The message is deliberately generic: this endpoint must not reveal
+    # whether an email is registered.
+    assert body["detail"] == "Invalid or expired code."
 
 
 @pytest.mark.asyncio
@@ -70,6 +71,24 @@ async def test_verified_user_rejects_even_a_plausible_code(client, db, allow_rat
 
     assert resp.status_code == 400
     assert "access_token" not in resp.json()
+
+
+@pytest.mark.asyncio
+async def test_unknown_and_verified_emails_get_the_same_otp_error(
+    client, db, allow_rate_limit
+):
+    """The OTP endpoint must not be an account-existence oracle."""
+    await _seed_user(db, email="known@sayvors.com", verified=True)
+
+    known = client.post(
+        VERIFY_URL, json={"email": "known@sayvors.com", "code": "000000"}
+    )
+    unknown = client.post(
+        VERIFY_URL, json={"email": "nobody@sayvors.com", "code": "000000"}
+    )
+
+    assert known.status_code == unknown.status_code == 400
+    assert known.json() == unknown.json() == {"detail": "Invalid or expired code."}
 
 
 @pytest.mark.asyncio

@@ -372,7 +372,7 @@ export default function AuthForm({ mode }: { mode: Mode }) {
     } else {
       setBusy(true);
       try {
-        const result = await signup({
+        await signup({
           first_name: v.firstName.trim(),
           last_name: v.lastName.trim(),
           email: v.email.trim(),
@@ -381,9 +381,6 @@ export default function AuthForm({ mode }: { mode: Mode }) {
           referral: v.referral || undefined,
           newsletter: v.newsletter,
         });
-        if (result.verification_token) {
-          localStorage.setItem("verification_token", result.verification_token);
-        }
         // The redirect below is immediate, so this is the only beat the user gets to
         // see the account actually went through.
         mascot.current?.play("delighted");

@@ -29,6 +29,8 @@ from .service import (
     verify_email,
     verify_signup_otp,
     get_user_sessions,
+    INVALID_OTP_MESSAGE,
+    INVALID_VERIFICATION_MESSAGE,
 )
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -146,7 +148,6 @@ def get_client_ip(request: Request) -> str:
 async def signup_endpoint(
     body: SignupRequest,
     request: Request,
-    response: Response,
     db: AsyncSession = Depends(get_db),
 ):
     ip = get_client_ip(request)
@@ -155,20 +156,9 @@ async def signup_endpoint(
     if not await rate_limit(f"signup:{ip}", 60, 60):
         raise HTTPException(status_code=429, detail="Too many signup attempts. Try again later.")
 
-    try:
-        result = await signup(body, db, user_agent, ip)
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-
-    verification_token = result.pop("verification_token", None)
-    access_token = result.pop("access_token", None)
-    refresh_token = result.pop("refresh_token")
-    _set_session_cookies(response, refresh_token, access_token)
-
-    return {
-        "user": result["user"],
-        "verification_token": verification_token,
-    }
+    # Same status and body for a new account, an existing account and the
+    # concurrent-insert race. No session is issued until verify-otp succeeds.
+    return await signup(body, db, user_agent, ip)
 
 
 @router.post("/login")
@@ -352,8 +342,8 @@ async def verify_email_endpoint(
 ):
     try:
         await verify_email(body.token, db)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError:
+        raise HTTPException(status_code=400, detail=INVALID_VERIFICATION_MESSAGE) from None
     return {"message": "Email verified successfully"}
 
 
@@ -414,8 +404,8 @@ async def verify_otp_endpoint(
         raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
     try:
         result = await verify_signup_otp(str(body.email), body.code, db, user_agent, ip)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError:
+        raise HTTPException(status_code=400, detail=INVALID_OTP_MESSAGE) from None
 
     refresh_token = result.pop("refresh_token")
     access_token = result.pop("access_token", None)
