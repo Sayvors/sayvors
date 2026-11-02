@@ -954,13 +954,13 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
             type="button"
             aria-label="Close feature settings"
             onClick={() => setPlanOpen(false)}
-            className={`absolute inset-0 bg-ink/40 ${FOCUS_RING}`}
+            className={`absolute inset-0 bg-[var(--ui-scrim)] ${FOCUS_RING}`}
           />
           <div
             role="dialog"
             aria-modal="true"
             aria-labelledby="plan-modal-title"
-            className="panel relative flex max-h-[85vh] w-full max-w-[620px] flex-col overflow-hidden"
+            className="panel relative flex max-h-[85vh] w-full max-w-[620px] flex-col overflow-hidden bg-[var(--ui-surface-solid)]"
           >
             <div className="flex items-start justify-between gap-3 border-b border-[var(--ui-line)] px-5 py-4">
               <div>
@@ -1076,8 +1076,8 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
       {/* ── review modal ─────────────────────────────────── */}
       {selected && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <button type="button" aria-label="Close review" onClick={() => setSelected(null)} className={`absolute inset-0 bg-ink/40 ${FOCUS_RING}`} />
-          <div role="dialog" aria-modal="true" aria-labelledby="review-title" className="panel relative max-h-[85vh] w-full max-w-[560px] overflow-auto p-5">
+          <button type="button" aria-label="Close review" onClick={() => setSelected(null)} className={`absolute inset-0 bg-[var(--ui-scrim)] ${FOCUS_RING}`} />
+          <div role="dialog" aria-modal="true" aria-labelledby="review-title" className="panel relative max-h-[85vh] w-full max-w-[560px] overflow-auto bg-[var(--ui-surface-solid)] p-5">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p id="review-title" className="flex items-center gap-2 text-[13px] font-bold text-ink">
