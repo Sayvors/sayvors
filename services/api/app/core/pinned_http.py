@@ -120,17 +120,25 @@ def _read_text(resp: httpcore.Response) -> str:
     return bytes(body).decode("utf-8", errors="ignore")
 
 
-def fetch_pinned_bytes(url: str, *, timeout: float = 20.0, user_agent: str = "SayvorsBot/1.0",
-                       max_bytes: int = 8 * 1024 * 1024) -> bytes:
-    """GET a user-supplied URL with SSRF validation + DNS pinning, returning raw bytes.
+def _fetch_pinned_body(
+    url: str,
+    *,
+    timeout: float,
+    user_agent: str,
+    max_bytes: int,
+) -> tuple[bytes, str]:
+    """Shared GET implementation for the pinned byte/media fetchers.
 
-    Same security guarantees as fetch_pinned (DNS pinning, per-hop redirect
-    validation, SSRF guard) but returns raw bytes instead of decoded text.
-    Suitable for image/media downloads. Raises UnsafeUrlError (ValueError) for
-    blocked URLs, ValueError for oversize/too-many-redirects, and httpcore
-    exceptions for transport failures.
+    Returns ``(body, content_type)``. Validates and re-pins every redirect
+    hop, rejects non-2xx responses, and streams with a hard byte cap so
+    neither a lying Content-Length nor an endless body can exhaust memory.
     """
-    timeouts = {"connect": min(10.0, timeout), "read": timeout, "write": 10.0, "pool": 10.0}
+    timeouts = {
+        "connect": min(10.0, timeout),
+        "read": timeout,
+        "write": 10.0,
+        "pool": 10.0,
+    }
     current = assert_public_http_url(url)
     for _ in range(MAX_REDIRECT_HOPS + 1):
         parts = urlparse(current)
@@ -143,7 +151,9 @@ def fetch_pinned_bytes(url: str, *, timeout: float = 20.0, user_agent: str = "Sa
             port = parts.port or (443 if parts.scheme == "https" else 80)
         except ValueError:
             port = 443 if parts.scheme == "https" else 80
-        if (parts.scheme == "https" and port != 443) or (parts.scheme == "http" and port != 80):
+        if (parts.scheme == "https" and port != 443) or (
+            parts.scheme == "http" and port != 80
+        ):
             host_header = f"{host}:{port}"
         pool = httpcore.ConnectionPool(network_backend=_PinnedBackend(ips[0]))
         try:
@@ -170,15 +180,56 @@ def fetch_pinned_bytes(url: str, *, timeout: float = 20.0, user_agent: str = "Sa
                 continue
             if resp.status >= 400:
                 raise ValueError(f"fetch failed with status {resp.status}")
+            content_type = ""
+            declared_length = None
+            for name, value in resp.headers:
+                key = name.decode("latin-1").lower()
+                if key == "content-type":
+                    content_type = value.decode("latin-1").split(";")[0].strip().lower()
+                elif key == "content-length":
+                    raw = value.decode("latin-1").strip()
+                    if raw.isdigit():
+                        declared_length = int(raw)
+            if declared_length is not None and declared_length > max_bytes:
+                raise ValueError("response exceeds size limit")
             body = bytearray()
             for chunk in resp.stream:
                 body += chunk
                 if len(body) > max_bytes:
                     raise ValueError("response exceeds size limit")
-            return bytes(body)
+            return bytes(body), content_type
         finally:
             pool.close()
     raise ValueError("too many redirects")
+
+
+def fetch_pinned_bytes(url: str, *, timeout: float = 20.0, user_agent: str = "SayvorsBot/1.0",
+                       max_bytes: int = 8 * 1024 * 1024) -> bytes:
+    """GET a user-supplied URL with SSRF validation + DNS pinning, returning raw bytes.
+
+    Same security guarantees as fetch_pinned (DNS pinning, per-hop redirect
+    validation, SSRF guard) but returns raw bytes instead of decoded text.
+    Suitable for image/media downloads. Raises UnsafeUrlError (ValueError) for
+    blocked URLs, ValueError for oversize/too-many-redirects, and httpcore
+    exceptions for transport failures.
+    """
+    body, _ = _fetch_pinned_body(
+        url, timeout=timeout, user_agent=user_agent, max_bytes=max_bytes
+    )
+    return body
+
+
+def fetch_pinned_media(url: str, *, timeout: float = 20.0, user_agent: str = "SayvorsBot/1.0",
+                       max_bytes: int = 8 * 1024 * 1024) -> tuple[bytes, str]:
+    """GET media with the same SSRF and DNS-pinning guarantees as fetch_pinned_bytes.
+
+    Returns ``(body, content_type)``. The content type is the origin's declared
+    type, lowercased with parameters stripped; callers must still check it
+    against the media kind they intend to send.
+    """
+    return _fetch_pinned_body(
+        url, timeout=timeout, user_agent=user_agent, max_bytes=max_bytes
+    )
 
 
 def fetch_pinned(url: str, *, timeout: float = 20.0, user_agent: str = "SayvorsBot/1.0") -> str:

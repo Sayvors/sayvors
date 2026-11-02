@@ -107,6 +107,27 @@ def test_loopback_size_and_type_caps(loopback, loopback_allowed):
         pinned_http.fetch_pinned(f"{loopback}/bin")
 
 
+def test_loopback_media_returns_body_and_content_type(loopback, loopback_allowed):
+    body, content_type = pinned_http.fetch_pinned_media(f"{loopback}/bin")
+    assert body == b"\x00\x01\x02"
+    assert content_type == "application/octet-stream"
+
+
+def test_loopback_media_follows_redirect(loopback, loopback_allowed):
+    body, content_type = pinned_http.fetch_pinned_media(f"{loopback}/redir")
+    assert body == b"hello pinned world"
+    assert content_type == "text/html"
+
+
+def test_loopback_media_size_cap(loopback, loopback_allowed):
+    with pytest.raises(ValueError, match="size limit"):
+        pinned_http.fetch_pinned_media(f"{loopback}/big")
+
+
+def test_loopback_bytes_still_returns_raw_body(loopback, loopback_allowed):
+    assert pinned_http.fetch_pinned_bytes(f"{loopback}/bin") == b"\x00\x01\x02"
+
+
 def test_redirect_to_private_ip_blocked_before_connect(loopback, loopback_allowed, monkeypatch):
     dialed = []
 

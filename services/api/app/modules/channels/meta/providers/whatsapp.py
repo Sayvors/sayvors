@@ -5,12 +5,21 @@ waba_id / phone_number_id / business_id + auth code -> backend exchanges the
 code for a customer business token, subscribes webhooks, registers the
 number, and persists WABA + phone_number assets.
 """
+import asyncio
 import logging
 
 from .....config import settings
+from .....core.http import UnsafeUrlError
+from .....core.pinned_http import fetch_pinned_media
 from .base import DiscoveredAsset, MetaAPIError, MetaProviderAdapter, graph_base
 
 logger = logging.getLogger(__name__)
+
+# WhatsApp status media limits. Images are capped at 5 MB and videos at
+# 16 MB by the Cloud API. Using the per-kind cap avoids downloading 16 MB for
+# an image that Meta will reject anyway.
+MAX_STATUS_IMAGE_BYTES = 5 * 1024 * 1024
+MAX_STATUS_VIDEO_BYTES = 16 * 1024 * 1024
 
 
 class WhatsAppAdapter(MetaProviderAdapter):
@@ -987,27 +996,77 @@ class WhatsAppAdapter(MetaProviderAdapter):
         """Send a WhatsApp status (image/video with caption, or text)."""
         if media_url:
             # WhatsApp Cloud API status sends require a media id from /media
-            # upload, not a public URL. The media was already stored on our
-            # S3/GCS backend; fetch it, then upload to WhatsApp.
-            import httpx
-
-            async with httpx.AsyncClient(timeout=30.0) as http:
-                media_resp = await http.get(media_url)
-                if media_resp.status_code >= 400:
-                    raise MetaAPIError(
-                        f"Failed to fetch media from {media_url} ({media_resp.status_code})",
-                        502,
-                    )
-                mime = media_type or "image/jpeg"
-                upload = await self.upload_media(
-                    phone_number_id, token, media_resp.content, mime
+            # upload, not a public URL. The media is usually on our object
+            # store, but the URL is tenant-supplied: fetch it through the SSRF
+            # guard + DNS pinning so the validated address is the one dialed,
+            # and cap the body so a hostile URL cannot exhaust memory. The
+            # fetch runs off the event loop because httpcore is synchronous.
+            is_video = (media_type or "").lower() == "video"
+            max_bytes = (
+                MAX_STATUS_VIDEO_BYTES if is_video else MAX_STATUS_IMAGE_BYTES
+            )
+            try:
+                data, content_type = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        fetch_pinned_media,
+                        media_url,
+                        timeout=20.0,
+                        max_bytes=max_bytes,
+                        user_agent="SayvorsMedia/1.0",
+                    ),
+                    timeout=30.0,
                 )
-            media_id = upload
+            except UnsafeUrlError:
+                # Never echo the URL or the resolved host: the tenant already
+                # knows what they sent, and logs/responses must not map the
+                # internal network for an attacker.
+                raise MetaAPIError(
+                    "WhatsApp status media URL is not publicly reachable or unsafe.",
+                    400,
+                ) from None
+            except TimeoutError:
+                logger.warning(
+                    "WhatsApp status media fetch timed out for %s", phone_number_id
+                )
+                raise MetaAPIError(
+                    "WhatsApp could not fetch the status media (timed out).",
+                    502,
+                ) from None
+            except Exception as e:
+                logger.warning(
+                    "WhatsApp status media fetch failed for %s (%s)",
+                    phone_number_id,
+                    type(e).__name__,
+                )
+                raise MetaAPIError(
+                    "WhatsApp could not fetch the status media "
+                    "(unreachable or too large).",
+                    502,
+                ) from None
+            if not data:
+                raise MetaAPIError("WhatsApp status media is empty.", 502)
+
+            media_kind = "video" if is_video else "image"
+            default_mime = "video/mp4" if is_video else "image/jpeg"
+            mime_prefix = "video/" if is_video else "image/"
+            # Use the origin's declared type only when it matches the declared
+            # media kind; otherwise fall back to that kind's safe default. A
+            # hostile or malformed Content-Type never becomes an arbitrary
+            # upload type.
+            mime = (
+                content_type
+                if content_type.startswith(mime_prefix)
+                and len(content_type) <= 64
+                else default_mime
+            )
+            media_id = await self.upload_media(
+                phone_number_id, token, data, mime
+            )
             body: dict = {
                 "messaging_product": "whatsapp",
                 "to": phone_number_id,
-                "type": "image",
-                "image": {"id": media_id, "caption": caption[:1024]},
+                "type": media_kind,
+                media_kind: {"id": media_id, "caption": caption[:1024]},
             }
         else:
             body = {
