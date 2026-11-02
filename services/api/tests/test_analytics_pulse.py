@@ -1,4 +1,5 @@
 """Analytics pulse cards: reputation + who-is-waiting aggregates."""
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -8,11 +9,23 @@ from app.modules.analytics.pulse import get_pulse
 from app.modules.channels.models import Channel
 
 
-async def _seed_channel(db, user_id, channel_id, platform="google_reviews"):
+async def _seed_channel(
+    db,
+    user_id,
+    channel_id,
+    platform="google_reviews",
+    last_success_at=None,
+    metadata_json=None,
+):
+    if metadata_json is None:
+        meta = {}
+        if last_success_at is not None:
+            meta["health"] = {"last_success_at": last_success_at.isoformat()}
+        metadata_json = json.dumps(meta)
     db.add(Channel(
         id=channel_id, user_id=user_id, platform=platform,
         platform_user_id=f"acct-{channel_id}", display_name=channel_id,
-        status="active", metadata_json="{}",
+        status="active", metadata_json=metadata_json,
     ))
 
 
@@ -33,7 +46,8 @@ async def _seed_review(db, user_id, channel_id, idx, rating, replied, days_ago=0
 
 @pytest.mark.asyncio
 async def test_pulse_reputation_and_waiting(db, user_id):
-    await _seed_channel(db, user_id, "ch-pulse")
+    synced_at = datetime.now(timezone.utc) - timedelta(hours=2)
+    await _seed_channel(db, user_id, "ch-pulse", last_success_at=synced_at)
     # Current period: 4 reviews (3 replied), avg 4.5. Prior: 2 reviews avg 4.0.
     await _seed_review(db, user_id, "ch-pulse", 1, 5, True, days_ago=1)
     await _seed_review(db, user_id, "ch-pulse", 2, 5, True, days_ago=2)
@@ -66,7 +80,7 @@ async def test_pulse_reputation_and_waiting(db, user_id):
     assert rep["awaiting_reply"] == 1  # only the live, unskipped unreplied row
     assert rep["oldest_wait_days"] == 4
     assert rep["sources"] == [{"platform": "google_reviews", "count": 4}]
-    assert rep["last_synced_at"] is not None
+    assert rep["last_synced_at"] == synced_at
 
     waiting = out["waiting"]
     assert waiting["unanswered_texts"] == 3
@@ -136,6 +150,81 @@ async def test_pulse_one_thing_and_low_rating_location(db, user_id):
 
 
 @pytest.mark.asyncio
+async def test_pulse_last_synced_uses_health_not_review_arrival(db, user_id):
+    synced_at = datetime.now(timezone.utc) - timedelta(hours=2)
+    await _seed_channel(db, user_id, "ch-quiet", last_success_at=synced_at)
+    # The newest review is 35 days old, but the poller succeeded two hours
+    # ago. "Synced 35d ago" would blame the sync for a quiet review week.
+    await _seed_review(db, user_id, "ch-quiet", 1, 5, True, days_ago=35)
+    await db.commit()
+
+    out = await get_pulse(db, user_id, None, 30)
+
+    assert out["reputation"]["last_synced_at"] == synced_at
+    assert "sync" not in {a["kind"] for a in out["attention"]}
+
+
+@pytest.mark.asyncio
+async def test_pulse_flags_stale_health_even_when_reviews_are_fresh(db, user_id):
+    stale_at = datetime.now(timezone.utc) - timedelta(days=3)
+    await _seed_channel(db, user_id, "ch-stale", last_success_at=stale_at)
+    # A review arrived today, so max(review_updated_at) would hide the fact
+    # that the poller itself has not succeeded in three days.
+    await _seed_review(db, user_id, "ch-stale", 1, 5, True, days_ago=0)
+    await db.commit()
+
+    out = await get_pulse(db, user_id, None, 30)
+
+    assert out["reputation"]["last_synced_at"] == stale_at
+    sync_cards = [a for a in out["attention"] if a["kind"] == "sync"]
+    assert len(sync_cards) == 1
+    assert sync_cards[0]["title"] == "Review sync is stale"
+    assert sync_cards[0]["detail"] == "oldest success 3d ago"
+
+
+@pytest.mark.asyncio
+async def test_pulse_sync_health_is_channel_scoped(db, user_id):
+    now = datetime.now(timezone.utc)
+    fresh_at = now - timedelta(hours=1)
+    stale_at = now - timedelta(days=2)
+    await _seed_channel(db, user_id, "ch-fresh", last_success_at=fresh_at)
+    await _seed_channel(db, user_id, "ch-stale", last_success_at=stale_at)
+    await db.commit()
+
+    fresh = await get_pulse(db, user_id, "ch-fresh", 30)
+    assert fresh["reputation"]["last_synced_at"] == fresh_at
+    assert "sync" not in {a["kind"] for a in fresh["attention"]}
+
+    stale = await get_pulse(db, user_id, "ch-stale", 30)
+    assert stale["reputation"]["last_synced_at"] == stale_at
+    assert {a["kind"] for a in stale["attention"]} == {"sync"}
+
+    # Unfiltered, the headline is the newest successful poll, while the card
+    # still names the location that has stopped succeeding.
+    all_channels = await get_pulse(db, user_id, None, 30)
+    assert all_channels["reputation"]["last_synced_at"] == fresh_at
+    sync_card = next(a for a in all_channels["attention"] if a["kind"] == "sync")
+    assert sync_card["title"] == "1 of 2 locations haven't synced in 24h"
+
+
+@pytest.mark.asyncio
+async def test_pulse_tolerates_malformed_health_metadata(db, user_id):
+    await _seed_channel(db, user_id, "ch-bad-json", metadata_json="not-json")
+    await _seed_channel(
+        db,
+        user_id,
+        "ch-bad-date",
+        metadata_json=json.dumps({"health": {"last_success_at": "not-a-date"}}),
+    )
+    await db.commit()
+
+    out = await get_pulse(db, user_id, None, 30)
+
+    assert out["reputation"]["last_synced_at"] is None
+    assert "sync" not in {a["kind"] for a in out["attention"]}
+
+
+@pytest.mark.asyncio
 async def test_pulse_empty_tenant(db, user_id):
     out = await get_pulse(db, user_id, None, 30)
     rep = out["reputation"]
@@ -145,5 +234,6 @@ async def test_pulse_empty_tenant(db, user_id):
     assert rep["awaiting_reply"] == 0
     assert rep["rating_delta"] is None
     assert rep["new_reviews_delta_pct"] is None
+    assert rep["last_synced_at"] is None
     assert out["waiting"]["unanswered_texts"] == 0
     assert out["waiting"]["median_first_response_seconds"] is None
