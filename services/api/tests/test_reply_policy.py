@@ -50,6 +50,16 @@ def test_prompt_has_the_conversation_flow_rules():
     assert "Never promise a time frame" in prompt
 
 
+def test_sticker_markers_are_offered_only_where_the_pipeline_can_send_them():
+    whatsapp = _system_prompt(_user(), platform="WhatsApp")
+    assert "[[sticker:ok]]" in whatsapp
+    assert "[[sticker:thanks]]" in whatsapp
+    assert "[[sticker:done]]" in whatsapp
+    # Instagram has no sticker message type; the prompt must not promise one.
+    instagram = _system_prompt(_user(), platform="Instagram")
+    assert "[[sticker:" not in instagram
+
+
 def test_human_request_is_detected_in_english_arabic_and_urdu():
     from app.modules.channels.meta.lead_escalation import detect_human_request
 

@@ -580,6 +580,102 @@ class WhatsAppAdapter(MetaProviderAdapter):
         )
         return resp.json().get("data", [])
 
+    @staticmethod
+    def _body_component(body: str, examples: list[str] | None) -> dict:
+        """One BODY component, with the samples Meta review requires.
+
+        A variable-bearing template submitted without ``example.body_text`` is
+        rejected in review for a reason the tenant never sees, so the samples
+        travel with the body.
+        """
+        component: dict = {"type": "BODY", "text": body}
+        if examples:
+            component["example"] = {"body_text": [str(e)[:1024] for e in examples]}
+        return component
+
+    async def create_template(
+        self,
+        waba_id: str,
+        token: str,
+        *,
+        name: str,
+        language: str,
+        category: str,
+        body: str,
+        examples: list[str] | None = None,
+    ) -> dict:
+        """Create one template in the WABA; Meta reviews it asynchronously.
+
+        Returns Meta's response (``id``, ``status``, ``category``). The row is
+        not sendable until a later sync/status pull says APPROVED.
+        """
+        resp = await self._graph(
+            "POST",
+            f"/{waba_id}/message_templates",
+            token,
+            json={
+                "name": name,
+                "language": language,
+                "category": category.upper(),
+                "components": [self._body_component(body, examples)],
+                # Let Meta re-categorise instead of rejecting a template whose
+                # content is clearly marketing but was submitted as utility.
+                "allow_category_change": True,
+            },
+        )
+        return resp.json()
+
+    async def update_template(
+        self,
+        template_id: str,
+        token: str,
+        *,
+        category: str,
+        body: str | None = None,
+        examples: list[str] | None = None,
+    ) -> dict:
+        """Edit a template. An approved template goes back to review.
+
+        Only the body can be changed — Meta does not allow renaming a template
+        or changing its language, so those stay fixed on the local row.
+        """
+        payload: dict = {"category": category.upper()}
+        if body is not None:
+            payload["components"] = [self._body_component(body, examples)]
+        resp = await self._graph(
+            "POST", f"/{template_id}", token, json=payload
+        )
+        return resp.json()
+
+    async def delete_template(
+        self,
+        token: str,
+        *,
+        template_id: str | None = None,
+        waba_id: str | None = None,
+        name: str | None = None,
+    ) -> dict:
+        """Delete one template under its WABA.
+
+        Meta deletes by ``name`` (all languages) unless ``hsm_id`` narrows it
+        to one template, so both travel together. There is no
+        ``DELETE /{template_id}`` endpoint on the Message Templates API.
+        """
+        if not waba_id or not name:
+            raise MetaAPIError(
+                "A WABA id and template name are required to delete a template"
+            )
+        params: dict = {"name": name}
+        if template_id:
+            params["hsm_id"] = template_id
+        resp = await self._graph(
+            "DELETE",
+            f"/{waba_id}/message_templates",
+            token,
+            params=params,
+        )
+        return resp.json() if resp.content else {}
+
     async def upload_media(
         self,
         phone_number_id: str,

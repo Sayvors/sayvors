@@ -737,7 +737,7 @@ export default function InboxView() {
     }
     if (templates !== null) return;
     try {
-      setTemplates(await listWhatsAppTemplates());
+      setTemplates((await listWhatsAppTemplates()).templates);
     } catch (e) {
       setTemplateError(
         e instanceof Error ? e.message : "Could not load templates.",

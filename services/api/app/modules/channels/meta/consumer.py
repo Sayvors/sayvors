@@ -514,6 +514,14 @@ def _system_prompt(
             "above contain that detail; never invent a phone number or a "
             "location."
         )
+        lines.append(
+            "Stickers: very rarely, when a short acknowledgement says it "
+            "better than words, end your reply with one marker on its own "
+            "line — exactly [[sticker:ok]], [[sticker:thanks]] or "
+            "[[sticker:done]]. The pipeline sends the matching sticker and "
+            "removes the marker. Never use one for a complaint, an urgent "
+            "message, a question, or instead of answering."
+        )
     if voice_enabled:
         lines.append(
             "If the customer seems frustrated or confused: acknowledge it, "
@@ -617,6 +625,9 @@ async def _generate_reply(
                     # the customer still has it, but this inbox chose to forget
                     # it (WA-4's honest half of "delete").
                     ChannelMessage.deleted_at.is_(None),
+                    # A reaction is a signal, not a turn: feeding "❤️" to the
+                    # model as a user message invites it to answer an emoji.
+                    ChannelMessage.content_type != "reaction",
                 )
                 .order_by(ChannelMessage.created_at.desc())
                 .limit(_HISTORY_MESSAGES)
@@ -1681,6 +1692,20 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
 
         await cancel_pending_actions(db, channel.id, from_wa, reason="answered")
         await db.commit()
+
+        # A reaction is the customer acknowledging our message, not asking
+        # for anything. It cancels queued nudges above, then stops: replying
+        # to "❤️" with a paragraph is exactly the bot behaviour we avoid.
+        if msg_type == "reaction":
+            inbound_row.ai_reply_status = "skipped"
+            db.add(inbound_row)
+            await db.commit()
+            logger.info(
+                "WhatsApp inbound reaction stored without an AI reply "
+                "wamid=%s from=+%s", wamid[:32], from_wa[-6:],
+            )
+            return
+
         inbound_lead = await capture_lead(
             db,
             tenant_id=tenant_id,
@@ -1967,6 +1992,41 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                 tenant_id,
                 preferred_language or getattr(state, "language", None),
                 unreadable=attachment_stored is False,
+            )
+            return
+
+        # A bare acknowledgement ("thanks", "ok", "done") gets a reaction, not
+        # an AI paragraph. This runs before the typing indicator and the
+        # classifier: an acknowledgement is not a question, and showing
+        # "typing…" then a heart is worse than either alone. The last delivered
+        # outbound decides — if it was a question, "ok" is an answer and the
+        # model must see it.
+        from ...channels.ai_stickers import (
+            reaction_for_ack,
+            send_ai_reaction,
+            should_react_instead_of_reply,
+        )
+
+        ack_emoji = reaction_for_ack(text) if msg_type == "text" else None
+        if ack_emoji and await should_react_instead_of_reply(
+            db, channel.id, from_wa
+        ):
+            await send_ai_reaction(
+                db,
+                channel=channel,
+                contact_phone=from_wa,
+                target_message_id=wamid,
+                emoji=ack_emoji,
+                phone_number_id=phone_number_id,
+                token=token,
+                adapter=adapter,
+            )
+            inbound_row.ai_reply_status = "skipped"
+            db.add(inbound_row)
+            await db.commit()
+            logger.info(
+                "WhatsApp AI reacted instead of replying wamid=%s emoji=%s",
+                wamid[:32], ack_emoji,
             )
             return
 
@@ -2332,7 +2392,14 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                     else "I couldn't open a ticket right now. Could you try again in a moment?"
                 )
 
-        if not reply and not native_card:
+        # A sticker marker is a pipeline instruction, never text for the
+        # customer. It is stripped on every platform; only WhatsApp can
+        # actually deliver the bundled sticker.
+        from ...channels.ai_stickers import split_sticker_marker
+
+        reply, sticker_key = split_sticker_marker(reply)
+
+        if not reply and not native_card and not sticker_key:
             logger.warning(
                 "WhatsApp AI reply was empty — retrying wamid=%s from=+%s",
                 wamid[:32], from_wa[-6:],
@@ -2370,6 +2437,10 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
         # note in their own language. Any problem (no engine for the tier,
         # unsupported language, Meta rejection) falls back to the text path —
         # a voice failure may never cost the customer their reply.
+        #
+        # Empty until a bubble is actually sent: a card-only or sticker-only
+        # reply has no text message id, and the closing log reads this.
+        provider_msg_id = ""
         voice_sent = False
         confused = bool(stats.get("confused"))
         if confused and voice_tier == "off":
@@ -2379,7 +2450,7 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                 "Voice skipped — tenant tier is OFF from=+%s wamid=%s "
                 "(set it in WhatsApp channel settings)", from_wa[-6:], wamid[:32],
             )
-        if voice_tier != "off" and confused:
+        if reply and voice_tier != "off" and confused:
             voice = await synthesize_voice_note(
                 db, voice_tier, stats.get("language") or "en", reply,
                 tenant_id=tenant_id,
@@ -2613,6 +2684,31 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                 to=from_wa,
                 kind=native_card,
                 wamid=wamid,
+            )
+
+        # Fixed sticker the model chose. Sent after the text so a sticker
+        # failure never costs the customer the answer. A sticker-only reply
+        # that cannot be uploaded falls back to one short line — silence is
+        # the one outcome we do not ship.
+        if sticker_key:
+            from ...channels.ai_stickers import (
+                send_pack_sticker,
+                sticker_fallback_text,
+            )
+
+            await send_pack_sticker(
+                db,
+                channel=channel,
+                tenant_id=tenant_id,
+                contact_phone=from_wa,
+                key=sticker_key,
+                phone_number_id=phone_number_id,
+                token=token,
+                adapter=adapter,
+                reply_to=wamid,
+                fallback_text=(
+                    sticker_fallback_text(sticker_key) if not reply else None
+                ),
             )
 
         # Lead engine, send side: merge whatever the reply call extracted,
@@ -3516,6 +3612,12 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
                     if lead is not None
                     else "I couldn't open a ticket right now. Try again in a moment."
                 )
+
+        # Instagram has no sticker message type. Strip the marker anyway so a
+        # model that ignores the platform capability never leaks it as text.
+        from ...channels.ai_stickers import split_sticker_marker
+
+        reply, _ = split_sticker_marker(reply)
 
         if not reply:
             logger.warning(
