@@ -24,8 +24,25 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.compiler import compiles
+
 from app.database import Base
 from app.main import app as fastapi_app
+
+
+@compiles(JSONB, "sqlite")
+def _render_jsonb_as_json_on_sqlite(type_, compiler, **kw):
+    """Let the in-memory SQLite test engine create the billing tables.
+
+    The launch plans model the feature matrix as Postgres JSONB, and SQLite
+    has no JSONB renderer — so ``Base.metadata.create_all`` crashed on the
+    ``plans`` table and every test using the db/client fixture errored at
+    setup, locally and in CI. JSONB's portable shape is plain JSON (TEXT
+    affinity), which is exactly what SQLite stores. Test harness only:
+    production runs Postgres and never takes this path.
+    """
+    return "JSON"
 from app.modules.users.models import User
 from app.modules.channels.models import AutoReplyConfig, Channel
 from app.modules.analytics.models import LocationDailyMetric, ReviewInsight
