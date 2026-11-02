@@ -1,0 +1,33 @@
+# Staging builds the API image with the repository root as the build context
+# (deploy-staging.yml: context: .). The daemon receives this filtered context,
+# so only the inputs services/api/Dockerfile actually copies are sent.
+# Everything else — .git history, .env files, apps, docs, tests, caches and
+# local tooling — stays on the build host.
+#
+# Keep this allowlist in step with services/api/Dockerfile.
+*
+!services
+!services/api
+!services/api/pyproject.toml
+!services/api/app
+!services/api/app/**
+!services/api/alembic
+!services/api/alembic/**
+!services/api/alembic.ini
+!integrations
+!integrations/**
+
+# Unignoring services/api above admits its whole subtree; re-exclude
+# everything except the Dockerfile inputs. services/api/.env is the one that
+# matters most — COPY never selected it, but the daemon used to receive it.
+services/api/*
+!services/api/pyproject.toml
+!services/api/app
+!services/api/app/**
+!services/api/alembic
+!services/api/alembic/**
+!services/api/alembic.ini
+
+# Python caches are never image inputs.
+**/__pycache__
+**/*.pyc

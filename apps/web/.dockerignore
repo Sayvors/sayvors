@@ -1,0 +1,27 @@
+# The web image builds with apps/web as its context and the builder stage
+# runs COPY . . — keep dependencies, build output, and local env files out of
+# the context. Next's standalone output only needs the source tree plus
+# package.json/package-lock.json.
+node_modules
+.next
+out
+dist
+coverage
+.env
+.env.*
+!.env.example
+certificates/
+*.pem
+*.key
+**/*.pem
+**/*.key
+*.log
+**/*.log
+AGENTS.md
+CLAUDE.md
+README.md
+.DS_Store
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
