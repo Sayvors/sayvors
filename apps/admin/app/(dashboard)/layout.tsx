@@ -4,60 +4,13 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { AdminSearch } from "@/components/AdminSearch";
+import { SearchIcon } from "@/components/SearchIcon";
 import { adminLogout, checkAdminSession } from "@/lib/admin-api";
+import { FLAT_NAV, SECTIONS, type NavItem } from "@/lib/admin-nav";
 import { useTheme } from "../theme";
 
-type NavItem = {
-  href: string;
-  label: string;
-  desc: string;
-  icon: "overview" | "tenants" | "usage" | "logs" | "llms" | "voice" | "embeddings" | "billing" | "jobs" | "special";
-};
-
-const SECTIONS: { title: string; items: NavItem[] }[] = [
-  {
-    title: "Platform",
-    items: [
-      { href: "/overview", label: "Overview", desc: "Funnel & health", icon: "overview" },
-      { href: "/tenants", label: "Tenants", desc: "Accounts & listings", icon: "tenants" },
-      { href: "/special", label: "Special list", desc: "Custom feature overrides", icon: "special" },
-    ],
-  },
-  {
-    title: "Operations",
-    items: [
-      { href: "/usage", label: "Usage", desc: "Tokens & metering", icon: "usage" },
-      { href: "/billing", label: "Billing", desc: "Wallets & ledger", icon: "billing" },
-      { href: "/plans", label: "Plans", desc: "Plans & entitlements", icon: "billing" },
-      { href: "/pricing", label: "Pricing", desc: "Tokens & voice rates", icon: "billing" },
-      { href: "/jobs", label: "Jobs", desc: "Queue & workers", icon: "jobs" },
-      { href: "/logs", label: "Logs", desc: "Services & failures", icon: "logs" },
-    ],
-  },
-  {
-    title: "Intelligence",
-    items: [
-      { href: "/llms", label: "LLMs", desc: "Providers & models", icon: "llms" },
-      { href: "/personas", label: "AI personas", desc: "Sarah & team voices", icon: "voice" },
-      { href: "/embeddings", label: "Embeddings", desc: "RAG vector API", icon: "embeddings" },
-      { href: "/voice", label: "Voice models", desc: "WhatsApp voice TTS", icon: "voice" },
-      { href: "/asr", label: "Speech-to-text", desc: "ASR provider & keys", icon: "voice" },
-    ],
-  },
-  {
-    title: "Access",
-    items: [
-      { href: "/operators", label: "Operators", desc: "Admin accounts", icon: "tenants" },
-      { href: "/audit-log", label: "Audit log", desc: "Admin actions", icon: "logs" },
-    ],
-  },
-];
-
 const SIDEBAR_KEY = "sayvors-admin-sidebar";
-
-const FLAT_NAV = SECTIONS.flatMap((section) =>
-  section.items.map((item) => ({ ...item, section: section.title })),
-);
 
 function pageContext(pathname: string): { section: string; title: string } {
   const match = FLAT_NAV.filter(
@@ -205,6 +158,13 @@ function NavIcon({ name, active }: { name: NavItem["icon"]; active: boolean }) {
           />
         </svg>
       );
+    case "search":
+      return (
+        <svg aria-hidden viewBox="0 0 24 24" fill="none" className={cls}>
+          <circle cx="10.7" cy="10.7" r="6.2" stroke="currentColor" strokeWidth="1.6" />
+          <path d="M15.2 15.2L20.5 20.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+        </svg>
+      );
     default:
       return null;
   }
@@ -225,6 +185,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return false;
   });
   const [navOpen, setNavOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
 
   useEffect(() => {
     checkAdminSession().then((ok) => {
@@ -232,6 +193,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       else setReady(true);
     });
   }, [router]);
+
+  // Global command-palette shortcut. The palette handles Escape and focus.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // The nav is taller than the viewport on shorter screens. Bring the active
   // destination into view so the sidebar always answers "where am I?".
@@ -335,6 +308,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {context.title}
         </p>
       </div>
+
+      <button
+        type="button"
+        onClick={() => setSearchOpen(true)}
+        aria-label="Search admin console"
+        aria-keyshortcuts="Control+K Meta+K"
+        className="hidden min-w-0 max-w-[340px] flex-1 items-center gap-2 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-left text-[12px] text-ink/35 transition hover:border-[var(--ui-line-strong)] hover:text-ink/60 lg:flex"
+      >
+        <SearchIcon className="h-3.5 w-3.5 shrink-0" />
+        <span className="truncate">Search tenants, models, jobs…</span>
+        <kbd className="ml-auto shrink-0 rounded-[2px] border border-[var(--ui-line)] px-1.5 py-0.5 text-[9px] font-semibold text-ink/30">
+          Ctrl K
+        </kbd>
+      </button>
 
       <div className="flex shrink-0 items-center gap-2">
         <ThemeToggle toggle={toggle} />
@@ -483,6 +470,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               {context.title}
             </p>
           </div>
+          <button
+            type="button"
+            onClick={() => setSearchOpen(true)}
+            aria-label="Search admin console"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[2px] border border-[var(--ui-line)] text-ink/55 transition hover:border-[var(--ui-line-strong)] hover:text-ink"
+          >
+            <SearchIcon className="h-4 w-4" />
+          </button>
           <ThemeToggle toggle={toggle} />
         </header>
 
@@ -493,6 +488,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {children}
         </main>
       </div>
+
+      {searchOpen ? (
+        <AdminSearch onClose={() => setSearchOpen(false)} />
+      ) : null}
     </div>
   );
 }
