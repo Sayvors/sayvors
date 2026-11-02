@@ -71,6 +71,11 @@ export function middleware(request: NextRequest) {
     "https://*.ggpht.com",
     ...(isProd ? [] : ["http://localhost:8000", "http://127.0.0.1:8000"]),
   ].join(" ");
+  // Google Maps JS API: the script itself is injected by a nonced script and
+  // 'strict-dynamic' trusts it transitively. Tiles, sprite images and
+  // geocoding calls are direct subresources, so they need explicit hosts —
+  // without these the map loads its shell and then renders blank.
+  const maps = "https://maps.googleapis.com https://maps.gstatic.com";
   const scriptSrc = isProd
     ? `'self' 'nonce-${nonce}' 'strict-dynamic' ${apiUrl} ${gsi}${devSdk}`
     : `'self' 'nonce-${nonce}' 'strict-dynamic' 'unsafe-eval' ${apiUrl} ${gsi}${devSdk}`;
@@ -83,11 +88,11 @@ export function middleware(request: NextRequest) {
     // Messenger lookaside) — temporary links by design, refreshed weekly.
     // WhatsApp business profile photos are served from pps.whatsapp.net.
     // Uploaded profile media comes from the object store (see mediaSrc).
-    `img-src 'self' data: blob: ${gsi} https://www.gstatic.com https://*.cdninstagram.com https://*.fbcdn.net https://*.fbsbx.com https://*.whatsapp.net ${mediaSrc}`,
+    `img-src 'self' data: blob: ${gsi} ${maps} https://www.gstatic.com https://*.cdninstagram.com https://*.fbcdn.net https://*.fbsbx.com https://*.whatsapp.net ${mediaSrc}`,
     "font-src 'self' data:",
     // Meta SDK subresources (graph calls, dialog/popup channel frames)
     // plus the realtime inbox WebSocket (wss:// form of the API host).
-    `connect-src 'self' ${apiUrl} ${wsApiUrl} ${gsi} https://graph.facebook.com https://connect.facebook.net`,
+    `connect-src 'self' ${apiUrl} ${wsApiUrl} ${gsi} ${maps} https://graph.facebook.com https://connect.facebook.net`,
     `frame-src 'self' ${gsi} https://www.facebook.com https://web.facebook.com`,
     "frame-ancestors 'none'",
   ].join("; ");
