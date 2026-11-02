@@ -19,7 +19,11 @@ from app.modules.channels.meta import consumer
 from app.modules.channels.meta import service as meta_service
 from app.modules.channels.meta.credentials import encrypt_credential
 from app.modules.channels.meta.models import MetaAsset, MetaConnection
-from app.modules.channels.meta.providers.base import MetaAPIError
+from app.modules.channels.meta.providers.base import (
+    MetaAmbiguousError,
+    MetaAPIError,
+    MetaTransportError,
+)
 from app.modules.channels.meta.native_cards import (
     coordinates_from_maps_url,
     split_native_card_request,
@@ -58,7 +62,7 @@ class _Adapter:
         self.contexts: list[str | None] = []
         self.locations: list[tuple] = []
         self.contacts: list[list[dict]] = []
-        self.fail_with: MetaAPIError | None = None
+        self.fail_with: Exception | None = None
         self.fail_times = 0
 
     async def send_text_message(self, phone_number_id, token, to, text, **kwargs):
@@ -317,6 +321,78 @@ async def test_transient_send_failure_is_retried(
     row = await _stored_row()
     assert row.ai_reply_status == "sent"
     assert adapter.sent == ["Delivered on the retry"]
+
+
+@pytest.mark.asyncio
+async def test_transport_unreachable_is_transient_like_a_5xx(
+    db, user_id, monkeypatch
+):
+    """LAUNCH-B3: an unreachable Meta raises MetaTransportError (a 503
+    MetaAPIError subclass) and takes the existing transient path — pending
+    row, raise to the worker, send lands on the retry."""
+    await _seed(db, user_id)
+    adapter = _Adapter()
+    adapter.fail_with = MetaTransportError("Meta unreachable after 3 attempts", 503)
+    adapter.fail_times = 1
+    _wire(monkeypatch, adapter)
+
+    async def _gen(*a, **k):
+        return "Sent once Meta came back"
+
+    monkeypatch.setattr(consumer, "_generate_reply", _gen)
+
+    event, data = _event()
+    with pytest.raises(MetaAPIError):
+        await consumer._handle_message_received(event, data)
+
+    row = await _stored_row()
+    assert row.ai_reply_status == "pending"
+    assert "unreachable" in (row.ai_reply_error or "")
+
+    await consumer._handle_message_received(event, data)
+
+    row = await _stored_row()
+    assert row.ai_reply_status == "sent"
+    assert adapter.sent == ["Sent once Meta came back"]
+
+
+@pytest.mark.asyncio
+async def test_mid_flight_send_failure_is_ambiguous_never_retried(
+    db, user_id, monkeypatch
+):
+    """LAUNCH-B3: a read timeout means the send may have landed. The row
+    stays pending and the handler raises MetaAmbiguousError so the events
+    worker files the event ambiguous (terminal) — no retry that could
+    double-message, no failed-row lie, no text fallback."""
+    await _seed(db, user_id)
+    adapter = _Adapter()
+    adapter.fail_with = MetaAmbiguousError(
+        "Meta Graph POST /messages failed mid-flight: ReadTimeout"
+    )
+    adapter.fail_times = 1
+    _wire(monkeypatch, adapter)
+
+    async def _gen(*a, **k):
+        return "Maybe delivered, maybe not"
+
+    monkeypatch.setattr(consumer, "_generate_reply", _gen)
+
+    event, data = _event()
+    with pytest.raises(MetaAmbiguousError):
+        await consumer._handle_message_received(event, data)
+
+    row = await _stored_row()
+    assert row.ai_reply_status == "pending"
+    assert "mid-flight" in (row.ai_reply_error or "")
+    assert await _outbound() == []
+
+    # The re-drive must stay honest: the reply is still owed, and a resume
+    # with no delivered outbound may send — but the event itself is
+    # terminal in the worker (pinned in test_meta_events_worker.py), so in
+    # production nothing re-enters automatically.
+    await consumer._handle_message_received(event, data)
+    row = await _stored_row()
+    assert adapter.sent == ["Maybe delivered, maybe not"]
 
 
 @pytest.mark.asyncio

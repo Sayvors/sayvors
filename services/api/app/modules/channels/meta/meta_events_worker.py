@@ -32,7 +32,11 @@ from ....database import async_session
 from ....modules.kafka.client import mark_kafka_unavailable
 from ..meta.models import MetaAsset, MetaWebhookEvent
 from ..models import Channel, ChannelMessage
-from .providers.base import MetaAPIError
+from .providers.base import (
+    MetaAmbiguousError as _AmbiguousError,
+    MetaPermanentError as _PermanentError,
+    MetaAPIError,
+)
 from .consumer import (
     _handle_message_received,
     _handle_message_status,
@@ -78,19 +82,11 @@ HANDLED_EVENT_TYPES = {
 }
 
 
-class _PermanentError(Exception):
-    """Config/credential problem — retrying cannot help."""
-    def __init__(self, message: str, status_code: int = 400):
-        super().__init__(message)
-        self.status_code = status_code
-
-
-class _AmbiguousError(Exception):
-    """Timeout-class failure: delivery unknown, a retry may double-send."""
-    def __init__(self, message: str):
-        super().__init__(message)
-
-
+# _PermanentError / _AmbiguousError used to be defined here. They now live in
+# providers.base (MetaPermanentError / MetaAmbiguousError) so the consumer can
+# raise the exact classes this worker catches — a send that times out mid-
+# flight must reach the ambiguous branch, not the generic retry. The old
+# names stay importable for the tests and any other callers.
 def _event_type_handled(provider: str, event_type: str) -> bool:
     """Check if we handle this event type."""
     return event_type in HANDLED_EVENT_TYPES.get(provider, set())

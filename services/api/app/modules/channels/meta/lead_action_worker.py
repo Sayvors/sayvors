@@ -27,7 +27,7 @@ from sqlalchemy import select, update
 
 from ....database import async_session
 from ..models import Channel, ChannelMessage, Lead, LeadAction
-from .providers.base import MetaAPIError
+from .providers.base import MetaAmbiguousError, MetaAPIError
 
 logger = logging.getLogger(__name__)
 
@@ -303,6 +303,14 @@ async def _process_action(db, action: LeadAction) -> None:
             action.status = "failed"
             action.error_category = "permanent"
             action.last_error = f"{e.status_code}: {e}"[:500]
+        return
+    except MetaAmbiguousError as e:
+        # _graph raises this instead of a raw read-timeout: the request may
+        # have landed, resending could double-text the customer. Same honest
+        # terminal state as the httpx branch below.
+        action.status = "ambiguous"
+        action.error_category = "ambiguous"
+        action.last_error = str(e)[:500]
         return
     except httpx.HTTPError as e:
         # Timeouts and connection resets: the request may have landed.

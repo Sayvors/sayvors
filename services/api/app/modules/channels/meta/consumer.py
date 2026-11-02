@@ -1594,7 +1594,7 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
     from ..models import ChannelMessage
     from ..service import categorize_message as _categorize
     from .credentials import decrypt_connection_token
-    from .providers.base import MetaAPIError
+    from .providers.base import MetaAmbiguousError, MetaAPIError
     from .service import get_adapter
 
     phone_number_id = event.get("external_asset_id") or ""
@@ -2221,6 +2221,19 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                         phone_number_id, token, from_wa, canned,
                         context_message_id=wamid,
                     )
+                except MetaAmbiguousError as e:
+                    # The send may have landed; the outbox retry must not
+                    # re-send it. The row stays pending and the re-raise
+                    # files the event ambiguous (terminal) in the worker.
+                    logger.error(
+                        "WhatsApp short-circuit send ambiguous from=+%s: %s",
+                        from_wa[-6:], str(e)[:200],
+                    )
+                    await _publish_typing(tenant_id, channel.id, from_wa, False)
+                    inbound_row.ai_reply_error = str(e)[:300]
+                    db.add(inbound_row)
+                    await db.commit()
+                    raise
                 except MetaAPIError as e:
                     logger.error(
                         "WhatsApp short-circuit send failed from=+%s: %s %s",
@@ -2573,6 +2586,24 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                             phone_number_id, token, from_wa, part,
                             context_message_id=quote_id,
                         )
+                except MetaAmbiguousError as e:
+                    # Mid-flight failure (timeout, broken response): the send
+                    # may have landed, so this reply is neither retried nor
+                    # fallen back — either could double-message. The row
+                    # stays pending and the re-raise files the event
+                    # ambiguous (terminal) in the worker.
+                    logger.error(
+                        "WhatsApp send ambiguous from=+%s: %s",
+                        from_wa[-6:], str(e)[:200],
+                    )
+                    await _publish_typing(tenant_id, channel.id, from_wa, False)
+                    inbound_row.ai_reply_attempts = (
+                        inbound_row.ai_reply_attempts or 0
+                    ) + 1
+                    inbound_row.ai_reply_error = str(e)[:300]
+                    db.add(inbound_row)
+                    await db.commit()
+                    raise
                 except (MetaAPIError, ValueError) as e:
                     # A rejected interactive payload must not cost the
                     # customer the reply: fall back to plain text once.
@@ -3352,7 +3383,7 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
     holds no usable messaging credential of its own.
     """
     from ..models import ChannelMessage
-    from .providers.base import MetaAPIError
+    from .providers.base import MetaAmbiguousError, MetaAPIError
     from .providers.instagram import InstagramAdapter
     from .service import get_instagram_page_credentials
 
@@ -3654,6 +3685,16 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
                 provider_msg_id = await adapter.send_text_message(
                     page_id, page_token, igsid, part
                 )
+            except MetaAmbiguousError as e:
+                # Mid-flight failure: the DM may have landed. Raising files
+                # the event ambiguous (terminal) — Instagram has no re-drive
+                # state machine, so a worker retry would only hit the dedupe
+                # wall and mark the event sent while the reply stayed lost.
+                logger.error(
+                    "Instagram send ambiguous from=+%s: %s",
+                    igsid[-6:], str(e)[:200],
+                )
+                raise
             except MetaAPIError as e:
                 logger.error(
                     "Instagram send failed from=+%s: %s %s",
