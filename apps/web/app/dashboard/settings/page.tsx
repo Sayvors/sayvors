@@ -10,6 +10,12 @@ import { COUNTRIES } from "@/lib/countries";
 import { BUSINESS_TYPES } from "@/lib/business-types";
 import LeadSettingsSection from "@/components/leads/LeadSettingsSection";
 import { disconnectMeta, fetchMetaConnections, type MetaConnection } from "@/lib/api-meta";
+import {
+  cancelPersonalDataDeletion,
+  fetchDeletionState,
+  requestPersonalDataDeletion,
+  type DeletionState,
+} from "@/lib/api-account";
 
 interface ChannelCfg {
   channel_id: string;
@@ -232,6 +238,22 @@ export default function SettingsPage() {
   const [dangerBusy, setDangerBusy] = useState<string | null>(null);
   const [dangerTarget, setDangerTarget] = useState<MetaConnection | null>(null);
   const [dangerPhrase, setDangerPhrase] = useState("");
+  const [deletion, setDeletion] = useState<DeletionState | null>(null);
+  const [deletionBusy, setDeletionBusy] = useState(false);
+  const [deletionModal, setDeletionModal] = useState(false);
+  const [deletionConfirm, setDeletionConfirm] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    fetchDeletionState()
+      .then((state) => {
+        if (alive) setDeletion(state);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const settingsQuery = useQuery({
     queryKey: ["settings", "all"],
@@ -1304,7 +1326,7 @@ export default function SettingsPage() {
         tone="danger"
         eyebrow="Data & privacy"
         title="Your data"
-        subtitle="Export everything Sayvors holds about you, or permanently delete your account and all associated data. Deletion cannot be undone."
+        subtitle="Export everything Sayvors holds about you, or schedule deletion of your personal data."
       >
         <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-[2px] border border-ink/[0.06] bg-white px-4 py-3 dark:border-fog/[0.08] dark:bg-ink">
@@ -1328,32 +1350,64 @@ export default function SettingsPage() {
               Download export
             </button>
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-[2px] border border-red-500/20 bg-red-500/[0.04] px-4 py-3 dark:border-red-500/20 dark:bg-red-500/[0.06]">
-            <div className="min-w-0">
-              <p className="text-[13px] font-semibold text-red-600 dark:text-red-400">Delete my account</p>
-              <p className="text-[11px] text-ink/40 dark:text-fog/40">
-                Permanently deletes your account and all data — channels, messages, leads, reviews, notifications. Cannot be undone.
+          {deletion?.status === "pending" ? (
+            <div className="rounded-[2px] border border-amber-500/30 bg-amber-500/[0.06] px-4 py-3">
+              <p className="text-[13px] font-semibold text-amber-800 dark:text-amber-300">
+                Personal data deletion scheduled
               </p>
+              <p className="mt-1 text-[11px] text-ink/55 dark:text-fog/55">
+                Your personal data will be deleted on{" "}
+                <strong>
+                  {deletion.scheduled_for
+                    ? new Date(deletion.scheduled_for).toLocaleDateString()
+                    : "the scheduled date"}
+                </strong>
+                . Signing in cancels it. Business records are retained as
+                business data.
+              </p>
+              <div className="mt-3 flex gap-2">
+                <button
+                  onClick={async () => {
+                    if (deletionBusy) return;
+                    setDeletionBusy(true);
+                    try {
+                      const state = await cancelPersonalDataDeletion();
+                      setDeletion(state);
+                    } catch {
+                      alert("Could not cancel. Please try again.");
+                    } finally {
+                      setDeletionBusy(false);
+                    }
+                  }}
+                  disabled={deletionBusy}
+                  className="rounded-[2px] border border-[var(--ui-line)] px-3 py-1.5 text-[12px] font-semibold text-ink transition hover:bg-ink/[0.04] disabled:opacity-50 dark:text-fog"
+                >
+                  {deletionBusy ? "Cancelling…" : "Keep my account"}
+                </button>
+              </div>
             </div>
-            <button
-              onClick={async () => {
-                if (!confirm("This will permanently delete your account and ALL data. This cannot be undone. Are you sure?")) return;
-                try {
-                  const res = await fetch("/api/v1/account", { method: "DELETE", credentials: "include" });
-                  if (res.ok) {
-                    window.location.href = "/login";
-                  } else {
-                    alert("Deletion failed. Please try again.");
-                  }
-                } catch {
-                  alert("Deletion failed. Please try again.");
-                }
-              }}
-              className="rounded-[2px] border border-red-500/40 px-3 py-1.5 text-[12px] font-semibold text-red-600 transition hover:bg-red-500/10 disabled:opacity-50 dark:text-red-400"
-            >
-              Delete account
-            </button>
-          </div>
+          ) : (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-[2px] border border-red-500/20 bg-red-500/[0.04] px-4 py-3 dark:border-red-500/20 dark:bg-red-500/[0.06]">
+              <div className="min-w-0">
+                <p className="text-[13px] font-semibold text-red-600 dark:text-red-400">
+                  Delete my personal data
+                </p>
+                <p className="text-[11px] text-ink/40 dark:text-fog/40">
+                  Your name, email, phone and login will be removed in 30 days.
+                  Business records are retained as business data.
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setDeletionConfirm("");
+                  setDeletionModal(true);
+                }}
+                className="rounded-[2px] border border-red-500/40 px-3 py-1.5 text-[12px] font-semibold text-red-600 transition hover:bg-red-500/10 disabled:opacity-50 dark:text-red-400"
+              >
+                Delete my personal data
+              </button>
+            </div>
+          )}
         </div>
       </Section>
 
@@ -1362,6 +1416,76 @@ export default function SettingsPage() {
       {/* Type-to-confirm modal — one wrong glance should not delete a
           tenant's whole history, so the button stays dead until the exact
           phrase is typed. */}
+      {deletionModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-md rounded-[3px] border border-red-500/30 bg-white p-5 shadow-xl dark:border-fog/[0.08] dark:bg-ink">
+            <p className="text-[15px] font-bold text-red-600 dark:text-red-400">
+              We’ll delete your personal data. Are you sure?
+            </p>
+            <p className="mt-2 text-[12px] leading-relaxed text-ink/70 dark:text-fog/70">
+              Your name, email, phone and login will be removed. You have{" "}
+              <strong>30 days</strong> to change your mind — signing in before
+              then cancels the deletion.
+            </p>
+            <details className="mt-3 rounded-[2px] border border-ink/[0.08] px-3 py-2 dark:border-fog/[0.1]">
+              <summary className="cursor-pointer text-[11px] font-semibold text-ink/60 dark:text-fog/60">
+                What happens to my business records?
+              </summary>
+              <p className="mt-2 text-[11px] leading-relaxed text-ink/55 dark:text-fog/55">
+                Chats, posts, insights and customer records are retained as
+                business data. Your name, email and phone are removed from
+                them where they appear.
+              </p>
+            </details>
+            <label className="mt-3 block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
+              Type DELETE to confirm
+              <input
+                value={deletionConfirm}
+                onChange={(e) => setDeletionConfirm(e.target.value)}
+                placeholder="DELETE"
+                className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] tracking-widest text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+              />
+            </label>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDeletionModal(false)}
+                className="rounded-[2px] border border-[var(--ui-line)] px-3 py-1.5 text-[12px] font-medium text-ink/70 dark:text-fog/70"
+              >
+                Keep my account
+              </button>
+              <button
+                type="button"
+                disabled={
+                  deletionBusy ||
+                  deletionConfirm.trim().toUpperCase() !== "DELETE"
+                }
+                onClick={async () => {
+                  if (deletionBusy) return;
+                  setDeletionBusy(true);
+                  try {
+                    const state = await requestPersonalDataDeletion();
+                    setDeletion(state);
+                    setDeletionModal(false);
+                  } catch {
+                    alert("Could not schedule deletion. Please try again.");
+                  } finally {
+                    setDeletionBusy(false);
+                  }
+                }}
+                className="rounded-[2px] bg-red-600 px-3 py-1.5 text-[12px] font-bold text-white disabled:opacity-40"
+              >
+                {deletionBusy ? "Scheduling…" : "Delete my personal data"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {dangerTarget && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-sm"

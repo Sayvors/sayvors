@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text, Index
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...database import Base
@@ -107,6 +107,43 @@ class User(Base):
     # that workspace. Tenant-scoped queries must use this, not `id` —
     # resolve it via core.deps.get_context.
     tenant_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class AccountDeletionRequest(Base):
+    """A 30-day owner personal-data deletion request.
+
+    The workspace (chats, posts, insights, customer records) is retained as
+    business data; this row only schedules and audits the owner-profile
+    anonymization. Signing in during the grace window cancels it.
+    """
+
+    __tablename__ = "account_deletion_requests"
+    __table_args__ = (
+        Index("ix_account_deletion_tenant_status", "tenant_id", "status"),
+        Index("ix_account_deletion_due", "status", "scheduled_for"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False)
+    requested_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # pending | cancelled | completed
+    status: Mapped[str] = mapped_column(String(16), default="pending", server_default="pending", nullable=False)
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reminder_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

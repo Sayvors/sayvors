@@ -178,6 +178,12 @@ async def login(body: LoginRequest, db: AsyncSession, user_agent: str, ip: str) 
         user_agent=user_agent[:500],
         ip_address=ip[:45],
     )
+    # A successful sign-in is the owner saying "keep my account" — cancel a
+    # pending personal-data deletion in the same transaction as the session.
+    from ..users.account_deletion import cancel_pending
+
+    await cancel_pending(db, user.id, commit=False)
+
     db.add(refresh)
     await db.commit()
 
@@ -222,6 +228,10 @@ async def _issue_session(user: User, db: AsyncSession, event: str,
         user_agent=user_agent[:500],
         ip_address=ip[:45],
     ))
+    if event == "login":
+        from ..users.account_deletion import cancel_pending
+
+        await cancel_pending(db, user.id, commit=False)
     await db.commit()
 
     try:

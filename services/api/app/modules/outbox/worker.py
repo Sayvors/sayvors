@@ -60,6 +60,22 @@ class OutboxWorker:
                     for table, n in counts.items():
                         if n and n > 0:
                             logger.info("Retention cleanup: deleted %d %s", n, table)
+                    # 30-day personal-data deletion: day-25 reminders and
+                    # due-day anonymization. Workspace business records stay.
+                    from ...database import async_session
+                    from ..users.account_deletion import (
+                        process_due_deletions,
+                        send_due_reminders,
+                    )
+
+                    async with async_session() as deletion_db:
+                        reminders = await send_due_reminders(deletion_db)
+                        completed = await process_due_deletions(deletion_db)
+                    if reminders or completed:
+                        logger.info(
+                            "Account deletion: reminders=%d completed=%d",
+                            reminders, completed,
+                        )
                     last_cleanup = now
 
                 # If Kafka is down, periodically try to reconnect
