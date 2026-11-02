@@ -272,6 +272,20 @@ async def client(user_id, engine):
                         mw.allowed_hosts = list(allowed_hosts) + ["testclient"]
                     except Exception:
                         pass
-        yield c
+        try:
+            yield c
+        finally:
+            # get_redis() caches a client bound to the loop that created it.
+            # TestClient runs the app on its own portal loop, while pytest's
+            # test body runs on another. Closing the cached client from the
+            # wrong loop later leaves cancellation tasks behind and makes
+            # TestClient shutdown fail under xdist. Close it here, while the
+            # portal loop that owns it is still alive.
+            try:
+                from app.modules.redis.client import close_redis
+
+                c.portal.call(close_redis)
+            except Exception:  # noqa: BLE001, S110 - never mask the test result
+                pass
 
     fastapi_app.dependency_overrides.clear()

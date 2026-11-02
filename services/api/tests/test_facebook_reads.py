@@ -65,10 +65,19 @@ def _fake_graph(calls: dict, payload: dict):
     return _inner
 
 
-async def _flush_cache(kind: str, page_id: str) -> None:
+def _flush_cache(client, kind: str, page_id: str) -> None:
+    """Delete one key on the TestClient's own loop.
+
+    The app's requests run on the TestClient portal loop; calling get_redis()
+    from pytest-asyncio's loop would close and recreate the shared client
+    across loops, which leaves cancellation tasks behind on teardown.
+    """
     from app.modules.redis.client import get_redis
 
-    await (await get_redis()).delete(f"ig:{kind}:{page_id}")
+    async def _delete() -> None:
+        await (await get_redis()).delete(f"ig:{kind}:{page_id}")
+
+    client.portal.call(_delete)
 
 
 @pytest.fixture(autouse=True)
@@ -102,7 +111,7 @@ async def test_profile_read_maps_the_page_fields(db, client, monkeypatch):
     # Meta nests the picture url one level down; the API flattens it.
     assert body["profile_picture_url"] == "https://cdn.facebook.com/pic.jpg"
     assert body["link"] == f"https://facebook.com/{pid}"
-    await _flush_cache("fb_profile", pid)
+    _flush_cache(client, "fb_profile", pid)
 
 
 async def test_posts_read_maps_feed_rows(db, client, monkeypatch):
@@ -147,7 +156,7 @@ async def test_posts_read_maps_feed_rows(db, client, monkeypatch):
         "https://cdn.facebook.com/s1.jpg",
         "https://cdn.facebook.com/s2.jpg",
     ]
-    await _flush_cache("fb_posts", pid)
+    _flush_cache(client, "fb_posts", pid)
 
 
 async def test_missing_page_token_degrades_posts_and_blocks_profile(
@@ -190,7 +199,7 @@ async def test_second_posts_read_is_served_from_cache(db, client, monkeypatch):
     assert first.status_code == 200 and second.status_code == 200
     assert calls["n"] == 1, "the second read inside the TTL must hit redis"
     assert second.json()["posts"][0]["message"] == "hello"
-    await _flush_cache("fb_posts", pid)
+    _flush_cache(client, "fb_posts", pid)
 
 
 async def test_scheduled_read_maps_unix_times(db, client, monkeypatch):
@@ -208,4 +217,4 @@ async def test_scheduled_read_maps_unix_times(db, client, monkeypatch):
     body = res.json()
     assert body["posts"] == [{"id": f"{pid}_55", "scheduled_publish_time": 1767225600}]
     assert calls["n"] == 1
-    await _flush_cache("fb_scheduled", pid)
+    _flush_cache(client, "fb_scheduled", pid)
