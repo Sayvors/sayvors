@@ -94,6 +94,7 @@ def _envelope(provider: str, event_type: str, data: dict) -> dict:
     [
         ("whatsapp", "message.received", "_handle_message_received"),
         ("whatsapp", "message.status", "_handle_message_status"),
+        ("whatsapp", "message.status.read", "_handle_message_status"),
         ("whatsapp", "message.history", "_handle_message_history"),
         ("whatsapp", "message.echo", "_handle_message_echo"),
         ("whatsapp", "smb.contacts", "_handle_smb_contacts"),

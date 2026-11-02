@@ -50,6 +50,7 @@ from .consumer import (
     _handle_facebook_comment,
     _drain_outbox_events as _drain_outbox_events_consumer,
 )
+from .webhooks.parser import is_message_status_event
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +90,11 @@ HANDLED_EVENT_TYPES = {
 # names stay importable for the tests and any other callers.
 def _event_type_handled(provider: str, event_type: str) -> bool:
     """Check if we handle this event type."""
-    return event_type in HANDLED_EVENT_TYPES.get(provider, set())
+    if event_type in HANDLED_EVENT_TYPES.get(provider, set()):
+        return True
+    # Status types carry the status suffix; keep accepting the bare type for
+    # events queued before the per-status identity landed.
+    return provider == "whatsapp" and is_message_status_event(event_type)
 
 
 async def _claim_due_events(db, worker_id: str, limit: int = BATCH_SIZE) -> List[Dict[str, Any]]:
@@ -179,7 +184,7 @@ async def _process_event(db, event_data: Dict[str, Any]) -> bool:
         if provider == "whatsapp":
             if event_type == "message.received":
                 await _handle_message_received(payload, data)
-            elif event_type == "message.status":
+            elif is_message_status_event(event_type):
                 await _handle_message_status(payload, data)
             elif event_type == "message.history":
                 await _handle_message_history(payload, data)

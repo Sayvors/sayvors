@@ -186,7 +186,7 @@
 
 <div class="top">
   <span class="name">Sayvors 1M-User Readiness</span>
-  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 25 open (1 blocker · 15 majors · 9 medium) · INS: 3 open · original audit: 2 open (OPS-1, OPS-4) · 36 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 8 open (2 high · 4 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,052 passed / 3 skipped (post-shim, 2026-11-02)</span>
+  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 24 open (1 blocker · 14 majors · 9 medium) · INS: 3 open · original audit: 2 open (OPS-1, OPS-4) · 36 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 8 open (2 high · 4 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,052 passed / 3 skipped (post-shim, 2026-11-02)</span>
   <nav class="topnav">
     <a href="#blockers">Blockers</a>
     <a href="#pass-2026-10-25">Oct 25 pass</a>
@@ -224,7 +224,7 @@
   <div class="stat"><div class="n amber">Live</div><div class="l">billing &amp; plans — wallet hotfix + durable ledger + 5 plans + admin plan CRUD + tenant grant-plan + entitlements service + enforcement at channel-connect/message-send/LLM; deployed to staging 2026-10-28, schema caught up from 5 migrations behind to <code>h4b5c6d7e8f9</code> head. Plan comparison + request-upgrade UI shipped (<a href="#billing">§6b</a>)</div></div>
   <div class="stat"><div class="n calm">1,645</div><div class="l">backend tests (2 skipped in CI where pgvector runs; 4 skipped locally without Postgres) — CI gates every staging deploy on them; staging CI run #77 passed on <code>d82d800</code></div></div>
   <div class="stat"><div class="n amber">3</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new findings still open: INS-3, INS-4, INS-5 (INS-1, INS-2, INS-6, INS-7 fixed)</div></div>
-  <div class="stat"><div class="n">25</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 1 blocker · 15 majors · 9 medium batches open; two are ~1-line fixes (P4, S12). Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
+  <div class="stat"><div class="n">24</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 1 blocker · 14 majors · 9 medium batches open; S12 is the remaining ~1-line fix. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
   <div class="stat"><div class="n">8</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — Review Intelligence + Analytics "actual facts" gaps: listing Q&amp;A, competitor deltas, grid rank, AI-answer visibility. Strategy rule: every number a tenant sees must be verifiable on Google Maps or carry a named source</div></div>
 </div>
 
@@ -480,11 +480,11 @@
       <td class="num">~1 day</td>
     </tr>
     <tr>
-      <td class="num">LAUNCH-P4</td><td><span class="chip high">High</span></td>
-      <td><strong><code>message.status</code> dedupe collapse — delivered/read/failed are dropped forever.</strong> The parser builds every status event with <code>external_event_id = wamid</code> and constant <code>event_type="message.status"</code>; the ingest unique constraint keeps only the FIRST status per wamid ("sent") and every later one is marked duplicate and never enqueued. Outbound rows never leave "sent"; Meta failure statuses are invisible; "is my message delivered" support tickets are unanswerable.</td>
-      <td class="path">channels/meta/webhooks/parser.py:64-77; meta/models.py:128-131 (unique constraint)</td>
-      <td>Include the status in the event identity (<code>message.status.delivered</code> or in external_event_id) — 1-2 line parser change, constraint unchanged.</td>
-      <td class="num">~1 hr</td>
+      <td class="num">LAUNCH-P4</td><td><span class="chip ok">Fixed</span></td>
+      <td><strong><code>message.status</code> dedupe collapse — delivered/read/failed are dropped forever.</strong> The parser built every status event with <code>external_event_id = wamid</code> and constant <code>event_type="message.status"</code>; the ingest unique constraint kept only the FIRST status per wamid ("sent") and every later one was marked duplicate and never enqueued. Outbound rows never left "sent"; Meta failure statuses were invisible; "is my message delivered" support tickets were unanswerable. <strong>Fixed 2026-11-02:</strong> the parser now emits <code>message.status.&lt;status&gt;</code>, so sent/delivered/read/failed are distinct dedupe keys while <code>external_event_id</code> stays the wamid the handler needs. Both the outbox worker and the Kafka consumer accept the suffixed type and the legacy bare type, so events queued during a rolling deploy still route. 79 scoped tests pass, including parser and ingress regressions that pin four transitions of one wamid as four events.</td>
+      <td class="path">channels/meta/webhooks/parser.py:6-20, 105-117; meta_events_worker.py:40, 67-97, 187; consumer.py:37, 3840; tests/test_meta_webhooks.py, tests/test_meta_events_worker.py</td>
+      <td><span class="chip ok">Done</span></td>
+      <td class="num">—</td>
     </tr>
     <tr>
       <td class="num">LAUNCH-P6</td><td><span class="chip high">High</span></td>
@@ -563,7 +563,7 @@
     </tr>
   </table></div>
 
-  <p class="note">Suggested order: P4 → S2 → S12 (all ≤1 hr, highest ratio of risk removed to effort) → B3 (send-path retry/DLQ) → B5 → S1/S3/S10/S11 → the rest. S4 and S7 are fixed. Infra rows (S8/S9/S14) can land any time on the current box; they stop being optional the day a second replica or real customers arrive.</p>
+  <p class="note">Suggested order: S2 → S12 → B3 (send-path retry/DLQ) → B5 → S1/S3/S10/S11 → the rest. P4, S4 and S7 are fixed. Infra rows (S8/S9/S14) can land any time on the current box; they stop being optional the day a second replica or real customers arrive.</p>
 </section>
 
 <section id="pass-2026-11-02">

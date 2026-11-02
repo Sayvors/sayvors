@@ -6,6 +6,21 @@ occurred_at, data}. Tenant resolution happens in the router via meta_assets.
 from datetime import datetime, timezone
 
 
+MESSAGE_STATUS_EVENT = "message.status"
+
+
+def is_message_status_event(event_type: str) -> bool:
+    """True for the legacy bare status type and the per-status type.
+
+    Status events carry the status in ``event_type`` so the webhook dedupe
+    constraint keeps sent/delivered/read/failed as separate events. Events
+    queued before that change still use the bare ``message.status``.
+    """
+    return event_type == MESSAGE_STATUS_EVENT or event_type.startswith(
+        f"{MESSAGE_STATUS_EVENT}."
+    )
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -88,15 +103,22 @@ def _parse_whatsapp(payload: dict) -> list[dict]:
                     }
                 )
             for st in value.get("statuses", []):
+                # Each wamid gets several status events (sent -> delivered ->
+                # read, or failed). The webhook ledger dedupes on
+                # (external_event_id, event_type), so a constant type would
+                # keep only the first and drop every later transition. The
+                # suffix keeps them distinct while external_event_id stays the
+                # wamid the status handler needs to find the outbound row.
+                status = str(st.get("status") or "unknown")[:40]
                 events.append(
                     {
                         "external_asset_id": phone_number_id,
                         "external_event_id": st.get("id", ""),
-                        "event_type": "message.status",
+                        "event_type": f"{MESSAGE_STATUS_EVENT}.{status}",
                         "occurred_at": _ts(st.get("timestamp")),
                         "data": {
                             "to": st.get("recipient_id"),
-                            "status": st.get("status"),
+                            "status": status,
                             "errors": st.get("errors"),
                         },
                     }

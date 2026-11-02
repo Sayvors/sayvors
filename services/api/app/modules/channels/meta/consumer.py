@@ -34,6 +34,7 @@ from ...channels.service import (
     hash_contact_phone,
 )
 from .models import MetaAsset
+from .webhooks.parser import is_message_status_event
 
 logger = logging.getLogger(__name__)
 
@@ -3836,7 +3837,7 @@ async def _process_message(value: bytes | None) -> str | None:
         if provider == "whatsapp":
             if event_type == "message.received":
                 await _handle_message_received(event, payload)
-            elif event_type == "message.status":
+            elif is_message_status_event(event_type):
                 await _handle_message_status(event, payload)
             elif event_type == "message.history":
                 await _handle_message_history(event, payload)
