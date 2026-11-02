@@ -186,7 +186,7 @@
 
 <div class="top">
   <span class="name">Sayvors 1M-User Readiness</span>
-  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 22 open (1 blocker · 12 majors · 9 medium) · INS: 3 open · original audit: 2 open (OPS-1, OPS-4) · 36 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 8 open (2 high · 4 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,052 passed / 3 skipped (post-shim, 2026-11-02)</span>
+  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 21 open (0 blockers · 12 majors · 9 medium) · INS: 3 open · original audit: 2 open (OPS-1, OPS-4) · 36 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 8 open (2 high · 4 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,052 passed / 3 skipped (post-shim, 2026-11-02)</span>
   <nav class="topnav">
     <a href="#blockers">Blockers</a>
     <a href="#pass-2026-10-25">Oct 25 pass</a>
@@ -224,7 +224,7 @@
   <div class="stat"><div class="n amber">Live</div><div class="l">billing &amp; plans — wallet hotfix + durable ledger + 5 plans + admin plan CRUD + tenant grant-plan + entitlements service + enforcement at channel-connect/message-send/LLM; deployed to staging 2026-10-28, schema caught up from 5 migrations behind to <code>h4b5c6d7e8f9</code> head. Plan comparison + request-upgrade UI shipped (<a href="#billing">§6b</a>)</div></div>
   <div class="stat"><div class="n calm">1,645</div><div class="l">backend tests (2 skipped in CI where pgvector runs; 4 skipped locally without Postgres) — CI gates every staging deploy on them; staging CI run #77 passed on <code>d82d800</code></div></div>
   <div class="stat"><div class="n amber">3</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new findings still open: INS-3, INS-4, INS-5 (INS-1, INS-2, INS-6, INS-7 fixed)</div></div>
-  <div class="stat"><div class="n">22</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 1 blocker · 12 majors · 9 medium batches open. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
+  <div class="stat"><div class="n">21</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 0 blockers · 12 majors · 9 medium batches open. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
   <div class="stat"><div class="n">8</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — Review Intelligence + Analytics "actual facts" gaps: listing Q&amp;A, competitor deltas, grid rank, AI-answer visibility. Strategy rule: every number a tenant sees must be verifiable on Google Maps or carry a named source</div></div>
 </div>
 
@@ -363,11 +363,11 @@
       <td class="num"><span class="chip ok">Done</span></td>
     </tr>
     <tr>
-      <td class="num">LAUNCH-B5</td><td><span class="chip crit">Blocker</span></td>
-      <td><strong>Thread message history is unbounded on the frontend.</strong> <code>fetchThreadMessages</code> has no pagination — the entire history of a thread returns in one response and renders in full. The 500-message buffer cap applies only to WS-appended messages, not the initial fetch. A 10k-message thread = 10k-row JSON + 10k React nodes on open. The one frontend thing that actually falls over at scale.</td>
-      <td class="path">apps/web/lib/api-inbox.ts:150-162; app/dashboard/inbox/InboxView.tsx:974-979, 1565</td>
-      <td>Cursor pagination on the messages endpoint + windowed/capped initial render.</td>
-      <td class="num">1–2 days</td>
+      <td class="num">LAUNCH-B5</td><td><span class="chip ok">Fixed</span></td>
+      <td><strong>Thread message history is unbounded on the frontend.</strong> <code>fetchThreadMessages</code> had no pagination — the entire history of a thread returned in one response and rendered in full. The 500-message buffer cap applied only to WS-appended messages, not the initial fetch. A 10k-message thread = 10k-row JSON + 10k React nodes on open. The one frontend thing that actually falls over at scale. <strong>Fixed 2026-11-02:</strong> the messages endpoint now takes <code>before</code> (the oldest loaded message id) and returns <code>next_cursor</code>, paging strictly older by <code>(created_at, id)</code> so identical timestamps cannot skip or repeat a row. Cross-thread cursors are rejected with 400. The inbox opens at <code>limit=100</code>, renders only that window, and offers "Load earlier messages"; older pages prepend with the viewport anchored and stop at the existing 500-message cap. Browser-verified: initial request <code>limit=100</code> with no cursor, then <code>before=m-2</code>, older message appears, no jump to bottom.</td>
+      <td class="path">channels/service.py:2099-2148; channels/router.py:747-792; channels/schemas.py:188-195; apps/web/lib/api-inbox.ts:157-183; app/dashboard/inbox/InboxView.tsx:312-325, 1143-1160, 1212-1261, 1760-1800; tests/test_inbox_api.py</td>
+      <td><span class="chip ok">Done</span></td>
+      <td class="num">—</td>
     </tr>
   </table></div>
 
@@ -563,7 +563,7 @@
     </tr>
   </table></div>
 
-  <p class="note">Suggested order: B5 (the remaining launch blocker) → S1/S3/S10/S11 → P2/P3/P6 → the rest. P4, S2, S4, S7 and S12 are fixed; B3 was fixed earlier. Infra rows (S8/S9/S14) can land any time on the current box; they stop being optional the day a second replica or real customers arrive.</p>
+  <p class="note">Suggested order: S1/S3/S10/S11 → P2/P3/P6 → the rest. P4, S2, S4, S7, S12 and B5 are fixed; B3 was fixed earlier. Infra rows (S8/S9/S14) can land any time on the current box; they stop being optional the day a second replica or real customers arrive.</p>
 </section>
 
 <section id="pass-2026-11-02">

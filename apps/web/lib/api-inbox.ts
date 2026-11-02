@@ -154,17 +154,30 @@ export async function deleteInboxThread(channelId: string, contactPhone: string 
     method: "DELETE",
   });
 }
+/** Initial window for a thread; older pages load on demand. */
+export const INBOX_THREAD_PAGE_SIZE = 100;
+
 export async function fetchThreadMessages(
   channelId: string,
   contactPhone: string | null,
-): Promise<{ messages: InboxMessage[]; thread: ThreadState | null }> {
+  options: { before?: string | null; limit?: number } = {},
+): Promise<{
+  messages: InboxMessage[];
+  thread: ThreadState | null;
+  next_cursor: string | null;
+}> {
   const key = contactPhone ?? UNKNOWN_THREAD_KEY;
+  const params = new URLSearchParams({
+    limit: String(options.limit ?? INBOX_THREAD_PAGE_SIZE),
+  });
+  if (options.before) params.set("before", options.before);
   const data = await apiFetch(
-    `/api/v1/inbox/threads/${encodeURIComponent(channelId)}/${encodeURIComponent(key)}`,
+    `/api/v1/inbox/threads/${encodeURIComponent(channelId)}/${encodeURIComponent(key)}?${params.toString()}`,
   );
   return {
     messages: (data?.messages ?? []) as InboxMessage[],
     thread: (data?.thread ?? null) as ThreadState | null,
+    next_cursor: (data?.next_cursor ?? null) as string | null,
   };
 }
 

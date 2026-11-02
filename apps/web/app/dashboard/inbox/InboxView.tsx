@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
 import Image from "next/image";
@@ -309,6 +309,19 @@ export default function InboxView() {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [messages, setMessages] = useState<InboxMessage[]>([]);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  // Older-page cursor and its loading/limit state. The initial window is
+  // capped (api-inbox INBOX_THREAD_PAGE_SIZE); older messages are fetched only
+  // when the agent asks for them.
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
+  const [earlierError, setEarlierError] = useState<string | null>(null);
+  const [historyLimitReached, setHistoryLimitReached] = useState(false);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  // Prepending older messages must keep the viewport anchored. The layout
+  // effect restores the old scroll offset; the passive auto-scroll effect
+  // skips exactly one run so it cannot jump to the bottom.
+  const prependScrollRef = useRef<{ height: number; top: number } | null>(null);
+  const skipAutoScrollRef = useRef(false);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -359,8 +372,6 @@ export default function InboxView() {
   const [templateBusy, setTemplateBusy] = useState(false);
   const [templateError, setTemplateError] = useState<string | null>(null);
   const templateKeyRef = useRef<string>("");
-
-  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   // Deep link (?channel=…&key=…) — the Instagram hub's Messages tab links
   // straight into a conversation. Captured once, applied on the first
@@ -699,6 +710,9 @@ export default function InboxView() {
   const reloadThread = async (thread: InboxThread) => {
     const data = await fetchThreadMessages(thread.channel_id, thread.contact_phone);
     setMessages(data.messages);
+    setNextCursor(data.next_cursor);
+    setHistoryLimitReached(false);
+    setEarlierError(null);
     if (data.thread) setThreadState(data.thread);
   };
 
@@ -1087,17 +1101,25 @@ export default function InboxView() {
     if (!target) return;
     let cancelled = false;
     setThreadState(null);
+    setNextCursor(null);
+    setLoadingEarlier(false);
+    setEarlierError(null);
+    setHistoryLimitReached(false);
+    prependScrollRef.current = null;
+    skipAutoScrollRef.current = false;
     (async () => {
       try {
         const data = await fetchThreadMessages(target.channel_id, target.contact_phone);
         if (!cancelled && requestedKey.current === targetKey) {
           setMessages(data.messages);
+          setNextCursor(data.next_cursor);
           setThreadState(data.thread);
           setLoadedKey(targetKey);
         }
       } catch (e) {
         if (!cancelled && requestedKey.current === targetKey) {
           setMessages([]);
+          setNextCursor(null);
           setThreadState(null);
           setReplyTo(null);
           setReactingTo(null);
@@ -1118,7 +1140,21 @@ export default function InboxView() {
     target?.key ?? null,
   );
 
+  // Older pages prepend above the viewport. Restore the previous offset
+  // before paint, then let the passive effect below skip its next bottom jump.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const anchor = prependScrollRef.current;
+    if (!el || !anchor) return;
+    el.scrollTop = el.scrollHeight - anchor.height + anchor.top;
+    prependScrollRef.current = null;
+  }, [messages.length]);
+
   useEffect(() => {
+    if (skipAutoScrollRef.current) {
+      skipAutoScrollRef.current = false;
+      return;
+    }
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
     // typingSource is in the deps because the indicator renders below the
@@ -1172,6 +1208,57 @@ export default function InboxView() {
     if (!q) return messages;
     return messages.filter((m) => m.content.toLowerCase().includes(q));
   }, [messages, threadQuery]);
+
+  const loadEarlierMessages = async () => {
+    if (!target || !nextCursor || loadingEarlier) return;
+    if (messages.length >= INBOX_MESSAGE_BUFFER_CAP) {
+      setHistoryLimitReached(true);
+      return;
+    }
+    const keyAtStart = targetKey;
+    setLoadingEarlier(true);
+    setEarlierError(null);
+    try {
+      const data = await fetchThreadMessages(
+        target.channel_id,
+        target.contact_phone,
+        { before: nextCursor },
+      );
+      if (requestedKey.current !== keyAtStart) return;
+      const seen = new Set(messages.map((m) => m.id));
+      const older = data.messages.filter((m) => !seen.has(m.id));
+      const room = Math.max(0, INBOX_MESSAGE_BUFFER_CAP - messages.length);
+      const take = older.slice(Math.max(0, older.length - room));
+      const truncated =
+        take.length < older.length ||
+        (take.length === room && Boolean(data.next_cursor));
+      if (take.length > 0) {
+        const el = scrollRef.current;
+        if (el) {
+          prependScrollRef.current = {
+            height: el.scrollHeight,
+            top: el.scrollTop,
+          };
+          skipAutoScrollRef.current = true;
+        }
+        setMessages((prev) => {
+          const current = new Set(prev.map((m) => m.id));
+          const add = take.filter((m) => !current.has(m.id));
+          return add.length > 0 ? [...add, ...prev] : prev;
+        });
+      }
+      setNextCursor(truncated ? null : data.next_cursor);
+      setHistoryLimitReached(truncated);
+    } catch (e) {
+      if (requestedKey.current === keyAtStart) {
+        setEarlierError(
+          e instanceof Error ? e.message : "Could not load earlier messages.",
+        );
+      }
+    } finally {
+      setLoadingEarlier(false);
+    }
+  };
 
   const send = async () => {
     const text = draft.trim();
@@ -1680,7 +1767,33 @@ export default function InboxView() {
                     {threadQuery ? "No messages match." : "No messages."}
                   </p>
                 ) : (
-                  threadView.map((m, i) => {
+                  <>
+                    {!threadQuery && nextCursor && !historyLimitReached && (
+                      <div className="mb-3 flex justify-center">
+                        <button
+                          type="button"
+                          disabled={loadingEarlier}
+                          onClick={() => void loadEarlierMessages()}
+                          className="rounded-full border border-ink/[0.08] bg-white px-3 py-1.5 text-[11px] font-semibold text-ink/55 transition hover:border-deep-violet/30 hover:text-deep-violet disabled:opacity-50 dark:border-fog/[0.12] dark:bg-ink dark:text-fog/55 dark:hover:text-fog"
+                        >
+                          {loadingEarlier ? "Loading earlier…" : "Load earlier messages"}
+                        </button>
+                      </div>
+                    )}
+                    {!threadQuery && historyLimitReached && (
+                      <p className="mb-3 text-center text-[10px] text-ink/40 dark:text-fog/40">
+                        Showing the latest {INBOX_MESSAGE_BUFFER_CAP} messages.
+                      </p>
+                    )}
+                    {!threadQuery && earlierError && (
+                      <p
+                        role="alert"
+                        className="mb-3 text-center text-[11px] font-medium text-[#C4304B] dark:text-[#FF8FA3]"
+                      >
+                        {earlierError}
+                      </p>
+                    )}
+                    {threadView.map((m, i) => {
                     const showDay =
                       i === 0 ||
                       new Date(threadView[i - 1].created_at).toDateString() !== new Date(m.created_at).toDateString();
@@ -1943,7 +2056,8 @@ export default function InboxView() {
                         )}
                       </div>
                     );
-                  })
+                    })}
+                  </>
                 )}
                 {typingSource && loadedKey === targetKey && (
                   <TypingIndicator

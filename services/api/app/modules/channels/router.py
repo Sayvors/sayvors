@@ -748,19 +748,33 @@ async def inbox_thread_messages(
     channel_id: str,
     contact_phone: str,
     limit: int = Query(200, ge=1, le=500),
+    before: str | None = Query(None, min_length=1, max_length=64),
     ctx: TenantContext = Depends(require_perm("inbox.view")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Messages in one thread, oldest first.
+    """One page of messages in a thread, oldest first.
 
     `contact_phone` is the literal string "unknown" for the catch-all thread
     holding pre-migration rows with no sender.
+
+    `before` is the id of the oldest message the client already has; the
+    response's `next_cursor` walks further back until null. Fetch one extra
+    row to tell whether an older page exists without a second query.
     """
     if ctx.channel_level(channel_id) == "none":
         raise HTTPException(status_code=404, detail="Channel not found")
     phone = None if contact_phone == UNKNOWN_THREAD_KEY else contact_phone
-    msgs = await list_thread_messages(ctx.user, db, channel_id, phone, limit=limit)
-    if not msgs:
+    try:
+        msgs = await list_thread_messages(
+            ctx.user, db, channel_id, phone, limit=limit + 1, before=before
+        )
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid message cursor") from None
+    has_more = len(msgs) > limit
+    if has_more:
+        msgs = msgs[-limit:]
+    next_cursor = msgs[0].id if has_more and msgs else None
+    if not msgs and not before:
         # Distinguish "no such channel" (404) from "empty thread" (200, empty).
         channel = await get_channel(channel_id, ctx.user, db)
         if not channel:
@@ -774,6 +788,7 @@ async def inbox_thread_messages(
             for m in msgs
         ],
         total=len(msgs),
+        next_cursor=next_cursor,
         thread=thread_state,
     )
 

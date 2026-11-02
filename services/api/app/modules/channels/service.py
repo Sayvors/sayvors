@@ -2102,22 +2102,42 @@ async def list_thread_messages(
     channel_id: str,
     contact_phone: str | None,
     limit: int = 200,
+    before: str | None = None,
 ) -> list[ChannelMessage]:
-    """Every message in one thread, oldest first for display."""
+    """One page of a thread, oldest first for display.
+
+    ``before`` is the id of the oldest message the client already has. The
+    query walks strictly older than that message's ``(created_at, id)`` pair,
+    so messages with identical timestamps cannot be skipped or repeated.
+    """
     channel = await get_channel(channel_id, user, db)
     if not channel:
         return []
+    contact_hash = (
+        hash_contact_phone(contact_phone) if contact_phone is not None else None
+    )
     conditions = [
         ChannelMessage.channel_id == channel_id,
         ChannelMessage.contact_phone_hash.is_(None)
-        if contact_phone is None
-        else ChannelMessage.contact_phone_hash
-        == hash_contact_phone(contact_phone),
+        if contact_hash is None
+        else ChannelMessage.contact_phone_hash == contact_hash,
     ]
+    if before:
+        cursor = await db.get(ChannelMessage, before)
+        if (
+            cursor is None
+            or cursor.channel_id != channel_id
+            or cursor.contact_phone_hash != contact_hash
+        ):
+            raise ValueError("invalid message cursor")
+        conditions.append(
+            tuple_(ChannelMessage.created_at, ChannelMessage.id)
+            < tuple_(cursor.created_at, cursor.id)
+        )
     result = await db.execute(
         select(ChannelMessage)
         .where(*conditions)
-        .order_by(ChannelMessage.created_at.desc())
+        .order_by(ChannelMessage.created_at.desc(), ChannelMessage.id.desc())
         .limit(limit)
     )
     rows = list(result.scalars().all())
