@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { setChatOpen, useChatOpen } from "@/lib/chat-store";
+import { safeHref } from "@/lib/safe-url";
 import { streamAssistantChat } from "@/lib/api-assistant";
 import FeedbackPanel from "@/components/FeedbackPanel";
 
@@ -126,11 +127,17 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
     if (tok.startsWith("[")) {
       const link = /\[([^\]]+)\]\(([^)\s]+)\)/.exec(tok);
       if (link) {
-        out.push(
-          <a key={key} href={link[2]} target="_blank" rel="noreferrer" className="underline underline-offset-2">
-            {link[1]}
-          </a>
-        );
+        const href = safeHref(link[2]);
+        if (href) {
+          out.push(
+            <a key={key} href={href} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
+              {link[1]}
+            </a>
+          );
+        } else {
+          // Unsafe scheme: keep the label, never render the URL as a link.
+          out.push(link[1]);
+        }
       } else {
         out.push(tok);
       }

