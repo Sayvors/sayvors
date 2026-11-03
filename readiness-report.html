@@ -186,7 +186,7 @@
 
 <div class="top">
   <span class="name">Sayvors 1M-User Readiness</span>
-  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 7 open (0 blockers · 3 majors · 4 medium) · INS: 1 open · original audit: 2 open (OPS-1, OPS-4) · 38 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 8 open (2 high · 4 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,113 passed / 3 skipped (2026-11-03)</span>
+  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 6 open (0 blockers · 3 majors · 3 medium) · INS: 1 open · original audit: 2 open (OPS-1, OPS-4) · 38 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 8 open (2 high · 4 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,113 passed / 3 skipped (2026-11-03)</span>
   <nav class="topnav">
     <a href="#blockers">Blockers</a>
     <a href="#pass-2026-10-25">Oct 25 pass</a>
@@ -224,7 +224,7 @@
   <div class="stat"><div class="n amber">Live</div><div class="l">billing &amp; plans — wallet hotfix + durable ledger + 5 plans + admin plan CRUD + tenant grant-plan + entitlements service + enforcement at channel-connect/message-send/LLM; deployed to staging 2026-10-28, schema caught up from 5 migrations behind to <code>h4b5c6d7e8f9</code> head. Plan comparison + request-upgrade UI shipped (<a href="#billing">§6b</a>)</div></div>
   <div class="stat"><div class="n calm">1,645</div><div class="l">backend tests (2 skipped in CI where pgvector runs; 4 skipped locally without Postgres) — CI gates every staging deploy on them; staging CI run #77 passed on <code>d82d800</code></div></div>
   <div class="stat"><div class="n amber">1</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new finding still open: INS-5 (INS-1, INS-2, INS-3, INS-4, INS-6, INS-7 fixed)</div></div>
-  <div class="stat"><div class="n">7</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 0 blockers · 3 majors · 4 medium batches open. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
+  <div class="stat"><div class="n">6</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 0 blockers · 3 majors · 3 medium batches open. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
   <div class="stat"><div class="n">8</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — Review Intelligence + Analytics "actual facts" gaps: listing Q&amp;A, competitor deltas, grid rank, AI-answer visibility. Strategy rule: every number a tenant sees must be verifiable on Google Maps or carry a named source</div></div>
 </div>
 
@@ -534,11 +534,11 @@
       <td class="num">—</td>
     </tr>
     <tr>
-      <td class="num">LAUNCH-M6</td><td><span class="chip med">Med</span></td>
-      <td><strong>WS reconnect has no jitter and no liveness detection.</strong> Exponential backoff caps at 16s (attempt clamped at 5) with no jitter — any API restart reconnects every open dashboard in lockstep. No ping-based liveness or online/offline listener, so dead half-open sockets linger.</td>
-      <td class="path">apps/web/lib/use-inbox-realtime.ts:109-143</td>
-      <td>Full jitter (+ random up to delay), raise the cap, ping/pong or online/offline listener.</td>
-      <td class="num">~1 hr</td>
+      <td class="num">LAUNCH-M6</td><td><span class="chip ok">Fixed</span></td>
+      <td><strong>WS reconnect has no jitter and no liveness detection.</strong> Exponential backoff capped at 16s and had no jitter; any API restart reconnected every dashboard in lockstep; half-open sockets were not detected. <strong>Fixed 2026-11-02:</strong> reconnect now uses full-jitter backoff (uniform delay up to a 60s exponential ceiling, max attempt 8) instead of lockstep retries. The hook treats server pings/messages as liveness, checks every 15s in visible tabs, closes a socket silent for 75s, and reconnects via the standard jittered path. Offline/"online" browser events now pause and immediately resume the connection instead of retrying in a tight loop. 4 hook tests cover ping handling, half-open teardown, and network-loss/recovery behavior; web tests, tsc, and build pass.</td>
+      <td class="path">apps/web/lib/use-inbox-realtime.ts; apps/web/lib/use-inbox-realtime.test.tsx</td>
+      <td><span class="chip ok">Done</span></td>
+      <td class="num">—</td>
     </tr>
     <tr>
       <td class="num">LAUNCH-M7</td><td><span class="chip med">Med</span></td>
@@ -563,7 +563,7 @@
     </tr>
   </table></div>
 
-  <p class="note">Suggested order: S10 → S8/S9 → the rest. P2, P3, P4, P6, S1, S2, S3, S4, S5, S6, S7, S11, S12, S14, B5, M1, M2, M3, M4 and M5 are fixed; B3 was fixed earlier. Infra rows (S8/S9) can land any time on the current box; they stop being optional the day a second replica or real customers arrive.</p>
+  <p class="note">Suggested order: S10 → S8/S9 → the rest. P2, P3, P4, P6, S1, S2, S3, S4, S5, S6, S7, S11, S12, S14, B5, M1, M2, M3, M4, M5 and M6 are fixed; B3 was fixed earlier. Infra rows (S8/S9) can land any time on the current box; they stop being optional the day a second replica or real customers arrive.</p>
 </section>
 
 <section id="pass-2026-11-02">

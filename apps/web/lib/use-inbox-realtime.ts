@@ -2,9 +2,16 @@
 
 import { API_BASE } from "./api-base";
 import { useEffect, useRef } from "react";
-import { refreshSession } from "@/lib/auth-context";
 
 const API = API_BASE;
+const RECONNECT_BASE_MS = 1_000;
+const RECONNECT_MAX_MS = 60_000;
+const MAX_RECONNECT_ATTEMPT = 8;
+// Server sends a heartbeat every 25s; three missed beats are enough evidence
+// that the client–server path is half-open. The browser's own WebSocket API
+// does not expose an inactivity timeout, so the hook enforces one explicitly.
+const HEARTBEAT_TIMEOUT_MS = 75_000;
+const HEARTBEAT_CHECK_MS = 15_000;
 
 export interface NotificationPayload {
   kind: "message" | string;
@@ -106,7 +113,7 @@ export interface InboxRealtimeEvent {
   issue?: ReviewIssueEvent;
 }
 
-/** Subscribe to live inbox events; auto-reconnects with backoff. */
+/** Subscribe to live inbox events; auto-reconnects with full-jitter backoff. */
 export function useInboxRealtime(onEvent: (e: InboxRealtimeEvent) => void) {
   const handler = useRef(onEvent);
   useEffect(() => {
@@ -118,33 +125,110 @@ export function useInboxRealtime(onEvent: (e: InboxRealtimeEvent) => void) {
     let closed = false;
     let attempt = 0;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let watchdog: ReturnType<typeof setInterval> | null = null;
+    let lastSeenAt = 0;
+
+    const online = () => typeof navigator === "undefined" || navigator.onLine;
+
+    function reconnectDelay() {
+      // Full jitter: wait a uniformly random interval up to the exponential
+      // ceiling. This avoids every open dashboard reconnecting in lockstep
+      // after an API restart overwhelms the server it is reconnecting to.
+      const ceiling = Math.min(
+        RECONNECT_BASE_MS * 2 ** Math.min(attempt - 1, 6),
+        RECONNECT_MAX_MS,
+      );
+      return Math.floor(Math.random() * ceiling);
+    }
+
+    function clearWatchdog() {
+      if (watchdog) clearInterval(watchdog);
+      watchdog = null;
+    }
+
+    function armWatchdog() {
+      clearWatchdog();
+      watchdog = setInterval(() => {
+        // Ignore hidden tabs: JS timers and socket events are throttled there,
+        // which must not be mistaken for a half-open connection.
+        if (document.visibilityState !== "visible") return;
+        if (Date.now() - lastSeenAt > HEARTBEAT_TIMEOUT_MS) {
+          // Closing triggers onclose, where the jittered reconnect is scheduled.
+          ws?.close();
+        }
+      }, HEARTBEAT_CHECK_MS);
+    }
+
+    function scheduleReconnect() {
+      if (closed || !online() || timer) return;
+      attempt = Math.min(attempt + 1, MAX_RECONNECT_ATTEMPT);
+      timer = setTimeout(() => {
+        timer = null;
+        connect();
+      }, reconnectDelay());
+    }
 
     function connect() {
-      if (closed) return;
+      if (closed || !online()) return;
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        return;
+      }
       // Access token travels as httpOnly cookie — the browser sends it
       // automatically on same-origin WebSocket connections. No query param needed.
       const url = `${API.replace(/^http/, "ws")}/api/v1/inbox/ws`;
       ws = new WebSocket(url);
-      ws.onopen = () => { attempt = 0; };
+      lastSeenAt = Date.now();
+      ws.onopen = () => { attempt = 0; armWatchdog(); };
       ws.onmessage = (ev) => {
         try {
           const data = JSON.parse(ev.data) as InboxRealtimeEvent;
-          if (data.type !== "ping") handler.current(data);
-        } catch {}
+          lastSeenAt = Date.now();
+          if (data.type === "ping") return;
+          handler.current(data);
+        } catch {
+          // A malformed frame is not a reason to drop the live connection.
+        }
       };
       ws.onclose = () => {
+        ws = null;
+        clearWatchdog();
         if (closed) return;
-        attempt = Math.min(attempt + 1, 5);
-        const delay = Math.min(1000 * 2 ** (attempt - 1), 30000);
-        timer = setTimeout(connect, delay);
+        scheduleReconnect();
       };
       ws.onerror = () => { ws?.close(); };
     }
+
+    function handleOffline() {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      clearWatchdog();
+      ws?.close();
+      ws = null;
+    }
+
+    function handleOnline() {
+      if (closed || (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING))) {
+        return;
+      }
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      // Reconnect immediately on recovery; jitter only applies to retries
+      // after a close/error, not to an explicit browser "back online" event.
+      connect();
+    }
+
+    window.addEventListener("offline", handleOffline);
+    window.addEventListener("online", handleOnline);
 
     connect();
     return () => {
       closed = true;
       if (timer) clearTimeout(timer);
+      clearWatchdog();
+      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("online", handleOnline);
       ws?.close();
     };
   }, []);
