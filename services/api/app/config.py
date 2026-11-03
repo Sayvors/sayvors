@@ -206,6 +206,9 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
     GOOGLE_REVIEWS_POLL_INTERVAL_SECONDS: int = 300  # 5 min
+    # Q&A changes much less often than reviews. Poll independently so 1M
+    # connected numbers do not make a Q&A request every review cycle.
+    GOOGLE_QA_POLL_INTERVAL_SECONDS: int = 3600  # 60 min
     GOOGLE_REVIEWS_REDIRECT_URI: str = "http://localhost:8000/api/v1/channels/google/callback"
     # Dev/test mode for Google Reviews: fabricate sample reviews.
     GOOGLE_REVIEWS_MOCK: bool = False

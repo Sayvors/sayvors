@@ -8,7 +8,11 @@ from app.modules.analytics.qa_router import router as _qa_router  # noqa: F401
 from app.modules.analytics.models import GoogleQuestionAnswer
 from app.modules.channels.google_reviews import GoogleReviewsClient
 from app.modules.channels.models import Channel
-from app.modules.channels.reviews_worker import _store_question_answer
+from app.modules.channels.reviews_worker import (
+    _mark_qa_polled,
+    _qa_due,
+    _store_question_answer,
+)
 from app.modules.channels.service import encrypt_token
 from app.config import settings
 
@@ -61,6 +65,30 @@ async def _channel(db, user_id: str) -> Channel:
     db.add(ch)
     await db.commit()
     return ch
+
+
+def test_qa_poll_is_throttled_to_its_own_interval(user_id):
+    from datetime import timedelta
+
+    from app.modules.channels.models import Channel
+
+    channel = Channel(
+        id="qa-throttle",
+        user_id=user_id,
+        platform="google_reviews",
+        platform_user_id="acct-1",
+        display_name="Test",
+        status="active",
+        metadata_json="{}",
+    )
+    now = datetime.now(timezone.utc)
+    assert _qa_due(channel, now) is True
+
+    _mark_qa_polled(channel, now - timedelta(minutes=30))
+    assert _qa_due(channel, now) is False
+
+    _mark_qa_polled(channel, now - timedelta(minutes=61))
+    assert _qa_due(channel, now) is True
 
 
 @pytest.mark.asyncio

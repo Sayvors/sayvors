@@ -13,7 +13,7 @@ Events flow through the outbox → Kafka (`review-events`, `metrics-events`),
 mirroring the existing event architecture in `modules/outbox`.
 """
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Enum, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
@@ -690,23 +690,27 @@ class ReviewRequest(Base):
 
 
 class CompetitorSnapshotHistory(Base):
-    """One per-refresh history row for an external competitor.
+    """One monthly history row for an external competitor.
 
     CompetitorSnapshot is the current peer set (one row per place). This table
-    keeps each refresh so rating/review-count deltas and velocity can be shown;
-    overwriting the snapshot destroyed the only fact that makes tracking worth
-    anything. Keyed by (user_id, place_id, source, fetched_at) through a unique
-    constraint so a retried refresh cannot double-write an identical cycle.
+    keeps one row per peer per calendar month so rating/review-count deltas and
+    velocity can be shown without growing on every manual refresh. Refreshes
+    upsert the current month's row; the comparison reads the latest prior
+    month. That keeps the table bounded at ~20 peers × 24 months per active
+    tenant instead of one row per click.
     """
 
     __tablename__ = "competitor_snapshot_history"
     __table_args__ = (
         UniqueConstraint(
-            "user_id", "place_id", "source", "fetched_at",
-            name="uq_competitor_history_cycle",
+            "user_id", "place_id", "source", "period_start",
+            name="uq_competitor_history_period",
         ),
-        Index("ix_competitor_history_user_place_fetched", "user_id", "place_id", "fetched_at"),
-        Index("ix_competitor_history_user_fetched", "user_id", "fetched_at"),
+        Index(
+            "ix_competitor_history_user_place_period",
+            "user_id", "place_id", "period_start",
+        ),
+        Index("ix_competitor_history_user_period", "user_id", "period_start"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -722,6 +726,9 @@ class CompetitorSnapshotHistory(Base):
     source: Mapped[str] = mapped_column(String(20), default="google_places", server_default="google_places")
     query_radius_m: Mapped[int | None] = mapped_column(Integer, nullable=True)
     query_category: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # First day of the month this row describes; the unique key is per month.
+    period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    # Last time this month's row was refreshed.
     fetched_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

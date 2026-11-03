@@ -111,6 +111,7 @@ must use appropriately separated storage/access policies.
 | `GOOGLE_REVIEWS_REDIRECT_URI` | Local callback URL | OAuth redirect URI registered with Google. |
 | `GOOGLE_REVIEWS_MOCK` | `false` | Use generated review data instead of live OAuth/provider data. |
 | `GOOGLE_REVIEWS_POLL_INTERVAL_SECONDS` | `300` | Review polling interval. |
+| `GOOGLE_QA_POLL_INTERVAL_SECONDS` | `3600` | Google listing Q&A polling interval, independent of reviews. |
 | `LOCALITH_API_KEY` | Empty | EmbedSocial/Localith API key. |
 | `LOCALITH_BASE_URL` | `https://embedsocial.com/app/api` | Localith API base URL. |
 | `LOCALITH_ITEMS_PATH` | `rest/v1/items` | Localith items endpoint path. |

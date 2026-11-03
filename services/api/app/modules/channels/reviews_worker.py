@@ -77,6 +77,30 @@ def _is_in_health_backoff(channel: Channel, now: datetime) -> bool:
         return False
 
 
+def _qa_due(channel: Channel, now: datetime) -> bool:
+    """True when this channel's Q&A has not been polled within the interval."""
+    last = _channel_meta(channel).get("qa", {}).get("last_polled_at")
+    if not last:
+        return True
+    try:
+        stamp = datetime.fromisoformat(str(last))
+    except (ValueError, TypeError):
+        return True
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return now - stamp >= timedelta(seconds=settings.GOOGLE_QA_POLL_INTERVAL_SECONDS)
+
+
+def _mark_qa_polled(channel: Channel, now: datetime) -> None:
+    """Record the attempt time so Q&A is not fetched on every review cycle."""
+    try:
+        meta = json.loads(channel.metadata_json or "{}")
+    except (json.JSONDecodeError, TypeError):
+        meta = {}
+    meta["qa"] = {"last_polled_at": now.isoformat()}
+    channel.metadata_json = json.dumps(meta)
+
+
 async def _update_channel_health(
     db: AsyncSession, channel: Channel, success: bool, error_code: str | None = None
 ) -> None:
@@ -978,14 +1002,17 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                 except Exception as e:
                     logger.warning("review.replied enqueue failed for %s: %s", review.review_id, e)
 
-        # ── Q&A polling ──────────────────────────────────────────────
-        # Google sends no webhooks for questions, so they are polled alongside
-        # reviews on the same schedule. Q&A failures never break the review
-        # poll — they are logged and the loop continues.
+        # ── Q&A polling (independent interval) ───────────────────────
+        # Google sends no webhooks for questions, but they change far less
+        # often than reviews. A 60-minute cadence keeps 1M connected numbers
+        # from making a Q&A request on every 5-minute review cycle. Q&A
+        # failures never break the review poll.
         try:
             account_id = channel.platform_user_id or ""
             location_id = _channel_meta(channel).get("location_id", "")
-            if account_id and location_id:
+            qa_now = datetime.now(timezone.utc)
+            if account_id and location_id and _qa_due(channel, qa_now):
+                _mark_qa_polled(channel, qa_now)
                 try:
                     questions = await client.list_questions(account_id, location_id)
                     stats["questions"] = len(questions)
@@ -997,13 +1024,23 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                                 "Failed to store question %s: %s",
                                 q.get("name", "unknown"), e,
                             )
-                    await db.commit()
                 except GoogleReviewsError as e:
                     logger.warning(
                         "Q&A poll failed for channel %s: %s", channel.id, e
                     )
+                except Exception as e:
+                    logger.warning(
+                        "Q&A poll unexpected error for channel %s: %s", channel.id, e
+                    )
+                try:
+                    # Persist questions and the throttle timestamp together.
+                    await db.commit()
+                except Exception as e:
+                    logger.warning(
+                        "Q&A commit failed for channel %s: %s", channel.id, e
+                    )
         except Exception as e:
-            logger.warning("Q&A poll unexpected error for channel %s: %s", channel.id, e)
+            logger.warning("Q&A poll setup failed for channel %s: %s", channel.id, e)
 
         return stats
     finally:

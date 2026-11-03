@@ -59,7 +59,8 @@ async def test_external_peers_include_30_day_deltas(db, user_id, monkeypatch):
 
     monkeypatch.setattr(settings, "GOOGLE_PLACES_API_KEY", "test-key")
     now = datetime.now(timezone.utc)
-    old = now - timedelta(days=45)
+    current_period = now.date().replace(day=1)
+    prior_period = (current_period - timedelta(days=1)).replace(day=1)
 
     for i, (old_rating, old_reviews, new_rating, new_reviews) in enumerate((
         (4.0, 100, 4.2, 110),
@@ -76,23 +77,23 @@ async def test_external_peers_include_30_day_deltas(db, user_id, monkeypatch):
             id=f"history-{i}", user_id=user_id, place_id=f"place-{i}",
             name=f"Competitor {i}", rating=old_rating, review_count=old_reviews,
             source="google_places", query_radius_m=5000, query_category="Cafe",
-            fetched_at=old,
+            period_start=prior_period, fetched_at=now - timedelta(days=45),
         ))
     await db.commit()
 
     out = await get_external_peer_set(db, user_id)
 
-    assert out["delta_window_days"] == 30
+    assert out["delta_window_days"] >= 28
     assert out["median_rating_delta"] == 0.2
     assert out["median_reviews_delta"] == 10
     peer = next(p for p in out["peers"] if p["place_id"] == "place-0")
     assert peer["rating_delta"] == 0.2
     assert peer["reviews_delta"] == 10
-    assert peer["baseline_days"] == 45
+    assert peer["baseline_days"] >= 28
 
 
 @pytest.mark.asyncio
-async def test_refresh_preserves_a_history_cycle(db, user_id, monkeypatch):
+async def test_refresh_upserts_one_history_row_per_month(db, user_id, monkeypatch):
     from app.config import settings
 
     monkeypatch.setattr(settings, "GOOGLE_PLACES_API_KEY", "test-key")
@@ -106,6 +107,7 @@ async def test_refresh_preserves_a_history_cycle(db, user_id, monkeypatch):
 
     monkeypatch.setattr("app.modules.analytics.competitors._search_text", _fake_search)
     await refresh_external_peers(db, user_id, name="Me", address="Riyadh", category="Cafe")
+    await refresh_external_peers(db, user_id, name="Me", address="Riyadh", category="Cafe")
 
     rows = (await db.execute(
         select(CompetitorSnapshotHistory).where(
@@ -113,3 +115,5 @@ async def test_refresh_preserves_a_history_cycle(db, user_id, monkeypatch):
         )
     )).scalars().all()
     assert len(rows) == 3
+    expected_period = datetime.now(timezone.utc).date().replace(day=1)
+    assert {r.period_start for r in rows} == {expected_period}

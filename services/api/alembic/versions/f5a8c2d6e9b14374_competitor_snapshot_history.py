@@ -2,10 +2,12 @@
 
 CompetitorSnapshot keeps the current peer set, but upserting destroyed the
 previous cycle: the benchmark could show a peer's current rating but never its
-delta. This table appends one row per peer per refresh so the API can compute
-rating/review-count deltas and review velocity over time.
+delta. This table keeps one row per peer per calendar month so the API can
+compute rating/review-count deltas and review velocity over time.
 
-The unique constraint prevents a retried refresh from duplicating a cycle.
+Monthly upserts (rather than one row per refresh) bound the table size and
+make repeated "Refresh peers" clicks free. The unique constraint prevents a
+retried refresh from duplicating a month.
 """
 from typing import Sequence, Union
 
@@ -33,6 +35,7 @@ def upgrade() -> None:
         sa.Column("source", sa.String(length=20), nullable=False, server_default="google_places"),
         sa.Column("query_radius_m", sa.Integer(), nullable=True),
         sa.Column("query_category", sa.String(length=120), nullable=True),
+        sa.Column("period_start", sa.Date(), nullable=False),
         sa.Column("fetched_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column(
             "created_at",
@@ -43,23 +46,23 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
-            "user_id", "place_id", "source", "fetched_at",
-            name="uq_competitor_history_cycle",
+            "user_id", "place_id", "source", "period_start",
+            name="uq_competitor_history_period",
         ),
     )
     op.create_index(
-        "ix_competitor_history_user_place_fetched",
+        "ix_competitor_history_user_place_period",
         "competitor_snapshot_history",
-        ["user_id", "place_id", "fetched_at"],
+        ["user_id", "place_id", "period_start"],
     )
     op.create_index(
-        "ix_competitor_history_user_fetched",
+        "ix_competitor_history_user_period",
         "competitor_snapshot_history",
-        ["user_id", "fetched_at"],
+        ["user_id", "period_start"],
     )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_competitor_history_user_fetched", table_name="competitor_snapshot_history")
-    op.drop_index("ix_competitor_history_user_place_fetched", table_name="competitor_snapshot_history")
+    op.drop_index("ix_competitor_history_user_period", table_name="competitor_snapshot_history")
+    op.drop_index("ix_competitor_history_user_place_period", table_name="competitor_snapshot_history")
     op.drop_table("competitor_snapshot_history")
