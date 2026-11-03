@@ -111,7 +111,15 @@ def _channel_source_info(channel: Channel) -> tuple[str | None, str | None]:
 
 
 def _channel_response(channel: Channel) -> ChannelResponse:
+    import json as _json
+
     source, listing_id = _channel_source_info(channel)
+    try:
+        meta = _json.loads(channel.metadata_json or "{}")
+    except (ValueError, TypeError):
+        meta = {}
+    if not isinstance(meta, dict):
+        meta = {}
     return ChannelResponse(
         id=channel.id,
         platform=channel.platform,
@@ -122,6 +130,16 @@ def _channel_response(channel: Channel) -> ChannelResponse:
         created_at=channel.created_at.isoformat(),
         source=source,
         listing_id=listing_id or None,
+        place_id=(
+            str(meta.get("place_id")).strip()
+            if meta.get("place_id")
+            else None
+        ),
+        maps_url=(
+            str(meta.get("maps_url")).strip()
+            if meta.get("maps_url")
+            else None
+        ),
     )
 
 
@@ -2163,6 +2181,7 @@ async def google_callback(
                     matching.token_expires_at = token_expires_at
                 continue
 
+            loc_meta = loc.get("metadata") or {}
             channel = Channel(
                 id=str(_uuid.uuid4()),
                 user_id=user_id,
@@ -2173,7 +2192,12 @@ async def google_callback(
                 refresh_token=encrypt_token(refresh_token) if refresh_token else None,
                 token_expires_at=token_expires_at,
                 status="active",
-                metadata_json=_json.dumps({"location_id": location_id, "account_name": account_name}),
+                metadata_json=_json.dumps({
+                    "location_id": location_id,
+                    "account_name": account_name,
+                    "place_id": loc_meta.get("placeId"),
+                    "maps_url": loc_meta.get("mapsUrl"),
+                }),
                 listing_key=key,
             )
             db.add(channel)

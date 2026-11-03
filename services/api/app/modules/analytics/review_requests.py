@@ -30,7 +30,6 @@ from ..channels.meta.models import MetaAsset
 from ..channels.meta.service import get_adapter
 from ..channels.models import Channel
 from ..email.service import send_email
-from ..localith.models import LocalithConnection
 from .models import ReviewRequest
 
 logger = logging.getLogger(__name__)
@@ -45,32 +44,40 @@ def _review_url_from_place(place_id: str | None, maps_url: str | None) -> str | 
 
 
 async def resolve_review_url(db: AsyncSession, user_id: str, channel_id: str | None) -> str | None:
-    """The listing's Google review composer URL, from the synced profile."""
-    conn = (
-        await db.execute(
-            select(LocalithConnection).where(LocalithConnection.user_id == user_id).limit(1)
-        )
-    ).scalar_one_or_none()
-    if conn is not None:
-        url = _review_url_from_place(conn.listing_google_id, conn.maps_url)
-        if url:
-            return url
-    if channel_id:
-        channel = await db.get(Channel, channel_id)
-        if channel is not None:
-            meta = channel.metadata_json
-            if isinstance(meta, str):
-                import json
+    """The listing's Google review composer URL, from the native channel.
 
-                try:
-                    meta = json.loads(meta)
-                except (TypeError, ValueError):
-                    meta = {}
-            place_id = (meta or {}).get("place_id") if isinstance(meta, dict) else None
-            url = _review_url_from_place(place_id, (meta or {}).get("maps_url") if isinstance(meta, dict) else None)
-            if url:
-                return url
-    return None
+    Localith used to be the source of the review link. Native Google now
+    stores the Place ID / Maps URL in the channel metadata; when no channel
+    is selected, the tenant's first active Google location is used.
+    """
+    import json
+
+    channel = await db.get(Channel, channel_id) if channel_id else None
+    if channel is None:
+        channel = (
+            await db.execute(
+                select(Channel)
+                .where(
+                    Channel.user_id == user_id,
+                    Channel.platform == "google_reviews",
+                    Channel.status == "active",
+                )
+                .order_by(Channel.created_at)
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+    if channel is None:
+        return None
+
+    meta = channel.metadata_json
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except (TypeError, ValueError):
+            meta = {}
+    if not isinstance(meta, dict):
+        meta = {}
+    return _review_url_from_place(meta.get("place_id"), meta.get("maps_url"))
 
 
 def tracked_link(token: str | None) -> str | None:

@@ -185,21 +185,18 @@ function PostsInner({ initialLocationId, autoCreate, focusId, onExit }: PostsPag
         initialLocationId && locs.some((l) => l.id === initialLocationId)
           ? initialLocationId
           : locs[0]?.id ?? null;
-      // Real locations: every Localith-connected branch.
-      try {
-        const conns = (await apiFetch("/api/v1/integrations/localith/connections")) as { listing_id: string; listing_name: string }[];
-        if (Array.isArray(conns) && conns.length > 0) {
-          const locs = conns.map((c) => ({ id: c.listing_id, name: c.listing_name }));
-          return { locations: locs, selectedId: preferredId(locs) };
-        }
-      } catch {
-        /* fall through to channels */
-      }
+      // Native Google channels are the single source of locations now.
       const data = await apiFetch("/api/v1/channels?limit=100");
       const googleChannels = (data.channels ?? [])
         .filter((channel: { platform: string }) => channel.platform === "google_reviews")
-        .map((channel: { id: string; display_name: string | null }) => ({
-          id: channel.id,
+        .map((channel: {
+          id: string;
+          display_name: string | null;
+          listing_id?: string | null;
+        }) => ({
+          // Publishing resolves the Google location by listing/location id,
+          // not by the local channel row id.
+          id: channel.listing_id ?? channel.id,
           name: channel.display_name ?? "Google location",
         }));
       return { locations: googleChannels, selectedId: preferredId(googleChannels) };
@@ -373,7 +370,7 @@ function PostsInner({ initialLocationId, autoCreate, focusId, onExit }: PostsPag
           body: form,
         });
         if (typeof result?.url !== "string" || !result.url.startsWith("https://")) {
-          throw new Error("This server stores uploads on local HTTP storage. Add a publicly hosted HTTPS image URL below instead; Localith must be able to fetch it.");
+          throw new Error("This server stores uploads on local HTTP storage. Add a publicly hosted HTTPS image URL below instead; Google must be able to fetch it.");
         }
         uploaded.push(result.url);
       }
@@ -397,7 +394,7 @@ function PostsInner({ initialLocationId, autoCreate, focusId, onExit }: PostsPag
       return;
     }
     if (parsed.protocol !== "https:") {
-      showBannerTimed("err", "Use an HTTPS image URL that Localith can access publicly.");
+      showBannerTimed("err", "Use an HTTPS image URL that Google can access publicly.");
       return;
     }
     if (images.includes(value)) {
@@ -1337,7 +1334,7 @@ function PostForm(props: {
             />
             <button type="button" onClick={p.onAddImageUrl} className="btn-secondary">Add URL</button>
           </div>
-          <p className="mt-1 text-[10px] text-ink/40">Localith must be able to fetch the image. Localhost and private-network URLs will not work.</p>
+          <p className="mt-1 text-[10px] text-ink/40">Google must be able to fetch the image. Localhost and private-network URLs will not work.</p>
           {p.images.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
               {p.images.map((url) => (

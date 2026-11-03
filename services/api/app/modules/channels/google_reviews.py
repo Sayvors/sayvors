@@ -115,6 +115,11 @@ class GoogleReview:
     reviewer_photo_url: str | None = None
     updated_at: datetime | None = None
     has_reply: bool = False
+    # The merchant reply Google already shows. Without this the sync only
+    # knew "has_reply=True" and could not show (or preserve) the actual
+    # response the business had already written on the listing.
+    reply_text: str | None = None
+    reply_updated_at: datetime | None = None
     # Photos the reviewer attached. Google returns these as
     # `reviewMediaItems: [{thumbnailUrl, videoUrl, thumbnailLabel}]`.
     media: list[dict] = field(default_factory=list)
@@ -349,11 +354,25 @@ class GoogleReviewsClient:
         resp = await self._authed_request(
             "GET",
             f"{GBP_API}/accounts/{account_id}/locations",
-            params={"readMask": "name,title,storefrontAddress"},
+            params={"readMask": "name,title,storefrontAddress,metadata"},
         )
         if resp.status_code != 200:
             raise GoogleReviewsError(f"list_locations failed: {resp.status_code}", resp.status_code)
         return resp.json().get("locations", [])
+
+    async def get_location(self, location_id: str) -> dict:
+        """One location with its Google Place ID / Maps URL metadata."""
+        resp = await self._authed_request(
+            "GET",
+            f"{GBP_API}/locations/{location_id}",
+            params={"readMask": "name,title,storefrontAddress,metadata"},
+        )
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"get_location failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        return resp.json()
 
     # ── Local posts (v4) ─────────────────────────────────
 
@@ -478,16 +497,37 @@ class GoogleReviewsClient:
                         )
                     except ValueError:
                         pass
-                if updated_after and updated and updated <= updated_after:
-                    continue
+                reply = r.get("reviewReply") or {}
+                reply_updated = None
+                if reply.get("updateTime"):
+                    try:
+                        reply_updated = datetime.fromisoformat(
+                            reply["updateTime"].replace("Z", "+00:00")
+                        )
+                    except ValueError:
+                        pass
+                if updated_after:
+                    # A merchant reply added/edited directly in GBP changes
+                    # `reviewReply.updateTime`, not necessarily the review's
+                    # own updateTime. Let either timestamp make the review due.
+                    review_changed = updated is not None and updated > updated_after
+                    reply_changed = (
+                        reply_updated is not None and reply_updated > updated_after
+                    )
+                    if not review_changed and not reply_changed:
+                        continue
                 all_reviews.append(
                     GoogleReview(
+                        # GBP v4 uses `starRating` ("FIVE"); the old
+                        # `rating` fallback keeps the fake/test shape working.
+                        rating=_parse_rating(r.get("starRating") or r.get("rating")),
                         review_id=r.get("name", ""),
-                        rating=_parse_rating(r.get("rating", 5)),
                         text=(r.get("comment") or "") or None,
                         reviewer_name=(r.get("reviewer") or {}).get("displayName"),
                         updated_at=updated,
-                        has_reply=bool(r.get("reviewReply")),
+                        has_reply=bool(reply),
+                        reply_text=((reply.get("comment") or "").strip() or None),
+                        reply_updated_at=reply_updated,
                         reviewer_photo_url=_photo_url((r.get("reviewer") or {}).get("profilePhotoUrl")),
                         media=_parse_media(r.get("reviewMediaItems")),
                     )

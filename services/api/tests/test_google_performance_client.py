@@ -60,6 +60,38 @@ async def test_performance_uses_get_and_parses_nested_series():
 
 
 @pytest.mark.asyncio
+async def test_review_parser_reads_star_rating_and_existing_reply():
+    client = GoogleReviewsClient("token")
+
+    async def _fake(method: str, url: str, **kwargs):
+        return _Resp({"reviews": [{
+            "name": "accounts/a/locations/l/reviews/r1",
+            "starRating": "ONE",
+            "comment": "Bad experience",
+            "updateTime": "2026-09-28T18:23:55.944360Z",
+            "reviewer": {"displayName": "Customer"},
+            "reviewReply": {
+                "comment": "We are sorry.",
+                "updateTime": "2026-09-30T10:28:52.149839Z",
+            },
+        }]})
+
+    client._authed_request = _fake
+    # The reply is newer than updated_after even though the review itself is
+    # older: a reply added/edited in GBP must still make the review due.
+    reviews = await client.list_reviews(
+        "a", "l", updated_after=datetime(2026, 9, 29, tzinfo=timezone.utc)
+    )
+    await client.close()
+
+    assert len(reviews) == 1
+    assert reviews[0].rating == 1
+    assert reviews[0].has_reply is True
+    assert reviews[0].reply_text == "We are sorry."
+    assert reviews[0].reply_updated_at is not None
+
+
+@pytest.mark.asyncio
 async def test_keywords_use_monthly_endpoint_and_drop_thresholds():
     client = GoogleReviewsClient("token")
     captured: dict = {}

@@ -167,51 +167,30 @@ function ReviewsInner() {
     let cancelled = false;
     (async () => {
       try {
-        // Real locations: every Localith-connected branch.
-        try {
-          const conns = (await apiFetch("/api/v1/integrations/localith/connections")) as { listing_id: string; listing_name: string }[];
-          if (!cancelled && Array.isArray(conns) && conns.length > 0) {
-            const locs = conns.map((c) => ({ id: c.listing_id, name: c.listing_name }));
-            try {
-              const ch = await apiFetch("/api/v1/channels?limit=100");
-              const names: Record<string, string> = {};
-              // listing_id -> channel id, so a group (keyed on listing_id) can
-              // be resolved to the channel the reviews API filters by.
-              const byListing: Record<string, string> = {};
-              for (const channel of ch.channels ?? []) {
-                if (channel?.id) names[channel.id] = channel.display_name ?? "Google location";
-                if (channel?.id && channel?.listing_id) byListing[channel.listing_id] = channel.id;
-              }
-              if (!cancelled) {
-                setChannelNames(names);
-                setListingChannels(byListing);
-              }
-            } catch {
-              /* names stay empty — location name is used as fallback */
-            }
-            if (!cancelled) {
-              setLocations(locs);
-              setSelectedId(locs.length > 0 ? ALL_BRANCHES : null);
-              return;
-            }
-          }
-        } catch {
-          /* no Localith connections — fall through to channels */
-        }
+        // Native Google channels are the single source of locations now.
         const data = await apiFetch("/api/v1/channels?limit=100");
         const googleChannels = (data.channels ?? [])
           .filter((channel: { platform: string }) => channel.platform === "google_reviews")
-          .map((channel: { id: string; display_name: string | null }) => ({
-            id: channel.id,
+          .map((channel: {
+            id: string;
+            display_name: string | null;
+            listing_id?: string | null;
+          }) => ({
+            id: channel.listing_id ?? channel.id,
             name: channel.display_name ?? "Google location",
             channelId: channel.id,
           }));
         if (!cancelled) {
           const names: Record<string, string> = {};
+          // listing_id -> channel id, so a group (keyed on listing_id) can
+          // be resolved to the channel the reviews API filters by.
+          const byListing: Record<string, string> = {};
           for (const channel of data.channels ?? []) {
             if (channel?.id) names[channel.id] = channel.display_name ?? "Google location";
+            if (channel?.id && channel?.listing_id) byListing[channel.listing_id] = channel.id;
           }
           setChannelNames(names);
+          setListingChannels(byListing);
           setLocations(googleChannels);
           if (googleChannels.length) setSelectedId(ALL_BRANCHES);
         }
@@ -296,18 +275,13 @@ function ReviewsInner() {
   const fetchReviews = async (withSync: boolean) => {
     setRefreshing(true);
     try {
-      if (withSync) {
-        try {
-          await apiFetch("/api/v1/integrations/localith/sync", { method: "POST" });
-        } catch {
-          /* sync failed — still show whatever is stored */
-        }
-      }
       const loc = locations.find((l) => l.id === selectedId);
       const items = await loadInsights(selectedGroup ? groupChannels : loc?.channelId ? [loc.channelId] : undefined);
       setReviews(items);
       await loadPendingReplies();
-      if (withSync) setBanner({ kind: "ok", text: "Reconciled with Localith." });
+      // Native Google polls on its own 5-minute cadence; this button reloads
+      // the stored reviews instead of triggering a provider sync.
+      if (withSync) setBanner({ kind: "ok", text: "Reviews refreshed." });
     } catch {
       setReviews([]);
       setBanner({ kind: "err", text: "Could not load reviews. Is the backend running?" });
@@ -819,7 +793,7 @@ function ReviewsInner() {
     setReplying(true);
     try {
       await navigator.clipboard.writeText(replyDraft.trim());
-      setBanner({ kind: "ok", text: "Draft copied — paste it in Google or Localith to publish." });
+      setBanner({ kind: "ok", text: "Draft copied — paste it into Google to publish." });
     } catch {
       setBanner({ kind: "err", text: "Could not copy — select the text manually." });
     } finally {
@@ -1100,7 +1074,7 @@ function ReviewsInner() {
                                   {/* Original review */}
                                   {d.review_text && (
                                     <blockquote className="mt-3 rounded-r-lg border-l-[3px] border-deep-violet/30 bg-ink/[0.025] py-2 pl-3 pr-2 dark:bg-fog/[0.04]">
-                                      <p className="line-clamp-3 text-[13px] italic leading-5 text-ink/65 dark:text-fog/60">“{d.review_text}”</p>
+                                      <p className="line-clamp-3 text-[13px] italic leading-5 text-ink/65 dark:text-fog/60">&quot;{d.review_text}&quot;</p>
                                     </blockquote>
                                   )}
 
@@ -1474,7 +1448,7 @@ function ReviewsInner() {
 
                 {/* Comment — clean quote, no purple */}
                 <div className="px-4 py-3">
-                  <p className="whitespace-pre-wrap break-words text-[13px] leading-6 text-[#202124]">{active.comment ? `“${active.comment}”` : <span className="italic text-[#5F6368]">No written comment — star rating only.</span>}</p>
+                  <p className="whitespace-pre-wrap break-words text-[13px] leading-6 text-[#202124]">{active.comment ? `"${active.comment}"` : <span className="italic text-[#5F6368]">No written comment — star rating only.</span>}</p>
                   <ReviewMedia media={active.media} />
                 </div>
 
@@ -1944,7 +1918,7 @@ function ReviewsInner() {
                         <button onClick={() => copyDraft()} disabled={!replyDraft.trim() || replying || aiLoading} className="inline-flex items-center justify-center rounded-md bg-[#1A73E8] px-4 py-2 text-[13px] font-medium text-white hover:bg-[#1765CC] disabled:opacity-50">
                           {replying ? <span className="inline-flex items-center gap-1.5"><span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" /> Copying…</span> : "Copy draft"}
                         </button>
-                        <span className="inline-flex items-center text-[11px] leading-4 text-[#5F6368]">Copy & publish from Google or Localith</span>
+                        <span className="inline-flex items-center text-[11px] leading-4 text-[#5F6368]">Copy & publish from Google</span>
                       </div>
                       <p className="mt-2 text-[11px] leading-4 text-[#5F6368]">Powered by the review strategy engine — grounded in your databank, validated before it reaches you. Full trace in Playground.</p>
                     </>
@@ -2151,7 +2125,7 @@ function StarInsightPage({ stars, group, total, onBack, onOpen }: { stars: numbe
           <div className="space-y-1.5">
             {group.map((r) => (
               <button key={r.id} onClick={() => onOpen(r.id)} className="block w-full truncate rounded-lg px-2.5 py-2 text-left text-[12px] text-ink/70 ring-1 ring-ink/[0.05] hover:ring-deep-violet/30 dark:text-fog/70">
-                <span className="font-semibold text-ink dark:text-fog">{r.reviewer}</span> — “{r.comment}”
+                <span className="font-semibold text-ink dark:text-fog">{r.reviewer}</span> — &quot;{r.comment}&quot;
               </button>
             ))}
           </div>

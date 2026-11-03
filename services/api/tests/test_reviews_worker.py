@@ -546,13 +546,13 @@ async def test_poll_once_sums_every_channel_field(db, channel_id, config_id, mon
     monkeypatch.setattr("app.database.async_session", factory)
 
     async def _fake(ch_id, cfg_id, semaphore):
-        return {"channels": 1, "reviews": 3, "replied": 2, "queued": 1, "skipped": 0, "errors": 0}
+        return {"channels": 1, "reviews": 3, "replied": 2, "queued": 1, "skipped": 0, "adopted": 0, "errors": 0}
 
     monkeypatch.setattr(reviews_worker, "_poll_one_channel", _fake)
 
     totals = await reviews_worker.poll_once()
 
-    assert totals == {"channels": 1, "reviews": 3, "replied": 2, "queued": 1, "skipped": 0, "errors": 0}
+    assert totals == {"channels": 1, "reviews": 3, "replied": 2, "queued": 1, "skipped": 0, "adopted": 0, "errors": 0}
 
 
 @pytest.mark.asyncio

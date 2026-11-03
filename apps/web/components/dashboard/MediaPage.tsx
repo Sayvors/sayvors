@@ -129,25 +129,17 @@ function MediaInner({ initialLocationId, autoUpload, focusMediaId, onExit }: Med
         : locs[0]?.id ?? null;
     (async () => {
       try {
-        // Real branches: every Localith-connected listing (same as Posts).
-        try {
-          const conns = (await apiFetch("/api/v1/integrations/localith/connections")) as { listing_id: string; listing_name: string }[];
-          if (!cancelled && Array.isArray(conns) && conns.length > 0) {
-            const locs = conns.map((c) => ({ id: c.listing_id, name: c.listing_name }));
-            if (!cancelled) {
-              setLocations(locs);
-              setSelectedId(preferredId(locs));
-              return;
-            }
-          }
-        } catch {
-          /* fall through to channels */
-        }
+        // Native Google channels are the single source of locations now.
         const data = await apiFetch("/api/v1/channels?limit=100");
         const googleChannels = (data.channels ?? [])
           .filter((channel: { platform: string }) => channel.platform === "google_reviews")
-          .map((channel: { id: string; display_name: string | null }) => ({
-            id: channel.id,
+          .map((channel: {
+            id: string;
+            display_name: string | null;
+            listing_id?: string | null;
+          }) => ({
+            // Publishing resolves the Google location by listing/location id.
+            id: channel.listing_id ?? channel.id,
             name: channel.display_name ?? "Google location",
           }));
         if (!cancelled) {

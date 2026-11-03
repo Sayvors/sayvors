@@ -1,4 +1,5 @@
 """Review-request delivery, click tracking, and per-request attribution."""
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -10,8 +11,10 @@ from app.modules.analytics.review_requests import (
     create_queued,
     deliver_request,
     render_template,
+    resolve_review_url,
     track_click,
 )
+from app.modules.channels.models import Channel
 
 
 def test_attribute_reviews_one_review_per_click():
@@ -42,6 +45,21 @@ async def test_whatsapp_failure_is_visible_when_no_number_connected(db, user_id)
     assert row.status == "failed"
     assert row.sent_via == "whatsapp"
     assert "no connected whatsapp" in (row.error or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_review_url_comes_from_the_native_google_channel(db, user_id, channel_id):
+    channel = await db.get(Channel, channel_id)
+    channel.metadata_json = json.dumps({"place_id": "ChIJnative"})
+    await db.commit()
+
+    assert await resolve_review_url(db, user_id, channel_id) == (
+        "https://search.google.com/local/writereview?placeid=ChIJnative"
+    )
+    # No channel selected -> the tenant's first active Google channel.
+    assert await resolve_review_url(db, user_id, None) == (
+        "https://search.google.com/local/writereview?placeid=ChIJnative"
+    )
 
 
 def test_render_template_placeholders():

@@ -104,7 +104,7 @@ must use appropriately separated storage/access policies.
 
 ## Google Business Profile and Localith
 
-Native Google Business Profile OAuth is the production path (reviews, replies, performance, posts, media). Google retired the Q&A API on 2025-11-03, so stored Q&A is read-only and no longer polled. Localith is retained as a legacy middleware and is selected per connected `LocalithConnection`; there is no global provider switch. To move a tenant to native Google, disconnect its Localith branches, then connect through **Channels → Google Business Profile**. Leaving both connected creates two channels for the same location.
+Native Google Business Profile OAuth is the production path (reviews, replies, performance, posts, media). Google retired the Q&A API on 2025-11-03, so stored Q&A is read-only and no longer polled. Localith is retired as a product path: its sync worker is no longer started, the Channels card is hidden, and the dashboard reads native Google channels for locations and review links. The Localith tables/endpoints remain dormant for the rollback window. Connect through **Channels → Google Business Profile**; existing Google replies are imported automatically and the AI will not overwrite them.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
@@ -118,7 +118,7 @@ Native Google Business Profile OAuth is the production path (reviews, replies, p
 | `LOCALITH_BASE_URL` | `https://embedsocial.com/app/api` | Localith API base URL. |
 | `LOCALITH_ITEMS_PATH` | `rest/v1/items` | Localith items endpoint path. |
 | `BUSINESS_DATA_PROVIDER` | `localith` | Label stored in Localith-created channel metadata. It does **not** disable Localith or enable native Google. |
-| `LOCALITH_SYNC_INTERVAL_SECONDS` | `300` | Background Localith sync interval. |
+| `LOCALITH_SYNC_INTERVAL_SECONDS` | `300` | Deprecated: the Localith sync worker is no longer started. |
 | `ANALYTICS_PERFORMANCE_SYNC_INTERVAL_SECONDS` | `21600` | Google performance metrics sync interval. |
 | `ANALYTICS_PERFORMANCE_DAYS_BACK` | `30` | Days of historical performance metrics requested per sync. |
 | `MESSAGING_ROLLUP_INTERVAL_SECONDS` | `900` | Messaging metrics rollup interval. |

@@ -25,6 +25,10 @@ class ChannelResponse(BaseModel):
     source: str | None = None
     # Localith listing_id (or Google location_id for native channels).
     listing_id: str | None = None
+    # Google Place ID / Maps URL, when the provider supplied them. Native
+    # Google channels need the Place ID for the review-request QR/link.
+    place_id: str | None = None
+    maps_url: str | None = None
 
 
 class ChannelListResponse(BaseModel):

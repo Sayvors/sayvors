@@ -78,6 +78,11 @@ interface LocalithProfile {
   item_metrics: { listings?: Record<string, number | string | null>[] };
 }
 
+// Localith was the temporary middleware; official Google OAuth is the
+// production path now. Keep the code for a one-release rollback window but
+// stop loading the integration or showing the card.
+const SHOW_LOCALITH = false;
+
 const GOOGLE_ERRORS: Record<string, string> = {  no_business_account: "No Google Business Profile was found on that Google account.",
   accounts_unavailable: "Google couldn't list your Business Profiles just now (rate limit or permissions). Please try again in a minute.",
   token_exchange_failed: "Google rejected the connection. Please try again.",
@@ -617,6 +622,7 @@ function ConnectHub() {
   // ── Localith connections + profiles + listings (TanStack Query) ──
   const localithQuery = useQuery({
     queryKey: ["localith", "all"],
+    enabled: SHOW_LOCALITH,
     queryFn: async () => {
       let conns: LocalithConnection[] = [];
       const profs: Record<string, LocalithProfile> = {};
@@ -1040,7 +1046,8 @@ function ConnectHub() {
           </div>
         </div>
 
-        {/* Localith — ONE card: every listing on the account, enabled per row */}
+        {SHOW_LOCALITH && (
+        /* Localith — legacy middleware card, hidden now that Google OAuth is live */
         <div className="rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink" data-tour="connect-location">
           <div className="flex flex-wrap items-center gap-4">
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 text-white shadow-sm">
@@ -1170,6 +1177,7 @@ function ConnectHub() {
             )}
           </div>
         </div>
+        )}
       </section>
 
       {/* ── Messaging channels: one card per provider, each with its own

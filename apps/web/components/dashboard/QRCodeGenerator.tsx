@@ -28,9 +28,29 @@ export default function QRCodeGenerator() {
     let cancelled = false;
     (async () => {
       try {
-        const data = await apiFetch("/api/v1/integrations/localith/connections");
+        const data = await apiFetch("/api/v1/channels?limit=100");
         if (cancelled) return;
-        const list = Array.isArray(data) ? data : [];
+        const list = ((data.channels ?? []) as {
+          id: string;
+          platform: string;
+          status: string;
+          display_name: string | null;
+          listing_id?: string | null;
+          place_id?: string | null;
+          maps_url?: string | null;
+        }[])
+          .filter(
+            (c) =>
+              c.platform === "google_reviews" &&
+              c.status === "active" &&
+              (c.place_id || c.maps_url)
+          )
+          .map((c) => ({
+            listing_id: c.listing_id ?? c.id,
+            listing_name: c.display_name ?? "Location",
+            listing_google_id: c.place_id ?? null,
+            maps_url: c.maps_url ?? null,
+          }));
         setProfiles(list);
         if (list.length > 0) {
           setSelectedId(list[0].listing_id);

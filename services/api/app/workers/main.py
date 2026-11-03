@@ -100,7 +100,8 @@ async def _amain() -> None:
     from ..modules.channels.reviews_worker import run_google_reviews_worker
     from ..modules.jobs.reaper import run_job_reaper
     from ..modules.jobs.runner import JobRunner
-    from ..modules.localith.worker import run_localith_sync_worker
+    # Localith was the temporary middleware; native Google OAuth is the
+    # production path. The Localith sync loop is intentionally not registered.
     from ..modules.posts.worker import run_post_publish_worker
     from ..modules.rag import jobs as rag_jobs
     from ..modules.redis.client import run_redis_rearmer
@@ -125,7 +126,6 @@ async def _amain() -> None:
 
     loops = {
         "google-reviews-auto-reply": run_google_reviews_worker,
-        "localith-sync": run_localith_sync_worker,
         "post-publisher": run_post_publish_worker,
         "analytics-consumer": run_analytics_consumer,
         "performance-sync": run_performance_sync_worker,

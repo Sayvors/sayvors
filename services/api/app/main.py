@@ -443,7 +443,9 @@ async def lifespan(app: FastAPI):
     outbox_worker = None
     if settings.RUN_BACKGROUND_WORKERS:
         from .modules.channels.reviews_worker import run_google_reviews_worker
-        from .modules.localith.worker import run_localith_sync_worker
+        # Localith was the temporary middleware; native Google Business Profile
+        # OAuth is the production path. Its sync worker is intentionally not
+        # started. The module/endpoints remain for the rollback window.
         from .modules.posts.worker import run_post_publish_worker
         from .modules.analytics.consumer import run_analytics_consumer
         from .modules.analytics.messaging_rollup import run_messaging_rollup_worker
@@ -458,7 +460,6 @@ async def lifespan(app: FastAPI):
 
         bg_tasks.append(asyncio.create_task(run_hold_reaper()))
         bg_tasks.append(asyncio.create_task(run_google_reviews_worker()))
-        bg_tasks.append(asyncio.create_task(run_localith_sync_worker()))
         bg_tasks.append(asyncio.create_task(run_post_publish_worker()))
         bg_tasks.append(asyncio.create_task(run_analytics_consumer()))
         bg_tasks.append(asyncio.create_task(run_performance_sync_worker()))
