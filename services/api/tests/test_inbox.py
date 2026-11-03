@@ -80,6 +80,25 @@ async def test_threads_group_by_contact(db, user_id):
 
 
 @pytest.mark.asyncio
+async def test_thread_page_applies_rbac_before_limit(db, user_id):
+    ch1, commit1 = _channel(db, user_id, cid="chan-rbac-1", name="One")
+    await commit1
+    ch2, commit2 = _channel(db, user_id, cid="chan-rbac-2", name="Two")
+    await commit2
+    await _msg(db, ch1.id, phone="966500000101", content="one", minutes_ago=10)
+    await _msg(db, ch2.id, phone="966500000102", content="two", minutes_ago=5)
+    await db.commit()
+
+    page, total, next_cursor = await channels.list_inbox_threads_page(
+        _user(user_id), db, limit=1, visible_channel_ids={"chan-rbac-1"}
+    )
+
+    assert total == 1
+    assert [t["channel_id"] for t in page] == ["chan-rbac-1"]
+    assert next_cursor is None
+
+
+@pytest.mark.asyncio
 async def test_threads_carry_cached_profile_name_and_avatar(db, user_id):
     """The contact_profiles cache feeds the thread list: profile name wins
     over the per-message name, avatar/username ride along for the UI."""

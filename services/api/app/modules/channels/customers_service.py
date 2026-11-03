@@ -1,25 +1,24 @@
 """Customer aggregation for the dashboard's "customers" page.
 
 A customer is a thread — the same grouping the inbox already uses — so this
-module reuses `list_inbox_threads` rather than re-implementing the grouping,
-the decryption and the contact-profile lookup. The work here is the
-augmentation (lead, reviews) and the profile assembly.
+module reuses `list_inbox_threads_page` rather than re-implementing the
+grouping, the filtering or the pagination. The work here is the augmentation
+(lead and review data) and the profile assembly.
 """
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..users.models import User
 from .models import Channel, ChannelMessage, ContactProfile
 from .service import (
-    decrypt_contact_phone,
     decrypt_message_content,
+    hash_contact_phone,
     is_important,
-    list_inbox_threads,
+    list_inbox_threads_page,
     tenant_id_of,
 )
 from .models import Lead
@@ -103,61 +102,113 @@ async def list_customers(
     priority: str | None = None,
     important: bool | None = None,
     limit: int = 100,
-    offset: int = 0,
-) -> tuple[list[dict[str, Any]], int]:
-    """All contacts across every channel, newest-activity first.
+    cursor: str | None = None,
+    visible_channel_ids: set[str] | None = None,
+    sort: str = "important",
+) -> tuple[list[dict[str, Any]], int, str | None]:
+    """One filtered, RBAC-scoped page of customers, newest/important first.
 
-    Reuses `list_inbox_threads` for the grouping/identity/categorization
-    (it already does the SQL aggregation, decryption and contact-profile
-    lookup), then augments each row with the lead summary and whether
-    the conversation has a Google review attached.
+    The inbox thread page does the expensive work in SQL. This function only
+    augments the returned page with lead data and whether a Google review is
+    attached — two bulk lookups, not one per Google thread.
     """
+    page, total, next_cursor = await list_inbox_threads_page(
+        user,
+        db,
+        search=search,
+        limit=limit,
+        cursor=cursor,
+        category=category,
+        priority=priority,
+        important=important,
+        platform=platform,
+        visible_channel_ids=visible_channel_ids,
+        sort=sort,
+    )
+    if not page:
+        return [], total, next_cursor
+
     tenant_id = tenant_id_of(user)
-    # Pull a generous page; we filter and paginate in Python because the
-    # filters live on the augmented row. Page sizes are small.
-    threads = await list_inbox_threads(user, db, search=search, limit=10000)
+    lead_pairs = {
+        (row["channel_id"], row["contact_phone"])
+        for row in page
+        if row.get("contact_phone")
+    }
+    leads_by_key: dict[tuple[str, str], Lead] = {}
+    if lead_pairs:
+        leads = (
+            await db.execute(
+                select(Lead).where(
+                    Lead.tenant_id == tenant_id,
+                    tuple_(Lead.channel_id, Lead.contact_id).in_(list(lead_pairs)),
+                )
+            )
+        ).scalars().all()
+        leads_by_key = {(lead.channel_id, lead.contact_id): lead for lead in leads}
 
-    # Leads for this tenant, indexed by (channel_id, contact_id).
-    leads = (
-        await db.execute(select(Lead).where(Lead.tenant_id == tenant_id))
-    ).scalars().all()
-    leads_by_key = {(l.channel_id, l.contact_id): l for l in leads}
+    # Google threads are keyed by the synthetic google:<digest> contact; a
+    # review reply is keyed by (channel_id, review_id), and the review id is
+    # the thread's platform_message_id. Two bulk queries for the whole page.
+    google_pairs = {
+        (row["channel_id"], hash_contact_phone(row["contact_phone"]))
+        for row in page
+        if row.get("platform") == "google_reviews"
+        and row.get("contact_phone")
+        and row["contact_phone"].startswith("google:")
+    }
+    reviewed_threads: set[tuple[str, str]] = set()
+    if google_pairs:
+        message_rows = (
+            await db.execute(
+                select(
+                    ChannelMessage.channel_id,
+                    ChannelMessage.contact_phone_hash,
+                    ChannelMessage.platform_message_id,
+                ).where(
+                    tuple_(
+                        ChannelMessage.channel_id,
+                        ChannelMessage.contact_phone_hash,
+                    ).in_(list(google_pairs)),
+                    ChannelMessage.platform_message_id.is_not(None),
+                )
+            )
+        ).all()
+        review_pairs = {
+            (channel_id, platform_message_id)
+            for channel_id, _contact_hash, platform_message_id in message_rows
+            if platform_message_id
+        }
+        if review_pairs:
+            reply_rows = (
+                await db.execute(
+                    select(ReviewReply.channel_id, ReviewReply.review_id).where(
+                        tuple_(
+                            ReviewReply.channel_id, ReviewReply.review_id
+                        ).in_(list(review_pairs))
+                    )
+                )
+            ).all()
+            replied = {(channel_id, review_id) for channel_id, review_id in reply_rows}
+            reviewed_threads = {
+                (channel_id, contact_hash)
+                for channel_id, contact_hash, platform_message_id in message_rows
+                if (channel_id, platform_message_id) in replied
+            }
 
-    out: list[dict[str, Any]] = []
-    for t in threads:
-        if platform and t.get("platform") != platform:
-            continue
-        if category and t.get("category") != category:
-            continue
-        if priority and t.get("priority") != priority:
-            continue
-        if important is not None and bool(t.get("important")) is not important:
-            continue
-
-        lead = leads_by_key.get((t["channel_id"], t["contact_phone"]))
-        has_review = False
-        if t.get("platform") == "google_reviews":
-            has_review = bool(await _reviews_for(db, t["channel_id"], t["contact_phone"]))
-
-        row = dict(t)
+    for row in page:
+        lead = leads_by_key.get((row["channel_id"], row.get("contact_phone")))
         row["lead_stage"] = lead.stage if lead else None
-        row["lead_category"] = lead.category if lead else None
+        if lead and lead.category:
+            row["lead_category"] = lead.category
         row["intent"] = lead.intent if lead else None
-        row["has_review"] = has_review
-        out.append(row)
+        phone = row.get("contact_phone")
+        row["has_review"] = bool(
+            phone
+            and phone.startswith("google:")
+            and (row["channel_id"], hash_contact_phone(phone)) in reviewed_threads
+        )
 
-    # Important first, then newest activity. The whole point of the page
-    # is "who needs me now".
-    def _sort_key(r: dict[str, Any]) -> tuple[int, float]:
-        try:
-            ts = datetime.fromisoformat(str(r.get("last_message_at", "")).replace("Z", "+00:00")).timestamp()
-        except (ValueError, TypeError):
-            ts = 0.0
-        return (0 if r.get("important") else 1, -ts)
-
-    out.sort(key=_sort_key)
-    total = len(out)
-    return out[offset : offset + limit], total
+    return page, total, next_cursor
 
 
 async def get_customer_profile(

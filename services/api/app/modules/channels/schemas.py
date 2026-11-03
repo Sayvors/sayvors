@@ -255,6 +255,7 @@ class InboxThread(BaseModel):
 class InboxThreadListResponse(BaseModel):
     threads: list[InboxThread]
     total: int
+    next_cursor: str | None = None
 
 
 class InboxSendRequest(BaseModel):

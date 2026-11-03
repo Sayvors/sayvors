@@ -63,7 +63,7 @@ from .service import (
     get_channel,
     hash_contact_phone,
     list_channels,
-    list_inbox_threads,
+    list_inbox_threads_page,
     list_messages,
     list_thread_messages,
     react_to_message,
@@ -722,22 +722,36 @@ async def inbox_threads(
     important: bool | None = Query(None),
     include_archived: bool = Query(False),
     limit: int = Query(100, ge=1, le=500),
+    cursor: str | None = Query(None, max_length=512),
     ctx: TenantContext = Depends(require_perm("inbox.view")),
     db: AsyncSession = Depends(get_db),
 ):
-    """List inbox threads, optionally filtered by category, priority or
-    the derived `important` flag."""
-    threads = await list_inbox_threads(ctx.user, db, search=search, limit=limit, include_archived=include_archived)
-    if category:
-        threads = [t for t in threads if t.get("category") == category]
-    if priority:
-        threads = [t for t in threads if t.get("priority") == priority]
-    if important is not None:
-        threads = [t for t in threads if bool(t.get("important")) is important]
-    visible = ctx.visible_channel_ids()
-    if visible is not None:
-        threads = [t for t in threads if t.get("channel_id") in visible]
-    return InboxThreadListResponse(threads=[InboxThread(**t) for t in threads], total=len(threads))
+    """One filtered, RBAC-scoped page of inbox threads.
+
+    Filters and channel visibility are applied in SQL before LIMIT. `cursor`
+    from a previous response walks to the next page; `total` counts the
+    filtered result set, not the page.
+    """
+    try:
+        threads, total, next_cursor = await list_inbox_threads_page(
+            ctx.user,
+            db,
+            search=search,
+            limit=limit,
+            cursor=cursor,
+            include_archived=include_archived,
+            category=category,
+            priority=priority,
+            important=important,
+            visible_channel_ids=ctx.visible_channel_ids(),
+        )
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid cursor") from None
+    return InboxThreadListResponse(
+        threads=[InboxThread(**t) for t in threads],
+        total=total,
+        next_cursor=next_cursor,
+    )
 
 
 @_inbox_router.get("/threads/{channel_id}/{contact_phone}", response_model=ChannelMessageListResponse)

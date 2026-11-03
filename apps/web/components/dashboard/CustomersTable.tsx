@@ -37,9 +37,18 @@ export default function CustomersTable() {
   const [importantOnly, setImportantOnly] = useState(false);
   const [sort, setSort] = useState<"recent" | "important" | "messages">("important");
   const [selected, setSelected] = useState<Customer | null>(null);
+  const pageKey = `${search.trim()}|${platform}|${category}|${priority}|${importantOnly}|${sort}`;
+  const [extraPage, setExtraPage] = useState<{
+    key: string;
+    rows: Customer[];
+    cursor: string | null;
+    loaded: boolean;
+  }>({ key: "", rows: [], cursor: null, loaded: false });
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
 
   const customersQuery = useQuery({
-    queryKey: queryKeys.customers.list(search.trim(), platform, category, priority, importantOnly),
+    queryKey: queryKeys.customers.list(search.trim(), platform, category, priority, importantOnly, sort),
     queryFn: async () => {
       const data = await fetchCustomers({
         search: search.trim() || undefined,
@@ -48,12 +57,24 @@ export default function CustomersTable() {
         priority,
         important: importantOnly,
         limit: 200,
+        sort,
       });
       return data;
     },
     staleTime: 30 * 1000,
   });
-  const customers = customersQuery.data?.customers ?? EMPTY_CUSTOMERS;
+
+  const activeExtra = extraPage.key === pageKey ? extraPage : null;
+  const nextCursor = activeExtra?.loaded
+    ? activeExtra.cursor
+    : (customersQuery.data?.next_cursor ?? null);
+  const customers = useMemo(
+    () => [
+      ...(customersQuery.data?.customers ?? EMPTY_CUSTOMERS),
+      ...(activeExtra?.rows ?? []),
+    ],
+    [customersQuery.data, activeExtra],
+  );
   const total = customersQuery.data?.total ?? 0;
   const loading = customersQuery.isPending;
   const error = customersQuery.isError
@@ -96,6 +117,54 @@ export default function CustomersTable() {
   }, [customers]);
 
   const importantTotal = customers.filter((c) => c.important).length;
+
+  const loadMore = async () => {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    setLoadMoreError(null);
+    try {
+      const page = await fetchCustomers({
+        search: search.trim() || undefined,
+        platform,
+        category,
+        priority,
+        important: importantOnly,
+        limit: 200,
+        sort,
+        cursor: nextCursor,
+      });
+      setExtraPage((prev) => {
+        const current = prev.key === pageKey ? prev.rows : [];
+        const seen = new Set(
+          current.map((c) => `${c.channel_id}:${c.key}`),
+        );
+        const base = new Set(
+          (customersQuery.data?.customers ?? []).map(
+            (c) => `${c.channel_id}:${c.key}`,
+          ),
+        );
+        return {
+          key: pageKey,
+          rows: [
+            ...current,
+            ...page.customers.filter(
+              (c) =>
+                !seen.has(`${c.channel_id}:${c.key}`) &&
+                !base.has(`${c.channel_id}:${c.key}`),
+            ),
+          ],
+          cursor: page.next_cursor,
+          loaded: true,
+        };
+      });
+    } catch (e) {
+      setLoadMoreError(
+        e instanceof Error ? e.message : "Could not load more customers.",
+      );
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   return (
     <div className="flex h-full min-h-0 gap-4">
@@ -265,6 +334,26 @@ export default function CustomersTable() {
             </table>
           )}
         </div>
+        {loadMoreError && (
+          <p
+            role="alert"
+            className="px-4 py-2 text-[12px] font-medium text-red-600 dark:text-red-400"
+          >
+            {loadMoreError}
+          </p>
+        )}
+        {nextCursor && (
+          <div className="border-t border-ink/[0.06] p-2 text-center dark:border-fog/[0.06]">
+            <button
+              type="button"
+              onClick={() => void loadMore()}
+              disabled={loadingMore}
+              className="rounded-full border border-ink/[0.08] bg-white px-3 py-1.5 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet/30 hover:text-deep-violet disabled:opacity-50 dark:border-fog/[0.12] dark:bg-ink dark:text-fog/60 dark:hover:text-fog"
+            >
+              {loadingMore ? "Loading…" : "Load more customers"}
+            </button>
+          </div>
+        )}
         {error && (
           <p className="px-4 py-2 text-[12px] font-medium text-red-600 dark:text-red-400" role="alert">
             {error}

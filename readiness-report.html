@@ -186,7 +186,7 @@
 
 <div class="top">
   <span class="name">Sayvors 1M-User Readiness</span>
-  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 12 open (0 blockers · 6 majors · 6 medium) · INS: 1 open · original audit: 2 open (OPS-1, OPS-4) · 38 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 8 open (2 high · 4 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,052 passed / 3 skipped (post-shim, 2026-11-02)</span>
+  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 10 open (0 blockers · 4 majors · 6 medium) · INS: 1 open · original audit: 2 open (OPS-1, OPS-4) · 38 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 8 open (2 high · 4 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,100 passed / 3 skipped (2026-11-03)</span>
   <nav class="topnav">
     <a href="#blockers">Blockers</a>
     <a href="#pass-2026-10-25">Oct 25 pass</a>
@@ -224,7 +224,7 @@
   <div class="stat"><div class="n amber">Live</div><div class="l">billing &amp; plans — wallet hotfix + durable ledger + 5 plans + admin plan CRUD + tenant grant-plan + entitlements service + enforcement at channel-connect/message-send/LLM; deployed to staging 2026-10-28, schema caught up from 5 migrations behind to <code>h4b5c6d7e8f9</code> head. Plan comparison + request-upgrade UI shipped (<a href="#billing">§6b</a>)</div></div>
   <div class="stat"><div class="n calm">1,645</div><div class="l">backend tests (2 skipped in CI where pgvector runs; 4 skipped locally without Postgres) — CI gates every staging deploy on them; staging CI run #77 passed on <code>d82d800</code></div></div>
   <div class="stat"><div class="n amber">1</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new finding still open: INS-5 (INS-1, INS-2, INS-3, INS-4, INS-6, INS-7 fixed)</div></div>
-  <div class="stat"><div class="n">12</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 0 blockers · 6 majors · 6 medium batches open. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
+  <div class="stat"><div class="n">10</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 0 blockers · 4 majors · 6 medium batches open. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
   <div class="stat"><div class="n">8</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — Review Intelligence + Analytics "actual facts" gaps: listing Q&amp;A, competitor deltas, grid rank, AI-answer visibility. Strategy rule: every number a tenant sees must be verifiable on Google Maps or carry a named source</div></div>
 </div>
 
@@ -466,18 +466,18 @@
       <td class="num">—</td>
     </tr>
     <tr>
-      <td class="num">LAUNCH-P2</td><td><span class="chip high">High</span></td>
-      <td><strong>The customers page does not scale and paginates wrong.</strong> Loads up to 10,000 threads + the <em>entire unbounded Lead table</em> for the tenant + 2 queries per Google-reviews thread inside the loop (N+1), then filters/sorts/slices in Python. Channel-level RBAC is applied <em>after</em> slicing, so RBAC users get short pages and <code>total</code> = filtered page length. One popular tenant's Customers tab is a multi-second full-lead-table request.</td>
-      <td class="path">channels/customers_service.py:96-160; channels/customers_router.py:47-53</td>
-      <td>Push filtering/sorting into SQL, RBAC before slice, batch the reviews lookup.</td>
-      <td class="num">~1 day</td>
+      <td class="num">LAUNCH-P2</td><td><span class="chip ok">Fixed</span></td>
+      <td><strong>The customers page does not scale and paginates wrong.</strong> Loaded up to 10,000 threads + the <em>entire unbounded Lead table</em> for the tenant + 2 queries per Google-reviews thread inside the loop (N+1), then filtered/sorted/sliced in Python. Channel-level RBAC was applied <em>after</em> slicing, so RBAC users got short pages and <code>total</code> = filtered page length. <strong>Fixed 2026-11-02:</strong> customers now uses the shared SQL thread page — platform/category/priority/important filters, RBAC, ordering and keyset pagination all run before LIMIT. Leads are one bulk query for the page and Google review presence is two bulk queries, not N+1. <code>total</code> is the SQL count of the filtered set. The frontend passes <code>sort</code>/<code>cursor</code> and has “Load more customers.” 43 customer/inbox tests pass; browser-verified two-page flow.</td>
+      <td class="path">channels/customers_service.py:95-211; channels/customers_router.py:23-65; channels/service.py:2194-2375; apps/web/components/dashboard/CustomersTable.tsx; apps/web/lib/api-customers.ts; tests/test_customers_api.py</td>
+      <td><span class="chip ok">Done</span></td>
+      <td class="num">—</td>
     </tr>
     <tr>
-      <td class="num">LAUNCH-P3</td><td><span class="chip high">High</span></td>
-      <td><strong>The inbox keyset cursor is dead code from HTTP, and filters run after LIMIT.</strong> The service supports cursor pagination on <code>last_message_at</code> but the route never exposes/forwards a <code>cursor</code> param, and category/priority/important/RBAC filters are applied in Python <em>after</em> the 500-thread LIMIT — threads beyond the first 500 are unreachable and totals are wrong. SCALE-3's "cursor pagination done" claim only holds at the service layer.</td>
-      <td class="path">channels/router.py:716-737 vs channels/service.py:1780-1788</td>
-      <td>Expose + forward the cursor; push the filters into the SQL before LIMIT.</td>
-      <td class="num">~1 day</td>
+      <td class="num">LAUNCH-P3</td><td><span class="chip ok">Fixed</span></td>
+      <td><strong>The inbox keyset cursor is dead code from HTTP, and filters run after LIMIT.</strong> The service supported cursor pagination on <code>last_message_at</code> but the route never exposed/forwarded a <code>cursor</code> param, and category/priority/important/RBAC filters were applied in Python <em>after</em> the 500-thread LIMIT — threads beyond the first 500 were unreachable and totals were wrong. <strong>Fixed 2026-11-02:</strong> <code>/inbox/threads</code> now accepts an opaque <code>cursor</code>, applies category/priority/important/platform/RBAC in SQL before LIMIT, and returns the SQL-filtered <code>total</code> plus <code>next_cursor</code>. The cursor encodes the sort key (pinned/important rank, timestamp, id) so ties cannot skip rows; invalid cursors return 400. The inbox UI has “Load more conversations.” 43 inbox/customer tests pass; browser-verified two-page flow.</td>
+      <td class="path">channels/router.py:718-755; channels/service.py:1708-1930, 2194-2375; channels/schemas.py:188-195; apps/web/app/dashboard/inbox/InboxView.tsx; apps/web/lib/api-inbox.ts; tests/test_inbox_api.py</td>
+      <td><span class="chip ok">Done</span></td>
+      <td class="num">—</td>
     </tr>
     <tr>
       <td class="num">LAUNCH-P4</td><td><span class="chip ok">Fixed</span></td>
@@ -563,7 +563,7 @@
     </tr>
   </table></div>
 
-  <p class="note">Suggested order: S10 → P2/P3/P6 → the rest. P4, S1, S2, S3, S4, S5, S6, S7, S11, S12, S14, B5, M1, M3 and M5 are fixed; B3 was fixed earlier. Infra rows (S8/S9) can land any time on the current box; they stop being optional the day a second replica or real customers arrive.</p>
+  <p class="note">Suggested order: S10 → P6 → S8/S9 → the rest. P2, P3, P4, S1, S2, S3, S4, S5, S6, S7, S11, S12, S14, B5, M1, M3 and M5 are fixed; B3 was fixed earlier. Infra rows (S8/S9) can land any time on the current box; they stop being optional the day a second replica or real customers arrive.</p>
 </section>
 
 <section id="pass-2026-11-02">

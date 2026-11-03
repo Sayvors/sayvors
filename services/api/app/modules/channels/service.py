@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import hmac
 import json
@@ -10,7 +11,7 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 
 from fastapi import Request
-from sqlalchemy import case, func, select, tuple_
+from sqlalchemy import and_, case, func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -1705,23 +1706,161 @@ def _thread_payloads(
     return out
 
 
-async def _search_threads(
+async def _active_user_channels(
+    user: User,
+    db: AsyncSession,
+    *,
+    visible_channel_ids: set[str] | None = None,
+    platform: str | None = None,
+) -> tuple[list[Channel], dict[str, Channel]]:
+    """Channels this tenant can actually see, with RBAC and platform applied.
+
+    Disconnected channels and deactivated Meta assets are excluded for the
+    same reason as before: their history is preserved, but they are not
+    reachable until reconnected.
+    """
+    tenant_id = tenant_id_of(user)
+    channels = list(
+        (
+            await db.execute(select(Channel).where(Channel.user_id == tenant_id))
+        ).scalars().all()
+    )
+    if not channels:
+        return [], {}
+
+    from .meta.models import MetaAsset
+
+    inactive_assets = {
+        (provider, external)
+        for provider, external in (
+            await db.execute(
+                select(MetaAsset.provider, MetaAsset.external_asset_id).where(
+                    MetaAsset.tenant_id == tenant_id,
+                    MetaAsset.active.is_(False),
+                )
+            )
+        ).all()
+    }
+    channels = [
+        c
+        for c in channels
+        if c.status != "disconnected"
+        and (c.platform, c.platform_user_id) not in inactive_assets
+        and (platform is None or c.platform == platform)
+        and (visible_channel_ids is None or c.id in visible_channel_ids)
+    ]
+    return channels, {c.id: c for c in channels}
+
+
+def _thread_importance_expr():
+    """SQL mirror of is_important() for filtering and ordering."""
+    return or_(
+        func.lower(func.coalesce(ChannelThread.priority, "normal")).in_(
+            list(IMPORTANT_PRIORITIES)
+        ),
+        func.lower(func.coalesce(ChannelThread.category, "")) == "complaint",
+    )
+
+
+def _thread_rank_expr(sort: str):
+    if sort == "pinned":
+        return case((ChannelThread.pinned_at.is_not(None), 0), else_=1)
+    if sort == "important":
+        return case((_thread_importance_expr(), 0), else_=1)
+    return None
+
+
+def _thread_rank_value(thread: ChannelThread, sort: str) -> int:
+    if sort == "pinned":
+        return 0 if thread.pinned_at is not None else 1
+    if sort == "important":
+        return 0 if is_important(thread.priority, thread.category) else 1
+    if sort == "messages":
+        return int(thread.total_count or 0)
+    return 0
+
+
+def _thread_sort_at(thread: ChannelThread) -> datetime:
+    return _as_utc(thread.last_message_at or thread.created_at)
+
+
+def _encode_thread_cursor(
+    sort: str, primary: int, sort_at: datetime, thread_id: str
+) -> str:
+    payload = json.dumps(
+        {
+            "s": sort,
+            "p": int(primary),
+            "t": _as_utc(sort_at).isoformat(),
+            "id": thread_id,
+        },
+        separators=(",", ":"),
+    ).encode()
+    return base64.urlsafe_b64encode(payload).decode().rstrip("=")
+
+
+def _decode_thread_cursor(
+    cursor: str, expected_sort: str
+) -> tuple[int, datetime, str]:
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        data = json.loads(base64.urlsafe_b64decode(padded).decode())
+        if data.get("s") != expected_sort:
+            raise ValueError("cursor sort mismatch")
+        primary = int(data["p"])
+        sort_at = datetime.fromisoformat(str(data["t"]))
+        thread_id = str(data["id"])
+    except (ValueError, TypeError, KeyError, UnicodeDecodeError):
+        raise ValueError("invalid thread cursor") from None
+    return primary, _as_utc(sort_at), thread_id
+
+
+def _thread_cursor_filter(
+    sort: str,
+    primary: int,
+    sort_at: datetime,
+    thread_id: str,
+    *,
+    rank_expr,
+    sort_at_expr,
+):
+    """Keyset condition for the requested thread ordering."""
+    if sort in ("pinned", "important"):
+        return or_(
+            rank_expr > primary,
+            and_(rank_expr == primary, sort_at_expr < sort_at),
+            and_(
+                rank_expr == primary,
+                sort_at_expr == sort_at,
+                ChannelThread.id < thread_id,
+            ),
+        )
+    if sort == "messages":
+        return or_(
+            ChannelThread.total_count < primary,
+            and_(ChannelThread.total_count == primary, sort_at_expr < sort_at),
+            and_(
+                ChannelThread.total_count == primary,
+                sort_at_expr == sort_at,
+                ChannelThread.id < thread_id,
+            ),
+        )
+    return or_(
+        sort_at_expr < sort_at,
+        and_(
+            sort_at_expr == sort_at,
+            ChannelThread.id < thread_id,
+        ),
+    )
+
+
+async def _search_thread_keys(
     db: AsyncSession,
     channel_ids: list[str],
     needle: str,
-    limit: int,
-    cursor: str | None,
-) -> list[ChannelThread]:
-    """Find threads whose *recent* messages contain ``needle``.
-
-    The scan is deliberately bounded (see the constants above). It reads the
-    newest slice of each channel, decrypts it, keeps the first
-    ``INBOX_SEARCH_MAX_THREADS`` matches, then resolves those keys against
-    the denormalized thread table so counts and ordering stay authoritative.
-    """
+) -> list[tuple[str, str]]:
+    """Bounded recent-message search; returns matched thread keys."""
     total_budget = INBOX_SEARCH_MESSAGE_LIMIT
-    # At least one row per channel so every channel is represented, but the
-    # sum across channels never exceeds the total budget.
     per_channel = max(1, total_budget // len(channel_ids))
 
     scanned: list = []
@@ -1760,15 +1899,26 @@ async def _search_threads(
         matched.append(key)
         if len(matched) >= INBOX_SEARCH_MAX_THREADS:
             break
-    if not matched:
-        return []
+    return matched
 
+
+async def _search_threads(
+    db: AsyncSession,
+    channel_ids: list[str],
+    needle: str,
+    limit: int,
+    cursor: str | None,
+) -> list[ChannelThread]:
+    """Legacy search helper used by list_inbox_threads()."""
+    keys = await _search_thread_keys(db, channel_ids, needle)
+    if not keys:
+        return []
     stmt = (
         select(ChannelThread)
         .where(
             tuple_(
                 ChannelThread.channel_id, ChannelThread.contact_phone_hash
-            ).in_(matched)
+            ).in_(keys)
         )
         .order_by(ChannelThread.last_message_at.desc())
         .limit(limit)
@@ -1798,44 +1948,10 @@ async def list_inbox_threads(
     busy inbox can hold tens of thousands of rows, and the aggregate here
     (last message, count, unread) is exactly what the database is for.
     """
-    # A disconnected channel is not reachable (Meta revoked / user
-    # disconnected), so its threads stay out of the list — the history is
-    # preserved and reappears when the same number reconnects. The status flag
-    # only exists since the disconnect started writing it, so channels
-    # disconnected before that are caught by their deactivated Meta asset —
-    # every disconnect path deactivates the asset too.
-    channels = (
-        (
-            await db.execute(select(Channel).where(Channel.user_id == tenant_id_of(user)))
-        )
-        .scalars()
-        .all()
-    )
-    if not channels:
-        return []
-    from .meta.models import MetaAsset
-
-    inactive_assets = {
-        (provider, external)
-        for provider, external in (
-            await db.execute(
-                select(MetaAsset.provider, MetaAsset.external_asset_id).where(
-                    MetaAsset.tenant_id == tenant_id_of(user),
-                    MetaAsset.active.is_(False),
-                )
-            )
-        ).all()
-    }
-    channels = [
-        c
-        for c in channels
-        if c.status != "disconnected"
-        and (c.platform, c.platform_user_id) not in inactive_assets
-    ]
+    channels, by_id = await _active_user_channels(user, db)
     if not channels:
         return []
     channel_ids = [c.id for c in channels]
-    by_id = {c.id: c for c in channels}
 
     needle = search.strip().lower() if search and search.strip() else None
     if needle and len(needle) < INBOX_SEARCH_MIN_QUERY_CHARS:
@@ -2051,6 +2167,212 @@ async def list_inbox_threads(
     return _thread_payloads(
         threads, by_id, profiles, lead_categories, assignee_names
     )
+
+
+THREAD_PAGE_SORTS = frozenset({"pinned", "recent", "important", "messages"})
+
+
+def _thread_row_matches(
+    row: dict, category: str | None, priority: str | None, important: bool | None
+) -> bool:
+    if category and (row.get("category") or "normal").strip().lower() != category.strip().lower():
+        return False
+    if priority and (row.get("priority") or "normal").strip().lower() != priority.strip().lower():
+        return False
+    if important is not None and bool(row.get("important")) is not important:
+        return False
+    return True
+
+
+def _iso_ts(value: object) -> float:
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except (ValueError, TypeError):
+        return 0.0
+
+
+async def list_inbox_threads_page(
+    user: User,
+    db: AsyncSession,
+    *,
+    search: str | None = None,
+    limit: int = 100,
+    cursor: str | None = None,
+    include_archived: bool = False,
+    category: str | None = None,
+    priority: str | None = None,
+    important: bool | None = None,
+    platform: str | None = None,
+    visible_channel_ids: set[str] | None = None,
+    sort: str = "pinned",
+) -> tuple[list[dict], int, str | None]:
+    """One filtered, RBAC-scoped, keyset-paginated page of inbox threads.
+
+    Filters, channel visibility and ordering are applied in SQL before LIMIT;
+    the old route applied them in Python after a fixed fetch, so pages were
+    short and every thread beyond the page was unreachable.
+
+    Returns ``(threads, total, next_cursor)``. ``total`` counts the filtered
+    result set, not the page. Cursors are opaque and encode the sort key.
+    """
+    if sort not in THREAD_PAGE_SORTS:
+        raise ValueError("invalid thread sort")
+    limit = max(1, limit)
+    decoded_cursor = _decode_thread_cursor(cursor, sort) if cursor else None
+
+    channels, by_id = await _active_user_channels(
+        user,
+        db,
+        visible_channel_ids=visible_channel_ids,
+        platform=platform,
+    )
+    if not channels:
+        return [], 0, None
+    channel_ids = [c.id for c in channels]
+
+    needle = search.strip().lower() if search and search.strip() else None
+    if needle and len(needle) < INBOX_SEARCH_MIN_QUERY_CHARS:
+        needle = None
+
+    # Legacy pre-backfill path: the thread table is empty. Keep the old
+    # message-grouped implementation, but apply the same filters and RBAC
+    # before slicing so it cannot return a short/wrong page either.
+    has_threads = (
+        await db.execute(
+            select(ChannelThread.id)
+            .where(ChannelThread.channel_id.in_(channel_ids))
+            .limit(1)
+        )
+    ).scalar_one_or_none() is not None
+    if not has_threads:
+        rows = await list_inbox_threads(
+            user,
+            db,
+            search=search,
+            limit=10000,
+            include_archived=include_archived,
+        )
+        allowed = set(channel_ids)
+        rows = [r for r in rows if r.get("channel_id") in allowed]
+        rows = [
+            r
+            for r in rows
+            if _thread_row_matches(r, category, priority, important)
+        ]
+        if sort == "important":
+            rows.sort(
+                key=lambda r: (
+                    0 if r.get("important") else 1,
+                    -_iso_ts(r.get("last_message_at")),
+                )
+            )
+        elif sort == "messages":
+            rows.sort(
+                key=lambda r: (
+                    -int(r.get("message_count") or 0),
+                    -_iso_ts(r.get("last_message_at")),
+                )
+            )
+        elif sort == "recent":
+            rows.sort(key=lambda r: -_iso_ts(r.get("last_message_at")))
+        total = len(rows)
+        return rows[:limit], total, None
+
+    filters = [ChannelThread.channel_id.in_(channel_ids)]
+    if not include_archived:
+        filters.append(ChannelThread.archived_at.is_(None))
+    if category:
+        filters.append(
+            func.lower(func.coalesce(ChannelThread.category, "normal"))
+            == category.strip().lower()
+        )
+    if priority:
+        filters.append(
+            func.lower(func.coalesce(ChannelThread.priority, "normal"))
+            == priority.strip().lower()
+        )
+    if important is not None:
+        importance = _thread_importance_expr()
+        filters.append(importance if important else ~importance)
+    if needle:
+        keys = await _search_thread_keys(db, channel_ids, needle)
+        if not keys:
+            return [], 0, None
+        filters.append(
+            tuple_(
+                ChannelThread.channel_id, ChannelThread.contact_phone_hash
+            ).in_(keys)
+        )
+
+    total = int(
+        (
+            await db.execute(
+                select(func.count()).select_from(ChannelThread).where(*filters)
+            )
+        ).scalar_one()
+        or 0
+    )
+    if total == 0:
+        return [], 0, None
+
+    sort_at_expr = func.coalesce(
+        ChannelThread.last_message_at, ChannelThread.created_at
+    )
+    rank_expr = _thread_rank_expr(sort)
+    stmt_filters = list(filters)
+    if decoded_cursor:
+        primary, cursor_at, thread_id = decoded_cursor
+        stmt_filters.append(
+            _thread_cursor_filter(
+                sort,
+                primary,
+                cursor_at,
+                thread_id,
+                rank_expr=rank_expr,
+                sort_at_expr=sort_at_expr,
+            )
+        )
+
+    stmt = select(ChannelThread).where(*stmt_filters)
+    if rank_expr is not None:
+        stmt = stmt.order_by(
+            rank_expr.asc(), sort_at_expr.desc(), ChannelThread.id.desc()
+        )
+    elif sort == "messages":
+        stmt = stmt.order_by(
+            ChannelThread.total_count.desc(),
+            sort_at_expr.desc(),
+            ChannelThread.id.desc(),
+        )
+    else:
+        stmt = stmt.order_by(sort_at_expr.desc(), ChannelThread.id.desc())
+    threads = list(
+        (await db.execute(stmt.limit(limit + 1))).scalars().all()
+    )
+    has_more = len(threads) > limit
+    threads = threads[:limit]
+    if not threads:
+        return [], total, None
+
+    profiles = await _thread_profiles(db, tenant_id_of(user), threads, by_id)
+    lead_categories = await _thread_lead_categories(
+        db, tenant_id_of(user), _thread_lead_pairs(threads)
+    )
+    assignee_names = await _thread_assignee_names(db, threads)
+    payloads = _thread_payloads(
+        threads, by_id, profiles, lead_categories, assignee_names
+    )
+    next_cursor = (
+        _encode_thread_cursor(
+            sort,
+            _thread_rank_value(threads[-1], sort),
+            _thread_sort_at(threads[-1]),
+            threads[-1].id,
+        )
+        if has_more
+        else None
+    )
+    return payloads, total, next_cursor
 
 
 async def list_thread_messages(

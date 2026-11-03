@@ -299,6 +299,8 @@ export default function InboxView() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const [threads, setThreads] = useState<InboxThread[]>([]);
+  const [nextThreadCursor, setNextThreadCursor] = useState<string | null>(null);
+  const [loadingMoreThreads, setLoadingMoreThreads] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -835,26 +837,29 @@ export default function InboxView() {
   const threadsQuery = useQuery({
     queryKey: ["inbox", "threads", debouncedSearch, showArchived],
     queryFn: async () => {
-      const list = await fetchInboxThreads(debouncedSearch, showArchived);
+      const page = await fetchInboxThreads(debouncedSearch, showArchived);
       // Deep-link handling: if a thread was requested via URL, select it.
       const deep = deepLinkRef.current;
       if (deep.channel && deep.key) {
-        const hit = list.find((t) => t.channel_id === deep.channel && t.key === deep.key);
+        const hit = page.threads.find(
+          (t) => t.channel_id === deep.channel && t.key === deep.key,
+        );
         if (hit) {
           setSelectedKey(`${hit.channel_id}:${hit.key}`);
           deepLinkRef.current = { channel: null, key: null };
         }
       }
-      return list;
+      return page;
     },
     staleTime: 15 * 1000,
   });
 
   // Sync server state into local state (preserves realtime/WS mutation paths).
   useEffect(() => {
-    const list = threadsQuery.data;
-    if (list) {
-      setThreads(list);
+    const page = threadsQuery.data;
+    if (page) {
+      setThreads(page.threads);
+      setNextThreadCursor(page.next_cursor);
       setLoading(false);
       setError(null);
     }
@@ -1182,6 +1187,32 @@ export default function InboxView() {
     });
   }, [threads, filter, platformFilter, showArchived]);
 
+  const loadMoreThreads = async () => {
+    if (!nextThreadCursor || loadingMoreThreads) return;
+    setLoadingMoreThreads(true);
+    try {
+      const page = await fetchInboxThreads(debouncedSearch, showArchived, {
+        cursor: nextThreadCursor,
+      });
+      setThreads((prev) => {
+        const seen = new Set(prev.map((t) => `${t.channel_id}:${t.key}`));
+        return [
+          ...prev,
+          ...page.threads.filter(
+            (t) => !seen.has(`${t.channel_id}:${t.key}`),
+          ),
+        ];
+      });
+      setNextThreadCursor(page.next_cursor);
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : "Could not load more conversations.",
+      );
+    } finally {
+      setLoadingMoreThreads(false);
+    }
+  };
+
   // Virtualize the thread list so a tenant with thousands of conversations
   // doesn't render thousands of DOM nodes. The scroll container is the
   // overflow-y-auto div below; rows are absolutely positioned by offset.
@@ -1502,6 +1533,20 @@ export default function InboxView() {
                     </div>
                   );
                 })}
+              </div>
+            )}
+            {nextThreadCursor && (
+              <div className="border-t border-ink/[0.04] p-3 text-center dark:border-fog/[0.04]">
+                <button
+                  type="button"
+                  onClick={() => void loadMoreThreads()}
+                  disabled={loadingMoreThreads}
+                  className="rounded-full border border-ink/[0.08] bg-white px-3 py-1.5 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet/30 hover:text-deep-violet disabled:opacity-50 dark:border-fog/[0.12] dark:bg-ink dark:text-fog/60 dark:hover:text-fog"
+                >
+                  {loadingMoreThreads
+                    ? "Loading…"
+                    : "Load more conversations"}
+                </button>
               </div>
             )}
           </div>

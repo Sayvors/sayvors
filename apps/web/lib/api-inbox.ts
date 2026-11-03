@@ -123,13 +123,40 @@ export interface InboxSendResult {
   error: string | null;
 }
 
-export async function fetchInboxThreads(search = "", includeArchived = false): Promise<InboxThread[]> {
+export interface InboxThreadPage {
+  threads: InboxThread[];
+  total: number;
+  next_cursor: string | null;
+}
+
+export async function fetchInboxThreads(
+  search = "",
+  includeArchived = false,
+  options: {
+    cursor?: string | null;
+    category?: string | null;
+    priority?: string | null;
+    important?: boolean | null;
+    limit?: number;
+  } = {},
+): Promise<InboxThreadPage> {
   const params = new URLSearchParams();
   if (search.trim()) params.set("search", search.trim());
   if (includeArchived) params.set("include_archived", "true");
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.category) params.set("category", options.category);
+  if (options.priority) params.set("priority", options.priority);
+  if (options.important !== null && options.important !== undefined) {
+    params.set("important", String(options.important));
+  }
+  if (options.limit) params.set("limit", String(options.limit));
   const q = params.toString() ? `?${params.toString()}` : "";
   const data = await apiFetch(`/api/v1/inbox/threads${q}`);
-  return (data?.threads ?? []) as InboxThread[];
+  return {
+    threads: (data?.threads ?? []) as InboxThread[],
+    total: Number(data?.total ?? 0),
+    next_cursor: (data?.next_cursor ?? null) as string | null,
+  };
 }
 
 export async function archiveInboxThread(channelId: string, contactPhone: string | null, archived: boolean): Promise<void> {

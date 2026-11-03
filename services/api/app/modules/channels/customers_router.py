@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_current_user, get_db
 from ..team.context import TenantContext, require_perm
@@ -26,30 +27,36 @@ async def list_customers(
     priority: str | None = Query(None, max_length=16),
     important: bool | None = Query(None),
     limit: int = Query(100, ge=1, le=500),
-    offset: int = Query(0, ge=0),
+    cursor: str | None = Query(None, max_length=512),
+    sort: str = Query("important", pattern="^(important|recent|messages)$"),
     ctx: TenantContext = Depends(require_perm("inbox.view")),
     db: AsyncSession = Depends(get_db),
 ):
-    """List every customer across every channel, newest activity first."""
-    from sqlalchemy.ext.asyncio import AsyncSession
+    """One filtered, RBAC-scoped page of customers.
 
-    customers, total = await customers_service.list_customers(
-        db,
-        ctx.user,
-        search=search,
-        platform=platform,
-        category=category,
-        priority=priority,
-        important=important,
-        limit=limit,
-        offset=offset,
-    )
-    visible = ctx.visible_channel_ids()
-    if visible is not None:
-        customers = [c for c in customers if c.get("channel_id") in visible]
+    Filtering, ordering and pagination happen in SQL; `next_cursor` walks to
+    the next page and `total` counts the filtered set.
+    """
+    try:
+        customers, total, next_cursor = await customers_service.list_customers(
+            db,
+            ctx.user,
+            search=search,
+            platform=platform,
+            category=category,
+            priority=priority,
+            important=important,
+            limit=limit,
+            cursor=cursor,
+            visible_channel_ids=ctx.visible_channel_ids(),
+            sort=sort,
+        )
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid cursor") from None
     return {
         "customers": customers,
-        "total": len(customers) if visible is not None else total,
+        "total": total,
+        "next_cursor": next_cursor,
     }
 
 
