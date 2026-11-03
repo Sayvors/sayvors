@@ -97,6 +97,14 @@ export default function PresenceSection({
   const synced = timeAgo(p.syncedAt);
   const branchNote =
     p.branchCount && p.branchCount > 1 ? `${p.branchCount} branches` : null;
+  const fmtNum = (value: number) => new Intl.NumberFormat(locale).format(value);
+  const snapshotTiles = [
+    { label: copy.searchViews, value: p.searchViews },
+    { label: copy.mapViews, value: p.mapViews },
+    { label: copy.websiteClicks, value: p.websiteClicks },
+    { label: copy.directionRequests, value: p.directionRequests },
+    { label: copy.phoneCalls, value: p.phoneCalls },
+  ];
 
   const labels = {
     discovery: copy.presenceDiscovery,
@@ -163,6 +171,31 @@ export default function PresenceSection({
             {p.windowLabel ?? copy.last30Days} · {copy.viaLocalith}
           </p>
         </div>
+        <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 lg:grid-cols-6">
+          {snapshotTiles.map(({ label, value }) => (
+            <div key={label}>
+              <dt className="text-[9px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
+                {label}
+              </dt>
+              <dd className="mt-0.5 text-[16px] font-black tabular-nums text-[var(--ui-ink)]">
+                {fmtNum(value)}
+              </dd>
+            </div>
+          ))}
+          <div>
+            <dt className="text-[9px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
+              {copy.reviewsAllTime}
+            </dt>
+            <dd className="mt-0.5 text-[16px] font-black tabular-nums text-[var(--ui-ink)]">
+              {fmtNum(p.totalReviews)}
+            </dd>
+            <p className="text-[10px] text-[var(--ui-ink-2)]">
+              {p.averageRating > 0
+                ? copy.ratingShort.replace("{rating}", p.averageRating.toFixed(1))
+                : "—"}
+            </p>
+          </div>
+        </dl>
         <FactSource
           source="Google Business Profile"
           detail={p.windowLabel ?? copy.last30Days}

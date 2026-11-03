@@ -6,9 +6,10 @@ path, so dashboards stay fast and deterministic.
 """
 import logging
 import math
-from datetime import datetime, timedelta, timezone
+import uuid
+from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import Integer, func, select
+from sqlalchemy import Integer, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..channels.models import ReviewReply
@@ -212,6 +213,97 @@ async def get_overview(
     }
 
 
+def _as_date(value: object) -> date:
+    """Normalise `func.date(...)` output (date on Postgres, str on SQLite)."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value)[:10])
+
+
+async def _review_rollup_fallback(
+    db: AsyncSession, user_id: str, channel_id: str | None, since: date
+) -> tuple[dict[tuple[str, date], dict], dict[tuple[str, date], int]]:
+    """Daily review aggregates for days the Kafka rollup did not cover.
+
+    `location_daily_metrics` is the normal chart source. It can legitimately
+    have a zero review count for a day: the performance sync creates the row
+    first and the analytics consumer fills the review fields later. If that
+    consumer event was missed (backfill, Kafka outage, a review ingested
+    before the rollup existed), the chart claims "no reviews" while
+    `review_insights` has them. This reads the source rows for the requested
+    window so the chart can show the truth.
+
+    Only called when *no* daily row in the window has a review count, so the
+    healthy path pays nothing. Bounded by tenant + window; no writes.
+    """
+    bucket = func.date(
+        func.coalesce(ReviewInsight.review_updated_at, ReviewInsight.created_at)
+    )
+    review_stmt = (
+        select(
+            ReviewInsight.channel_id,
+            bucket.label("day"),
+            func.count(ReviewInsight.id),
+            func.avg(ReviewInsight.rating),
+            func.sum(case((ReviewInsight.sentiment == "positive", 1), else_=0)),
+            func.sum(case((ReviewInsight.sentiment == "neutral", 1), else_=0)),
+            func.sum(case((ReviewInsight.sentiment == "negative", 1), else_=0)),
+        )
+        .where(
+            ReviewInsight.user_id == user_id,
+            ReviewInsight.removed_at.is_(None),
+            bucket >= since,
+        )
+        .group_by(ReviewInsight.channel_id, bucket)
+    )
+    if channel_id:
+        review_stmt = review_stmt.where(ReviewInsight.channel_id == channel_id)
+
+    stats: dict[tuple[str, date], dict] = {}
+    for cid, day, count, avg, positive, neutral, negative in (
+        await db.execute(review_stmt)
+    ).all():
+        key = (cid, _as_date(day))
+        stats[key] = {
+            "reviews_count": int(count or 0),
+            "avg_rating": round(float(avg or 0.0), 2),
+            "positive_count": int(positive or 0),
+            "neutral_count": int(neutral or 0),
+            "negative_count": int(negative or 0),
+        }
+
+    # Mirror `recompute_daily_rollup`: a posted reply is counted on the day
+    # of the review it answers, not the day the reply was posted.
+    reply_bucket = func.date(
+        func.coalesce(ReviewInsight.review_updated_at, ReviewInsight.created_at)
+    )
+    reply_stmt = (
+        select(
+            ReviewInsight.channel_id,
+            reply_bucket.label("day"),
+            func.count(ReviewReply.id),
+        )
+        .join(ReviewReply, ReviewReply.review_id == ReviewInsight.review_id)
+        .where(
+            ReviewInsight.user_id == user_id,
+            ReviewInsight.removed_at.is_(None),
+            ReviewInsight.replied.is_(True),
+            ReviewReply.status == "posted",
+            reply_bucket >= since,
+        )
+        .group_by(ReviewInsight.channel_id, reply_bucket)
+    )
+    if channel_id:
+        reply_stmt = reply_stmt.where(ReviewInsight.channel_id == channel_id)
+    replies = {
+        (cid, _as_date(day)): int(count or 0)
+        for cid, day, count in (await db.execute(reply_stmt)).all()
+    }
+    return stats, replies
+
+
 async def get_timeseries(
     db: AsyncSession, user_id: str, channel_id: str | None, days: int = 30
 ) -> list[LocationDailyMetric]:
@@ -224,7 +316,50 @@ async def get_timeseries(
     )
     if channel_id:
         stmt = stmt.where(LocationDailyMetric.channel_id == channel_id)
-    return list((await db.execute(stmt)).scalars().all())
+    rows = list((await db.execute(stmt)).scalars().all())
+
+    # A performance-only sync creates rows before the review rollup lands.
+    # When every row in the window still has zero reviews, ask the source
+    # table and merge the real counts in memory. No writes, and no query at
+    # all for the normal case where the rollup already has review data.
+    if not any(row.reviews_count for row in rows):
+        stats, replies = await _review_rollup_fallback(
+            db, user_id, channel_id, since
+        )
+        if stats:
+            by_key = {(row.channel_id, row.date): row for row in rows}
+            for key, stat in stats.items():
+                cid, day = key
+                row = by_key.get(key)
+                if row is None:
+                    row = LocationDailyMetric(
+                        id=str(uuid.uuid4()),
+                        user_id=user_id,
+                        channel_id=cid,
+                        date=day,
+                        reviews_count=0,
+                        avg_rating=0.0,
+                        positive_count=0,
+                        neutral_count=0,
+                        negative_count=0,
+                        replies_count=0,
+                        impressions_maps_desktop=0,
+                        impressions_maps_mobile=0,
+                        website_clicks=0,
+                        call_clicks=0,
+                        direction_requests=0,
+                    )
+                    rows.append(row)
+                    by_key[key] = row
+                row.reviews_count = stat["reviews_count"]
+                row.avg_rating = stat["avg_rating"]
+                row.positive_count = stat["positive_count"]
+                row.neutral_count = stat["neutral_count"]
+                row.negative_count = stat["negative_count"]
+                row.replies_count = replies.get(key, 0)
+            rows.sort(key=lambda row: (row.date, row.channel_id))
+
+    return rows
 
 
 async def list_insights(
