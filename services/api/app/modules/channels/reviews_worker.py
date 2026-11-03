@@ -19,6 +19,7 @@ the same channel. The lock expires on its own (crash-safe).
 import asyncio
 import json
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, update
@@ -28,6 +29,7 @@ from ...config import settings
 from ..outbox.service import enqueue_event
 from .google_reviews import GoogleReviewsClient, GoogleReviewsError
 from .models import AutoReplyConfig, Channel, ChannelMessage, ReviewReply
+from ..analytics.models import GoogleQuestionAnswer
 from .review_reply import generate_auto_reply
 from ..notifications.service import notify
 from .service import decrypt_token, encrypt_message_content
@@ -389,6 +391,106 @@ def _google_reviewer_key(review) -> str:
         # the message still lands in a thread of its own.
         identity = str(review.review_id)
     return f"google:{hashlib.sha256(identity.encode()).hexdigest()[:32]}"
+
+
+async def _store_question_answer(
+    db: AsyncSession, channel: Channel, question: dict
+) -> None:
+    """Upsert one Q&A pair from Google's questions list.
+
+    Google returns questions with optional answers. We store both the
+    question and any merchant answer. Customer answers are read-only;
+    only merchant answers are ever posted back to Google.
+    """
+    question_id = question.get("name", "")
+    if not question_id:
+        return
+
+    existing = (
+        await db.execute(
+            select(GoogleQuestionAnswer).where(
+                GoogleQuestionAnswer.channel_id == channel.id,
+                GoogleQuestionAnswer.question_id == question_id,
+            )
+        )
+    ).scalar_one_or_none()
+
+    asker = question.get("author") or {}
+    top_answers = question.get("topAnswers") or []
+    merchant_answer = next(
+        (
+            a
+            for a in top_answers
+            if str(((a.get("author") or {}).get("type") or "")).upper() == "MERCHANT"
+        ),
+        None,
+    )
+    answer = merchant_answer or {}
+    answer_text = (answer.get("text") or "").strip() or None
+    answer_author = answer.get("author") or {}
+
+    if existing is None:
+        db.add(
+            GoogleQuestionAnswer(
+                id=str(uuid.uuid4()),
+                user_id=channel.user_id,
+                channel_id=channel.id,
+                question_id=question_id,
+                question_text=question.get("text", "") or "",
+                asker_name=asker.get("displayName"),
+                asker_profile_photo_url=asker.get("profilePhotoUrl"),
+                question_created_at=_parse_google_time(question.get("createTime")),
+                answer_text=answer_text,
+                answerer_name=answer_author.get("displayName"),
+                answer_type=answer_author.get("type"),
+                answer_created_at=_parse_google_time(
+                    answer.get("createTime") or answer.get("updateTime")
+                ),
+                is_answered=bool(answer_text),
+                upvote_count=int(question.get("upvoteCount", 0) or 0),
+                draft_status="posted" if answer_text else "none",
+                draft_approved_at=(
+                    _parse_google_time(answer.get("createTime"))
+                    if answer_text
+                    else None
+                ),
+                last_synced_at=datetime.now(timezone.utc),
+            )
+        )
+    else:
+        existing.question_text = question.get("text", "") or ""
+        existing.asker_name = asker.get("displayName")
+        existing.asker_profile_photo_url = asker.get("profilePhotoUrl")
+        existing.question_created_at = _parse_google_time(
+            question.get("createTime")
+        )
+        existing.answer_text = answer_text
+        existing.answerer_name = answer_author.get("displayName")
+        existing.answer_type = answer_author.get("type")
+        existing.answer_created_at = _parse_google_time(
+            answer.get("createTime") or answer.get("updateTime")
+        )
+        existing.is_answered = bool(answer_text)
+        existing.upvote_count = int(question.get("upvoteCount", 0) or 0)
+        if answer_text:
+            existing.draft_status = "posted"
+            existing.draft_approved_at = (
+                existing.draft_approved_at
+                or _parse_google_time(answer.get("createTime"))
+            )
+        existing.last_synced_at = datetime.now(timezone.utc)
+        db.add(existing)
+
+
+def _parse_google_time(value: str | None) -> datetime | None:
+    """Parse a Google API RFC-3339 timestamp into an aware datetime."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
 
 
 async def _enqueue_review_discovered(db: AsyncSession, channel: Channel, review) -> None:
@@ -875,6 +977,33 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                     await _enqueue_review_replied(db, channel, review, "pending_approval")
                 except Exception as e:
                     logger.warning("review.replied enqueue failed for %s: %s", review.review_id, e)
+
+        # ── Q&A polling ──────────────────────────────────────────────
+        # Google sends no webhooks for questions, so they are polled alongside
+        # reviews on the same schedule. Q&A failures never break the review
+        # poll — they are logged and the loop continues.
+        try:
+            account_id = channel.platform_user_id or ""
+            location_id = _channel_meta(channel).get("location_id", "")
+            if account_id and location_id:
+                try:
+                    questions = await client.list_questions(account_id, location_id)
+                    stats["questions"] = len(questions)
+                    for q in questions:
+                        try:
+                            await _store_question_answer(db, channel, q)
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to store question %s: %s",
+                                q.get("name", "unknown"), e,
+                            )
+                    await db.commit()
+                except GoogleReviewsError as e:
+                    logger.warning(
+                        "Q&A poll failed for channel %s: %s", channel.id, e
+                    )
+        except Exception as e:
+            logger.warning("Q&A poll unexpected error for channel %s: %s", channel.id, e)
 
         return stats
     finally:

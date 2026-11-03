@@ -186,7 +186,7 @@
 
 <div class="top">
   <span class="name">Sayvors 1M-User Readiness</span>
-  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 4 open (0 blockers · 3 majors · 1 medium) · INS: 1 open · original audit: 2 open (OPS-1, OPS-4) · 38 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 8 open (2 high · 4 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,113 passed / 3 skipped (2026-11-03)</span>
+  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 4 open (0 blockers · 3 majors · 1 medium) · INS: 1 open · original audit: 2 open (OPS-1, OPS-4) · 38 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 8 open (2 high · 4 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,118 passed / 3 skipped (2026-11-03)</span>
   <nav class="topnav">
     <a href="#blockers">Blockers</a>
     <a href="#pass-2026-10-25">Oct 25 pass</a>
@@ -225,7 +225,7 @@
   <div class="stat"><div class="n calm">1,645</div><div class="l">backend tests (2 skipped in CI where pgvector runs; 4 skipped locally without Postgres) — CI gates every staging deploy on them; staging CI run #77 passed on <code>d82d800</code></div></div>
   <div class="stat"><div class="n amber">1</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new finding still open: INS-5 (INS-1, INS-2, INS-3, INS-4, INS-6, INS-7 fixed)</div></div>
   <div class="stat"><div class="n">4</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 0 blockers · 3 majors · 1 medium batches open. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
-  <div class="stat"><div class="n">9</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — Review Intelligence + Analytics "actual facts" gaps: listing Q&amp;A, competitor deltas, grid rank, AI-answer visibility, Review Campaign premium gating. Strategy rule: every number a tenant sees must be verifiable on Google Maps or carry a named source</div></div>
+  <div class="stat"><div class="n">8</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — Review Intelligence + Analytics "actual facts" gaps: competitor deltas, grid rank, AI-answer visibility, Review Campaign premium gating. Strategy rule: every number a tenant sees must be verifiable on Google Maps or carry a named source</div></div>
 </div>
 
 <section id="model">
@@ -588,11 +588,11 @@
   <div class="scroll"><table>
     <tr><th>ID</th><th>Sev</th><th>Finding</th><th>Evidence</th><th>Fix</th><th>Effort</th></tr>
     <tr>
-      <td class="num">FACT-1</td><td><span class="chip high">High</span></td>
-      <td><strong>Google listing Q&amp;A is completely unsynced.</strong> Maps Q&amp;A is public, appears in search results, and is frequently answered by strangers or nobody — unanswered questions cost conversions daily. No endpoint in the analytics router and no Q&amp;A surface in the GBP client touches it (grep across <code>app/modules</code>: zero hits — all "questions" code is review-text analysis). A tenant literally cannot see their own listing's questions in the dashboard.</td>
-      <td class="path">channels/google_reviews.py (GBP client — no questions endpoints); analytics/router.py (no /questions route)</td>
-      <td>Sync listing Q&amp;A alongside reviews; unanswered-question card; draft answers through the existing reply-engine approval flow (same need_approval UX).</td>
-      <td class="num">2–3 days</td>
+      <td class="num">FACT-1</td><td><span class="chip ok">Fixed</span></td>
+      <td><strong>Google listing Q&amp;A is completely unsynced.</strong> Maps Q&amp;A is public, appears in search results, and is frequently answered by strangers or nobody — unanswered questions cost conversions daily. <strong>Fixed 2026-11-03:</strong> the GBP client now lists questions, answers via <code>questions/{q}/answers:upsert</code>, and reads one question back for verification. The reviews worker polls Q&amp;A alongside reviews and stores merchant answers only (customer answers are read-only), keyed by <code>(channel_id, question_id)</code> so duplicate polls collapse. New dashboard API: list/filter questions with unanswered count, generate an AI draft or write one manually, edit/save, approve-and-post, reject, ignore/unignore — using the same <code>pending_approval → posted/failed</code> contract as review replies. A Google Q&amp;A card on the Reviews page shows the unanswered badge and all actions. Five scoped Q&amp;A/migration tests pass; full suite 2,118 passed / 3 skipped; web tests 39, tsc and build pass.</td>
+      <td class="path">channels/google_reviews.py (list_questions/answer_question/get_question); channels/reviews_worker.py (_store_question_answer + poll); analytics/models.py (GoogleQuestionAnswer); analytics/qa_router.py; alembic/versions/f5a8c2d6e9b14373_google_question_answers.py; apps/web/components/dashboard/GoogleQuestionsCard.tsx; apps/web/lib/api-qa.ts; tests/test_google_qa.py</td>
+      <td><span class="chip ok">Done</span></td>
+      <td class="num">—</td>
     </tr>
     <tr>
       <td class="num">FACT-2</td><td><span class="chip high">High</span></td>
@@ -652,7 +652,7 @@
     </tr>
   </table></div>
 
-  <p class="note">Order: FACT-2 → FACT-3 (fastest to land, biggest credibility win) → FACT-1 → FACT-7/FACT-8 (one page-touch each) → FACT-6 → FACT-4 (buy, phase 2) → FACT-5 (spike, phase 3) → FACT-9 (premium Review Campaign, plan-gated + duplicate/reuse). Every row here is product-track — none of it blocks the Phase 1 launch; FACT-2/FACT-3/FACT-7/FACT-8 are each ≤2 days and compound into the "we show facts, not vibes" position the paid-tool market (Birdeye $300/mo, Podium $289/mo) currently leaves open.</p>
+  <p class="note">Order: FACT-2 → FACT-3 (fastest to land, biggest credibility win) → FACT-7/FACT-8 (one page-touch each) → FACT-6 → FACT-4 (buy, phase 2) → FACT-5 (spike, phase 3) → FACT-9 (premium Review Campaign, plan-gated + duplicate/reuse). FACT-1 (Google listing Q&amp;A sync + draft/approval card) is done. Every row here is product-track — none of it blocks the Phase 1 launch; FACT-2/FACT-3/FACT-7/FACT-8 are each ≤2 days and compound into the "we show facts, not vibes" position the paid-tool market (Birdeye $300/mo, Podium $289/mo) currently leaves open.</p>
 
   <h3>Also found 2026-11-02 — why the Overview was wall-to-wall zeros</h3>
   <div class="scroll"><table>

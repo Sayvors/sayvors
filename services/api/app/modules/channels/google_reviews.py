@@ -550,6 +550,75 @@ class GoogleReviewsClient:
                 await asyncio.sleep(2)
         return False
 
+    # ── Questions & Answers (Google Business Profile Q&A v4) ──────────────
+
+    async def list_questions(
+        self, account_id: str, location_id: str
+    ) -> list[dict]:
+        """List all questions for a location.
+
+        Returns raw question dicts (one per page of results). Each dict
+        carries ``name`` (full resource name), ``questionText``,
+        ``askerProfile`` (displayName, profilePhotoUrl), ``createTime``,
+        ``answer`` (if a merchant answer exists), ``upvoteCount``, etc.
+
+        Google pages results; the caller should page through until
+        ``nextPageToken`` is absent.
+        """
+        url = f"{GBP_REVIEWS_API}/accounts/{account_id}/locations/{location_id}/questions"
+        out: list[dict] = []
+        page_token: str | None = None
+        for _ in range(10):  # safety cap; real listings rarely exceed a few pages
+            params: dict = {"pageSize": 50}
+            if page_token:
+                params["pageToken"] = page_token
+            resp = await self._authed_request("GET", url, params=params)
+            if resp.status_code != 200:
+                raise GoogleReviewsError(
+                    f"list_questions failed ({resp.status_code}): {resp.text[:300]}",
+                    resp.status_code,
+                )
+            data = resp.json()
+            out.extend(data.get("questions", []) or [])
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                break
+        return out
+
+    async def answer_question(self, question_id: str, comment: str) -> None:
+        """Create or update the merchant answer to a question.
+
+        ``question_id`` is the full resource name
+        ``accounts/{a}/locations/{l}/questions/{q}``. Google's v4 method is
+        ``questions/{q}/answers:upsert``; there is no ``:answer`` method.
+        """
+        url = f"{GBP_REVIEWS_API}/{question_id}/answers:upsert"
+        resp = await self._authed_request(
+            "POST", url, json={"answer": {"text": comment}}
+        )
+        if resp.status_code not in (200, 201):
+            raise GoogleReviewsError(
+                f"answerQuestion failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+
+    async def get_question(self, question_resource: str) -> dict:
+        """Fetch one question by full resource name.
+
+        Returns the raw question dict, or {} when the question no longer
+        exists (404).
+        """
+        resp = await self._authed_request("GET", f"{GBP_REVIEWS_API}/{question_resource}")
+        if resp.status_code == 404:
+            return {}
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"get_question failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        data = resp.json()
+        return data if isinstance(data, dict) else {}
+
     # ── Performance (Business Profile Performance API v1) ──────────────────
 
     PERFORMANCE_API = "https://businessprofileperformance.googleapis.com/v1"

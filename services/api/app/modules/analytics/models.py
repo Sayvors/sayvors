@@ -546,6 +546,81 @@ register_postgres_index_ddl(
 )
 
 
+class GoogleQuestionAnswer(Base):
+    """One Q&A pair from a Google Business Profile listing.
+
+    Google sends no webhooks for questions, so they are discovered by
+    polling `accounts/{account}/locations/{location}/questions` (see
+    reviews_worker.py). Merchant answers and customer questions are both
+    stored; only merchant answers are ever posted back to Google.
+
+    `question_id` is the full resource name
+    ``accounts/{a}/locations/{l}/questions/{q}``.
+    """
+
+    __tablename__ = "google_question_answers"
+    __table_args__ = (
+        # One question per listing — duplicates across polls are deduped.
+        UniqueConstraint("channel_id", "question_id", name="uq_google_qa_channel_question"),
+        # The dashboard reads “my open questions, newest first”; this composite
+        # serves filter + ORDER BY without a sort.
+        Index("ix_google_qa_channel_created", "channel_id", "created_at"),
+        # Answering status is a common filter (“needs my answer”).
+        Index("ix_google_qa_channel_answered", "channel_id", "is_answered"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(String(36), index=True)
+    channel_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("channels.id", ondelete="CASCADE"), index=True
+    )
+    # Google question resource name: accounts/{a}/locations/{l}/questions/{q}
+    question_id: Mapped[str] = mapped_column(String(500), index=True)
+    question_text: Mapped[str] = mapped_column(Text)
+    asker_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    asker_profile_photo_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    question_created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Only merchant answers are posted back to Google. Customer answers are
+    # stored read-only.
+    answer_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    answerer_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    answer_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    answer_created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    is_answered: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    is_ignored: Mapped[bool] = mapped_column(Boolean, default=False)
+    upvote_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Merchant draft flowing through the same approval gate as review replies.
+    # The draft is never visible on Google; `answer_text` is the live posted
+    # answer. `draft_status`: none | pending_approval | posted | rejected |
+    # failed.
+    draft_answer_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    draft_status: Mapped[str] = mapped_column(
+        String(24), default="none", server_default="none", index=True
+    )
+    draft_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    draft_generated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    draft_approved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
 class ReviewRequest(Base):
     """One review-request send, recorded when a merchant asks a customer.
 

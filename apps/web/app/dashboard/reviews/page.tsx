@@ -15,6 +15,7 @@ import { clearAbuseFlag, flagReviewAbusive, markAbuseReported, setAbuseVerdict }
 import MeaningInspector from "@/components/reviews/MeaningInspector";
 import AskForReview from "@/components/dashboard/AskForReview";
 import BulkReviewRequests from "@/components/dashboard/BulkReviewRequests";
+import GoogleQuestionsCard from "@/components/dashboard/GoogleQuestionsCard";
 import ReviewRequestLog from "@/components/dashboard/ReviewRequestLog";
 import QRCodeGenerator from "@/components/dashboard/QRCodeGenerator";
 import { ALL_BRANCHES, groupValue, parseGroupValue, useLocationGroups } from "@/lib/location-groups";
@@ -1273,6 +1274,7 @@ function ReviewsInner() {
 
                   {/* Right column: 1/4 - Insights */}
                   <div className="col-span-12 lg:col-span-4 space-y-4">
+                    <GoogleQuestionsCard />
                     {/* Rating breakdown leads the column: the star mix is the
                         fastest read on business health, and it is the way in
                         to the full intelligence view. */}
