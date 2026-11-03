@@ -126,17 +126,44 @@ class OutboxWorker:
             # Kafka unavailable — events stay "pending", will retry next cycle
             return
 
+        published_events = []
         sent_ids = []
         for event in events:
             try:
-                key = f"{event.event_type}:{event.payload.get('user_id', event.payload.get('email', ''))}".encode()
-                value = json.dumps({"event_type": event.event_type, "payload": event.payload}).encode()
+                payload = event.payload if isinstance(event.payload, dict) else {}
+                key_source = (
+                    payload.get("connection_id")
+                    or payload.get("tenant_id")
+                    or event.event_type
+                )
+                key = str(key_source).encode("utf-8")
+                value = json.dumps(
+                    {
+                        "event_id": event.id,
+                        "event_type": event.event_type,
+                        "payload": event.payload,
+                    },
+                    separators=(",", ":"),
+                ).encode("utf-8")
                 await producer.send(topic, key=key, value=value)
-                sent_ids.append(event.id)
+                if event.event_type.startswith("meta."):
+                    published_events.append(event)
+                else:
+                    sent_ids.append(event.id)
             except Exception as e:
                 logger.warning("Failed to send event %s: %s", event.id, e)
                 await mark_failed(event.id, str(e))
 
+        if published_events:
+            from .service import mark_published
+
+            await mark_published(published_events)
         if sent_ids:
             await mark_sent(sent_ids)
             logger.debug("Sent %d events to %s", len(sent_ids), topic)
+        if published_events:
+            logger.debug(
+                "Published %d meta events to %s; processing is consumer-owned",
+                len(published_events),
+                topic,
+            )
