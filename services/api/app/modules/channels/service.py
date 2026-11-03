@@ -189,13 +189,6 @@ def encrypt_webhook_secret(secret: str | None) -> str | None:
     return _get_fernet().encrypt(secret.encode()).decode()
 
 
-def decrypt_webhook_secret(secret: str | None) -> str | None:
-    """Decrypt a channel webhook secret at rest."""
-    if not secret:
-        return secret
-    return _get_fernet().decrypt(secret.encode()).decode()
-
-
 def hash_contact_phone(phone: str) -> str:
     """Hash a phone number for lookup without encryption.
 
@@ -206,34 +199,6 @@ def hash_contact_phone(phone: str) -> str:
     import hmac
     key = settings.CHANNEL_ENCRYPTION_KEY or settings.JWT_SECRET
     return hmac.new(key.encode(), phone.encode(), hashlib.sha256).hexdigest()
-
-
-async def verify_webhook_signature(
-    platform: str, payload: bytes, signature: str, channel: Channel
-) -> bool:
-    """Verify webhook signature for supported platforms."""
-    secret = decrypt_webhook_secret(channel.webhook_secret)
-    if not secret:
-        return False
-
-    if platform == "telegram":
-        # Telegram: HMAC-SHA256
-        expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
-        return hmac.compare_digest(expected, signature)
-    elif platform == "whatsapp":
-        # WhatsApp: HMAC-SHA256
-        expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
-        return hmac.compare_digest(expected, signature)
-    elif platform in ("facebook", "instagram"):
-        # Meta: HMAC-SHA256 with app secret
-        expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
-        return hmac.compare_digest(expected, signature)
-    elif platform == "x":
-        # X/Twitter: HMAC-SHA256
-        expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
-        return hmac.compare_digest(expected, signature)
-
-    return False
 
 
 async def create_channel(body: ChannelCreate, user: User, db: AsyncSession) -> Channel:
@@ -1528,14 +1493,6 @@ async def list_messages(
         .offset(offset)
     )
     return list(result.scalars().all()), total
-
-
-async def handle_webhook(
-    platform: str, payload: dict, db: AsyncSession
-) -> ChannelMessage | None:
-    # TODO: verify webhook signature, parse platform-specific payload
-    # For now, return None — will be wired up per platform
-    return None
 
 
 # --- inbox: per-customer threads ------------------------------------------

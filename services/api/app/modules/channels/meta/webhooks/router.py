@@ -13,8 +13,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .....config import settings
 from .....core.deps import get_db
 from .....modules.outbox.models import EventOutbox
+from ....auth.rate_limit import rate_limit
+from ....auth.router import get_client_ip
 from ..models import MetaAsset, MetaConnection, MetaWebhookEvent
 from . import parser as _parser
 from .normalizer import normalize
@@ -25,6 +28,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/meta/webhooks", tags=["meta-webhooks"])
 
 META_EVENTS_TOPIC = "meta-events"
+
+# A post can carry many events, and Meta bursts during an outage recovery.
+# This is a flood ceiling, not a per-event budget; Meta retries a 429.
+META_WEBHOOK_RATE_MAX = 6000
+META_WEBHOOK_RATE_WINDOW_SECONDS = 60
 
 
 @router.get("")
@@ -42,6 +50,23 @@ async def verify(
 
 @router.post("")
 async def ingress(request: Request, db: AsyncSession = Depends(get_db)):
+    # Signature checks protect authenticity, not availability: an unsigned
+    # flood still costs a body read and an HMAC. The edge ceiling is generous
+    # and fail-closed when Redis is unavailable, exactly like auth limits.
+    if not settings.TESTING:
+        client_ip = get_client_ip(request)
+        if not await rate_limit(
+            f"meta-webhook:{client_ip}",
+            META_WEBHOOK_RATE_MAX,
+            META_WEBHOOK_RATE_WINDOW_SECONDS,
+        ):
+            logger.warning("Meta webhook rate limited ip=%s", client_ip)
+            return Response(
+                status_code=429,
+                content="Too many requests",
+                headers={"Retry-After": str(META_WEBHOOK_RATE_WINDOW_SECONDS)},
+            )
+
     content_length = request.headers.get("content-length")
     if content_length and int(content_length) > MAX_BODY_BYTES:
         return Response(status_code=413, content="Payload too large")

@@ -186,7 +186,7 @@
 
 <div class="top">
   <span class="name">Sayvors 1M-User Readiness</span>
-  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 19 open (0 blockers · 10 majors · 9 medium) · INS: 2 open · original audit: 2 open (OPS-1, OPS-4) · 37 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 8 open (2 high · 4 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,052 passed / 3 skipped (post-shim, 2026-11-02)</span>
+  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 18 open (0 blockers · 9 majors · 9 medium) · INS: 2 open · original audit: 2 open (OPS-1, OPS-4) · 37 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 8 open (2 high · 4 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,052 passed / 3 skipped (post-shim, 2026-11-02)</span>
   <nav class="topnav">
     <a href="#blockers">Blockers</a>
     <a href="#pass-2026-10-25">Oct 25 pass</a>
@@ -224,7 +224,7 @@
   <div class="stat"><div class="n amber">Live</div><div class="l">billing &amp; plans — wallet hotfix + durable ledger + 5 plans + admin plan CRUD + tenant grant-plan + entitlements service + enforcement at channel-connect/message-send/LLM; deployed to staging 2026-10-28, schema caught up from 5 migrations behind to <code>h4b5c6d7e8f9</code> head. Plan comparison + request-upgrade UI shipped (<a href="#billing">§6b</a>)</div></div>
   <div class="stat"><div class="n calm">1,645</div><div class="l">backend tests (2 skipped in CI where pgvector runs; 4 skipped locally without Postgres) — CI gates every staging deploy on them; staging CI run #77 passed on <code>d82d800</code></div></div>
   <div class="stat"><div class="n amber">2</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new findings still open: INS-4, INS-5 (INS-1, INS-2, INS-3, INS-6, INS-7 fixed)</div></div>
-  <div class="stat"><div class="n">19</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 0 blockers · 10 majors · 9 medium batches open. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
+  <div class="stat"><div class="n">18</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 0 blockers · 9 majors · 9 medium batches open. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
   <div class="stat"><div class="n">8</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — Review Intelligence + Analytics "actual facts" gaps: listing Q&amp;A, competitor deltas, grid rank, AI-answer visibility. Strategy rule: every number a tenant sees must be verifiable on Google Maps or carry a named source</div></div>
 </div>
 
@@ -389,11 +389,11 @@
       <td class="num">—</td>
     </tr>
     <tr>
-      <td class="num">LAUNCH-S3</td><td><span class="chip high">High</span></td>
-      <td><strong>Meta webhook ingress has no rate limit, and the legacy webhook endpoint is a silent stub.</strong> The production ingress gates on signature only — a DB insert attempt per request from anyone. The legacy <code>/channels/webhook/{platform}</code> verifies signatures across <em>all</em> active channels of the platform (unbounded scan), caps verified traffic at 100/min/channel (would 429 Meta long before scale), then calls <code>handle_webhook()</code> — a TODO stub returning None that silently drops payloads. Violates the repo's no-placeholder rule.</td>
-      <td class="path">channels/meta/webhooks/router.py:43-77; channels/router.py:1588-1664; channels/service.py:1238-1243</td>
-      <td>Redis sliding-window limit on the meta ingress (generous, fail-closed like auth limits); delete or clearly quarantine the legacy endpoint.</td>
-      <td class="num">2–3 hrs</td>
+      <td class="num">LAUNCH-S3</td><td><span class="chip ok">Fixed</span></td>
+      <td><strong>Meta webhook ingress has no rate limit, and the legacy webhook endpoint is a silent stub.</strong> The production ingress gated on signature only; unsigned floods still cost a body read and an HMAC. The legacy <code>/channels/webhook/{platform}</code> verified signatures across <em>all</em> active channels of the platform (unbounded scan), capped verified traffic at 100/min/channel (would 429 Meta long before scale), then called <code>handle_webhook()</code> — a TODO stub returning None that silently dropped payloads. <strong>Fixed 2026-11-02:</strong> the real Meta ingress now applies a generous Redis sliding-window limit (6,000 requests/min per client, 429 + <code>Retry-After</code>) that fails closed when Redis is unavailable, before any body read. The legacy route is quarantined with an explicit <strong>410 Gone</strong> and no signature scan; the <code>handle_webhook</code>, <code>verify_webhook_signature</code> and <code>decrypt_webhook_secret</code> stubs were removed. 27 webhook tests pass, including the 429 and 410 paths.</td>
+      <td class="path">channels/meta/webhooks/router.py:16-64; channels/router.py:1837-1856; tests/test_meta_webhooks.py</td>
+      <td><span class="chip ok">Done</span></td>
+      <td class="num">—</td>
     </tr>
     <tr>
       <td class="num">LAUNCH-S4</td><td><span class="chip ok">Fixed</span></td>
@@ -563,7 +563,7 @@
     </tr>
   </table></div>
 
-  <p class="note">Suggested order: S3/S10 → P2/P3/P6 → the rest. P4, S1, S2, S4, S7, S11, S12 and B5 are fixed; B3 was fixed earlier. Infra rows (S8/S9/S14) can land any time on the current box; they stop being optional the day a second replica or real customers arrive.</p>
+  <p class="note">Suggested order: S10 → P2/P3/P6 → the rest. P4, S1, S2, S3, S4, S7, S11, S12 and B5 are fixed; B3 was fixed earlier. Infra rows (S8/S9/S14) can land any time on the current box; they stop being optional the day a second replica or real customers arrive.</p>
 </section>
 
 <section id="pass-2026-11-02">

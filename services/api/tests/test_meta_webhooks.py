@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from app.modules.channels.meta.models import MetaAsset, MetaConnection, MetaWebhookEvent
 from app.modules.channels.meta.webhooks import parser as _parser
+from app.modules.channels.meta.webhooks import router as _webhook_router
 from app.modules.channels.meta.webhooks import verifier as _verifier
 from app.modules.outbox.models import EventOutbox
 
@@ -310,6 +311,36 @@ async def test_ingress_bad_signature(client, engine):
         headers={"host": "localhost", "x-hub-signature-256": "sha256=bad"},
     )
     assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_meta_ingress_rate_limit_returns_429(client, monkeypatch):
+    from app import config as _config
+
+    async def _deny(key, max_requests, window_seconds):
+        return False
+
+    monkeypatch.setattr(_webhook_router, "rate_limit", _deny)
+    monkeypatch.setattr(_config.settings, "TESTING", False)
+
+    resp = client.post(
+        "/api/v1/meta/webhooks",
+        content=b"{}",
+        headers={"host": "localhost"},
+    )
+
+    assert resp.status_code == 429
+    assert resp.headers["retry-after"] == "60"
+
+
+def test_legacy_channel_webhook_is_retired(client):
+    resp = client.post(
+        "/api/v1/channels/webhook/whatsapp",
+        content=b"{}",
+        headers={"host": "localhost"},
+    )
+    assert resp.status_code == 410
+    assert "retired" in resp.json()["detail"].lower()
 
 
 @pytest.mark.asyncio
