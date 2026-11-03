@@ -186,7 +186,7 @@
 
 <div class="top">
   <span class="name">Sayvors 1M-User Readiness</span>
-  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 8 open (0 blockers · 3 majors · 5 medium) · INS: 1 open · original audit: 2 open (OPS-1, OPS-4) · 38 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 8 open (2 high · 4 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,113 passed / 3 skipped (2026-11-03)</span>
+  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 7 open (0 blockers · 3 majors · 4 medium) · INS: 1 open · original audit: 2 open (OPS-1, OPS-4) · 38 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 8 open (2 high · 4 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,113 passed / 3 skipped (2026-11-03)</span>
   <nav class="topnav">
     <a href="#blockers">Blockers</a>
     <a href="#pass-2026-10-25">Oct 25 pass</a>
@@ -224,7 +224,7 @@
   <div class="stat"><div class="n amber">Live</div><div class="l">billing &amp; plans — wallet hotfix + durable ledger + 5 plans + admin plan CRUD + tenant grant-plan + entitlements service + enforcement at channel-connect/message-send/LLM; deployed to staging 2026-10-28, schema caught up from 5 migrations behind to <code>h4b5c6d7e8f9</code> head. Plan comparison + request-upgrade UI shipped (<a href="#billing">§6b</a>)</div></div>
   <div class="stat"><div class="n calm">1,645</div><div class="l">backend tests (2 skipped in CI where pgvector runs; 4 skipped locally without Postgres) — CI gates every staging deploy on them; staging CI run #77 passed on <code>d82d800</code></div></div>
   <div class="stat"><div class="n amber">1</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new finding still open: INS-5 (INS-1, INS-2, INS-3, INS-4, INS-6, INS-7 fixed)</div></div>
-  <div class="stat"><div class="n">8</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 0 blockers · 3 majors · 5 medium batches open. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
+  <div class="stat"><div class="n">7</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 0 blockers · 3 majors · 4 medium batches open. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
   <div class="stat"><div class="n">8</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — Review Intelligence + Analytics "actual facts" gaps: listing Q&amp;A, competitor deltas, grid rank, AI-answer visibility. Strategy rule: every number a tenant sees must be verifiable on Google Maps or carry a named source</div></div>
 </div>
 
@@ -520,11 +520,11 @@
       <td class="num">—</td>
     </tr>
     <tr>
-      <td class="num">LAUNCH-M4</td><td><span class="chip med">Med</span></td>
-      <td><strong>Inbox action errors are swallowed; composer draft lost on failed send.</strong> Pin/archive/delete failures hit <code>catch { /* keep stale */ }</code> — no user-facing surface, no invalidation, no poll to correct the row (violates the repo's no-silent-failure rule); the Delete modal button has no busy guard (double-click double-fires DELETE). <code>send()</code> clears the draft even when the provider rejected the send.</td>
-      <td class="path">apps/web/app/dashboard/inbox/InboxView.tsx:369-412, 1072, 2051-2057</td>
-      <td>Surface failures (toast/banner + invalidate on error); busy-guard the modal; only clear the draft on success.</td>
-      <td class="num">~2 hrs</td>
+      <td class="num">LAUNCH-M4</td><td><span class="chip ok">Fixed</span></td>
+      <td><strong>Inbox action errors are swallowed; composer draft lost on failed send.</strong> Pin/archive/delete failures hit <code>catch { /* keep stale */ }</code> — no user-facing surface, no invalidation, no refetch to correct the row; the Delete modal button had no busy guard; <code>send()</code> cleared the draft even when the provider rejected it. <strong>Fixed 2026-11-02:</strong> list actions now surface a dismissible <code>role="alert"</code> banner with action-specific copy and <code>queryClient.invalidateQueries</code> on failure or success. The Delete modal keeps open feedback on failure, disables Cancel/Delete while in flight, and prevents double DELETE. The composer only clears draft/replyTo on an accepted send; provider-rejected messages keep the draft (and stay visible as failed rows). Web tests, tsc and production build pass.</td>
+      <td class="path">apps/web/app/dashboard/inbox/InboxView.tsx; readiness-report.html</td>
+      <td><span class="chip ok">Done</span></td>
+      <td class="num">—</td>
     </tr>
     <tr>
       <td class="num">LAUNCH-M5</td><td><span class="chip ok">Fixed</span></td>
@@ -563,7 +563,7 @@
     </tr>
   </table></div>
 
-  <p class="note">Suggested order: S10 → S8/S9 → the rest. P2, P3, P4, P6, S1, S2, S3, S4, S5, S6, S7, S11, S12, S14, B5, M1, M2, M3 and M5 are fixed; B3 was fixed earlier. Infra rows (S8/S9) can land any time on the current box; they stop being optional the day a second replica or real customers arrive.</p>
+  <p class="note">Suggested order: S10 → S8/S9 → the rest. P2, P3, P4, P6, S1, S2, S3, S4, S5, S6, S7, S11, S12, S14, B5, M1, M2, M3, M4 and M5 are fixed; B3 was fixed earlier. Infra rows (S8/S9) can land any time on the current box; they stop being optional the day a second replica or real customers arrive.</p>
 </section>
 
 <section id="pass-2026-11-02">

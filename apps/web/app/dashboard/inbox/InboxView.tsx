@@ -306,6 +306,8 @@ export default function InboxView() {
   const [search, setSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<InboxThread | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [listActionError, setListActionError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [platformFilter, setPlatformFilter] = useState<string>("all");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -393,6 +395,7 @@ export default function InboxView() {
   const togglePin = async (thread: InboxThread) => {
     const composite = `${thread.channel_id}:${thread.key}`;
     const next = !thread.pinned;
+    setListActionError(null);
     try {
       await pinInboxThread(thread.channel_id, thread.contact_phone, next);
       setThreads((prev) =>
@@ -402,12 +405,18 @@ export default function InboxView() {
       );
       void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] });
     } catch {
-      /* keep stale */
+      setListActionError(
+        next
+          ? "Could not pin the conversation. Try again."
+          : "Could not unpin the conversation. Try again.",
+      );
+      void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] });
     }
   };
 
   const handleArchive = async (thread: InboxThread, archived: boolean) => {
     const composite = `${thread.channel_id}:${thread.key}`;
+    setListActionError(null);
     try {
       await archiveInboxThread(thread.channel_id, thread.contact_phone, archived);
       // Optimistic local update + cache invalidation.
@@ -418,21 +427,32 @@ export default function InboxView() {
       );
       void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] });
     } catch {
-      // keep stale; the next fetch will correct
+      setListActionError(
+        archived
+          ? "Could not archive the conversation. Try again."
+          : "Could not restore the conversation. Try again.",
+      );
+      void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] });
     }
   };
 
   const handleDelete = async (thread: InboxThread) => {
+    if (deleteBusy) return;
     const composite = `${thread.channel_id}:${thread.key}`;
+    setDeleteBusy(true);
+    setListActionError(null);
     try {
       await deleteInboxThread(thread.channel_id, thread.contact_phone);
       setThreads((prev) => prev.filter((t) => `${t.channel_id}:${t.key}` !== composite));
       if (selectedKey === composite) setSelectedKey(null);
       void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] });
+      setDeleteTarget(null);
     } catch {
-      // keep stale; the next fetch will correct
+      setListActionError("Could not delete the conversation. Try again.");
+      void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] });
+    } finally {
+      setDeleteBusy(false);
     }
-    setDeleteTarget(null);
   };
 
   /** Apply a server-returned thread state to the open thread and its row. */
@@ -1305,40 +1325,42 @@ export default function InboxView() {
         content: text,
         replyToMessageId: replyTo?.id ?? null,
       });
-      setDraft("");
-      if (result.sent) setReplyTo(null);
-      // The agent answered, so nothing is pending on either side. The realtime
-      // socket would clear this too, but a failed send never produces an
-      // outbound event — clear here so a rejected message cannot strand dots.
-      clearThreadTyping(thread.channel_id, thread.key);
-      // The realtime socket usually delivers this same outbound message
-      // while the POST is still in flight — skip it if it already landed.
+      // A rejected message is still rendered so the user can see what Meta
+      // refused. It is not accepted as sent and must not consume their draft.
       setMessages((prev) =>
         prev.some((m) => m.id === result.message.id) ? prev : [...prev, result.message],
       );
-      setThreads((prev) =>
-        prev.map((t) =>
-          `${t.channel_id}:${t.key}` === `${thread.channel_id}:${thread.key}`
-            ? {
-                ...t,
-                unread: 0,
-                last_message: result.message.content,
-                last_message_at: result.message.created_at,
-                last_direction: "outbound",
-                message_count: t.message_count + 1,
-              }
-            : t,
-        ),
-      );
-      if (!result.sent)
+      if (result.sent) {
+        setDraft("");
+        setReplyTo(null);
+        // The agent answered, so nothing is pending on either side. The realtime
+        // socket would clear this too, but a failed send never produces an
+        // outbound event — clear here so a rejected message cannot strand dots.
+        clearThreadTyping(thread.channel_id, thread.key);
+        setThreads((prev) =>
+          prev.map((t) =>
+            `${t.channel_id}:${t.key}` === `${thread.channel_id}:${thread.key}`
+              ? {
+                  ...t,
+                  unread: 0,
+                  last_message: result.message.content,
+                  last_message_at: result.message.created_at,
+                  last_direction: "outbound",
+                  message_count: t.message_count + 1,
+                }
+              : t,
+          ),
+        );
+      } else {
         setSendError(
           result.error ||
-            (target?.platform === "instagram"
+            (thread.platform === "instagram"
               ? "Instagram rejected this message."
               : "WhatsApp rejected this message."),
         );
-    } catch (e) {
-      setSendError(e instanceof Error ? e.message : "Could not send the message.");
+      }
+    } catch {
+      setSendError("Couldn't send the message. Check your connection and try again.");
     } finally {
       setSending(false);
     }
@@ -1366,6 +1388,21 @@ export default function InboxView() {
           Refresh
         </button>
       </div>
+      {listActionError && (
+        <div
+          role="alert"
+          className="mb-3 flex items-center justify-between gap-4 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-[12px] font-medium text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300"
+        >
+          <span>{listActionError}</span>
+          <button
+            type="button"
+            onClick={() => setListActionError(null)}
+            className="min-h-[44px] shrink-0 rounded-lg px-3 font-semibold underline underline-offset-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       <div className={`relative grid min-h-0 flex-1 gap-4 ${showInfo ? "lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)_minmax(0,260px)]" : "lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)]"}`}>
         {/* Thread list */}
@@ -1522,7 +1559,10 @@ export default function InboxView() {
                           {t.archived ? "📥" : "📦"}
                         </button>
                         <button
-                          onClick={() => setDeleteTarget(t)}
+                          onClick={() => {
+                            setListActionError(null);
+                            setDeleteTarget(t);
+                          }}
                           aria-label="Delete thread"
                           className="px-2 py-3 text-[13px] text-ink/20 hover:text-red-600"
                           title="Delete conversation permanently"
@@ -2451,20 +2491,27 @@ export default function InboxView() {
             <p className="mt-2 text-[12px] text-ink/60 dark:text-fog/60">
               This permanently deletes all messages in this thread. This cannot be undone.
             </p>
+            {listActionError && (
+              <p role="alert" className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-medium text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+                {listActionError}
+              </p>
+            )}
             <div className="mt-4 flex justify-end gap-2">
               <button
                 type="button"
+                disabled={deleteBusy}
                 onClick={() => setDeleteTarget(null)}
-                className="rounded-[2px] border border-[var(--ui-line)] px-3 py-1.5 text-[12px] font-medium text-ink/70"
+                className="rounded-[2px] border border-[var(--ui-line)] px-3 py-1.5 text-[12px] font-medium text-ink/70 disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 type="button"
+                disabled={deleteBusy}
                 onClick={() => void handleDelete(deleteTarget)}
-                className="rounded-[2px] bg-red-600 px-3 py-1.5 text-[12px] font-bold text-white"
+                className="rounded-[2px] bg-red-600 px-3 py-1.5 text-[12px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Delete
+                {deleteBusy ? "Deleting…" : "Delete"}
               </button>
             </div>
           </div>
