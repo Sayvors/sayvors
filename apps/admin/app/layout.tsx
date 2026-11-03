@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import { headers } from "next/headers";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ThemeProvider } from "./theme";
 import "./globals.css";
@@ -19,10 +20,16 @@ export const metadata: Metadata = {
   description: "Sayvors admin console",
 };
 
+// The nonce-based CSP in middleware.ts must be injected per request; dynamic
+// rendering is what lets Next.js put the nonce on its inline bootstrap
+// scripts. Without this the console renders without working JavaScript.
+export const dynamic = "force-dynamic";
+
 // Runs before first paint so a saved dark theme never flashes light.
 const themeInit = `(function(){try{var t=localStorage.getItem("sayvors-admin-theme");if(t==="dark"||t==="light"){document.documentElement.classList.toggle("dark",t==="dark");}else if(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches){document.documentElement.classList.add("dark");}}catch(e){}})();`;
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
   return (
     <html
       lang="en"
@@ -30,7 +37,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       suppressHydrationWarning
     >
       <head>
-        <script dangerouslySetInnerHTML={{ __html: themeInit }} />
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: themeInit }} />
       </head>
       <body className="min-h-full flex flex-col">
         <ThemeProvider>{children}</ThemeProvider>
