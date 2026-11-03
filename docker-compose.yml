@@ -31,7 +31,10 @@ services:
     volumes:
       - kafkadata:/var/lib/kafka/data
     healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      # Broker listener is ready when TCP accepts. Avoid a second JVM
+      # (kafka-topics.sh) on every probe; it can exceed the timeout and mark
+      # a healthy broker unhealthy.
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 9092"]
       interval: 10s
       timeout: 5s
       retries: 10
