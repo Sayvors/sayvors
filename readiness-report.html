@@ -186,7 +186,7 @@
 
 <div class="top">
   <span class="name">Sayvors 1M-User Readiness</span>
-  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 16 open (0 blockers · 8 majors · 8 medium) · INS: 2 open · original audit: 2 open (OPS-1, OPS-4) · 37 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 8 open (2 high · 4 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,052 passed / 3 skipped (post-shim, 2026-11-02)</span>
+  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 15 open (0 blockers · 8 majors · 7 medium) · INS: 2 open · original audit: 2 open (OPS-1, OPS-4) · 37 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 8 open (2 high · 4 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,052 passed / 3 skipped (post-shim, 2026-11-02)</span>
   <nav class="topnav">
     <a href="#blockers">Blockers</a>
     <a href="#pass-2026-10-25">Oct 25 pass</a>
@@ -224,7 +224,7 @@
   <div class="stat"><div class="n amber">Live</div><div class="l">billing &amp; plans — wallet hotfix + durable ledger + 5 plans + admin plan CRUD + tenant grant-plan + entitlements service + enforcement at channel-connect/message-send/LLM; deployed to staging 2026-10-28, schema caught up from 5 migrations behind to <code>h4b5c6d7e8f9</code> head. Plan comparison + request-upgrade UI shipped (<a href="#billing">§6b</a>)</div></div>
   <div class="stat"><div class="n calm">1,645</div><div class="l">backend tests (2 skipped in CI where pgvector runs; 4 skipped locally without Postgres) — CI gates every staging deploy on them; staging CI run #77 passed on <code>d82d800</code></div></div>
   <div class="stat"><div class="n amber">2</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new findings still open: INS-4, INS-5 (INS-1, INS-2, INS-3, INS-6, INS-7 fixed)</div></div>
-  <div class="stat"><div class="n">16</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 0 blockers · 8 majors · 8 medium batches open. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
+  <div class="stat"><div class="n">15</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 0 blockers · 8 majors · 7 medium batches open. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
   <div class="stat"><div class="n">8</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — Review Intelligence + Analytics "actual facts" gaps: listing Q&amp;A, competitor deltas, grid rank, AI-answer visibility. Strategy rule: every number a tenant sees must be verifiable on Google Maps or carry a named source</div></div>
 </div>
 
@@ -499,11 +499,11 @@
   <div class="scroll"><table>
     <tr><th>ID</th><th>Sev</th><th>Finding</th><th>Evidence</th><th>Fix</th><th>Effort</th></tr>
     <tr>
-      <td class="num">LAUNCH-M1</td><td><span class="chip med">Med</span></td>
-      <td><strong>Webhook ingress 500s on malformed input.</strong> <code>int(content_length)</code> can raise ValueError → 500 on a malformed header (the raw-body length check already exists and is sufficient); <code>hmac.compare_digest</code> on the verify_token query param can raise TypeError on non-ASCII → 500 instead of 403.</td>
-      <td class="path">channels/router.py:1591; meta/webhooks/router.py:46; meta/webhooks/verifier.py</td>
-      <td>Drop the header parse (keep raw check); encode both sides to bytes before compare_digest.</td>
-      <td class="num">~30 min</td>
+      <td class="num">LAUNCH-M1</td><td><span class="chip ok">Fixed</span></td>
+      <td><strong>Webhook ingress 500s on malformed input.</strong> <code>int(content_length)</code> could raise ValueError → 500 on a malformed header; <code>hmac.compare_digest</code> on the verify_token query param and the signature header could raise TypeError on non-ASCII → 500 instead of 403. <strong>Fixed 2026-11-02:</strong> the header is only parsed when it is all digits (the raw-body cap remains the real enforcement), and both handshake and signature comparisons encode to bytes before <code>compare_digest</code>. 29 webhook tests pass, including non-ASCII token/signature cases.</td>
+      <td class="path">channels/meta/webhooks/router.py:70-75; channels/meta/webhooks/verifier.py:16-42; tests/test_meta_webhooks.py</td>
+      <td><span class="chip ok">Done</span></td>
+      <td class="num">—</td>
     </tr>
     <tr>
       <td class="num">LAUNCH-M2</td><td><span class="chip med">Med</span></td>
@@ -563,7 +563,7 @@
     </tr>
   </table></div>
 
-  <p class="note">Suggested order: S10 → P2/P3/P6 → the rest. P4, S1, S2, S3, S4, S6, S7, S11, S12, B5 and M5 are fixed; B3 was fixed earlier. Infra rows (S8/S9/S14) can land any time on the current box; they stop being optional the day a second replica or real customers arrive.</p>
+  <p class="note">Suggested order: S10 → P2/P3/P6 → the rest. P4, S1, S2, S3, S4, S6, S7, S11, S12, B5, M1 and M5 are fixed; B3 was fixed earlier. Infra rows (S8/S9/S14) can land any time on the current box; they stop being optional the day a second replica or real customers arrive.</p>
 </section>
 
 <section id="pass-2026-11-02">

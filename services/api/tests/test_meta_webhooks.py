@@ -313,6 +313,20 @@ async def test_ingress_bad_signature(client, engine):
     assert resp.status_code == 403
 
 
+def test_handshake_non_ascii_token_is_rejected(monkeypatch):
+    """compare_digest(str, str) raises on non-ASCII; the handshake must 403."""
+    from app import config as _config
+
+    monkeypatch.setattr(_config.settings, "META_WEBHOOK_VERIFY_TOKEN", "expected")
+    assert (
+        _verifier.verify_handshake("subscribe", "tökén", "challenge") is None
+    )
+
+
+def test_signature_non_ascii_header_is_false_not_500():
+    assert _verifier.verify_signature(b"{}", "sha256=☃") is False
+
+
 @pytest.mark.asyncio
 async def test_meta_ingress_rate_limit_returns_429(client, monkeypatch):
     from app import config as _config

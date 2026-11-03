@@ -68,7 +68,7 @@ async def ingress(request: Request, db: AsyncSession = Depends(get_db)):
             )
 
     content_length = request.headers.get("content-length")
-    if content_length and int(content_length) > MAX_BODY_BYTES:
+    if content_length and content_length.isdigit() and int(content_length) > MAX_BODY_BYTES:
         return Response(status_code=413, content="Payload too large")
     raw_body = await request.body()
     if len(raw_body) > MAX_BODY_BYTES:

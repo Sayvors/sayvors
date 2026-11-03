@@ -17,7 +17,11 @@ def verify_handshake(mode: str | None, verify_token: str | None, challenge: str 
     """Return the challenge to echo, or None when verification fails."""
     expected = settings.META_WEBHOOK_VERIFY_TOKEN or ""
     if mode == "subscribe" and verify_token and challenge:
-        if expected and hmac.compare_digest(verify_token, expected):
+        # compare_digest(str, str) raises TypeError on non-ASCII input; bytes
+        # keeps a hostile query param a clean 403 instead of a 500.
+        if expected and hmac.compare_digest(
+            verify_token.encode("utf-8"), expected.encode("utf-8")
+        ):
             return challenge
     return None
 
@@ -31,4 +35,6 @@ def verify_signature(raw_body: bytes, signature: str | None) -> bool:
     if hex_part.startswith("sha256="):
         hex_part = hex_part[len("sha256="):]
     expected = hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, hex_part)
+    return hmac.compare_digest(
+        expected.encode("ascii"), hex_part.encode("utf-8", errors="ignore")
+    )
