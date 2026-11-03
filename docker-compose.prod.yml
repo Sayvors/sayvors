@@ -3,10 +3,21 @@
 # The Next.js web app deploys on Vercel; postgres is AWS RDS.
 # Requires .env.prod next to this file (template: deploy/env.prod.example).
 
+# Docker's default json-file driver is unbounded. Cap every service so one
+# runaway log line cannot fill the 2 GB box's disk.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    logging: *default-logging
+    # CPU/memory are ceilings, not reservations; the box has 2 vCPUs.
+    cpus: 0.25
     ports:
       - "80:80"
       - "443:443"
@@ -31,6 +42,8 @@ services:
     # e.g. ghcr.io/sayvors/sayvors-api@sha256:<digest>
     image: ghcr.io/sayvors/sayvors-api:staging
     restart: unless-stopped
+    logging: *default-logging
+    cpus: 0.75
     env_file:
       - ./.env.prod
     expose:
@@ -78,12 +91,16 @@ services:
       start_period: 40s
     volumes:
       # Uploaded files (media photos for Google, databank docs) live here —
-      # without this volume every redeploy would wipe them.
+      # without this volume every redeploy would wipe them. After the first
+      # non-root deploy, an existing volume may be root-owned; run once:
+      # docker compose run --rm --user root api chown -R 10001:10001 /app/data/uploads
       - uploadsdata:/app/data/uploads
 
   worker:
     image: ghcr.io/sayvors/sayvors-api:staging
     restart: unless-stopped
+    logging: *default-logging
+    cpus: 0.5
     env_file:
       - ./.env.prod
     # Same image as the api, no HTTP port: runs `python -m app.workers`
@@ -114,6 +131,8 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    logging: *default-logging
+    cpus: 0.25
     # noeviction: this instance holds OTPs, rate-limit windows, JWT
     # blacklist entries and session indexes. An LRU eviction would silently
     # void brute-force limits / revocation checks; capacity alarms are the
@@ -131,6 +150,8 @@ services:
   kafka:
     image: apache/kafka:3.8.0
     restart: unless-stopped
+    logging: *default-logging
+    cpus: 0.5
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -157,8 +178,12 @@ services:
   prometheus:
     image: prom/prometheus:v2.54.1
     restart: unless-stopped
+    logging: *default-logging
+    cpus: 0.25
     ports:
-      - "9090:9090"
+      # UI stays on the host loopback; Caddy never proxies it. Scraping is
+      # internal (api:8000/metrics).
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
