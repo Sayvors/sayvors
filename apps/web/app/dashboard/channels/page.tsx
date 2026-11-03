@@ -367,20 +367,25 @@ function LocalithListingRow({
             {busy ? <LogoLoader size={14} /> : "Sync now"}
           </button>
         )}
-        <select
-          value={connected ? "enabled" : "disabled"}
-          disabled={busy}
-          onChange={(e) => {
-            if (e.target.value === "enabled") onEnable(listing.id);
-            else onDisable(listing.id);
-          }}
-          aria-label={`Enable ${listing.name} in Sayvors`}
-          title={connected ? "Disable this listing" : "Enable this listing"}
-          className="min-h-8 shrink-0 rounded-lg border border-ink/[0.08] bg-white px-2 py-1.5 text-[11px] font-semibold text-ink outline-none transition focus:border-deep-violet/30 disabled:opacity-50 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
-        >
-          <option value="disabled">Disabled</option>
-          <option value="enabled">Enabled</option>
-        </select>
+        {connected ? (
+          <button
+            onClick={() => onDisable(listing.id)}
+            disabled={busy}
+            title="Disconnect this Localith branch"
+            className="min-h-8 shrink-0 rounded-lg border border-red-200 px-2.5 py-1.5 text-[11px] font-semibold text-red-600 transition hover:bg-red-50 disabled:opacity-50 dark:border-red-500/30 dark:text-red-300 dark:hover:bg-red-500/10"
+          >
+            Disconnect
+          </button>
+        ) : (
+          <button
+            onClick={() => onEnable(listing.id)}
+            disabled={busy}
+            title="Connect this Localith branch"
+            className="min-h-8 shrink-0 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[11px] font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"
+          >
+            Enable
+          </button>
+        )}
       </div>
 
       {expanded && conn && (
@@ -500,6 +505,7 @@ function ConnectHub() {
   const [savingConfig, setSavingConfig] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+  const [googleBusy, setGoogleBusy] = useState(false);
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [urlDismissed, setUrlDismissed] = useState(false);
 
@@ -576,6 +582,37 @@ function ConnectHub() {
       /* history unavailable */
     }
   }, []);
+
+  // The official Google OAuth flow. The ticket keeps the access JWT out of
+  // the browser URL; the callback returns here with google_connected/N or
+  // google_error and the banner above handles both.
+  const connectGoogle = useCallback(async () => {
+    if (localithConns.length > 0) {
+      // The two providers use different location-id spaces. Connecting Google
+      // while Localith is still live creates a second channel for the same
+      // branch, so make the duplicate explicit before opening consent.
+      const proceed = window.confirm(
+        "Localith branches are still connected. Connecting Google now can create a duplicate channel for the same location. Disconnect Localith first for a clean switch. Continue anyway?"
+      );
+      if (!proceed) return;
+    }
+    setGoogleBusy(true);
+    setBanner(null);
+    try {
+      const data = await apiFetch("/api/v1/channels/google/connect-ticket", {
+        method: "POST",
+      });
+      const ticket = typeof data?.ticket === "string" ? data.ticket : "";
+      if (!ticket) throw new Error("Google connect is not configured yet.");
+      window.location.href = `${API}/api/v1/channels/google/connect?ticket=${encodeURIComponent(ticket)}&next=/dashboard/channels`;
+    } catch (e) {
+      setBanner({
+        kind: "err",
+        text: errDetail(e, "Could not start Google connect. Please try again."),
+      });
+      setGoogleBusy(false);
+    }
+  }, [localithConns.length]);
 
   // ── Localith connections + profiles + listings (TanStack Query) ──
   const localithQuery = useQuery({
@@ -958,6 +995,51 @@ function ConnectHub() {
         <h2 className="text-[11px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">
           Google reviews &amp; locations
         </h2>
+        {/* Official Google Business Profile API — the production path. */}
+        <div className="rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-ink/[0.06] bg-white dark:border-fog/[0.08] dark:bg-ink">
+              <PlatformMark platform="google_reviews" size={24} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-[14px] font-semibold text-ink dark:text-fog">
+                  Google Business Profile
+                </p>
+                <span className="rounded-full bg-[#1a73e8]/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#1a73e8] dark:bg-[#8ab4f8]/15 dark:text-[#8ab4f8]">
+                  Official API
+                </span>
+                {googleChannelsNative.length > 0 && (
+                  <span className="rounded-full bg-emerald-600/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+                    {googleChannelsNative.length} connected
+                  </span>
+                )}
+              </div>
+              <p className="text-[12px] text-ink/40 dark:text-fog/40">
+                Connect your Business Profile directly — reviews, replies, Q&amp;A, and performance sync from Google.
+              </p>
+              {localithConns.length > 0 && (
+                <p className="mt-1 text-[11px] leading-snug text-amber-700 dark:text-amber-300">
+                  {localithConns.length} Localith branch{localithConns.length === 1 ? "" : "es"} still connected. Disconnect {localithConns.length === 1 ? "it" : "them"} below first — otherwise Google creates a second channel for the same location.
+                </p>
+              )}
+            </div>
+            <button
+              onClick={() => void connectGoogle()}
+              disabled={googleBusy}
+              className="min-h-8 shrink-0 rounded-lg bg-[#1a73e8] px-3 py-1.5 text-[12px] font-semibold text-white transition hover:bg-[#1765cc] disabled:opacity-50"
+            >
+              {googleBusy ? (
+                <LogoLoader size={14} />
+              ) : googleChannelsNative.length > 0 ? (
+                "Add locations"
+              ) : (
+                "Connect Google Business"
+              )}
+            </button>
+          </div>
+        </div>
+
         {/* Localith — ONE card: every listing on the account, enabled per row */}
         <div className="rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink" data-tour="connect-location">
           <div className="flex flex-wrap items-center gap-4">
@@ -967,15 +1049,20 @@ function ConnectHub() {
               </svg>
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-[14px] font-semibold text-ink dark:text-fog">
+              <p className="flex flex-wrap items-center gap-2 text-[14px] font-semibold text-ink dark:text-fog">
                 Localith
+                <span className="rounded-full bg-ink/[0.05] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink/45 dark:bg-fog/[0.07] dark:text-fog/45">
+                  Legacy
+                </span>
                 {localithConns.length > 0 && (
-                  <span className="ml-2 rounded-full bg-emerald-600/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+                  <span className="rounded-full bg-emerald-600/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
                     {localithConns.length} connected
                   </span>
                 )}
               </p>
-              <p className="text-[12px] text-ink/40 dark:text-fog/40">Import reviews via middleware — enable each listing below</p>
+              <p className="text-[12px] text-ink/40 dark:text-fog/40">
+                Temporary middleware — disconnect these branches before connecting the official Google API.
+              </p>
             </div>
             <button
               onClick={() => void resyncLocalith()}

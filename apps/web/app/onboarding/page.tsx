@@ -144,11 +144,11 @@ export default function OnboardingPage() {
     try {
       // Mint a 120s single-use connect ticket so the access JWT never
       // appears in a URL (history / proxy logs / Referer leakage).
-      const res = await apiFetch("/api/v1/channels/google/connect-ticket", {
+      const data = await apiFetch("/api/v1/channels/google/connect-ticket", {
         method: "POST",
       });
-      if (!res.ok) throw new Error("ticket");
-      const { ticket } = await res.json();
+      const ticket = typeof data?.ticket === "string" ? data.ticket : "";
+      if (!ticket) throw new Error("ticket");
       // Real OAuth: Google consent → callback → back to /onboarding?google_connected=N
       window.location.href = `${API_URL}/api/v1/channels/google/connect?ticket=${encodeURIComponent(ticket)}&next=/onboarding`;
     } catch {

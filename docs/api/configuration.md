@@ -104,19 +104,21 @@ must use appropriately separated storage/access policies.
 
 ## Google Business Profile and Localith
 
+Native Google Business Profile OAuth is the production path (reviews, replies, Q&A, performance). Localith is retained as a legacy middleware and is selected per connected `LocalithConnection`; there is no global provider switch. To move a tenant to native Google, disconnect its Localith branches, then connect through **Channels → Google Business Profile**. Leaving both connected creates two channels for the same location.
+
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `GOOGLE_CLIENT_ID` | Empty | Google OAuth client ID for Business Profile reviews. |
 | `GOOGLE_CLIENT_SECRET` | Empty | Google OAuth client secret; server-side only. |
-| `GOOGLE_REVIEWS_REDIRECT_URI` | Local callback URL | OAuth redirect URI registered with Google. |
+| `GOOGLE_REVIEWS_REDIRECT_URI` | Local callback URL | OAuth redirect URI registered with Google; must match the API origin used by the browser. |
 | `GOOGLE_REVIEWS_MOCK` | `false` | Use generated review data instead of live OAuth/provider data. |
 | `GOOGLE_REVIEWS_POLL_INTERVAL_SECONDS` | `300` | Review polling interval. |
 | `GOOGLE_QA_POLL_INTERVAL_SECONDS` | `3600` | Google listing Q&A polling interval, independent of reviews. |
 | `LOCALITH_API_KEY` | Empty | EmbedSocial/Localith API key. |
 | `LOCALITH_BASE_URL` | `https://embedsocial.com/app/api` | Localith API base URL. |
 | `LOCALITH_ITEMS_PATH` | `rest/v1/items` | Localith items endpoint path. |
-| `BUSINESS_DATA_PROVIDER` | `localith` | Selected business-data provider. |
-| `LOCALITH_SYNC_INTERVAL_SECONDS` | `60` | Background Localith sync interval. |
+| `BUSINESS_DATA_PROVIDER` | `localith` | Label stored in Localith-created channel metadata. It does **not** disable Localith or enable native Google. |
+| `LOCALITH_SYNC_INTERVAL_SECONDS` | `300` | Background Localith sync interval. |
 | `ANALYTICS_PERFORMANCE_SYNC_INTERVAL_SECONDS` | `21600` | Google performance metrics sync interval. |
 | `ANALYTICS_PERFORMANCE_DAYS_BACK` | `30` | Days of historical performance metrics requested per sync. |
 | `MESSAGING_ROLLUP_INTERVAL_SECONDS` | `900` | Messaging metrics rollup interval. |
