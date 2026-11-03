@@ -21,6 +21,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import delete, select
 
 from ..database import async_session
+from .analytics.models import CompetitorSnapshotHistory
 from .channels.meta.models import MetaWebhookEvent
 from .jobs.models import Job
 from .llm.models import LLMUsageEvent
@@ -37,6 +38,9 @@ WEBHOOK_EVENT_RETENTION_DAYS = 30
 WEBHOOK_EVENT_ORPHAN_RETENTION_DAYS = 7
 NOTIFICATION_RETENTION_DAYS = 90
 USAGE_EVENT_RETENTION_DAYS = 90
+# Competitor history powers month-over-month deltas; keep two years so the
+# benchmark can still show a year-over-year comparison without unbounded growth.
+COMPETITOR_HISTORY_RETENTION_DAYS = 730
 # The jobs table is the execution record and grows with every AI reply,
 # publish, transcription and media job. It needs a retention window like
 # every other unbounded table - without one it is the table that eventually
@@ -151,6 +155,17 @@ async def cleanup_jobs() -> int:
     return deleted
 
 
+async def cleanup_competitor_history() -> int:
+    """Delete competitor snapshots older than the delta history window."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=COMPETITOR_HISTORY_RETENTION_DAYS)
+    async with async_session() as db:
+        return await _batched_delete(
+            db,
+            CompetitorSnapshotHistory,
+            CompetitorSnapshotHistory.fetched_at < cutoff,
+        )
+
+
 async def cleanup_all() -> dict[str, int]:
     """Run all retention cleanup jobs. Returns counts deleted."""
     counts = {}
@@ -159,6 +174,7 @@ async def cleanup_all() -> dict[str, int]:
         ("notifications", cleanup_notifications),
         ("usage_events", cleanup_usage_events),
         ("jobs", cleanup_jobs),
+        ("competitor_history", cleanup_competitor_history),
     ]:
         try:
             counts[name] = await fn()

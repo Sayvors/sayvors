@@ -186,7 +186,7 @@
 
 <div class="top">
   <span class="name">Sayvors 1M-User Readiness</span>
-  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 4 open (0 blockers · 3 majors · 1 medium) · INS: 1 open · original audit: 2 open (OPS-1, OPS-4) · 38 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 8 open (2 high · 4 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,118 passed / 3 skipped (2026-11-03)</span>
+  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 4 open (0 blockers · 3 majors · 1 medium) · INS: 1 open · original audit: 2 open (OPS-1, OPS-4) · 38 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 7 open (1 high · 4 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,120 passed / 3 skipped (2026-11-03)</span>
   <nav class="topnav">
     <a href="#blockers">Blockers</a>
     <a href="#pass-2026-10-25">Oct 25 pass</a>
@@ -225,7 +225,7 @@
   <div class="stat"><div class="n calm">1,645</div><div class="l">backend tests (2 skipped in CI where pgvector runs; 4 skipped locally without Postgres) — CI gates every staging deploy on them; staging CI run #77 passed on <code>d82d800</code></div></div>
   <div class="stat"><div class="n amber">1</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new finding still open: INS-5 (INS-1, INS-2, INS-3, INS-4, INS-6, INS-7 fixed)</div></div>
   <div class="stat"><div class="n">4</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 0 blockers · 3 majors · 1 medium batches open. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
-  <div class="stat"><div class="n">8</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — Review Intelligence + Analytics "actual facts" gaps: competitor deltas, grid rank, AI-answer visibility, Review Campaign premium gating. Strategy rule: every number a tenant sees must be verifiable on Google Maps or carry a named source</div></div>
+  <div class="stat"><div class="n">7</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — Review Intelligence + Analytics "actual facts" gaps: grid rank, AI-answer visibility, Review Campaign premium gating. Strategy rule: every number a tenant sees must be verifiable on Google Maps or carry a named source</div></div>
 </div>
 
 <section id="model">
@@ -595,11 +595,11 @@
       <td class="num">—</td>
     </tr>
     <tr>
-      <td class="num">FACT-2</td><td><span class="chip high">High</span></td>
-      <td><strong>Competitor trend deltas are computed but never rendered.</strong> <code>CompetitorSnapshot</code> rows refresh idempotently, but the benchmark tab shows point-in-time values and a manual refresh button — the fact "your rating moved +0.1 this month while the local median moved −0.05" never surfaces. Time-series data is being overwritten into a single row per refresh; deltas are the entire value of tracking competitors.</td>
-      <td class="path">analytics/competitors.py:94-163 (upsert, stale sweep); app/dashboard/benchmark/page.tsx:62 (refresh button only)</td>
-      <td>Keep per-cycle history (history table or SCD rows) and render delta cards: rating Δ, review-count Δ, velocity vs. each tracked peer.</td>
-      <td class="num">1–2 days</td>
+      <td class="num">FACT-2</td><td><span class="chip ok">Fixed</span></td>
+      <td><strong>Competitor trend deltas are computed but never rendered.</strong> <code>CompetitorSnapshot</code> rows refreshed idempotently, but the benchmark tab showed point-in-time values and a manual refresh button — the fact "your rating moved +0.1 this month while the local median moved −0.05" never surfaced. Time-series data was overwritten into a single row per refresh; deltas are the entire value of tracking competitors. <strong>Fixed 2026-11-03:</strong> new <code>competitor_snapshot_history</code> table (migration <code>f5a8c2d6e9b14374</code>) appends one row per peer per refresh. The benchmark API computes 30-day rating Δ, review-count Δ and velocity per peer, plus median peer Δs; the external peer card renders the three delta cards and per-peer deltas. History is retained for 730 days by the existing hourly retention sweep. 16 scoped competitor/migration tests pass; full suite 2,120 passed / 3 skipped; web tests 39, tsc and build pass.</td>
+      <td class="path">analytics/models.py (CompetitorSnapshotHistory); analytics/competitors.py; alembic/versions/f5a8c2d6e9b14374_competitor_snapshot_history.py; retention.py; apps/web/components/analytics/BenchmarkCards.tsx; apps/web/lib/api-analytics.ts; tests/test_analytics_competitors.py</td>
+      <td><span class="chip ok">Done</span></td>
+      <td class="num">—</td>
     </tr>
     <tr>
       <td class="num">FACT-3</td><td><span class="chip med">Med</span></td>
@@ -652,7 +652,7 @@
     </tr>
   </table></div>
 
-  <p class="note">Order: FACT-2 → FACT-3 (fastest to land, biggest credibility win) → FACT-7/FACT-8 (one page-touch each) → FACT-6 → FACT-4 (buy, phase 2) → FACT-5 (spike, phase 3) → FACT-9 (premium Review Campaign, plan-gated + duplicate/reuse). FACT-1 (Google listing Q&amp;A sync + draft/approval card) is done. Every row here is product-track — none of it blocks the Phase 1 launch; FACT-2/FACT-3/FACT-7/FACT-8 are each ≤2 days and compound into the "we show facts, not vibes" position the paid-tool market (Birdeye $300/mo, Podium $289/mo) currently leaves open.</p>
+  <p class="note">Order: FACT-3 (fastest credibility win) → FACT-7/FACT-8 (one page-touch each) → FACT-6 → FACT-4 (buy, phase 2) → FACT-5 (spike, phase 3) → FACT-9 (premium Review Campaign, plan-gated + duplicate/reuse). FACT-1 (Google Q&amp;A sync) and FACT-2 (competitor deltas) are done. Every row here is product-track — none of it blocks the Phase 1 launch; FACT-3/FACT-7/FACT-8 are each ≤2 days and compound into the "we show facts, not vibes" position the paid-tool market (Birdeye $300/mo, Podium $289/mo) currently leaves open.</p>
 
   <h3>Also found 2026-11-02 — why the Overview was wall-to-wall zeros</h3>
   <div class="scroll"><table>

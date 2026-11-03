@@ -66,6 +66,12 @@ export default function BenchmarkCards({
   const ratingDelta = benchmark.current_avg_rating - benchmark.similar_avg_rating;
   const reviewsDelta = benchmark.current_reviews_total - benchmark.similar_reviews_total;
   const responseDelta = benchmark.current_response_rate - benchmark.similar_response_rate;
+  const ext = benchmark.external;
+  const deltaWindow = ext?.delta_window_days ?? 30;
+  const fmtDelta = (value: number | null | undefined, suffix = "") => {
+    if (value === null || value === undefined) return "—";
+    return `${value > 0 ? "+" : ""}${value}${suffix}`;
+  };
 
   return (
     <div className="space-y-4 sm:space-y-5">
@@ -222,6 +228,30 @@ export default function BenchmarkCards({
                   <p className="text-[22px] font-black tabular-nums text-[var(--ui-ink)]">{benchmark.external.count}</p>
                 </div>
               </div>
+              {(benchmark.external.median_rating_delta != null ||
+                benchmark.external.median_reviews_delta != null ||
+                benchmark.external.median_velocity_per_month != null) && (
+                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                  <div className="rounded-[2px] bg-[var(--ui-sunken)] p-2.5">
+                    <p className="text-[9px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">Peer rating Δ · {deltaWindow}d</p>
+                    <p className="mt-1 text-[16px] font-black tabular-nums text-[var(--ui-ink)]">
+                      {fmtDelta(benchmark.external.median_rating_delta, "★")}
+                    </p>
+                  </div>
+                  <div className="rounded-[2px] bg-[var(--ui-sunken)] p-2.5">
+                    <p className="text-[9px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">Peer reviews Δ · {deltaWindow}d</p>
+                    <p className="mt-1 text-[16px] font-black tabular-nums text-[var(--ui-ink)]">
+                      {fmtDelta(benchmark.external.median_reviews_delta)}
+                    </p>
+                  </div>
+                  <div className="rounded-[2px] bg-[var(--ui-sunken)] p-2.5">
+                    <p className="text-[9px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">Peer velocity · /mo</p>
+                    <p className="mt-1 text-[16px] font-black tabular-nums text-[var(--ui-ink)]">
+                      {fmtDelta(benchmark.external.median_velocity_per_month)}
+                    </p>
+                  </div>
+                </div>
+              )}
               <p className="mt-2 text-[10px] text-[var(--ui-ink-2)]">
                 {benchmark.external.radius_m ? `Within ${benchmark.external.radius_m}m` : "Radius not recorded"}
                 {benchmark.external.category ? ` · ${benchmark.external.category}` : ""}
@@ -236,6 +266,12 @@ export default function BenchmarkCards({
                       <span className="shrink-0 tabular-nums text-[var(--ui-ink-2)]">
                         {p.rating !== null ? p.rating.toFixed(1) + "★" : "—"} · {p.review_count}
                       </span>
+                      {(p.rating_delta != null || p.reviews_delta != null) && (
+                        <span className="w-20 shrink-0 text-right text-[10px] font-semibold tabular-nums text-[var(--ui-ink-2)]">
+                          {p.rating_delta != null ? `${p.rating_delta > 0 ? "+" : ""}${p.rating_delta.toFixed(2)}★` : ""}
+                          {p.reviews_delta != null ? ` · ${p.reviews_delta > 0 ? "+" : ""}${p.reviews_delta}` : ""}
+                        </span>
+                      )}
                     </li>
                   ))}
                 </ul>

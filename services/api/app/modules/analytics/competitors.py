@@ -17,6 +17,7 @@ Design rules:
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -24,7 +25,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import settings
-from .models import CompetitorSnapshot
+from .models import CompetitorSnapshot, CompetitorSnapshotHistory
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,10 @@ PLACES_FIELD_MASK = (
     "places.userRatingCount,places.primaryTypeDisplayName"
 )
 PLACES_TIMEOUT_SECONDS = 10.0
+# Deltas are most useful over a month; that is also the benchmark copy's
+# "this month" claim. History older than this is retained only for audit.
+DELTA_WINDOW_DAYS = 30
+HISTORY_QUERY_LIMIT = 2000
 
 
 def places_configured() -> bool:
@@ -148,6 +153,22 @@ async def refresh_external_peers(
         row.query_radius_m = settings.BENCHMARK_PEER_RADIUS_METERS
         row.query_category = category
         row.fetched_at = now
+        # Keep every cycle: this is the only source of the delta and velocity
+        # facts the benchmark now renders.
+        db.add(CompetitorSnapshotHistory(
+            id=str(uuid.uuid4()),
+            user_id=user_id,
+            place_id=item["place_id"],
+            name=item["name"],
+            category=item["category"],
+            address=item["address"],
+            rating=item["rating"],
+            review_count=item["review_count"],
+            source="google_places",
+            query_radius_m=settings.BENCHMARK_PEER_RADIUS_METERS,
+            query_category=category,
+            fetched_at=now,
+        ))
     if existing:
         stale_ids = [pid for pid in existing if pid not in seen]
         if stale_ids:
@@ -163,7 +184,7 @@ async def refresh_external_peers(
 
 
 async def get_external_peer_set(db: AsyncSession, user_id: str) -> dict:
-    """Read the stored external peer set with provenance and medians."""
+    """Read the stored external peer set with provenance, medians and deltas."""
     if not places_configured():
         return {"configured": False, "available": False, "count": 0, "peers": []}
 
@@ -188,6 +209,76 @@ async def get_external_peer_set(db: AsyncSession, user_id: str) -> dict:
 
     ratings = [r.rating for r in rows if r.rating is not None]
     reviews = [r.review_count for r in rows]
+
+    # Deltas are computed against the last capture at/older than the 30-day
+    # window (or the earliest capture when the history is younger). This is
+    # why the history table exists: the snapshot row was overwritten each
+    # refresh and the before-value was lost.
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=DELTA_WINDOW_DAYS)
+    history = (
+        await db.execute(
+            select(CompetitorSnapshotHistory)
+            .where(
+                CompetitorSnapshotHistory.user_id == user_id,
+                CompetitorSnapshotHistory.source == "google_places",
+            )
+            .order_by(CompetitorSnapshotHistory.fetched_at.desc())
+            .limit(HISTORY_QUERY_LIMIT)
+        )
+    ).scalars().all()
+    series: dict[str, list[CompetitorSnapshotHistory]] = {}
+    for row in history:
+        series.setdefault(row.place_id, []).append(row)
+
+    def _aware(value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+    peer_deltas: list[dict] = []
+    rating_deltas: list[float] = []
+    review_deltas: list[int] = []
+    velocities: list[float] = []
+    for r in rows[:20]:
+        points = series.get(r.place_id) or []
+        baseline = None
+        for point in points:
+            stamp = _aware(point.fetched_at)
+            if stamp is None or stamp > cutoff:
+                continue
+            if baseline is None or stamp > (_aware(baseline.fetched_at) or cutoff):
+                baseline = point
+        if baseline is None and points:
+            baseline = min(points, key=lambda p: _aware(p.fetched_at) or now)
+        base_at = _aware(baseline.fetched_at) if baseline is not None else None
+        current_at = _aware(r.fetched_at) or now
+        days = max(1, int((current_at - base_at).days)) if base_at else None
+        rating_delta = None
+        if baseline is not None and r.rating is not None and baseline.rating is not None:
+            rating_delta = round(r.rating - baseline.rating, 2)
+            rating_deltas.append(rating_delta)
+        review_delta = None
+        velocity = None
+        if baseline is not None:
+            review_delta = int(r.review_count - baseline.review_count)
+            review_deltas.append(review_delta)
+            if days:
+                velocity = round(review_delta * 30 / days, 1)
+                velocities.append(velocity)
+        peer_deltas.append({
+            "place_id": r.place_id,
+            "name": r.name,
+            "category": r.category,
+            "rating": r.rating,
+            "review_count": r.review_count,
+            "rating_delta": rating_delta,
+            "reviews_delta": review_delta,
+            "velocity_per_month": velocity,
+            "baseline_at": base_at,
+            "baseline_days": days,
+        })
+
     return {
         "configured": True,
         "available": len(rows) >= 3,
@@ -199,14 +290,9 @@ async def get_external_peer_set(db: AsyncSession, user_id: str) -> dict:
         "stale": stale,
         "median_rating": round(_median(ratings), 2) if ratings else None,
         "median_reviews": int(_median([float(v) for v in reviews]) or 0) if reviews else None,
-        "peers": [
-            {
-                "place_id": r.place_id,
-                "name": r.name,
-                "category": r.category,
-                "rating": r.rating,
-                "review_count": r.review_count,
-            }
-            for r in rows[:20]
-        ],
+        "delta_window_days": DELTA_WINDOW_DAYS,
+        "median_rating_delta": round(_median(rating_deltas), 2) if rating_deltas else None,
+        "median_reviews_delta": int(_median([float(v) for v in review_deltas]) or 0) if review_deltas else None,
+        "median_velocity_per_month": round(_median(velocities), 1) if velocities else None,
+        "peers": peer_deltas,
     }
