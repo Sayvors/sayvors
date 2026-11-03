@@ -16,6 +16,53 @@ from app.modules.channels.meta.language_gate import (
 )
 
 
+def test_parser_hoists_interactive_and_button_labels():
+    from app.modules.channels.meta.webhooks import parser
+
+    _provider, events = parser.parse({
+        "object": "whatsapp_business_account",
+        "entry": [{
+            "id": "waba-1",
+            "changes": [{
+                "field": "messages",
+                "value": {
+                    "metadata": {"phone_number_id": "phone-1"},
+                    "messages": [
+                        {
+                            "id": "wamid-interactive-1",
+                            "from": "966500001111",
+                            "timestamp": "1700000000",
+                            "type": "interactive",
+                            "interactive": {
+                                "type": "button_reply",
+                                "button_reply": {
+                                    "id": "lang_en",
+                                    "title": "English",
+                                },
+                            },
+                        },
+                        {
+                            "id": "wamid-button-1",
+                            "from": "966500001111",
+                            "timestamp": "1700000001",
+                            "type": "button",
+                            "button": {
+                                "text": "اردو",
+                                "payload": "lang_ur",
+                            },
+                        },
+                    ],
+                },
+            }],
+        }],
+    })
+
+    assert events[0]["data"]["msg_type"] == "interactive"
+    assert events[0]["data"]["text"] == "English"
+    assert events[1]["data"]["msg_type"] == "button"
+    assert events[1]["data"]["text"] == "اردو"
+
+
 def test_three_buttons_in_the_expected_order():
     assert [label for label, _ in LANGUAGE_OPTIONS] == ["English", "العربية", "اردو"]
     assert [code for _, code in LANGUAGE_OPTIONS] == ["en", "ar", "ur"]

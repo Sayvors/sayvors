@@ -129,6 +129,26 @@ async def _messages(db):
     )).scalars().all()
 
 
+@pytest.mark.asyncio
+async def test_instagram_human_request_escalates_without_an_ai_reply(db, ig_mocks):
+    await _seed_ig_stack(db)
+    await _seed_channel(db)
+
+    raw = {
+        "sender": {"id": IGSID},
+        "recipient": {"id": IG_ID},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "message": {"mid": "ig-human-1", "text": "I want to talk to a human"},
+    }
+    await _consumer._process_message(_dm_bytes(raw=raw, mid="ig-human-1"))
+
+    ig_mocks.reply.assert_not_awaited()
+    ig_mocks.send.assert_awaited()
+    from app.modules.channels.meta.lead_escalation import HANDOVER_TEXT
+
+    assert any(call.args[3] == HANDOVER_TEXT for call in ig_mocks.send.await_args_list)
+
+
 # ── Parser: the mid lives at value.message.mid ───────────
 
 

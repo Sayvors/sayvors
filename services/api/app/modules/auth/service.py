@@ -39,6 +39,14 @@ from .events import (
 from ...modules.email.service import send_welcome_email
 
 
+# Signup must not reveal whether an email is registered. The same response is
+# returned for a new account, an existing verified account and the rare
+# duplicate-insert race; the mailbox owner gets the actionable email.
+SIGNUP_GENERIC_MESSAGE = "Check your email to continue."
+INVALID_OTP_MESSAGE = "Invalid or expired code."
+INVALID_VERIFICATION_MESSAGE = "Invalid or expired verification token."
+
+
 def _adopt_provider_avatar(user: User, provider: str, picture: str | None) -> None:
     """Record a provider snapshot without clobbering an explicit choice.
 
@@ -59,10 +67,37 @@ def _adopt_provider_avatar(user: User, provider: str, picture: str | None) -> No
         user.avatar_url = url[:1000]
 
 
+async def _notify_existing_signup(user: User) -> None:
+    """Send the mailbox owner an actionable email for a duplicate signup.
+
+    The endpoint's response is identical either way; this is the only place
+    that knows the account already exists, and it only tells the mailbox.
+    """
+    try:
+        if user.email_verified:
+            from ...modules.email.service import send_account_exists_email
+
+            await send_account_exists_email(user.email, user.first_name or "there")
+        else:
+            # The account never finished verification; let the owner finish it
+            # instead of leaving them with a dead-end signup page.
+            from ...modules.email.service import send_otp_email
+
+            await send_otp_email(user.email, "signup")
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Signup notice email failed for %s", user.email
+        )
+
+
 async def signup(body: SignupRequest, db: AsyncSession, user_agent: str, ip: str) -> dict:
     existing = await db.execute(select(User).where(User.email == body.email))
-    if existing.scalar_one_or_none():
-        raise ValueError("Email already registered")
+    user = existing.scalar_one_or_none()
+    if user is not None:
+        await _notify_existing_signup(user)
+        return {"message": SIGNUP_GENERIC_MESSAGE}
 
     user = User(
         first_name=body.first_name,
@@ -74,7 +109,19 @@ async def signup(body: SignupRequest, db: AsyncSession, user_agent: str, ip: str
         newsletter=body.newsletter,
     )
     db.add(user)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError:
+        # Two concurrent signups for the same address: the loser behaves
+        # exactly like a duplicate, not like a 500.
+        await db.rollback()
+        user = (
+            await db.execute(select(User).where(User.email == body.email))
+        ).scalar_one_or_none()
+        if user is None:
+            raise
+        await _notify_existing_signup(user)
+        return {"message": SIGNUP_GENERIC_MESSAGE}
 
     raw_token = create_email_verification_token(user.id)
     verification = EmailVerification(
@@ -83,56 +130,33 @@ async def signup(body: SignupRequest, db: AsyncSession, user_agent: str, ip: str
         expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
     )
     db.add(verification)
-
-    refresh_raw = create_refresh_token(user.id)
-    refresh = RefreshToken(
-        user_id=user.id,
-        token_hash=hash_token(refresh_raw),
-        fingerprint=create_token_fingerprint(user_agent, ip),
-        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.JWT_REFRESH_EXPIRATION_DAYS),
-        user_agent=user_agent[:500],
-        ip_address=ip[:45],
-    )
-    db.add(refresh)
-    await db.commit()
-
-    access_token = create_access_token(user.id, user.token_version or 0)
-
-    # Store session in Redis
-    import json
-    from ...modules.redis.client import get_redis
     try:
-        redis = await get_redis()
-        session_data = {"user_id": user.id, "ip": ip, "user_agent": user_agent[:200]}
-        await store_session(user.id, user.id, session_data, settings.JWT_REFRESH_EXPIRATION_DAYS * 86400)
-    except Exception:
-        pass
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        user = (
+            await db.execute(select(User).where(User.email == body.email))
+        ).scalar_one_or_none()
+        if user is None:
+            raise
+        await _notify_existing_signup(user)
+        return {"message": SIGNUP_GENERIC_MESSAGE}
 
     await log_signup(user.id, user.email, ip, user_agent[:200])
 
-    # Gate sign-in on email verification: send the OTP now. A send
-    # failure must not fail signup — the user can resend from login.
+    # Gate sign-in on email verification: send the OTP now. A send failure
+    # must not fail signup — the user can resend from login. No session is
+    # issued here; verify_signup_otp issues one only after the code lands.
     try:
         from ...modules.email.service import send_otp_email
+
         await send_otp_email(user.email, "signup")
     except Exception:
         import logging
+
         logging.getLogger(__name__).warning("OTP email failed for %s", user.email)
 
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_raw,
-        "user": {
-            "id": user.id,
-            "first_name": user.first_name,
-            "last_name": user.last_name,
-            "email": user.email,
-            "email_verified": user.email_verified,
-            "onboarded": user.onboarded,
-            "avatar_url": user.avatar_url,
-        },
-        "verification_token": raw_token,
-    }
+    return {"message": SIGNUP_GENERIC_MESSAGE}
 
 
 async def login(body: LoginRequest, db: AsyncSession, user_agent: str, ip: str) -> dict:
@@ -178,6 +202,12 @@ async def login(body: LoginRequest, db: AsyncSession, user_agent: str, ip: str) 
         user_agent=user_agent[:500],
         ip_address=ip[:45],
     )
+    # A successful sign-in is the owner saying "keep my account" — cancel a
+    # pending personal-data deletion in the same transaction as the session.
+    from ..users.account_deletion import cancel_pending
+
+    await cancel_pending(db, user.id, commit=False)
+
     db.add(refresh)
     await db.commit()
 
@@ -222,6 +252,10 @@ async def _issue_session(user: User, db: AsyncSession, event: str,
         user_agent=user_agent[:500],
         ip_address=ip[:45],
     ))
+    if event == "login":
+        from ..users.account_deletion import cancel_pending
+
+        await cancel_pending(db, user.id, commit=False)
     await db.commit()
 
     try:
@@ -712,12 +746,10 @@ async def reset_password(body: ResetPasswordRequest, db: AsyncSession, ip: str, 
 async def verify_email(token: str, db: AsyncSession) -> bool:
     try:
         payload = decode_token(token)
-        if payload.get("type") != "email_verify":
-            raise ValueError("Invalid token type")
-    except ValueError:
-        raise
     except Exception:
-        raise ValueError("Invalid or expired verification token")
+        raise ValueError(INVALID_VERIFICATION_MESSAGE) from None
+    if payload.get("type") != "email_verify":
+        raise ValueError(INVALID_VERIFICATION_MESSAGE)
 
     token_hash_val = hash_token(token)
     result = await db.execute(
@@ -729,14 +761,14 @@ async def verify_email(token: str, db: AsyncSession) -> bool:
     db_verification = result.scalar_one_or_none()
 
     if not db_verification or db_verification.expires_at < datetime.now(timezone.utc):
-        raise ValueError("Invalid or expired verification token")
+        raise ValueError(INVALID_VERIFICATION_MESSAGE)
 
     db_verification.used = True
 
     user_result = await db.execute(select(User).where(User.id == payload["sub"]))
     user = user_result.scalar_one_or_none()
     if not user:
-        raise ValueError("User not found")
+        raise ValueError(INVALID_VERIFICATION_MESSAGE)
 
     user.email_verified = True
     await db.commit()
@@ -758,16 +790,17 @@ async def verify_signup_otp(
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
     if not user:
-        raise ValueError("No account with that email")
+        raise ValueError(INVALID_OTP_MESSAGE)
     if user.email_verified:
         # This endpoint completes signup; it is not a login. Skipping the OTP
         # check for already-verified accounts (the old behavior) let anyone who
         # knew a verified user's email mint a full session with an arbitrary
         # code — an account-takeover bypass. Verified users sign in with their
-        # password; the verify-otp page links there.
-        raise ValueError("This account is already verified. Please sign in instead.")
+        # password; the verify-otp page links there. The message is generic so
+        # this endpoint cannot be used to test whether an email is registered.
+        raise ValueError(INVALID_OTP_MESSAGE)
     if not await verify_otp(email, code):
-        raise ValueError("Invalid or expired code.")
+        raise ValueError(INVALID_OTP_MESSAGE)
     just_verified = True
     user.email_verified = True
     await log_email_verified(user.id, user.email)

@@ -47,6 +47,9 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "aiosqlite>=0.20",
+    # Parallel test execution for the full suite (CI and local). Scoped runs
+    # can override the default with `-n 0` when worker startup would dominate.
+    "pytest-xdist>=3.8",
 ]
 
 [build-system]
@@ -59,3 +62,8 @@ packages = ["app"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# The full suite is ~2k tests and dominated by per-test imports/fixtures.
+# `loadscope` keeps a module on one worker, which avoids module-global and
+# Redis cross-talk while still filling every available CPU. Use `-n 0` for a
+# single test/file, where worker startup costs more than the test itself.
+addopts = "-ra -n auto --dist loadscope"

@@ -6,16 +6,18 @@ Root-level rules for any agent working in this repo. These override default habi
 
 ## 1. Test only what you changed
 
-**Never run the full suite to validate a scoped change.** The suite takes ~20 minutes
-and burns CI minutes on GitHub for nothing.
+**Never run the full suite to validate a scoped change.** It burns CI minutes on
+GitHub for nothing. The full suite runs in parallel via pytest-xdist (configured in
+`services/api/pyproject.toml`) and takes a few minutes; a scoped run is still faster.
 
 Instead:
 
 1. Identify the test files that cover the code you touched.
-2. Run **only those files**:
+2. Run **only those files**. `-n 0` overrides the parallel default so a two-file
+   run does not pay worker startup:
    ```bash
    cd services/api
-   python -m pytest tests/test_foo.py tests/test_bar.py -q
+   python -m pytest tests/test_foo.py tests/test_bar.py -q -n 0
    ```
 3. Run the broader suite **only** when the change is cross-cutting (shared model,
    migration, config, auth, database engine) or before a release/deploy gate.

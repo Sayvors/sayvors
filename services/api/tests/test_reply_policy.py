@@ -29,6 +29,47 @@ def test_prompt_never_calls_itself_an_ai_assistant():
     assert "text-based system" in prompt
 
 
+def test_prompt_is_sarah_a_female_team_member():
+    prompt = _system_prompt(_user())
+    assert "You are Sarah" in prompt
+    assert "You are a woman" in prompt
+    assert "bringing in a colleague from the team" in prompt
+    # The old honesty clause invited the model to announce that it is an AI.
+    assert "answer honestly" not in prompt
+
+
+def test_prompt_has_the_conversation_flow_rules():
+    prompt = _system_prompt(_user())
+    assert "a question is not a lead" in prompt
+    assert "Opening a new conversation" in prompt
+    assert "English, Arabic and Urdu" in prompt
+    assert "Use the customer's name occasionally" in prompt
+    assert "At most one emoji" in prompt
+    assert "Voice notes may contain filler words" in prompt
+    assert "either/or question" in prompt
+    assert "Never promise a time frame" in prompt
+
+
+def test_sticker_markers_are_offered_only_where_the_pipeline_can_send_them():
+    whatsapp = _system_prompt(_user(), platform="WhatsApp")
+    assert "[[sticker:ok]]" in whatsapp
+    assert "[[sticker:thanks]]" in whatsapp
+    assert "[[sticker:done]]" in whatsapp
+    # Instagram has no sticker message type; the prompt must not promise one.
+    instagram = _system_prompt(_user(), platform="Instagram")
+    assert "[[sticker:" not in instagram
+
+
+def test_human_request_is_detected_in_english_arabic_and_urdu():
+    from app.modules.channels.meta.lead_escalation import detect_human_request
+
+    assert detect_human_request("I want to talk to a human")
+    assert detect_human_request("can I speak to a real person?")
+    assert detect_human_request("أريد التحدث مع موظف")
+    assert detect_human_request("kisi insaan se baat karni hai")
+    assert not detect_human_request("what are your hours?")
+
+
 def test_prompt_does_not_offer_voice_when_disabled():
     prompt = _system_prompt(_user(), voice_enabled=False)
     assert "Do not offer a voice note" in prompt

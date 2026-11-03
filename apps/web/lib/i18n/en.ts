@@ -156,9 +156,9 @@ const en = {
       subtitle: "What customers talk about — topics, problems and products, ranked by AI.",
       loadError: "Couldn't load insights.",
       retry: "Retry",
-      emptyTitle: "No topic data yet",
+      emptyTitle: "No review intelligence in this window",
       emptyBody:
-        "Once reviews flow through the AI pipeline, topics, problems and products appear here automatically.",
+        "No topics, problems or products were enriched for this period. Try a wider range above, or open Reviews to check what has synced.",
       mostLoved: "Most loved",
       mostLovedSub: "highest praise among products",
       fixFirst: "Fix first",

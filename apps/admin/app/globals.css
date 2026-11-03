@@ -15,6 +15,8 @@
   --ui-line: rgba(61, 29, 110, 0.14);
   --ui-line-strong: rgba(61, 29, 110, 0.28);
   --ui-surface: #ffffff;
+  --ui-surface-solid: #ffffff;
+  --ui-scrim: rgba(61, 29, 110, 0.4);
   --ui-sunken: #e7e1f6; /* deep-violet wash over the page */
   --ui-page: #f3f0ff;
 
@@ -32,6 +34,11 @@
   --ui-line: rgba(255, 255, 255, 0.14);
   --ui-line-strong: rgba(255, 255, 255, 0.26);
   --ui-surface: rgba(255, 255, 255, 0.06);
+  /* Sticky chrome cannot be translucent: the nav/page scrolls underneath it.
+   * Matches the effective 6%-white surface over the black page. */
+  --ui-surface-solid: #0f0f0f;
+  /* A scrim must darken in both themes; the ink token flips to white in dark. */
+  --ui-scrim: rgba(0, 0, 0, 0.68);
   --ui-sunken: rgba(255, 255, 255, 0.03);
   --ui-page: #000000;
 

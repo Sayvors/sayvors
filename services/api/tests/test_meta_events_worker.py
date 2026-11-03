@@ -27,6 +27,16 @@ from app.modules.channels.meta import meta_events_worker as worker
 from app.modules.channels.meta.models import MetaWebhookEvent
 from app.modules.outbox.models import EventOutbox
 
+
+def test_ambiguous_error_is_the_shared_base_class():
+    """LAUNCH-B3: the consumer raises MetaAmbiguousError from
+    providers.base; the worker's ambiguous branch must catch the exact same
+    class — a structurally-identical lookalike would fall through to the
+    generic retry and risk a double-send."""
+    from app.modules.channels.meta.providers.base import MetaAmbiguousError
+
+    assert worker._AmbiguousError is MetaAmbiguousError
+
 ROUTED_HANDLERS = [
     "_handle_message_received",
     "_handle_message_status",
@@ -84,6 +94,7 @@ def _envelope(provider: str, event_type: str, data: dict) -> dict:
     [
         ("whatsapp", "message.received", "_handle_message_received"),
         ("whatsapp", "message.status", "_handle_message_status"),
+        ("whatsapp", "message.status.read", "_handle_message_status"),
         ("whatsapp", "message.history", "_handle_message_history"),
         ("whatsapp", "message.echo", "_handle_message_echo"),
         ("whatsapp", "smb.contacts", "_handle_smb_contacts"),

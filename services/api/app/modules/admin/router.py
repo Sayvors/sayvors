@@ -547,6 +547,185 @@ async def admin_usage_voice(
     return AdminVoiceUsageOverview(**await get_voice_overview(db, days))
 
 
+class PersonaIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80)
+    gender: str = Field("female", pattern="^(female|male|neutral)$")
+    description: str | None = Field(None, max_length=255)
+    instructions: str | None = Field(None, max_length=4000)
+    sort_order: int = Field(0, ge=0, le=1000)
+
+
+class PersonaUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=80)
+    gender: str | None = Field(None, pattern="^(female|male|neutral)$")
+    description: str | None = Field(None, max_length=255)
+    instructions: str | None = Field(None, max_length=4000)
+    sort_order: int | None = Field(None, ge=0, le=1000)
+
+
+def _persona_out(row) -> dict:
+    return {
+        "id": row.id,
+        "name": row.name,
+        "gender": row.gender,
+        "description": row.description,
+        "instructions": row.instructions,
+        "is_active": bool(row.is_active),
+        "sort_order": row.sort_order,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@router.get("/personas")
+async def admin_personas(
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Every customer-facing AI persona; exactly one should be active."""
+    from sqlalchemy import select
+
+    from ..assistant.personas import AIPersona
+
+    rows = (
+        await db.execute(
+            select(AIPersona).order_by(AIPersona.sort_order, AIPersona.name)
+        )
+    ).scalars().all()
+    return {"personas": [_persona_out(row) for row in rows]}
+
+
+@router.post("/personas", status_code=status.HTTP_201_CREATED)
+async def admin_persona_create(
+    body: PersonaIn,
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Add a persona. It stays inactive until explicitly activated."""
+    from sqlalchemy import select
+    from sqlalchemy.exc import IntegrityError
+
+    from ..assistant.personas import AIPersona, invalidate_persona_cache
+
+    exists = (
+        await db.execute(select(AIPersona).where(AIPersona.name == body.name.strip()))
+    ).scalar_one_or_none()
+    if exists is not None:
+        raise HTTPException(status_code=409, detail="A persona with that name already exists")
+    row = AIPersona(
+        name=body.name.strip(),
+        gender=body.gender,
+        description=(body.description or "").strip() or None,
+        instructions=(body.instructions or "").strip() or None,
+        sort_order=body.sort_order,
+        is_active=False,
+    )
+    db.add(row)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="A persona with that name already exists")
+    await db.refresh(row)
+    invalidate_persona_cache()
+    return _persona_out(row)
+
+
+@router.patch("/personas/{persona_id}")
+async def admin_persona_update(
+    persona_id: str,
+    body: PersonaUpdate,
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Edit a persona's name, gender, description or tone notes."""
+    from sqlalchemy import select
+    from sqlalchemy.exc import IntegrityError
+
+    from ..assistant.personas import AIPersona, invalidate_persona_cache
+
+    row = (
+        await db.execute(select(AIPersona).where(AIPersona.id == persona_id))
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Persona not found")
+    data = body.model_dump(exclude_unset=True)
+    if "name" in data and data["name"]:
+        data["name"] = data["name"].strip()
+    if "description" in data:
+        data["description"] = (data["description"] or "").strip() or None
+    if "instructions" in data:
+        data["instructions"] = (data["instructions"] or "").strip() or None
+    for key, value in data.items():
+        setattr(row, key, value)
+    db.add(row)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="A persona with that name already exists")
+    await db.refresh(row)
+    invalidate_persona_cache()
+    return _persona_out(row)
+
+
+@router.post("/personas/{persona_id}/activate")
+async def admin_persona_activate(
+    persona_id: str,
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Make one persona the active voice for every tenant."""
+    from sqlalchemy import select, update
+
+    from ..assistant.personas import AIPersona, invalidate_persona_cache
+
+    row = (
+        await db.execute(select(AIPersona).where(AIPersona.id == persona_id))
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Persona not found")
+    await db.execute(update(AIPersona).values(is_active=False))
+    row.is_active = True
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    invalidate_persona_cache()
+    return _persona_out(row)
+
+
+@router.delete("/personas/{persona_id}")
+async def admin_persona_delete(
+    persona_id: str,
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete an inactive persona. The active one must be switched first."""
+    from sqlalchemy import select
+
+    from ..assistant.personas import AIPersona, invalidate_persona_cache
+
+    row = (
+        await db.execute(select(AIPersona).where(AIPersona.id == persona_id))
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Persona not found")
+    if row.is_active:
+        raise HTTPException(
+            status_code=409,
+            detail="Activate another persona before deleting the active one.",
+        )
+    await db.delete(row)
+    await db.commit()
+    invalidate_persona_cache()
+    return {"deleted": True, "id": persona_id}
+
+
 @router.get("/llm", response_model=list[LlmProviderStatus])
 async def admin_llm_list(
     _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),

@@ -14,6 +14,7 @@ external calls and no per-conversation scans on the request path.
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from statistics import median
@@ -35,6 +36,68 @@ WAITING_LONG_SECONDS = 60 * 60
 # thins each day to <=500 values; this cap keeps a 90-day x many-channel
 # tenant from turning the pulse into a multi-million-int sort.
 MAX_FRT_SAMPLES = 50_000
+
+# A review sync that has not succeeded in a day is stale. The reviews worker
+# records a success on every successful poll, so this is about the poller, not
+# about whether Google happened to return a new review that day.
+SECONDS_PER_DAY = 24 * 60 * 60
+STALE_SYNC_SECONDS = SECONDS_PER_DAY
+
+
+def _parse_health_timestamp(value: object) -> datetime | None:
+    """Parse an ISO-8601 timestamp from channel health metadata.
+
+    Health is written by the reviews worker as a string and read here on the
+    dashboard path. A malformed value must not fail the whole pulse, so this
+    returns None instead of raising.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+async def _sync_successes(
+    db: AsyncSession, user_id: str, channel_id: str | None
+) -> list[datetime]:
+    """Return the last successful poll per in-scope review channel.
+
+    ``last_synced_at`` must mean "the poller last succeeded", not "the newest
+    review arrived". Those are different facts: a healthy channel that simply
+    received no new review still has a fresh sync timestamp, and using review
+    rows for it produced a false "stale" card. The worker persists the truth
+    in ``Channel.metadata_json.health.last_success_at`` on every successful
+    poll, so that is the source read here.
+    """
+    filters = [
+        Channel.user_id == user_id,
+        Channel.platform == "google_reviews",
+        Channel.status == "active",
+    ]
+    if channel_id:
+        filters.append(Channel.id == channel_id)
+    rows = (
+        await db.execute(select(Channel.metadata_json).where(*filters))
+    ).scalars().all()
+
+    successes: list[datetime] = []
+    for raw in rows:
+        try:
+            meta = json.loads(raw or "{}")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(meta, dict):
+            continue
+        health = meta.get("health")
+        if not isinstance(health, dict):
+            continue
+        parsed = _parse_health_timestamp(health.get("last_success_at"))
+        if parsed is not None:
+            successes.append(parsed)
+    return successes
 
 
 def _bucket():
@@ -118,7 +181,7 @@ async def get_pulse(
         # the subtraction never mixes the two.
         if oldest_at.tzinfo is None:
             oldest_at = oldest_at.replace(tzinfo=timezone.utc)
-        oldest_wait_days = max(0, int((now - oldest_at).total_seconds() // 86400))
+        oldest_wait_days = max(0, int((now - oldest_at).total_seconds() // SECONDS_PER_DAY))
 
     # Source mix for the period (channel -> platform), one aggregate query.
     source_rows = (
@@ -135,9 +198,11 @@ async def get_pulse(
         for platform, count in source_rows
     ]
 
-    last_synced = (
-        await db.execute(select(func.max(bucket)).where(*base))
-    ).scalar()
+    # "Synced" is a property of the poller, not of review volume. Read the
+    # last successful poll per active location so a quiet-but-healthy channel
+    # never looks stale, and return the most recent success for the headline.
+    sync_successes = await _sync_successes(db, user_id, channel_id)
+    last_synced = max(sync_successes) if sync_successes else None
 
     # ── Location league: one aggregate, grouped by channel ────────────────
     in_period = bucket >= start
@@ -263,16 +328,33 @@ async def get_pulse(
             "detail": f"{loc['unanswered']} unanswered" if loc["unanswered"] else None,
             "href": "/dashboard/analytics?tab=insights",
         })
-    if last_synced is not None:
-        synced_at = last_synced if last_synced.tzinfo else last_synced.replace(tzinfo=timezone.utc)
-        if (now - synced_at).total_seconds() > 86400:
-            attention.append({
-                "kind": "sync",
-                "severity": "medium",
-                "title": "Review sync is stale",
-                "detail": "last success >24h ago",
-                "href": "/dashboard/channels",
-            })
+    # A single stale location is worth surfacing even when the tenant's other
+    # locations are healthy; the detail names the oldest success so the card
+    # never claims the whole account stopped syncing when it did not.
+    stale_successes = [
+        ts
+        for ts in sync_successes
+        if (now - ts).total_seconds() > STALE_SYNC_SECONDS
+    ]
+    if stale_successes:
+        oldest_stale = min(stale_successes)
+        stale_days = max(
+            0, int((now - oldest_stale).total_seconds() // SECONDS_PER_DAY)
+        )
+        if len(stale_successes) == len(sync_successes):
+            stale_title = "Review sync is stale"
+        else:
+            stale_title = (
+                f"{len(stale_successes)} of {len(sync_successes)} locations "
+                "haven't synced in 24h"
+            )
+        attention.append({
+            "kind": "sync",
+            "severity": "medium",
+            "title": stale_title,
+            "detail": f"oldest success {stale_days}d ago",
+            "href": "/dashboard/channels",
+        })
     attention = attention[:5]
 
     return {

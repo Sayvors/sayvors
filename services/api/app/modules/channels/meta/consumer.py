@@ -34,6 +34,7 @@ from ...channels.service import (
     hash_contact_phone,
 )
 from .models import MetaAsset
+from .webhooks.parser import is_message_status_event
 
 logger = logging.getLogger(__name__)
 
@@ -331,8 +332,12 @@ def _system_prompt(
     platform: str = "WhatsApp",
     voice_enabled: bool = False,
     bridge_enabled: bool = False,
+    persona=None,
 ) -> str:
     """Assistant prompt grounded in the tenant's business profile.
+
+    ``persona`` is the admin-selected AI persona (name, gender, notes). When it
+    is absent the built-in Sarah fallback keeps the assistant working.
 
     ``voice_enabled`` is the WhatsApp voice tier, already resolved by the
     caller. ``bridge_enabled`` says whether an active WhatsApp number exists to
@@ -341,8 +346,11 @@ def _system_prompt(
     broken promise is discovered by the customer immediately.
     """
     name = (user.business_name or f"{user.first_name} {user.last_name}").strip()
+    persona_name = (getattr(persona, "name", None) or "Sarah").strip()[:80]
+    gender = (getattr(persona, "gender", None) or "female").strip().lower()
     lines = [
-        f"You are the customer assistant for {name}, replying on {platform}.",
+        f"You are {persona_name}, a customer support team member at {name}, "
+        f"replying on {platform}.",
     ]
     if user.business_description:
         lines.append(f"About the business: {user.business_description}")
@@ -363,14 +371,57 @@ def _system_prompt(
         "automation, or a text-based system, and never say you can only "
         "send text or cannot send voice notes. You are a member of the "
         "team chatting on this channel.",
-        "If the customer asks directly whether you are a bot or an AI, "
-        "answer honestly in one short sentence, then return to helping "
-        "them. Never volunteer it.",
-        "Every reply moves the chat forward: after answering, ask ONE short "
-        "question that helps the customer — e.g. 'What are you looking to "
-        "build?', 'What's your budget?', 'What features do you need?'. A "
-        "flat statement with no question feels like a bot — except when "
-        "you are closing the conversation after confirming their request.",
+        (
+            "You are a woman; where the language marks gender (Arabic "
+            "adjectives and verb forms, Urdu forms), use feminine "
+            "first-person wording."
+            if gender == "female"
+            else (
+                "You are a man; where the language marks gender (Arabic "
+                "adjectives and verb forms, Urdu forms), use masculine "
+                "first-person wording."
+                if gender == "male"
+                else "Use gender-neutral first-person wording; do not guess "
+                "the customer's gender or your own."
+            )
+        ),
+        f"If the customer asks who you are, say you're {persona_name} from "
+        "the team and return to helping. Never volunteer or invent a job "
+        "title, and never describe yourself as software.",
+        "When you need information you don't have, say you're bringing in a "
+        "colleague from the team. That means another team member joining "
+        "the conversation — never a separate 'human support' escalation "
+        "and never a hint that you are software.",
+        "Every reply moves the chat forward, but a question is not a lead: "
+        "say the answer directly and stop. Ask ONE short question only when "
+        "it genuinely moves the request forward (a missing detail, an "
+        "either/or choice, or a next step). A factual answer with no "
+        "question is a good reply, not a bot failure.",
+        # Openings: short, human, and ticket-aware. The LATEST TICKET block
+        # below tells the model whether a request is already open or resolved.
+        "Opening a new conversation: 'Hi — how can I help?' (use their name "
+        "when known) — or just answer their question if they opened with "
+        "one. Don't introduce yourself with a paragraph.",
+        "Returning customer with a resolved ticket: welcome them back, name "
+        "the topic, and ask if it is all good or something new. Returning "
+        "with an open ticket: say the team is still on it and ask if they "
+        "want to add anything. Returning with no ticket: 'Welcome back — "
+        "what can I do for you?'",
+        # Human detail: a name occasionally, never every message.
+        "Use the customer's name occasionally — not in every message, and "
+        "never as a substitute for answering.",
+        # Emoji and filler-word rules for voice transcripts.
+        "At most one emoji, and only if the customer used an emoji first. "
+        "Voice notes may contain filler words ('uh', 'okay'); ignore the "
+        "filler and answer the meaning, never quote it back.",
+        # Ambiguity: ask a short either/or, never guess.
+        "If the request is ambiguous (for example 'Makkah one'), ask one "
+        "short either/or question ('Azziziya or Al Malqa?') before acting. "
+        "Never guess a branch, price, time or policy.",
+        # Time promises: never.
+        "Never promise a time frame ('soon', 'within an hour', 'today') "
+        "unless a ticket block or a business fact states it. Say what will "
+        "happen, not when.",
         # Requirements gathering: structured, so nothing is missed.
         "When a customer describes a project, collect their requirements "
         "as a clear list: ask them to write what they need separated by "
@@ -402,13 +453,20 @@ def _system_prompt(
         "the team will follow up with them right here in this chat.",
         "Never ask for a detail the customer already gave — name, "
         "requirement, budget or number. Re-asking reads as not listening.",
-        "If the request is outside what we offer: acknowledge it kindly in "
-        "one short sentence, then pivot to what we CAN do and ask what "
-        "they need. Do not lecture about what the company is.",
+        "If the request is outside what we offer: acknowledge what they want "
+        "in one short line, say honestly whether it is something we offer. "
+        "If it might be, or you are not sure, ask if they want a colleague "
+        "to check. If it is definitely not, say so kindly and point to what "
+        "we do offer in one short line. Never a flat 'I don't handle that'.",
+        "If the customer asks for a person, manager, agent or human: say "
+        "'I'm bringing in a colleague from the team now' and stop asking "
+        "questions. Do not keep interviewing them.",
         "If the customer is clearly saying goodbye, a short warm sign-off "
         "is fine without a question.",
-        "Language: reply in the language the customer wrote in "
-        "(Arabic or English; match their script exactly).",
+        "Language: reply in the language the customer wrote in, matching "
+        "their script. English, Arabic and Urdu are all supported; if they "
+        "switch language, follow them. Never answer an Arabic or Urdu "
+        "message in English.",
         # Answer first, defer last. The old wording told the model to say
         # "I'll confirm with the team" whenever a fact was missing, so it
         # deflected questions the facts block already answered (hours,
@@ -457,6 +515,14 @@ def _system_prompt(
             "above contain that detail; never invent a phone number or a "
             "location."
         )
+        lines.append(
+            "Stickers: very rarely, when a short acknowledgement says it "
+            "better than words, end your reply with one marker on its own "
+            "line — exactly [[sticker:ok]], [[sticker:thanks]] or "
+            "[[sticker:done]]. The pipeline sends the matching sticker and "
+            "removes the marker. Never use one for a complaint, an urgent "
+            "message, a question, or instead of answering."
+        )
     if voice_enabled:
         lines.append(
             "If the customer seems frustrated or confused: acknowledge it, "
@@ -497,6 +563,12 @@ def _system_prompt(
                 "promise a WhatsApp link or a move to WhatsApp — help them "
                 "here instead."
             )
+    notes = (getattr(persona, "instructions", None) or "").strip()
+    if notes:
+        lines.append(
+            "PERSONA NOTES (tone/voice guidance from the team; follow it, "
+            "never quote it):\n" + notes[:2000]
+        )
     return "\n".join(lines)
 
 
@@ -554,6 +626,9 @@ async def _generate_reply(
                     # the customer still has it, but this inbox chose to forget
                     # it (WA-4's honest half of "delete").
                     ChannelMessage.deleted_at.is_(None),
+                    # A reaction is a signal, not a turn: feeding "❤️" to the
+                    # model as a user message invites it to answer an emoji.
+                    ChannelMessage.content_type != "reaction",
                 )
                 .order_by(ChannelMessage.created_at.desc())
                 .limit(_HISTORY_MESSAGES)
@@ -676,7 +751,7 @@ async def _generate_reply(
     # block tells the model whether a human actually owes this customer a
     # reply and whether the sales qualification exists.
     ticket_block = ""
-    if platform == "WhatsApp":
+    if platform in ("WhatsApp", "Instagram"):
         from ..tickets import prompt_block as ticket_prompt_block
 
         ticket_block = ticket_prompt_block(ticket)
@@ -751,12 +826,17 @@ async def _generate_reply(
         len(stored_block or ""),
     )
 
+    from ...assistant.personas import get_active_persona
+
+    persona = await get_active_persona(db)
+
     system_prompt = (
         _system_prompt(
             user,
             platform=platform,
             voice_enabled=voice_enabled,
             bridge_enabled=bridge_enabled,
+            persona=persona,
         )
         + (f"\n\n{lang_block}" if lang_block else "")
         + (f"\n\n{business_card}" if business_card else "")
@@ -1515,7 +1595,7 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
     from ..models import ChannelMessage
     from ..service import categorize_message as _categorize
     from .credentials import decrypt_connection_token
-    from .providers.base import MetaAPIError
+    from .providers.base import MetaAmbiguousError, MetaAPIError
     from .service import get_adapter
 
     phone_number_id = event.get("external_asset_id") or ""
@@ -1613,6 +1693,20 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
 
         await cancel_pending_actions(db, channel.id, from_wa, reason="answered")
         await db.commit()
+
+        # A reaction is the customer acknowledging our message, not asking
+        # for anything. It cancels queued nudges above, then stops: replying
+        # to "❤️" with a paragraph is exactly the bot behaviour we avoid.
+        if msg_type == "reaction":
+            inbound_row.ai_reply_status = "skipped"
+            db.add(inbound_row)
+            await db.commit()
+            logger.info(
+                "WhatsApp inbound reaction stored without an AI reply "
+                "wamid=%s from=+%s", wamid[:32], from_wa[-6:],
+            )
+            return
+
         inbound_lead = await capture_lead(
             db,
             tenant_id=tenant_id,
@@ -1729,9 +1823,20 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
             return
         # A caption makes an image/document a typed question, so it flows
         # through the normal pipeline. Without one the attachment is stored and
-        # published, then answered deterministically after the language gate —
+        # published, then answered deterministically after the language gate -
         # the model is never asked to guess at bytes it cannot see.
-        if msg_type not in ("audio", "voice", "text", "image", "document"):
+        # Interactive/button taps carry their label in `text` (hoisted by the
+        # parser), so they must reach the language gate and the AI.
+        if msg_type in ("interactive", "button") and not text:
+            logger.info(
+                "WhatsApp interactive tap had no label wamid=%s type=%s",
+                wamid[:32], msg_type,
+            )
+            return
+        if msg_type not in (
+            "audio", "voice", "text", "image", "document",
+            "interactive", "button",
+        ):
             logger.info(
                 "WhatsApp AI reply skipped for non-text message type=%s wamid=%s",
                 msg_type, wamid[:32],
@@ -1891,6 +1996,41 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
             )
             return
 
+        # A bare acknowledgement ("thanks", "ok", "done") gets a reaction, not
+        # an AI paragraph. This runs before the typing indicator and the
+        # classifier: an acknowledgement is not a question, and showing
+        # "typing…" then a heart is worse than either alone. The last delivered
+        # outbound decides — if it was a question, "ok" is an answer and the
+        # model must see it.
+        from ...channels.ai_stickers import (
+            reaction_for_ack,
+            send_ai_reaction,
+            should_react_instead_of_reply,
+        )
+
+        ack_emoji = reaction_for_ack(text) if msg_type == "text" else None
+        if ack_emoji and await should_react_instead_of_reply(
+            db, channel.id, from_wa
+        ):
+            await send_ai_reaction(
+                db,
+                channel=channel,
+                contact_phone=from_wa,
+                target_message_id=wamid,
+                emoji=ack_emoji,
+                phone_number_id=phone_number_id,
+                token=token,
+                adapter=adapter,
+            )
+            inbound_row.ai_reply_status = "skipped"
+            db.add(inbound_row)
+            await db.commit()
+            logger.info(
+                "WhatsApp AI reacted instead of replying wamid=%s emoji=%s",
+                wamid[:32], ack_emoji,
+            )
+            return
+
         # Mark the inbound message read and show the typing dots while the
         # reply is prepared (classification + generation take seconds). The
         # Cloud API has no "recording audio" variant — text dots are what
@@ -1937,7 +2077,11 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
         #   * confusion counter — only if the tenant opted in (threshold > 0).
         # A normal follow-up question is neither, so a healthy thread keeps
         # being answered by the AI instead of being muted after three turns.
-        from .lead_escalation import detect_urgency, update_escalation_state
+        from .lead_escalation import (
+            detect_human_request,
+            detect_urgency,
+            update_escalation_state,
+        )
         from ...profile.facts_tool import detect_topics, is_information_request
 
         fact_topics = detect_topics(text)
@@ -1948,12 +2092,29 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
         # The classifier reads the whole thread and decides intent; the
         # keyword matcher remains only as a fallback when the model is down.
         keyword_urgent = detect_urgency(text)
+        human_requested = detect_human_request(text)
+        # A human request on an information-only chat still needs a ticket:
+        # capture_lead() normally skips info chat, so ask it explicitly.
+        if human_requested and inbound_lead is None:
+            inbound_lead = await capture_lead(
+                db,
+                tenant_id=tenant_id,
+                channel_id=channel.id,
+                platform="whatsapp",
+                contact_id=from_wa,
+                contact_name=data.get("profile_name"),
+                message_id=wamid[:200] or None,
+                inbound_text=text or "Customer asked for a colleague",
+                require_intent=False,
+            )
         urgent = bool(stats.get("urgent")) or keyword_urgent
-        urgent = urgent and not fact_question
+        # A direct "I want a person" is never suppressed by a fact question.
+        urgent = (urgent and not fact_question) or human_requested
         logger.info(
-            "Urgency wamid=%s classified=%s fallback=%s fact_question=%s -> %s",
+            "Urgency wamid=%s classified=%s fallback=%s human=%s "
+            "fact_question=%s -> %s",
             wamid[:32], stats.get("urgent"), keyword_urgent,
-            fact_question, urgent,
+            human_requested, fact_question, urgent,
         )
         if inbound_lead is not None:
             try:
@@ -2061,6 +2222,19 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                         phone_number_id, token, from_wa, canned,
                         context_message_id=wamid,
                     )
+                except MetaAmbiguousError as e:
+                    # The send may have landed; the outbox retry must not
+                    # re-send it. The row stays pending and the re-raise
+                    # files the event ambiguous (terminal) in the worker.
+                    logger.error(
+                        "WhatsApp short-circuit send ambiguous from=+%s: %s",
+                        from_wa[-6:], str(e)[:200],
+                    )
+                    await _publish_typing(tenant_id, channel.id, from_wa, False)
+                    inbound_row.ai_reply_error = str(e)[:300]
+                    db.add(inbound_row)
+                    await db.commit()
+                    raise
                 except MetaAPIError as e:
                     logger.error(
                         "WhatsApp short-circuit send failed from=+%s: %s %s",
@@ -2122,7 +2296,7 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
         if inbound_lead is not None and not should_ai_reply(inbound_lead):
             await escalate_to_human(
                 db, inbound_lead, adapter, phone_number_id, token,
-                urgent=urgent,
+                urgent=urgent and not human_requested,
             )
             await db.commit()
             logger.info(
@@ -2232,7 +2406,14 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                     else "I couldn't open a ticket right now. Could you try again in a moment?"
                 )
 
-        if not reply and not native_card:
+        # A sticker marker is a pipeline instruction, never text for the
+        # customer. It is stripped on every platform; only WhatsApp can
+        # actually deliver the bundled sticker.
+        from ...channels.ai_stickers import split_sticker_marker
+
+        reply, sticker_key = split_sticker_marker(reply)
+
+        if not reply and not native_card and not sticker_key:
             logger.warning(
                 "WhatsApp AI reply was empty — retrying wamid=%s from=+%s",
                 wamid[:32], from_wa[-6:],
@@ -2270,6 +2451,10 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
         # note in their own language. Any problem (no engine for the tier,
         # unsupported language, Meta rejection) falls back to the text path —
         # a voice failure may never cost the customer their reply.
+        #
+        # Empty until a bubble is actually sent: a card-only or sticker-only
+        # reply has no text message id, and the closing log reads this.
+        provider_msg_id = ""
         voice_sent = False
         confused = bool(stats.get("confused"))
         if confused and voice_tier == "off":
@@ -2279,7 +2464,7 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                 "Voice skipped — tenant tier is OFF from=+%s wamid=%s "
                 "(set it in WhatsApp channel settings)", from_wa[-6:], wamid[:32],
             )
-        if voice_tier != "off" and confused:
+        if reply and voice_tier != "off" and confused:
             voice = await synthesize_voice_note(
                 db, voice_tier, stats.get("language") or "en", reply,
                 tenant_id=tenant_id,
@@ -2402,6 +2587,24 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                             phone_number_id, token, from_wa, part,
                             context_message_id=quote_id,
                         )
+                except MetaAmbiguousError as e:
+                    # Mid-flight failure (timeout, broken response): the send
+                    # may have landed, so this reply is neither retried nor
+                    # fallen back — either could double-message. The row
+                    # stays pending and the re-raise files the event
+                    # ambiguous (terminal) in the worker.
+                    logger.error(
+                        "WhatsApp send ambiguous from=+%s: %s",
+                        from_wa[-6:], str(e)[:200],
+                    )
+                    await _publish_typing(tenant_id, channel.id, from_wa, False)
+                    inbound_row.ai_reply_attempts = (
+                        inbound_row.ai_reply_attempts or 0
+                    ) + 1
+                    inbound_row.ai_reply_error = str(e)[:300]
+                    db.add(inbound_row)
+                    await db.commit()
+                    raise
                 except (MetaAPIError, ValueError) as e:
                     # A rejected interactive payload must not cost the
                     # customer the reply: fall back to plain text once.
@@ -2513,6 +2716,31 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                 to=from_wa,
                 kind=native_card,
                 wamid=wamid,
+            )
+
+        # Fixed sticker the model chose. Sent after the text so a sticker
+        # failure never costs the customer the answer. A sticker-only reply
+        # that cannot be uploaded falls back to one short line — silence is
+        # the one outcome we do not ship.
+        if sticker_key:
+            from ...channels.ai_stickers import (
+                send_pack_sticker,
+                sticker_fallback_text,
+            )
+
+            await send_pack_sticker(
+                db,
+                channel=channel,
+                tenant_id=tenant_id,
+                contact_phone=from_wa,
+                key=sticker_key,
+                phone_number_id=phone_number_id,
+                token=token,
+                adapter=adapter,
+                reply_to=wamid,
+                fallback_text=(
+                    sticker_fallback_text(sticker_key) if not reply else None
+                ),
             )
 
         # Lead engine, send side: merge whatever the reply call extracted,
@@ -3156,7 +3384,7 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
     holds no usable messaging credential of its own.
     """
     from ..models import ChannelMessage
-    from .providers.base import MetaAPIError
+    from .providers.base import MetaAmbiguousError, MetaAPIError
     from .providers.instagram import InstagramAdapter
     from .service import get_instagram_page_credentials
 
@@ -3238,7 +3466,7 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
 
         await cancel_pending_actions(db, channel.id, igsid, reason="answered")
         await db.commit()
-        await capture_lead(
+        lead = await capture_lead(
             db,
             tenant_id=tenant_id,
             channel_id=channel.id,
@@ -3294,6 +3522,43 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
 
         adapter = InstagramAdapter()
 
+        # The same human/urgent guard as WhatsApp. Instagram has no
+        # interactive buttons or voice, but a person asking for a teammate
+        # must not be interviewed by the AI.
+        from .lead_escalation import (
+            detect_human_request,
+            detect_urgency,
+            escalate_to_human,
+            should_ai_reply,
+        )
+
+        human_requested = detect_human_request(text)
+        urgent = detect_urgency(text)
+        if human_requested and lead is None:
+            lead = await capture_lead(
+                db,
+                tenant_id=tenant_id,
+                channel_id=channel.id,
+                platform="instagram",
+                contact_id=igsid,
+                message_id=mid[:200] or None,
+                inbound_text=text or "Customer asked for a colleague",
+                require_intent=False,
+            )
+        if lead is not None and (
+            human_requested or urgent or not should_ai_reply(lead)
+        ):
+            await escalate_to_human(
+                db, lead, adapter, page_id, page_token,
+                urgent=urgent and not human_requested,
+            )
+            await db.commit()
+            logger.info(
+                "Instagram handover mid=%s human=%s urgent=%s",
+                mid[:32], human_requested, urgent,
+            )
+            return
+
         # Typing dots while the reply is prepared — best-effort, exactly
         # like WhatsApp: failure here changes nothing downstream. Gated on
         # the same tenant setting.
@@ -3329,6 +3594,7 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
             raw_reply = await _generate_reply(
                 db, channel, tenant_id, text or "", platform="Instagram",
                 contact=igsid or None,
+                ticket=lead,
             )
         except Exception as e:
             logger.warning(
@@ -3351,6 +3617,39 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
         from ...catalog.service import split_catalog_request
 
         reply, _ = split_catalog_request(reply)
+
+        from ..tickets import split_ticket_request, ticket_kind_for
+
+        reply, open_ticket = split_ticket_request(reply)
+        if open_ticket:
+            if lead is None:
+                lead = await capture_lead(
+                    db,
+                    tenant_id=tenant_id,
+                    channel_id=channel.id,
+                    platform="instagram",
+                    contact_id=igsid,
+                    message_id=mid[:200] or None,
+                    inbound_text=text or "Customer requested a ticket",
+                    require_intent=False,
+                )
+            if lead is not None:
+                lead.ticket_status = "open"
+                lead.ticket_kind = ticket_kind_for(lead.category, lead.intent)
+                db.add(lead)
+                await db.commit()
+            if not reply:
+                reply = (
+                    "Done — I've opened a ticket for the team. They'll follow up here."
+                    if lead is not None
+                    else "I couldn't open a ticket right now. Try again in a moment."
+                )
+
+        # Instagram has no sticker message type. Strip the marker anyway so a
+        # model that ignores the platform capability never leaks it as text.
+        from ...channels.ai_stickers import split_sticker_marker
+
+        reply, _ = split_sticker_marker(reply)
 
         if not reply:
             logger.warning(
@@ -3387,6 +3686,16 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
                 provider_msg_id = await adapter.send_text_message(
                     page_id, page_token, igsid, part
                 )
+            except MetaAmbiguousError as e:
+                # Mid-flight failure: the DM may have landed. Raising files
+                # the event ambiguous (terminal) — Instagram has no re-drive
+                # state machine, so a worker retry would only hit the dedupe
+                # wall and mark the event sent while the reply stayed lost.
+                logger.error(
+                    "Instagram send ambiguous from=+%s: %s",
+                    igsid[-6:], str(e)[:200],
+                )
+                raise
             except MetaAPIError as e:
                 logger.error(
                     "Instagram send failed from=+%s: %s %s",
@@ -3528,7 +3837,7 @@ async def _process_message(value: bytes | None) -> str | None:
         if provider == "whatsapp":
             if event_type == "message.received":
                 await _handle_message_received(event, payload)
-            elif event_type == "message.status":
+            elif is_message_status_event(event_type):
                 await _handle_message_status(event, payload)
             elif event_type == "message.history":
                 await _handle_message_history(event, payload)

@@ -1,4 +1,4 @@
-"""WhatsApp template API: list, sync, send, and record consent."""
+"""WhatsApp template API: author, list, sync, send, and record consent."""
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -10,6 +10,20 @@ from ..team.context import TenantContext, require_perm
 from . import service
 
 router = APIRouter(prefix="/api/v1/whatsapp/templates", tags=["whatsapp-templates"])
+
+
+class TemplateCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=512)
+    language: str = Field("en", min_length=2, max_length=20)
+    category: str = Field("utility", max_length=20)
+    body: str = Field(..., min_length=1, max_length=1024)
+    examples: list[str] = Field(default_factory=list, max_length=20)
+
+
+class TemplateUpdateRequest(BaseModel):
+    category: str | None = Field(None, max_length=20)
+    body: str | None = Field(None, min_length=1, max_length=1024)
+    examples: list[str] = Field(default_factory=list, max_length=20)
 
 
 class TemplateSendRequest(BaseModel):
@@ -44,8 +58,10 @@ async def list_templates(
     ctx: TenantContext = Depends(require_perm("channels.view")),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    rows = await service.list_templates(db, ctx.tenant_id)
-    return {"templates": [service.serialize_template(r) for r in rows]}
+    return {
+        "templates": await service.list_templates_with_stats(db, ctx.tenant_id),
+        "waba": await service.waba_connection(db, ctx.tenant_id),
+    }
 
 
 @router.post("/sync", response_model=dict)
@@ -53,7 +69,7 @@ async def sync_templates(
     ctx: TenantContext = Depends(require_perm("channels.edit")),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Pull the WABA's templates from Meta. Templates are created there."""
+    """Reconcile the local mirror with Meta (status + templates made there)."""
     try:
         result = await service.sync_templates(db, ctx.tenant_id)
     except ValueError as exc:
@@ -63,10 +79,10 @@ async def sync_templates(
             status_code=502,
             detail=f"Could not sync templates from Meta: {type(exc).__name__}",
         )
-    rows = await service.list_templates(db, ctx.tenant_id)
     return {
         **result,
-        "templates": [service.serialize_template(r) for r in rows],
+        "templates": await service.list_templates_with_stats(db, ctx.tenant_id),
+        "waba": await service.waba_connection(db, ctx.tenant_id),
     }
 
 
@@ -194,3 +210,98 @@ async def revoke_consent(
     lead.whatsapp_opt_in_message_id = None
     await db.commit()
     return {"opt_in_at": None, "opt_in_source": None}
+
+
+# Authoring routes are declared after the static paths above: FastAPI matches
+# in declaration order, so a dynamic "/{template_id}" DELETE placed earlier
+# would swallow DELETE /consent.
+
+
+@router.post("", response_model=dict, status_code=201)
+async def create_template(
+    body: TemplateCreateRequest,
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Submit a template to Meta and mirror its review status locally."""
+    try:
+        row = await service.create_template(
+            db,
+            ctx.tenant_id,
+            name=body.name,
+            language=body.language,
+            category=body.category,
+            body=body.body,
+            examples=body.examples,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001 - provider/network failure
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not create the template at Meta: {type(exc).__name__}",
+        )
+    return {"template": service.serialize_template(row)}
+
+
+@router.patch("/{template_id}", response_model=dict)
+async def update_template(
+    template_id: str,
+    body: TemplateUpdateRequest,
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Edit the body/category; Meta re-reviews an edited template."""
+    try:
+        row = await service.update_template(
+            db,
+            ctx.tenant_id,
+            template_id,
+            category=body.category,
+            body=body.body,
+            examples=body.examples,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001 - provider/network failure
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not update the template at Meta: {type(exc).__name__}",
+        )
+    stats = (await service.send_stats(db, ctx.tenant_id)).get(row.id)
+    return {"template": service.serialize_template(row, stats)}
+
+
+@router.delete("/{template_id}", response_model=dict)
+async def delete_template(
+    template_id: str,
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Delete the template at Meta and locally; send history keeps its name."""
+    try:
+        await service.delete_template(db, ctx.tenant_id, template_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001 - provider/network failure
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not delete the template at Meta: {type(exc).__name__}",
+        )
+    return {"deleted": True, "id": template_id}
+
+
+@router.get("/{template_id}/analytics", response_model=dict)
+async def template_analytics(
+    template_id: str,
+    days: int = Query(30, ge=1, le=365),
+    ctx: TenantContext = Depends(require_perm("channels.view")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Send outcomes for one template over a bounded window."""
+    try:
+        return await service.template_analytics(
+            db, ctx.tenant_id, template_id, days=days
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))

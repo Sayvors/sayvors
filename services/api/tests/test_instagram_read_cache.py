@@ -78,10 +78,19 @@ async def _seed(db, ig: str) -> None:
     await db.commit()
 
 
-async def _flush_cache(kind: str, ig: str) -> None:
+def _flush_cache(client, kind: str, ig: str) -> None:
+    """Delete one key on the TestClient's own loop.
+
+    The app's requests run on the TestClient portal loop; calling get_redis()
+    from pytest-asyncio's loop would close and recreate the shared client
+    across loops, which leaves cancellation tasks behind on teardown.
+    """
     from app.modules.redis.client import get_redis
 
-    await (await get_redis()).delete(f"ig:{kind}:{ig}")
+    async def _delete() -> None:
+        await (await get_redis()).delete(f"ig:{kind}:{ig}")
+
+    client.portal.call(_delete)
 
 
 @pytest.fixture(autouse=True)
@@ -105,7 +114,7 @@ async def test_second_profile_read_is_served_from_cache(client, db, monkeypatch)
     assert calls["n"] == 1, "the second read inside the TTL must hit redis"
     assert second.json()["followers_count"] == first.json()["followers_count"]
     assert second.json()["stale"] is False
-    await _flush_cache("profile", ig)
+    _flush_cache(client, "profile", ig)
 
 
 async def test_refresh_bypasses_the_cache(client, db, monkeypatch):
@@ -120,7 +129,7 @@ async def test_refresh_bypasses_the_cache(client, db, monkeypatch):
     client.get(f"/api/v1/meta/instagram/{ig}/profile?refresh=true")
 
     assert calls["n"] == 2, "an explicit refresh must re-read Graph"
-    await _flush_cache("profile", ig)
+    _flush_cache(client, "profile", ig)
 
 
 async def test_igcache_swallows_redis_outages(monkeypatch):
@@ -181,7 +190,7 @@ async def test_second_posts_read_is_served_from_cache(client, db, monkeypatch):
     assert first.status_code == 200 and second.status_code == 200
     assert calls["n"] == 1
     assert second.json()["posts"][0]["comments"][0]["username"] == "fan"
-    await _flush_cache("posts", ig)
+    _flush_cache(client, "posts", ig)
 
 
 async def test_second_audience_read_is_served_from_cache(client, db, monkeypatch):
@@ -218,7 +227,7 @@ async def test_second_audience_read_is_served_from_cache(client, db, monkeypatch
     assert first.status_code == 200 and second.status_code == 200
     assert calls["n"] == 1
     assert second.json()["people"][0]["username"] == "fan"
-    await _flush_cache("audience", ig)
+    _flush_cache(client, "audience", ig)
 
 
 async def test_unreachable_graph_is_not_cached(client, db, monkeypatch):
@@ -246,4 +255,4 @@ async def test_unreachable_graph_is_not_cached(client, db, monkeypatch):
     assert first.status_code == 500
     assert second.status_code == 200
     assert calls["n"] == 2
-    await _flush_cache("profile", ig)
+    _flush_cache(client, "profile", ig)

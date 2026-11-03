@@ -5,9 +5,9 @@ the only allowed send is a pre-approved template. This module stores the
 templates the business has in WhatsApp Manager, the consent basis for using
 them, and every send attempt.
 
-Templates are created and approved in Meta's WhatsApp Manager — the API can
-list and send them, not conjure them. "Sync" is therefore the source of truth
-for status, and a local row that Meta does not know cannot be sent.
+Templates can be authored here or in Meta's WhatsApp Manager. Meta reviews
+every create/edit asynchronously; "Sync" reconciles the status, and a local row
+that Meta does not know cannot be sent.
 """
 from datetime import datetime, timezone
 

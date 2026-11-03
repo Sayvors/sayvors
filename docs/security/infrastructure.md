@@ -156,6 +156,15 @@ spec:
   run: cosign sign sayvors-api:$SHA
 ```
 
+### Build Context Hygiene
+
+The staging API image builds with the repository root as its context, so `.dockerignore` is a security control, not just a cache optimization: the daemon receives every file left in the context, whether or not the Dockerfile copies it.
+
+- Root `.dockerignore` is an allowlist for the API build: only `services/api/{pyproject.toml,app,alembic,alembic.ini}` and `integrations/` are sent. `.git`, `.env*`, `apps/`, `docs/`, tests, scripts and caches are excluded.
+- `apps/web/.dockerignore` covers the web image's `COPY . .`: `node_modules`, `.next`, `.env*`, dev certificates and logs stay out.
+- Verified with a BuildKit probe: the API context is 38.46 kB and the web context is 20.51 kB; neither contains `.env` files or `.git`.
+- When adding a Dockerfile, add a `.dockerignore` at its context root. Never rely on `COPY` to keep secrets out of the daemon.
+
 ### Runtime Security (Planned)
 
 - Falco for runtime threat detection

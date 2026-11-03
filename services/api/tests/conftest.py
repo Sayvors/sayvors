@@ -24,8 +24,25 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.compiler import compiles
+
 from app.database import Base
 from app.main import app as fastapi_app
+
+
+@compiles(JSONB, "sqlite")
+def _render_jsonb_as_json_on_sqlite(type_, compiler, **kw):
+    """Let the in-memory SQLite test engine create the billing tables.
+
+    The launch plans model the feature matrix as Postgres JSONB, and SQLite
+    has no JSONB renderer — so ``Base.metadata.create_all`` crashed on the
+    ``plans`` table and every test using the db/client fixture errored at
+    setup, locally and in CI. JSONB's portable shape is plain JSON (TEXT
+    affinity), which is exactly what SQLite stores. Test harness only:
+    production runs Postgres and never takes this path.
+    """
+    return "JSON"
 from app.modules.users.models import User
 from app.modules.channels.models import AutoReplyConfig, Channel
 from app.modules.analytics.models import LocationDailyMetric, ReviewInsight
@@ -272,6 +289,20 @@ async def client(user_id, engine):
                         mw.allowed_hosts = list(allowed_hosts) + ["testclient"]
                     except Exception:
                         pass
-        yield c
+        try:
+            yield c
+        finally:
+            # get_redis() caches a client bound to the loop that created it.
+            # TestClient runs the app on its own portal loop, while pytest's
+            # test body runs on another. Closing the cached client from the
+            # wrong loop later leaves cancellation tasks behind and makes
+            # TestClient shutdown fail under xdist. Close it here, while the
+            # portal loop that owns it is still alive.
+            try:
+                from app.modules.redis.client import close_redis
+
+                c.portal.call(close_redis)
+            except Exception:  # noqa: BLE001, S110 - never mask the test result
+                pass
 
     fastapi_app.dependency_overrides.clear()

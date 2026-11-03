@@ -96,6 +96,10 @@ def verify_password(password: str, hashed: str) -> bool:
 - Never log passwords or hashes
 - Timing-safe comparison via bcrypt.checkpw
 
+## Account Enumeration
+
+Signup returns the same `201 {"message": "Check your email to continue."}` whether the email is new, already registered, or lost a concurrent-insert race. It never issues a session. The mailbox owner gets the actionable email: an OTP for a new or unverified account, and a "sign in instead" notice for a verified account. `verify-email` and `verify-otp` collapse every failure to one generic 400 message, so neither endpoint can be used to test whether an email is registered. The OTP flow issues the session only after the code is verified.
+
 ## Session Management
 
 ### Refresh Token Rotation

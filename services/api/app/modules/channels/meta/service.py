@@ -284,17 +284,45 @@ async def select_assets(
                 db.add(existing_channel)
         activated.append(asset)
 
+    # Container assets — a WABA above its phone numbers, a Page above an
+    # Instagram account — are not messaging channels and the UI never offers
+    # them as checkboxes. They still have to stay active: template calls
+    # resolve the WABA through this row, and a parent that the selection
+    # sweep below deactivates breaks them silently. Activate the whole parent
+    # chain of what was selected and keep it out of that sweep.
+    container_ids: set[str] = set()
+    pending_parents = {a.parent_asset_id for a in activated if a.parent_asset_id}
+    while pending_parents:
+        parent_id = pending_parents.pop()
+        if parent_id in container_ids:
+            continue
+        parent = await db.get(MetaAsset, parent_id)
+        # A parent may belong to another provider on purpose: an Instagram
+        # account sends through its parent Facebook Page. Only the tenant
+        # boundary matters here.
+        if parent is None or parent.tenant_id != tenant_id:
+            continue
+        container_ids.add(parent.id)
+        parent.active = True
+        parent.status = "connected"
+        db.add(parent)
+        if parent.parent_asset_id:
+            pending_parents.add(parent.parent_asset_id)
+
     # Deselection: same-provider active assets the tenant left unchecked go
     # inactive, and their messaging channel is marked disconnected — the same
     # semantics as a soft disconnect, so the inbox and dashboard hide the
-    # asset's data while the history is kept for a re-selection.
+    # asset's data while the history is kept for a re-selection. An empty
+    # selection deactivates everything, including containers: the tenant has
+    # unchecked every number, so no parent should linger as "connected".
+    keep_ids = set(asset_ids) | container_ids
     deselected_filter = [
         MetaAsset.tenant_id == tenant_id,
         MetaAsset.provider == provider,
         MetaAsset.active.is_(True),
     ]
-    if asset_ids:
-        deselected_filter.append(MetaAsset.id.not_in(asset_ids))
+    if keep_ids:
+        deselected_filter.append(MetaAsset.id.not_in(keep_ids))
     deselected = (
         await db.execute(select(MetaAsset).where(*deselected_filter))
     ).scalars().all()

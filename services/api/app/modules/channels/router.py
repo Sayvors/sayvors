@@ -60,7 +60,6 @@ from .service import (
     decrypt_message_content,
     delete_channel,
     get_channel,
-    handle_webhook,
     hash_contact_phone,
     list_channels,
     list_inbox_threads,
@@ -79,14 +78,11 @@ from .service import (
     list_whatsapp_qr_codes,
     create_whatsapp_qr_code,
     delete_whatsapp_qr_code,
-    verify_webhook_signature,
 )
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/channels", tags=["channels"])
-
-MAX_WEBHOOK_BODY_BYTES = 1_000_000  # 1 MB
 
 
 def _channel_source_info(channel: Channel) -> tuple[str | None, str | None]:
@@ -748,19 +744,33 @@ async def inbox_thread_messages(
     channel_id: str,
     contact_phone: str,
     limit: int = Query(200, ge=1, le=500),
+    before: str | None = Query(None, min_length=1, max_length=64),
     ctx: TenantContext = Depends(require_perm("inbox.view")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Messages in one thread, oldest first.
+    """One page of messages in a thread, oldest first.
 
     `contact_phone` is the literal string "unknown" for the catch-all thread
     holding pre-migration rows with no sender.
+
+    `before` is the id of the oldest message the client already has; the
+    response's `next_cursor` walks further back until null. Fetch one extra
+    row to tell whether an older page exists without a second query.
     """
     if ctx.channel_level(channel_id) == "none":
         raise HTTPException(status_code=404, detail="Channel not found")
     phone = None if contact_phone == UNKNOWN_THREAD_KEY else contact_phone
-    msgs = await list_thread_messages(ctx.user, db, channel_id, phone, limit=limit)
-    if not msgs:
+    try:
+        msgs = await list_thread_messages(
+            ctx.user, db, channel_id, phone, limit=limit + 1, before=before
+        )
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid message cursor") from None
+    has_more = len(msgs) > limit
+    if has_more:
+        msgs = msgs[-limit:]
+    next_cursor = msgs[0].id if has_more and msgs else None
+    if not msgs and not before:
         # Distinguish "no such channel" (404) from "empty thread" (200, empty).
         channel = await get_channel(channel_id, ctx.user, db)
         if not channel:
@@ -774,6 +784,7 @@ async def inbox_thread_messages(
             for m in msgs
         ],
         total=len(msgs),
+        next_cursor=next_cursor,
         thread=thread_state,
     )
 
@@ -1823,96 +1834,24 @@ async def inbox_remove_message(
     return _message_out(msg)
 
 
-# ── Webhooks (no auth — platform sends these) ──────────────────────────
-
-# Platform → header that carries the HMAC signature
-_SIGNATURE_HEADERS = {
-    "facebook": "x-hub-signature-256",
-    "instagram": "x-hub-signature-256",
-    "x": "x-twitter-webhooks-signature",
-    "telegram": "x-telegram-bot-api-secret-token",
-    "whatsapp": "x-hub-signature-256",
-    "linkedin": "x-linkedin-signature",
-}
-
+# ── Retired legacy webhooks ─────────────────────────────────────────────
+#
+# The real Meta ingress is POST /api/v1/meta/webhooks (signature-verified,
+# rate-limited, persisted, enqueued). This older path scanned every active
+# channel's secret and then called handle_webhook(), a stub that silently
+# dropped the payload. It now fails loudly so no caller believes an event was
+# accepted; the route stays mounted to give existing integrations a clear 410
+# instead of a confusing 404 or CSRF rejection.
 
 @router.post("/webhook/{platform}")
-async def channel_webhook(
-    platform: str,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-):
-    # ── Enforce body size limit ──
-    content_length = request.headers.get("content-length")
-    if content_length and int(content_length) > MAX_WEBHOOK_BODY_BYTES:
-        return Response(status_code=413, content="Payload too large")
-
-    raw_body = await request.body()
-    if len(raw_body) > MAX_WEBHOOK_BODY_BYTES:
-        return Response(status_code=413, content="Payload too large")
-
-    # ── Signature verification (FAIL CLOSED) ──
-    # Every branch below rejects: an unsigned/forged payload must never reach
-    # dispatch. If no channel/secret is configured we cannot verify anything,
-    # so the correct answer is 503, not "process anyway".
-    sig_header = _SIGNATURE_HEADERS.get(platform)
-    if not sig_header:
-        return Response(status_code=404, content="Unknown platform")
-
-    signature = request.headers.get(sig_header)
-    channels = (
-        await db.execute(
-            select(Channel).where(
-                Channel.platform == platform,
-                Channel.status == "active",
-            )
-        )
-    ).scalars().all()
-
-    if not channels:
-        logger.warning(
-            "Webhook rejected for platform=%s: no active channel configured", platform
-        )
-        return Response(status_code=503, content="Channel not configured")
-
-    secret_channels = [c for c in channels if c.webhook_secret]
-    if not secret_channels:
-        # A channel without a webhook secret cannot be authenticated.
-        logger.warning(
-            "Webhook rejected for platform=%s: no channel secret configured", platform
-        )
-        return Response(status_code=503, content="Webhook secret not configured")
-
-    verified_channel = None
-    for channel in secret_channels:
-        if await verify_webhook_signature(platform, raw_body, signature or "", channel):
-            verified_channel = channel
-            break
-    if verified_channel is None:
-        # Unverified traffic (forged/unsigned): apply a per-IP rate limit
-        # to prevent brute-force signature probing.
-        if not settings.TESTING:
-            client_ip = request.client.host if request.client else "unknown"
-            if not await rate_limit(f"webhook:unverified:{platform}:{client_ip}", 20, 60):
-                return Response(status_code=429, content="Too many requests")
-        logger.warning("Webhook signature verification failed for platform=%s", platform)
-        return Response(status_code=403, content="Invalid signature")
-
-    # ── Rate limit (per verified channel, not global per platform) ──
-    if not settings.TESTING and not await rate_limit(
-        f"webhook:{platform}:{verified_channel.id}", 100, 60
-    ):
-        return Response(status_code=429, content="Too many requests")
-
-    # ── Parse and dispatch ──
-    try:
-        import json
-        payload = json.loads(raw_body)
-    except Exception:
-        return Response(status_code=400, content="Invalid JSON")
-
-    msg = await handle_webhook(platform, payload, db)
-    return {"status": "ok"}
+async def channel_webhook(platform: str):
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail=(
+            "Legacy webhook endpoint retired. Use the platform-specific "
+            "ingress at POST /api/v1/meta/webhooks."
+        ),
+    )
 
 
 # ── Google Reviews OAuth connect (REAL flow) ────────────

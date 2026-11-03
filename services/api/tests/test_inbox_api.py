@@ -33,14 +33,14 @@ async def _seed(db, user_id, channel_id="chan-1"):
 
 
 async def _msg(db, channel_id, *, phone=None, direction="inbound", content="hi",
-               minutes_ago=0, name=None):
+               minutes_ago=0, name=None, created_at=None):
     db.add(ChannelMessage(
         id=f"m-{abs(hash((channel_id, phone, content, minutes_ago))) % 10**12}",
         channel_id=channel_id, platform_message_id=None, direction=direction,
         content=encrypt_message_content(content), content_type="text", status="delivered",
         contact_phone=encrypt_contact_phone(phone), contact_phone_hash=hash_contact_phone(phone) if phone else None,
         contact_name=name,
-        created_at=datetime.now(timezone.utc) - timedelta(minutes=minutes_ago),
+        created_at=created_at or (datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)),
     ))
     await db.commit()
 
@@ -87,9 +87,95 @@ async def test_inbox_thread_messages_http(client, db, user_id):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["total"] == 2
+    assert body["next_cursor"] is None
     # Oldest first, as the thread renders top to bottom.
     assert [m["content"] for m in body["messages"]] == ["first", "second"]
     assert body["messages"][0]["direction"] == "inbound"
+
+
+@pytest.mark.asyncio
+async def test_inbox_thread_messages_cursor_pages_older(client, db, user_id):
+    await _seed(db, user_id)
+    for i in range(5):
+        await _msg(
+            db, "chan-1", phone="966500000001", content=f"m{i}",
+            minutes_ago=50 - i * 10,
+        )
+
+    first = client.get(
+        "/api/v1/inbox/threads/chan-1/966500000001", params={"limit": 2}
+    )
+    assert first.status_code == 200, first.text
+    body = first.json()
+    assert [m["content"] for m in body["messages"]] == ["m3", "m4"]
+    cursor = body["next_cursor"]
+    assert cursor
+
+    second = client.get(
+        "/api/v1/inbox/threads/chan-1/966500000001",
+        params={"limit": 2, "before": cursor},
+    )
+    assert second.status_code == 200, second.text
+    body = second.json()
+    assert [m["content"] for m in body["messages"]] == ["m1", "m2"]
+    cursor = body["next_cursor"]
+    assert cursor
+
+    third = client.get(
+        "/api/v1/inbox/threads/chan-1/966500000001",
+        params={"limit": 2, "before": cursor},
+    )
+    assert third.status_code == 200, third.text
+    body = third.json()
+    assert [m["content"] for m in body["messages"]] == ["m0"]
+    assert body["next_cursor"] is None
+
+
+@pytest.mark.asyncio
+async def test_inbox_thread_cursor_cannot_cross_threads(client, db, user_id):
+    await _seed(db, user_id)
+    await _msg(db, "chan-1", phone="966500000001", content="mine", minutes_ago=20)
+    await _msg(db, "chan-1", phone="966500000002", content="theirs", minutes_ago=10)
+
+    other = client.get("/api/v1/inbox/threads/chan-1/966500000002").json()
+    other_id = other["messages"][0]["id"]
+
+    r = client.get(
+        "/api/v1/inbox/threads/chan-1/966500000001",
+        params={"before": other_id},
+    )
+    assert r.status_code == 400, r.text
+
+
+@pytest.mark.asyncio
+async def test_inbox_thread_cursor_handles_identical_timestamps(client, db, user_id):
+    """The cursor is (created_at, id), so a timestamp tie cannot skip a row."""
+    await _seed(db, user_id)
+    same = datetime.now(timezone.utc) - timedelta(minutes=10)
+    for content in ("a", "b", "c"):
+        await _msg(
+            db, "chan-1", phone="966500000001", content=content,
+            created_at=same,
+        )
+
+    seen: list[str] = []
+    before = None
+    for _ in range(4):
+        params = {"limit": 1}
+        if before:
+            params["before"] = before
+        r = client.get(
+            "/api/v1/inbox/threads/chan-1/966500000001", params=params
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        seen.extend(m["content"] for m in body["messages"])
+        before = body["next_cursor"]
+        if not before:
+            break
+
+    assert sorted(seen) == ["a", "b", "c"]
+    assert len(seen) == 3
 
 
 @pytest.mark.asyncio

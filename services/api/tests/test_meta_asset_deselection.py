@@ -97,6 +97,50 @@ async def test_deselect_hides_asset_and_disconnects_channel(db, no_page_webhooks
     assert chan_b.status == "disconnected"
 
 
+async def test_selecting_a_number_activates_its_parent_waba(db):
+    """The WABA is a container, not a checkbox — selecting a number must keep
+    it active or template sync reports "no WhatsApp Business Account"."""
+    conn = await _seed_connection(db, TENANT)
+    waba = await _seed_asset(
+        db, TENANT, conn, "waba-1", asset_type="waba", name="My WABA",
+    )
+    phone = await _seed_asset(
+        db, TENANT, conn, "pn-a", parent_asset_id=waba.id,
+    )
+
+    await _service.select_assets(db, TENANT, "whatsapp", [phone.id])
+
+    await db.refresh(waba)
+    assert waba.active is True
+    assert waba.status == "connected"
+    # The WABA never becomes a messaging channel of its own.
+    assert await _channel_for(db, TENANT, "whatsapp", "waba-1") is None
+
+    await _service.select_assets(db, TENANT, "whatsapp", [])
+    await db.refresh(waba)
+    assert waba.active is False
+
+
+async def test_selecting_ig_child_activates_its_parent_page(db, no_page_webhooks):
+    """An Instagram account sends through the parent Page, so selecting the
+    account must leave that Page active even though it is a Facebook asset."""
+    conn = await _seed_connection(db, TENANT, provider="facebook")
+    page = await _seed_asset(
+        db, TENANT, conn, "page-1", provider="facebook", asset_type="page",
+        name="Test Page",
+    )
+    ig = await _seed_asset(
+        db, TENANT, conn, "ig-1", provider="instagram", asset_type="ig_account",
+        parent_asset_id=page.id, username="myshop",
+    )
+
+    await _service.select_assets(db, TENANT, "instagram", [ig.id])
+
+    await db.refresh(page)
+    assert page.active is True
+    assert page.status == "connected"
+
+
 async def test_deselect_all_clears_everything(db, no_page_webhooks):
     """An empty selection is valid: every asset of the provider goes quiet."""
     conn = await _seed_connection(db, TENANT)

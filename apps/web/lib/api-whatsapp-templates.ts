@@ -1,4 +1,8 @@
-/* WhatsApp message templates: the only legal send outside the 24h window. */
+/* WhatsApp message templates: the only legal send outside the 24h window.
+ *
+ * Templates are authored here and reviewed by Meta. The list mirrors Meta's
+ * status; "sync" reconciles templates created in WhatsApp Manager.
+ */
 
 import { apiFetch } from "@/lib/api-rag";
 
@@ -11,8 +15,34 @@ export interface WhatsAppTemplate {
   body: string;
   variables: number;
   meta_template_id: string | null;
+  send_count: number;
+  sent_count: number;
+  failed_count: number;
+  last_sent_at: string | null;
   last_synced_at: string | null;
   updated_at: string | null;
+}
+
+export interface WabaConnection {
+  connected: boolean;
+  name: string | null;
+}
+
+export interface TemplateListResponse {
+  templates: WhatsAppTemplate[];
+  waba: WabaConnection;
+}
+
+export interface TemplateAnalytics {
+  template_id: string;
+  name: string;
+  language: string;
+  days: number;
+  total: number;
+  sent: number;
+  failed: number;
+  blocked: number;
+  last_sent_at: string | null;
 }
 
 export interface TemplateSendResult {
@@ -27,19 +57,72 @@ export interface TemplateSendResult {
   created: boolean;
 }
 
-export async function listWhatsAppTemplates(): Promise<WhatsAppTemplate[]> {
+export async function listWhatsAppTemplates(): Promise<TemplateListResponse> {
   const data = await apiFetch("/api/v1/whatsapp/templates");
-  return (data?.templates ?? []) as WhatsAppTemplate[];
+  return {
+    templates: (data?.templates ?? []) as WhatsAppTemplate[],
+    waba: (data?.waba ?? { connected: false, name: null }) as WabaConnection,
+  };
 }
 
-export async function syncWhatsAppTemplates(): Promise<{
-  created: number;
-  updated: number;
-  templates: WhatsAppTemplate[];
-}> {
+export async function syncWhatsAppTemplates(): Promise<
+  TemplateListResponse & { created: number; updated: number; remote: number }
+> {
   return (await apiFetch("/api/v1/whatsapp/templates/sync", {
     method: "POST",
-  })) as { created: number; updated: number; templates: WhatsAppTemplate[] };
+  })) as TemplateListResponse & {
+    created: number;
+    updated: number;
+    remote: number;
+  };
+}
+
+export async function createWhatsAppTemplate(params: {
+  name: string;
+  language: string;
+  category: string;
+  body: string;
+  examples: string[];
+}): Promise<WhatsAppTemplate> {
+  const data = await apiFetch("/api/v1/whatsapp/templates", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+  return data.template as WhatsAppTemplate;
+}
+
+export async function updateWhatsAppTemplate(
+  templateId: string,
+  params: {
+    category?: string;
+    body?: string;
+    examples?: string[];
+  },
+): Promise<WhatsAppTemplate> {
+  const data = await apiFetch(
+    `/api/v1/whatsapp/templates/${encodeURIComponent(templateId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(params),
+    },
+  );
+  return data.template as WhatsAppTemplate;
+}
+
+export async function deleteWhatsAppTemplate(templateId: string): Promise<void> {
+  await apiFetch(
+    `/api/v1/whatsapp/templates/${encodeURIComponent(templateId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function getWhatsAppTemplateAnalytics(
+  templateId: string,
+  days = 30,
+): Promise<TemplateAnalytics> {
+  return (await apiFetch(
+    `/api/v1/whatsapp/templates/${encodeURIComponent(templateId)}/analytics?days=${days}`,
+  )) as TemplateAnalytics;
 }
 
 export async function sendWhatsAppTemplate(params: {

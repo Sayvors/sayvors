@@ -4,55 +4,59 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { AdminSearch } from "@/components/AdminSearch";
+import { SearchIcon } from "@/components/SearchIcon";
 import { adminLogout, checkAdminSession } from "@/lib/admin-api";
+import { FLAT_NAV, SECTIONS, type NavItem } from "@/lib/admin-nav";
 import { useTheme } from "../theme";
 
-type NavItem = {
-  href: string;
-  label: string;
-  desc: string;
-  icon: "overview" | "tenants" | "usage" | "logs" | "llms" | "voice" | "embeddings" | "billing" | "jobs" | "special";
-};
-
-const SECTIONS: { title: string; items: NavItem[] }[] = [
-  {
-    title: "Platform",
-    items: [
-      { href: "/overview", label: "Overview", desc: "Funnel & health", icon: "overview" },
-      { href: "/tenants", label: "Tenants", desc: "Accounts & listings", icon: "tenants" },
-      { href: "/special", label: "Special list", desc: "Custom feature overrides", icon: "special" },
-    ],
-  },
-  {
-    title: "Operations",
-    items: [
-      { href: "/usage", label: "Usage", desc: "Tokens & metering", icon: "usage" },
-      { href: "/billing", label: "Billing", desc: "Wallets & ledger", icon: "billing" },
-      { href: "/plans", label: "Plans", desc: "Plans & entitlements", icon: "billing" },
-      { href: "/pricing", label: "Pricing", desc: "Tokens & voice rates", icon: "billing" },
-      { href: "/jobs", label: "Jobs", desc: "Queue & workers", icon: "jobs" },
-      { href: "/logs", label: "Logs", desc: "Services & failures", icon: "logs" },
-    ],
-  },
-  {
-    title: "Intelligence",
-    items: [
-      { href: "/llms", label: "LLMs", desc: "Providers & models", icon: "llms" },
-      { href: "/embeddings", label: "Embeddings", desc: "RAG vector API", icon: "embeddings" },
-      { href: "/voice", label: "Voice models", desc: "WhatsApp voice TTS", icon: "voice" },
-      { href: "/asr", label: "Speech-to-text", desc: "ASR provider & keys", icon: "voice" },
-    ],
-  },
-  {
-    title: "Access",
-    items: [
-      { href: "/operators", label: "Operators", desc: "Admin accounts", icon: "tenants" },
-      { href: "/audit-log", label: "Audit log", desc: "Admin actions", icon: "logs" },
-    ],
-  },
-];
-
 const SIDEBAR_KEY = "sayvors-admin-sidebar";
+
+function pageContext(pathname: string): { section: string; title: string } {
+  const match = FLAT_NAV.filter(
+    (item) => pathname === item.href || pathname.startsWith(`${item.href}/`),
+  ).sort((a, b) => b.href.length - a.href.length)[0];
+  if (!match) return { section: "Console", title: "Admin" };
+  if (pathname === match.href) {
+    return { section: match.section, title: match.label };
+  }
+  return {
+    section: match.section,
+    title: `${match.label.replace(/s$/, "")} detail`,
+  };
+}
+
+function ThemeToggle({ toggle }: { toggle: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      aria-label="Toggle color theme"
+      title="Toggle color theme"
+      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] text-ink/55 transition-colors duration-150 hover:border-[var(--ui-line-strong)] hover:text-ink"
+    >
+      {/* Both icons are rendered; the pre-hydration .dark class picks one, so
+       * the icon is right on first paint without a theme-state mismatch. */}
+      <svg aria-hidden viewBox="0 0 24 24" fill="none" className="h-4 w-4 dark:hidden">
+        <path
+          d="M20.2 14.1A8.4 8.4 0 0 1 9.9 3.8 8.4 8.4 0 1 0 20.2 14.1z"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinejoin="round"
+        />
+      </svg>
+      <svg aria-hidden viewBox="0 0 24 24" fill="none" className="hidden h-4 w-4 dark:block">
+        <circle cx="12" cy="12" r="4.2" stroke="currentColor" strokeWidth="1.6" />
+        <path
+          d="M12 2.8v2.2M12 19v2.2M2.8 12h2.2M19 12h2.2M5.5 5.5l1.6 1.6M16.9 16.9l1.6 1.6M18.5 5.5l-1.6 1.6M7.1 16.9l-1.6 1.6"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+        />
+      </svg>
+    </button>
+  );
+}
 
 function NavIcon({ name, active }: { name: NavItem["icon"]; active: boolean }) {
   const cls = `h-[16px] w-[16px] shrink-0 ${active ? "text-[var(--ui-ink)]" : "text-ink/45 group-hover:text-ink/75"}`;
@@ -154,6 +158,13 @@ function NavIcon({ name, active }: { name: NavItem["icon"]; active: boolean }) {
           />
         </svg>
       );
+    case "search":
+      return (
+        <svg aria-hidden viewBox="0 0 24 24" fill="none" className={cls}>
+          <circle cx="10.7" cy="10.7" r="6.2" stroke="currentColor" strokeWidth="1.6" />
+          <path d="M15.2 15.2L20.5 20.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+        </svg>
+      );
     default:
       return null;
   }
@@ -162,7 +173,7 @@ function NavIcon({ name, active }: { name: NavItem["icon"]; active: boolean }) {
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { theme, toggle } = useTheme();
+  const { toggle } = useTheme();
   const [ready, setReady] = useState(false);
   const [collapsed, setCollapsed] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -174,6 +185,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return false;
   });
   const [navOpen, setNavOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
 
   useEffect(() => {
     checkAdminSession().then((ok) => {
@@ -181,6 +193,27 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       else setReady(true);
     });
   }, [router]);
+
+  // Global command-palette shortcut. The palette handles Escape and focus.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // The nav is taller than the viewport on shorter screens. Bring the active
+  // destination into view so the sidebar always answers "where am I?".
+  useEffect(() => {
+    if (!ready) return;
+    document
+      .querySelector<HTMLElement>('nav[aria-label="Primary"] [aria-current="page"]')
+      ?.scrollIntoView({ block: "nearest" });
+  }, [pathname, collapsed, ready]);
 
   const toggleCollapsed = () => {
     setCollapsed((prev) => {
@@ -199,13 +232,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
 
   const nav = (
-    <nav className="flex-1 px-3 py-3" aria-label="Primary">
+    <nav className="flex-1 px-3 pb-6 pt-3" aria-label="Primary">
       <div className="space-y-5">
         {SECTIONS.map((section) => (
           <div key={section.title}>
-            <p className={`mb-1.5 px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-ink/40 ${collapsed ? "text-center" : ""}`}>
-              {collapsed ? "···" : section.title}
-            </p>
+            {collapsed ? (
+              <div
+                aria-hidden
+                className="mx-auto mb-2 h-px w-6 bg-[var(--ui-line)]"
+              />
+            ) : (
+              <p className="mb-1.5 px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-ink/40">
+                {section.title}
+              </p>
+            )}
             <ul className="space-y-1">
               {section.items.map((item) => {
                 const active = isActive(item.href);
@@ -215,7 +255,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       href={item.href}
                       aria-current={active ? "page" : undefined}
                       title={collapsed ? item.label : undefined}
-                      className={`group relative flex items-center gap-3 rounded-[2px] px-2.5 py-2.5 text-[13px] transition-colors duration-150 ${
+                      className={`group relative flex scroll-mb-6 scroll-mt-24 items-center gap-3 rounded-[2px] px-2.5 py-2.5 text-[13px] transition-colors duration-150 ${
                         active
                           ? "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
                           : "text-ink/55 hover:bg-ink/[0.04] hover:text-ink"
@@ -250,45 +290,67 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     </nav>
   );
 
+  const context = pageContext(pathname);
+
   const header = (
-    <header className="sticky top-0 z-20 hidden items-center justify-between border-b border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-3 lg:flex">
-      {/* Brand — mirrors the sidebar rail */}
-      <div className="flex items-center gap-3">
-        <Image
-          src="/Sayvors_Icon.png"
-          alt="Sayvors"
-          width={32}
-          height={32}
-          className="h-8 w-8 shrink-0 rounded-[2px] border border-[var(--ui-line)] bg-white object-contain p-1"
-          unoptimized
-        />
-        <div className="min-w-0">
-          <p className="text-[13px] font-bold leading-none tracking-tight text-[var(--ui-ink)]">Sayvors</p>
-          <p className="mt-0.5 text-[11px] font-medium leading-none text-ink/45">Admin console</p>
+    <header className="sticky top-0 z-20 hidden items-center justify-between gap-6 border-b border-[var(--ui-line)] bg-[var(--ui-surface-solid)] px-5 py-3 lg:flex">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="text-[9px] font-bold uppercase tracking-[0.18em] text-ink/40">
+            {context.section}
+          </span>
+          <span aria-hidden className="h-3 w-px bg-[var(--ui-line)]" />
+          <span className="text-[9px] font-bold uppercase tracking-[0.18em] text-ink/30">
+            Admin console
+          </span>
         </div>
-        <span className="ml-1 rounded-[2px] border border-[var(--ui-line)] px-2 py-1 text-[9px] font-bold uppercase tracking-[0.14em] text-ink/50">
-          Admin
-        </span>
+        <p className="mt-1 truncate text-[16px] font-semibold tracking-tight text-[var(--ui-ink)]">
+          {context.title}
+        </p>
       </div>
 
-      {/* Right rail — identity + sign out, styled like sidebar items */}
-      <div className="flex items-center gap-2">
-        <div className="hidden items-center gap-2.5 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 sm:flex">
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-deep-violet text-[11px] font-bold text-white">
+      <button
+        type="button"
+        onClick={() => setSearchOpen(true)}
+        aria-label="Search admin console"
+        aria-keyshortcuts="Control+K Meta+K"
+        className="hidden min-w-0 max-w-[340px] flex-1 items-center gap-2 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-left text-[12px] text-ink/35 transition hover:border-[var(--ui-line-strong)] hover:text-ink/60 lg:flex"
+      >
+        <SearchIcon className="h-3.5 w-3.5 shrink-0" />
+        <span className="truncate">Search tenants, models, jobs…</span>
+        <kbd className="ml-auto shrink-0 rounded-[2px] border border-[var(--ui-line)] px-1.5 py-0.5 text-[9px] font-semibold text-ink/30">
+          Ctrl K
+        </kbd>
+      </button>
+
+      <div className="flex shrink-0 items-center gap-2">
+        <ThemeToggle toggle={toggle} />
+        <span aria-hidden className="h-6 w-px bg-[var(--ui-line)]" />
+        <div className="flex items-center gap-2.5 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-1.5">
+          <div className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-[2px] bg-deep-violet text-[10px] font-bold text-white">
             AD
+            <span
+              aria-hidden
+              className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-[var(--ui-surface)] bg-emerald-500"
+            />
           </div>
           <div className="min-w-0">
-            <p className="truncate text-[12px] font-semibold leading-none text-[var(--ui-ink)]">Admin</p>
-            <p className="truncate text-[11px] leading-none text-ink/40">Session · secure</p>
+            <p className="truncate text-[11.5px] font-semibold leading-none text-[var(--ui-ink)]">
+              Administrator
+            </p>
+            <p className="mt-1 truncate text-[10px] leading-none text-ink/45">
+              Admin account
+            </p>
           </div>
-          <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" aria-hidden title="Session active" />
         </div>
         <button
+          type="button"
           onClick={() => {
             adminLogout().finally(() => router.replace("/login"));
           }}
+          aria-label="Sign out"
           title="Sign out"
-          className="flex items-center justify-center gap-2 rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-3 py-2 text-[12px] font-semibold text-ink/60 transition-colors duration-150 hover:border-[var(--ui-ink)] hover:text-ink"
+          className="flex h-9 items-center justify-center gap-2 rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-3 text-[11.5px] font-semibold text-ink/60 transition-colors duration-150 hover:border-[var(--ui-ink)] hover:text-ink"
         >
           <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none" className="opacity-60">
             <path d="M15.2 18.2L9 12l6.2-6.2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
@@ -296,7 +358,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <path d="M3 5.2a2 2 0 0 1 2-2h6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             <path d="M3 18.8a2 2 0 0 0 2 2h6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
           </svg>
-          <span className="hidden sm:inline">Sign out</span>
+          <span className="hidden xl:inline">Sign out</span>
         </button>
       </div>
     </header>
@@ -304,39 +366,56 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="flex h-screen overflow-hidden bg-[var(--ui-page)]">
+      <a
+        href="#admin-main"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-[2px] focus:bg-[var(--ui-ink)] focus:px-3 focus:py-2 focus:text-[12px] focus:font-semibold focus:text-[var(--ui-on-ink)]"
+      >
+        Skip to content
+      </a>
       {/* Sidebar: a drawer under lg, a flat rail on desktop. */}
       <aside
         className={`fixed inset-y-0 left-0 z-40 flex flex-col border-r border-[var(--ui-line)] bg-[var(--ui-surface)] transition-[width,transform] duration-200 ease-out lg:static lg:translate-x-0 ${
           navOpen ? "translate-x-0" : "-translate-x-full"
-        } ${collapsed ? "lg:w-14" : "w-60"}`}
+        } ${collapsed ? "lg:w-16" : "w-60"}`}
       >
         {/* Everything scrolls in here; the aside itself must not clip, or the
             collapse toggle straddling its right edge gets cut off. */}
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain [scrollbar-width:thin]">
-        {/* Brand */}
-        <div className="sticky top-0 z-10 bg-[var(--ui-surface)] px-4 pb-3 pt-4">
-          <div className={`flex items-center gap-3 ${collapsed ? "lg:justify-center lg:px-0" : ""}`}>
-            <Image
-              src="/Sayvors_Icon.png"
-              alt="Sayvors"
-              width={36}
-              height={36}
-              className="h-9 w-9 shrink-0 rounded-[2px] border border-[var(--ui-line)] bg-white object-contain p-1"
-              unoptimized
-            />
+        {/* Brand + console identity */}
+        <div className={`sticky top-0 z-10 border-b border-[var(--ui-line)] bg-[var(--ui-surface-solid)] px-4 pb-3 pt-4 ${collapsed ? "lg:px-0" : ""}`}>
+          <div className={`flex items-center gap-3 ${collapsed ? "lg:justify-center" : ""}`}>
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[3px] border border-[var(--ui-line)] bg-white">
+              <Image
+                src="/Sayvors_Icon.png"
+                alt="Sayvors"
+                width={28}
+                height={28}
+                className="h-7 w-7 object-contain"
+                unoptimized
+              />
+            </div>
             {!collapsed && (
               <div className="min-w-0">
-                <p className="text-[14px] font-bold leading-none tracking-tight text-[var(--ui-ink)]">Sayvors</p>
-                <p className="mt-0.5 text-[11px] font-medium leading-none text-ink/45">Admin console</p>
+                <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-ink/40">
+                  Control plane
+                </p>
+                <p className="mt-0.5 text-[15px] font-semibold leading-none tracking-tight text-[var(--ui-ink)]">
+                  Sayvors
+                </p>
               </div>
             )}
-            {!collapsed && (
-              <span className="ml-auto rounded-[2px] border border-[var(--ui-line)] px-2 py-1 text-[9px] font-bold uppercase tracking-[0.14em] text-ink/50">
-                Admin
-              </span>
-            )}
           </div>
-          <div className="mt-4 h-px bg-[var(--ui-line)]" aria-hidden />
+          {!collapsed && (
+            <div className="mt-3 flex items-center justify-between gap-2 border-t border-[var(--ui-line)] pt-2.5">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-ink/40">
+                Admin console
+              </span>
+              <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-ink/50">
+                <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                Secure session
+              </span>
+            </div>
+          )}
         </div>
 
         {nav}
@@ -349,7 +428,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           onClick={toggleCollapsed}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           aria-expanded={!collapsed}
-          className="absolute -right-3 top-[68px] z-50 hidden h-6 w-6 items-center justify-center rounded-full border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] text-[var(--ui-ink)] transition-colors duration-150 hover:bg-[var(--ui-sunken)] lg:flex"
+          className="absolute -right-3 top-[24px] z-50 hidden h-6 w-6 items-center justify-center rounded-full border border-[var(--ui-line-strong)] bg-[var(--ui-surface-solid)] text-[var(--ui-ink)] transition-colors duration-150 hover:bg-[var(--ui-sunken)] lg:flex"
         >
           <svg aria-hidden viewBox="0 0 24 24" fill="none" className={`h-3 w-3 transition-transform duration-200 ${collapsed ? "rotate-180" : ""}`}>
             <path d="M14.5 6.5L9 12l5.5 5.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -371,24 +450,48 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         {/* Desktop header (hidden on mobile) */}
         {header}
         {/* Mobile top bar */}
-        <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-3 lg:hidden">
+        <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-[var(--ui-line)] bg-[var(--ui-surface-solid)] px-4 py-3 lg:hidden">
           <button
             type="button"
             onClick={() => setNavOpen(true)}
             aria-label="Open navigation"
             aria-expanded={navOpen}
-            className="flex h-8 w-8 items-center justify-center rounded-[2px] border border-[var(--ui-line-strong)] text-ink/60"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[2px] border border-[var(--ui-line-strong)] text-ink/60"
           >
             <svg aria-hidden viewBox="0 0 24 24" fill="none" className="h-4 w-4">
               <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
             </svg>
           </button>
-          <Image src="/Sayvors_Icon.png" alt="Sayvors" width={24} height={24} className="h-6 w-6 rounded-[2px] border border-[var(--ui-line)] bg-white object-contain p-0.5" unoptimized />
-          <p className="text-[13px] font-bold tracking-tight text-[var(--ui-ink)]">Sayvors Admin</p>
+          <div className="min-w-0 flex-1">
+            <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-ink/40">
+              {context.section}
+            </p>
+            <p className="truncate text-[13px] font-semibold tracking-tight text-[var(--ui-ink)]">
+              {context.title}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSearchOpen(true)}
+            aria-label="Search admin console"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[2px] border border-[var(--ui-line)] text-ink/55 transition hover:border-[var(--ui-line-strong)] hover:text-ink"
+          >
+            <SearchIcon className="h-4 w-4" />
+          </button>
+          <ThemeToggle toggle={toggle} />
         </header>
 
-        <main className="min-w-0 flex-1 overflow-y-auto overscroll-contain bg-[var(--ui-page)] p-4 sm:p-6">{children}</main>
+        <main
+          id="admin-main"
+          className="min-w-0 flex-1 overflow-y-auto overscroll-contain bg-[var(--ui-page)] p-4 sm:p-6"
+        >
+          {children}
+        </main>
       </div>
+
+      {searchOpen ? (
+        <AdminSearch onClose={() => setSearchOpen(false)} />
+      ) : null}
     </div>
   );
 }

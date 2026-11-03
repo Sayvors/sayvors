@@ -3,6 +3,7 @@
 import { API_BASE } from "./api-base";
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { getCsrfToken } from "./csrf";
+import { clearSessionLocalState } from "./auth-storage";
 
 const API_URL = API_BASE;
 
@@ -22,7 +23,7 @@ interface User {
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  signup: (data: SignupData) => Promise<{ verification_token?: string }>;
+  signup: (data: SignupData) => Promise<void>;
   login: (data: LoginData) => Promise<User>;
   googleLogin: (idToken: string) => Promise<User>;
   facebookLogin: (accessToken: string) => Promise<User>;
@@ -183,9 +184,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error(err.detail || "Signup failed");
     }
 
-    const result = await res.json();
-    setUser(result.user);
-    return { verification_token: result.verification_token };
+    // No session is issued here: verify-otp establishes it after the code
+    // check. Keeping signup session-free also keeps the response identical
+    // for new and existing emails.
   };
 
   const login = async (data: LoginData) => {
@@ -248,6 +249,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       method: "POST",
       body: JSON.stringify({ all_devices: allDevices }),
     });
+    clearSessionLocalState();
     setUser(null);
     // Invite acceptance passes its own path so sign-in returns there.
     window.location.href = next ? `/login?next=${encodeURIComponent(next)}` : "/login";

@@ -188,6 +188,9 @@ class ThreadStateOut(BaseModel):
 class ChannelMessageListResponse(BaseModel):
     messages: list[ChannelMessageResponse]
     total: int
+    # Cursor for the page older than `messages[0]`; null when the client has
+    # reached the start of the conversation.
+    next_cursor: str | None = None
     # Conversation-level state that the thread view needs on open: who owns
     # the conversation and the newest summary. Optional so the channel-level
     # message endpoint keeps working unchanged.

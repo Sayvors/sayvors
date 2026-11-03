@@ -32,7 +32,11 @@ from ....database import async_session
 from ....modules.kafka.client import mark_kafka_unavailable
 from ..meta.models import MetaAsset, MetaWebhookEvent
 from ..models import Channel, ChannelMessage
-from .providers.base import MetaAPIError
+from .providers.base import (
+    MetaAmbiguousError as _AmbiguousError,
+    MetaPermanentError as _PermanentError,
+    MetaAPIError,
+)
 from .consumer import (
     _handle_message_received,
     _handle_message_status,
@@ -46,6 +50,7 @@ from .consumer import (
     _handle_facebook_comment,
     _drain_outbox_events as _drain_outbox_events_consumer,
 )
+from .webhooks.parser import is_message_status_event
 
 logger = logging.getLogger(__name__)
 
@@ -78,22 +83,18 @@ HANDLED_EVENT_TYPES = {
 }
 
 
-class _PermanentError(Exception):
-    """Config/credential problem — retrying cannot help."""
-    def __init__(self, message: str, status_code: int = 400):
-        super().__init__(message)
-        self.status_code = status_code
-
-
-class _AmbiguousError(Exception):
-    """Timeout-class failure: delivery unknown, a retry may double-send."""
-    def __init__(self, message: str):
-        super().__init__(message)
-
-
+# _PermanentError / _AmbiguousError used to be defined here. They now live in
+# providers.base (MetaPermanentError / MetaAmbiguousError) so the consumer can
+# raise the exact classes this worker catches — a send that times out mid-
+# flight must reach the ambiguous branch, not the generic retry. The old
+# names stay importable for the tests and any other callers.
 def _event_type_handled(provider: str, event_type: str) -> bool:
     """Check if we handle this event type."""
-    return event_type in HANDLED_EVENT_TYPES.get(provider, set())
+    if event_type in HANDLED_EVENT_TYPES.get(provider, set()):
+        return True
+    # Status types carry the status suffix; keep accepting the bare type for
+    # events queued before the per-status identity landed.
+    return provider == "whatsapp" and is_message_status_event(event_type)
 
 
 async def _claim_due_events(db, worker_id: str, limit: int = BATCH_SIZE) -> List[Dict[str, Any]]:
@@ -183,7 +184,7 @@ async def _process_event(db, event_data: Dict[str, Any]) -> bool:
         if provider == "whatsapp":
             if event_type == "message.received":
                 await _handle_message_received(payload, data)
-            elif event_type == "message.status":
+            elif is_message_status_event(event_type):
                 await _handle_message_status(payload, data)
             elif event_type == "message.history":
                 await _handle_message_history(payload, data)

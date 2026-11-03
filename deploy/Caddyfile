@@ -1,3 +1,9 @@
 api.staging.sayvors.com {
+	# Keep the operator surface off the public edge: Prometheus metrics and
+	# the full API schema/docs. The app also disables docs when
+	# ENVIRONMENT=production; this covers staging and any misconfigured origin.
+	@blocked path /metrics /docs /docs/* /redoc /redoc/* /openapi.json
+	respond @blocked 403
+	header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
 	reverse_proxy api:8000
 }

@@ -108,6 +108,10 @@ Cross-Origin-Embedder-Policy: require-corp
 | base-uri | 'self' | Prevent base tag injection |
 | form-action | 'self' | Forms only to self |
 
+### Hidden Operator Surface
+
+FastAPI's docs are development tools, not a public API contract. In `ENVIRONMENT=production` the app is constructed with `docs_url=None`, `redoc_url=None` and `openapi_url=None`, so the schema and request console are not served even if the proxy is bypassed. Caddy also 403s `/metrics`, `/docs*`, `/redoc*` and `/openapi.json` at the public edge (staging included) and sends HSTS; `/readyz` stays reachable for the uptime monitor.
+
 ## CORS Configuration
 
 ```python

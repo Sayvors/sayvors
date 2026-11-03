@@ -5,12 +5,21 @@ waba_id / phone_number_id / business_id + auth code -> backend exchanges the
 code for a customer business token, subscribes webhooks, registers the
 number, and persists WABA + phone_number assets.
 """
+import asyncio
 import logging
 
 from .....config import settings
+from .....core.http import UnsafeUrlError
+from .....core.pinned_http import fetch_pinned_media
 from .base import DiscoveredAsset, MetaAPIError, MetaProviderAdapter, graph_base
 
 logger = logging.getLogger(__name__)
+
+# WhatsApp status media limits. Images are capped at 5 MB and videos at
+# 16 MB by the Cloud API. Using the per-kind cap avoids downloading 16 MB for
+# an image that Meta will reject anyway.
+MAX_STATUS_IMAGE_BYTES = 5 * 1024 * 1024
+MAX_STATUS_VIDEO_BYTES = 16 * 1024 * 1024
 
 
 class WhatsAppAdapter(MetaProviderAdapter):
@@ -580,6 +589,102 @@ class WhatsAppAdapter(MetaProviderAdapter):
         )
         return resp.json().get("data", [])
 
+    @staticmethod
+    def _body_component(body: str, examples: list[str] | None) -> dict:
+        """One BODY component, with the samples Meta review requires.
+
+        A variable-bearing template submitted without ``example.body_text`` is
+        rejected in review for a reason the tenant never sees, so the samples
+        travel with the body.
+        """
+        component: dict = {"type": "BODY", "text": body}
+        if examples:
+            component["example"] = {"body_text": [str(e)[:1024] for e in examples]}
+        return component
+
+    async def create_template(
+        self,
+        waba_id: str,
+        token: str,
+        *,
+        name: str,
+        language: str,
+        category: str,
+        body: str,
+        examples: list[str] | None = None,
+    ) -> dict:
+        """Create one template in the WABA; Meta reviews it asynchronously.
+
+        Returns Meta's response (``id``, ``status``, ``category``). The row is
+        not sendable until a later sync/status pull says APPROVED.
+        """
+        resp = await self._graph(
+            "POST",
+            f"/{waba_id}/message_templates",
+            token,
+            json={
+                "name": name,
+                "language": language,
+                "category": category.upper(),
+                "components": [self._body_component(body, examples)],
+                # Let Meta re-categorise instead of rejecting a template whose
+                # content is clearly marketing but was submitted as utility.
+                "allow_category_change": True,
+            },
+        )
+        return resp.json()
+
+    async def update_template(
+        self,
+        template_id: str,
+        token: str,
+        *,
+        category: str,
+        body: str | None = None,
+        examples: list[str] | None = None,
+    ) -> dict:
+        """Edit a template. An approved template goes back to review.
+
+        Only the body can be changed — Meta does not allow renaming a template
+        or changing its language, so those stay fixed on the local row.
+        """
+        payload: dict = {"category": category.upper()}
+        if body is not None:
+            payload["components"] = [self._body_component(body, examples)]
+        resp = await self._graph(
+            "POST", f"/{template_id}", token, json=payload
+        )
+        return resp.json()
+
+    async def delete_template(
+        self,
+        token: str,
+        *,
+        template_id: str | None = None,
+        waba_id: str | None = None,
+        name: str | None = None,
+    ) -> dict:
+        """Delete one template under its WABA.
+
+        Meta deletes by ``name`` (all languages) unless ``hsm_id`` narrows it
+        to one template, so both travel together. There is no
+        ``DELETE /{template_id}`` endpoint on the Message Templates API.
+        """
+        if not waba_id or not name:
+            raise MetaAPIError(
+                "A WABA id and template name are required to delete a template"
+            )
+        params: dict = {"name": name}
+        if template_id:
+            params["hsm_id"] = template_id
+        resp = await self._graph(
+            "DELETE",
+            f"/{waba_id}/message_templates",
+            token,
+            params=params,
+        )
+        return resp.json() if resp.content else {}
+
     async def upload_media(
         self,
         phone_number_id: str,
@@ -891,27 +996,77 @@ class WhatsAppAdapter(MetaProviderAdapter):
         """Send a WhatsApp status (image/video with caption, or text)."""
         if media_url:
             # WhatsApp Cloud API status sends require a media id from /media
-            # upload, not a public URL. The media was already stored on our
-            # S3/GCS backend; fetch it, then upload to WhatsApp.
-            import httpx
-
-            async with httpx.AsyncClient(timeout=30.0) as http:
-                media_resp = await http.get(media_url)
-                if media_resp.status_code >= 400:
-                    raise MetaAPIError(
-                        f"Failed to fetch media from {media_url} ({media_resp.status_code})",
-                        502,
-                    )
-                mime = media_type or "image/jpeg"
-                upload = await self.upload_media(
-                    phone_number_id, token, media_resp.content, mime
+            # upload, not a public URL. The media is usually on our object
+            # store, but the URL is tenant-supplied: fetch it through the SSRF
+            # guard + DNS pinning so the validated address is the one dialed,
+            # and cap the body so a hostile URL cannot exhaust memory. The
+            # fetch runs off the event loop because httpcore is synchronous.
+            is_video = (media_type or "").lower() == "video"
+            max_bytes = (
+                MAX_STATUS_VIDEO_BYTES if is_video else MAX_STATUS_IMAGE_BYTES
+            )
+            try:
+                data, content_type = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        fetch_pinned_media,
+                        media_url,
+                        timeout=20.0,
+                        max_bytes=max_bytes,
+                        user_agent="SayvorsMedia/1.0",
+                    ),
+                    timeout=30.0,
                 )
-            media_id = upload
+            except UnsafeUrlError:
+                # Never echo the URL or the resolved host: the tenant already
+                # knows what they sent, and logs/responses must not map the
+                # internal network for an attacker.
+                raise MetaAPIError(
+                    "WhatsApp status media URL is not publicly reachable or unsafe.",
+                    400,
+                ) from None
+            except TimeoutError:
+                logger.warning(
+                    "WhatsApp status media fetch timed out for %s", phone_number_id
+                )
+                raise MetaAPIError(
+                    "WhatsApp could not fetch the status media (timed out).",
+                    502,
+                ) from None
+            except Exception as e:
+                logger.warning(
+                    "WhatsApp status media fetch failed for %s (%s)",
+                    phone_number_id,
+                    type(e).__name__,
+                )
+                raise MetaAPIError(
+                    "WhatsApp could not fetch the status media "
+                    "(unreachable or too large).",
+                    502,
+                ) from None
+            if not data:
+                raise MetaAPIError("WhatsApp status media is empty.", 502)
+
+            media_kind = "video" if is_video else "image"
+            default_mime = "video/mp4" if is_video else "image/jpeg"
+            mime_prefix = "video/" if is_video else "image/"
+            # Use the origin's declared type only when it matches the declared
+            # media kind; otherwise fall back to that kind's safe default. A
+            # hostile or malformed Content-Type never becomes an arbitrary
+            # upload type.
+            mime = (
+                content_type
+                if content_type.startswith(mime_prefix)
+                and len(content_type) <= 64
+                else default_mime
+            )
+            media_id = await self.upload_media(
+                phone_number_id, token, data, mime
+            )
             body: dict = {
                 "messaging_product": "whatsapp",
                 "to": phone_number_id,
-                "type": "image",
-                "image": {"id": media_id, "caption": caption[:1024]},
+                "type": media_kind,
+                media_kind: {"id": media_id, "caption": caption[:1024]},
             }
         else:
             body = {

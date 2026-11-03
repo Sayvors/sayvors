@@ -49,6 +49,7 @@ from .modules.email.router import router as email_router
 from .modules.review_engine.router import router as review_engine_router
 from .modules.review_engine.csv_router import router as csv_router
 from .modules.assistant.router import router as assistant_router
+from .modules.assistant import personas as assistant_personas  # noqa: F401
 from .modules.notifications.router import router as notifications_router
 from .modules.billing.router import router as billing_router
 from .modules.jobs.router import router as jobs_router, admin_router as jobs_admin_router
@@ -496,7 +497,25 @@ async def lifespan(app: FastAPI):
     await close_kafka()
 
 
-app = FastAPI(title="Sayvors API", version="0.1.0", lifespan=lifespan, body_limit=100_000_000)
+def _docs_urls(environment: str) -> dict[str, str | None]:
+    """FastAPI's interactive docs are a development tool.
+
+    Production exposes the entire schema at /openapi.json and an executable
+    request console at /docs and /redoc. The edge blocks them too, but the app
+    must not serve them even if the proxy is bypassed or misconfigured.
+    """
+    if environment == "production":
+        return {"docs_url": None, "redoc_url": None, "openapi_url": None}
+    return {}
+
+
+app = FastAPI(
+    title="Sayvors API",
+    version="0.1.0",
+    lifespan=lifespan,
+    body_limit=100_000_000,
+    **_docs_urls(settings.ENVIRONMENT),
+)
 
 # ── Middleware ──────────────────────────────────────────────────────────
 app.add_middleware(AdminAuditMiddleware)

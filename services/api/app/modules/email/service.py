@@ -390,6 +390,34 @@ async def send_password_reset_success_email(
     )
 
 
+async def send_account_exists_email(email: str, name: str) -> str:
+    """Tell the mailbox owner that a signup was attempted for an existing account.
+
+    The signup endpoint returns the same response whether or not the email is
+    registered. This message is the legitimate user's next step; an attacker
+    who does not control the mailbox learns nothing.
+    """
+    import html as _html
+
+    display = _html.escape(name or "there")
+    login_url = f"{(settings.FRONTEND_URL or '').rstrip('/')}/login"
+    body = (
+        f"<p style=\"margin:0 0 16px;font-size:15px;line-height:24px;color:#52525B;\">Hi {display},</p>"
+        f"<p style=\"margin:0 0 16px;font-size:15px;line-height:24px;color:#52525B;\">Someone tried to create a Sayvors account with this email, but an account already exists. If this was you, sign in instead:</p>"
+        f"{_cta_button('Sign in to Sayvors', login_url)}"
+        f"<p style=\"margin:16px 0 0;font-size:14px;line-height:22px;color:#71717A;\">If you didn't request this, you can safely ignore this email.</p>"
+    )
+    return await send_email(
+        email,
+        "Your Sayvors account already exists",
+        _shell("Your account already exists", body, _logo_url()),
+        text=(
+            f"Hi {display}, an account already exists for this email. "
+            f"Sign in: {login_url}"
+        ),
+    )
+
+
 async def send_welcome_email(email: str, name: str) -> str:
     """Send a branded onboarding email after account creation."""
     display = name or "there"

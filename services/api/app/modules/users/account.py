@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -180,8 +181,66 @@ async def export_account_data(
     )
 
 
-@router.delete("", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_account(
+class DeletionRequestIn(BaseModel):
+    confirm: str = Field(..., min_length=5, max_length=10)
+
+
+def _require_owner(user: User) -> None:
+    if user.tenant_id and user.tenant_id != user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the workspace owner can delete the account.",
+        )
+
+
+@router.get("/deletion")
+async def get_deletion_state(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Current personal-data deletion request, if any."""
+    _require_owner(user)
+    from .account_deletion import deletion_state
+
+    return await deletion_state(db, user.id)
+
+
+@router.post("/deletion", status_code=status.HTTP_202_ACCEPTED)
+async def request_personal_data_deletion(
+    body: DeletionRequestIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Schedule deletion of the owner's personal data in 30 days."""
+    _require_owner(user)
+    if body.confirm.strip().upper() != "DELETE":
+        raise HTTPException(
+            status_code=422, detail="Type DELETE to confirm the request."
+        )
+    from .account_deletion import deletion_state, request_deletion
+
+    await request_deletion(db, user)
+    state = await deletion_state(db, user.id)
+    return state
+
+
+@router.delete("/deletion")
+async def cancel_personal_data_deletion(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cancel a pending deletion request (signing in does this automatically)."""
+    _require_owner(user)
+    from .account_deletion import cancel_pending, deletion_state
+
+    await cancel_pending(db, user.id)
+    return await deletion_state(db, user.id)
+
+
+# Kept for an explicit admin/manual purge only; it is deliberately NOT routed.
+# The public route is the 30-day request above so a click cannot erase the
+# whole tenant in one transaction.
+async def _hard_delete_account(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):

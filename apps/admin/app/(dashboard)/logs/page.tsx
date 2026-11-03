@@ -78,9 +78,17 @@ export default function AdminLogsPage() {
       } catch (e) { if (!cancelled) setError(e instanceof Error ? e.message : "Load failed."); }
       finally { if (!cancelled) { setLoading(false); setProbing(false); } }
     };
+    // Hidden tabs should not poll; catch up as soon as the operator returns.
+    const tick = () => { if (!document.hidden) void refresh(); };
+    const onVisibility = () => { if (!document.hidden) void refresh(); };
     refresh();
-    timer.current = setInterval(refresh, 30000);
-    return () => { cancelled = true; if (timer.current) clearInterval(timer.current); };
+    timer.current = setInterval(tick, 30000);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVisibility);
+      if (timer.current) clearInterval(timer.current);
+    };
   }, [load]);
 
   const isAI = (s: HealthService) => s.name.startsWith("AI:");

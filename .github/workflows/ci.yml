@@ -82,6 +82,10 @@ jobs:
         run: python migration_guard.py
 
       - name: Run pytest
+        # Parallelism and testpaths come from services/api/pyproject.toml
+        # (`addopts = "-ra -n auto --dist loadscope"`), so local and CI run the
+        # same suite the same way. Deliberately no `-q`: keep pytest's
+        # worker/percentage progress visible in the Actions log.
         env:
           DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/sayvors
           DATABASE_READER_URL: ""
@@ -104,7 +108,7 @@ jobs:
           GOOGLE_CLIENT_SECRET: "test-google-client-secret"
         run: |
           cd services/api
-          python -m pytest tests/ -q
+          python -m pytest tests
 
   lint-frontend:
     runs-on: ubuntu-latest

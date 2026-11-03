@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from app.modules.channels.meta.models import MetaAsset, MetaConnection, MetaWebhookEvent
 from app.modules.channels.meta.webhooks import parser as _parser
+from app.modules.channels.meta.webhooks import router as _webhook_router
 from app.modules.channels.meta.webhooks import verifier as _verifier
 from app.modules.outbox.models import EventOutbox
 
@@ -132,8 +133,45 @@ def test_parse_whatsapp_status():
         }],
     }
     provider, events = _parser.parse(payload)
-    assert events[0]["event_type"] == "message.status"
+    assert events[0]["event_type"] == "message.status.delivered"
     assert events[0]["data"]["status"] == "delivered"
+
+
+def test_parse_whatsapp_keeps_each_status_transition():
+    """One wamid can produce sent, delivered, read and failed events.
+
+    The webhook ledger dedupes on (external_event_id, event_type); a constant
+    event_type collapsed every later transition into "duplicate" and dropped
+    it before enqueue. Pin the distinct identity here.
+    """
+    payload = {
+        "object": "whatsapp_business_account",
+        "entry": [{
+            "id": "waba-1",
+            "changes": [{
+                "field": "messages",
+                "value": {
+                    "metadata": {"phone_number_id": "pn-1"},
+                    "statuses": [
+                        {"id": "wamid.2", "status": "sent", "timestamp": "1757721600"},
+                        {"id": "wamid.2", "status": "delivered", "timestamp": "1757721601"},
+                        {"id": "wamid.2", "status": "read", "timestamp": "1757721602"},
+                        {"id": "wamid.2", "status": "failed", "timestamp": "1757721603"},
+                    ],
+                },
+            }],
+        }],
+    }
+    _, events = _parser.parse(payload)
+
+    assert [e["external_event_id"] for e in events] == ["wamid.2"] * 4
+    assert [e["event_type"] for e in events] == [
+        "message.status.sent",
+        "message.status.delivered",
+        "message.status.read",
+        "message.status.failed",
+    ]
+    assert len({(e["external_event_id"], e["event_type"]) for e in events}) == 4
 
 
 def test_parse_page_comment():
@@ -275,6 +313,50 @@ async def test_ingress_bad_signature(client, engine):
     assert resp.status_code == 403
 
 
+def test_handshake_non_ascii_token_is_rejected(monkeypatch):
+    """compare_digest(str, str) raises on non-ASCII; the handshake must 403."""
+    from app import config as _config
+
+    monkeypatch.setattr(_config.settings, "META_WEBHOOK_VERIFY_TOKEN", "expected")
+    assert (
+        _verifier.verify_handshake("subscribe", "tökén", "challenge") is None
+    )
+
+
+def test_signature_non_ascii_header_is_false_not_500():
+    assert _verifier.verify_signature(b"{}", "sha256=☃") is False
+
+
+@pytest.mark.asyncio
+async def test_meta_ingress_rate_limit_returns_429(client, monkeypatch):
+    from app import config as _config
+
+    async def _deny(key, max_requests, window_seconds):
+        return False
+
+    monkeypatch.setattr(_webhook_router, "rate_limit", _deny)
+    monkeypatch.setattr(_config.settings, "TESTING", False)
+
+    resp = client.post(
+        "/api/v1/meta/webhooks",
+        content=b"{}",
+        headers={"host": "localhost"},
+    )
+
+    assert resp.status_code == 429
+    assert resp.headers["retry-after"] == "60"
+
+
+def test_legacy_channel_webhook_is_retired(client):
+    resp = client.post(
+        "/api/v1/channels/webhook/whatsapp",
+        content=b"{}",
+        headers={"host": "localhost"},
+    )
+    assert resp.status_code == 410
+    assert "retired" in resp.json()["detail"].lower()
+
+
 @pytest.mark.asyncio
 async def test_ingress_message_resolves_tenant(client, engine, db):
     await _seed_asset(db, "pn-1")
@@ -309,6 +391,49 @@ async def test_ingress_duplicate_is_idempotent(client, engine, db):
         )
     )).scalars().all()
     assert len(rows) == 1  # single row: no double-processing
+
+
+@pytest.mark.asyncio
+async def test_ingress_keeps_each_status_transition(client, engine, db):
+    """Four statuses for one wamid must survive the webhook dedupe ledger."""
+    await _seed_asset(db, "pn-status")
+    payload = {
+        "object": "whatsapp_business_account",
+        "entry": [{
+            "id": "waba-1",
+            "changes": [{
+                "field": "messages",
+                "value": {
+                    "metadata": {"phone_number_id": "pn-status"},
+                    "statuses": [
+                        {"id": "wamid.status.1", "status": "sent", "timestamp": "1757721600"},
+                        {"id": "wamid.status.1", "status": "delivered", "timestamp": "1757721601"},
+                        {"id": "wamid.status.1", "status": "read", "timestamp": "1757721602"},
+                        {"id": "wamid.status.1", "status": "failed", "timestamp": "1757721603"},
+                    ],
+                },
+            }],
+        }],
+    }
+    body = json.dumps(payload).encode()
+    resp = client.post(
+        "/api/v1/meta/webhooks", content=body,
+        headers={"host": "localhost", "x-hub-signature-256": _sign(body)},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["events"] == 4
+
+    rows = (await db.execute(
+        select(MetaWebhookEvent).where(
+            MetaWebhookEvent.external_event_id == "wamid.status.1"
+        )
+    )).scalars().all()
+    assert {row.event_type for row in rows} == {
+        "message.status.sent",
+        "message.status.delivered",
+        "message.status.read",
+        "message.status.failed",
+    }
 
 
 @pytest.mark.asyncio

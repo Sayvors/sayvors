@@ -40,7 +40,7 @@ async def test_stories_return_live_and_are_cached(client, db, monkeypatch):
     assert first.status_code == 200 and second.status_code == 200
     assert first.json()["stories"][0]["id"] == "s1"
     assert InstagramAdapter.get_stories.await_count == 1, "second read must hit redis"
-    await _flush_cache("stories", ig)
+    _flush_cache(client, "stories", ig)
 
 
 async def test_stories_without_token_is_empty_not_error(client, db):
@@ -78,7 +78,7 @@ async def test_insights_map_metrics_and_cache(client, db, monkeypatch):
     assert body["saves"] == 41
     assert body["shares"] == 7
     assert InstagramAdapter.get_media_insights.await_count == 1
-    await _flush_cache("insights", "m1")
+    _flush_cache(client, "insights", "m1")
 
 
 async def test_insights_unavailable_is_a_normal_answer(client, db, monkeypatch):
@@ -94,4 +94,4 @@ async def test_insights_unavailable_is_a_normal_answer(client, db, monkeypatch):
     body = res.json()
     assert body["available"] is False
     assert body["reason"]
-    await _flush_cache("insights", "m2")
+    _flush_cache(client, "insights", "m2")
