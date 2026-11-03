@@ -225,7 +225,7 @@
   <div class="stat"><div class="n calm">1,645</div><div class="l">backend tests (2 skipped in CI where pgvector runs; 4 skipped locally without Postgres) — CI gates every staging deploy on them; staging CI run #77 passed on <code>d82d800</code></div></div>
   <div class="stat"><div class="n amber">1</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new finding still open: INS-5 (INS-1, INS-2, INS-3, INS-4, INS-6, INS-7 fixed)</div></div>
   <div class="stat"><div class="n">4</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 0 blockers · 3 majors · 1 medium batches open. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
-  <div class="stat"><div class="n">8</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — Review Intelligence + Analytics "actual facts" gaps: listing Q&amp;A, competitor deltas, grid rank, AI-answer visibility. Strategy rule: every number a tenant sees must be verifiable on Google Maps or carry a named source</div></div>
+  <div class="stat"><div class="n">9</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — Review Intelligence + Analytics "actual facts" gaps: listing Q&amp;A, competitor deltas, grid rank, AI-answer visibility, Review Campaign premium gating. Strategy rule: every number a tenant sees must be verifiable on Google Maps or carry a named source</div></div>
 </div>
 
 <section id="model">
@@ -643,9 +643,16 @@
       <td>Add median response time + distribution to the review metrics; render the score formula in a tooltip/footnote ("50% rating · 25% response · 25% sentiment").</td>
       <td class="num">1 day</td>
     </tr>
+    <tr>
+      <td class="num">FACT-9</td><td><span class="chip high">High</span></td>
+      <td><strong>No Review Campaign feature — the most-requested premium upsell.</strong> Tenants want to send a "please review our business" link only to happy customers, after a conversation, as a time-boxed campaign (from/to dates). It should be gated behind plan entitlements: trial gets 1 campaign per week (≤7 days); Growth/Pro gets 14 days/month (2× 7-day or 1× 14-day); Pro+/Enterprise gets 30 days configurable (30/14/7-day windows). Campaign results (sent → clicked → reviewed, per campaign) must be stored and reusable — duplicate any past campaign with one button, including its recipient list, message copy, date window, and results. Nothing in the codebase builds this: no campaign table, no date-window gating, no plan-level campaign limits, no duplicate/reuse flow.</td>
+      <td class="path">analytics/router.py:703 (review-request click); channels/router.py (send path); billing/entitlements.py (plan tiers); new: campaign table, campaign router, duplicate/reuse endpoint</td>
+      <td>Create campaign table (id, tenant_id, name, from_date, to_date, status, message_template, recipient_count, sent_count, clicked_count, reviewed_count, created_at, updated_at); add plan-level campaign limits to entitlements (campaigns_per_month, max_days_per_campaign); build campaign CRUD + duplicate/reuse endpoint; gate the /inbox/send review-request path behind an active campaign; render campaign results card (sent → clicked → reviewed, with rate and trend).</td>
+      <td class="num">4–5 days</td>
+    </tr>
   </table></div>
 
-  <p class="note">Order: FACT-2 → FACT-3 (fastest to land, biggest credibility win) → FACT-1 → FACT-7/FACT-8 (one page-touch each) → FACT-6 → FACT-4 (buy, phase 2) → FACT-5 (spike, phase 3). Every row here is product-track — none of it blocks the Phase 1 launch; FACT-2/FACT-3/FACT-7/FACT-8 are each ≤2 days and compound into the "we show facts, not vibes" position the paid-tool market (Birdeye $300/mo, Podium $289/mo) currently leaves open.</p>
+  <p class="note">Order: FACT-2 → FACT-3 (fastest to land, biggest credibility win) → FACT-1 → FACT-7/FACT-8 (one page-touch each) → FACT-6 → FACT-4 (buy, phase 2) → FACT-5 (spike, phase 3) → FACT-9 (premium Review Campaign, plan-gated + duplicate/reuse). Every row here is product-track — none of it blocks the Phase 1 launch; FACT-2/FACT-3/FACT-7/FACT-8 are each ≤2 days and compound into the "we show facts, not vibes" position the paid-tool market (Birdeye $300/mo, Podium $289/mo) currently leaves open.</p>
 
   <h3>Also found 2026-11-02 — why the Overview was wall-to-wall zeros</h3>
   <div class="scroll"><table>
