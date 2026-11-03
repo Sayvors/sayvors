@@ -3,6 +3,7 @@
 import { API_BASE } from "./api-base";
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { getCsrfToken } from "./csrf";
+import { clearSessionLocalState } from "./auth-storage";
 
 const API_URL = API_BASE;
 
@@ -248,6 +249,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       method: "POST",
       body: JSON.stringify({ all_devices: allDevices }),
     });
+    clearSessionLocalState();
     setUser(null);
     // Invite acceptance passes its own path so sign-in returns there.
     window.location.href = next ? `/login?next=${encodeURIComponent(next)}` : "/login";
