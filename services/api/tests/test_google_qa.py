@@ -6,7 +6,6 @@ from sqlalchemy import select
 
 from app.modules.analytics.qa_router import router as _qa_router  # noqa: F401
 from app.modules.analytics.models import GoogleQuestionAnswer
-from app.modules.channels.google_reviews import GoogleReviewsClient
 from app.modules.channels.models import Channel
 from app.modules.channels.reviews_worker import (
     _mark_qa_polled,
@@ -14,7 +13,6 @@ from app.modules.channels.reviews_worker import (
     _store_question_answer,
 )
 from app.modules.channels.service import encrypt_token
-from app.config import settings
 
 
 def _question(
@@ -171,10 +169,11 @@ async def test_list_questions_returns_unanswered_count(client, db, user_id):
 
 
 @pytest.mark.asyncio
-async def test_manual_draft_then_approve_posts_to_google(
-    client, db, user_id, monkeypatch
+async def test_approve_is_gone_after_google_retired_the_qa_api(
+    client, db, user_id
 ):
-    monkeypatch.setattr(settings, "GOOGLE_REVIEWS_MOCK", False)
+    """Google discontinued the Q&A API on 2025-11-03; publishing fails
+    closed with a clear 410 instead of attempting a dead endpoint."""
     channel = await _channel(db, user_id)
     row = GoogleQuestionAnswer(
         id="qa-3",
@@ -196,36 +195,9 @@ async def test_manual_draft_then_approve_posts_to_google(
     assert draft.status_code == 200, draft.text
     assert draft.json()["draft_status"] == "pending_approval"
 
-    calls = {}
-
-    async def _answer(self, question_id, comment):
-        calls["answer"] = (question_id, comment)
-
-    async def _get(self, question_resource):
-        return {
-            "topAnswers": [{
-                "text": "Yes, free parking is available.",
-                "author": {"displayName": "Owner", "type": "MERCHANT"},
-            }]
-        }
-
-    async def _close(self):
-        return None
-
-    monkeypatch.setattr(GoogleReviewsClient, "answer_question", _answer)
-    monkeypatch.setattr(GoogleReviewsClient, "get_question", _get)
-    monkeypatch.setattr(GoogleReviewsClient, "close", _close)
-
     approved = client.post("/api/v1/analytics/questions/qa-3/approve")
-    assert approved.status_code == 200, approved.text
-    body = approved.json()
-    assert body["is_answered"] is True
-    assert body["draft_status"] == "posted"
-    assert body["answer_text"] == "Yes, free parking is available."
-    assert calls["answer"] == (
-        "accounts/a/locations/l/questions/q3",
-        "Yes, free parking is available.",
-    )
+    assert approved.status_code == 410, approved.text
+    assert "retired" in approved.json()["detail"].lower()
 
 
 @pytest.mark.asyncio

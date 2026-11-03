@@ -233,70 +233,20 @@ async def edit_google_answer_draft(
 async def _post_question_answer(
     db: AsyncSession, q: GoogleQuestionAnswer, channel, text: str
 ) -> None:
-    from ...config import settings
-    from ..channels.google_reviews import GoogleReviewsClient, GoogleReviewsError
-    from ..channels.service import decrypt_token
+    """Publishing is no longer possible: Google retired the Q&A API.
 
-    if settings.GOOGLE_REVIEWS_MOCK:
-        raise HTTPException(
-            status_code=503,
-            detail="Mock mode: connect a real Google Business Profile to publish answers.",
-        )
-    access_token = decrypt_token(channel.access_token) if channel.access_token else None
-    refresh_token = decrypt_token(channel.refresh_token) if channel.refresh_token else None
-    if not access_token and not refresh_token:
-        raise HTTPException(
-            status_code=401,
-            detail="Google account not connected. Reconnect Google on the Connect page, then try again.",
-        )
-
-    client = GoogleReviewsClient(access_token or "", refresh_token)
-    client.set_known_expiry(channel.token_expires_at)
-
-    async def _persist(new_access: str, expires_at) -> None:
-        from ..channels.service import encrypt_token
-
-        channel.access_token = encrypt_token(new_access)
-        channel.token_expires_at = expires_at
-        db.add(channel)
-        await db.commit()
-
-    client.set_token_persister(_persist)
-    try:
-        await client.answer_question(q.question_id, text)
-        remote = await client.get_question(q.question_id)
-        found = next(
-            (
-                a
-                for a in (remote.get("topAnswers") or [])
-                if str(((a.get("author") or {}).get("type") or "")).upper()
-                == "MERCHANT"
-            ),
-            None,
-        )
-        if not found or not (found.get("text") or "").strip():
-            raise GoogleReviewsError(
-                "Google accepted the answer but it is not showing on the listing"
-            )
-        q.answer_text = (found.get("text") or text).strip()[:4000]
-        q.answerer_name = (found.get("author") or {}).get("displayName")
-        q.answer_type = (found.get("author") or {}).get("type")
-        q.answer_created_at = datetime.now(timezone.utc)
-        q.is_answered = True
-        q.draft_status = "posted"
-        q.draft_error = None
-        q.draft_approved_at = datetime.now(timezone.utc)
-        q.is_ignored = False
-    except GoogleReviewsError as e:
-        q.draft_status = "failed"
-        q.draft_error = str(e)[:500]
-        await db.commit()
-        raise HTTPException(
-            status_code=e.status_code,
-            detail="Could not post this answer to Google. Try again shortly.",
-        ) from None
-    finally:
-        await client.close()
+    The My Business Q&A API was discontinued on 2025-11-03. Keep historical
+    questions/drafts readable, but fail closed with a clear message instead
+    of sending a request that can only 404.
+    """
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "Google retired the Business Profile Q&A API on 3 Nov 2025. "
+            "Answers can no longer be published through the API; manage Q&A "
+            "in Google Maps."
+        ),
+    )
 
 
 @router.post("/questions/{qa_id}/approve", response_model=GoogleQuestionAnswerOut)

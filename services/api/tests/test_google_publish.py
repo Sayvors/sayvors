@@ -70,6 +70,8 @@ async def test_update_maps_to_the_standard_topic():
     assert captured["body"]["summary"] == "Grand opening"
     assert "event" not in captured["body"]
     assert "offer" not in captured["body"]
+    # localPosts exists on v4; v1 returns Google's HTML 404.
+    assert "/v4/accounts/1/locations/2/localPosts" in captured["url"]
 
 
 @pytest.mark.asyncio

@@ -24,7 +24,7 @@ from ...google_reviews import GoogleReviewsClient, GoogleReviewsError
 
 logger = logging.getLogger(__name__)
 
-GBP_LOCAL_POSTS_API = "https://mybusiness.googleapis.com/v1"
+GBP_LOCAL_POSTS_API = "https://mybusiness.googleapis.com/v4"
 
 # Location photos live in the v4.9 Business Profile API — v1 has no media
 # resource. Both versions are served from the same host and take the same
@@ -162,10 +162,7 @@ class GoogleBusinessPublisher:
             except ValueError:
                 logger.warning("invalid scheduled_at %r - publishing immediately", scheduled_at)
 
-        url = (
-            f"https://mybusiness.googleapis.com/v1/"
-            f"{account}/{location}/localPosts"
-        )
+        url = f"{GBP_LOCAL_POSTS_API}/{account}/{location}/localPosts"
         resp = await self._client._authed_request("POST", url, json=body)
         if resp.status_code not in (200, 201):
             raise GoogleReviewsError(
@@ -257,7 +254,7 @@ class GoogleBusinessPublisher:
                 "post_id must be the full localPost resource name", 400
             )
 
-        url = f"https://mybusiness.googleapis.com/v1/{post_id}"
+        url = f"{GBP_LOCAL_POSTS_API}/{post_id}"
         resp = await self._client._authed_request("DELETE", url)
         if resp.status_code not in (200, 204):
             raise GoogleReviewsError(

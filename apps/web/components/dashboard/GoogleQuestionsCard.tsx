@@ -15,6 +15,9 @@ import {
 
 const MAX_VISIBLE = 5;
 const QA_QUERY_KEY = ["google-qa"] as const;
+// Google discontinued the My Business Q&A API on 2025-11-03. Existing
+// questions stay readable, but the write actions can never succeed again.
+const QA_RETIRED = true;
 
 function initial(name: string | null): string {
   return (name || "?").trim().charAt(0).toUpperCase() || "?";
@@ -79,7 +82,7 @@ export default function GoogleQuestionsCard() {
             )}
           </div>
           <p className="mt-0.5 text-[12px] text-ink/45 dark:text-fog/45">
-            Public questions on your listing. Answer them before a stranger does.
+            Historical questions from Google. The Q&amp;A API is retired, so this list is read-only.
           </p>
         </div>
         <button
@@ -91,6 +94,13 @@ export default function GoogleQuestionsCard() {
           Refresh
         </button>
       </div>
+
+      {QA_RETIRED && (
+        <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-medium text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
+          Google retired the Business Profile Q&amp;A API on 3 Nov 2025. Existing
+          questions are read-only; manage new Q&amp;A in Google Maps.
+        </p>
+      )}
 
       {error && (
         <p role="alert" className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-medium text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
@@ -104,7 +114,7 @@ export default function GoogleQuestionsCard() {
         </div>
       ) : visible.length === 0 ? (
         <p className="py-6 text-center text-[12px] text-ink/40 dark:text-fog/40">
-          No Google questions yet. They appear here as customers ask them.
+          No historical Google questions.
         </p>
       ) : (
         <ul className="mt-3 divide-y divide-ink/[0.05] dark:divide-fog/[0.06]">
@@ -150,7 +160,7 @@ export default function GoogleQuestionsCard() {
                         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                           <button
                             type="button"
-                            disabled={busy || !draft.trim()}
+                            disabled={QA_RETIRED || busy || !draft.trim()}
                             onClick={() =>
                               void run(q.id, async () => {
                                 await editGoogleAnswerDraft(q.id, draft.trim());
@@ -163,7 +173,7 @@ export default function GoogleQuestionsCard() {
                           </button>
                           <button
                             type="button"
-                            disabled={busy}
+                            disabled={QA_RETIRED || busy}
                             onClick={() =>
                               void run(q.id, () =>
                                 q.draft_status === "pending_approval"
@@ -177,7 +187,7 @@ export default function GoogleQuestionsCard() {
                           </button>
                           <button
                             type="button"
-                            disabled={busy}
+                            disabled={QA_RETIRED || busy}
                             onClick={() =>
                               void run(q.id, () => rejectGoogleAnswerDraft(q.id)).then(() => {
                                 setDraftTexts((prev) => ({ ...prev, [q.id]: "" }));
@@ -199,7 +209,7 @@ export default function GoogleQuestionsCard() {
                       <div className="mt-2 flex flex-wrap items-center gap-1.5">
                         <button
                           type="button"
-                          disabled={busy}
+                          disabled={QA_RETIRED || busy}
                           onClick={() =>
                             void run(q.id, async () => {
                               const generated = await draftGoogleAnswer(q.id);
@@ -217,7 +227,7 @@ export default function GoogleQuestionsCard() {
                         </button>
                         <button
                           type="button"
-                          disabled={busy}
+                          disabled={QA_RETIRED || busy}
                           onClick={() => setEditingId(q.id)}
                           className="rounded-lg border border-ink/[0.08] px-2.5 py-1.5 text-[11px] font-semibold text-ink/60 dark:border-fog/[0.1] dark:text-fog/60"
                         >
@@ -225,7 +235,7 @@ export default function GoogleQuestionsCard() {
                         </button>
                         <button
                           type="button"
-                          disabled={busy}
+                          disabled={QA_RETIRED || busy}
                           onClick={() => void run(q.id, () => ignoreGoogleQuestion(q.id))}
                           className="rounded-lg px-2 py-1.5 text-[11px] font-semibold text-ink/35 hover:text-ink dark:text-fog/35 dark:hover:text-fog"
                         >

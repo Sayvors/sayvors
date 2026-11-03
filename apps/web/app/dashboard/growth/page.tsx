@@ -479,6 +479,9 @@ export default function GrowthPage() {
                 ))}
               </ol>
             )}
+            <p className="mt-2 text-[10px] text-[var(--ui-ink-2)]">
+              Google reports keyword impressions monthly; the selected range buckets them by month.
+            </p>
             <FactSource
               source="Google Business Profile search terms"
               detail={`last ${days} days · native Google connection`}

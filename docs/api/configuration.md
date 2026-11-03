@@ -104,7 +104,7 @@ must use appropriately separated storage/access policies.
 
 ## Google Business Profile and Localith
 
-Native Google Business Profile OAuth is the production path (reviews, replies, Q&A, performance). Localith is retained as a legacy middleware and is selected per connected `LocalithConnection`; there is no global provider switch. To move a tenant to native Google, disconnect its Localith branches, then connect through **Channels → Google Business Profile**. Leaving both connected creates two channels for the same location.
+Native Google Business Profile OAuth is the production path (reviews, replies, performance, posts, media). Google retired the Q&A API on 2025-11-03, so stored Q&A is read-only and no longer polled. Localith is retained as a legacy middleware and is selected per connected `LocalithConnection`; there is no global provider switch. To move a tenant to native Google, disconnect its Localith branches, then connect through **Channels → Google Business Profile**. Leaving both connected creates two channels for the same location.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
@@ -113,7 +113,7 @@ Native Google Business Profile OAuth is the production path (reviews, replies, Q
 | `GOOGLE_REVIEWS_REDIRECT_URI` | Local callback URL | OAuth redirect URI registered with Google; must match the API origin used by the browser. |
 | `GOOGLE_REVIEWS_MOCK` | `false` | Use generated review data instead of live OAuth/provider data. |
 | `GOOGLE_REVIEWS_POLL_INTERVAL_SECONDS` | `300` | Review polling interval. |
-| `GOOGLE_QA_POLL_INTERVAL_SECONDS` | `3600` | Google listing Q&A polling interval, independent of reviews. |
+| `GOOGLE_QA_POLL_INTERVAL_SECONDS` | `3600` | Deprecated: Google retired the Q&A API on 2025-11-03; the worker no longer polls it. |
 | `LOCALITH_API_KEY` | Empty | EmbedSocial/Localith API key. |
 | `LOCALITH_BASE_URL` | `https://embedsocial.com/app/api` | Localith API base URL. |
 | `LOCALITH_ITEMS_PATH` | `rest/v1/items` | Localith items endpoint path. |

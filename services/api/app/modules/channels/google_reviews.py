@@ -628,28 +628,37 @@ class GoogleReviewsClient:
     ) -> dict[str, list[tuple]]:
         """Daily performance metrics for a location.
 
-        Returns {metric_type: [(date, value), ...]} for the supported
-        DailyMetricType values (customer actions + impressions). The map is
-        keyed by the raw Google metric names, e.g. "WEBSITE_CLICKS".
+        Returns {metric: [(date, value), ...]} keyed by Google's daily
+        metric names. The endpoint is a GET with repeated `dailyMetrics`
+        query parameters (not a POST body), and the response nests the
+        series under `multiDailyMetricTimeSeries[].dailyMetricTimeSeries[]`.
         """
-        def _d(d: datetime) -> dict:
-            return {"year": d.year, "month": d.month, "day": d.day}
-
         url = (
             f"{self.PERFORMANCE_API}/locations/{location_id}"
             f":fetchMultiDailyMetricsTimeSeries"
         )
-        body = {
-            "dailyMetrics": [
+        params = [
+            ("dailyMetrics", metric)
+            for metric in (
                 "WEBSITE_CLICKS",
                 "CALL_CLICKS",
-                "DIRECTION_REQUESTS",
-                "BUSINESS_IMPRESSIONS_DESKTOP",
-                "BUSINESS_IMPRESSIONS_MOBILE",
-            ],
-            "dailyRange": {"startDate": _d(start_date), "endDate": _d(end_date)},
-        }
-        resp = await self._authed_request("POST", url, json=body)
+                "BUSINESS_DIRECTION_REQUESTS",
+                # The old DIRECTION_REQUESTS / BUSINESS_IMPRESSIONS_* enum
+                # names are rejected by the current API.
+                "BUSINESS_IMPRESSIONS_DESKTOP_MAPS",
+                "BUSINESS_IMPRESSIONS_DESKTOP_SEARCH",
+                "BUSINESS_IMPRESSIONS_MOBILE_MAPS",
+                "BUSINESS_IMPRESSIONS_MOBILE_SEARCH",
+            )
+        ] + [
+            ("dailyRange.startDate.year", str(start_date.year)),
+            ("dailyRange.startDate.month", str(start_date.month)),
+            ("dailyRange.startDate.day", str(start_date.day)),
+            ("dailyRange.endDate.year", str(end_date.year)),
+            ("dailyRange.endDate.month", str(end_date.month)),
+            ("dailyRange.endDate.day", str(end_date.day)),
+        ]
+        resp = await self._authed_request("GET", url, params=params)
         if resp.status_code != 200:
             raise GoogleReviewsError(
                 f"fetch_performance_timeseries failed ({resp.status_code}): {resp.text[:300]}",
@@ -657,72 +666,89 @@ class GoogleReviewsClient:
             )
 
         out: dict[str, list[tuple]] = {}
-        for series in resp.json().get("multiDailyMetricTimeSeries", []):
-            metric = series.get("dailyMetricType", "")
-            dated: list[tuple] = []
-            for v in (series.get("timeSeries") or {}).get("datedValues", []):
-                d = v.get("date") or {}
-                raw_value = v.get("value")
-                if not raw_value:
-                    continue
-                try:
-                    day = datetime(int(d["year"]), int(d["month"]), int(d["day"]), tzinfo=timezone.utc)
-                    dated.append((day.date(), int(raw_value)))
-                except (KeyError, TypeError, ValueError):
-                    continue
-            if metric and dated:
-                out[metric] = dated
+        for group in resp.json().get("multiDailyMetricTimeSeries", []):
+            for series in group.get("dailyMetricTimeSeries", []):
+                metric = series.get("dailyMetric", "")
+                dated: list[tuple] = []
+                for v in (series.get("timeSeries") or {}).get("datedValues", []):
+                    d = v.get("date") or {}
+                    raw_value = v.get("value")
+                    if raw_value is None:
+                        continue
+                    try:
+                        day = datetime(int(d["year"]), int(d["month"]), int(d["day"]), tzinfo=timezone.utc)
+                        dated.append((day.date(), int(raw_value)))
+                    except (KeyError, TypeError, ValueError):
+                        continue
+                if metric and dated:
+                    out[metric] = dated
         return out
 
     async def fetch_keyword_timeseries(
         self, location_id: str, start_date: datetime, end_date: datetime
     ) -> dict[str, list[tuple]]:
-        """Daily search-keyword impressions for a location.
+        """Monthly search-keyword impressions for a location.
 
-        Returns {keyword: [(date, impressions), ...]}. Only the native
-        Google path can produce this — Localith has no keyword endpoint,
-        so Localith-only tenants get an honest empty state, never fake rows.
+        Google exposes keyword impressions only at monthly granularity via
+        `locations.searchkeywords.impressions.monthly` — not as a daily
+        metric. Each keyword's aggregate is stored on the first day of its
+        month. The fetch covers the trailing six months (not just the daily
+        sync window) because completed months are what Google returns and
+        the Growth card's 90-day view needs them. Google returns low-volume
+        terms as a threshold ("at least 15") rather than an exact count;
+        those are omitted instead of being presented as precise numbers.
         """
-        def _d(d: datetime) -> dict:
-            return {"year": d.year, "month": d.month, "day": d.day}
+        def _first_of_month(value):
+            if isinstance(value, datetime):
+                value = value.date()
+            return value.replace(day=1)
+
+        def _next_month(day):
+            return (day.replace(day=28) + timedelta(days=4)).replace(day=1)
 
         url = (
             f"{self.PERFORMANCE_API}/locations/{location_id}"
-            f":fetchMultiDailyMetricsTimeSeries"
+            f"/searchkeywords/impressions/monthly"
         )
-        body = {
-            "dailyMetrics": ["SEARCH_KEYWORD_IMPRESSIONS"],
-            "dailyRange": {"startDate": _d(start_date), "endDate": _d(end_date)},
-        }
-        resp = await self._authed_request("POST", url, json=body)
-        if resp.status_code != 200:
-            raise GoogleReviewsError(
-                f"fetch_keyword_timeseries failed ({resp.status_code}): {resp.text[:300]}",
-                resp.status_code,
-            )
-
         out: dict[str, list[tuple]] = {}
-        for series in resp.json().get("multiDailyMetricTimeSeries", []):
-            for kw_block in series.get("searchKeywordImpressions", []):
-                keyword = (kw_block.get("searchKeyword") or "").strip()
-                if not keyword:
-                    continue
-                dated: list[tuple] = []
-                inner = (kw_block.get("dailyMetricTimeSeries") or {}).get(
-                    "timeSeries", {})
-                for v in inner.get("datedValues", []):
-                    d = v.get("date") or {}
-                    raw_value = v.get("value")
-                    if not raw_value:
+        last_month = _first_of_month(end_date)
+        month = _first_of_month(last_month - timedelta(days=180))
+        while month <= last_month:
+            base_params = [
+                ("monthlyRange.startMonth.year", str(month.year)),
+                ("monthlyRange.startMonth.month", str(month.month)),
+                ("monthlyRange.endMonth.year", str(month.year)),
+                ("monthlyRange.endMonth.month", str(month.month)),
+                ("pageSize", "100"),
+            ]
+            page_token: str | None = None
+            for _ in range(10):  # bounded pagination
+                params = list(base_params)
+                if page_token:
+                    params.append(("pageToken", page_token))
+                resp = await self._authed_request("GET", url, params=params)
+                if resp.status_code != 200:
+                    raise GoogleReviewsError(
+                        f"fetch_keyword_timeseries failed ({resp.status_code}): {resp.text[:300]}",
+                        resp.status_code,
+                    )
+                data = resp.json()
+                for item in data.get("searchKeywordsCounts", []) or []:
+                    keyword = (item.get("searchKeyword") or "").strip()
+                    insights = item.get("insightsValue") or {}
+                    raw_value = insights.get("value")
+                    # `threshold` is a lower bound, not an exact count.
+                    if not keyword or raw_value is None:
                         continue
                     try:
-                        day = datetime(int(d["year"]), int(d["month"]), int(d["day"]),
-                                       tzinfo=timezone.utc)
-                        dated.append((day.date(), int(raw_value)))
-                    except (KeyError, TypeError, ValueError):
+                        value = int(raw_value)
+                    except (TypeError, ValueError):
                         continue
-                if dated:
-                    out.setdefault(keyword, []).extend(dated)
+                    out.setdefault(keyword, []).append((month, value))
+                page_token = data.get("nextPageToken")
+                if not page_token:
+                    break
+            month = _next_month(month)
         return out
 
 

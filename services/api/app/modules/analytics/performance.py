@@ -40,14 +40,22 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 embedsocial = importlib.import_module("integrations.channels.embedsocial")  # type: ignore[arg-type]
 
-# Metric name -> LocationDailyMetric column
+# Metric name -> LocationDailyMetric column. These are the current
+# Business Profile Performance API enum names; the old DIRECTION_REQUESTS /
+# BUSINESS_IMPRESSIONS_DESKTOP / _MOBILE names are rejected by Google.
 _METRIC_COLUMNS = {
     "WEBSITE_CLICKS": "website_clicks",
     "CALL_CLICKS": "call_clicks",
-    "DIRECTION_REQUESTS": "direction_requests",
-    "BUSINESS_IMPRESSIONS_DESKTOP": "impressions_maps_desktop",
-    "BUSINESS_IMPRESSIONS_MOBILE": "impressions_maps_mobile",
+    "BUSINESS_DIRECTION_REQUESTS": "direction_requests",
+    "BUSINESS_IMPRESSIONS_DESKTOP_MAPS": "impressions_maps_desktop",
+    "BUSINESS_IMPRESSIONS_MOBILE_MAPS": "impressions_maps_mobile",
 }
+# Search impressions have no dedicated column; they ride in `extra` and are
+# summed from desktop + mobile into one per-day value.
+_SEARCH_IMPRESSION_METRICS = (
+    "BUSINESS_IMPRESSIONS_DESKTOP_SEARCH",
+    "BUSINESS_IMPRESSIONS_MOBILE_SEARCH",
+)
 
 
 def _channel_meta(channel: Channel) -> dict:
@@ -91,6 +99,13 @@ async def _sync_channel(channel: Channel) -> int:
     finally:
         await client.close()
 
+    # Search impressions are split desktop/mobile by Google but share one
+    # `extra.impressions_search` value in the daily row.
+    search_totals: dict = {}
+    for metric in _SEARCH_IMPRESSION_METRICS:
+        for day, value in series.get(metric, []):
+            search_totals[day] = search_totals.get(day, 0) + int(value)
+
     days_touched: set = set()
     async with async_session() as db:
         for metric, dated_values in series.items():
@@ -114,8 +129,37 @@ async def _sync_channel(channel: Channel) -> int:
                         date=day,
                     )
                 setattr(row, column, int(value))
+                if day in search_totals:
+                    extra = dict(row.extra) if isinstance(row.extra, dict) else {}
+                    extra["impressions_search"] = search_totals[day]
+                    row.extra = extra
                 db.add(row)
                 days_touched.add(day)
+        # A day can have search impressions but no maps/action metric; it
+        # still needs a row so the growth charts see the search views.
+        for day, value in search_totals.items():
+            if day in days_touched:
+                continue
+            row = (
+                await db.execute(
+                    select(LocationDailyMetric).where(
+                        LocationDailyMetric.channel_id == channel.id,
+                        LocationDailyMetric.date == day,
+                    )
+                )
+            ).scalar_one_or_none()
+            if not row:
+                row = LocationDailyMetric(
+                    id=str(uuid.uuid4()),
+                    channel_id=channel.id,
+                    user_id=channel.user_id,
+                    date=day,
+                )
+            extra = dict(row.extra) if isinstance(row.extra, dict) else {}
+            extra["impressions_search"] = value
+            row.extra = extra
+            db.add(row)
+            days_touched.add(day)
         for keyword, dated_values in keywords.items():
             for day, value in dated_values:
                 existing = (

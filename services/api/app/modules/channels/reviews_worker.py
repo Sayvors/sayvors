@@ -1002,45 +1002,11 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                 except Exception as e:
                     logger.warning("review.replied enqueue failed for %s: %s", review.review_id, e)
 
-        # ── Q&A polling (independent interval) ───────────────────────
-        # Google sends no webhooks for questions, but they change far less
-        # often than reviews. A 60-minute cadence keeps 1M connected numbers
-        # from making a Q&A request on every 5-minute review cycle. Q&A
-        # failures never break the review poll.
-        try:
-            account_id = channel.platform_user_id or ""
-            location_id = _channel_meta(channel).get("location_id", "")
-            qa_now = datetime.now(timezone.utc)
-            if account_id and location_id and _qa_due(channel, qa_now):
-                _mark_qa_polled(channel, qa_now)
-                try:
-                    questions = await client.list_questions(account_id, location_id)
-                    stats["questions"] = len(questions)
-                    for q in questions:
-                        try:
-                            await _store_question_answer(db, channel, q)
-                        except Exception as e:
-                            logger.warning(
-                                "Failed to store question %s: %s",
-                                q.get("name", "unknown"), e,
-                            )
-                except GoogleReviewsError as e:
-                    logger.warning(
-                        "Q&A poll failed for channel %s: %s", channel.id, e
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "Q&A poll unexpected error for channel %s: %s", channel.id, e
-                    )
-                try:
-                    # Persist questions and the throttle timestamp together.
-                    await db.commit()
-                except Exception as e:
-                    logger.warning(
-                        "Q&A commit failed for channel %s: %s", channel.id, e
-                    )
-        except Exception as e:
-            logger.warning("Q&A poll setup failed for channel %s: %s", channel.id, e)
+        # Google discontinued the My Business Q&A API on 2025-11-03. There
+        # is no replacement; every native call now returns 404. Keep any
+        # previously stored questions read-only and never poll Google again.
+        # (`_store_question_answer` / `_qa_due` remain for the historical
+        # tests and for imported rows, but the worker no longer calls them.)
 
         return stats
     finally:
