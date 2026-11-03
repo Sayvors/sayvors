@@ -18,6 +18,14 @@ class Settings(BaseSettings):
     # contended, so fail the wait fast and let the caller retry instead of
     # pinning a connection for the full statement timeout.
     DB_LOCK_TIMEOUT_MS: int = 5000  # 5s
+
+    @field_validator("DB_POOL_MODE")
+    @classmethod
+    def _validate_db_pool_mode(cls, value: str) -> str:
+        mode = value.strip().lower()
+        if mode not in {"session", "transaction"}:
+            raise ValueError("DB_POOL_MODE must be 'session' or 'transaction'")
+        return mode
     JWT_SECRET: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_EXPIRATION_MINUTES: int = 15

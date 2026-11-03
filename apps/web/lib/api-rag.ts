@@ -289,10 +289,6 @@ export async function previewDocument(
   );
 }
 
-export async function listJobs(): Promise<any> {
-  return apiFetch("/api/v1/rag/jobs");
-}
-
 export async function searchRag(databankId: string, query: string, topK?: number): Promise<any> {
   return apiFetch(`/api/v1/rag/databanks/${databankId}/search`, {
     method: "POST",

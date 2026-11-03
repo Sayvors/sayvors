@@ -239,6 +239,40 @@ async def test_sent_event_closes_the_raw_webhook_row(db):
 
 
 @pytest.mark.asyncio
+async def test_handler_failure_marks_outbox_failed_once(db, monkeypatch):
+    """A swallowed handler error must retry, never read as delivered."""
+    outbox = _event_row("evt-handler-boom", attempts=0)
+    hook = _webhook_row("wh-handler-boom")
+    db.add_all([outbox, hook])
+    await db.commit()
+
+    async def _explode(event, data):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(worker, "_handle_message_received", _explode)
+    row = {
+        "id": outbox.id,
+        "event_type": "meta.message.received",
+        "topic": "meta-events",
+        "attempts": 0,
+        "next_retry_at": None,
+        "payload": {
+            "webhook_event_id": hook.id,
+            "provider": "whatsapp",
+            "event_type": "message.received",
+            "payload": {"from": "9665", "text": "hi"},
+        },
+    }
+
+    assert await worker._process_event(db, row) is False
+    stored = await _stored(db, EventOutbox, outbox.id)
+    assert stored.status == "failed"
+    assert stored.attempts == 1
+    assert "boom" in (stored.last_error or "")
+    assert (await _stored(db, MetaWebhookEvent, hook.id)).status == "received"
+
+
+@pytest.mark.asyncio
 async def test_retry_keeps_the_raw_row_open_and_dead_rejects_it(db):
     retrying = _event_row("evt-retry-open")
     retry_hook = _webhook_row("wh-retry-open")

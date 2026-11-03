@@ -1,9 +1,8 @@
 """Meta events worker: processes inbound WhatsApp/Instagram/Facebook events with
 bounded concurrency and proper lease/retry mechanics.
 
-Replaces the sequential Kafka consumer (run_meta_events_consumer) with a
-worker pool that claims events from the outbox, processes them with bounded
-concurrency, and handles retries with proper backoff.
+The old Kafka consumer is gone; this worker pool claims inbound events
+from the transactional outbox with bounded concurrency.
 
 Key differences from the old consumer:
 - Claims events from the outbox using SELECT FOR UPDATE SKIP LOCKED
@@ -48,7 +47,6 @@ from .consumer import (
     _handle_instagram_message,
     _handle_instagram_comment,
     _handle_facebook_comment,
-    _drain_outbox_events as _drain_outbox_events_consumer,
 )
 from .webhooks.parser import is_message_status_event
 

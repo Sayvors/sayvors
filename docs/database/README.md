@@ -57,7 +57,7 @@ replica that may lag the primary by milliseconds to seconds.
 |---------|---------|---------|
 | `DATABASE_URL` | `postgresql+asyncpg://postgres:postgres@localhost:5432/sayvors` | Primary (write) connection string |
 | `DATABASE_READER_URL` | `""` | Read replica connection string. Empty = reads hit primary |
-| `DB_POOL_MODE` | `"session"` | `"session"` or `"transaction"` — PgBouncer pooling mode |
+| `DB_POOL_MODE` | `"session"` | `"session"` or `"transaction"` — tells the API which PgBouncer pool mode the database URL uses. Validated at startup; transaction mode disables asyncpg prepared-statement caching. It cannot inspect or enforce PgBouncer's own `pool_mode`. |
 | `DB_POOL_SIZE` | `50` | Connection pool size per process |
 | `DB_POOL_MAX_OVERFLOW` | `50` | Overflow connections beyond pool size |
 | `DB_POOL_TIMEOUT_SECONDS` | `30` | Seconds to wait for a pool connection |
@@ -92,7 +92,11 @@ PGBOUNCER_MAX_CLIENT_CONN=400
 ```
 
 Set `DATABASE_URL` in `.env.prod` to point at PgBouncer instead of Postgres
-directly.
+directly, and set `DB_POOL_MODE=transaction` to match it. The API validates
+the value and disables asyncpg's prepared-statement cache in transaction
+mode. `DB_POOL_MODE` is a client-side compatibility switch: PgBouncer's own
+`pool_mode` must still be configured to match — the API cannot enforce the
+server-side pool mode from an environment variable.
 
 ---
 

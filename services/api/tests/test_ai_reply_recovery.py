@@ -40,8 +40,6 @@ from app.modules.channels.service import (
     hash_contact_phone,
 )
 from app.modules.localith.models import LocalithConnection
-from app.modules.outbox import service as outbox_service
-from app.modules.outbox.models import EventOutbox
 from app.modules.users.models import User
 from conftest import TEST_ENGINE
 
@@ -435,48 +433,6 @@ async def test_auto_reply_off_closes_the_row_as_skipped(
     row = await _stored_row()
     assert row.ai_reply_status == "skipped"
     assert adapter.sent == []
-
-
-@pytest.mark.asyncio
-async def test_outbox_fallback_marks_a_handler_failure_failed(
-    db, monkeypatch
-):
-    """A swallowed handler error must not be marked sent by the fallback.
-
-    The Kafka loop cannot retry one message, but the DB-outbox fallback can.
-    Returning an error from `_process_message` is what tells it apart.
-    """
-    factory = _session_factory()
-    monkeypatch.setattr(consumer, "async_session", factory)
-    monkeypatch.setattr(outbox_service, "async_session", factory)
-
-    db.add(EventOutbox(
-        id="evt-fallback-failed",
-        event_type="meta.message.received",
-        payload={},
-        topic=consumer.TOPIC,
-        status="pending",
-        attempts=0,
-    ))
-    await db.commit()
-
-    async def _fail(_value):
-        return "RuntimeError: handler exploded"
-
-    monkeypatch.setattr(consumer, "_process_message", _fail)
-
-    assert await consumer._drain_outbox_events() == 0
-    async with factory() as session:
-        row = (
-            await session.execute(
-                select(EventOutbox).where(
-                    EventOutbox.id == "evt-fallback-failed",
-                )
-            )
-        ).scalar_one()
-        assert row.status == "failed"
-        assert row.attempts == 1
-        assert "handler exploded" in (row.last_error or "")
 
 
 def test_native_card_marker_is_stripped_from_the_reply():
