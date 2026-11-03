@@ -313,7 +313,7 @@ class ChannelDailyMetric(Base):
     table serves stored rows; nothing derives numbers from
     `channel_messages` at request time.
 
-    Response-time semantics: a conversation is (channel_id, contact_phone).
+    Response-time semantics: a conversation is (channel_id, contact_phone_hash).
     FRT = the day's first inbound → the next outbound in that thread, and a
     reply may land up to 48h after the inbound — each worker pass recomputes
     the last 2 days so late replies land in the right row, and rows freeze
@@ -373,6 +373,13 @@ class ChannelDailyMetric(Base):
     by_hour_in: Mapped[list] = mapped_column(JSON, default=list, server_default=_EMPTY_JSON)
 
     computed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Bumped when the rollup logic changes in a way that invalidates stored
+    # rows (the contact grouping moved from Fernet ciphertext to the stable
+    # HMAC). 0 = pre-versioned; the worker recomputes stale rows in bounded
+    # slices, then a normal pass is back to the last three days.
+    rollup_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)

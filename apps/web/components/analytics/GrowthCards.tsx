@@ -60,6 +60,7 @@ export default function GrowthCardsSection({
   const byTrigger = f.by_trigger ?? [];
   const byChannel = f.by_channel ?? [];
   const actions = cards.actions ?? [];
+  const contactPlatforms = c.by_platform.filter((p) => p.contacts > 0);
 
   return (
     <div className="space-y-4 sm:space-y-5">
@@ -174,9 +175,9 @@ export default function GrowthCardsSection({
               </span>
             )}
           </div>
-          {c.by_platform.length > 0 ? (
+          {c.new_contacts > 0 && contactPlatforms.length > 0 ? (
             <ul className="mt-3 space-y-1">
-              {c.by_platform.map((p) => (
+              {contactPlatforms.map((p) => (
                 <li key={p.platform} className="flex items-center justify-between text-[11px]">
                   <span className="text-[var(--ui-ink)]">{platformLabel(p.platform)}</span>
                   <span className="tabular-nums text-[var(--ui-ink-2)]">{p.contacts}</span>

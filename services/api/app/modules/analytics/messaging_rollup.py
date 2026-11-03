@@ -38,6 +38,16 @@ _LOOKBACK = timedelta(days=2)
 # cap keeps a runaway day from bloating the row, thinned evenly so the
 # shape of the distribution survives.
 _MAX_SAMPLES = 500
+# The Growth card can ask for 7/30/90 days, but the worker historically
+# recomputed only today + 2 days. A tenant whose messages predate the worker
+# therefore saw zeros for the rest of the window. Backfill missing days in
+# bounded chunks so the first pass after deploy heals history without turning
+# every 5-minute pass into a 90-day scan.
+_BACKFILL_DAYS = 90
+_BACKFILL_DAYS_PER_PASS = 7
+# Bump when the stored row shape changes in a way that invalidates history.
+# 2: contact grouping moved from Fernet ciphertext to the stable HMAC.
+CURRENT_ROLLUP_VERSION = 2
 
 
 def _utc(dt: datetime) -> datetime:
@@ -76,18 +86,27 @@ async def rollup_channel_days(db, channel: Channel, days: list[date]) -> int:
     # First-ever inbound per contact — one group-by for the whole channel,
     # reused across the day rows (contacts_new = new customers, not new
     # messages from known ones).
+    #
+    # Group by the deterministic HMAC, never the Fernet ciphertext: the same
+    # phone encrypts to a different value on every write, so grouping by
+    # `contact_phone` made every message look like a brand-new contact.
+    # `contact_phone` remains the legacy fallback for rows written before the
+    # hash column existed (and for plaintext test fixtures).
+    contact_key = func.coalesce(
+        ChannelMessage.contact_phone_hash, ChannelMessage.contact_phone
+    )
     first_contact_rows = (
         await db.execute(
-            select(ChannelMessage.contact_phone, func.min(ChannelMessage.created_at))
+            select(contact_key, func.min(ChannelMessage.created_at))
             .where(
                 ChannelMessage.channel_id == channel.id,
-                ChannelMessage.contact_phone.is_not(None),
+                contact_key.is_not(None),
                 ChannelMessage.direction == "inbound",
             )
-            .group_by(ChannelMessage.contact_phone)
+            .group_by(contact_key)
         )
     ).all()
-    first_contact_at = {phone: ts for phone, ts in first_contact_rows}
+    first_contact_at = {key: ts for key, ts in first_contact_rows}
 
     for day in days:
         day_start = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
@@ -124,8 +143,9 @@ async def rollup_channel_days(db, channel: Channel, days: list[date]) -> int:
         # metrics — their volume still counts above.
         convs: dict[str, list[ChannelMessage]] = {}
         for m in msgs:
-            if m.contact_phone:
-                convs.setdefault(m.contact_phone, []).append(m)
+            key = m.contact_phone_hash or m.contact_phone
+            if key:
+                convs.setdefault(key, []).append(m)
 
         samples: list[int] = []
         conversations_in = 0
@@ -233,6 +253,7 @@ async def rollup_channel_days(db, channel: Channel, days: list[date]) -> int:
         row.contacts_new = contacts_new
         row.by_hour_in = by_hour
         row.computed_at = now
+        row.rollup_version = CURRENT_ROLLUP_VERSION
         db.add(row)
         written += 1
 
@@ -240,10 +261,53 @@ async def rollup_channel_days(db, channel: Channel, days: list[date]) -> int:
     return written
 
 
+async def _rollup_days(db, channel: Channel, today: date) -> list[date]:
+    """Hot days plus a bounded slice of missing or stale history.
+
+    The last three days are always recomputed (a reply may straddle
+    midnight). Missing days and rows written before the current rollup
+    version are filled newest-first, at most `_BACKFILL_DAYS_PER_PASS` per
+    pass, so the default 30-day card heals before the older history. Once the
+    window is complete the pass is back to three rows per channel.
+    """
+    hot = [today - timedelta(days=2), today - timedelta(days=1), today]
+    oldest = today - timedelta(days=_BACKFILL_DAYS - 1)
+    stored = {
+        day: int(version or 0)
+        for day, version in (
+            await db.execute(
+                select(
+                    ChannelDailyMetric.date,
+                    ChannelDailyMetric.rollup_version,
+                ).where(
+                    ChannelDailyMetric.channel_id == channel.id,
+                    ChannelDailyMetric.date >= oldest,
+                    ChannelDailyMetric.date <= today,
+                )
+            )
+        ).all()
+    }
+    # Missing days and rows written before the current rollup version both
+    # need work. Newest-first so a deploy heals the default 30-day card
+    # before spending passes on the older 90-day tail. Hot days are already
+    # in the pass, so they must not consume the backfill budget.
+    hot_set = set(hot)
+    window = [
+        oldest + timedelta(days=offset)
+        for offset in range((today - oldest).days + 1)
+    ]
+    stale = [
+        day
+        for day in window
+        if day not in hot_set and stored.get(day, -1) < CURRENT_ROLLUP_VERSION
+    ]
+    stale.sort(reverse=True)
+    return sorted(hot_set | set(stale[:_BACKFILL_DAYS_PER_PASS]))
+
+
 async def rollup_all() -> dict:
     """One pass over every active messaging channel. Returns totals."""
     today = datetime.now(timezone.utc).date()
-    days = [today - timedelta(days=2), today - timedelta(days=1), today]
     totals = {"channels": 0, "rows": 0, "errors": 0}
 
     async with async_session() as db:
@@ -259,6 +323,7 @@ async def rollup_all() -> dict:
         for channel in channels:
             totals["channels"] += 1
             try:
+                days = await _rollup_days(db, channel, today)
                 totals["rows"] += await rollup_channel_days(db, channel, days)
             except Exception:
                 logger.exception("Messaging rollup failed for channel %s", channel.id)
