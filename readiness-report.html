@@ -186,7 +186,7 @@
 
 <div class="top">
   <span class="name">Sayvors 1M-User Readiness</span>
-  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 5 open (0 blockers · 3 majors · 2 medium) · INS: 1 open · original audit: 2 open (OPS-1, OPS-4) · 38 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 8 open (2 high · 4 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,113 passed / 3 skipped (2026-11-03)</span>
+  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 4 open (0 blockers · 3 majors · 1 medium) · INS: 1 open · original audit: 2 open (OPS-1, OPS-4) · 38 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 8 open (2 high · 4 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,113 passed / 3 skipped (2026-11-03)</span>
   <nav class="topnav">
     <a href="#blockers">Blockers</a>
     <a href="#pass-2026-10-25">Oct 25 pass</a>
@@ -224,7 +224,7 @@
   <div class="stat"><div class="n amber">Live</div><div class="l">billing &amp; plans — wallet hotfix + durable ledger + 5 plans + admin plan CRUD + tenant grant-plan + entitlements service + enforcement at channel-connect/message-send/LLM; deployed to staging 2026-10-28, schema caught up from 5 migrations behind to <code>h4b5c6d7e8f9</code> head. Plan comparison + request-upgrade UI shipped (<a href="#billing">§6b</a>)</div></div>
   <div class="stat"><div class="n calm">1,645</div><div class="l">backend tests (2 skipped in CI where pgvector runs; 4 skipped locally without Postgres) — CI gates every staging deploy on them; staging CI run #77 passed on <code>d82d800</code></div></div>
   <div class="stat"><div class="n amber">1</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new finding still open: INS-5 (INS-1, INS-2, INS-3, INS-4, INS-6, INS-7 fixed)</div></div>
-  <div class="stat"><div class="n">5</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 0 blockers · 3 majors · 2 medium batches open. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
+  <div class="stat"><div class="n">4</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 0 blockers · 3 majors · 1 medium batches open. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
   <div class="stat"><div class="n">8</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — Review Intelligence + Analytics "actual facts" gaps: listing Q&amp;A, competitor deltas, grid rank, AI-answer visibility. Strategy rule: every number a tenant sees must be verifiable on Google Maps or carry a named source</div></div>
 </div>
 
@@ -548,11 +548,11 @@
       <td class="num">—</td>
     </tr>
     <tr>
-      <td class="num">LAUNCH-M8</td><td><span class="chip med">Decide</span></td>
-      <td><strong>AI auto-replies bypass the plan messaging quota.</strong> <code>_ensure_messaging_quota</code> gates only human sends. Exposure is bounded by the LLM budget gate (entitlement + reserve before every call), so this may be intentional — but today a free tenant's AI reply count is uncapped. Make it a deliberate decision and document it.</td>
-      <td class="path">channels/router.py:1365-1385; meta/consumer.py reply path</td>
-      <td>Either extend the quota to AI replies or write the rationale into the plan/entitlements docs.</td>
-      <td class="num">decision + ~1 hr</td>
+      <td class="num">LAUNCH-M8</td><td><span class="chip ok">Decided</span></td>
+      <td><strong>AI auto-replies bypass the plan messaging quota.</strong> <code>_ensure_messaging_quota</code> gates only human sends. Exposure is bounded by the LLM budget gate (entitlement + reserve before every call), so this may be intentional — but today a free tenant's AI reply count is uncapped. <strong>Decision 2026-11-03:</strong> AI auto-replies remain unbounded by <code>max_messages_per_month</code>. The LLM budget gate (<code>check_feature(tenant_id, "ai_replies")</code>, fail-closed entitlement + credit reserve/settle before every LLM call) is the appropriate control because it directly caps dollar cost (tokens), whereas the messaging quota caps human conversation volume. AI replies are also selectively triggered by <code>should_ai_reply()</code> (confusion detection, mode state, escalation clock), so not every inbound message generates one. Extending the messaging quota to AI replies would double-count cost control and add latency to the hot reply path without reducing spend. Documented in docs/guides/billing-and-notifications.md under "Messaging quota vs. AI auto-replies."</td>
+      <td class="path">channels/router.py:1476-1497 (_ensure_messaging_quota); meta/consumer.py reply path (no quota call — intentional); docs/guides/billing-and-notifications.md</td>
+      <td><span class="chip ok">Done</span></td>
+      <td class="num">—</td>
     </tr>
     <tr>
       <td class="num">LAUNCH-M9</td><td><span class="chip med">Med</span></td>
@@ -563,7 +563,7 @@
     </tr>
   </table></div>
 
-  <p class="note">Suggested order: S10 → S8/S9 → the rest. P2, P3, P4, P6, S1, S2, S3, S4, S5, S6, S7, S11, S12, S14, B5, M1, M2, M3, M4, M5, M6 and M7 are fixed; B3 was fixed earlier. Infra rows (S8/S9) can land any time on the current box; they stop being optional the day a second replica or real customers arrive.</p>
+  <p class="note">Suggested order: S10 → S8/S9 → the rest. P2, P3, P4, P6, S1, S2, S3, S4, S5, S6, S7, S11, S12, S14, B5, M1, M2, M3, M4, M5, M6, M7 and M8 are fixed/decided; B3 was fixed earlier. Infra rows (S8/S9) can land any time on the current box; they stop being optional the day a second replica or real customers arrive.</p>
 </section>
 
 <section id="pass-2026-11-02">
