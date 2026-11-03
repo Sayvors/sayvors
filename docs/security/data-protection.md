@@ -103,6 +103,32 @@ def derive_key(passphrase: str, salt: bytes) -> bytes:
 - Optional fields clearly marked
 - Analytics uses aggregated/anonymized data
 
+### Field-level encryption: contact phone
+
+Customer phone numbers are PII and are encrypted at rest wherever they're
+stored as message content:
+
+- `ChannelMessage.contact_phone` — Fernet-encrypted + HMAC hash for lookup
+  (SEC-M2), with `decrypt_contact_phone` falling back to the raw value for
+  legacy plaintext rows.
+- `WhatsAppThreadState.contact_phone` and
+  `ConversationContext.contact_phone` — Fernet-encrypted on write with an
+  HMAC hash column for lookups, matching the `ChannelMessage` pattern. Reads
+  resolve through the hash column; the encrypted column is never exposed
+  plaintext to callers.
+
+`ContactProfile.contact_id` is deliberately **not** encrypted in isolation.
+It is a join key shared across `Lead.contact_id`,
+`ContactProfile.contact_id` and `ChannelBridge.contact_id`, and several
+queries equate two of these columns directly (e.g. leads.py joins
+`ContactProfile.contact_id == Lead.contact_id`). Encrypting only
+`ContactProfile.contact_id` would break those referential lookups and drop
+lead-to-profile associations. The phone PII is already protected where it
+matters — at the message layer (`ChannelMessage.contact_phone`) — and the
+coordinated fix (encrypt `Lead`, `ContactProfile` and `ChannelBridge`
+contact_id together with hash columns and a data backfill) is tracked as a
+separate cross-table change.
+
 ### Right to Deletion (GDPR Art. 17)
 
 ```python
