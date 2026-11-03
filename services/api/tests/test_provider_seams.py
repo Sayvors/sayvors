@@ -1,7 +1,8 @@
-"""Provider seams: Localith today, Google native when GBP API lands.
+"""Media publish provider seam.
 
-Defaults keep every existing behavior (Localith). Flipping a flag to
-"google" before its native client exists fails loudly — never silently.
+Locations writes are native Google only. Media still defaults to Localith;
+flipping to "google" before its native client exists fails loudly — never
+silently.
 """
 import sys
 from pathlib import Path
@@ -16,68 +17,14 @@ from app.core import providers
 
 
 def test_defaults_are_localith(monkeypatch):
-    monkeypatch.delenv("LOCATIONS_WRITE_PROVIDER", raising=False)
     monkeypatch.delenv("MEDIA_PUBLISH_PROVIDER", raising=False)
-    assert providers.locations_write_provider() == "localith"
     assert providers.media_publish_provider() == "localith"
 
 
 def test_invalid_value_rejected(monkeypatch):
-    monkeypatch.setenv("LOCATIONS_WRITE_PROVIDER", "acme")
-    with pytest.raises(ValueError, match="LOCATIONS_WRITE_PROVIDER"):
-        providers.locations_write_provider()
     monkeypatch.setenv("MEDIA_PUBLISH_PROVIDER", "ACME")
     with pytest.raises(ValueError, match="MEDIA_PUBLISH_PROVIDER"):
         providers.media_publish_provider()
-
-
-@pytest.mark.asyncio
-async def test_locations_google_flag_saves_locally_without_channel(monkeypatch, db, user_id):
-    """Google provider with no native channel: local save lands, push is a
-    logged skip (google_synced empty) — never an error to the merchant."""
-    from app.modules.locations import service as locations
-    from app.modules.localith.models import LocalithConnection
-
-    db.add(LocalithConnection(
-        id="conn-seam-1", user_id=user_id, listing_id="loc-1",
-        listing_name="Seam Place",
-    ))
-    await db.commit()
-    monkeypatch.setenv("LOCATIONS_WRITE_PROVIDER", "google")
-    out = await locations.update_profile(
-        db, user_id, "loc-1", description="New blurb",
-        categories=None, hours=None, service_area=None, attributes=None,
-    )
-    assert out["description"] == "New blurb"
-    assert out["google_synced"] == []
-
-
-@pytest.mark.asyncio
-async def test_locations_default_still_pushes_localith(monkeypatch, db, user_id):
-    from integrations.channels import embedsocial
-
-    from app.modules.locations import service as locations
-    from app.modules.localith.models import LocalithConnection
-
-    db.add(LocalithConnection(
-        id="conn-seam-2", user_id=user_id, listing_id="loc-1",
-        listing_name="Seam Place",
-    ))
-    await db.commit()
-    calls = []
-
-    def _fake_update(listing_id, payload):
-        calls.append((listing_id, payload))
-        return {}
-
-    monkeypatch.setattr(embedsocial, "update_listing", _fake_update)
-    monkeypatch.delenv("LOCATIONS_WRITE_PROVIDER", raising=False)
-    out = await locations.update_profile(
-        db, user_id, "loc-1", description="New blurb",
-        categories=None, hours=None, service_area=None, attributes=None,
-    )
-    assert out["description"] == "New blurb"
-    assert calls == [("loc-1", {"description": "New blurb"})]
 
 
 @pytest.mark.asyncio

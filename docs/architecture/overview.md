@@ -90,7 +90,7 @@ API Request → PostgreSQL (transaction) → Outbox Table
 ```
 services/api/app/modules/
 ├── auth/           # Authentication, sessions, passwords
-├── locations/      # Business locations (Google + Localith)
+├── locations/      # Business locations (native Google)
 ├── posts/          # Google Business posts (create, schedule, publish)
 ├── analytics/      # Reviews, insights, intelligence, benchmarks
 ├── channels/       # Multi-platform channels (Google, FB, Insta, etc.)

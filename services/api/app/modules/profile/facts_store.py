@@ -236,10 +236,19 @@ async def _team(db, tenant_id: str) -> list[dict]:
 
 
 async def _locations(db, tenant_id: str) -> list[dict]:
-    """Every location with its address and normalised hours."""
+    """Every location with its address and normalised hours.
+
+    Native Google metadata wins. A listing with no native channel keeps the
+    legacy Localith snapshot as a read-only fallback until it is reconnected —
+    without that, a tenant mid-migration would lose its address in AI facts.
+    """
     try:
-        from ..localith.models import LocalithConnection
         from ..locations.models import LocationProfile
+        from ..locations.service import (
+            channel_meta,
+            listing_id_of,
+            native_channels,
+        )
 
         profiles = (
             await db.execute(
@@ -248,25 +257,52 @@ async def _locations(db, tenant_id: str) -> list[dict]:
                 .order_by(LocationProfile.updated_at.desc())
             )
         ).scalars().all()
-        connections = (
-            await db.execute(
-                select(LocalithConnection).where(LocalithConnection.user_id == tenant_id)
-            )
-        ).scalars().all()
+        channels = await native_channels(db, tenant_id)
     except Exception as e:  # noqa: BLE001
         logger.warning("location facts failed tenant=%s: %s", tenant_id, e)
         return []
 
-    by_listing = {str(c.listing_id): c for c in connections}
+    by_listing = {listing_id_of(ch): ch for ch in channels}
+    legacy: dict[str, object] = {}
+    if any(str(p.listing_id) not in by_listing for p in profiles):
+        try:
+            from ..localith.models import LocalithConnection
+
+            rows = (
+                await db.execute(
+                    select(LocalithConnection).where(
+                        LocalithConnection.user_id == tenant_id
+                    )
+                )
+            ).scalars().all()
+            legacy = {
+                str(c.listing_id): c
+                for c in rows
+                if str(c.listing_id) not in by_listing
+            }
+        except Exception as e:  # noqa: BLE001
+            logger.warning("legacy location fallback failed tenant=%s: %s", tenant_id, e)
+
     out: list[dict] = []
     for profile in profiles:
-        connection = by_listing.get(str(profile.listing_id))
+        listing_id = str(profile.listing_id)
         schedule = compress_schedule(normalise_schedule(profile.hours))
+        channel = by_listing.get(listing_id)
+        if channel is not None:
+            meta = channel_meta(channel)
+            name = (channel.display_name or "").strip()
+            address = str(meta.get("address") or "").strip()
+            website = str(meta.get("website") or "").strip()
+        else:
+            connection = legacy.get(listing_id)
+            name = str(getattr(connection, "listing_name", "") or "").strip()
+            address = str(getattr(connection, "address", "") or "").strip()
+            website = str(getattr(connection, "website_url", "") or "").strip()
         out.append({
-            "listing_id": str(profile.listing_id),
-            "name": (getattr(connection, "listing_name", "") or "").strip(),
-            "address": (getattr(connection, "address", "") or "").strip(),
-            "website": (getattr(connection, "website_url", "") or "").strip(),
+            "listing_id": listing_id,
+            "name": name,
+            "address": address,
+            "website": website,
             "schedule": schedule,
         })
     return out

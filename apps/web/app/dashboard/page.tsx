@@ -26,7 +26,16 @@ const checklistDefs = [
 
 const CHECKLIST_KEY = "sayvors.onboarding.checklist";
 
-type DashboardChannel = { id: string; platform: string; display_name: string | null; listing_id?: string | null; source?: string | null };
+type DashboardChannel = {
+  id: string;
+  platform: string;
+  display_name: string | null;
+  listing_id?: string | null;
+  source?: string | null;
+  phone?: string | null;
+  website?: string | null;
+  profile_fields_checked?: boolean;
+};
 
 interface AttentionItem {
   severity: "high" | "medium";
@@ -35,7 +44,7 @@ interface AttentionItem {
   href: string;
 }
 
-/** One row per review â€” newest draft wins (the backend may hold older duplicates). */
+/** One row per review — newest draft wins (the backend may hold older duplicates). */
 function dedupeDraftsByReview(list: ReviewReplyDTO[]): ReviewReplyDTO[] {
   const seen = new Map<string, ReviewReplyDTO>();
   for (const d of list) {
@@ -46,14 +55,14 @@ function dedupeDraftsByReview(list: ReviewReplyDTO[]): ReviewReplyDTO[] {
 }
 
 function detailFromError(e: unknown, fallback: string): string {
-  // apiFetch throws the raw response body â€” extract the server's detail
+  // apiFetch throws the raw response body — extract the server's detail
   // (e.g. "Failed to post reply to Google: No refresh token available").
   if (e instanceof Error) {
     try {
       const parsed = JSON.parse(e.message) as { detail?: unknown };
       if (typeof parsed.detail === "string") return parsed.detail;
     } catch {
-      /* not JSON â€” keep the fallback */
+      /* not JSON — keep the fallback */
     }
   }
   return fallback;
@@ -134,14 +143,10 @@ function AttentionQueue() {
     queryFn: async () => {
       const found: AttentionItem[] = [];
       try {
-        const [overview, connsData, channelData] = await Promise.all([
+        const [overview, channelData] = await Promise.all([
           fetchOverview(30, null).catch(() => null),
-          apiFetch("/api/v1/integrations/localith/connections").catch(() => null),
           apiFetch("/api/v1/channels?limit=100").catch(() => null),
         ]);
-        const conns = (Array.isArray(connsData) ? connsData : []) as {
-          listing_name?: string; phone_number?: string | null; website_url?: string | null;
-        }[];
         const rawChannels: DashboardChannel[] = (channelData?.channels ?? []).filter(
           (c: { platform: string }) => c.platform === "google_reviews"
         );
@@ -233,13 +238,14 @@ function AttentionQueue() {
           /* edited section hidden on error */
         }
         try {
-          const rawConns = (Array.isArray(connsData) ? connsData : []) as {
-            listing_id?: string; listing_name?: string;
-          }[];
-          const locs = rawConns.filter((c) => c.listing_id).slice(0, 10);
+          // Scheduled items are keyed by the native Google location id. The
+          // dashboard never reads Localith listings.
+          const locs = googleChannels
+            .filter((c) => c.listing_id)
+            .slice(0, 10);
           const locNames: Record<string, string> = {};
-          for (const c of rawConns) {
-            if (c.listing_id) locNames[c.listing_id] = c.listing_name ?? "Location";
+          for (const c of locs) {
+            if (c.listing_id) locNames[c.listing_id] = c.display_name ?? "Location";
           }
           const sched: ScheduledItem[] = [];
           await Promise.all(locs.map(async (loc) => {
@@ -300,23 +306,29 @@ function AttentionQueue() {
             href: "/dashboard/reviews",
           });
         }
-        const missingPhone = conns.filter((c) => !c.phone_number);
+        // Only claim a field is missing when Google actually answered the
+        // profile query. Channels fetched before phone/website were in the
+        // read mask carry profile_fields_checked=false and stay quiet.
+        const profiled = googleChannels.filter(
+          (c) => c.profile_fields_checked === true
+        );
+        const missingPhone = profiled.filter((c) => !c.phone);
         if (missingPhone.length > 0) {
           found.push({
             severity: "medium",
             title: missingPhone.length === 1
-              ? `No phone number on ${missingPhone[0].listing_name ?? "your profile"}`
+              ? `No phone number on ${missingPhone[0].display_name ?? "your profile"}`
               : `No phone number on ${missingPhone.length} branches`,
             detail: "Customers can't call you from Google",
             href: "/dashboard/locations?tab=details",
           });
         }
-        const missingSite = conns.filter((c) => !(c.website_url || "").trim());
+        const missingSite = profiled.filter((c) => !(c.website || "").trim());
         if (missingSite.length > 0) {
           found.push({
             severity: "medium",
             title: missingSite.length === 1
-              ? `No website linked for ${missingSite[0].listing_name ?? "your profile"}`
+              ? `No website linked for ${missingSite[0].display_name ?? "your profile"}`
               : `No website linked for ${missingSite.length} branches`,
             detail: "Add one to turn views into visits",
             href: "/dashboard/locations?tab=details",
@@ -342,7 +354,7 @@ function AttentionQueue() {
       setDrafts((prev) => prev.filter((d) => d.id !== replyId));
       setDraftTotal((t) => Math.max(0, t - 1));
     } catch (e) {
-      // apiFetch throws the raw response body â€” extract the server's detail
+      // apiFetch throws the raw response body — extract the server's detail
       // (e.g. "Failed to post reply to Google: No refresh token available").
       let msg = "Could not publish that reply. Try again.";
       if (e instanceof Error) {
@@ -350,7 +362,7 @@ function AttentionQueue() {
           const parsed = JSON.parse(e.message) as { detail?: unknown };
           if (typeof parsed.detail === "string") msg = parsed.detail;
         } catch {
-          /* not JSON â€” keep the generic message */
+          /* not JSON — keep the generic message */
         }
       }
       setDraftError(msg);
@@ -381,7 +393,7 @@ function AttentionQueue() {
     try {
       await approveReply(d.channel_id, d.id);
       // Publishing the updated reply clears the edited flag server-side
-      // (review.replied â†’ posted) â€” drop the card locally right away.
+      // (review.replied → posted) — drop the card locally right away.
       setEdited((prev) => prev.filter((x) => x.review_id !== reviewId));
       setEditedTotal((t) => Math.max(0, t - 1));
       setEditedDrafts((prev) => {
@@ -444,7 +456,7 @@ function AttentionQueue() {
       const fresh = await regenerateReply(d.channel_id, d.id, true);
       setDrafts((prev) => prev.map((x) => (x.id === d.id ? { ...x, reply_text: fresh.reply_text, generation_attempt: fresh.generation_attempt ?? (x.generation_attempt ?? 1) + 1 } : x)));
     } catch (e) {
-      // apiFetch throws the raw response body â€” extract the server's detail
+      // apiFetch throws the raw response body — extract the server's detail
       // (e.g. "Engine generation failed: 403 Access denied").
       let msg = "Engine rewrite failed. Try again.";
       if (e instanceof Error) {
@@ -452,7 +464,7 @@ function AttentionQueue() {
           const parsed = JSON.parse(e.message) as { detail?: unknown };
           if (typeof parsed.detail === "string") msg = parsed.detail;
         } catch {
-          /* not JSON â€” keep the generic message */
+          /* not JSON — keep the generic message */
         }
       }
       setDraftError(msg);
@@ -492,7 +504,7 @@ function AttentionQueue() {
       setDrafts((prev) => prev.filter((d) => failed.includes(d.id)));
       setDraftTotal((t) => Math.max(0, t - ok));
       if (failed.length > 0) {
-        setDraftError(`Published ${ok} of ${all.length}. ${failed.length} failed â€” try again.`);
+        setDraftError(`Published ${ok} of ${all.length}. ${failed.length} failed — try again.`);
       }
     } catch {
       setDraftError("Could not publish. Try again.");
@@ -504,7 +516,7 @@ function AttentionQueue() {
 
   async function remakeDraft(d: ReviewReplyDTO) {
     if (generatingId !== null || remakingAll) return;
-    // A live draft already covers this review â€” drop the stale failed row.
+    // A live draft already covers this review — drop the stale failed row.
     if (drafts.some((x) => x.review_id === d.review_id)) {
       setFailed((prev) => prev.filter((x) => x.id !== d.id));
       setFailedTotal((t) => Math.max(0, t - 1));
@@ -561,7 +573,7 @@ function AttentionQueue() {
         setDrafts((prev) => dedupeDraftsByReview([...prev, ...freshOnes]).slice(0, 5));
         setDraftTotal((t) => t + freshOnes.length);
       }
-      // Refresh the failed list fresh â€” rows covered by live drafts stay hidden.
+      // Refresh the failed list fresh — rows covered by live drafts stay hidden.
       const covered = new Set(freshOnes.map((f) => f.review_id));
       const remaining = dedupeDraftsByReview(stillFailed).filter((d) => !covered.has(d.review_id));
       setFailed(remaining.slice(0, 5));
@@ -645,7 +657,7 @@ function AttentionQueue() {
                            <span className="rounded-[2px] bg-ink/[0.06] dark:bg-fog/[0.06] px-2 py-0.5 text-[10px] font-medium text-ink/50 dark:text-fog/50">{locName}</span>
                          </div>
                         {d.review_text && (
-                          <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/60 dark:text-fog/60">â€œ{d.review_text}â€</p>
+                          <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/60 dark:text-fog/60">“{d.review_text}”</p>
                         )}
                         <div className="mt-2 rounded-[2px] bg-deep-violet/[0.05] dark:bg-violet-soft/[0.05] p-2.5">
                           <p className="text-[9px] font-bold uppercase tracking-wide text-deep-violet/60 dark:text-violet-soft/60">
@@ -674,7 +686,7 @@ function AttentionQueue() {
                                   disabled={!editingDraftText.trim() || savingDraftId !== null}
                                   className="rounded-[2px] bg-deep-violet px-3 py-1 text-[11px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-50"
                                 >
-                                  {savingDraftId === d.id ? "Savingâ€¦" : "Save"}
+                                  {savingDraftId === d.id ? "Saving…" : "Save"}
                                 </button>
                               </div>
                             </>
@@ -699,7 +711,7 @@ function AttentionQueue() {
                             className="inline-flex items-center gap-1 rounded-[2px] bg-deep-violet/[0.08] dark:bg-violet-soft/[0.08] px-3 py-1.5 text-[11px] font-bold text-deep-violet dark:text-violet-soft outline-none transition hover:bg-deep-violet/[0.15] dark:hover:bg-violet-soft/[0.15] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40 disabled:opacity-50"
                           >
                             {enginingId === d.id ? (
-                              <><span className="h-3 w-3 animate-spin rounded-full border-2 border-deep-violet/30 border-t-deep-violet dark:border-violet-soft/30 dark:border-t-violet-soft" /> Engineâ€¦</>
+                              <><span className="h-3 w-3 animate-spin rounded-full border-2 border-deep-violet/30 border-t-deep-violet dark:border-violet-soft/30 dark:border-t-violet-soft" /> Engine…</>
                             ) : (
                               <>
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3" aria-hidden>
@@ -714,7 +726,7 @@ function AttentionQueue() {
                             disabled={approvingId !== null || approvingAll || enginingId !== null || editingDraftId !== null}
                             className="rounded-[2px] bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40 active:scale-[0.98] disabled:opacity-50"
                           >
-                            {busy ? "Publishingâ€¦" : "Approve & publish"}
+                            {busy ? "Publishing…" : "Approve & publish"}
                           </button>
                         </div>
                       </div>
@@ -726,7 +738,7 @@ function AttentionQueue() {
                       className="flex items-center justify-center gap-1 rounded-[2px] bg-deep-violet/[0.06] dark:bg-violet-soft/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet dark:text-violet-soft outline-none transition hover:bg-deep-violet/[0.1] dark:hover:bg-violet-soft/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40"
                     >
                       See all {draftTotal} and approve
-                      <span aria-hidden> â†’</span>
+                      <span aria-hidden> →</span>
                     </Link>
                   )}
                   <div className="flex gap-2">
@@ -736,7 +748,7 @@ function AttentionQueue() {
                       className="flex-1 rounded-[2px] bg-deep-violet px-3 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40 active:scale-[0.99] disabled:opacity-50"
                     >
                        {approvingAll
-                         ? `Publishing ${approveProgress.done} of ${approveProgress.total} across all locationsâ€¦`
+                         ? `Publishing ${approveProgress.done} of ${approveProgress.total} across all locations…`
                          : `Approve & publish all across all locations (${draftTotal})`}
                      </button>
 <Link
@@ -744,7 +756,7 @@ function AttentionQueue() {
                        className="relative flex items-center justify-center gap-1 rounded-[2px] bg-deep-violet/[0.06] dark:bg-violet-soft/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet dark:text-violet-soft outline-none transition hover:bg-deep-violet/[0.1] dark:hover:bg-violet-soft/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40"
                      >
                        Visit all reviews
-                       <span aria-hidden> â†’</span>
+                       <span aria-hidden> →</span>
                        {draftTotal > 0 && (
                          <span aria-hidden className="absolute -right-1 -top-1 flex h-3 w-3">
                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-coral opacity-60" />
@@ -783,7 +795,7 @@ function AttentionQueue() {
                   {scheduled.map((s) => (
                     <div key={`${s.kind}-${s.id}`} className="rounded-[2px] border border-ink/[0.06] dark:border-fog/[0.06] bg-white dark:bg-[#1d1636] p-3">
                       <div className="flex items-center gap-2">
-                        <span aria-hidden className="text-[13px]">{s.kind === "post" ? "ðŸ“" : "ðŸ“¸"}</span>
+                        <span aria-hidden className="text-[13px]">{s.kind === "post" ? "📝" : "📸"}</span>
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-[12px] font-semibold text-ink dark:text-fog">{s.title}</span>
                           <span className="block truncate text-[11px] text-ink/45 dark:text-fog/45">{s.location} Â· goes live {fmtWhen(s.at)}</span>
@@ -797,7 +809,7 @@ function AttentionQueue() {
                         href="/dashboard/posts-media"
                         className="flex flex-1 items-center justify-center gap-1 rounded-[2px] bg-deep-violet/[0.06] dark:bg-violet-soft/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet dark:text-violet-soft outline-none transition hover:bg-deep-violet/[0.1] dark:hover:bg-violet-soft/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40"
                       >
-                        Manage posts <span aria-hidden> â†’</span>
+                        Manage posts <span aria-hidden> →</span>
                       </Link>
                     )}
                     {scheduled.some((s) => s.kind === "photo") && (
@@ -805,7 +817,7 @@ function AttentionQueue() {
                         href="/dashboard/posts-media"
                         className="flex flex-1 items-center justify-center gap-1 rounded-[2px] bg-deep-violet/[0.06] dark:bg-violet-soft/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet dark:text-violet-soft outline-none transition hover:bg-deep-violet/[0.1] dark:hover:bg-violet-soft/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40"
                       >
-                        Manage media <span aria-hidden> â†’</span>
+                        Manage media <span aria-hidden> →</span>
                       </Link>
                     )}
                   </div>
@@ -826,8 +838,8 @@ function AttentionQueue() {
                   <span className="block truncate text-[13px] font-semibold text-ink dark:text-fog">{failedTitle}</span>
                   <span className="block truncate text-[11px] text-ink/45 dark:text-fog/45">
                     {needsReconnect
-                      ? "Google access expired â€” reconnect, then make new drafts"
-                      : "Publishing failed â€” make new drafts and try again"}
+                      ? "Google access expired — reconnect, then make new drafts"
+                      : "Publishing failed — make new drafts and try again"}
                   </span>
                 </span>
                 <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className={`h-3.5 w-3.5 shrink-0 text-ink/25 dark:text-fog/25 transition group-hover:text-deep-violet dark:group-hover:text-violet-soft ${failedOpen ? "rotate-180" : ""}`}>
@@ -850,13 +862,13 @@ function AttentionQueue() {
                            <span className="rounded-[2px] bg-ink/[0.06] dark:bg-fog/[0.06] px-2 py-0.5 text-[10px] font-medium text-ink/50 dark:text-fog/50">{locName}</span>
                          </div>
                         {d.review_text && (
-                          <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/60 dark:text-fog/60">â€œ{d.review_text}â€</p>
+                          <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/60 dark:text-fog/60">“{d.review_text}”</p>
                         )}
                         <div className="mt-2 rounded-[2px] bg-ink/[0.03] dark:bg-fog/[0.03] p-2.5">
                           <p className="text-[9px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">
                             Failed draft{(d.generation_attempt ?? 1) > 1 ? ` Â· try #${d.generation_attempt}` : ""}
                           </p>
-                          <p className="mt-0.5 line-clamp-2 text-[12px] leading-relaxed text-ink/60 dark:text-fog/60">{d.reply_text || "â€”"}</p>
+                          <p className="mt-0.5 line-clamp-2 text-[12px] leading-relaxed text-ink/60 dark:text-fog/60">{d.reply_text || "—"}</p>
                         </div>
                         {d.error && (
                           <p className="mt-1.5 rounded-[2px] bg-coral/10 px-2.5 py-1.5 text-[11px] font-medium leading-relaxed text-coral">
@@ -869,7 +881,7 @@ function AttentionQueue() {
                             disabled={generatingId !== null || remakingAll}
                             className="rounded-[2px] bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40 active:scale-[0.98] disabled:opacity-50"
                           >
-                            {busy ? "Retryingâ€¦" : d.reply_text ? "Retry publishing" : "Retry AI drafting"}
+                            {busy ? "Retrying…" : d.reply_text ? "Retry publishing" : "Retry AI drafting"}
                           </button>
                         </div>
                       </div>
@@ -881,14 +893,14 @@ function AttentionQueue() {
                       className="flex flex-1 items-center justify-center gap-1 rounded-[2px] bg-deep-violet px-3 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40"
                     >
                       Open outbox
-                      <span aria-hidden> â†’</span>
+                      <span aria-hidden> →</span>
                     </Link>
                     <Link
                       href="/dashboard/channels"
                       className="flex flex-1 items-center justify-center gap-1 rounded-[2px] bg-ink/[0.04] dark:bg-fog/[0.04] px-3 py-2.5 text-[12px] font-bold text-ink/60 dark:text-fog/60 outline-none transition hover:bg-ink/[0.07] dark:hover:bg-fog/[0.07] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40"
                     >
                       {needsReconnect ? "Reconnect Google" : "Manage connection"}
-                      <span aria-hidden> â†’</span>
+                      <span aria-hidden> →</span>
                     </Link>
                   </div>
                   <button
@@ -897,7 +909,7 @@ function AttentionQueue() {
                     className="w-full rounded-[2px] bg-deep-violet px-3 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40 active:scale-[0.99] disabled:opacity-50"
                   >
                     {remakingAll
-                      ? `Retrying ${remakeProgress.done} of ${remakeProgress.total}â€¦`
+                      ? `Retrying ${remakeProgress.done} of ${remakeProgress.total}…`
                       : `Retry all (${failedTotal})`}
                   </button>
                 </div>
@@ -941,12 +953,12 @@ function AttentionQueue() {
                            <span className="rounded-[2px] bg-ink/[0.06] dark:bg-fog/[0.06] px-2 py-0.5 text-[10px] font-medium text-ink/50 dark:text-fog/50">{locName}</span>
                          </div>
                          {d.review_text && (
-                           <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/60 dark:text-fog/60">â€œ{d.review_text}â€</p>
+                           <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/60 dark:text-fog/60">“{d.review_text}”</p>
                          )}
                          {draft ? (
                            <div className="mt-2 rounded-[2px] bg-deep-violet/[0.05] dark:bg-violet-soft/[0.05] p-2.5">
                              <p className="text-[9px] font-bold uppercase tracking-wide text-deep-violet/60 dark:text-violet-soft/60">
-                               AI draft â€” refreshed for the edited review{(draft.generation_attempt ?? 1) > 1 ? ` Â· try #${draft.generation_attempt}` : ""}
+                               AI draft — refreshed for the edited review{(draft.generation_attempt ?? 1) > 1 ? ` Â· try #${draft.generation_attempt}` : ""}
                              </p>
                              <p className="mt-0.5 line-clamp-3 text-[12px] leading-relaxed text-ink/80 dark:text-fog/80">{draft.reply_text}</p>
                              <div className="mt-2 flex items-center justify-end gap-2">
@@ -956,14 +968,14 @@ function AttentionQueue() {
                                  title="Re-run the full AI pipeline on the new review text"
                                  className="inline-flex items-center gap-1 rounded-[2px] bg-deep-violet/[0.08] dark:bg-violet-soft/[0.08] px-3 py-1.5 text-[11px] font-bold text-deep-violet dark:text-violet-soft outline-none transition hover:bg-deep-violet/[0.15] dark:hover:bg-violet-soft/[0.15] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40 disabled:opacity-50"
                                >
-                                 {editedRewritingId === draft.id ? "Rewritingâ€¦" : "Rewrite"}
+                                 {editedRewritingId === draft.id ? "Rewriting…" : "Rewrite"}
                                </button>
                                <button
                                  onClick={() => void approveEditedDraft(draft, d.review_id)}
                                  disabled={busy || editedApprovingId !== null}
                                  className="rounded-[2px] bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40 active:scale-[0.98] disabled:opacity-50"
                                >
-                                 {busy ? "Publishingâ€¦" : "Approve & publish"}
+                                 {busy ? "Publishing…" : "Approve & publish"}
                                </button>
                              </div>
                            </div>
@@ -976,7 +988,7 @@ function AttentionQueue() {
                                className="shrink-0 rounded-[2px] bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40 active:scale-[0.98] disabled:opacity-50"
                              >
                                {editedGeneratingId === d.id ? (
-                                 <><span className="mr-1 inline-block h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white align-[-2px]" /> Draftingâ€¦</>
+                                 <><span className="mr-1 inline-block h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white align-[-2px]" /> Drafting…</>
                                ) : (
                                  "Generate draft now"
                                )}
@@ -985,13 +997,13 @@ function AttentionQueue() {
                          )}
                          <div className="mt-2 flex items-center justify-between">
                            <span className="text-[10px] font-bold uppercase tracking-wide text-deep-violet/60 dark:text-violet-soft/60">Edited after sync</span>
-                           <Link href="/dashboard/reviews?tab=edited" className="text-[11px] font-bold text-deep-violet dark:text-violet-soft underline underline-offset-2 hover:text-deep-violet/80 dark:hover:text-violet-soft/80">See what changed â†’</Link>
+                           <Link href="/dashboard/reviews?tab=edited" className="text-[11px] font-bold text-deep-violet dark:text-violet-soft underline underline-offset-2 hover:text-deep-violet/80 dark:hover:text-violet-soft/80">See what changed →</Link>
                          </div>
                        </div>
                      );
                    })}
                    <Link href="/dashboard/reviews?tab=edited" className="flex items-center justify-center gap-1 rounded-[2px] bg-deep-violet/[0.06] dark:bg-violet-soft/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet dark:text-violet-soft outline-none transition hover:bg-deep-violet/[0.1] dark:hover:bg-violet-soft/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40">
-                     Review &amp; respond to all {editedTotal} <span aria-hidden> â†’</span>
+                     Review &amp; respond to all {editedTotal} <span aria-hidden> →</span>
                    </Link>
                  </div>
                )}
@@ -1008,7 +1020,7 @@ function AttentionQueue() {
                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden />
                  <span className="min-w-0 flex-1">
                    <span className="block truncate text-[13px] font-semibold text-ink dark:text-fog">{flaggedTitle}</span>
-                   <span className="block truncate text-[11px] text-ink/45 dark:text-fog/45">Marked unavailable â€” no AI draft needed</span>
+                   <span className="block truncate text-[11px] text-ink/45 dark:text-fog/45">Marked unavailable — no AI draft needed</span>
                  </span>
                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className={`h-3.5 w-3.5 shrink-0 text-ink/25 dark:text-fog/25 transition group-hover:text-deep-violet dark:group-hover:text-violet-soft ${flaggedOpen ? "rotate-180" : ""}`}>
                    <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
@@ -1030,13 +1042,13 @@ function AttentionQueue() {
                          )}
                          <div className="mt-2 flex items-center justify-between">
                            <span className="text-[10px] font-bold uppercase tracking-wide text-amber-600/60">Unavailable on Google</span>
-                           <Link href="/dashboard/reviews?tab=flagged" className="text-[11px] font-bold text-deep-violet dark:text-violet-soft underline underline-offset-2 hover:text-deep-violet/80 dark:hover:text-violet-soft/80">View all flagged â†’</Link>
+                           <Link href="/dashboard/reviews?tab=flagged" className="text-[11px] font-bold text-deep-violet dark:text-violet-soft underline underline-offset-2 hover:text-deep-violet/80 dark:hover:text-violet-soft/80">View all flagged →</Link>
                          </div>
                        </div>
                      );
                    })}
                    <Link href="/dashboard/reviews?tab=flagged" className="flex items-center justify-center gap-1 rounded-[2px] bg-ink/[0.04] dark:bg-fog/[0.04] px-3 py-2.5 text-[12px] font-bold text-ink/60 dark:text-fog/60 outline-none transition hover:bg-ink/[0.07] dark:hover:bg-fog/[0.07] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40">
-                     See all {flaggedTotal} flagged reviews <span aria-hidden> â†’</span>
+                     See all {flaggedTotal} flagged reviews <span aria-hidden> →</span>
                    </Link>
                  </div>
                )}
@@ -1102,7 +1114,7 @@ function writeChecklist(next: Record<string, boolean>) {
   try {
     window.localStorage.setItem(CHECKLIST_KEY, JSON.stringify(next));
   } catch {
-    // storage unavailable â€” updates still broadcast for this session
+    // storage unavailable — updates still broadcast for this session
   }
   checklistListeners.forEach((listener) => listener());
 }
@@ -1132,8 +1144,8 @@ export default function DashboardPage() {
 
   // A tenant who already connected a channel has finished the launch step
   // that this widget exists to drive — so the whole "Start here" block is
-  // hidden, not merely marked done. Any of the three connection sources counts:
-  // Google reviews channels, Localith listings, Meta (WhatsApp/FB/Instagram).
+  // hidden, not merely marked done. Either native connection source counts:
+  // Google reviews channels or Meta (WhatsApp/FB/Instagram).
   const [hasConnectedChannel, setHasConnectedChannel] = useState(false);
   // False until the probe answers; keeps the widget from flashing in and out.
   const [connectionChecked, setConnectionChecked] = useState(false);
@@ -1141,16 +1153,14 @@ export default function DashboardPage() {
     let cancelled = false;
     (async () => {
       try {
-        const [ch, lc, mc] = await Promise.all([
+        const [ch, mc] = await Promise.all([
           apiFetch("/api/v1/channels?limit=1").catch(() => null),
-          apiFetch("/api/v1/integrations/localith/connections").catch(() => null),
           apiFetch("/api/v1/meta/connections").catch(() => null),
         ]);
         if (cancelled) return;
         const googleOk = Array.isArray(ch?.channels) ? ch.channels.length > 0 : false;
-        const localithOk = Array.isArray(lc) ? lc.length > 0 : false;
         const metaOk = Array.isArray(mc?.connections) ? mc.connections.length > 0 : false;
-        setHasConnectedChannel(googleOk || localithOk || metaOk);
+        setHasConnectedChannel(googleOk || metaOk);
       } catch {
         /* leave the checklist as the user left it */
       } finally {
@@ -1261,7 +1271,7 @@ export default function DashboardPage() {
 
   return (
     <div className="h-full overflow-y-auto p-4 sm:p-6 space-y-5 bg-[#f3f0ff] dark:bg-[#14101f]">
-      {/* Getting Started checklist â€” first thing a new user must see */}
+      {/* Getting Started checklist — first thing a new user must see */}
       {showChecklist && (
         <section
           aria-label={t.dashboard.start.title}
@@ -1371,7 +1381,7 @@ export default function DashboardPage() {
                       className="shrink-0 rounded-[2px] bg-deep-violet px-3.5 py-2 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/30 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40 active:scale-[0.98]"
                     >
                       {t.dashboard.start.start}
-                      <span aria-hidden> {dir === "rtl" ? "â†" : "â†’"}</span>
+                      <span aria-hidden> {dir === "rtl" ? "←" : "→"}</span>
                     </Link>
                   ) : (
                     <div className="flex shrink-0 items-center gap-1">
@@ -1415,7 +1425,7 @@ export default function DashboardPage() {
         </p>
       </div>
 
-      {/* Needs attention â€” the daily driver */}
+      {/* Needs attention — the daily driver */}
       <AttentionQueue />
 
       <ReviewTicketsCard />

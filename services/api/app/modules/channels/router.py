@@ -140,6 +140,17 @@ def _channel_response(channel: Channel) -> ChannelResponse:
             if meta.get("maps_url")
             else None
         ),
+        phone=(
+            str(meta.get("phone")).strip()
+            if meta.get("phone")
+            else None
+        ),
+        website=(
+            str(meta.get("website")).strip()
+            if meta.get("website")
+            else None
+        ),
+        profile_fields_checked=meta.get("profile_fields_checked") is True,
     )
 
 
@@ -2076,7 +2087,17 @@ async def google_callback(
     for every Business Profile location found."""
     import uuid as _uuid
     from fastapi.responses import RedirectResponse
-    from .google_reviews import exchange_code, list_accounts, GoogleReviewsClient, GoogleReviewsError
+    from .google_reviews import (
+        exchange_code,
+        list_accounts,
+        location_address,
+        location_category,
+        location_phone,
+        location_website,
+        location_description,
+        GoogleReviewsClient,
+        GoogleReviewsError,
+    )
     from .service import encrypt_token
     from ...config import settings as cfg
 
@@ -2197,6 +2218,12 @@ async def google_callback(
                     "account_name": account_name,
                     "place_id": loc_meta.get("placeId"),
                     "maps_url": loc_meta.get("mapsUrl"),
+                    "address": location_address(loc),
+                    "category": location_category(loc),
+                    "phone": location_phone(loc),
+                    "website": location_website(loc),
+                    "description": location_description(loc),
+                    "profile_fields_checked": True,
                 }),
                 listing_key=key,
             )

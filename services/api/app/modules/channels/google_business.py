@@ -1,8 +1,8 @@
 """Google Business Profile (Business Information) adapter — locations read/write.
 
-Used when LOCATIONS_WRITE_PROVIDER=google (GBP API access granted). Same
-OAuth app and tenant tokens as the reviews client — the `business.manage`
-scope already covers these endpoints.
+The Locations page writes exclusively through this client using each
+tenant's native Google OAuth tokens — the `business.manage` scope already
+covers these endpoints.
 
 Reference: https://developers.google.com/my-business/reference/businessinformation
 
@@ -324,6 +324,9 @@ class GoogleBusinessClient(GoogleReviewsClient):
         self,
         location_id: str,
         *,
+        name: str | None = None,
+        phone: str | None = None,
+        website: str | None = None,
         description: str | None = None,
         categories: dict | None = None,
         hours: dict | None = None,
@@ -341,9 +344,11 @@ class GoogleBusinessClient(GoogleReviewsClient):
 
         core_body: dict = {}
         core_mask: list[str] = []
+        core_sections: list[str] = []
         if description is not None:
             core_body["profile"] = {"description": description[:750]}
             core_mask.append("profile.description")
+            core_sections.append("description")
         if opening_date:
             import datetime as _dt
 
@@ -352,16 +357,37 @@ class GoogleBusinessClient(GoogleReviewsClient):
                 core_body["openInfo"] = {"openingDate": {
                     "year": day.year, "month": day.month, "day": day.day}}
                 core_mask.append("openInfo.openingDate")
+                core_sections.append("opening_date")
             except ValueError:
                 skipped["opening_date"] = f"unparseable date {opening_date!r}"
         if core_body:
             try:
                 await self.patch_location(location_id, core_body, ",".join(core_mask))
-                pushed.append("description" if description is not None else "core")
-                if "openInfo.openingDate" in core_mask:
-                    pushed.append("opening_date")
+                pushed.extend(core_sections)
             except GoogleReviewsError as e:
                 skipped["core"] = str(e)[:200]
+
+        # Identity fields are patched one by one so a title Google reserves
+        # for verified locations cannot block a phone or website update.
+        identity_sections: list[tuple[str, dict, str]] = []
+        if name is not None:
+            identity_sections.append(("name", {"title": name[:255]}, "title"))
+        if phone is not None:
+            identity_sections.append((
+                "phone",
+                {"phoneNumbers": {"primaryPhone": phone[:40]}},
+                "phoneNumbers.primaryPhone",
+            ))
+        if website is not None:
+            identity_sections.append((
+                "website", {"websiteUri": website[:255]}, "websiteUri"
+            ))
+        for section, body, mask in identity_sections:
+            try:
+                await self.patch_location(location_id, body, mask)
+                pushed.append(section)
+            except GoogleReviewsError as e:
+                skipped[section] = str(e)[:200]
 
         if categories is not None:
             try:

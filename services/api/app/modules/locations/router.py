@@ -1,6 +1,6 @@
 """Locations API — list, read and update business locations.
 
-GET    /api/v1/locations/                list (Localith listing + Google channels)
+GET    /api/v1/locations/                list native Google listings
 GET    /api/v1/locations/groups          named sets of listings for bulk actions
 POST   /api/v1/locations/groups          create a group
 PATCH  /api/v1/locations/groups/{id}     rename / change members
@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_current_user, get_db
 from ...core.upstream_errors import upstream_http_error
-from ..channels.models import Channel
 from ..users.models import User
 from . import service
 from . import bulk as bulk_service
@@ -37,42 +36,50 @@ async def list_locations(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    from ..localith.models import LocalithConnection
+    """Every native Google listing for the tenant, with live review stats."""
+    from sqlalchemy import func
+
+    from ..analytics.models import ReviewInsight
+
+    uid = tenant_id_of(user)
+    channels = await service.native_channels(db, uid)
+    stats: dict[str, tuple[float | None, int]] = {}
+    if channels:
+        rows = (
+            await db.execute(
+                select(
+                    ReviewInsight.channel_id,
+                    func.avg(ReviewInsight.rating),
+                    func.count(),
+                )
+                .where(
+                    ReviewInsight.channel_id.in_([ch.id for ch in channels]),
+                    ReviewInsight.removed_at.is_(None),
+                )
+                .group_by(ReviewInsight.channel_id)
+            )
+        ).all()
+        stats = {
+            channel_id: (float(avg) if avg is not None else None, int(total))
+            for channel_id, avg, total in rows
+        }
 
     out: list[LocationSummary] = []
-    result = await db.execute(
-        select(LocalithConnection)
-        .where(LocalithConnection.user_id == tenant_id_of(user))
-        .order_by(LocalithConnection.created_at)
-    )
-    connections = list(result.scalars().all())
-    for connection in connections:
+    for channel in channels:
+        meta = service.channel_meta(channel)
+        rating, reviews = stats.get(channel.id, (None, 0))
         out.append(LocationSummary(
-            listing_id=connection.listing_id,
-            name=connection.listing_name,
-            address=connection.address,
-            status=service._status_of(connection),
-            source="localith",
+            listing_id=service.listing_id_of(channel),
+            name=channel.display_name or "Google location",
+            address=meta.get("address"),
+            phone=meta.get("phone"),
+            website=meta.get("website"),
+            maps_url=meta.get("maps_url"),
+            status=channel.status,
+            rating=rating,
+            reviews=reviews,
+            source="google",
         ))
-    channels = (
-        await db.execute(
-            select(Channel).where(
-                Channel.user_id == tenant_id_of(user),
-                Channel.platform == "google_reviews",
-                Channel.status == "active",
-            )
-        )
-    ).scalars().all()
-    seen = {c.listing_id for c in connections}
-    for ch in channels:
-        if ch.platform_user_id and ch.platform_user_id not in seen:
-            out.append(LocationSummary(
-                listing_id=ch.id,
-                name=ch.display_name or "Google location",
-                address=None,
-                status=ch.status,
-                source="channel",
-            ))
     return out
 
 
@@ -136,6 +143,8 @@ async def get_bulk_data(
 ):
     """Return current listing data as JSON for the in-browser spreadsheet editor."""
     return await bulk_service.build_template_data(db, tenant_id_of(user))
+
+@router.get("/bulk-template")
 async def download_bulk_template(
     ctx: TenantContext = Depends(require_perm("locations.view")),
     user: User = Depends(get_current_user),
@@ -172,6 +181,8 @@ async def upload_bulk_csv(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return report
+
+@router.get("/{listing_id}", response_model=LocationProfileOut)
 async def get_location(
     listing_id: str,
     ctx: TenantContext = Depends(require_perm("locations.view")),
@@ -200,6 +211,9 @@ async def update_location(
             service_area=body.service_area,
             attributes=body.attributes,
             opening_date=body.opening_date.isoformat() if body.opening_date else None,
+            name=body.name,
+            phone=body.phone,
+            website=body.website,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

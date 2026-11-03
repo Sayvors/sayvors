@@ -1,8 +1,10 @@
 """Bulk CSV edit for business locations.
 
-Download a template with current listing data, edit offline, upload to apply.
-All updates flow through the existing update_profile() path so Google/Localith
-push behaviour is identical to single-location edits.
+Download a template with current native Google listing data, edit offline,
+upload to apply. All updates flow through the existing update_profile() path
+so each row gets the same native Business Information API push as a single
+location edit. Address, city and zip are display-only: Google requires a
+structured postal address, so free-text address edits are not pushed.
 """
 from __future__ import annotations
 
@@ -10,12 +12,9 @@ import csv
 import io
 import json
 import logging
-from datetime import datetime, timezone
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..localith.models import LocalithConnection
 from . import service
 
 logger = logging.getLogger(__name__)
@@ -42,47 +41,25 @@ TEMPLATE_COLUMNS = [
 
 
 async def build_template_data(db: AsyncSession, user_id: str) -> list[dict]:
-    """Build a list of dicts with current listing data (for in-browser editor)."""
-    from ..channels.models import Channel
-
-    connections = (
-        await db.execute(
-            select(LocalithConnection).where(LocalithConnection.user_id == user_id)
-        )
-    ).scalars().all()
-
-    channels = (
-        await db.execute(
-            select(Channel).where(
-                Channel.user_id == user_id,
-                Channel.platform == "google_reviews",
-                Channel.status == "active",
-            )
-        )
-    ).scalars().all()
-
-    listing_ids = [c.listing_id for c in connections]
-    seen = set(listing_ids)
-    for ch in channels:
-        if ch.platform_user_id and ch.platform_user_id not in seen:
-            listing_ids.append(ch.platform_user_id)
-            seen.add(ch.platform_user_id)
+    """Build a list of dicts with current native listing data."""
+    channels = await service.native_channels(db, user_id)
 
     rows = []
-    for lid in listing_ids:
+    for channel in channels:
+        lid = service.listing_id_of(channel)
         profile = await service.get_profile(db, user_id, lid)
-        connection = next((c for c in connections if c.listing_id == lid), None)
+        meta = service.channel_meta(channel)
 
         hours = profile.get("hours") or {}
         categories = profile.get("categories") or {}
 
         rows.append({
             "listing_id": lid,
-            "name": (connection.listing_name if connection else "") or "",
-            "phone": (connection.phone_number if connection else "") or "",
-            "website": (connection.website_url if connection else "") or "",
+            "name": channel.display_name or "",
+            "phone": meta.get("phone") or "",
+            "website": meta.get("website") or "",
             "description": profile.get("description") or "",
-            "address": (connection.address if connection else "") or "",
+            "address": meta.get("address") or "",
             "city": "",
             "zip_code": "",
             "category": categories.get("primary") or "",
@@ -144,29 +121,9 @@ async def apply_bulk_csv(
     if len(rows) > MAX_ROWS:
         raise ValueError(f"Too many rows (max {MAX_ROWS})")
 
-    # Verify all listing_ids belong to this tenant
-    from ..localith.models import LocalithConnection
-    from ..channels.models import Channel
-
-    connections = (
-        await db.execute(
-            select(LocalithConnection).where(LocalithConnection.user_id == user_id)
-        )
-    ).scalars().all()
-    owned_ids = {c.listing_id for c in connections}
-
-    channels = (
-        await db.execute(
-            select(Channel).where(
-                Channel.user_id == user_id,
-                Channel.platform == "google_reviews",
-                Channel.status == "active",
-            )
-        )
-    ).scalars().all()
-    for ch in channels:
-        if ch.platform_user_id:
-            owned_ids.add(ch.platform_user_id)
+    # Verify all listing_ids belong to this tenant's native Google channels.
+    channels = await service.native_channels(db, user_id)
+    owned_ids = {service.listing_id_of(ch) for ch in channels}
 
     results: list[dict] = []
     success = 0
@@ -225,32 +182,13 @@ async def apply_bulk_csv(
 
             opening_date = (row.get("opening_date") or "").strip() or None
 
-            # Update connection fields (name, phone, website, address)
-            from ..localith.models import LocalithConnection
-            connection = (
-                await db.execute(
-                    select(LocalithConnection).where(
-                        LocalithConnection.user_id == user_id,
-                        LocalithConnection.listing_id == listing_id,
-                    )
-                )
-            ).scalar_one_or_none()
+            # Identity fields are native Google fields; empty cells mean
+            # "leave unchanged", matching the single-location editor.
+            name = (row.get("name") or "").strip() or None
+            phone = (row.get("phone") or "").strip() or None
+            website = (row.get("website") or "").strip() or None
 
-            if connection is not None:
-                name = (row.get("name") or "").strip()
-                if name:
-                    connection.listing_name = name
-                phone = (row.get("phone") or "").strip()
-                if phone:
-                    connection.phone_number = phone
-                website = (row.get("website") or "").strip()
-                if website:
-                    connection.website_url = website
-                address = (row.get("address") or "").strip()
-                if address:
-                    connection.address = address
-
-            # Update profile (description, categories, hours, service_area, attributes, opening_date)
+            # Update profile + native Google in one path.
             await service.update_profile(
                 db,
                 user_id,
@@ -261,6 +199,9 @@ async def apply_bulk_csv(
                 service_area=service_area,
                 attributes=attributes,
                 opening_date=opening_date,
+                name=name,
+                phone=phone,
+                website=website,
             )
 
             results.append({"row": i, "listing_id": listing_id, "status": "ok"})

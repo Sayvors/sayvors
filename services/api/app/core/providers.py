@@ -1,21 +1,11 @@
-"""Publish/write provider seams (Localith today, Google native when GBP API lands).
+"""Publish-provider seam for media.
 
-Each tenant's reviews/replies/metrics already route per channel (OAuth
-tokens → native Google, otherwise Localith), so those need no seam. The
-three direct Localith call sites are different — they assume Localith:
+Locations writes are native Google only (Business Information API) and do
+not use a provider flag. Media publishing still has a seam because Google's
+media upload is not implemented yet; the flag defaults to "localith" and a
+premature "google" flip fails loudly with NotImplementedError.
 
-- locations write-back  (locations/service.py)
-- media publishing      (media/service.py)
-- posts publishing      (posts/service.py — stays on Localith permanently;
-  Google's Posts API is hotel-only, so Localith remains the posts partner
-  by decision, not by accident)
-
-The two flags below default to "localith": zero behavior change. Setting
-either to "google" before the native client exists fails loudly with
-NotImplementedError (never silently) — when GBP API access lands, the swap
-is: implement the google branch at the marked seam + flip the flag.
-
-Set via environment: LOCATIONS_WRITE_PROVIDER, MEDIA_PUBLISH_PROVIDER.
+Set via environment: MEDIA_PUBLISH_PROVIDER.
 """
 import os
 
@@ -30,11 +20,6 @@ def _read(env_name: str) -> str:
     if value not in _VALID:
         raise ValueError(f"{env_name} must be 'localith' or 'google', got {value!r}")
     return value
-
-
-def locations_write_provider() -> str:
-    """Who receives location profile writes (description/hours/etc.)."""
-    return _read("LOCATIONS_WRITE_PROVIDER")
 
 
 def media_publish_provider() -> str:

@@ -104,7 +104,7 @@ must use appropriately separated storage/access policies.
 
 ## Google Business Profile and Localith
 
-Native Google Business Profile OAuth is the production path (reviews, replies, performance, posts, media). Google retired the Q&A API on 2025-11-03, so stored Q&A is read-only and no longer polled. Localith is retired as a product path: its sync worker is no longer started, the Channels card is hidden, and the dashboard reads native Google channels for locations and review links. The Localith tables/endpoints remain dormant for the rollback window. Connect through **Channels → Google Business Profile**; existing Google replies are imported automatically and the AI will not overwrite them.
+Native Google Business Profile OAuth is the production path (reviews, replies, performance, posts, media, locations). Google retired the Q&A API on 2025-11-03, so stored Q&A is read-only and no longer polled. Localith is retired as a product path: its sync worker is no longer started, the Channels card is hidden, and the Locations page lists and writes only native Google channels (Business Information API). The Localith tables/endpoints remain dormant for the rollback window. Connect through **Channels → Google Business Profile**; existing Google replies are imported automatically and the AI will not overwrite them.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|

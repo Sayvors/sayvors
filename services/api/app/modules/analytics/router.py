@@ -1186,7 +1186,7 @@ async def refresh_external_benchmark(
     """
     from ..billing.entitlements import get_entitlements
     from ..channels.models import Channel
-    from ..localith.models import LocalithConnection
+    import json as _json
 
     uid = tenant_id_of(user)
     ent = await get_entitlements(uid, db)
@@ -1196,22 +1196,27 @@ async def refresh_external_benchmark(
         raise entitlement_403("External benchmarking is a Pro feature.", "benchmark_external")
 
     name = address = category = None
-    conn = (
+    channel = (
         await db.execute(
-            select(LocalithConnection).where(LocalithConnection.user_id == uid).limit(1)
+            select(Channel)
+            .where(
+                Channel.user_id == uid,
+                Channel.platform == "google_reviews",
+                Channel.status == "active",
+            )
+            .order_by(Channel.created_at)
+            .limit(1)
         )
     ).scalar_one_or_none()
-    if conn is not None:
-        name = conn.listing_name
-        address = conn.address
-    if not name:
-        channel = (
-            await db.execute(
-                select(Channel).where(Channel.user_id == uid).limit(1)
-            )
-        ).scalar_one_or_none()
-        if channel is not None:
-            name = channel.display_name
+    if channel is not None:
+        name = channel.display_name
+        try:
+            meta = _json.loads(channel.metadata_json or "{}")
+        except (TypeError, ValueError):
+            meta = {}
+        if isinstance(meta, dict):
+            address = meta.get("address")
+            category = meta.get("category")
     return await competitors.refresh_external_peers(
         db, uid, name=name, address=address, category=category
     )

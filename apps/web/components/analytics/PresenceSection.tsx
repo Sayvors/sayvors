@@ -7,7 +7,7 @@ import { GBP_DASHBOARD_URL, listingMapsUrl } from "@/lib/google-links";
 import { timeAgo } from "@/lib/relative-time";
 import type { TimeseriesPoint } from "@/lib/api-analytics";
 
-/* ── Google presence (Localith snapshot — live even with 0 reviews) ── */
+/* ── Google presence (native performance rollups) ── */
 
 export interface PresenceData {
   listingName: string;
@@ -22,50 +22,9 @@ export interface PresenceData {
   /** Google's own Maps URL / place id; either one makes a real verify link. */
   mapsUrl?: string | null;
   placeId?: string | null;
-  /** When the underlying Localith/GBP snapshot was last refreshed. */
+  /** When the underlying performance snapshot was last refreshed. */
   syncedAt?: string | null;
   branchCount?: number;
-}
-
-function num(v: unknown): number {
-  const n = typeof v === "number" ? v : parseFloat(String(v ?? ""));
-  return Number.isFinite(n) ? n : 0;
-}
-
-export function presenceFromProfile(prof: {
-  connection?: {
-    listing_name?: string;
-    metrics_start?: string | null;
-    metrics_end?: string | null;
-    total_reviews?: number;
-    average_rating?: number;
-    maps_url?: string | null;
-    listing_google_id?: string | null;
-    metrics_synced_at?: string | null;
-    last_synced_at?: string | null;
-  };
-  metrics?: { listings?: Record<string, number | string | null>[] };
-  item_metrics?: { listings?: Record<string, number | string | null>[] };
-} | null): PresenceData | null {
-  const perf = prof?.metrics?.listings?.[0];
-  const rev = prof?.item_metrics?.listings?.[0];
-  if (!perf && !rev) return null;
-  const conn = prof?.connection ?? {};
-  return {
-    listingName: conn.listing_name ?? "",
-    windowLabel: conn.metrics_start && conn.metrics_end ? `${conn.metrics_start} → ${conn.metrics_end}` : null,
-    searchViews: num(perf?.googleSearchDesktop) + num(perf?.googleSearchMobile),
-    mapViews: num(perf?.googleMapsDesktop) + num(perf?.googleMapsMobile),
-    websiteClicks: num(perf?.websiteClicks),
-    directionRequests: num(perf?.directions),
-    phoneCalls: num(perf?.callClicks),
-    totalReviews: num(rev?.numberOfReviews ?? conn.total_reviews),
-    averageRating: num(rev?.averageRating ?? conn.average_rating),
-    mapsUrl: conn.maps_url ?? null,
-    placeId: conn.listing_google_id ?? null,
-    syncedAt: conn.metrics_synced_at ?? conn.last_synced_at ?? null,
-    branchCount: 1,
-  };
 }
 
 /* Two chart groups plus the snapshot's window footnote. Theme: the Team
@@ -168,7 +127,7 @@ export default function PresenceSection({
             {p.listingName ? ` — ${p.listingName}` : ""}
           </h3>
           <p className="text-[11px] text-[var(--ui-ink-2)]">
-            {p.windowLabel ?? copy.last30Days} · {copy.viaLocalith}
+            {p.windowLabel ?? copy.last30Days} · {copy.viaGoogle}
           </p>
         </div>
         <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 lg:grid-cols-6">

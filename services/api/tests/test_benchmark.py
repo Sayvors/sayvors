@@ -1,4 +1,5 @@
 """Branch-vs-branch benchmark tests (service level)."""
+import json
 from datetime import datetime, timezone
 
 import pytest
@@ -6,15 +7,25 @@ import pytest
 from app.modules.analytics import benchmark
 from app.modules.analytics.models import ReviewInsight
 from app.modules.channels.models import Channel
-from app.modules.localith.models import LocalithConnection
 from app.modules.users.models import User
 
 
-async def _seed_branch(db, user_id, channel_id, name, reviews):
+async def _seed_branch(
+    db, user_id, channel_id, name, reviews, address=None, category=None
+):
+    meta = {}
+    if address:
+        meta["address"] = address
+    if category:
+        meta["category"] = category
     db.add(Channel(
         id=channel_id, user_id=user_id, platform="google_reviews",
         platform_user_id=f"demo-{channel_id}", display_name=name,
-        status="active", metadata_json="{}",
+        status="active", metadata_json=json.dumps(meta),
+        listing_key=channel_id,
+        # Native Google peers have OAuth credentials; the benchmark excludes
+        # tokenless seeded/demo rows from the market cohort.
+        access_token="test-token", refresh_token="test-refresh",
     ))
     for i, (rating, sentiment, replied) in enumerate(reviews):
         db.add(ReviewInsight(
@@ -96,24 +107,24 @@ def _user(db, uid, email, business_type=None):
                 password_hash="x", business_type=business_type))
 
 
-def _conn(db, uid, lid, name, address, rating, reviews):
-    db.add(LocalithConnection(
-        user_id=uid, listing_id=lid, listing_name=name, address=address,
-        total_reviews=reviews, average_rating=rating,
-    ))
+async def _peer(db, uid, cid, name, address, rating, reviews, category):
+    await _seed_branch(
+        db, uid, cid, name,
+        [(rating, "positive", True)] * reviews,
+        address=address, category=category,
+    )
 
 
 @pytest.mark.asyncio
 async def test_cohort_ranks_tenants_not_demo_account(db):
-    """Tenants ARE the competitor set: same city + category tenants rank
-    together, self excluded, my rank computed."""
+    """Native Google channels ARE the competitor set: same city + category
+    tenants rank together, self excluded, my rank computed."""
     _user(db, "me", "me@x.com", "restaurant")
     _user(db, "u2", "u2@x.com", "restaurant")
     _user(db, "u3", "u3@x.com", "salon")  # different category, same city
-    _conn(db, "me", "l-me", "My Place", "RIYADH Al Malqa", 4.5, 10)
-    _conn(db, "u2", "l-u2", "Rival Diner", "RIYADH Olaya", 4.8, 40)
-    _conn(db, "u3", "l-u3", "Other Salon", "RIYADH Malaz", 5.0, 100)
-    await db.commit()
+    await _peer(db, "me", "ch-me", "My Place", "RIYADH Al Malqa", 5, 4, "Restaurant")
+    await _peer(db, "u2", "ch-u2", "Rival Diner", "RIYADH Olaya", 4, 6, "Restaurant")
+    await _peer(db, "u3", "ch-u3", "Other Salon", "RIYADH Malaz", 5, 8, "Salon")
 
     out = await benchmark.get_benchmark(db, "me", None, 30)
     cohort = out["cohort"]
@@ -122,17 +133,16 @@ async def test_cohort_ranks_tenants_not_demo_account(db):
     assert cohort["competitors"][0]["name"] == "Rival Diner"
     assert cohort["competitors"][0]["is_you"] is False
     assert all(e["name"] != "Other Salon" for e in out["market"])
-    # No branches of mine yet: honest unranked state, no "#None".
-    assert out["my_rank"] is None
-    assert "connect a branch" in out["benchmark_text"]
+    assert out["my_rank"] == 1
     assert "#None" not in out["benchmark_text"]
+
+
 @pytest.mark.asyncio
 async def test_cohort_widens_when_category_empty(db):
     _user(db, "me", "me@x.com", "restaurant")
     _user(db, "u2", "u2@x.com", "salon")
-    _conn(db, "me", "l-me", "My Place", "RIYADH Al Malqa", 4.5, 10)
-    _conn(db, "u2", "l-u2", "Other Salon", "RIYADH Malaz", 5.0, 100)
-    await db.commit()
+    await _peer(db, "me", "ch-me", "My Place", "RIYADH Al Malqa", 5, 3, "Restaurant")
+    await _peer(db, "u2", "ch-u2", "Other Salon", "RIYADH Malaz", 5, 5, "Salon")
 
     out = await benchmark.get_benchmark(db, "me", None, 30)
     assert out["cohort"]["scope"] == "city"
@@ -142,12 +152,13 @@ async def test_cohort_widens_when_category_empty(db):
 @pytest.mark.asyncio
 async def test_cohort_empty_first_tenant(db):
     _user(db, "solo", "solo@x.com", "restaurant")
-    _conn(db, "solo", "l-s", "Solo Spot", "RIYADH Malqa", 5.0, 3)
-    await db.commit()
+    await _peer(db, "solo", "ch-solo", "Solo Spot", "RIYADH Malqa", 5, 3, "Restaurant")
 
     out = await benchmark.get_benchmark(db, "solo", None, 30)
     assert out["cohort"]["count"] == 0
-    assert out["my_rank"] is None
+    # The tenant has one branch, so it is rank 1 in its own (peer-less) market;
+    # the UI hides the rank until the peer cohort reaches three businesses.
+    assert out["my_rank"] == 1
     assert "first" in out["benchmark_text"]
 
 
@@ -161,17 +172,11 @@ async def test_parse_city():
 
 @pytest.mark.asyncio
 async def test_cohort_ranks_me_against_tenants(db, user_id):
-    """My 5.0★ branch outranks the 4.8 rival: rank 1, leader text."""
+    """My 5★ branch outranks the 4★ rival: rank 1, leader text."""
     _user(db, user_id, "mine@x.com", "restaurant")
-    db.add(LocalithConnection(
-        user_id=user_id, listing_id="l-mine", listing_name="My Place",
-        address="RIYADH Malqa", total_reviews=10, average_rating=5.0,
-    ))
-    await _seed_branch(db, user_id, "ch-mine", "My Place",
-                       [(5, "positive", True), (5, "positive", True)])
+    await _peer(db, user_id, "ch-mine", "My Place", "RIYADH Malqa", 5, 2, "Restaurant")
     _user(db, "u2", "u2@x.com", "restaurant")
-    _conn(db, "u2", "l-u2", "Rival Diner", "RIYADH Olaya", 4.8, 40)
-    await db.commit()
+    await _peer(db, "u2", "ch-u2", "Rival Diner", "RIYADH Olaya", 4, 5, "Restaurant")
 
     out = await benchmark.get_benchmark(db, user_id, None, 30)
     assert out["my_rank"] == 1

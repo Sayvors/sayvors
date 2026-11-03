@@ -29,6 +29,11 @@ class ChannelResponse(BaseModel):
     # Google channels need the Place ID for the review-request QR/link.
     place_id: str | None = None
     maps_url: str | None = None
+    # Google listing profile fields. `profile_fields_checked` distinguishes
+    # "Google says there is no phone/website" from "not fetched yet".
+    phone: str | None = None
+    website: str | None = None
+    profile_fields_checked: bool = False
 
 
 class ChannelListResponse(BaseModel):

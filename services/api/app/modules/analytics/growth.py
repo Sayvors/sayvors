@@ -248,9 +248,9 @@ async def get_opportunities(db: AsyncSession, user_id: str, channel_id: str | No
 async def get_keywords(db: AsyncSession, user_id: str, channel_id: str | None, days: int = 30) -> dict:
     """Search keywords tenants were found by: keyword, impressions, trend.
 
-    `available` is False for Localith-only tenants — keyword breakdowns
-    come solely from the native Performance API, so the UI shows an honest
-    empty state instead of fake rows.
+    `available` is False when the tenant has no native Google channel —
+    keyword breakdowns come solely from the Performance API, so the UI
+    shows an honest empty state instead of fake rows.
     """
     from ..channels.models import Channel
 

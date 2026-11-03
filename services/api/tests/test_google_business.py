@@ -176,11 +176,10 @@ def _native_channel(db, user_id, listing_id="loc-google-1"):
 
 
 @pytest.mark.asyncio
-async def test_seam_google_no_channel_saves_locally(db, user_id, monkeypatch):
+async def test_native_locations_no_channel_saves_locally(db, user_id):
     """No native channel: local save lands, google_synced stays empty."""
     from app.modules.locations import service as locations
 
-    monkeypatch.setenv("LOCATIONS_WRITE_PROVIDER", "google")
     out = await locations.update_profile(
         db, user_id, "loc-1", description="Hello",
         categories=None, hours=None, service_area=None, attributes=None,
@@ -190,7 +189,7 @@ async def test_seam_google_no_channel_saves_locally(db, user_id, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_seam_google_pushes_via_native_client(monkeypatch, db, user_id):
+async def test_native_locations_pushes_via_google_client(monkeypatch, db, user_id):
     from app.modules.channels import google_business as gb
     from app.modules.locations import service as locations
 
@@ -204,7 +203,6 @@ async def test_seam_google_pushes_via_native_client(monkeypatch, db, user_id):
         return {"pushed": ["description", "categories"], "skipped": {}}
 
     monkeypatch.setattr(gb.GoogleBusinessClient, "push_profile", _push)
-    monkeypatch.setenv("LOCATIONS_WRITE_PROVIDER", "google")
     out = await locations.update_profile(
         db, user_id, "loc-google-1", description="Hello",
         categories={"primary": "Software company"}, hours=None,

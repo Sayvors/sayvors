@@ -140,6 +140,46 @@ def _parse_rating(raw) -> int:
         return 5
 
 
+def location_address(loc: dict) -> str | None:
+    """Flatten Google's `storefrontAddress` into the free-text shape the
+    benchmark city parser understands."""
+    addr = (loc or {}).get("storefrontAddress") or {}
+    lines = addr.get("addressLines") or []
+    parts = [
+        *[str(line) for line in lines if line],
+        addr.get("locality"),
+        addr.get("administrativeArea"),
+        addr.get("postalCode"),
+    ]
+    text = ", ".join(str(p).strip() for p in parts if p and str(p).strip())
+    return text or None
+
+
+def location_category(loc: dict) -> str | None:
+    """Primary Google category display name, when the location has one."""
+    cats = (loc or {}).get("categories") or {}
+    primary = (cats.get("primaryCategory") or {}).get("displayName")
+    return str(primary).strip() if primary else None
+
+
+def location_phone(loc: dict) -> str | None:
+    """Primary phone number on the listing, when the profile has one."""
+    phone = ((loc or {}).get("phoneNumbers") or {}).get("primaryPhone")
+    return str(phone).strip() if phone else None
+
+
+def location_website(loc: dict) -> str | None:
+    """Website linked to the listing, when the profile has one."""
+    site = (loc or {}).get("websiteUri")
+    return str(site).strip() if site else None
+
+
+def location_description(loc: dict) -> str | None:
+    """Google's business description, when the profile has one."""
+    desc = ((loc or {}).get("profile") or {}).get("description")
+    return str(desc).strip() if desc else None
+
+
 def _parse_media(raw) -> list[dict]:
     """Normalise GBP `reviewMediaItems` into the shape we store.
 
@@ -354,7 +394,7 @@ class GoogleReviewsClient:
         resp = await self._authed_request(
             "GET",
             f"{GBP_API}/accounts/{account_id}/locations",
-            params={"readMask": "name,title,storefrontAddress,metadata"},
+            params={"readMask": "name,title,storefrontAddress,categories,phoneNumbers,websiteUri,profile,metadata"},
         )
         if resp.status_code != 200:
             raise GoogleReviewsError(f"list_locations failed: {resp.status_code}", resp.status_code)
@@ -365,7 +405,7 @@ class GoogleReviewsClient:
         resp = await self._authed_request(
             "GET",
             f"{GBP_API}/locations/{location_id}",
-            params={"readMask": "name,title,storefrontAddress,metadata"},
+            params={"readMask": "name,title,storefrontAddress,categories,phoneNumbers,websiteUri,profile,metadata"},
         )
         if resp.status_code != 200:
             raise GoogleReviewsError(

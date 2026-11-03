@@ -235,7 +235,7 @@ const ar: Dict = {
       detailsSubtitle: "عدّل المعلومات الأساسية لفرعك.",
       syncedToGoogle: "متزامن مع Google",
       storedInSayvors: "مخزّن في سيفورس",
-      syncedViaLocalith: "متزامن من Google عبر Localith",
+      syncedViaGoogle: "متزامن من Google Business Profile",
       viewOnMaps: "عرض على الخرائط",
       addressReadOnlyTitle: "العنوان متزامن من Google — عدّله من لوحة Google Business",
       fieldPhone: "الهاتف",
@@ -277,7 +277,7 @@ const ar: Dict = {
       essentialPhone: "رقم الهاتف",
       addPhone: "أضف رقم الهاتف",
       reviewsLabel: "تقييم",
-      completenessFootnote: "الوصف وساعات العمل والتصنيف لا تُرجعها واجهة Localith.",
+      completenessFootnote: "الوصف وساعات العمل والتصنيف تُدار في Sayvors وتُزامن مع Google عند الحفظ.",
       bulkEditingAll: "تعديل جميع الفروع الـ {count} — {branches}",
       bulkEditingAllSub:
         "كل حفظ أدناه يُطبَّق على كل فرع مذكور. الاسم والعنوان يبقوان لكل فرع على حدة — بدّل إلى فرع واحد لتعديلهما.",
@@ -372,7 +372,7 @@ const ar: Dict = {
     },
     presence: {
       title: "الظهور على Google",
-      viaLocalith: "عبر Localith",
+      viaGoogle: "عبر Google Business Profile",
       last30Days: "آخر 30 يوماً",
       searchViews: "مرات الظهور في البحث",
       mapViews: "مرات الظهور على الخرائط",
@@ -403,7 +403,7 @@ const ar: Dict = {
       scopeByBranch: "حسب الفرع",
       noMetricYet: "لا يوجد {metric} في هذه الفترة",
       noMetricHint: "تظهر مقاييس Google اليومية بعد مزامنة الأداء. جرّب نطاقاً أوسع إذا كانت البيانات أقدم.",
-      periodTotals: "إجماليات الفترة من Localith. اختر مؤشراً لعرض اتجاهه اليومي.",
+      periodTotals: "إجماليات الفترة من Google Business Profile. اختر مؤشراً لعرض اتجاهه اليومي.",
     },
   },
   dashboard: {

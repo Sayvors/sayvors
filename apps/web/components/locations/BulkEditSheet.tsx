@@ -9,9 +9,9 @@ const COLUMNS = [
   { key: "phone", label: "Phone", readonly: false, width: "140px" },
   { key: "website", label: "Website", readonly: false, width: "160px" },
   { key: "description", label: "Description", readonly: false, width: "200px" },
-  { key: "address", label: "Address", readonly: false, width: "180px" },
-  { key: "city", label: "City", readonly: false, width: "100px" },
-  { key: "zip_code", label: "Zip", readonly: false, width: "80px" },
+  { key: "address", label: "Address (Google-managed)", readonly: true, width: "180px" },
+  { key: "city", label: "City (Google-managed)", readonly: true, width: "100px" },
+  { key: "zip_code", label: "Zip (Google-managed)", readonly: true, width: "80px" },
   { key: "category", label: "Category", readonly: false, width: "120px" },
   { key: "hours_regular", label: "Hours (JSON)", readonly: false, width: "220px" },
   { key: "special_hours", label: "Special hours (JSON)", readonly: false, width: "180px" },
@@ -382,7 +382,8 @@ export default function BulkEditSheet({ onClose }: { onClose: () => void }) {
               <h3 className="text-[14px] font-bold text-ink dark:text-fog">Confirm bulk update</h3>
               <p className="mt-2 text-[12px] text-ink/60 dark:text-fog/60">
                 This will update {rows.length} listing(s). Changes to name, phone, website, description,
-                address, category, hours, and attributes will be pushed to Google Business Profile.
+                category, hours, and attributes will be pushed to Google Business Profile.
+                Address, city and zip are managed by Google and stay read-only here.
                 This action cannot be undone per-row.
               </p>
               <div className="mt-4 flex justify-end gap-2">

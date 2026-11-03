@@ -413,25 +413,41 @@ async def _adopt_existing_reply(db: AsyncSession, channel: Channel, review) -> b
 async def _ensure_location_metadata(
     db: AsyncSession, channel: Channel, client, location_id: str
 ) -> None:
-    """Backfill the Google Place ID / Maps URL for an existing channel.
+    """Backfill Place ID, Maps URL, address, category, phone and website.
 
-    Channels created before `metadata` was requested during OAuth have only
-    the location id. The QR/review-request surfaces need the Place ID to open
-    Google's review composer, so fetch it once and persist it.
+    Channels created before `metadata` (and the profile fields) were requested
+    during OAuth have only the location id. The QR/review-request surfaces need
+    the Place ID; the dashboard completeness checks need phone/website. Fetch
+    once and persist; `profile_fields_checked` records that the answer is real,
+    including "Google returned no phone".
     """
     meta = _channel_meta(channel)
-    if meta.get("place_id") or meta.get("place_metadata_checked"):
+    if meta.get("profile_fields_checked") and meta.get("place_metadata_checked"):
         return
     try:
         loc = await client.get_location(location_id)
     except Exception as e:
         logger.warning("location metadata backfill failed for %s: %s", channel.id, e)
         return
+    from .google_reviews import (
+        location_address,
+        location_category,
+        location_phone,
+        location_website,
+        location_description,
+    )
+
     loc_meta = loc.get("metadata") or {}
     meta["place_id"] = loc_meta.get("placeId")
     meta["maps_url"] = loc_meta.get("mapsUrl")
-    # A location with no Place ID yet (new/unverified) is retried on the next
-    # OAuth reconnect, not every poll.
+    meta["address"] = location_address(loc)
+    meta["category"] = location_category(loc)
+    meta["phone"] = location_phone(loc)
+    meta["website"] = location_website(loc)
+    meta["description"] = location_description(loc)
+    meta["profile_fields_checked"] = True
+    # Separate marker: a location with no Place ID yet (new/unverified) must
+    # not be re-fetched on every poll.
     meta["place_metadata_checked"] = True
     channel.metadata_json = json.dumps(meta)
     await db.commit()
