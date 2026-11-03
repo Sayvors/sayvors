@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_db
+from ...core.upstream_errors import upstream_http_error
 from ..channels.models import Channel, Lead
 from ..team.context import TenantContext, require_perm
 from . import service
@@ -75,10 +76,11 @@ async def sync_templates(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:  # noqa: BLE001 - provider/network failure
-        raise HTTPException(
-            status_code=502,
-            detail=f"Could not sync templates from Meta: {type(exc).__name__}",
-        )
+        raise upstream_http_error(
+            exc,
+            context="Meta template sync failed",
+            detail="Could not sync templates from Meta. Try again shortly.",
+        ) from None
     return {
         **result,
         "templates": await service.list_templates_with_stats(db, ctx.tenant_id),
@@ -237,10 +239,11 @@ async def create_template(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:  # noqa: BLE001 - provider/network failure
-        raise HTTPException(
-            status_code=502,
-            detail=f"Could not create the template at Meta: {type(exc).__name__}",
-        )
+        raise upstream_http_error(
+            exc,
+            context="Meta template create failed",
+            detail="Could not create the template at Meta. Try again shortly.",
+        ) from None
     return {"template": service.serialize_template(row)}
 
 
@@ -264,10 +267,11 @@ async def update_template(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:  # noqa: BLE001 - provider/network failure
-        raise HTTPException(
-            status_code=502,
-            detail=f"Could not update the template at Meta: {type(exc).__name__}",
-        )
+        raise upstream_http_error(
+            exc,
+            context="Meta template update failed",
+            detail="Could not update the template at Meta. Try again shortly.",
+        ) from None
     stats = (await service.send_stats(db, ctx.tenant_id)).get(row.id)
     return {"template": service.serialize_template(row, stats)}
 
@@ -284,10 +288,11 @@ async def delete_template(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:  # noqa: BLE001 - provider/network failure
-        raise HTTPException(
-            status_code=502,
-            detail=f"Could not delete the template at Meta: {type(exc).__name__}",
-        )
+        raise upstream_http_error(
+            exc,
+            context="Meta template delete failed",
+            detail="Could not delete the template at Meta. Try again shortly.",
+        ) from None
     return {"deleted": True, "id": template_id}
 
 

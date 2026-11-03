@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_db, get_current_user
+from ...core.upstream_errors import upstream_http_error
 from ..team.context import TenantContext, get_context, require_perm, tenant_id_of
 from ...database import async_session as _async_session
 from ...config import settings
@@ -2618,10 +2619,11 @@ async def approve_review_reply(
             reply.error = str(e)[:2000]
             await db.commit()
             await _notify_reply_failed(db, ctx.user.id, channel, reply, str(e))
-            raise HTTPException(
-                status_code=502,
-                detail=f"Failed to post reply via Localith: {e}",
-            )
+            raise upstream_http_error(
+                e,
+                context="Localith reply publish failed",
+                detail="Could not post the reply through Localith. Try again shortly.",
+            ) from None
         reply.status = "posted"
         reply.error = None
         await db.commit()
@@ -2790,7 +2792,11 @@ async def generate_reply_for_review(
                 body.reviewer_name, db, review_id=body.review_id,
             )
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Reply generation failed: {e}")
+            raise upstream_http_error(
+                e,
+                context="Review reply generation failed",
+                detail="Reply generation is temporarily unavailable. Try again shortly.",
+            ) from None
 
     reply = ReviewReply(
         id=str(uuid.uuid4()),
@@ -2886,7 +2892,11 @@ async def regenerate_reply(
             attempt=attempt, previous_draft=reply.reply_text,
         )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Reply generation failed: {e}")
+        raise upstream_http_error(
+            e,
+            context="Review reply regeneration failed",
+            detail="Reply generation is temporarily unavailable. Try again shortly.",
+        ) from None
 
     refreshed = await db.get(ReviewReply, reply_id)
     refreshed.reply_text = reply.reply_text
@@ -2935,7 +2945,11 @@ async def retry_failed_reply(
                 attempt=attempt,
             )
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Reply generation failed: {e}")
+            raise upstream_http_error(
+                e,
+                context="Review reply generation failed",
+                detail="Reply generation is temporarily unavailable. Try again shortly.",
+            ) from None
 
     refreshed = await db.get(ReviewReply, reply_id)
     refreshed.status = "pending_approval"

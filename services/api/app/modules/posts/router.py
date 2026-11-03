@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_current_user, get_db, require_admin
+from ...core.upstream_errors import upstream_http_error
 from ..auth.rate_limit import rate_limit
 from ..users.models import User
 from . import service
@@ -47,7 +48,11 @@ async def create_post(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        raise upstream_http_error(
+            e,
+            context="Posts provider failed",
+            detail="The publishing provider is temporarily unavailable. Try again shortly.",
+        ) from None
     return PublishResult(
         post=_out(result),
         google_published=result["google_published"],
@@ -89,7 +94,11 @@ async def sync_post_metrics(
     try:
         result = await service.sync_post_metrics(db, tenant_id_of(user), body.listing_id)
     except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        raise upstream_http_error(
+            e,
+            context="Posts provider failed",
+            detail="The publishing provider is temporarily unavailable. Try again shortly.",
+        ) from None
     return SyncMetricsResult(
         checked=result["checked"],
         matched=result["matched"],
@@ -157,7 +166,11 @@ async def update_post(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        raise upstream_http_error(
+            e,
+            context="Posts provider failed",
+            detail="The publishing provider is temporarily unavailable. Try again shortly.",
+        ) from None
     return PublishResult(
         post=_out(result),
         google_published=result["google_published"],

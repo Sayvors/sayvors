@@ -438,11 +438,11 @@
       <td class="num">with infra move</td>
     </tr>
     <tr>
-      <td class="num">LAUNCH-S10</td><td><span class="chip high">High</span></td>
-      <td><strong><code>str(e)</code> reaches clients — systemic, ~130 sites.</strong> <code>detail=str(</code> across nearly every router; worst are the meta/storage/rag 502 paths carrying raw upstream driver errors. The old S4 spot-list understated it: this is a pattern, not a spot fix.</td>
-      <td class="path">grep <code>detail=str(</code> services/api/app (worst: meta/router.py, storage/router.py, rag/router.py 502s)</td>
-      <td>Generic client messages, full detail to logs/GlitchTip only. Phase the fix: 502 provider paths first, then sweep.</td>
-      <td class="num">1–2 days phased</td>
+      <td class="num">LAUNCH-S10</td><td><span class="chip warn">Phase 1</span></td>
+      <td><strong><code>str(e)</code> reaches clients — systemic, ~130 sites.</strong> <code>detail=str(</code> across nearly every router; worst are the provider 502 paths carrying raw upstream driver errors. The old S4 spot-list understated it: this is a pattern, not a spot fix. <strong>Phase 1 fixed 2026-11-02:</strong> new <code>upstream_http_error()</code> logs the real exception with its traceback and returns a generic client message (plus a safe permission hint where actionable). Converted every <code>detail=str(e)</code> 502 path across Meta, posts, media, locations, admin model-list, TTS voice catalog, WhatsApp templates, assistant, Localith and review-reply generation. 101 scoped tests pass, including checks that raw provider text never reaches the response. <strong>Remaining:</strong> 116 non-502 <code>detail=str(...)</code> sites — mostly 4xx validation/ownership paths that need a per-site safe/public split.</td>
+      <td class="path">core/upstream_errors.py; modules/{channels/meta,posts,media,locations,admin,tts,whatsapp_templates,assistant,localith}/router.py; tests/test_upstream_errors.py</td>
+      <td><span class="chip warn">Phase 1 done</span> — remaining sweep ~1 day.</td>
+      <td class="num">~1 day remaining</td>
     </tr>
     <tr>
       <td class="num">LAUNCH-S11</td><td><span class="chip ok">Fixed</span></td>

@@ -151,6 +151,7 @@ async def test_failed_reply_is_a_failed_row_and_a_502(db, client, monkeypatch):
     )
 
     assert res.status_code == 502
+    assert "graph down" not in res.json()["detail"]
     # The failed attempt must be visible in the thread, keyed by parent.
     from app.modules.channels.models import ChannelComment
 

@@ -194,7 +194,8 @@ async def test_model_list_surfaces_provider_errors(
         "/api/v1/admin/embeddings/models?provider=openai", headers=admin_headers
     )
     assert r.status_code == 502
-    assert "provider rejected the key" in r.json()["detail"]
+    assert "Provider list is temporarily unavailable" in r.json()["detail"]
+    assert "provider rejected the key" not in r.json()["detail"]
 
 
 @pytest.mark.asyncio

@@ -314,7 +314,8 @@ async def test_feed_failure_is_502_and_never_partial(db, client, monkeypatch):
         },
     )
     assert res.status_code == 502
-    assert "feed refused" in res.json()["detail"]
+    assert "Meta rejected the post" in res.json()["detail"]
+    assert "feed refused" not in res.json()["detail"]
     # The children were attempted, the /feed call was attempted and raised —
     # nothing live, nothing stored, and Meta's message is what the tenant sees.
     assert [c["path"] for c in calls] == [

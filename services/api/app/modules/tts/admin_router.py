@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.crypto import decrypt_secret, encrypt_secret
 from ...core.deps import get_db
+from ...core.upstream_errors import upstream_http_error
 from .models import VoiceModelConfig
 
 router = APIRouter(prefix="/voice-engines", tags=["admin"])
@@ -125,12 +126,17 @@ async def admin_fish_voice_catalog(
             decrypt_secret(row.key_encrypted), sort_by=sort_by, page=page
         )
     except ValueError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        raise upstream_http_error(
+            e,
+            context="Fish Audio voice catalog rejected the request",
+            detail="Fish Audio rejected the voice catalog request.",
+        ) from None
     except Exception as e:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Could not reach fish.audio: {type(e).__name__}: {str(e)[:120]}",
-        )
+        raise upstream_http_error(
+            e,
+            context="Fish Audio voice catalog failed",
+            detail="Voice catalog is temporarily unavailable. Try again shortly.",
+        ) from None
 
 
 @router.post("", response_model=VoiceEngineStatus, status_code=201)

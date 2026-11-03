@@ -370,6 +370,10 @@ else:
     raise HTTPException(500, "Internal server error")
 ```
 
+### Upstream/provider errors
+
+Provider SDKs and HTTP clients routinely put hostnames, URLs, credentials or SQL in `str(exc)`. Use `app.core.upstream_errors.upstream_http_error(exc, context=..., detail=...)`: it logs the real exception with its traceback and returns a generic client message (plus a safe permission hint where that is the actual fix). Never put `str(e)` in a 502 detail. Phase 1 converted every 502 provider path; the remaining non-502 `detail=str(e)` sites are tracked in the readiness report.
+
 ## Security Testing Checklist
 
 ### Automated (CI)

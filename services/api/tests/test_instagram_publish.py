@@ -130,7 +130,8 @@ async def test_container_failure_is_502_and_never_publishes(db, client, monkeypa
         json={"image_urls": ["https://cdn.example.com/x.jpg"], "caption": ""},
     )
     assert res.status_code == 502
-    assert "media container refused" in res.json()["detail"]
+    assert "Meta rejected the post" in res.json()["detail"]
+    assert "media container refused" not in res.json()["detail"]
     assert all(c["path"] != f"/{ig}/media_publish" for c in calls)
 
 
@@ -148,7 +149,8 @@ async def test_publish_step_failure_is_502(db, client, monkeypatch):
         json={"image_urls": ["https://cdn.example.com/x.jpg"], "caption": ""},
     )
     assert res.status_code == 502
-    assert "publish refused" in res.json()["detail"]
+    assert "Meta rejected the post" in res.json()["detail"]
+    assert "publish refused" not in res.json()["detail"]
 
 
 async def test_publish_is_tenant_scoped(db, client, monkeypatch):

@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFil
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_current_user, get_db, require_admin
+from ...core.upstream_errors import upstream_http_error
 from ..users.models import User
 from . import service
 from .schemas import MediaCreate, MediaOut, MediaPublishResult, MediaSyncResult, MediaUpdate
@@ -78,7 +79,7 @@ async def create_media(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        raise upstream_http_error(e, context="Media provider failed") from None
     return MediaPublishResult(
         media=_out(result),
         google_published=result["google_published"],
@@ -116,7 +117,7 @@ async def update_media(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        raise upstream_http_error(e, context="Media provider failed") from None
     return MediaPublishResult(
         media=_out(result),
         google_published=result["google_published"],
@@ -148,7 +149,7 @@ async def publish_media_now(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        raise upstream_http_error(e, context="Media provider failed") from None
     return MediaPublishResult(
         media=_out(result),
         google_published=result["google_published"],
