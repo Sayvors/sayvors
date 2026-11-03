@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import PlatformMark, { platformLabel } from "@/components/channels/PlatformMark";
+import { FactSource } from "@/components/analytics/FactSource";
 import {
   fetchMessagingOverview,
   type MessagingOverview,
@@ -228,6 +229,17 @@ export default function MessagingSection({
         )}
         </div>
       </div>
+      <FactSource
+        source="Sayvors message rollup"
+        detail={
+          t.as_of
+            ? `updated ${new Date(t.as_of).toLocaleTimeString(undefined, {
+                hour: "numeric",
+                minute: "2-digit",
+              })} · last ${days}d`
+            : `last ${days}d`
+        }
+      />
     </section>
   );
 }

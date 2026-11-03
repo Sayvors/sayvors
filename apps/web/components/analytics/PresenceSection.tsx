@@ -2,6 +2,9 @@
 
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import PresenceChart from "@/components/analytics/PresenceChart";
+import { FactSource } from "@/components/analytics/FactSource";
+import { GBP_DASHBOARD_URL, listingMapsUrl } from "@/lib/google-links";
+import { timeAgo } from "@/lib/relative-time";
 import type { TimeseriesPoint } from "@/lib/api-analytics";
 
 /* ── Google presence (Localith snapshot — live even with 0 reviews) ── */
@@ -16,6 +19,12 @@ export interface PresenceData {
   phoneCalls: number;
   totalReviews: number;
   averageRating: number;
+  /** Google's own Maps URL / place id; either one makes a real verify link. */
+  mapsUrl?: string | null;
+  placeId?: string | null;
+  /** When the underlying Localith/GBP snapshot was last refreshed. */
+  syncedAt?: string | null;
+  branchCount?: number;
 }
 
 function num(v: unknown): number {
@@ -24,7 +33,17 @@ function num(v: unknown): number {
 }
 
 export function presenceFromProfile(prof: {
-  connection?: { listing_name?: string; metrics_start?: string | null; metrics_end?: string | null; total_reviews?: number; average_rating?: number };
+  connection?: {
+    listing_name?: string;
+    metrics_start?: string | null;
+    metrics_end?: string | null;
+    total_reviews?: number;
+    average_rating?: number;
+    maps_url?: string | null;
+    listing_google_id?: string | null;
+    metrics_synced_at?: string | null;
+    last_synced_at?: string | null;
+  };
   metrics?: { listings?: Record<string, number | string | null>[] };
   item_metrics?: { listings?: Record<string, number | string | null>[] };
 } | null): PresenceData | null {
@@ -42,6 +61,10 @@ export function presenceFromProfile(prof: {
     phoneCalls: num(perf?.callClicks),
     totalReviews: num(rev?.numberOfReviews ?? conn.total_reviews),
     averageRating: num(rev?.averageRating ?? conn.average_rating),
+    mapsUrl: conn.maps_url ?? null,
+    placeId: conn.listing_google_id ?? null,
+    syncedAt: conn.metrics_synced_at ?? conn.last_synced_at ?? null,
+    branchCount: 1,
   };
 }
 
@@ -66,6 +89,14 @@ export default function PresenceSection({
   const { t } = useI18n();
   const copy = t.analytics.presence;
   const p = presence;
+  // Prefer the listing's own Maps URL / place id. An aggregate view has no
+  // single listing, so it links to the GBP location manager instead of
+  // pretending a search result is the tenant's listing.
+  const mapsHref = listingMapsUrl({ mapsUrl: p.mapsUrl, placeId: p.placeId });
+  const verifyHref = mapsHref ?? GBP_DASHBOARD_URL;
+  const synced = timeAgo(p.syncedAt);
+  const branchNote =
+    p.branchCount && p.branchCount > 1 ? `${p.branchCount} branches` : null;
 
   const labels = {
     discovery: copy.presenceDiscovery,
@@ -103,6 +134,10 @@ export default function PresenceSection({
           locale={locale}
           loading={loading}
           scopeLabel={scopeLabel}
+          source="Google Business Profile"
+          sourceDetail={p.windowLabel ?? copy.last30Days}
+          sourceHref={verifyHref}
+          sourceLinkLabel={mapsHref ? "Verify on Google Maps" : "Open GBP dashboard"}
         />
         <PresenceChart
           points={points}
@@ -112,6 +147,10 @@ export default function PresenceSection({
           locale={locale}
           loading={loading}
           scopeLabel={scopeLabel}
+          source="Google Business Profile"
+          sourceDetail={p.windowLabel ?? copy.last30Days}
+          sourceHref={verifyHref}
+          sourceLinkLabel={mapsHref ? "Verify on Google Maps" : "Open GBP dashboard"}
         />
       </div>
       <div className="ui-card p-4 sm:p-5">
@@ -124,6 +163,15 @@ export default function PresenceSection({
             {p.windowLabel ?? copy.last30Days} · {copy.viaLocalith}
           </p>
         </div>
+        <FactSource
+          source="Google Business Profile"
+          detail={p.windowLabel ?? copy.last30Days}
+          note={[branchNote, synced ? `synced ${synced}` : null]
+            .filter(Boolean)
+            .join(" · ") || null}
+          href={verifyHref}
+          linkLabel={mapsHref ? "Verify on Google Maps" : "Open GBP dashboard"}
+        />
       </div>
     </div>
   );

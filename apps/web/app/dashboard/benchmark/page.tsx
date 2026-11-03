@@ -10,6 +10,8 @@ import {
 } from "@/lib/api-analytics";
 import { RangeChannelControls, useGoogleChannels } from "@/components/analytics/Controls";
 import BenchmarkCards from "@/components/analytics/BenchmarkCards";
+import { FactSource } from "@/components/analytics/FactSource";
+import { GBP_DASHBOARD_URL } from "@/lib/google-links";
 import { refreshExternalBenchmark } from "@/lib/api-analytics";
 
 type MetricFocus = "reputation" | "rating" | "sentiment" | "response" | "volume";
@@ -162,6 +164,7 @@ export default function BenchmarkPage() {
           loading={loading}
           onRefreshExternal={() => void handleRefreshExternal()}
           refreshingExternal={refreshingExternal}
+          googleConnected={channels.length > 0}
         />
       </div>
 
@@ -186,6 +189,7 @@ export default function BenchmarkPage() {
         <div className="space-y-8">
           {/* Portfolio health strip — the 4 numbers owners check first */}
           {portfolio && benchmark && (
+            <>
             <section aria-label="Portfolio health" className="grid gap-5 sm:gap-6 sm:grid-cols-4">
               <div className="rounded-[2px] border border-[var(--ui-ink)] bg-[var(--ui-ink)] p-4 text-[var(--ui-on-ink)]">
                 <p className="text-[10px] font-bold uppercase tracking-widest opacity-70">Health score</p>
@@ -218,6 +222,13 @@ export default function BenchmarkPage() {
                 <p className="mt-1 text-[11px] leading-tight text-[var(--ui-ink-2)]">{benchmark.current_response_rate < 70 ? "Lift this to protect reputation" : benchmark.current_response_rate >= 90 ? "Excellent — answering everyone" : "Good — aim for 90%+"}</p>
               </div>
             </section>
+            <FactSource
+              source="Google Business Profile"
+              detail={`last ${benchmark.days} days · aggregated across your branches`}
+              href={channels.length > 0 ? GBP_DASHBOARD_URL : null}
+              linkLabel="Open GBP dashboard"
+            />
+            </>
           )}
 
           {/* Plain-English AI summary — replaces industry estimate as primary insight */}
@@ -225,6 +236,10 @@ export default function BenchmarkPage() {
             <section aria-label="Summary" className="ui-card p-4">
               <p className="text-[11px] font-bold uppercase tracking-widest text-[var(--ui-ink)]">In plain English</p>
               <p className="mt-1.5 text-[13px] leading-relaxed text-[var(--ui-ink-2)]">{portfolio.plain}</p>
+              <FactSource
+                source="Sayvors summary"
+                detail="generated from the numbers on this page"
+              />
             </section>
           )}
 
@@ -262,6 +277,10 @@ export default function BenchmarkPage() {
                   <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">You are at {benchmark.current_response_rate.toFixed(0)}%. Reaching 90% could lift conversions.</p>
                 </div>
               )}
+              <FactSource
+                source="Published industry studies (US/UK reference medians)"
+                detail="external reference values, not your listings or a Saudi cohort"
+              />
             </section>
           )}
 
@@ -311,6 +330,13 @@ export default function BenchmarkPage() {
                    </div>
                  );
                })()}
+               <FactSource
+                 source="Sayvors market benchmarks"
+                 detail={`${Math.max(...marketBenchmarks.map((m) => m.business_count || 0))} businesses · minimum 3 for a median`}
+                 note="aggregates only; your own numbers are Google Business Profile"
+                 href={channels.length > 0 ? GBP_DASHBOARD_URL : null}
+                 linkLabel="Open GBP dashboard"
+               />
              </section>
            ) : (
              <section aria-label="Market response ranking" className="ui-card p-5">
@@ -517,6 +543,12 @@ export default function BenchmarkPage() {
                 })}
               </div>
             )}
+            <FactSource
+              source="Google Business Profile"
+              detail={`last ${benchmark?.days ?? days} days · your connected branches`}
+              href={channels.length > 0 ? GBP_DASHBOARD_URL : null}
+              linkLabel="Open GBP dashboard"
+            />
           </section>
 
           {/* Needs attention */}
@@ -572,6 +604,12 @@ export default function BenchmarkPage() {
                   </div>
                 ))}
               </div>
+              <FactSource
+                source="Sayvors branch analysis"
+                detail="derived from the same branch numbers above"
+                href={channels.length > 0 ? GBP_DASHBOARD_URL : null}
+                linkLabel="Open GBP dashboard"
+              />
             </section>
           )}
 
@@ -595,6 +633,12 @@ export default function BenchmarkPage() {
                   </div>
                 ))}
               </div>
+              <FactSource
+                source="Google Business Profile"
+                detail={`last ${benchmark.days} days · your connected branches`}
+                href={channels.length > 0 ? GBP_DASHBOARD_URL : null}
+                linkLabel="Open GBP dashboard"
+              />
             </section>
           )}
 
@@ -645,6 +689,12 @@ export default function BenchmarkPage() {
                 </div>
               )}
               <Link href="/dashboard/locations?tab=services" className="mt-3 inline-block text-[11px] font-semibold text-[var(--ui-ink)] hover:underline">Manage services →</Link>
+              <FactSource
+                source="Google review text"
+                detail={`last ${benchmark.days} days · mentions and sentiment`}
+                href={channels.length > 0 ? GBP_DASHBOARD_URL : null}
+                linkLabel="Open GBP dashboard"
+              />
             </section>
           )}
 
@@ -691,6 +741,13 @@ export default function BenchmarkPage() {
                   {typeof benchmark.cohort.top3_median_rating === "number" && <> · top-3 median {benchmark.cohort.top3_median_rating.toFixed(1)}★</>}
                 </p>
               )}
+              <FactSource
+                source="Sayvors connected listings"
+                detail="Google reviews · real businesses in your market"
+                note="aggregated, never a single competitor's private data"
+                href={channels.length > 0 ? GBP_DASHBOARD_URL : null}
+                linkLabel="Open GBP dashboard"
+              />
             </section>
           ) : (
             <p className="px-1 text-center text-[10.5px] leading-relaxed text-[var(--ui-ink-2)]">

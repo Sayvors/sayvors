@@ -1,6 +1,7 @@
 "use client";
 
 import { ReactNode } from "react";
+import { FactSource } from "@/components/analytics/FactSource";
 
 export function DeltaChip({ delta, suffix = "%", noPriorData = "no prior data" }: { delta: number | null; suffix?: string; noPriorData?: string }) {
   if (delta === null || delta === undefined) {
@@ -40,6 +41,10 @@ export function StatCard({
   icon,
   loading,
   noPriorData,
+  source,
+  sourceDetail,
+  sourceHref,
+  sourceLinkLabel,
 }: {
   label: string;
   value: string;
@@ -50,6 +55,11 @@ export function StatCard({
   icon?: ReactNode;
   loading?: boolean;
   noPriorData?: string;
+  /** Provenance for the number; rendered as the card's footer. */
+  source?: string;
+  sourceDetail?: string;
+  sourceHref?: string;
+  sourceLinkLabel?: string;
 }) {
   if (loading) {
     return (
@@ -75,6 +85,14 @@ export function StatCard({
         <DeltaChip delta={delta ?? null} suffix={deltaSuffix} noPriorData={noPriorData} />
       </div>
       {sub && <p className="text-[10px] text-[var(--ui-ink-2)]">{sub}</p>}
+      {source && (
+        <FactSource
+          source={source}
+          detail={sourceDetail}
+          href={sourceHref}
+          linkLabel={sourceLinkLabel}
+        />
+      )}
     </div>
   );
 }

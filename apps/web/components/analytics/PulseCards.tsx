@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
 import { fetchPulse, type PulseResponse } from "@/lib/api-analytics";
+import { FactSource } from "@/components/analytics/FactSource";
+import { GBP_DASHBOARD_URL } from "@/lib/google-links";
 
 const PLATFORM_LABEL: Record<string, string> = {
   google_reviews: "Google",
@@ -138,6 +140,12 @@ export default function PulseCards({
   const attention = data.attention ?? [];
   const synced = fmtAgo(rep.last_synced_at);
   const waitingAsOf = fmtAgo(waiting.as_of);
+  const googleConnected = rep.sources.some(
+    (s) => s.platform === "google_reviews" || s.platform === "google",
+  );
+  const googleInLocations = locations.some(
+    (l) => l.platform === "google_reviews" || l.platform === "google",
+  );
   const sourcesText = rep.sources.length
     ? rep.sources.map((s) => `${platformLabel(s.platform)} ${s.count}`).join(" · ")
     : "No reviews in this period";
@@ -179,10 +187,19 @@ export default function PulseCards({
           <Stat label="Awaiting reply" value={String(rep.awaiting_reply)} sub={rep.oldest_wait_days !== null ? `oldest ${rep.oldest_wait_days}d` : "all clear"} />
         </div>
 
-        <p className="mt-3 text-[10px] text-[var(--ui-ink-2)]">
-          {sourcesText}
-          {synced ? ` · synced ${synced}` : ""}
-        </p>
+        <FactSource
+          source={
+            rep.sources.length
+              ? rep.sources.map((s) => platformLabel(s.platform)).join(" + ")
+              : "Connected review channels"
+          }
+          detail={`last ${days} days`}
+          note={[sourcesText, synced ? `synced ${synced}` : null]
+            .filter(Boolean)
+            .join(" · ")}
+          href={googleConnected ? GBP_DASHBOARD_URL : null}
+          linkLabel="Open GBP dashboard"
+        />
       </section>
 
       {/* Who's waiting */}
@@ -221,12 +238,15 @@ export default function PulseCards({
           />
         </div>
 
-        <p className="mt-3 text-[10px] text-[var(--ui-ink-2)]">
-          {waiting.oldest_unanswered_seconds !== null
-            ? `Oldest waiting ${fmtDuration(waiting.oldest_unanswered_seconds)}`
-            : "Nothing waiting"}
-          {waitingAsOf ? ` · as of ${waitingAsOf}` : ""}
-        </p>
+        <FactSource
+          source="Sayvors inbox"
+          detail={waitingAsOf ? `as of ${waitingAsOf}` : "live"}
+          note={
+            waiting.oldest_unanswered_seconds !== null
+              ? `oldest waiting ${fmtDuration(waiting.oldest_unanswered_seconds)}`
+              : "nothing waiting"
+          }
+        />
       </section>
       </div>
 
@@ -269,6 +289,13 @@ export default function PulseCards({
               {locations.filter((l) => l.below_threshold).length} of {locations.length} below 4.5&#9733;.
             </p>
           )}
+          <FactSource
+            source="Connected listings"
+            detail={`last ${days} days`}
+            note={synced ? `synced ${synced}` : null}
+            href={googleInLocations ? GBP_DASHBOARD_URL : null}
+            linkLabel="Open GBP dashboard"
+          />
         </section>
 
         {/* One thing that changed */}
@@ -301,6 +328,12 @@ export default function PulseCards({
               </Link>
             </>
           )}
+          <FactSource
+            source="Review complaint tags"
+            detail={`last ${oneThing?.period_days ?? days} days`}
+            href={googleInLocations ? GBP_DASHBOARD_URL : null}
+            linkLabel="Open GBP dashboard"
+          />
         </section>
       </div>
 
@@ -335,6 +368,10 @@ export default function PulseCards({
             ))}
           </ul>
         )}
+        <FactSource
+          source="Sayvors priority engine"
+          detail="derived from the cards above, not a new measurement"
+        />
       </section>
     </div>
   );

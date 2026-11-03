@@ -186,7 +186,7 @@
 
 <div class="top">
   <span class="name">Sayvors 1M-User Readiness</span>
-  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 4 open (0 blockers · 3 majors · 1 medium) · INS: 1 open · original audit: 2 open (OPS-1, OPS-4) · 38 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 7 open (1 high · 4 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,121 passed / 3 skipped (2026-11-03)</span>
+  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 4 open (0 blockers · 3 majors · 1 medium) · INS: 1 open · original audit: 2 open (OPS-1, OPS-4) · 38 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 6 open (1 high · 3 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,121 passed / 3 skipped (2026-11-03)</span>
   <nav class="topnav">
     <a href="#blockers">Blockers</a>
     <a href="#pass-2026-10-25">Oct 25 pass</a>
@@ -225,7 +225,7 @@
   <div class="stat"><div class="n calm">1,645</div><div class="l">backend tests (2 skipped in CI where pgvector runs; 4 skipped locally without Postgres) — CI gates every staging deploy on them; staging CI run #77 passed on <code>d82d800</code></div></div>
   <div class="stat"><div class="n amber">1</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new finding still open: INS-5 (INS-1, INS-2, INS-3, INS-4, INS-6, INS-7 fixed)</div></div>
   <div class="stat"><div class="n">4</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 0 blockers · 3 majors · 1 medium batches open. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
-  <div class="stat"><div class="n">7</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — Review Intelligence + Analytics "actual facts" gaps: grid rank, AI-answer visibility, Review Campaign premium gating. Strategy rule: every number a tenant sees must be verifiable on Google Maps or carry a named source</div></div>
+  <div class="stat"><div class="n">6</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — Review Intelligence + Analytics "actual facts" gaps: grid rank, AI-answer visibility, Review Campaign premium gating. Strategy rule: every number a tenant sees must be verifiable on Google Maps or carry a named source</div></div>
 </div>
 
 <section id="model">
@@ -602,11 +602,11 @@
       <td class="num">—</td>
     </tr>
     <tr>
-      <td class="num">FACT-3</td><td><span class="chip med">Med</span></td>
-      <td><strong>No "verify on Maps" source link on fact cards.</strong> The verifiability strategy dies if the tenant can't check. Review rows carry <code>reviewUrl</code>, but competitor, visibility, keyword and insight cards show numbers with no source line and no deep link — indistinguishable from the invented "insight scores" this audit is trying to kill.</td>
-      <td class="path">apps/web components/analytics/* (OverviewPanel, GrowthPage, BenchmarkPage cards)</td>
-      <td>Every fact card gets a source line ("Google Business Profile · updated hourly") + a Maps/GBP-dashboard deep link. Cheap, and it is the whole brand claim.</td>
-      <td class="num">1–2 days</td>
+      <td class="num">FACT-3</td><td><span class="chip ok">Fixed</span></td>
+      <td><strong>No "verify on Maps" source link on fact cards.</strong> The verifiability strategy dies if the tenant can't check. Review rows carry <code>reviewUrl</code>, but competitor, visibility, keyword and insight cards show numbers with no source line and no deep link — indistinguishable from the invented "insight scores" this audit is trying to kill. <strong>Fixed 2026-11-03:</strong> a shared <code>FactSource</code> footer now names the source, window/refresh time and verification link on every analytics fact card (Overview pulse/presence/charts, Growth KPIs/funnel/trends/keywords, Insights themes/changes/sentiment/summary/actions, Benchmark peer/gap/peer-set/external/ranking/market cards). Links are real, never search-by-name: external peers open their Google Places <code>place_id</code>; a single listing's presence uses its <code>maps_url</code> or <code>listing_google_id</code>; aggregate cards fall back to the GBP location manager. The aggregate profile API now returns a single branch's maps identity and the latest <code>metrics_synced_at</code>; multi-branch totals deliberately carry no Maps identity. URLs are validated by <code>safeHref</code> plus a Google-host allowlist. Scoped backend 40 passed; web 51 passed; tsc and production build pass.</td>
+      <td class="path">apps/web/components/analytics/FactSource.tsx; google-links.ts; PresenceSection.tsx; PresenceChart.tsx; PulseCards.tsx; GrowthCards.tsx; InsightsCards.tsx; InsightsPanel.tsx; BenchmarkCards.tsx; Charts.tsx; StatCard.tsx; app/dashboard/growth/page.tsx; app/dashboard/benchmark/page.tsx; services/api/app/modules/localith/service.py; tests/test_localith_sync.py; lib/google-links.test.ts</td>
+      <td><span class="chip ok">Done</span></td>
+      <td class="num">—</td>
     </tr>
     <tr>
       <td class="num">FACT-4</td><td><span class="chip med">Med</span></td>
@@ -652,7 +652,7 @@
     </tr>
   </table></div>
 
-  <p class="note">Order: FACT-3 (fastest credibility win) → FACT-7/FACT-8 (one page-touch each) → FACT-6 → FACT-4 (buy, phase 2) → FACT-5 (spike, phase 3) → FACT-9 (premium Review Campaign, plan-gated + duplicate/reuse). FACT-1 (Google Q&amp;A sync) and FACT-2 (competitor deltas) are done. Every row here is product-track — none of it blocks the Phase 1 launch; FACT-3/FACT-7/FACT-8 are each ≤2 days and compound into the "we show facts, not vibes" position the paid-tool market (Birdeye $300/mo, Podium $289/mo) currently leaves open.</p>
+  <p class="note">Order: FACT-7/FACT-8 (one page-touch each) → FACT-6 → FACT-4 (buy, phase 2) → FACT-5 (spike, phase 3) → FACT-9 (premium Review Campaign, plan-gated + duplicate/reuse). FACT-1 (Google Q&amp;A sync), FACT-2 (competitor deltas) and FACT-3 (source lines + Maps/GBP deep links) are done. Every row here is product-track — none of it blocks the Phase 1 launch; FACT-7/FACT-8 are each ≤2 days and compound into the "we show facts, not vibes" position the paid-tool market (Birdeye $300/mo, Podium $289/mo) currently leaves open.</p>
 
   <h3>Also found 2026-11-02 — why the Overview was wall-to-wall zeros</h3>
   <div class="scroll"><table>

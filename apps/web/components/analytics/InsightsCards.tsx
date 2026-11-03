@@ -2,6 +2,9 @@
 
 import Link from "next/link";
 import type { InsightsCards, ThemeCard } from "@/lib/api-analytics";
+import { FactSource } from "@/components/analytics/FactSource";
+import { GBP_DASHBOARD_URL } from "@/lib/google-links";
+import { timeAgo } from "@/lib/relative-time";
 
 function Trend({ value }: { value: number | null }) {
   if (value === null) {
@@ -54,9 +57,12 @@ function ThemeRow({ theme }: { theme: ThemeCard }) {
 export default function InsightsCardsSection({
   cards,
   loading,
+  googleConnected = false,
 }: {
   cards: InsightsCards | null;
   loading: boolean;
+  /** Whether a Google Business Profile is connected; gates the GBP link. */
+  googleConnected?: boolean;
 }) {
   if (loading && !cards) {
     return <div className="ui-card h-40 animate-pulse" aria-hidden />;
@@ -69,6 +75,7 @@ export default function InsightsCardsSection({
   const locations = cards.sentiment_by_location ?? [];
   const actions = cards.action_plan ?? [];
   const bullets = summary?.bullets ?? [];
+  const analyzedAgo = timeAgo(summary?.analyzed_at);
 
   const lowReviews = changed?.low_reviews ?? 0;
   const priorLowReviews = changed?.prior_low_reviews ?? 0;
@@ -115,6 +122,12 @@ export default function InsightsCardsSection({
                   <ThemeRow key={theme.name} theme={theme} />
                 ))}
               </ul>
+              <FactSource
+                source="Connected review text"
+                detail={`last ${cards.days} days`}
+                href={googleConnected ? GBP_DASHBOARD_URL : null}
+                linkLabel="Open GBP dashboard"
+              />
             </section>
           )}
 
@@ -167,6 +180,12 @@ export default function InsightsCardsSection({
               >
                 Review the low-star reviews
               </Link>
+              <FactSource
+                source="Connected review ratings"
+                detail="last 7 days vs the prior 7"
+                href={googleConnected ? GBP_DASHBOARD_URL : null}
+                linkLabel="Open GBP dashboard"
+              />
             </section>
           )}
         </div>
@@ -240,6 +259,12 @@ export default function InsightsCardsSection({
                   </li>
                 ))}
               </ul>
+              <FactSource
+                source="Connected review ratings"
+                detail="90-day rating trend"
+                href={googleConnected ? GBP_DASHBOARD_URL : null}
+                linkLabel="Open GBP dashboard"
+              />
             </section>
           )}
 
@@ -269,6 +294,14 @@ export default function InsightsCardsSection({
                 Data-derived, not a model narrative. Every bullet shows its
                 count.
               </p>
+              <FactSource
+                source="Connected review text"
+                detail={`${summary.review_count} reviews${
+                  analyzedAgo ? ` · computed ${analyzedAgo}` : ""
+                }`}
+                href={googleConnected ? GBP_DASHBOARD_URL : null}
+                linkLabel="Open GBP dashboard"
+              />
             </section>
           )}
         </div>
@@ -316,6 +349,10 @@ export default function InsightsCardsSection({
               </li>
             ))}
           </ul>
+          <FactSource
+            source="Sayvors issue tracker"
+            detail="stored review issues, not a model score"
+          />
         </section>
       )}
     </div>

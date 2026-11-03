@@ -288,9 +288,24 @@ async def aggregate_profiles(db: AsyncSession, user_id: str) -> dict | None:
             ends.append(str(c.metrics_end))
 
     branches = len(connections)
+    # A single-branch aggregate is that listing, so it can carry a real Maps
+    # deep link. With several branches there is no one Maps page that
+    # represents the total; the UI falls back to the GBP location manager.
+    only = connections[0] if branches == 1 else None
+    latest_sync = max(
+        (c.metrics_synced_at for c in connections if c.metrics_synced_at),
+        default=None,
+    )
+    # SQLite returns naive datetimes; normalise so the ISO string the card
+    # receives carries an offset and is not re-interpreted as local time.
+    if latest_sync is not None and latest_sync.tzinfo is None:
+        latest_sync = latest_sync.replace(tzinfo=timezone.utc)
     return {
         "listing_name": f"All businesses ({branches} branch{'es' if branches != 1 else ''})",
         "branches": branches,
+        "maps_url": only.maps_url if only else None,
+        "listing_google_id": only.listing_google_id if only else None,
+        "metrics_synced_at": latest_sync.isoformat() if latest_sync else None,
         "window_label": f"{min(starts)} → {max(ends)}" if starts and ends else None,
         "search_views": search,
         "map_views": maps,

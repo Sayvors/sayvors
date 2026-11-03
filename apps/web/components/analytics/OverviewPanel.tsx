@@ -6,6 +6,7 @@ import { queryKeys } from "@/lib/query-keys";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api-rag";
 import { dedupeBusinesses } from "@/lib/channel-identity";
+import { GBP_DASHBOARD_URL } from "@/lib/google-links";
 import {
   fetchOverview,
   fetchTimeseries,
@@ -118,6 +119,10 @@ export default function OverviewPanel() {
         phoneCalls: n("phone_calls"),
         totalReviews: n("total_reviews"),
         averageRating: n("average_rating"),
+        mapsUrl: typeof agg.maps_url === "string" ? agg.maps_url : null,
+        placeId: typeof agg.listing_google_id === "string" ? agg.listing_google_id : null,
+        syncedAt: typeof agg.metrics_synced_at === "string" ? agg.metrics_synced_at : null,
+        branchCount: typeof agg.branches === "number" ? agg.branches : undefined,
       } as PresenceData;
     },
     enabled: !channelsQuery.isPending,
@@ -233,7 +238,13 @@ export default function OverviewPanel() {
               {loading ? (
                 <div className="h-48 animate-pulse rounded-[2px] bg-[var(--ui-sunken)] sm:h-72" aria-hidden />
               ) : (
-                <MetricChart points={points} />
+                <MetricChart
+                  points={points}
+                  source="Connected review channels"
+                  sourceDetail={`last ${days} days`}
+                  sourceHref={channels.length > 0 ? GBP_DASHBOARD_URL : undefined}
+                  sourceLinkLabel="Open GBP dashboard"
+                />
               )}
             </div>
             <div className="space-y-5 sm:space-y-6">
@@ -246,7 +257,16 @@ export default function OverviewPanel() {
                     ))}
                   </div>
                 ) : (
-                  overview && <RatingDistribution distribution={overview.rating_distribution} total={overview.total_reviews} />
+                  overview && (
+                    <RatingDistribution
+                      distribution={overview.rating_distribution}
+                      total={overview.total_reviews}
+                      source="Connected review channels"
+                      sourceDetail={`last ${days} days`}
+                      sourceHref={channels.length > 0 ? GBP_DASHBOARD_URL : undefined}
+                      sourceLinkLabel="Open GBP dashboard"
+                    />
+                  )
                 )}
               </div>
               <div className="ui-card p-4 sm:p-5">
@@ -259,6 +279,10 @@ export default function OverviewPanel() {
                       positive={overview.sentiment.positive}
                       neutral={overview.sentiment.neutral}
                       negative={overview.sentiment.negative}
+                      source="Sayvors sentiment model"
+                      sourceDetail={`connected review text · last ${days} days`}
+                      sourceHref={channels.length > 0 ? GBP_DASHBOARD_URL : undefined}
+                      sourceLinkLabel="Open GBP dashboard"
                     />
                   )
                 )}

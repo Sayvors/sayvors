@@ -17,6 +17,8 @@ import {
 import { apiFetch } from "@/lib/api-rag";
 import { RangeChannelControls, useGoogleChannels } from "@/components/analytics/Controls";
 import { StatCard } from "@/components/analytics/StatCard";
+import { FactSource } from "@/components/analytics/FactSource";
+import { GBP_DASHBOARD_URL } from "@/lib/google-links";
 import GrowthCardsSection from "@/components/analytics/GrowthCards";
 
 function num(v: unknown): number {
@@ -274,7 +276,11 @@ export default function GrowthPage() {
       </div>
 
       <div className="mb-5">
-        <GrowthCardsSection cards={growthCards} loading={loading} />
+        <GrowthCardsSection
+          cards={growthCards}
+          loading={loading}
+          googleConnected={channels.length > 0}
+        />
       </div>
 
       {error && !loading ? (
@@ -308,6 +314,10 @@ export default function GrowthPage() {
               delta={nativePerf ? visibility?.impressions_trend_pct : undefined}
               accent="bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
               icon={ACTION_ICONS.impressions}
+              source="Google Business Profile"
+              sourceDetail={usePresence ? `Localith snapshot · last ${days} days` : `last ${days} days`}
+              sourceHref={channels.length > 0 ? GBP_DASHBOARD_URL : undefined}
+              sourceLinkLabel="Open GBP dashboard"
             />
             <StatCard
               loading={loading}
@@ -317,6 +327,10 @@ export default function GrowthPage() {
               delta={nativePerf ? acquisition?.website_clicks.trend_pct : undefined}
               accent="bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
               icon={ACTION_ICONS.website}
+              source="Google Business Profile"
+              sourceDetail={usePresence ? `Localith snapshot · last ${days} days` : `last ${days} days`}
+              sourceHref={channels.length > 0 ? GBP_DASHBOARD_URL : undefined}
+              sourceLinkLabel="Open GBP dashboard"
             />
             <StatCard
               loading={loading}
@@ -326,6 +340,10 @@ export default function GrowthPage() {
               delta={nativePerf ? acquisition?.call_clicks.trend_pct : undefined}
               accent="bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
               icon={ACTION_ICONS.calls}
+              source="Google Business Profile"
+              sourceDetail={usePresence ? `Localith snapshot · last ${days} days` : `last ${days} days`}
+              sourceHref={channels.length > 0 ? GBP_DASHBOARD_URL : undefined}
+              sourceLinkLabel="Open GBP dashboard"
             />
             <StatCard
               loading={loading}
@@ -335,6 +353,10 @@ export default function GrowthPage() {
               delta={nativePerf ? acquisition?.direction_requests.trend_pct : undefined}
               accent="bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
               icon={ACTION_ICONS.directions}
+              source="Google Business Profile"
+              sourceDetail={usePresence ? `Localith snapshot · last ${days} days` : `last ${days} days`}
+              sourceHref={channels.length > 0 ? GBP_DASHBOARD_URL : undefined}
+              sourceLinkLabel="Open GBP dashboard"
             />
           </div>
 
@@ -360,6 +382,12 @@ export default function GrowthPage() {
                   <span className="font-semibold text-[var(--ui-ink)]">{overview ? `${Math.round(overview.response_rate)}%` : "—"}</span>
                 </p>
               </div>
+              <FactSource
+                source="Google Business Profile"
+                detail={`last ${days} days`}
+                href={channels.length > 0 ? GBP_DASHBOARD_URL : null}
+                linkLabel="Open GBP dashboard"
+              />
           </div>
           )}
 
@@ -413,6 +441,12 @@ export default function GrowthPage() {
             ) : (
               <TrendChart points={points} metric={trendMetric} granularity={granularity} />
             )}
+            <FactSource
+              source="Google Business Profile"
+              detail={`${granularity === "day" ? "daily" : "monthly"} · last ${days} days`}
+              href={channels.length > 0 ? GBP_DASHBOARD_URL : null}
+              linkLabel="Open GBP dashboard"
+            />
           </section>
           )}
 
@@ -445,6 +479,12 @@ export default function GrowthPage() {
                 ))}
               </ol>
             )}
+            <FactSource
+              source="Google Business Profile search terms"
+              detail={`last ${days} days · native Google connection`}
+              href={channels.length > 0 ? GBP_DASHBOARD_URL : null}
+              linkLabel="Open GBP dashboard"
+            />
           </section>
 
           {/* Opportunities — independent of performance data */}
@@ -479,6 +519,12 @@ export default function GrowthPage() {
                 })}
               </ol>
             )}
+            <FactSource
+              source="Sayvors analysis of your Google data"
+              detail="recommendations, not measured facts"
+              href={channels.length > 0 ? GBP_DASHBOARD_URL : null}
+              linkLabel="Open GBP dashboard"
+            />
           </section>
 
           {/* Messaging growth — customer growth from stored daily rollups */}
@@ -536,6 +582,10 @@ export default function GrowthPage() {
                   )}
                 </div>
               )}
+              <FactSource
+                source="Sayvors message rollup"
+                detail={`last ${days} days`}
+              />
             </section>
           )}
         </div>

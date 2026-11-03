@@ -7,7 +7,7 @@ shapes observed on 2026-09-09.
 """
 import sys
 from contextlib import asynccontextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -999,6 +999,38 @@ async def test_get_connection_selects_branch(db, user_id):
     assert (await service.get_connection(db, user_id)).listing_name == "Branch One"
     assert await service.get_connection(db, user_id, "nope") is None
     assert len(await service.list_connections(db, user_id)) == 2
+
+
+@pytest.mark.asyncio
+async def test_aggregate_profiles_exposes_maps_identity_only_for_one_branch(db, user_id):
+    """A single-branch aggregate can deep-link to Maps; a multi-branch total
+    cannot, so it leaves the identity empty and lets the UI use GBP instead."""
+    from app.modules.localith.models import LocalithConnection
+
+    synced_at = datetime(2026, 11, 3, 10, 0, tzinfo=timezone.utc)
+    db.add(LocalithConnection(
+        id="lc-agg", user_id=user_id, listing_id="list-agg", listing_name="Branch One",
+        maps_url="https://maps.google.com/?cid=1", listing_google_id="ChIJ1",
+        metrics_synced_at=synced_at,
+        raw_metrics_json={"listings": [{"googleSearchDesktop": 10, "googleMapsMobile": 5}]},
+    ))
+    await db.commit()
+
+    out = await service.aggregate_profiles(db, user_id)
+    assert out["branches"] == 1
+    assert out["maps_url"] == "https://maps.google.com/?cid=1"
+    assert out["listing_google_id"] == "ChIJ1"
+    assert out["metrics_synced_at"] == synced_at.isoformat()
+
+    db.add(LocalithConnection(
+        id="lc-agg-2", user_id=user_id, listing_id="list-agg-2", listing_name="Branch Two",
+    ))
+    await db.commit()
+
+    out = await service.aggregate_profiles(db, user_id)
+    assert out["branches"] == 2
+    assert out["maps_url"] is None
+    assert out["listing_google_id"] is None
 
 
 @pytest.mark.asyncio
