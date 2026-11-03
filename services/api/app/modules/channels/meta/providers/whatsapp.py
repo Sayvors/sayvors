@@ -6,7 +6,10 @@ code for a customer business token, subscribes webhooks, registers the
 number, and persists WABA + phone_number assets.
 """
 import asyncio
+import hashlib
 import logging
+import re
+import time
 
 from .....config import settings
 from .....core.http import UnsafeUrlError
@@ -21,9 +24,139 @@ logger = logging.getLogger(__name__)
 MAX_STATUS_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_STATUS_VIDEO_BYTES = 16 * 1024 * 1024
 
+# Meta's Cloud API caps an individual business phone number at roughly
+# 80 messages per second. Anything faster earns a 429 from Meta, which the
+# send path intentionally treats as terminal. Pace every message call
+# through a shared bucket so several API workers and server processes agree.
+WHATSAPP_SEND_LIMIT_PER_SECOND = 80
+WHATSAPP_SEND_BUCKET_CAPACITY = 80
+WHATSAPP_SEND_MAX_WAIT_SECONDS = 1.0
+WHATSAPP_SEND_BUCKET_TTL_SECONDS = 10
+WHATSAPP_SEND_KEY_PREFIX = "meta:wa:send-bucket:"
+
+# The bucket's read/modify/write must be one Redis operation. Redis-portable
+# as-is; callers pass millisecond timestamps so wall-clock jumps within one
+# call do not mint extra capacity.
+_WHATSAPP_TOKEN_BUCKET_LUA = r"""
+local key = KEYS[1]
+local capacity = tonumber(ARGV[1])
+local refill_per_second = tonumber(ARGV[2])
+local now_ms = tonumber(ARGV[3])
+local ttl_seconds = tonumber(ARGV[4])
+local bucket = redis.call("HMGET", key, "tokens", "updated_at")
+local tokens = tonumber(bucket[1])
+local updated_at = tonumber(bucket[2])
+if tokens == nil then
+  tokens = capacity
+end
+if tokens > capacity then
+  tokens = capacity
+end
+if updated_at == nil then
+  updated_at = now_ms
+end
+local elapsed_ms = math.max(0, now_ms - updated_at)
+tokens = math.min(capacity, tokens + (elapsed_ms / 1000.0) * refill_per_second)
+local allowed = 0
+local wait_ms = 0
+if tokens >= 1 then
+  tokens = tokens - 1
+  allowed = 1
+else
+  wait_ms = math.max(1, math.ceil(((1 - tokens) / refill_per_second) * 1000))
+end
+redis.call("HSET", key, "tokens", tostring(tokens), "updated_at", tostring(now_ms))
+redis.call("EXPIRE", key, ttl_seconds)
+return {allowed, tostring(tokens), wait_ms}
+"""
+_SEND_PATH = re.compile(r"^/([^/]+)/messages$")
+
+
+def _send_bucket_key(phone_number_id: str) -> str:
+    digest = hashlib.sha256(phone_number_id.encode("utf-8")).hexdigest()[:32]
+    return f"{WHATSAPP_SEND_KEY_PREFIX}{digest}"
+
+
+def _log_id(phone_number_id: str) -> str:
+    return hashlib.sha256(phone_number_id.encode("utf-8")).hexdigest()[:12]
+
+
+async def _acquire_whatsapp_send_token(phone_number_id: str) -> tuple[bool, int]:
+    """Reserve one token, returning (allowed, retry_after_ms).
+
+    Redis is the coordination point for all API workers for one business
+    number. A Redis failure allows the send (availability first, matching
+    the LLM chat rate limit); a saturated bucket returns a bounded wait and
+    callers decide whether to wait or report a local, terminal failure.
+    """
+    try:
+        from ....redis.client import get_redis
+
+        redis = await get_redis()
+        result = await redis.eval(
+            _WHATSAPP_TOKEN_BUCKET_LUA,
+            1,
+            _send_bucket_key(phone_number_id),
+            WHATSAPP_SEND_BUCKET_CAPACITY,
+            WHATSAPP_SEND_LIMIT_PER_SECOND,
+            time.time_ns() // 1_000_000,
+            WHATSAPP_SEND_BUCKET_TTL_SECONDS,
+        )
+        if not isinstance(result, (list, tuple)) or len(result) < 3:
+            raise ValueError("unexpected rate-limit response")
+        return bool(int(result[0])), int(float(result[2]))
+    except Exception as exc:  # noqa: BLE001 - pacing must fail open
+        logger.warning(
+            "WhatsApp send pacing unavailable; allowing send for phone=%s: %s",
+            _log_id(phone_number_id),
+            exc,
+        )
+        try:
+            from ....redis.client import mark_redis_unavailable
+
+            mark_redis_unavailable()
+        except Exception:  # noqa: BLE001 - rearming is best effort
+            pass
+        return True, 0
+
 
 class WhatsAppAdapter(MetaProviderAdapter):
     provider = "whatsapp"
+
+    async def _graph(self, method: str, path: str, token: str, **kwargs):
+        """Rate-limit message sends before they reach Meta.
+
+        This is the shared choke point for text, templates, media-by-id,
+        reactions and context cards. GET/other utility calls are untouched.
+        """
+        if not settings.TESTING and method.upper() == "POST":
+            match = _SEND_PATH.match(path)
+            if match:
+                phone_number_id = match.group(1)
+                await self._wait_for_send_capacity(phone_number_id)
+        return await super()._graph(method, path, token, **kwargs)
+
+    async def _wait_for_send_capacity(self, phone_number_id: str) -> None:
+        deadline = time.monotonic() + WHATSAPP_SEND_MAX_WAIT_SECONDS
+        while True:
+            allowed, retry_after_ms = await _acquire_whatsapp_send_token(
+                phone_number_id
+            )
+            if allowed:
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise MetaAPIError(
+                    "WhatsApp delivery is temporarily paced for this number. "
+                    "Try again shortly.",
+                    429,
+                )
+            # The Lua script returns milliseconds; wait only within the
+            # bounded window so a sustained overload cannot occupy workers
+            # indefinitely.
+            await asyncio.sleep(
+                min(max(retry_after_ms, 1) / 1000.0, remaining)
+            )
 
     def build_auth_entry(self, state: str) -> dict:
         if not settings.META_APP_ID or not settings.META_WHATSAPP_CONFIG_ID:

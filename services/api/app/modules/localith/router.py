@@ -16,6 +16,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_current_user, get_db
+from ...core.upstream_errors import upstream_http_error
 from ..analytics.models import ReviewInsight
 from ..channels.models import AutoReplyConfig, Channel, ChannelMessage, ReviewReply
 from ..channels.service import encrypt_token as _encrypt_localith_key
@@ -342,7 +343,11 @@ async def update_my_listing(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Localith update failed: {e}")
+        raise upstream_http_error(
+            e,
+            context="Localith listing update failed",
+            detail="Localith is temporarily unavailable. Try again shortly.",
+        ) from None
 
     # Trust the write: reflect what the merchant just submitted.
     if fields.get("name"):

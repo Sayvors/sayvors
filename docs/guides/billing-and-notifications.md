@@ -23,14 +23,40 @@ expiry, and optional cardholder name. The full card number is not sent to the
 API; the UI validates it locally and the stub returns a token. Saved cards are
 marked unverified until a real gateway integration is available.
 
+### Messaging quota vs. AI auto-replies
+
+Sayvors has two separate caps on outbound messages, and they are intentional:
+
+**Messaging quota** (`PLAN_MESSAGE_LIMITS`, e.g. free: 1,000 / month) governs
+human-initiated sends (`/inbox/send`, document, location, contacts, template).
+Every human outbound message passes through `_ensure_messaging_quota()` and is
+counted against the plan's `max_messages_per_month`.
+
+**AI auto-replies** (`meta/consumer.py` reply path) do **not** count against the
+messaging quota. They are bounded instead by the **LLM budget gate**:
+`check_feature(tenant_id, "ai_replies")` (fail-closed entitlement — the plan must
+enable AI replies) plus credit reserve/settle before every LLM call
+(`billing/entitlements.py`, `llm/gateway.py`). AI replies are also selectively
+triggered by `should_ai_reply()` (confusion detection, mode state, escalation
+clock), so not every inbound message generates one.
+
+**Decision:** AI auto-replies remain unbounded by `max_messages_per_month`. The
+LLM budget gate is the appropriate control for AI usage because it directly caps
+dollar cost (tokens), whereas the messaging quota caps human conversation
+volume. Extending the messaging quota to AI replies would double-count cost
+control and add latency to the hot reply path without reducing spend.
+
+If you want AI replies to also consume messaging quota, extend
+`_ensure_messaging_quota()` (or `count_messages_this_month()`) to include
+AI-authored outbound rows and call it from the `meta/consumer.py` reply path
+before `adapter.send_text_message()`.
+
 **Payments are not live yet.** The current charge endpoint is a stub and moves
 no money; adding a card does not charge it, create a subscription, or add
 credits. The page's plan/credit display reflects the account state provided by
 the API, not a completed payment.
 
 ## Notifications
-
-Open **Dashboard → Notifications** to review the notification feed:
 
 - Filter by **All** or **Unread**, and by **Syncs**, **Reviews**, or **Replies**.
 - Select a notification to mark it read and follow its destination link, when

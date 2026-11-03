@@ -10,12 +10,13 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy import select
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from app.modules.channels.models import Channel, ChannelMessage
+from app.modules.channels.models import Channel, ChannelMessage, ChannelThread
 from app.modules.channels.service import (
     encrypt_contact_phone, encrypt_message_content, hash_contact_phone,
 )
@@ -45,6 +46,20 @@ async def _msg(db, channel_id, *, phone=None, direction="inbound", content="hi",
     await db.commit()
 
 
+async def _set_thread_fields(db, channel_id, phone, **fields):
+    row = (
+        await db.execute(
+            select(ChannelThread).where(
+                ChannelThread.channel_id == channel_id,
+                ChannelThread.contact_phone_hash == hash_contact_phone(phone),
+            )
+        )
+    ).scalar_one()
+    for key, value in fields.items():
+        setattr(row, key, value)
+    await db.commit()
+
+
 @pytest.mark.asyncio
 async def test_inbox_threads_http(client, db, user_id):
     await _seed(db, user_id)
@@ -63,6 +78,89 @@ async def test_inbox_threads_http(client, db, user_id):
     assert first["channel_name"] == "Business line"
     assert first["unread"] == 1
     assert first["is_unknown"] is False
+
+
+@pytest.mark.asyncio
+async def test_inbox_threads_cursor_pages_every_thread(client, db, user_id):
+    await _seed(db, user_id)
+    phones = [f"966500000{i:03d}" for i in range(5)]
+    for i, phone in enumerate(phones):
+        await _msg(
+            db, "chan-1", phone=phone, content=f"m{i}",
+            minutes_ago=50 - i * 10,
+        )
+
+    first = client.get("/api/v1/inbox/threads", params={"limit": 2})
+    assert first.status_code == 200, first.text
+    body = first.json()
+    assert body["total"] == 5
+    assert [t["key"] for t in body["threads"]] == [phones[4], phones[3]]
+    cursor = body["next_cursor"]
+    assert cursor
+
+    second = client.get(
+        "/api/v1/inbox/threads", params={"limit": 2, "cursor": cursor}
+    )
+    assert second.status_code == 200, second.text
+    body = second.json()
+    assert body["total"] == 5
+    assert [t["key"] for t in body["threads"]] == [phones[2], phones[1]]
+    cursor = body["next_cursor"]
+    assert cursor
+
+    third = client.get(
+        "/api/v1/inbox/threads", params={"limit": 2, "cursor": cursor}
+    )
+    assert third.status_code == 200, third.text
+    body = third.json()
+    assert body["total"] == 5
+    assert [t["key"] for t in body["threads"]] == [phones[0]]
+    assert body["next_cursor"] is None
+
+
+@pytest.mark.asyncio
+async def test_inbox_thread_filters_and_total_are_server_side(client, db, user_id):
+    await _seed(db, user_id)
+    await _msg(db, "chan-1", phone="966500000001", content="complaint", minutes_ago=30)
+    await _msg(db, "chan-1", phone="966500000002", content="urgent", minutes_ago=20)
+    await _msg(db, "chan-1", phone="966500000003", content="normal", minutes_ago=10)
+    await _set_thread_fields(db, "chan-1", "966500000001", category="complaint", priority="normal")
+    await _set_thread_fields(db, "chan-1", "966500000002", category="normal", priority="high")
+    await _set_thread_fields(db, "chan-1", "966500000003", category="normal", priority="normal")
+
+    important = client.get(
+        "/api/v1/inbox/threads", params={"important": "true"}
+    ).json()
+    assert important["total"] == 2
+    assert {t["key"] for t in important["threads"]} == {
+        "966500000001",
+        "966500000002",
+    }
+
+    complaints = client.get(
+        "/api/v1/inbox/threads", params={"category": "complaint"}
+    ).json()
+    assert complaints["total"] == 1
+    assert [t["key"] for t in complaints["threads"]] == ["966500000001"]
+
+    high = client.get(
+        "/api/v1/inbox/threads", params={"priority": "high"}
+    ).json()
+    assert high["total"] == 1
+    assert [t["key"] for t in high["threads"]] == ["966500000002"]
+
+    normal_only = client.get(
+        "/api/v1/inbox/threads", params={"important": "false"}
+    ).json()
+    assert normal_only["total"] == 1
+    assert [t["key"] for t in normal_only["threads"]] == ["966500000003"]
+
+
+def test_inbox_threads_rejects_an_invalid_cursor(client):
+    resp = client.get(
+        "/api/v1/inbox/threads", params={"cursor": "definitely-not-a-cursor"}
+    )
+    assert resp.status_code == 400
 
 
 @pytest.mark.asyncio

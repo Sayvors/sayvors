@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import settings
 from ...core.deps import get_current_user, get_db
+from ...core.upstream_errors import upstream_http_error
 from ..auth.rate_limit import rate_limit
 from ..analytics.models import ReviewInsight
 from ..channels.models import AutoReplyConfig, Channel, ReviewReply
@@ -561,7 +562,11 @@ async def chat(
         reply = await _llm_reply(model, system_prompt, body.history, body.message, user)
     except Exception as e:
         logger.warning("Assistant LLM failed (%s); answering from snapshot only", e)
-        raise HTTPException(status_code=502, detail=f"Assistant is unavailable right now: {e}")
+        raise upstream_http_error(
+            e,
+            context="Assistant LLM failed",
+            detail="Assistant is unavailable right now. Try again shortly.",
+        ) from None
 
     if not reply:
         raise HTTPException(status_code=502, detail="Assistant returned an empty reply")

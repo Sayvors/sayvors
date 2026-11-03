@@ -15,6 +15,7 @@ from ....core.pinned_http import (
     assert_public_http_url,
     fetch_pinned_status,
 )
+from ....core.upstream_errors import upstream_http_error
 from ....core.deps import get_current_user, get_db
 from ....modules.team.context import TenantContext, require_perm, tenant_id_of
 from ...auth.rate_limit import rate_limit
@@ -1512,7 +1513,7 @@ async def reply_to_instagram_comment(
                 error=str(e)[:500],
             ))
             await db.commit()
-        raise HTTPException(status_code=502, detail=str(e)[:200])
+        raise upstream_http_error(e, context="Meta comment action failed") from None
 
     channel = (
         await db.execute(
@@ -1595,7 +1596,7 @@ async def hide_instagram_comment(
     try:
         await adapter.set_comment_hidden(comment_id, token, body.hidden)
     except MetaAPIError as e:
-        raise HTTPException(status_code=502, detail=str(e)[:200])
+        raise upstream_http_error(e, context="Meta comment action failed") from None
 
     row = (
         await db.execute(
@@ -1651,7 +1652,7 @@ async def delete_instagram_comment(
     try:
         await adapter.delete_comment(comment_id, token)
     except MetaAPIError as e:
-        raise HTTPException(status_code=502, detail=str(e)[:200])
+        raise upstream_http_error(e, context="Meta comment action failed") from None
 
     row = (
         await db.execute(
@@ -1723,17 +1724,20 @@ async def _assert_media_fetchable(url: str, *, what: str = "Instagram") -> None:
 
 
 def _publish_error_detail(e: MetaAPIError) -> str:
-    """Meta's message, plus the one hint that actually fixes the most
-    common publishing failure: scopes are minted at OAuth time, so adding
-    instagram_content_publish to the app does nothing until the account
-    is reconnected."""
-    detail = str(e)[:200]
-    low = detail.lower()
+    """Safe client text for a failed Instagram publish.
+
+    The raw Meta error is already logged by the caller. Keep the one hint
+    that actually fixes the common failure: scopes are minted at OAuth time,
+    so adding instagram_content_publish to the app does nothing until the
+    account is reconnected.
+    """
+    detail = "Meta rejected the post. Try again shortly."
+    low = str(e).lower()
     if any(k in low for k in ("permission", "scope", "authorize", "oauth", "capability")):
-        detail += (
-            " — the app needs the instagram_content_publish permission, and "
-            "the Instagram account must be reconnected in Sayvors so the new "
-            "scope lands in its token."
+        detail = (
+            "Meta rejected the post: the app needs the "
+            "instagram_content_publish permission, and the Instagram account "
+            "must be reconnected in Sayvors so the new scope lands in its token."
         )
     return detail
 
@@ -1940,9 +1944,11 @@ async def suggest_instagram_caption(
             purpose="instagram.caption_suggest",
         )
     except Exception as e:  # ProviderError and transport failures alike
-        raise HTTPException(
-            status_code=502, detail=f"Caption generation failed: {str(e)[:150]}"
-        )
+        raise upstream_http_error(
+            e,
+            context="Instagram caption generation failed",
+            detail="Caption generation is temporarily unavailable. Try again shortly.",
+        ) from None
     caption = (resp.content or "").strip()
     if not caption:
         raise HTTPException(status_code=502, detail="The model returned an empty caption.")
@@ -2067,17 +2073,20 @@ async def _facebook_asset_or_404(db: AsyncSession, user: User, page_id: str):
 
 
 def _fb_error_detail(e: MetaAPIError) -> str:
-    """Meta's message, plus the hint that fixes the most common Page
-    publishing failure: scopes are minted at OAuth time, so adding
-    pages_manage_posts to the app configuration does nothing until the
-    Page is reconnected."""
-    detail = str(e)[:200]
-    low = detail.lower()
+    """Safe client text for a failed Page publish.
+
+    The raw Meta error is already logged by the caller. Keep the one hint
+    that actually fixes the common failure: scopes are minted at OAuth time,
+    so adding pages_manage_posts to the app does nothing until the Page is
+    reconnected.
+    """
+    detail = "Meta rejected the post. Try again shortly."
+    low = str(e).lower()
     if any(k in low for k in ("permission", "scope", "authorize", "oauth", "capability")):
-        detail += (
-            " — the app needs the pages_manage_posts permission, and the "
-            "Page must be reconnected in Sayvors so the new scope lands in "
-            "its token."
+        detail = (
+            "Meta rejected the post: the app needs the pages_manage_posts "
+            "permission, and the Page must be reconnected in Sayvors so the "
+            "new scope lands in its token."
         )
     return detail
 
@@ -2509,7 +2518,7 @@ async def reply_to_facebook_comment(
                 error=str(e)[:500],
             ))
             await db.commit()
-        raise HTTPException(status_code=502, detail=str(e)[:200])
+        raise upstream_http_error(e, context="Meta comment action failed") from None
 
     channel = (
         await db.execute(
@@ -2593,7 +2602,7 @@ async def hide_facebook_comment(
     try:
         await adapter.set_comment_hidden(comment_id, token, body.hidden)
     except MetaAPIError as e:
-        raise HTTPException(status_code=502, detail=str(e)[:200])
+        raise upstream_http_error(e, context="Meta comment action failed") from None
 
     row = (
         await db.execute(
@@ -2650,7 +2659,7 @@ async def delete_facebook_comment(
     try:
         await adapter.delete_comment(comment_id, token)
     except MetaAPIError as e:
-        raise HTTPException(status_code=502, detail=str(e)[:200])
+        raise upstream_http_error(e, context="Meta comment action failed") from None
 
     row = (
         await db.execute(

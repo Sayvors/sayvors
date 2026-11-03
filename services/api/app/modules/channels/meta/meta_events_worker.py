@@ -1,28 +1,31 @@
-"""Meta events worker: processes inbound WhatsApp/Instagram/Facebook events with
-bounded concurrency and proper lease/retry mechanics.
+"""Meta events worker: Kafka consumer for inbound Meta events.
 
-Replaces the sequential Kafka consumer (run_meta_events_consumer) with a
-worker pool that claims events from the outbox, processes them with bounded
-concurrency, and handles retries with proper backoff.
+The webhook writes the normalized envelope to the transactional outbox in the
+same DB transaction as the raw ledger row. The outbox relay publishes those
+rows to `meta-events`; this worker consumes them from Kafka and hands each
+envelope to the same handlers the rest of the pipeline uses.
 
-Key differences from the old consumer:
-- Claims events from the outbox using SELECT FOR UPDATE SKIP LOCKED
-- Processes multiple events concurrently (bounded by CONCURRENCY)
-- Each event has a lease; crashed workers' claims are reclaimed after expiry
-- Proper retry taxonomy: transient -> retry with backoff, permanent -> failed,
-  ambiguous (timeout) -> never auto-retried
-- No Kafka consumer group needed; the outbox is the queue.
+Kafka is the streaming path. Postgres is the durable source and the retry
+ledger; it does not transport events more than one hop.
+
+Delivery rules:
+- one message per poll keeps offsets ordered per partition
+- offsets are committed after the DB outcome is durable
+- handler failures mark the outbox row failed and let the relay republish it
+  after its backoff interval (handlers are idempotent by message id)
+- ambiguous sends stay ambiguous: never retried, so a retry cannot double-send
+
+Scale rule: run one or more replicas; Kafka's consumer group balances the 12
+partitions across them. Messages are not independently counted by the relay
+because the relay is not the consumer.
 """
 
 import asyncio
 import json
 import logging
 import os
-import random
-import socket
-import uuid
 from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Any, Optional
+from typing import Dict, Any
 
 from sqlalchemy import select, update, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -48,20 +51,19 @@ from .consumer import (
     _handle_instagram_message,
     _handle_instagram_comment,
     _handle_facebook_comment,
-    _drain_outbox_events as _drain_outbox_events_consumer,
 )
 from .webhooks.parser import is_message_status_event
 
 logger = logging.getLogger(__name__)
 
 # Configuration
-POLL_SECONDS = int(os.environ.get("META_EVENTS_POLL_SECONDS", "5"))
-BATCH_SIZE = int(os.environ.get("META_EVENTS_BATCH_SIZE", "20"))
-CONCURRENCY = int(os.environ.get("META_EVENTS_CONCURRENCY", "8"))
-LEASE_SECONDS = int(os.environ.get("META_EVENTS_LEASE_SECONDS", "120"))
-MAX_RETRIES = int(os.environ.get("META_EVENTS_MAX_RETRIES", "5"))
+MAX_RETRIES = 10
 RETRY_BASE_SECONDS = int(os.environ.get("META_EVENTS_RETRY_BASE_SECONDS", "300"))
 RETRY_MAX_SECONDS = int(os.environ.get("META_EVENTS_RETRY_MAX_SECONDS", "7200"))
+
+# The outbox relay publishes to this topic; this consumer owns the queue.
+TOPIC = "meta-events"
+GROUP_ID = "meta-events-replier"
 
 # Event types we handle
 HANDLED_EVENT_TYPES = {
@@ -95,60 +97,6 @@ def _event_type_handled(provider: str, event_type: str) -> bool:
     # Status types carry the status suffix; keep accepting the bare type for
     # events queued before the per-status identity landed.
     return provider == "whatsapp" and is_message_status_event(event_type)
-
-
-async def _claim_due_events(db, worker_id: str, limit: int = BATCH_SIZE) -> List[Dict[str, Any]]:
-    """Atomically claim up to `limit` pending meta events from the outbox.
-
-    Uses SELECT FOR UPDATE SKIP LOCKED for concurrent safety. Expired leases
-    are released first so crashed workers' claims are reclaimed.
-    """
-    now = datetime.now(timezone.utc)
-
-    # Release expired leases back to pending so crashed workers' claims are
-    # reclaimed (mirrors JobRunner lease-expiry pattern).
-    await db.execute(
-        text("""
-            UPDATE event_outbox
-            SET status = 'pending', lease_owner = NULL, lease_expires_at = NULL
-            WHERE status = 'processing'
-              AND event_type LIKE 'meta.%'
-              AND lease_expires_at IS NOT NULL
-              AND lease_expires_at < :now
-        """),
-        {"now": now},
-    )
-
-    query = text("""
-        SELECT id, event_type, payload, topic, attempts, next_retry_at
-        FROM event_outbox
-        WHERE status IN ('pending', 'failed')
-          AND event_type LIKE 'meta.%'
-          AND (next_retry_at IS NULL OR next_retry_at <= :now)
-        ORDER BY created_at ASC
-        LIMIT :limit
-        FOR UPDATE SKIP LOCKED
-    """)
-    result = await db.execute(query, {"now": now, "limit": limit})
-    rows = result.mappings().all()
-
-    events = []
-    for row in rows:
-        # Mark as claimed by updating status to 'processing' with a lease.
-        await db.execute(
-            text("""
-                UPDATE event_outbox
-                SET status = 'processing', lease_owner = :worker, lease_expires_at = :lease
-                WHERE id = :id
-            """),
-            {"id": row["id"], "worker": worker_id, "lease": now + timedelta(seconds=LEASE_SECONDS)},
-        )
-        events.append(dict(row))
-
-    if events:
-        await db.commit()
-
-    return events
 
 
 async def _process_event(db, event_data: Dict[str, Any]) -> bool:
@@ -341,40 +289,93 @@ async def _mark_event_failed(
     await _mark_webhook_event(db, webhook_event_id, "rejected", str(error))
 
 
+def _decode_message(value):
+    """Normalize kafka bytes/strings/parsed values into one envelope."""
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, (bytes, bytearray, str)):
+        return None
+    try:
+        decoded = json.loads(
+            value.decode("utf-8") if isinstance(value, (bytes, bytearray)) else value
+        )
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return decoded if isinstance(decoded, dict) else None
+
+
 async def run_meta_events_worker() -> None:
-    """Main worker loop. Runs until cancelled."""
-    logger.info("Meta events worker started (poll=%ds, concurrency=%d)", POLL_SECONDS, CONCURRENCY)
-    worker_id = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+    """Consume the meta events stream until cancelled."""
+    from ...kafka import client as kafka_client
 
-    # Semaphore to limit concurrency
-    semaphore = asyncio.Semaphore(CONCURRENCY)
+    if not kafka_client.is_kafka_available(GROUP_ID):
+        logger.info("Kafka producer offline; meta events remain buffered in the outbox")
 
-    async def process_one(event_data: Dict[str, Any]) -> None:
-        async with semaphore:
-            try:
-                async with async_session() as db:
-                    await _process_event(db, event_data)
-            except Exception as e:
-                logger.exception("Event processing crashed: %s", e)
-
+    logger.info("Meta events Kafka consumer started (topic=%s, group=%s)", TOPIC, GROUP_ID)
     while True:
+        consumer = None
         try:
-            # Claim events
-            async with async_session() as db:
-                events = await _claim_due_events(db, worker_id, BATCH_SIZE)
-
-            if not events:
-                await asyncio.sleep(POLL_SECONDS)
+            if not kafka_client.is_kafka_available(GROUP_ID):
+                await asyncio.sleep(5)
                 continue
 
-            # Process events concurrently
-            tasks = [process_one(event) for event in events]
-            await asyncio.gather(*tasks, return_exceptions=True)
+            consumer = await kafka_client.create_consumer(
+                GROUP_ID,
+                [TOPIC],
+                max_poll_records=1,
+            )
+            logger.info("Meta events consumer listening on %s", TOPIC)
+            async for msg in consumer:
+                envelope = _decode_message(msg.value)
+                if envelope is None:
+                    logger.warning(
+                        "Discarding malformed %s payload at offset=%s",
+                        TOPIC,
+                        msg.offset,
+                    )
+                    await consumer.commit()
+                    continue
 
+                event_id = envelope.get("event_id")
+                payload = envelope.get("payload")
+                event_type = envelope.get("event_type")
+                if not isinstance(event_id, str) or not isinstance(event_type, str) or not isinstance(payload, dict):
+                    logger.warning(
+                        "Discarding malformed %s envelope at offset=%s",
+                        TOPIC,
+                        msg.offset,
+                    )
+                    await consumer.commit()
+                    continue
+
+                event_data = {
+                    "id": event_id,
+                    "event_type": event_type,
+                    "topic": msg.topic,
+                    "attempts": 0,
+                    "next_retry_at": None,
+                    "payload": payload,
+                }
+                async with async_session() as db:
+                    await _process_event(db, event_data)
+                # The DB outcome is durable here. Handler failures are already
+                # staged on the outbox row for backed-off republish; committing
+                # stops Kafka from hot-looping the same failure.
+                await consumer.commit()
         except asyncio.CancelledError:
-            break
+            if consumer is not None:
+                await consumer.stop()
+            raise
         except Exception:
-            logger.exception("Meta events worker cycle failed")
+            logger.exception(
+                "Meta events Kafka consumer failed — re-creating the consumer"
+            )
+            kafka_client.mark_kafka_unavailable(GROUP_ID)
+            if consumer is not None:
+                try:
+                    await consumer.stop()
+                except Exception:
+                    pass
             await asyncio.sleep(5)
 
 

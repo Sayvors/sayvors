@@ -31,6 +31,25 @@ Requires HTTPS with a valid cert.
    `(provider, external_event_id, event_type)` → duplicates become
    `duplicate`, never processed twice (replay-safe).
 6. Enqueue normalized event on the outbox (`meta-events` topic) → 200.
+   The relay publishes it to Kafka and changes the row to `published`
+   (without overwriting consumer progress); the Kafka consumer is the only
+   code that processes Meta events. Failed rows are republished with a
+   backoff, and ambiguous rows are never retried.
+
+## Delivery boundary
+
+Postgres is the durable source and retry ledger. Kafka is the streaming bus.
+
+```text
+webhook -> meta_webhook_events + event_outbox (one Postgres transaction)
+        -> outbox relay publishes to meta-events
+        -> meta_events_worker consumes, commits offsets
+        -> handler closes the raw row / outbox row
+```
+
+If Kafka is unavailable, rows remain pending; nothing is silently consumed
+locally. If the consumer crashes after the handler succeeds but before the
+offset is committed, Kafka redelivers; handlers are idempotent by message id.
 
 ## Normalized envelope (what the rest of Sayvors sees)
 

@@ -186,7 +186,7 @@
 
 <div class="top">
   <span class="name">Sayvors 1M-User Readiness</span>
-  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 14 open (0 blockers · 8 majors · 6 medium) · INS: 2 open · original audit: 2 open (OPS-1, OPS-4) · 37 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 8 open (2 high · 4 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,052 passed / 3 skipped (post-shim, 2026-11-02)</span>
+  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 4 open (0 blockers · 3 majors · 1 medium) · INS: 1 open · original audit: 2 open (OPS-1, OPS-4) · 38 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 8 open (2 high · 4 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,113 passed / 3 skipped (2026-11-03)</span>
   <nav class="topnav">
     <a href="#blockers">Blockers</a>
     <a href="#pass-2026-10-25">Oct 25 pass</a>
@@ -210,7 +210,7 @@
 </div>
 
 <div class="verdict">
-  <p><strong>Most of the audit is closed — 32 of the 34 findings in the original ledger are resolved; 2 remain open (OPS-1, OPS-4).</strong> Counting the Oct 25 INS pass, 37 of 41 code findings are closed and 4 remain; the two server-image CVEs (Redis 7, Kafka 3.8) are separate and still open. Multi-tenant isolation held up under an adversarial pass — not one missing tenant filter was found across every router. Auth internals are genuinely solid. The unified job-processing design in the repo is enterprise-grade and approved after four review rounds. What still stands between here and 1M users is a short list: no rehearsed backup, one box carrying everything, and a production host that has not been stood up.</p>
+  <p><strong>Most of the audit is closed — 32 of the 34 findings in the original ledger are resolved; 2 remain open (OPS-1, OPS-4).</strong> Counting the Oct 25 INS pass, 38 of 41 code findings are closed and 3 remain; the two server-image CVEs (Redis 7, Kafka 3.8) are separate and still open. Multi-tenant isolation held up under an adversarial pass — not one missing tenant filter was found across every router. Auth internals are genuinely solid. The unified job-processing design in the repo is enterprise-grade and approved after four review rounds. What still stands between here and 1M users is a short list: no rehearsed backup, one box carrying everything, and a production host that has not been stood up.</p>
   <p>A separate <strong>billing &amp; plans</strong> workstream is now tracked in <a href="#billing">§6b</a>. The wallet hotfix, durable spend ledger, five plans, admin plan CRUD, entitlements service and enforcement at channel-connect / message-send / LLM are deployed to staging (<code>d82d800</code>, 2026-10-28). It is not counted in the 32/2 audit ledger.</p>
   <p>A third workstream opened on 2026-10-29: <a href="#handoff">conversation control &amp; Instagram &rarr; WhatsApp handoff</a>. It carries 16 items plus a deferred calling decision (WebRTC-based, not started). It is product work, not an audit finding, and is not counted in the 32/2 ledger either. <strong>All 16 are fixed on <code>development</code></strong> (BUG-4 and HAND-5 on 2026-10-31; HAND-10 and HAND-11 on 2026-11-01): BUG-1/2/3/4, BUG-5, HAND-1, HAND-2, HAND-3, HAND-4, HAND-5, HAND-6, HAND-7, HAND-8, HAND-9, HAND-10 and HAND-11. The escalated-thread mute no longer re-arms, a quoted handoff code reaches the AI, the handover line is persisted and visible in the inbox, the outbox Kafka publisher no longer steals meta events from the worker that processes them, the Instagram DM hands over a real <code>wa.me</code> link that merges the two identities and carries the context, the prompt no longer presents itself as a text-based bot, the conversation has a real AI/human mode with a switch and a resolve path, the escalation clock and "Resume AI now" are visible in the thread, lead labels are canonical everywhere and only sellable categories auto-qualify, an escalated conversation or review ticket can be assigned to an eligible teammate with a notification and a "Mine" filter, the thread keeps a stored context that both sides read, the assistant quotes catalog prices/stock and sends item photos with a public catalog page, customer replies are grounded in the databank per message, and the 24h window is covered by synced templates with a recorded consent basis, and resolved conversations draft scrubbed, human-approved memories that future replies can retrieve. No items remain open.</p>
   <p><strong>2026-10-31 pass.</strong> Two items shipped. (1) <em>Google review polling was dead since <code>f2c1b62</code> (2026-10-21).</em> The concurrency refactor moved per-channel work into <code>_poll_one_channel()</code> but gave that function a stats dict without the <code>channels</code> key, while <code>poll_once()</code> still summed <code>result["channels"]</code>. Every due channel therefore raised <code>KeyError('channels')</code> before <code>process_channel()</code> ran, and <code>asyncio.gather(return_exceptions=True)</code> turned that into a per-channel error line — so each pass logged "Poll task failed: 'channels'" and quietly polled nothing. Fixed by seeding <code>channels</code> in the dict; the failure log now names the channel and keeps the traceback, and the pass log also prints when <code>errors &gt; 0</code> instead of only when reviews were seen. Two regression tests pin the per-channel keys and the pass totals. No data was lost — Google is polled, not pushed, so the next successful pass backfills. (2) <em>Per-tenant feature overrides.</em> <code>tenant_subscriptions.features_override</code> (JSONB, migration <code>4b8820f95bf2ab91</code>) wins per key over the plan's <code>features</code>, exposed through <code>PUT /api/v1/admin/tenants/{id}/features</code> and the admin <strong>Special list</strong> (<code>GET /api/v1/admin/tenants/special</code>), with a checkbox modal on the tenant Plan card. (3) <em>Escalation was muting healthy conversations, and the assistant had no hours.</em> The counter incremented on every inbound that followed an AI reply and only reset on a human reply, so the Nth question in a normal thread handed the customer to a person mid-conversation. It now counts only a <em>confused</em> return (the thread classifier's signal), defaults to 0 (off), and urgency escalates immediately from the message text (EN + AR, deterministic, no LLM round-trip): urgent sets <code>priority=important</code>, sends an urgent-specific holding line, and notifies through the existing inbox notification + email. Lead capture is gated the same way: an information request ("what are your hours?") creates no CRM row, a request that shows intent does, and an urgent lead lands as an important lead with both notifications. The assistant also receives an <strong>OPENING HOURS</strong> block built from <code>location_profiles.hours</code> (weekly, closed days, upcoming special dates, tenant timezone) — the data existed and was displayed in the dashboard but had never been fed to the prompt, which is why working-hours questions were answered with "I'll confirm with the team". (4) <em>ASR is now an admin-managed provider, like LLM and embeddings.</em> <code>asr_engine_configs</code> (migration <code>ed44c60beb4c92aa</code>) stores one row per provider — model, base URL, language coverage, enabled/active, Fernet-encrypted key — exposed at <code>GET /api/v1/admin/asr</code>, <code>PUT /api/v1/admin/asr/{provider}</code> and <code>POST /api/v1/admin/asr/{provider}/test</code>, with an admin page under Intelligence → Speech-to-text. ElevenLabs is the first hosted engine (<code>scribe_v1</code>, <code>POST /v1/speech-to-text</code>); the key needs only the speech-to-text permission, so the connection test sends real audio through that same endpoint rather than probing account APIs. With no active engine — or a language outside its coverage, a failed call, or a missing key — transcription falls back to the local faster-whisper model, so a provider problem degrades quality instead of losing the voice note. The work itself runs on the existing <strong>bulk lane</strong> (<code>stt.job</code> → <code>JobLane.bulk</code>), inheriting <code>FOR UPDATE SKIP LOCKED</code> claims, the per-tenant in-flight cap, and 10 retries; the engine config is cached for 30s per process (invalidated on save) and the media download is streamed with a 25 MB cap, so a busy lane does not query the config row per note or load a customer-supplied file of unknown size into a 384 MB worker.</p>
@@ -223,9 +223,9 @@
   <div class="stat"><div class="n amber">2</div><div class="l">findings <strong>still open</strong> — OPS-1 (backups), OPS-4 (prod host + SHA-pinned deploys)</div></div>
   <div class="stat"><div class="n amber">Live</div><div class="l">billing &amp; plans — wallet hotfix + durable ledger + 5 plans + admin plan CRUD + tenant grant-plan + entitlements service + enforcement at channel-connect/message-send/LLM; deployed to staging 2026-10-28, schema caught up from 5 migrations behind to <code>h4b5c6d7e8f9</code> head. Plan comparison + request-upgrade UI shipped (<a href="#billing">§6b</a>)</div></div>
   <div class="stat"><div class="n calm">1,645</div><div class="l">backend tests (2 skipped in CI where pgvector runs; 4 skipped locally without Postgres) — CI gates every staging deploy on them; staging CI run #77 passed on <code>d82d800</code></div></div>
-  <div class="stat"><div class="n amber">2</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new findings still open: INS-4, INS-5 (INS-1, INS-2, INS-3, INS-6, INS-7 fixed)</div></div>
-  <div class="stat"><div class="n">14</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 0 blockers · 8 majors · 6 medium batches open. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
-  <div class="stat"><div class="n">8</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — Review Intelligence + Analytics "actual facts" gaps: listing Q&amp;A, competitor deltas, grid rank, AI-answer visibility. Strategy rule: every number a tenant sees must be verifiable on Google Maps or carry a named source</div></div>
+  <div class="stat"><div class="n amber">1</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new finding still open: INS-5 (INS-1, INS-2, INS-3, INS-4, INS-6, INS-7 fixed)</div></div>
+  <div class="stat"><div class="n">4</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 0 blockers · 3 majors · 1 medium batches open. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
+  <div class="stat"><div class="n">9</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — Review Intelligence + Analytics "actual facts" gaps: listing Q&amp;A, competitor deltas, grid rank, AI-answer visibility, Review Campaign premium gating. Strategy rule: every number a tenant sees must be verifiable on Google Maps or carry a named source</div></div>
 </div>
 
 <section id="model">
@@ -403,11 +403,11 @@
       <td class="num">—</td>
     </tr>
     <tr>
-      <td class="num">LAUNCH-S5</td><td><span class="chip high">High</span></td>
-      <td><strong>The Next middleware rate limiter is simultaneously a DoS vector and an office lockout.</strong> In-memory Map keyed by raw <code>x-forwarded-for</code> with no eviction (entries accumulate forever; spoofable when not behind a sanitizing proxy), while 100 req/min/IP covers every page, RSC prefetch and <code>/media-files/*</code> — an office behind one NAT trips 429s; behind &gt;1 replica the limiter is per-instance and inconsistent.</td>
-      <td class="path">apps/web/middleware.ts:4-24</td>
-      <td>Evict expired entries (bounded LRU), take the leftmost XFF entry only, raise/segment limits for page+RSC traffic, treat as best-effort rather than a control.</td>
-      <td class="num">~2 hrs</td>
+      <td class="num">LAUNCH-S5</td><td><span class="chip ok">Fixed</span></td>
+      <td><strong>The Next middleware rate limiter is simultaneously a DoS vector and an office lockout.</strong> In-memory Map keyed by raw <code>x-forwarded-for</code> with no eviction (entries accumulate forever; spoofable when not behind a sanitizing proxy), while 100 req/min/IP covers every page, RSC prefetch and <code>/media-files/*</code> — an office behind one NAT trips 429s; behind &gt;1 replica the limiter is per-instance and inconsistent. <strong>Fixed 2026-11-02:</strong> extracted a bounded <code>SlidingWindowLimiter</code> (10k keys, expired-prune + LRU eviction), uses the leftmost XFF entry, and separates page/RSC (1,800/min) from media (3,000/min) buckets; API routes skip the edge limiter because the backend owns them. It is explicitly best-effort: limiter failures allow, the map is per replica, and the 429 carries <code>Retry-After</code>. 4 limiter tests; 32 web tests; tsc/build pass; built app loads with CSP intact.</td>
+      <td class="path">apps/web/lib/rate-limit.ts; apps/web/middleware.ts:1-52; apps/web/lib/rate-limit.test.ts</td>
+      <td><span class="chip ok">Done</span></td>
+      <td class="num">—</td>
     </tr>
     <tr>
       <td class="num">LAUNCH-S6</td><td><span class="chip ok">Fixed</span></td>
@@ -438,11 +438,11 @@
       <td class="num">with infra move</td>
     </tr>
     <tr>
-      <td class="num">LAUNCH-S10</td><td><span class="chip high">High</span></td>
-      <td><strong><code>str(e)</code> reaches clients — systemic, ~130 sites.</strong> <code>detail=str(</code> across nearly every router; worst are the meta/storage/rag 502 paths carrying raw upstream driver errors. The old S4 spot-list understated it: this is a pattern, not a spot fix.</td>
-      <td class="path">grep <code>detail=str(</code> services/api/app (worst: meta/router.py, storage/router.py, rag/router.py 502s)</td>
-      <td>Generic client messages, full detail to logs/GlitchTip only. Phase the fix: 502 provider paths first, then sweep.</td>
-      <td class="num">1–2 days phased</td>
+      <td class="num">LAUNCH-S10</td><td><span class="chip warn">Phase 1</span></td>
+      <td><strong><code>str(e)</code> reaches clients — systemic, ~130 sites.</strong> <code>detail=str(</code> across nearly every router; worst are the provider 502 paths carrying raw upstream driver errors. The old S4 spot-list understated it: this is a pattern, not a spot fix. <strong>Phase 1 fixed 2026-11-02:</strong> new <code>upstream_http_error()</code> logs the real exception with its traceback and returns a generic client message (plus a safe permission hint where actionable). Converted every <code>detail=str(e)</code> 502 path across Meta, posts, media, locations, admin model-list, TTS voice catalog, WhatsApp templates, assistant, Localith and review-reply generation. 101 scoped tests pass, including checks that raw provider text never reaches the response. <strong>Remaining:</strong> 116 non-502 <code>detail=str(...)</code> sites — mostly 4xx validation/ownership paths that need a per-site safe/public split.</td>
+      <td class="path">core/upstream_errors.py; modules/{channels/meta,posts,media,locations,admin,tts,whatsapp_templates,assistant,localith}/router.py; tests/test_upstream_errors.py</td>
+      <td><span class="chip warn">Phase 1 done</span> — remaining sweep ~1 day.</td>
+      <td class="num">~1 day remaining</td>
     </tr>
     <tr>
       <td class="num">LAUNCH-S11</td><td><span class="chip ok">Fixed</span></td>
@@ -459,25 +459,25 @@
       <td class="num">—</td>
     </tr>
     <tr>
-      <td class="num">LAUNCH-S14</td><td><span class="chip high">High</span></td>
-      <td><strong>Containers run as root; no CPU limits; no log-rotation config on a 2 GB no-swap host.</strong> Neither Dockerfile has a USER directive; the api image is single-stage with compilers retained. Docker's default json-file logging is unbounded without daemon config. One spike or runaway log = OOM/log-fill on the box that runs everything.</td>
-      <td class="path">services/api/Dockerfile; apps/web/Dockerfile; docker-compose.prod.yml (mem_limit only)</td>
-      <td>Non-root USER + multi-stage api image; <code>logging: driver: json-file, max-size/max-file</code> per service (or daemon.json); CPU limits with the mem ones.</td>
-      <td class="num">~half day</td>
+      <td class="num">LAUNCH-S14</td><td><span class="chip ok">Fixed</span></td>
+      <td><strong>Containers run as root; no CPU limits; no log-rotation config on a 2 GB no-swap host.</strong> Neither Dockerfile had a USER directive; the api image was single-stage with compilers retained. Docker's default json-file logging is unbounded without daemon config. <strong>Fixed 2026-11-02:</strong> the API image is multi-stage (build tools stay in the builder) and runs as UID <code>10001</code>; the web runtime runs as UID <code>1001</code> with a BusyBox-wget healthcheck. Every compose service now has a 10 MB × 3 json-file cap and a CPU ceiling. Both images build and run non-root; the API imports with Alembic/Uvicorn installed and the web server returns 200. Existing uploads volumes may need the documented one-time chown.</td>
+      <td class="path">services/api/Dockerfile; apps/web/Dockerfile; docker-compose.prod.yml; docs/security/infrastructure.md</td>
+      <td><span class="chip ok">Done</span></td>
+      <td class="num">—</td>
     </tr>
     <tr>
-      <td class="num">LAUNCH-P2</td><td><span class="chip high">High</span></td>
-      <td><strong>The customers page does not scale and paginates wrong.</strong> Loads up to 10,000 threads + the <em>entire unbounded Lead table</em> for the tenant + 2 queries per Google-reviews thread inside the loop (N+1), then filters/sorts/slices in Python. Channel-level RBAC is applied <em>after</em> slicing, so RBAC users get short pages and <code>total</code> = filtered page length. One popular tenant's Customers tab is a multi-second full-lead-table request.</td>
-      <td class="path">channels/customers_service.py:96-160; channels/customers_router.py:47-53</td>
-      <td>Push filtering/sorting into SQL, RBAC before slice, batch the reviews lookup.</td>
-      <td class="num">~1 day</td>
+      <td class="num">LAUNCH-P2</td><td><span class="chip ok">Fixed</span></td>
+      <td><strong>The customers page does not scale and paginates wrong.</strong> Loaded up to 10,000 threads + the <em>entire unbounded Lead table</em> for the tenant + 2 queries per Google-reviews thread inside the loop (N+1), then filtered/sorted/sliced in Python. Channel-level RBAC was applied <em>after</em> slicing, so RBAC users got short pages and <code>total</code> = filtered page length. <strong>Fixed 2026-11-02:</strong> customers now uses the shared SQL thread page — platform/category/priority/important filters, RBAC, ordering and keyset pagination all run before LIMIT. Leads are one bulk query for the page and Google review presence is two bulk queries, not N+1. <code>total</code> is the SQL count of the filtered set. The frontend passes <code>sort</code>/<code>cursor</code> and has “Load more customers.” 43 customer/inbox tests pass; browser-verified two-page flow.</td>
+      <td class="path">channels/customers_service.py:95-211; channels/customers_router.py:23-65; channels/service.py:2194-2375; apps/web/components/dashboard/CustomersTable.tsx; apps/web/lib/api-customers.ts; tests/test_customers_api.py</td>
+      <td><span class="chip ok">Done</span></td>
+      <td class="num">—</td>
     </tr>
     <tr>
-      <td class="num">LAUNCH-P3</td><td><span class="chip high">High</span></td>
-      <td><strong>The inbox keyset cursor is dead code from HTTP, and filters run after LIMIT.</strong> The service supports cursor pagination on <code>last_message_at</code> but the route never exposes/forwards a <code>cursor</code> param, and category/priority/important/RBAC filters are applied in Python <em>after</em> the 500-thread LIMIT — threads beyond the first 500 are unreachable and totals are wrong. SCALE-3's "cursor pagination done" claim only holds at the service layer.</td>
-      <td class="path">channels/router.py:716-737 vs channels/service.py:1780-1788</td>
-      <td>Expose + forward the cursor; push the filters into the SQL before LIMIT.</td>
-      <td class="num">~1 day</td>
+      <td class="num">LAUNCH-P3</td><td><span class="chip ok">Fixed</span></td>
+      <td><strong>The inbox keyset cursor is dead code from HTTP, and filters run after LIMIT.</strong> The service supported cursor pagination on <code>last_message_at</code> but the route never exposed/forwarded a <code>cursor</code> param, and category/priority/important/RBAC filters were applied in Python <em>after</em> the 500-thread LIMIT — threads beyond the first 500 were unreachable and totals were wrong. <strong>Fixed 2026-11-02:</strong> <code>/inbox/threads</code> now accepts an opaque <code>cursor</code>, applies category/priority/important/platform/RBAC in SQL before LIMIT, and returns the SQL-filtered <code>total</code> plus <code>next_cursor</code>. The cursor encodes the sort key (pinned/important rank, timestamp, id) so ties cannot skip rows; invalid cursors return 400. The inbox UI has “Load more conversations.” 43 inbox/customer tests pass; browser-verified two-page flow.</td>
+      <td class="path">channels/router.py:718-755; channels/service.py:1708-1930, 2194-2375; channels/schemas.py:188-195; apps/web/app/dashboard/inbox/InboxView.tsx; apps/web/lib/api-inbox.ts; tests/test_inbox_api.py</td>
+      <td><span class="chip ok">Done</span></td>
+      <td class="num">—</td>
     </tr>
     <tr>
       <td class="num">LAUNCH-P4</td><td><span class="chip ok">Fixed</span></td>
@@ -487,11 +487,11 @@
       <td class="num">—</td>
     </tr>
     <tr>
-      <td class="num">LAUNCH-P6</td><td><span class="chip high">High</span></td>
-      <td><strong>No outbound pacing toward Meta's ~80 msg/s per-number limit.</strong> Nothing in the send path rate-limits (only 0.8s inter-part gaps within one message). One busy tenant or a fan-out (catalog image + text + follow-up per inbound) trips Meta throughput → 429s → which per LAUNCH-B3 are terminal.</td>
-      <td class="path">channels/meta/providers/whatsapp.py (send path); channels/service.py send_message</td>
-      <td>Per-phone_number_id token bucket in the adapter (Redis, fail-open toward availability like LLM chat).</td>
-      <td class="num">3–4 hrs</td>
+      <td class="num">LAUNCH-P6</td><td><span class="chip ok">Fixed</span></td>
+      <td><strong>No outbound pacing toward Meta's ~80 msg/s per-number limit.</strong> Nothing in the send path rate-limited (only 0.8s inter-part gaps within one message). One busy tenant or a fan-out could trip Meta throughput → 429s → terminal per LAUNCH-B3. <strong>Fixed 2026-11-02:</strong> the WhatsApp adapter now paces every <code>POST /{phone_number_id}/messages</code> call (text, templates, media-by-id, reactions, typing indicators, status posts) through one Redis token bucket per business number — an atomic Lua HMGET/HSET script (capacity and refill 80/s, 10s idle TTL), keyed by the SHA-256 of the phone id. Callers wait at most one second; if the bucket is still empty they get a local 429 before the request reaches Meta. Redis/script failures fail open for availability, matching the LLM limiter, and log only a 12-character digest. Full suite: 2,107 passed / 3 skipped; Lua script syntax reviewed (no live Redis in CI).</td>
+      <td class="path">channels/meta/providers/whatsapp.py (send path); docs/security/api-security.md; tests/test_whatsapp_send_limit.py</td>
+      <td><span class="chip ok">Done</span></td>
+      <td class="num">—</td>
     </tr>
   </table></div>
 
@@ -506,11 +506,11 @@
       <td class="num">—</td>
     </tr>
     <tr>
-      <td class="num">LAUNCH-M2</td><td><span class="chip med">Med</span></td>
-      <td><strong>Dead code with live consequences.</strong> (a) <code>run_meta_events_consumer</code> is never started and would never commit offsets if started (manual-commit client, no commit call) — flipping it on replays from earliest; the <code>meta-events</code> topic is produced but never consumed. (b) JobPanel polls every 2s and is imported nowhere. (c) <code>optimizePackageImports</code> lists packages that aren't dependencies. (d) <code>DB_POOL_MODE</code> is consumed nowhere — PgBouncer mode is enforced by nothing.</td>
-      <td class="path">meta/consumer.py:3072-3110; apps/web JobPanel.tsx; apps/web/next.config.ts:50-52; app/config.py:8</td>
-      <td>Delete (a)–(c) or fix before anyone enables them; document (d) or wire it.</td>
-      <td class="num">~1 hr</td>
+      <td class="num">LAUNCH-M2</td><td><span class="chip ok">Fixed</span></td>
+      <td><strong>Dead code with live consequences.</strong> (a) The never-started consumer and its outbox fallback were deleted, then replaced by a proper two-phase handoff: the outbox relay publishes every pending/failed meta row to <code>meta-events</code> with a stable <code>event_id</code>, marks it <code>published</code> using a consumer-aware CAS (so it never overwrites consumer progress), and the bounded Kafka consumer owns processing. One message per poll keeps offsets ordered; offsets are committed only after the DB outcome is durable; handler failures go back to the outbox with backoff; ambiguous sends stay terminal. Tests cover publisher/consumer ownership and CAS safety. (b) <code>JobPanel.tsx</code> was imported nowhere and its 2s polling is gone; its unused <code>/rag/jobs</code> client wrapper was also removed. (c) <code>optimizePackageImports</code> referenced packages absent from <code>package.json</code>; the dead experimental block is removed. (d) <code>DB_POOL_MODE</code> is now validated at startup (<code>session|transaction</code>) and transaction mode sets asyncpg <code>statement_cache_size=0</code> for both DB engines; docs state the remaining server-side limit (API cannot enforce PgBouncer's own pool_mode). Full backend suite: 2,113 passed.</td>
+      <td class="path">channels/meta/meta_events_worker.py; modules/outbox/service.py; modules/outbox/worker.py; docs/integrations/meta/webhooks.md; apps/web/components/dashboard/JobPanel.tsx (deleted); apps/web/next.config.ts; app/config.py; app/database.py; docs/database/README.md; docs/api/configuration.md</td>
+      <td><span class="chip ok">Done</span></td>
+      <td class="num">—</td>
     </tr>
     <tr>
       <td class="num">LAUNCH-M3</td><td><span class="chip ok">Fixed</span></td>
@@ -520,11 +520,11 @@
       <td class="num">—</td>
     </tr>
     <tr>
-      <td class="num">LAUNCH-M4</td><td><span class="chip med">Med</span></td>
-      <td><strong>Inbox action errors are swallowed; composer draft lost on failed send.</strong> Pin/archive/delete failures hit <code>catch { /* keep stale */ }</code> — no user-facing surface, no invalidation, no poll to correct the row (violates the repo's no-silent-failure rule); the Delete modal button has no busy guard (double-click double-fires DELETE). <code>send()</code> clears the draft even when the provider rejected the send.</td>
-      <td class="path">apps/web/app/dashboard/inbox/InboxView.tsx:369-412, 1072, 2051-2057</td>
-      <td>Surface failures (toast/banner + invalidate on error); busy-guard the modal; only clear the draft on success.</td>
-      <td class="num">~2 hrs</td>
+      <td class="num">LAUNCH-M4</td><td><span class="chip ok">Fixed</span></td>
+      <td><strong>Inbox action errors are swallowed; composer draft lost on failed send.</strong> Pin/archive/delete failures hit <code>catch { /* keep stale */ }</code> — no user-facing surface, no invalidation, no refetch to correct the row; the Delete modal button had no busy guard; <code>send()</code> cleared the draft even when the provider rejected it. <strong>Fixed 2026-11-02:</strong> list actions now surface a dismissible <code>role="alert"</code> banner with action-specific copy and <code>queryClient.invalidateQueries</code> on failure or success. The Delete modal keeps open feedback on failure, disables Cancel/Delete while in flight, and prevents double DELETE. The composer only clears draft/replyTo on an accepted send; provider-rejected messages keep the draft (and stay visible as failed rows). Web tests, tsc and production build pass.</td>
+      <td class="path">apps/web/app/dashboard/inbox/InboxView.tsx; readiness-report.html</td>
+      <td><span class="chip ok">Done</span></td>
+      <td class="num">—</td>
     </tr>
     <tr>
       <td class="num">LAUNCH-M5</td><td><span class="chip ok">Fixed</span></td>
@@ -534,36 +534,36 @@
       <td class="num">—</td>
     </tr>
     <tr>
-      <td class="num">LAUNCH-M6</td><td><span class="chip med">Med</span></td>
-      <td><strong>WS reconnect has no jitter and no liveness detection.</strong> Exponential backoff caps at 16s (attempt clamped at 5) with no jitter — any API restart reconnects every open dashboard in lockstep. No ping-based liveness or online/offline listener, so dead half-open sockets linger.</td>
-      <td class="path">apps/web/lib/use-inbox-realtime.ts:109-143</td>
-      <td>Full jitter (+ random up to delay), raise the cap, ping/pong or online/offline listener.</td>
-      <td class="num">~1 hr</td>
+      <td class="num">LAUNCH-M6</td><td><span class="chip ok">Fixed</span></td>
+      <td><strong>WS reconnect has no jitter and no liveness detection.</strong> Exponential backoff capped at 16s and had no jitter; any API restart reconnected every dashboard in lockstep; half-open sockets were not detected. <strong>Fixed 2026-11-02:</strong> reconnect now uses full-jitter backoff (uniform delay up to a 60s exponential ceiling, max attempt 8) instead of lockstep retries. The hook treats server pings/messages as liveness, checks every 15s in visible tabs, closes a socket silent for 75s, and reconnects via the standard jittered path. Offline/"online" browser events now pause and immediately resume the connection instead of retrying in a tight loop. 4 hook tests cover ping handling, half-open teardown, and network-loss/recovery behavior; web tests, tsc, and build pass.</td>
+      <td class="path">apps/web/lib/use-inbox-realtime.ts; apps/web/lib/use-inbox-realtime.test.tsx</td>
+      <td><span class="chip ok">Done</span></td>
+      <td class="num">—</td>
     </tr>
     <tr>
-      <td class="num">LAUNCH-M7</td><td><span class="chip med">Med</span></td>
-      <td><strong>PII encryption is inconsistent.</strong> <code>ChannelMessage.contact_phone</code> is Fernet-encrypted + hashed (SEC-M2), but <code>WhatsAppThreadState.contact_phone</code>, <code>ConversationContext.contact_phone</code> and <code>ContactProfile.contact_id</code> (IGSID) store plaintext. If the message rows justify encryption, these leak the same PII.</td>
-      <td class="path">channels/meta/models.py (thread state); conversation_context.py; contact profiles</td>
-      <td>Encrypt + hash the same fields (with legacy-plaintext fallback like SEC-M2 did), or document why the boundary differs.</td>
-      <td class="num">~half day</td>
+      <td class="num">LAUNCH-M7</td><td><span class="chip ok">Fixed</span></td>
+      <td><strong>PII encryption is inconsistent.</strong> <code>ChannelMessage.contact_phone</code> is Fernet-encrypted + hashed (SEC-M2). Verified <code>WhatsAppThreadState.contact_phone</code> and <code>ConversationContext.contact_phone</code> are already encrypted on write with an HMAC-hash lookup column, matching the <code>ChannelMessage</code> pattern (thread_state.py, conversation_context.py). <code>ContactProfile.contact_id</code> stays plaintext because it is a plaintext join key shared with <code>Lead.contact_id</code> and <code>ChannelBridge.contact_id</code>; encrypting it in isolation breaks those referential lookups. The coordinated fix (encrypt <code>Lead</code>/<code>ContactProfile</code>/<code>ChannelBridge</code> contact_id together with hash columns + backfill) is scoped separately. Boundary documented in docs/security/data-protection.md.</td>
+      <td class="path">docs/security/data-protection.md; channels/meta/thread_state.py; channels/conversation_context.py</td>
+      <td><span class="chip ok">Done</span></td>
+      <td class="num">—</td>
     </tr>
     <tr>
-      <td class="num">LAUNCH-M8</td><td><span class="chip med">Decide</span></td>
-      <td><strong>AI auto-replies bypass the plan messaging quota.</strong> <code>_ensure_messaging_quota</code> gates only human sends. Exposure is bounded by the LLM budget gate (entitlement + reserve before every call), so this may be intentional — but today a free tenant's AI reply count is uncapped. Make it a deliberate decision and document it.</td>
-      <td class="path">channels/router.py:1365-1385; meta/consumer.py reply path</td>
-      <td>Either extend the quota to AI replies or write the rationale into the plan/entitlements docs.</td>
-      <td class="num">decision + ~1 hr</td>
+      <td class="num">LAUNCH-M8</td><td><span class="chip ok">Decided</span></td>
+      <td><strong>AI auto-replies bypass the plan messaging quota.</strong> <code>_ensure_messaging_quota</code> gates only human sends. Exposure is bounded by the LLM budget gate (entitlement + reserve before every call), so this may be intentional — but today a free tenant's AI reply count is uncapped. <strong>Decision 2026-11-03:</strong> AI auto-replies remain unbounded by <code>max_messages_per_month</code>. The LLM budget gate (<code>check_feature(tenant_id, "ai_replies")</code>, fail-closed entitlement + credit reserve/settle before every LLM call) is the appropriate control because it directly caps dollar cost (tokens), whereas the messaging quota caps human conversation volume. AI replies are also selectively triggered by <code>should_ai_reply()</code> (confusion detection, mode state, escalation clock), so not every inbound message generates one. Extending the messaging quota to AI replies would double-count cost control and add latency to the hot reply path without reducing spend. Documented in docs/guides/billing-and-notifications.md under "Messaging quota vs. AI auto-replies."</td>
+      <td class="path">channels/router.py:1476-1497 (_ensure_messaging_quota); meta/consumer.py reply path (no quota call — intentional); docs/guides/billing-and-notifications.md</td>
+      <td><span class="chip ok">Done</span></td>
+      <td class="num">—</td>
     </tr>
     <tr>
       <td class="num">LAUNCH-M9</td><td><span class="chip med">Med</span></td>
-      <td><strong>Scale wiring batch (designed for, not yet wired).</strong> (a) <code>get_db_read()</code> has zero call sites — every auth check (2+ queries) hits the primary with no cache; route hot reads to the replica once it exists. (b) /metrics counters are per-process globals and prod runs 2 uvicorn workers — each scrape sees ~half, flapping; multiproc or one worker per pod. (c) Alembic still runs at container boot — fine at 1 replica, a race the moment api scales (worker correctly waits on api health today). (d) <code>llm_usage_events</code> lacks a (tenant_id, created_at) composite; review-insights search uses unindexable <code>LOWER(LIKE %…%)</code> + offset. (e) <code>channel_messages</code> has no retention/partitioning story — deliberate, but it becomes the largest table; needs an archival decision. (f) AI-reply throughput: single worker ≈ 2 msg/s vs a 10k msg/min target — the <code>--scale worker</code> + <code>WORKER_LOOPS</code> split is designed-in but not the default topology; ingress commits per event (~4 round trips) are the first batching candidate.</td>
-      <td class="path">core/database.py:170 (sole get_db_read ref); core/deps.py:21-82; main.py:93-98; Dockerfile:31; llm/models.py:106-124; analytics/service.py:275-280; retention.py; meta_events_worker.py:53-59</td>
-      <td>Wire (a) with the replica purchase; (b)/(c) before scaling api; (d) indexes next migration; (e) product decision; (f) write the scale-out runbook.</td>
+      <td><strong>Scale wiring batch (designed for, not yet wired).</strong> (a) <code>get_db_read()</code> has zero call sites — every auth check (2+ queries) hits the primary with no cache; route hot reads to the replica once it exists. (b) /metrics counters are per-process globals and prod runs 2 uvicorn workers — each scrape sees ~half, flapping; multiproc or one worker per pod. (c) Alembic still runs at container boot — fine at 1 replica, a race the moment api scales (worker correctly waits on api health today). <strong>(d) Done 2026-11-03:</strong> composite index <code>ix_llm_usage_events_tenant_created</code> on <code>llm_usage_events(tenant_id, created_at)</code> and pg_trgm GIN indexes on <code>review_insights(review_text)</code> / <code>review_insights(reviewer_name)</code> added (migrations <code>f5a8c2d6e9b14371</code>, <code>f5a8c2d6e9b14372</code>). <strong>(f) Done 2026-11-03:</strong> AI-reply throughput runbook written at docs/operations/ai-reply-throughput-runbook.md — target 10k msg/min, current ~2 msg/s per worker, scale via WORKER_LOOPS=meta-events-ai-replies + --scale worker=N, Kafka topic meta-events has 12 partitions, ingress commits per event identified as first batching candidate. (e) <code>channel_messages</code> has no retention/partitioning story — deliberate, but it becomes the largest table; needs an archival decision.</td>
+      <td class="path">core/database.py:170 (sole get_db_read ref); core/deps.py:21-82; main.py:93-98; Dockerfile:31; llm/models.py:106-124; analytics/service.py:275-280; retention.py; meta_events_worker.py:53-59; alembic/versions/f5a8c2d6e9b14371_llm_usage_events_tenant_created_idx.py; alembic/versions/f5a8c2d6e9b14372_review_insights_trgm_idx.py; docs/operations/ai-reply-throughput-runbook.md</td>
+      <td>Wire (a) with the replica purchase; (b)/(c) before scaling api; (d) done; (e) product decision; (f) done.</td>
       <td class="num">phased</td>
     </tr>
   </table></div>
 
-  <p class="note">Suggested order: S10 → P2/P3/P6 → the rest. P4, S1, S2, S3, S4, S6, S7, S11, S12, B5, M1, M3 and M5 are fixed; B3 was fixed earlier. Infra rows (S8/S9/S14) can land any time on the current box; they stop being optional the day a second replica or real customers arrive.</p>
+  <p class="note">Suggested order: S10 → S8/S9 → the rest. P2, P3, P4, P6, S1, S2, S3, S4, S5, S6, S7, S11, S12, S14, B5, M1, M2, M3, M4, M5, M6, M7, M8 are fixed/decided; M-9(d) and M-9(f) done, M-9(a)/(b)/(c)/(e) remain; B3 was fixed earlier. Infra rows (S8/S9) can land any time on the current box; they stop being optional the day a second replica or real customers arrive.</p>
 </section>
 
 <section id="pass-2026-11-02">
@@ -571,16 +571,17 @@
   <h2>Nov 2 pass — "actual facts" audit: Review Intelligence + Analytics</h2>
   <p>Product-track audit (2026-11-02), not launch-track. The strategy: every number on the dashboard must survive one test — <strong>the tenant opens Google Maps and sees the same thing</strong>, or the card carries a named source. No invented insight scores, no unlabeled AI claims. Three classes of fact count: (1) traceable to Google directly (GBP/Places APIs), (2) computed from synced data with the formula shown, (3) cited benchmarks (survey or the tenant's own cohort). Paid-tool pricing from the same-day research proves the demand: Birdeye ~$300/mo, Podium ~$289/mo, ReviewTrackers ~$109/mo, Local Falcon $24.95–$99.95/mo, Whitespark grid scans from $10/mo — the differentiator is not more charts, it is <em>verifiability</em>.</p>
 
-  <h3>Already factual — do not rebuild (verified 2026-11-02)</h3>
+  <h3>Already factual — do not rebuild <span class="chip ok">7/7 verified (2026-11-02)</span></h3>
+  <p class="note">All seven facts below are already wired end-to-end and visible to tenants today. No rebuild needed — only display polish (tooltips, source links, delta rendering) remains, and that is tracked in the FACT gaps below.</p>
   <div class="scroll"><table>
     <tr><th>Fact</th><th>Where it lives</th><th>Why it matters</th></tr>
-    <tr><td><strong>Google visibility + acquisition + search keywords</strong> (impressions, calls, direction requests, website clicks, keyword impressions w/ trend)</td><td class="path">analytics/performance.py (daily sync worker, never persists mock data) → /visibility, /acquisition, /growth/keywords → Growth tab (app/dashboard/growth/page.tsx:191-195)</td><td>The Performance API was assumed missing in the chat report — it is not. This is Google's own traffic truth, already visible in the tenant's GBP dashboard, so zero trust-barrier.</td></tr>
-    <tr><td><strong>Response rate + average response seconds + velocity ratio</strong></td><td class="path">analytics/service.py:101-189</td><td>Computed from the synced review stream; candidates for median + distribution display (FACT-8).</td></tr>
-    <tr><td><strong>Reputation / health scores as explicit formulas</strong> (avg_rating/5 × 50 + response_rate × 25 + positive_ratio × 25)</td><td class="path">analytics/service.py:25-37</td><td>Published arithmetic, not vibes — display the formula next to the score and the "facts" claim becomes credible.</td></tr>
-    <tr><td><strong>Review edit &amp; removal tracking</strong> (previousRating / previousText, "Edited" tab)</td><td class="path">apps/web/app/dashboard/reviews/page.tsx</td><td>Market-unique fact — almost no paid tool shows "3 customers edited their reviews this month". Lead with it in marketing.</td></tr>
-    <tr><td><strong>Request→review click tracking</strong> (tokenized links)</td><td class="path">analytics/router.py:703 (/review-requests/{token}/click)</td><td>The funnel fact exists in data; only the conversion-rate display is missing (FACT-7).</td></tr>
-    <tr><td><strong>Competitor snapshots via Places Text Search</strong> (idempotent upserts + stale sweep)</td><td class="path">analytics/competitors.py:31-165, /benchmark/external + refresh</td><td>Point-in-time peer ratings exist; the <em>delta</em> fact is the missing piece (FACT-2).</td></tr>
-    <tr><td><strong>Tenant cohort benchmarks</strong> (branch breakdowns, medians, market rank)</td><td class="path">analytics/benchmark.py</td><td>The raw material for the Saudi Regional Index (FACT-6) — the only regional review benchmark in existence.</td></tr>
+    <tr><td><strong>Google visibility + acquisition + search keywords</strong> <span class="chip ok">Verified</span> (impressions, calls, direction requests, website clicks, keyword impressions w/ trend)</td><td class="path">analytics/performance.py (daily sync worker, never persists mock data) → /visibility, /acquisition, /growth/keywords → Growth tab (app/dashboard/growth/page.tsx:191-195)</td><td>The Performance API was assumed missing in the chat report — it is not. This is Google's own traffic truth, already visible in the tenant's GBP dashboard, so zero trust-barrier.</td></tr>
+    <tr><td><strong>Response rate + average response seconds + velocity ratio</strong> <span class="chip ok">Verified</span></td><td class="path">analytics/service.py:101-189</td><td>Computed from the synced review stream; candidates for median + distribution display (FACT-8).</td></tr>
+    <tr><td><strong>Reputation / health scores as explicit formulas</strong> <span class="chip ok">Verified</span> (avg_rating/5 × 50 + response_rate × 25 + positive_ratio × 25)</td><td class="path">analytics/service.py:25-37</td><td>Published arithmetic, not vibes — display the formula next to the score and the "facts" claim becomes credible.</td></tr>
+    <tr><td><strong>Review edit &amp; removal tracking</strong> <span class="chip ok">Verified</span> (previousRating / previousText, "Edited" tab)</td><td class="path">apps/web/app/dashboard/reviews/page.tsx</td><td>Market-unique fact — almost no paid tool shows "3 customers edited their reviews this month". Lead with it in marketing.</td></tr>
+    <tr><td><strong>Request→review click tracking</strong> <span class="chip ok">Verified</span> (tokenized links)</td><td class="path">analytics/router.py:703 (/review-requests/{token}/click)</td><td>The funnel fact exists in data; only the conversion-rate display is missing (FACT-7).</td></tr>
+    <tr><td><strong>Competitor snapshots via Places Text Search</strong> <span class="chip ok">Verified</span> (idempotent upserts + stale sweep)</td><td class="path">analytics/competitors.py:31-165, /benchmark/external + refresh</td><td>Point-in-time peer ratings exist; the <em>delta</em> fact is the missing piece (FACT-2).</td></tr>
+    <tr><td><strong>Tenant cohort benchmarks</strong> <span class="chip ok">Verified</span> (branch breakdowns, medians, market rank)</td><td class="path">analytics/benchmark.py</td><td>The raw material for the Saudi Regional Index (FACT-6) — the only regional review benchmark in existence.</td></tr>
   </table></div>
 
   <h3>Gaps — make the dashboard undeniable</h3>
@@ -642,9 +643,16 @@
       <td>Add median response time + distribution to the review metrics; render the score formula in a tooltip/footnote ("50% rating · 25% response · 25% sentiment").</td>
       <td class="num">1 day</td>
     </tr>
+    <tr>
+      <td class="num">FACT-9</td><td><span class="chip high">High</span></td>
+      <td><strong>No Review Campaign feature — the most-requested premium upsell.</strong> Tenants want to send a "please review our business" link only to happy customers, after a conversation, as a time-boxed campaign (from/to dates). It should be gated behind plan entitlements: trial gets 1 campaign per week (≤7 days); Growth/Pro gets 14 days/month (2× 7-day or 1× 14-day); Pro+/Enterprise gets 30 days configurable (30/14/7-day windows). Campaign results (sent → clicked → reviewed, per campaign) must be stored and reusable — duplicate any past campaign with one button, including its recipient list, message copy, date window, and results. Nothing in the codebase builds this: no campaign table, no date-window gating, no plan-level campaign limits, no duplicate/reuse flow.</td>
+      <td class="path">analytics/router.py:703 (review-request click); channels/router.py (send path); billing/entitlements.py (plan tiers); new: campaign table, campaign router, duplicate/reuse endpoint</td>
+      <td>Create campaign table (id, tenant_id, name, from_date, to_date, status, message_template, recipient_count, sent_count, clicked_count, reviewed_count, created_at, updated_at); add plan-level campaign limits to entitlements (campaigns_per_month, max_days_per_campaign); build campaign CRUD + duplicate/reuse endpoint; gate the /inbox/send review-request path behind an active campaign; render campaign results card (sent → clicked → reviewed, with rate and trend).</td>
+      <td class="num">4–5 days</td>
+    </tr>
   </table></div>
 
-  <p class="note">Order: FACT-2 → FACT-3 (fastest to land, biggest credibility win) → FACT-1 → FACT-7/FACT-8 (one page-touch each) → FACT-6 → FACT-4 (buy, phase 2) → FACT-5 (spike, phase 3). Every row here is product-track — none of it blocks the Phase 1 launch; FACT-2/FACT-3/FACT-7/FACT-8 are each ≤2 days and compound into the "we show facts, not vibes" position the paid-tool market (Birdeye $300/mo, Podium $289/mo) currently leaves open.</p>
+  <p class="note">Order: FACT-2 → FACT-3 (fastest to land, biggest credibility win) → FACT-1 → FACT-7/FACT-8 (one page-touch each) → FACT-6 → FACT-4 (buy, phase 2) → FACT-5 (spike, phase 3) → FACT-9 (premium Review Campaign, plan-gated + duplicate/reuse). Every row here is product-track — none of it blocks the Phase 1 launch; FACT-2/FACT-3/FACT-7/FACT-8 are each ≤2 days and compound into the "we show facts, not vibes" position the paid-tool market (Birdeye $300/mo, Podium $289/mo) currently leaves open.</p>
 
   <h3>Also found 2026-11-02 — why the Overview was wall-to-wall zeros</h3>
   <div class="scroll"><table>
@@ -1483,11 +1491,11 @@
       <td class="num">—</td>
     </tr>
     <tr>
-      <td class="num">INS-4</td><td><span class="chip med">Med</span></td><td><span class="chip med">Infra</span></td>
-      <td><strong>Prometheus UI is published on <code>0.0.0.0:9090</code> in the prod compose</strong> — a public, unauthenticated page that exposes targets, scrape health and build info. The dev compose already binds redis/kafka to loopback; prod prometheus did not get the same treatment. <em>Tied to the self-hosted single-box setup; on Google Cloud use Cloud Monitoring / GMP instead — skip if migrating to GCP.</em></td>
-      <td class="path">docker-compose.prod.yml:160-161</td>
-      <td><code>"9090:9090"</code> → <code>"127.0.0.1:9090:9090"</code>. If a hosted Grafana needs remote scrape, run a grafana-agent container in-compose instead of exposing the UI.</td>
-      <td class="num">2 min</td>
+      <td class="num">INS-4</td><td><span class="chip ok">Fixed</span></td><td><span class="chip med">Infra</span></td>
+      <td><strong>Prometheus UI is published on <code>0.0.0.0:9090</code> in the prod compose</strong> — a public, unauthenticated page that exposes targets, scrape health and build info. The dev compose already binds redis/kafka to loopback; prod prometheus did not get the same treatment. <strong>Fixed 2026-11-02:</strong> the port now binds <code>127.0.0.1:9090:9090</code>; the API scrape stays on the internal compose network. <em>On Google Cloud this becomes load-balancer/Cloud Monitoring config.</em></td>
+      <td class="path">docker-compose.prod.yml (prometheus service)</td>
+      <td><span class="chip ok">Done</span></td>
+      <td class="num">—</td>
     </tr>
     <tr>
       <td class="num">INS-5</td><td><span class="chip med">Ctx</span></td><td><span class="chip med">Infra</span></td>

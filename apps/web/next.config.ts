@@ -47,9 +47,6 @@ const nextConfig: NextConfig = {
       { protocol: "https", hostname: "**.googleapis.com" },
     ],
   },
-  experimental: {
-    optimizePackageImports: ["lucide-react", "@heroicons/react"],
-  },
   async headers() {
     return [
       {

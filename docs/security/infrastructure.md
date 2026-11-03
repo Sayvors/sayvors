@@ -165,6 +165,14 @@ The staging API image builds with the repository root as its context, so `.docke
 - Verified with a BuildKit probe: the API context is 38.46 kB and the web context is 20.51 kB; neither contains `.env` files or `.git`.
 - When adding a Dockerfile, add a `.dockerignore` at its context root. Never rely on `COPY` to keep secrets out of the daemon.
 
+### Container Hardening
+
+- The API image is multi-stage: compilers and headers stay in the builder; the runtime is `python:3.11-slim` with only `libpq5`, `curl` and `ffmpeg`, and runs as UID `10001`.
+- The web image runs as UID `1001`; its healthcheck uses BusyBox `wget`.
+- Every production compose service has a `json-file` log cap of 10 MB × 3 and a CPU ceiling.
+- Prometheus's UI binds `127.0.0.1:9090`; it is not proxied publicly.
+- An existing `uploadsdata` volume created by the old root image may need a one-time `chown -R 10001:10001 /app/data/uploads`.
+
 ### Runtime Security (Planned)
 
 - Falco for runtime threat detection

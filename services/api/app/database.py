@@ -14,6 +14,26 @@ logger = logging.getLogger(__name__)
 # connection.
 _vector_codec_logged = False
 
+
+def _connection_args(url: str) -> dict:
+    """Connection arguments, matched to the configured PgBouncer mode.
+
+    Transaction mode gives the backend no stable client session, so asyncpg's
+    prepared-statement LRU cannot be reused safely. Session mode keeps the
+    client/server session affinity PgBouncer needs for cached statements.
+    """
+    args: dict = {
+        "server_settings": {
+            "statement_timeout": str(settings.DB_STATEMENT_TIMEOUT_MS),
+            "idle_in_transaction_session_timeout": str(settings.DB_IDLE_IN_TX_TIMEOUT_MS),
+            "lock_timeout": str(settings.DB_LOCK_TIMEOUT_MS),
+        }
+    }
+    if settings.DB_POOL_MODE == "transaction" and url.startswith("postgresql"):
+        args["statement_cache_size"] = 0
+    return args
+
+
 # ── Writer engine (primary / PgBouncer) ──────────────────────────────
 engine = create_async_engine(
     settings.DATABASE_URL,
@@ -23,13 +43,7 @@ engine = create_async_engine(
     pool_timeout=settings.DB_POOL_TIMEOUT_SECONDS,
     pool_recycle=1800,
     pool_pre_ping=True,
-    connect_args={
-        "server_settings": {
-            "statement_timeout": str(settings.DB_STATEMENT_TIMEOUT_MS),
-            "idle_in_transaction_session_timeout": str(settings.DB_IDLE_IN_TX_TIMEOUT_MS),
-            "lock_timeout": str(settings.DB_LOCK_TIMEOUT_MS),
-        }
-    },
+    connect_args=_connection_args(settings.DATABASE_URL),
 )
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
@@ -44,13 +58,7 @@ engine_read = create_async_engine(
     pool_timeout=settings.DB_POOL_TIMEOUT_SECONDS,
     pool_recycle=1800,
     pool_pre_ping=True,
-    connect_args={
-        "server_settings": {
-            "statement_timeout": str(settings.DB_STATEMENT_TIMEOUT_MS),
-            "idle_in_transaction_session_timeout": str(settings.DB_IDLE_IN_TX_TIMEOUT_MS),
-            "lock_timeout": str(settings.DB_LOCK_TIMEOUT_MS),
-        }
-    },
+    connect_args=_connection_args(_reader_url),
 )
 async_session_read = async_sessionmaker(engine_read, class_=AsyncSession, expire_on_commit=False)
 

@@ -3,12 +3,14 @@ import sys
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from app.config import settings, validate_production_settings
+from app.config import Settings, settings, validate_production_settings
+from app import database
 
 _PROD = {
     "JWT_SECRET": "x" * 40,
@@ -52,3 +54,24 @@ def test_each_permissive_default_fails_closed(monkeypatch, attr, value):
     with pytest.raises(SystemExit) as exc:
         validate_production_settings()
     assert exc.value.code == 1
+
+
+def test_db_pool_mode_is_normalized_and_validated():
+    assert Settings(DB_POOL_MODE=" TRANSACTION ").DB_POOL_MODE == "transaction"
+
+    with pytest.raises(ValidationError):
+        Settings(DB_POOL_MODE="bogus")
+
+
+def test_transaction_db_pool_mode_disables_asyncpg_statement_cache(monkeypatch):
+    monkeypatch.setattr(settings, "DB_POOL_MODE", "transaction")
+    args = database._connection_args(
+        "postgresql+asyncpg://user:pass@db:6432/sayvors?ssl=require"
+    )
+    assert args["statement_cache_size"] == 0
+
+    monkeypatch.setattr(settings, "DB_POOL_MODE", "session")
+    args = database._connection_args(
+        "postgresql+asyncpg://user:pass@db:5432/sayvors?ssl=require"
+    )
+    assert "statement_cache_size" not in args

@@ -138,16 +138,11 @@ async def enqueue_event_in(
 async def fetch_pending_events(batch_size: int = 100) -> list[EventOutbox]:
     """Fetch a batch of events ready for delivery with FOR UPDATE SKIP LOCKED.
 
-    Multiple drainers can run concurrently without twin-sending events (S5 in design doc).
-
-    Ownership split: ``meta.*`` rows are EXCLUDED here. They are owned
-    exclusively by the meta events worker, which claims them from the same
-    table (pending -> processing -> sent/failed/dead). The Kafka publisher
-    must never mark them ``sent``: nothing consumes the ``meta-events`` Kafka
-    topic since the sequential Kafka consumer was retired, so a published
-    meta event is processed by nobody — yet its row reads ``sent`` and the
-    meta worker will never pick it up. That race silently drops inbound
-    customer messages (accepted 200, stored nowhere, no reply, no log).
+    Multiple drainers can run concurrently without twin-sending events (S5 in
+    design doc). Meta events go through the same outbox -> Kafka relay as the
+    other dispatch lanes. The outbox holds the durable transaction boundary;
+    the Kafka consumer owns processing, and failed rows are republished after
+    their DB backoff. The outbox is not a substitute for the streaming bus.
     """
     async with async_session() as db:
         now = datetime.now(timezone.utc)
@@ -157,8 +152,6 @@ async def fetch_pending_events(batch_size: int = 100) -> list[EventOutbox]:
                 EventOutbox.status.in_(["pending", "failed"]),
                 EventOutbox.next_retry_at <= now,
                 EventOutbox.attempts < MAX_RETRIES,
-                # Meta events belong to the meta events worker (see above).
-                ~EventOutbox.event_type.like("meta.%"),
             )
             .order_by(EventOutbox.created_at)
             .with_for_update(skip_locked=True)
@@ -169,6 +162,32 @@ async def fetch_pending_events(batch_size: int = 100) -> list[EventOutbox]:
         for e in events:
             db.expunge(e)
         return events
+
+
+async def mark_published(events: list[EventOutbox]) -> None:
+    """Mark rows accepted by Kafka, without overwriting consumer progress.
+
+    Kafka returns before the consumer finishes. This compare-and-set keeps the
+    outbox row from regressing after the consumer has marked it sent, failed,
+    or ambiguous. Rows are left in ``published`` until the consumer closes the
+    business outcome, so retained Kafka lag is visible as pending work rather
+    than pretending a message was consumed.
+    """
+    if not events:
+        return
+    async with async_session() as db:
+        for event in events:
+            await db.execute(
+                update(EventOutbox)
+                .where(
+                    EventOutbox.id == event.id,
+                    EventOutbox.status.in_(["pending", "failed"]),
+                    EventOutbox.attempts == event.attempts,
+                    EventOutbox.next_retry_at == event.next_retry_at,
+                )
+                .values(status="published", last_error=None)
+            )
+        await db.commit()
 
 
 async def mark_sent(event_ids: list[str]) -> None:

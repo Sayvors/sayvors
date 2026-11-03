@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchThreadMessages, INBOX_THREAD_PAGE_SIZE } from "./api-inbox";
+import { fetchInboxThreads, fetchThreadMessages, INBOX_THREAD_PAGE_SIZE } from "./api-inbox";
 
 function mockFetch(payload: unknown) {
   const urls: string[] = [];
@@ -63,5 +63,38 @@ describe("fetchThreadMessages", () => {
     const data = await fetchThreadMessages("chan-1", "+966500000001");
 
     expect(data.next_cursor).toBe("m-3");
+  });
+});
+
+describe("fetchInboxThreads", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("returns the page contract and forwards cursor/filters", async () => {
+    const urls = mockFetch({
+      threads: [{ channel_id: "chan-1", key: "966500000001" }],
+      total: 42,
+      next_cursor: "next-page",
+    });
+
+    const page = await fetchInboxThreads("ahmed", false, {
+      cursor: "page-2",
+      category: "complaint",
+      priority: "high",
+      important: true,
+      limit: 100,
+    });
+
+    expect(page.threads).toHaveLength(1);
+    expect(page.total).toBe(42);
+    expect(page.next_cursor).toBe("next-page");
+    const url = urls[0];
+    expect(url).toContain("search=ahmed");
+    expect(url).toContain("cursor=page-2");
+    expect(url).toContain("category=complaint");
+    expect(url).toContain("priority=high");
+    expect(url).toContain("important=true");
+    expect(url).toContain("limit=100");
   });
 });

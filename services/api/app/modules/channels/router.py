@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_db, get_current_user
+from ...core.upstream_errors import upstream_http_error
 from ..team.context import TenantContext, get_context, require_perm, tenant_id_of
 from ...database import async_session as _async_session
 from ...config import settings
@@ -62,7 +63,7 @@ from .service import (
     get_channel,
     hash_contact_phone,
     list_channels,
-    list_inbox_threads,
+    list_inbox_threads_page,
     list_messages,
     list_thread_messages,
     react_to_message,
@@ -721,22 +722,36 @@ async def inbox_threads(
     important: bool | None = Query(None),
     include_archived: bool = Query(False),
     limit: int = Query(100, ge=1, le=500),
+    cursor: str | None = Query(None, max_length=512),
     ctx: TenantContext = Depends(require_perm("inbox.view")),
     db: AsyncSession = Depends(get_db),
 ):
-    """List inbox threads, optionally filtered by category, priority or
-    the derived `important` flag."""
-    threads = await list_inbox_threads(ctx.user, db, search=search, limit=limit, include_archived=include_archived)
-    if category:
-        threads = [t for t in threads if t.get("category") == category]
-    if priority:
-        threads = [t for t in threads if t.get("priority") == priority]
-    if important is not None:
-        threads = [t for t in threads if bool(t.get("important")) is important]
-    visible = ctx.visible_channel_ids()
-    if visible is not None:
-        threads = [t for t in threads if t.get("channel_id") in visible]
-    return InboxThreadListResponse(threads=[InboxThread(**t) for t in threads], total=len(threads))
+    """One filtered, RBAC-scoped page of inbox threads.
+
+    Filters and channel visibility are applied in SQL before LIMIT. `cursor`
+    from a previous response walks to the next page; `total` counts the
+    filtered result set, not the page.
+    """
+    try:
+        threads, total, next_cursor = await list_inbox_threads_page(
+            ctx.user,
+            db,
+            search=search,
+            limit=limit,
+            cursor=cursor,
+            include_archived=include_archived,
+            category=category,
+            priority=priority,
+            important=important,
+            visible_channel_ids=ctx.visible_channel_ids(),
+        )
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid cursor") from None
+    return InboxThreadListResponse(
+        threads=[InboxThread(**t) for t in threads],
+        total=total,
+        next_cursor=next_cursor,
+    )
 
 
 @_inbox_router.get("/threads/{channel_id}/{contact_phone}", response_model=ChannelMessageListResponse)
@@ -2618,10 +2633,11 @@ async def approve_review_reply(
             reply.error = str(e)[:2000]
             await db.commit()
             await _notify_reply_failed(db, ctx.user.id, channel, reply, str(e))
-            raise HTTPException(
-                status_code=502,
-                detail=f"Failed to post reply via Localith: {e}",
-            )
+            raise upstream_http_error(
+                e,
+                context="Localith reply publish failed",
+                detail="Could not post the reply through Localith. Try again shortly.",
+            ) from None
         reply.status = "posted"
         reply.error = None
         await db.commit()
@@ -2790,7 +2806,11 @@ async def generate_reply_for_review(
                 body.reviewer_name, db, review_id=body.review_id,
             )
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Reply generation failed: {e}")
+            raise upstream_http_error(
+                e,
+                context="Review reply generation failed",
+                detail="Reply generation is temporarily unavailable. Try again shortly.",
+            ) from None
 
     reply = ReviewReply(
         id=str(uuid.uuid4()),
@@ -2886,7 +2906,11 @@ async def regenerate_reply(
             attempt=attempt, previous_draft=reply.reply_text,
         )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Reply generation failed: {e}")
+        raise upstream_http_error(
+            e,
+            context="Review reply regeneration failed",
+            detail="Reply generation is temporarily unavailable. Try again shortly.",
+        ) from None
 
     refreshed = await db.get(ReviewReply, reply_id)
     refreshed.reply_text = reply.reply_text
@@ -2935,7 +2959,11 @@ async def retry_failed_reply(
                 attempt=attempt,
             )
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Reply generation failed: {e}")
+            raise upstream_http_error(
+                e,
+                context="Review reply generation failed",
+                detail="Reply generation is temporarily unavailable. Try again shortly.",
+            ) from None
 
     refreshed = await db.get(ReviewReply, reply_id)
     refreshed.status = "pending_approval"

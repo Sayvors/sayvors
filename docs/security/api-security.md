@@ -197,6 +197,35 @@ async def rate_limit(key: str, limit: int, window_seconds: int) -> bool:
     return True
 ```
 
+### Outbound WhatsApp pacing
+
+Inbound API rate limits are not enough: Meta independently caps throughput per
+business phone number (~80 messages/second). An overloaded number can produce
+a 429 from Meta, which the send path treats as terminal. The WhatsApp adapter
+therefore enforces one shared token bucket per phone before a message reaches
+Meta.
+
+Implementation, in `services/api/app/modules/channels/meta/providers/whatsapp.py`:
+
+- Applies to every `POST /{phone_number_id}/messages` call — text, templates,
+  media-by-id, reactions, typing indicators and status posts. Reads and media
+  upload calls are not paced.
+- The bucket lives in Redis and is mutated by an atomic Lua `HMGET`/`HSET`
+  script. Capacity and refill are 80 tokens/second, and the key expires after
+  10 idle seconds.
+- Redis keys use the SHA-256 of `phone_number_id`; raw IDs are not written to
+  keys and logs only carry a 12-character digest.
+- The caller may wait at most one second. If the bucket is still empty, the
+  adapter raises a local 429 before any request reaches Meta; it never spams
+  a 429-prone path to "test" whether capacity returned.
+- Redis unavailability and script failures fail open, allowing the send. This
+  is deliberate availability behavior, matching the LLM chat limiter: losing
+  local pacing must not make the messaging service unavailable.
+
+This control limits concurrency across API replicas. It does not override a
+tenant's Meta messaging-tier limits or template approvals; Meta remains the
+final authority for those restrictions.
+
 ### Rate Limit Headers
 
 ```
@@ -369,6 +398,10 @@ else:
     logger.error("Internal error", exc_info=e)
     raise HTTPException(500, "Internal server error")
 ```
+
+### Upstream/provider errors
+
+Provider SDKs and HTTP clients routinely put hostnames, URLs, credentials or SQL in `str(exc)`. Use `app.core.upstream_errors.upstream_http_error(exc, context=..., detail=...)`: it logs the real exception with its traceback and returns a generic client message (plus a safe permission hint where that is the actual fix). Never put `str(e)` in a 502 detail. Phase 1 converted every 502 provider path; the remaining non-502 `detail=str(e)` sites are tracked in the readiness report.
 
 ## Security Testing Checklist
 

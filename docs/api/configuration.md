@@ -23,7 +23,7 @@ The runtime environment can override them.
 |----------|---------|---------|
 | `DATABASE_URL` | Local PostgreSQL URL | Primary database connection. |
 | `DATABASE_READER_URL` | Empty | Optional read-replica URL; empty uses `DATABASE_URL`. |
-| `DB_POOL_MODE` | `session` | PgBouncer mode (`session` or `transaction`). |
+| `DB_POOL_MODE` | `session` | Validated `session` or `transaction`; transaction disables asyncpg prepared-statement caching. PgBouncer's server-side `pool_mode` must still be set to match. |
 | `DB_POOL_SIZE` | `50` | SQLAlchemy async pool size. |
 | `DB_POOL_MAX_OVERFLOW` | `50` | Additional connections above pool size. |
 | `DB_POOL_TIMEOUT_SECONDS` | `30` | Seconds to wait for a pool connection. |

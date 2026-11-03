@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_current_user, get_db
+from ...core.upstream_errors import upstream_http_error
 from ..channels.models import Channel
 from ..users.models import User
 from . import service
@@ -203,4 +204,4 @@ async def update_location(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        raise upstream_http_error(e, context="Location provider failed") from None

@@ -34,6 +34,7 @@ export interface Customer {
 export interface CustomerListResponse {
   customers: Customer[];
   total: number;
+  next_cursor: string | null;
 }
 
 export interface CustomerIdentity {
@@ -111,7 +112,8 @@ export async function fetchCustomers(params: {
   priority?: string;
   important?: boolean;
   limit?: number;
-  offset?: number;
+  cursor?: string | null;
+  sort?: "important" | "recent" | "messages";
 } = {}): Promise<CustomerListResponse> {
   const q = new URLSearchParams();
   if (params.search) q.set("search", params.search);
@@ -120,9 +122,14 @@ export async function fetchCustomers(params: {
   if (params.priority && params.priority !== "all") q.set("priority", params.priority);
   if (params.important) q.set("important", "true");
   q.set("limit", String(params.limit ?? 100));
-  q.set("offset", String(params.offset ?? 0));
+  if (params.cursor) q.set("cursor", params.cursor);
+  if (params.sort) q.set("sort", params.sort);
   const data = await apiFetch(`/api/v1/customers?${q.toString()}`);
-  return { customers: data?.customers ?? [], total: data?.total ?? 0 };
+  return {
+    customers: data?.customers ?? [],
+    total: data?.total ?? 0,
+    next_cursor: data?.next_cursor ?? null,
+  };
 }
 
 export async function fetchCustomerProfile(

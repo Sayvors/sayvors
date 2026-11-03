@@ -1,27 +1,51 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { SlidingWindowLimiter } from "@/lib/rate-limit";
 
-const rateLimit = new Map<string, { count: number; last: number }>();
+// Best-effort flood protection only. The backend owns auth and API limits.
+// A spoofed X-Forwarded-For can move the bucket, each replica has its own map,
+// and limiter failures allow the request.
 const RATE_LIMIT_WINDOW = 60_000;
-const RATE_LIMIT_MAX = process.env.NODE_ENV === "production" ? 100 : 500;
+const PAGE_RATE_LIMIT_MAX = process.env.NODE_ENV === "production" ? 1_800 : 20_000;
+const MEDIA_RATE_LIMIT_MAX = process.env.NODE_ENV === "production" ? 3_000 : 30_000;
+const RATE_LIMIT_MAX_KEYS = 10_000;
+const rateLimiter = new SlidingWindowLimiter(RATE_LIMIT_WINDOW, RATE_LIMIT_MAX_KEYS);
 
-function checkRateLimit(ip: string): boolean {
-  const now = Date.now();
-  const entry = rateLimit.get(ip);
-  if (!entry || now - entry.last > RATE_LIMIT_WINDOW) {
-    rateLimit.set(ip, { count: 1, last: now });
-    return true;
+function clientKey(request: NextRequest): string {
+  // The leftmost XFF entry is the original client as set by the platform.
+  // This is a coarse bucket, not an auth or security decision.
+  const forwarded = request.headers.get("x-forwarded-for");
+  if (forwarded) {
+    const leftmost = forwarded.split(",")[0]?.trim();
+    if (leftmost) return leftmost;
   }
-  if (entry.count >= RATE_LIMIT_MAX) return false;
-  entry.count++;
-  return true;
+  return request.headers.get("x-real-ip")?.trim() || "unknown";
 }
 
 export function middleware(request: NextRequest) {
-  const ip = request.headers.get("x-forwarded-for") || request.headers.get("x-real-ip") || "unknown";
+  const pathname = request.nextUrl.pathname;
 
-  if (!checkRateLimit(ip)) {
-    return new NextResponse("Too many requests", { status: 429, headers: { "Retry-After": "60" } });
+  // API routes have their own backend limits; page/RSC and media traffic get
+  // separate, generous buckets so one image-heavy page cannot exhaust a
+  // conversation's navigation budget.
+  if (!pathname.startsWith("/api/")) {
+    const isMedia = pathname.startsWith("/media-files/");
+    const key = `${isMedia ? "media" : "page"}:${clientKey(request)}`;
+    let allowed = true;
+    try {
+      allowed = rateLimiter.allow(
+        key,
+        isMedia ? MEDIA_RATE_LIMIT_MAX : PAGE_RATE_LIMIT_MAX,
+      );
+    } catch {
+      allowed = true;
+    }
+    if (!allowed) {
+      return new NextResponse("Too many requests", {
+        status: 429,
+        headers: { "Retry-After": String(RATE_LIMIT_WINDOW / 1000) },
+      });
+    }
   }
 
   // NOTE: no server-side auth gate here on purpose. The session cookies

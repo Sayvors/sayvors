@@ -25,7 +25,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from ....database import async_session
-from ...kafka.client import create_consumer
 from ...channels.service import (
     decrypt_contact_phone,
     decrypt_message_content,
@@ -277,7 +276,6 @@ async def _refresh_instagram_profile(
     return row.name or row.username
 
 TOPIC = "meta-events"
-GROUP_ID = "meta-events-replier"
 
 # WhatsApp replies: short, human, no markdown scaffolding.
 _REPLY_MAX_TOKENS = 600
@@ -3880,88 +3878,3 @@ async def _process_message(value: bytes | None) -> str | None:
         logger.exception("Failed processing %s event: %s", event_type, e)
         return f"{type(e).__name__}: {str(e)[:300]}"
     return None
-
-
-async def _drain_outbox_events() -> int:
-    """Process meta events directly from the outbox (Kafka-down fallback).
-
-    Handlers are idempotent (platform_message_id dedupe), so events the
-    outbox worker also delivers to Kafka later are safe to process twice.
-    """
-    from ...outbox.models import EventOutbox
-    from ...outbox.service import mark_failed, mark_sent
-
-    async with async_session() as db:
-        events = (
-            await db.execute(
-                select(EventOutbox)
-                .where(
-                    EventOutbox.topic == TOPIC,
-                    EventOutbox.status.in_(["pending", "failed"]),
-                    EventOutbox.attempts < 10,
-                )
-                .order_by(EventOutbox.created_at)
-                .limit(100)
-            )
-        ).scalars().all()
-        db.expunge_all()
-
-    sent_ids: list[str] = []
-    for event in events:
-        try:
-            # Kafka carries event.payload (the envelope) raw — same here.
-            error = await _process_message(
-                json.dumps(event.payload).encode("utf-8")
-            )
-            if error is None:
-                sent_ids.append(event.id)
-            else:
-                logger.warning("Outbox event %s failed: %s", event.id, error)
-                await mark_failed(event.id, error)
-        except Exception as e:
-            logger.warning("Outbox event %s failed: %s", event.id, e)
-            await mark_failed(event.id, str(e))
-    if sent_ids:
-        await mark_sent(sent_ids)
-    return len(sent_ids)
-
-
-async def run_meta_events_consumer() -> None:
-    """Background loop started from app lifespan. Kafka-first with DB-outbox
-    fallback and automatic recovery, mirroring the analytics consumer."""
-    from ...kafka import client as kafka_client
-
-    fallback_logged = False
-    while True:
-        consumer = None
-        try:
-            if not kafka_client.is_kafka_available():
-                if not fallback_logged:
-                    logger.info(
-                        "Kafka unavailable — meta consumer draining events from the DB outbox"
-                    )
-                    fallback_logged = True
-                await _drain_outbox_events()
-                await asyncio.sleep(3)
-                continue
-
-            fallback_logged = False
-            consumer = await create_consumer(group_id=GROUP_ID, topics=[TOPIC])
-            logger.info("Meta events consumer listening on %s", TOPIC)
-            async for msg in consumer:
-                await _process_message(msg.value)
-        except asyncio.CancelledError:
-            if consumer:
-                await consumer.stop()
-            raise
-        except Exception:
-            if not fallback_logged:
-                logger.warning("Kafka connection failed — meta consumer switching to outbox fallback")
-                fallback_logged = True
-            kafka_client.mark_kafka_unavailable(GROUP_ID)
-            if consumer:
-                try:
-                    await consumer.stop()
-                except Exception:
-                    pass
-            await asyncio.sleep(5)

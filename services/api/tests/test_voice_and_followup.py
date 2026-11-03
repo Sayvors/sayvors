@@ -1457,7 +1457,8 @@ async def test_admin_fish_voice_catalog_endpoint(db, client, admin_headers, monk
     monkeypatch.setattr(fish_engine, "voice_catalog", _boom)
     r = client.get("/api/v1/admin/voice-engines/fish-voices", headers=admin_headers)
     assert r.status_code == 502
-    assert "503" in r.json()["detail"]
+    assert "Fish Audio rejected" in r.json()["detail"]
+    assert "503" not in r.json()["detail"]
 
 
 async def _outbound_rows():

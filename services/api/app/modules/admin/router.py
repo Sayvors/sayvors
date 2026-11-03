@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import settings
 from ...core.deps import get_db, require_admin
+from ...core.upstream_errors import upstream_http_error
 from ...security import create_admin_token, hash_password, verify_password
 from ..auth.rate_limit import rate_limit
 from ..auth.router import get_client_ip
@@ -1020,7 +1021,11 @@ async def admin_embedding_models(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        raise upstream_http_error(
+            e,
+            context="Admin model-list provider failed",
+            detail="Provider list is temporarily unavailable. Try again shortly.",
+        ) from None
     return {"provider": provider, "models": models}
 
 
@@ -1499,7 +1504,11 @@ async def admin_remote_models(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider list failed: {type(e).__name__}: {str(e)[:160]}")
+        raise upstream_http_error(
+            e,
+            context="Admin provider list failed",
+            detail="Provider list is temporarily unavailable. Try again shortly.",
+        ) from None
 
 # Voice-engine admin is part of the TTS capability. Mount it here so it
 # shares this router's auth and rate limit without TTS importing admin.
