@@ -169,7 +169,7 @@ export default function PlansPage() {
   const handleSelect = (plan: WebPlan) => {
     if (plan.slug === "enterprise") {
       window.location.href =
-        "mailto:sales@sayvors.com?subject=" +
+        "mailto:it@sayvors.com?subject=" +
         encodeURIComponent("Sayvors Enterprise plan inquiry");
       return;
     }

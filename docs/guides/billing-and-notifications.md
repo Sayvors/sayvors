@@ -32,7 +32,7 @@ the script is a dry run.
 - **Starter, Pro and Growth** are shown for comparison but are disabled until a
   real payment gateway is connected. The app must never show a fake “pay”
   button or activate a paid plan without a payment.
-- **Enterprise** is custom: the button opens a sales email instead of showing a
+- **Enterprise** is custom: the button opens an email to `it@sayvors.com` instead of showing a
   price or charging a card.
 - There is **no downgrade action** in the UI. Current plans show
   “Your current plan” and are disabled.

@@ -105,8 +105,8 @@ recorded in the admin audit middleware. A customer cannot call either route.
 
 The customer-facing plans page is read-only. There is **no downgrade action**;
 the current plan is disabled. Starter/Pro/Growth are disabled until a real
-payment provider and webhook exist. Enterprise opens a sales email rather than
-pretending to charge a card.
+payment provider and webhook exist. Enterprise opens an email to
+`it@sayvors.com` rather than pretending to charge a card.
 
 ## 6. Payment data
 
