@@ -1,12 +1,15 @@
 """Canonical feature catalog for plan entitlements.
 
 A single source of truth for the set of feature keys an admin can toggle
-per plan. The admin UI renders one checkbox per entry here; the backend
-enforces the resulting booleans via entitlements.has_feature().
+per plan. The admin UI renders one checkbox per entry here.
 
-Adding a feature: add an entry below + enforce it at the relevant write
-path. Removing one: delete the entry; old plans simply keep a stale true
-that no code reads (harmless).
+The catalog is a vocabulary, not an enforcement list. A key only has an effect
+when a request path calls ``Entitlements.has_feature`` or
+``check_feature(tenant_id, key)``. Today that is true for a small subset; the
+full enforced-vs-catalog table lives in
+``docs/security/plans-and-credits.md``. Adding a feature: add an entry below
+and enforce it at the relevant write path. Removing one: delete the entry; old
+plans simply keep a stale true that no code reads (harmless).
 """
 
 from __future__ import annotations

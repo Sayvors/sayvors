@@ -67,6 +67,19 @@ def _adopt_provider_avatar(user: User, provider: str, picture: str | None) -> No
         user.avatar_url = url[:1000]
 
 
+async def _grant_trial(user: User, db: AsyncSession) -> None:
+    """Start a new account on the free-trial plan with its one-time credit.
+
+    Imported lazily so the auth module does not import the billing stack on
+    every request. A billing failure must fail the signup: a user created with
+    no credit would be unable to use any AI feature and would have no visible
+    reason why.
+    """
+    from ..billing.service import grant_trial_credit
+
+    await grant_trial_credit(user, db)
+
+
 async def _notify_existing_signup(user: User) -> None:
     """Send the mailbox owner an actionable email for a duplicate signup.
 
@@ -123,6 +136,7 @@ async def signup(body: SignupRequest, db: AsyncSession, user_agent: str, ip: str
         await _notify_existing_signup(user)
         return {"message": SIGNUP_GENERIC_MESSAGE}
 
+    await _grant_trial(user, db)
     raw_token = create_email_verification_token(user.id)
     verification = EmailVerification(
         user_id=user.id,
@@ -342,6 +356,7 @@ async def google_login(claims: dict, db: AsyncSession,
                 _adopt_provider_avatar(user, "google", picture)
                 db.add(user)
                 await db.flush()  # assign user.id before the refresh-token row
+                await _grant_trial(user, db)
                 event = "signup"
         else:
             if first:
@@ -412,6 +427,7 @@ async def facebook_login(profile: dict, db: AsyncSession,
                 _adopt_provider_avatar(user, "facebook", picture)
                 db.add(user)
                 await db.flush()  # assign user.id before the refresh-token row
+                await _grant_trial(user, db)
                 event = "signup"
         else:
             if first:

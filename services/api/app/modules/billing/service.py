@@ -6,7 +6,13 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import BillingEvent, BillingProfile, PaymentMethod
+from .models import (
+    BillingEvent,
+    BillingProfile,
+    PaymentMethod,
+    Plan,
+    TenantSubscription,
+)
 from .schemas import BillingProfileIn, PaymentMethodIn
 
 logger = logging.getLogger(__name__)
@@ -227,6 +233,19 @@ async def get_budget(tenant_id: str, db: AsyncSession) -> dict:
     fallback = int(user.ai_credit_cents or 0)
     plan = user.plan or "free"
     try:
+        from .entitlements import get_effective_plan
+
+        effective, _status, _by, _until, _override = await get_effective_plan(
+            tenant_id, db
+        )
+        plan = effective.slug
+    except Exception as e:
+        logger.warning(
+            "Could not resolve effective plan for %s; using user.plan: %s",
+            tenant_id,
+            e,
+        )
+    try:
         # Fast path: after cutover the opening row exists, so a dashboard read
         # is a plain row read with no wallet lock. Only a tenant that still
         # predates the ledger pays for the one-time reconstruction.
@@ -259,16 +278,92 @@ async def get_budget(tenant_id: str, db: AsyncSession) -> dict:
     }
 
 
+async def grant_trial_credit(user, db: AsyncSession) -> bool:
+    """Give a new tenant the one-time free-trial AI credit.
+
+    Runs inside the signup transaction, after the user row has an id. The
+    ledger key is the idempotency boundary: a retried signup, a duplicate
+    social callback or a backfill run cannot grant the same tenant twice.
+    The wallet, ledger event and subscription move together; a failure here
+    rolls the signup back instead of silently creating a zero-credit account.
+    """
+    from ...config import settings
+
+    key = f"trial:{user.id}"
+    existing = (
+        await db.execute(
+            select(BillingEvent.id).where(
+                BillingEvent.tenant_id == user.id,
+                BillingEvent.idempotency_key == key,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return False
+
+    amount = max(0, int(settings.TRIAL_CREDIT_CENTS))
+    if amount == 0:
+        return False
+
+    plan = (
+        await db.execute(
+            select(Plan).where(Plan.slug == "free-trial", Plan.is_active.is_(True))
+        )
+    ).scalar_one_or_none()
+    if plan is not None:
+        sub = (
+            await db.execute(
+                select(TenantSubscription).where(
+                    TenantSubscription.tenant_id == user.id
+                )
+            )
+        ).scalar_one_or_none()
+        if sub is None:
+            db.add(
+                TenantSubscription(
+                    tenant_id=user.id,
+                    plan_id=plan.id,
+                    status="active",
+                    granted_by="signup",
+                )
+            )
+        elif (user.plan or "free") == "free":
+            sub.plan_id = plan.id
+            sub.status = "active"
+            sub.granted_by = "signup"
+
+    balance = int(user.ai_credit_cents or 0) + amount
+    user.ai_credit_cents = balance
+    if (user.plan or "free") == "free":
+        user.plan = "free-trial"
+    db.add(
+        BillingEvent(
+            id=str(uuid.uuid4()),
+            tenant_id=user.id,
+            kind="plan_grant",
+            status="posted",
+            amount_cents=amount,
+            reserved_cents=0,
+            balance_after_cents=balance,
+            idempotency_key=key,
+            note=f"Free trial credit (${amount / 100:.2f})",
+            created_by="signup",
+        )
+    )
+    await db.flush()
+    return True
+
+
 async def grant_plan(user_id: str, plan: str, add_credit_cents: int,
                      note: str | None, created_by: str | None,
                      db: AsyncSession) -> dict:
     """Admin purchase flow: set the plan, add credits, ledger it, sync Redis.
 
-    A Pro purchase grants PLAN_INCLUDED_CENTS bundled credits on top of any
-    explicit top-up. The grant adds to the locked durable wallet; it never
-    recomputes a balance from grants, so a top-up cannot re-grant credit the
-    tenant already spent. A tenant that predates the ledger gets its one-time
-    opening baseline in the same transaction.
+    The plan's own ``included_credit_cents`` is bundled on a plan change, so
+    the wallet matches the card the tenant saw. The grant adds to the locked
+    durable wallet; it never recomputes a balance from grants, so a top-up
+    cannot re-grant credit the tenant already spent. The subscription row is
+    updated here as well so entitlement checks and the wallet cannot disagree.
     """
     from ..users.models import User
     from .budget import PLAN_INCLUDED_CENTS, sync_balance
@@ -276,6 +371,9 @@ async def grant_plan(user_id: str, plan: str, add_credit_cents: int,
 
     if plan not in ("free", "pro"):
         raise ValueError("Unknown plan.")
+    plan_row = (
+        await db.execute(select(Plan).where(Plan.slug == plan))
+    ).scalar_one_or_none()
     # Serialise grants so two admins cannot lose one top-up to a
     # read-modify-write race.
     user = (
@@ -287,8 +385,36 @@ async def grant_plan(user_id: str, plan: str, add_credit_cents: int,
         raise ValueError("Tenant not found.")
     old_plan = user.plan or "free"
     plan_changed = old_plan != plan
-    bundled = PLAN_INCLUDED_CENTS.get(plan, 0) if plan_changed else 0
+    if plan_changed:
+        bundled = (
+            plan_row.included_credit_cents
+            if plan_row is not None
+            else PLAN_INCLUDED_CENTS.get(plan, 0)
+        )
+    else:
+        bundled = 0
     total_add = (add_credit_cents or 0) + bundled
+
+    sub = (
+        await db.execute(
+            select(TenantSubscription).where(TenantSubscription.tenant_id == user_id)
+        )
+    ).scalar_one_or_none()
+    if plan_row is not None and plan_changed:
+        if sub is None:
+            db.add(
+                TenantSubscription(
+                    tenant_id=user_id,
+                    plan_id=plan_row.id,
+                    status="active",
+                    granted_by=created_by or "admin",
+                )
+            )
+        else:
+            sub.plan_id = plan_row.id
+            sub.status = "active"
+            sub.granted_by = created_by or "admin"
+            sub.granted_until = None
 
     before = int(await ensure_ledger_initialized(user_id, db))
     new_balance = before + total_add

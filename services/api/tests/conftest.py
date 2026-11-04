@@ -120,14 +120,14 @@ async def engine():
     async with TEST_SESSION() as session:
         from app.modules.billing.models import Plan
 
-        session.add(
+        session.add_all([
             Plan(
                 id="test-plan-free-trial",
                 slug="free-trial",
                 name="Free Trial",
                 description="test seed",
                 price_cents=0,
-                included_credit_cents=5000,
+                included_credit_cents=1000,
                 max_channels=None,
                 max_messages_per_month=1000,
                 features={
@@ -136,8 +136,25 @@ async def engine():
                 },
                 is_active=True,
                 sort_order=0,
-            )
-        )
+            ),
+            Plan(
+                id="test-plan-pro",
+                slug="pro",
+                name="Pro",
+                description="test seed",
+                price_cents=10000,
+                included_credit_cents=10000,
+                max_channels=5,
+                max_messages_per_month=25000,
+                features={
+                    "channels": True, "messaging": True,
+                    "ai_replies": True, "posts": True, "media": True, "reviews": True,
+                    "analytics": True, "automation": True,
+                },
+                is_active=True,
+                sort_order=2,
+            ),
+        ])
         await session.commit()
     # The ASR engine config is cached per process for 30s. Each test owns a
     # fresh database, so a cached row from the previous test must never leak

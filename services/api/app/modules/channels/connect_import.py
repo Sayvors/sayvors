@@ -24,6 +24,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..analytics.models import ReviewInsight
+from ..billing.budget import BudgetExhausted
 from .google_reviews import GoogleReviewsClient, GoogleReviewsError
 from .models import (
     AutoReplyConfig,
@@ -395,6 +396,29 @@ async def _ensure_insight(
         logger.warning("Import discovery event failed for %s: %s", review.review_id, e)
 
 
+async def _adopt_google_reply(db: AsyncSession, channel: Channel, review):
+    """Import the reply Google already shows and return its local row.
+
+    The regular review poll already adopts live Google replies before deciding
+    a review is answered. The first-connect import must use the same rule, or
+    it drafts a second response over a reply the merchant can see on Google.
+    """
+    from .reviews_worker import _adopt_existing_reply
+
+    await _adopt_existing_reply(db, channel, review)
+    return (
+        await db.execute(
+            select(ReviewReply)
+            .where(
+                ReviewReply.channel_id == channel.id,
+                ReviewReply.review_id == review.review_id,
+            )
+            .order_by(ReviewReply.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
 async def _fetch_phase(db: AsyncSession, session: ConnectImportSession) -> None:
     session.status = "fetching"
     await _log(db, session.id, "Connecting to Google Business Profile.")
@@ -465,15 +489,27 @@ async def _fetch_phase(db: AsyncSession, session: ConnectImportSession) -> None:
         }
         for review in reviews:
             session.total_reviews = (session.total_reviews or 0) + 1
+            already_on_google = bool(getattr(review, "has_reply", False))
             if (channel.id, review.review_id) in existing_items:
                 existing = existing_items[(channel.id, review.review_id)]
-                if existing.status == "generating":
+                if already_on_google:
+                    # A resumed import may have left this row failed before the
+                    # budget gate was fixed, or before the Google reply was
+                    # adopted. Google wins: correct the row in place.
+                    reply = await _adopt_google_reply(db, channel, review)
+                    existing.status = "already_replied"
+                    existing.reply_id = reply.id if reply is not None else None
+                    existing.error = None
+                elif existing.status == "generating":
                     existing.status = "pending"
                     existing.error = None
                 session.fetched_reviews = (session.fetched_reviews or 0) + 1
                 continue
             reply = existing_replies.get(review.review_id)
-            already = (
+            if already_on_google:
+                reply = await _adopt_google_reply(db, channel, review)
+                existing_replies[review.review_id] = reply
+            already = already_on_google or (
                 reply is not None
                 and reply.status in ("pending_approval", "posted", "approved")
             )
@@ -606,10 +642,18 @@ async def _generate_one(session_id: str, item_id: str, semaphore: asyncio.Semaph
                     if item is None:
                         return
                     item.status = "failed"
-                    item.error = str(e)[:2000]
+                    item.error = (
+                        "AI credits are used up. Add credit to keep writing replies."
+                        if isinstance(e, BudgetExhausted)
+                        else str(e)[:2000]
+                    )
                     await _log(
                         db, session_id,
-                        f"We couldn't write a reply for {item.reviewer_name or 'a reviewer'} yet. You can try again from the list.",
+                        (
+                            f"AI credits are used up, so we couldn't write a reply for {item.reviewer_name or 'a reviewer'}."
+                            if isinstance(e, BudgetExhausted)
+                            else f"We couldn't write a reply for {item.reviewer_name or 'a reviewer'} yet. You can try again from the list."
+                        ),
                         "warning",
                     )
                     await db.execute(

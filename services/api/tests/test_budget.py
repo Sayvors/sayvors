@@ -1,5 +1,6 @@
 """AI credit budget — pricing, durable reserve/settle, provider gate, grants."""
 import pytest
+from sqlalchemy import select
 
 from app.modules.billing import budget
 from app.modules.billing.budget import (
@@ -361,6 +362,46 @@ def test_chat_refuses_an_empty_wallet_before_creating_a_conversation(
 
 
 @pytest.mark.asyncio
+async def test_trial_grant_is_idempotent(db):
+    from app.modules.billing import service as billing_service
+    from app.modules.billing.models import BillingEvent, TenantSubscription
+    from app.modules.users.models import User
+
+    uid = "trial-grant-user-0001"
+    user = User(
+        id=uid,
+        email="trial@sayvors.com",
+        first_name="T",
+        last_name="R",
+        password_hash="x",
+    )
+    db.add(user)
+    await db.commit()
+
+    assert await billing_service.grant_trial_credit(user, db) is True
+    await db.commit()
+    assert await billing_service.grant_trial_credit(user, db) is False
+    await db.commit()
+
+    row = await db.get(User, uid)
+    assert row.plan == "free-trial"
+    assert row.ai_credit_cents == 1000
+    events = (
+        await db.execute(
+            select(BillingEvent).where(BillingEvent.tenant_id == uid)
+        )
+    ).scalars().all()
+    assert len(events) == 1
+    assert events[0].idempotency_key == f"trial:{uid}"
+    sub = (
+        await db.execute(
+            select(TenantSubscription).where(TenantSubscription.tenant_id == uid)
+        )
+    ).scalar_one()
+    assert sub.status == "active"
+
+
+@pytest.mark.asyncio
 async def test_grant_plan_bundles_pro_credits(db):
     """First Pro grant → plan=pro + $20 bundled; ledger row; Redis synced."""
     from app.modules.billing import service as billing_service
@@ -373,13 +414,13 @@ async def test_grant_plan_bundles_pro_credits(db):
 
     out = await billing_service.grant_plan(uid, "pro", 0, "test purchase", "admin", db)
     assert out["plan"] == "pro"
-    assert out["balance_cents"] == 2000
-    assert out["balance_dollars"] == 20.0
+    assert out["balance_cents"] == 10000
+    assert out["balance_dollars"] == 100.0
 
     row = await db.get(User, uid)
     assert row.plan == "pro"
-    assert row.ai_credit_cents == 2000
-    assert await get_balance(uid) == 2000
+    assert row.ai_credit_cents == 10000
+    assert await get_balance(uid) == 10000
 
     from sqlalchemy import select
     from app.modules.billing.models import BillingEvent
@@ -391,11 +432,11 @@ async def test_grant_plan_bundles_pro_credits(db):
         )
     )).scalars().all()
     assert len(events) == 1
-    assert events[0].amount_cents == 2000
+    assert events[0].amount_cents == 10000
 
     # Second grant on same plan + explicit top-up → credit_topup kind.
     out2 = await billing_service.grant_plan(uid, "pro", 500, "topup", "admin", db)
-    assert out2["balance_cents"] == 2500
+    assert out2["balance_cents"] == 10500
 
 
 @pytest.mark.asyncio
@@ -414,17 +455,17 @@ async def test_admin_grant_endpoint_and_budget(client, db, user_id, _allow_admin
                     headers=admin_headers)
     assert r.status_code == 200, r.text[:200]
     assert r.json()["plan"] == "pro"
-    assert r.json()["balance_cents"] == 2000
+    assert r.json()["balance_cents"] == 10000
 
     b = client.get("/api/v1/billing/budget")
     assert b.status_code == 200
     assert b.json()["plan"] == "pro"
-    assert b.json()["balance_cents"] == 2000
+    assert b.json()["balance_cents"] == 10000
 
     t = client.get(f"/api/v1/admin/tenants/{user_id}", headers=admin_headers)
     assert t.status_code == 200
     assert t.json()["plan"] == "pro"
-    assert t.json()["ai_credit_cents"] == 2000
+    assert t.json()["ai_credit_cents"] == 10000
 
     r2 = client.post("/api/v1/admin/tenants/nonexistent/plan",
                      json={"plan": "pro"}, headers=admin_headers)

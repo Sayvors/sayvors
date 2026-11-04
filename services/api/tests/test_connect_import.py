@@ -22,13 +22,22 @@ class _Ctx:
         self.user = type("User", (), {"id": user_id, "tenant_id": None})()
 
 
-def _review(review_id: str, *, rating: int = 5, text: str = "Great") -> GoogleReview:
+def _review(
+    review_id: str,
+    *,
+    rating: int = 5,
+    text: str = "Great",
+    has_reply: bool = False,
+    reply_text: str | None = None,
+) -> GoogleReview:
     return GoogleReview(
         review_id=review_id,
         rating=rating,
         text=text,
         reviewer_name="Tester",
         updated_at=datetime.now(timezone.utc) - timedelta(days=1),
+        has_reply=has_reply,
+        reply_text=reply_text,
     )
 
 
@@ -80,6 +89,86 @@ async def test_fetch_phase_counts_all_and_marks_existing_replies(
     assert await db.execute(
         select(ReviewInsight).where(ReviewInsight.channel_id == channel_id)
     ) is not None
+
+
+@pytest.mark.asyncio
+async def test_fetch_phase_adopts_a_reply_already_live_on_google(
+    db, user_id, channel_id, monkeypatch
+):
+    """First-connect import must not draft over a reply visible on Google."""
+    from app.modules.channels.service import encrypt_token
+
+    review_id = "accounts/a/locations/l/reviews/already"
+    channel = await db.get(Channel, channel_id)
+    channel.access_token = encrypt_token("token")
+    await db.commit()
+
+    async def _fake_fetch(channel):
+        return channel, [
+            _review(
+                review_id,
+                has_reply=True,
+                reply_text="Thank you for visiting!",
+            )
+        ], None
+
+    monkeypatch.setattr(ci, "_fetch_channel_reviews", _fake_fetch)
+    session = await ci.create_session(db, user_id)
+    await ci._fetch_phase(db, session)
+
+    item = (
+        await db.execute(
+            select(ConnectImportItem).where(
+                ConnectImportItem.session_id == session.id,
+                ConnectImportItem.review_id == review_id,
+            )
+        )
+    ).scalar_one()
+    assert item.status == "already_replied"
+    assert item.reply_id is not None
+    reply = await db.get(ReviewReply, item.reply_id)
+    assert reply is not None
+    assert reply.status == "posted"
+    assert reply.reply_text == "Thank you for visiting!"
+
+
+@pytest.mark.asyncio
+async def test_fetch_phase_corrects_a_failed_item_when_google_has_reply(
+    db, user_id, channel_id, monkeypatch
+):
+    """A resumed import must fix an old failed row, not retry over a live reply."""
+    from app.modules.channels.service import encrypt_token
+
+    review_id = "accounts/a/locations/l/reviews/resumed"
+    channel = await db.get(Channel, channel_id)
+    channel.access_token = encrypt_token("token")
+    session = await ci.create_session(db, user_id)
+    item = ConnectImportItem(
+        session_id=session.id,
+        channel_id=channel_id,
+        review_id=review_id,
+        rating=5,
+        status="failed",
+        error="budget: AI credit balance exhausted.",
+    )
+    db.add(item)
+    await db.commit()
+
+    async def _fake_fetch(channel):
+        return channel, [
+            _review(review_id, has_reply=True, reply_text="Already answered.")
+        ], None
+
+    monkeypatch.setattr(ci, "_fetch_channel_reviews", _fake_fetch)
+    await ci._fetch_phase(db, session)
+    await db.refresh(item)
+
+    assert item.status == "already_replied"
+    assert item.error is None
+    assert item.reply_id is not None
+    reply = await db.get(ReviewReply, item.reply_id)
+    assert reply is not None and reply.status == "posted"
+    assert reply.reply_text == "Already answered."
 
 
 @pytest.mark.asyncio

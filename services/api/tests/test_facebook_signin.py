@@ -109,6 +109,8 @@ async def test_facebook_signup_creates_user(db):
     assert u.facebook_id == "fb-123"
     assert u.avatar_url == "https://pic/fb.jpg"
     assert u.google_sub is None
+    assert u.plan == "free-trial"
+    assert u.ai_credit_cents == 1000
     mock_ev.assert_awaited_once()
     mock_mail.assert_awaited_once()
 

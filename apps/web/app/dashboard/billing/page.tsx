@@ -29,6 +29,19 @@ function fieldInput(hasError: boolean): string {
     : inputCls;
 }
 
+const PLAN_LABELS: Record<string, string> = {
+  "free-trial": "Free Trial",
+  free: "Free",
+  starter: "Starter",
+  pro: "Pro",
+  growth: "Growth",
+  enterprise: "Enterprise",
+};
+
+function planLabel(slug: string): string {
+  return PLAN_LABELS[slug] || slug || "Free Trial";
+}
+
 function Field({ label, hint, required, error, children }: { label: string; hint?: string; required?: boolean; error?: string | null; children: React.ReactNode }) {
   return (
     <div>
@@ -540,11 +553,13 @@ export default function BillingPage() {
             <div className="relative flex flex-wrap items-end justify-between gap-4">
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-white/60">Current plan</p>
-                <p className="mt-1 text-[30px] font-black capitalize leading-none">{plan}</p>
+                <p className="mt-1 text-[30px] font-black leading-none">{planLabel(plan)}</p>
                 <p className="mt-2 max-w-md text-[12px] text-white/70">
-                  {plan === "pro"
-                    ? "Pro includes a $20 AI credit wallet — every AI reply, analysis and chat message spends from it."
-                    : "Free has no AI credits — upgrade to Pro to unlock AI replies, analyses and chat."}
+                  {plan === "free-trial"
+                    ? "Your free trial includes $10 of AI credit — every AI reply, analysis and chat message spends from it."
+                    : plan === "free"
+                      ? "Free has no AI credits — choose a plan to unlock AI replies, analyses and chat."
+                      : `${planLabel(plan)} includes AI credit — every AI reply, analysis and chat message spends from it.`}
                 </p>
               </div>
               <div className="text-right">

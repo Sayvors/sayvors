@@ -62,6 +62,8 @@ async def test_google_signup_creates_user(db):
     assert u.onboarded is False
     assert u.avatar_url == "https://img.example/p.png"
     assert (u.first_name, u.last_name) == ("G", "User")
+    assert u.plan == "free-trial"
+    assert u.ai_credit_cents == 1000
     assert verify_password("anypassword1", u.password_hash) is False
     mock_ev.assert_awaited_once()
     assert mock_ev.call_args.kwargs.get("metadata") == {"via": "google"}
