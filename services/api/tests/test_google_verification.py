@@ -240,6 +240,39 @@ async def test_request_verification_calls_google_and_stores_pending_name(
 
 
 @pytest.mark.asyncio
+async def test_empty_placeholder_option_is_filtered_and_explained(
+    db, user_id, channel_id, monkeypatch
+):
+    """Google returns `[{}]` when the caller has no business authority."""
+    user = await _user(db, user_id)
+    fake = _FakeClient(
+        state={
+            "hasVoiceOfMerchant": False,
+            "hasBusinessAuthority": False,
+            "verify": {"hasPendingVerification": False},
+        },
+        options=[{}],
+        verifications=[{
+            "name": "locations/841/verifications/failed",
+            "method": "SMS",
+            "state": "FAILED",
+            "createTime": "2026-09-16T10:08:21Z",
+        }],
+    )
+
+    async def _fake_client(channel, db_):
+        return fake, "841"
+
+    monkeypatch.setattr(channels_router, "_verification_client", _fake_client)
+    out = await channels_router.get_verification(
+        channel_id, language="en", ctx=_Ctx(user), db=db
+    )
+    assert out.options == []
+    assert out.status == "failed"
+    assert "business authority" in (out.provider_error or "")
+
+
+@pytest.mark.asyncio
 async def test_status_mapping_covers_required_and_failed():
     assert channels_router._verification_status(
         {"hasVoiceOfMerchant": False, "verify": {}}, []

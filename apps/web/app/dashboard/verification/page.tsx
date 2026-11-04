@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
 import { apiFetch } from "@/lib/api-rag";
+import { GBP_DASHBOARD_URL } from "@/lib/google-links";
 import LogoLoader from "@/components/LogoLoader";
 
 type Channel = { id: string; display_name: string | null; platform: string; status: string };
@@ -352,9 +353,19 @@ export default function VerificationPage() {
               <section className="rounded-[32px] bg-white p-6 shadow-[0_12px_30px_rgba(20,16,31,0.07)]">
                 <h2 className="text-[16px] font-bold text-ink">No eligible methods returned</h2>
                 <p className="mt-2 max-w-2xl text-[12.5px] leading-relaxed text-ink/55">
-                  Google did not return a verification method for this location. It may already be
-                  verified, under review, or require action in the Google Business Profile dashboard.
+                  Google is not offering a verification method through the API for this
+                  location. This usually means the connected Google account is not the
+                  profile owner, or the last attempt failed. You can still complete
+                  verification from Google Business Profile.
                 </p>
+                <a
+                  href={GBP_DASHBOARD_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-4 inline-flex rounded-[24px] border border-ink/10 bg-white px-3.5 py-2 text-[12px] font-bold text-deep-violet shadow-[0_1px_0_rgba(255,255,255,0.9)_inset,0_4px_12px_rgba(20,16,31,0.06)] transition active:translate-y-[2px] active:scale-[0.98]"
+                >
+                  Open Google Business Profile
+                </a>
               </section>
             )}
 

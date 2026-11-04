@@ -374,8 +374,35 @@ async def _verification_snapshot(
     except GoogleReviewsError:
         provider_error = provider_error or "Google did not return verification history."
 
+    # Google sometimes returns a placeholder option (`{}`) when the caller is
+    # not eligible to verify. It is not a method and must never reach the UI as
+    # a blank card.
+    options = [
+        option for option in options if option.get("verificationMethod")
+    ]
+
     status, latest, _ = _verification_status(state, verifications)
     method, contact = _verification_contact(latest, options)
+
+    if provider_error is None and not options and status != "verified":
+        if state.get("hasBusinessAuthority") is False:
+            provider_error = (
+                "Google reports this account does not have business authority "
+                "for this location, so the API cannot offer a verification "
+                "method. Ask the profile owner to grant owner or manager access "
+                "in Google Business Profile, then refresh."
+            )
+        elif latest and str(latest.get("state") or "").upper() == "FAILED":
+            provider_error = (
+                "Google's last verification attempt failed and no new method is "
+                "currently eligible through the API. Try again from Google "
+                "Business Profile or contact Google support."
+            )
+        else:
+            provider_error = (
+                "Google did not return an eligible verification method for this "
+                "location."
+            )
 
     result = await db.execute(
         select(VerificationRecord).where(VerificationRecord.channel_id == channel.id)
