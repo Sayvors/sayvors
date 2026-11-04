@@ -40,8 +40,8 @@ The runtime environment can override them.
 |----------|---------|---------|
 | `JWT_SECRET` | Unsafe placeholder; must be replaced | Signing secret. Startup exits if the placeholder remains; production requires at least 32 characters. Generate a random value with `python -c "import secrets; print(secrets.token_urlsafe(64))"`. |
 | `JWT_ALGORITHM` | `HS256` | JWT signing algorithm. |
-| `JWT_ACCESS_EXPIRATION_MINUTES` | `15` | Access-token lifetime. |
-| `JWT_REFRESH_EXPIRATION_DAYS` | `7` | Refresh-token lifetime. |
+| `JWT_ACCESS_EXPIRATION_MINUTES` | `1440` | Access-token lifetime (24 hours). |
+| `JWT_REFRESH_EXPIRATION_DAYS` | `7` | Refresh-token lifetime (7 days, rotated on each refresh). |
 | `MAX_LOGIN_ATTEMPTS` | `5` | Failed login attempts before lockout. |
 | `LOCKOUT_MINUTES` | `15` | Login lockout duration. |
 | `AUTH_RATE_LIMIT_FAIL_CLOSED` | `true` | Reject auth-critical operations when Redis rate limiting is unavailable. Keep enabled outside isolated local development. |
@@ -55,7 +55,7 @@ The runtime environment can override them.
 | `CSRF_COOKIE_NAME` | `csrf_token` | CSRF cookie name. |
 | `ACCESS_COOKIE_NAME` | `access_token` | Access cookie name. |
 | `REFRESH_COOKIE_NAME` | `refresh_token` | Refresh cookie name. |
-| `ACCESS_COOKIE_MAX_AGE` | `900` seconds | Access cookie lifetime. |
+| `ACCESS_COOKIE_MAX_AGE` | `86400` seconds | Access cookie lifetime (24 hours). |
 | `REFRESH_COOKIE_MAX_AGE` | `604800` seconds | Refresh cookie lifetime. |
 | `RETENTION_CLEANUP_INTERVAL_SECONDS` | `21600` | Interval for auth-record retention cleanup. |
 | `RETENTION_DELETE_BATCH_SIZE` | `1000` | Maximum records deleted per cleanup batch. |

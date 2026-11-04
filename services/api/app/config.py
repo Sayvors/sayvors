@@ -28,7 +28,7 @@ class Settings(BaseSettings):
         return mode
     JWT_SECRET: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"
-    JWT_ACCESS_EXPIRATION_MINUTES: int = 15
+    JWT_ACCESS_EXPIRATION_MINUTES: int = 60 * 24  # 24 hours; refreshed but long enough that a browser hiccup cannot log the user out mid-session
     JWT_REFRESH_EXPIRATION_DAYS: int = 7
     # "production" arms the fail-closed startup validation below.
     ENVIRONMENT: str = "development"
@@ -108,7 +108,7 @@ class Settings(BaseSettings):
     REFRESH_COOKIE_NAME: str = "refresh_token"
     ACCESS_COOKIE_NAME: str = "access_token"
     REFRESH_COOKIE_MAX_AGE: int = 60 * 60 * 24 * 7  # 7 days
-    ACCESS_COOKIE_MAX_AGE: int = 15 * 60  # 15 minutes, matches JWT access expiry
+    ACCESS_COOKIE_MAX_AGE: int = 60 * 60 * 24  # 24 hours, matches JWT access expiry
     # Parent domain shared by the SPA and the API (e.g. ".sayvors.com").
     # Lets the SPA origin read the non-httpOnly CSRF cookie for the
     # X-CSRF-Token double-submit header in split-domain deployments.
