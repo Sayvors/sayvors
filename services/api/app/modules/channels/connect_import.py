@@ -20,7 +20,7 @@ import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..analytics.models import ReviewInsight
@@ -28,6 +28,7 @@ from .google_reviews import GoogleReviewsClient, GoogleReviewsError
 from .models import (
     AutoReplyConfig,
     Channel,
+    ConnectImportEvent,
     ConnectImportItem,
     ConnectImportSession,
     ReviewReply,
@@ -94,6 +95,7 @@ async def create_session(db: AsyncSession, user_id: str) -> ConnectImportSession
         existing.status = "queued"
         existing.locked_until = None
         existing.error = None
+        await _log(db, existing.id, "Google is reconnected. Picking up where we left off.")
         await db.commit()
         await db.refresh(existing)
         return existing
@@ -104,9 +106,43 @@ async def create_session(db: AsyncSession, user_id: str) -> ConnectImportSession
         scope_days=DEFAULT_SCOPE_DAYS,
     )
     db.add(session)
+    await db.flush()
+    await _log(db, session.id, "Google is connected. We're getting your reviews ready.")
     await db.commit()
     await db.refresh(session)
     return session
+
+
+async def _log(
+    db: AsyncSession, session_id: str, message: str, level: str = "info"
+) -> None:
+    """Queue one progress-feed row. The caller's next commit persists it."""
+    db.add(
+        ConnectImportEvent(
+            session_id=session_id,
+            level=level,
+            message=message[:1000],
+        )
+    )
+
+
+def _plural(count: int, singular: str, plural: str | None = None) -> str:
+    """Readable counts for merchant-facing copy ("1 review", "3 reviews")."""
+    return f"{count} {singular if count == 1 else (plural or singular + 's')}"
+
+
+async def session_events(
+    db: AsyncSession, session_id: str, limit: int = 120
+) -> list[ConnectImportEvent]:
+    rows = (
+        await db.execute(
+            select(ConnectImportEvent)
+            .where(ConnectImportEvent.session_id == session_id)
+            .order_by(ConnectImportEvent.created_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    return list(reversed(rows))
 
 
 async def get_session(
@@ -169,6 +205,15 @@ async def start_generation(
     session.drafts_ready = 0
     session.drafts_failed = 0
     session.status = "generating"
+    label = "your full history" if not scope_days else (
+        "the last 30 days" if scope_days == 30 else
+        "the last 6 months" if scope_days == 180 else
+        "the last 12 months"
+    )
+    await _log(
+        db, session.id,
+        f"Writing AI replies for {_plural(session.total_drafts, 'review')} from {label}.",
+    )
     session.locked_until = None
     await db.commit()
     await db.refresh(session)
@@ -235,6 +280,11 @@ async def request_publish(
         raise ValueError("No generated drafts match the selection")
     session.status = "publishing"
     session.locked_until = None
+    await _log(
+        db,
+        session.id,
+        "Posting your replies to Google.",
+    )
     await db.commit()
     await db.refresh(session)
     return session
@@ -347,6 +397,7 @@ async def _ensure_insight(
 
 async def _fetch_phase(db: AsyncSession, session: ConnectImportSession) -> None:
     session.status = "fetching"
+    await _log(db, session.id, "Connecting to Google Business Profile.")
     await db.commit()
 
     channels = (
@@ -377,10 +428,21 @@ async def _fetch_phase(db: AsyncSession, session: ConnectImportSession) -> None:
     for result in results:
         if isinstance(result, Exception):
             errors.append(str(result)[:200])
+            await _log(
+                db,
+                session.id,
+                "We couldn't load one of your Google locations right now. We'll try again later.",
+                "warning",
+            )
             continue
         channel, reviews, error = result
         if error:
             errors.append(f"{channel.display_name or channel.id}: {error}")
+            await _log(
+                db, session.id,
+                f"We couldn't load {channel.display_name or 'this location'} right now. We'll try again later.",
+                "warning",
+            )
             continue
         existing_items = {
             (item.channel_id, item.review_id): item
@@ -431,6 +493,11 @@ async def _fetch_phase(db: AsyncSession, session: ConnectImportSession) -> None:
             await _ensure_insight(db, channel, review)
             session.fetched_reviews = (session.fetched_reviews or 0) + 1
         session.fetched_locations = (session.fetched_locations or 0) + 1
+        await _log(
+            db, session.id,
+            f"Found {_plural(len(reviews), 'review')} at {channel.display_name or 'this location'}.",
+            "success",
+        )
         await db.commit()
 
     session.total_drafts = sum(
@@ -441,8 +508,14 @@ async def _fetch_phase(db: AsyncSession, session: ConnectImportSession) -> None:
         session.status = "completed"
         session.locked_until = None
         await _write_summary(db, session)
+        await _log(db, session.id, "We didn't find any reviews on your Google locations yet.", "warning")
     else:
         session.status = "awaiting_scope"
+        await _log(
+            db, session.id,
+            f"Found {_plural(session.fetched_reviews, 'review')} across {_plural(session.fetched_locations, 'location')}.",
+            "success",
+        )
     await db.commit()
 
 
@@ -499,6 +572,11 @@ async def _generate_one(session_id: str, item_id: str, semaphore: asyncio.Semaph
                     item.reply_id = reply.id
                     item.status = "draft_ready"
                     item.error = None
+                    await _log(
+                        db, session.id,
+                        f"Reply ready for {item.reviewer_name or 'a reviewer'}.",
+                        "success",
+                    )
                     await db.execute(
                         update(ConnectImportSession)
                         .where(ConnectImportSession.id == session.id)
@@ -529,6 +607,11 @@ async def _generate_one(session_id: str, item_id: str, semaphore: asyncio.Semaph
                         return
                     item.status = "failed"
                     item.error = str(e)[:2000]
+                    await _log(
+                        db, session_id,
+                        f"We couldn't write a reply for {item.reviewer_name or 'a reviewer'} yet. You can try again from the list.",
+                        "warning",
+                    )
                     await db.execute(
                         update(ConnectImportSession)
                         .where(ConnectImportSession.id == session_id)
@@ -562,6 +645,7 @@ async def _generate_phase(db: AsyncSession, session: ConnectImportSession) -> No
         session.status = "completed"
         session.locked_until = None
         await _write_summary(db, session)
+        await _log(db, session.id, "Every review in this range already has a reply.", "success")
         await db.commit()
         return
 
@@ -583,7 +667,33 @@ async def _generate_phase(db: AsyncSession, session: ConnectImportSession) -> No
     await db.refresh(session)
     session.status = "ready"
     session.locked_until = None
+    done_rows = (
+        await db.execute(
+            select(ConnectImportItem.location_name, func.count(ConnectImportItem.id))
+            .where(
+                ConnectImportItem.session_id == session.id,
+                ConnectImportItem.status == "draft_ready",
+            )
+            .group_by(ConnectImportItem.location_name)
+        )
+    ).all()
+    for location_name, count in done_rows:
+        await _log(
+            db,
+            session.id,
+            f"{_plural(count, 'reply', 'replies')} are ready for {location_name or 'this location'}.",
+            "success",
+        )
     await _write_summary(db, session)
+    await _log(
+        db, session.id,
+        (
+            f"{_plural(session.drafts_ready, 'reply', 'replies')} are ready. {_plural(session.drafts_failed, 'reply', 'replies')} {'needs' if session.drafts_failed == 1 else 'need'} another try."
+            if session.drafts_failed
+            else f"{_plural(session.drafts_ready, 'reply', 'replies')} are ready."
+        ),
+        "success" if not session.drafts_failed else "warning",
+    )
     await db.commit()
 
 
@@ -616,6 +726,12 @@ async def _publish_one(session_id: str, item_id: str, semaphore: asyncio.Semapho
                 reply.error = None
                 item.status = "published"
                 item.error = None
+                await _log(
+                    db,
+                    session_id,
+                    f"Your reply to {item.reviewer_name or 'a reviewer'} is live on Google.",
+                    "success",
+                )
                 await db.commit()
                 try:
                     from ..outbox.service import enqueue_event_in
@@ -645,6 +761,12 @@ async def _publish_one(session_id: str, item_id: str, semaphore: asyncio.Semapho
                 if reply is not None:
                     reply.status = "failed"
                     reply.error = str(e)[:2000]
+                await _log(
+                    db,
+                    session_id,
+                    f"We couldn't post your reply to {item.reviewer_name or 'a reviewer'}. You can try again.",
+                    "warning",
+                )
                 await db.commit()
                 logger.warning("Import publish failed for %s: %s", item.review_id, e)
             finally:
@@ -679,6 +801,19 @@ async def _publish_phase(db: AsyncSession, session: ConnectImportSession) -> Non
     session.status = "completed"
     session.locked_until = None
     await _write_summary(db, session)
+    summary = session.summary or {}
+    failed = int(summary.get("failed") or 0)
+    published = int(summary.get("published_now") or 0)
+    await _log(
+        db,
+        session.id,
+        (
+            f"All done. {_plural(published, 'reply', 'replies')} posted, {failed} {'needs' if failed == 1 else 'need'} attention."
+            if failed
+            else f"All done. {_plural(published, 'reply', 'replies')} posted."
+        ),
+        "success" if not failed else "warning",
+    )
     await db.commit()
 
 

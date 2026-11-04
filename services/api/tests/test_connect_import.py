@@ -139,6 +139,9 @@ async def test_publish_selection_marks_only_selected_drafts(db, user_id, channel
     assert first.selected is True
     assert second.selected is False
 
+    events = await ci.session_events(db, session.id)
+    assert any("Posting your replies" in event.message for event in events)
+
     with pytest.raises(ValueError):
         await ci.request_publish(db, session, item_ids=[], publish_all=False)
 
@@ -234,6 +237,11 @@ async def test_publish_one_posts_only_the_selected_draft(db, user_id, channel_id
     await db.refresh(reply)
     assert item.status == "published"
     assert reply.status == "posted"
+    events = await ci.session_events(db, session.id)
+    assert any(
+        event.level == "success" and "is live on Google" in event.message
+        for event in events
+    )
 
 
 @pytest.mark.asyncio
@@ -283,6 +291,10 @@ async def test_import_endpoint_is_tenant_scoped_and_returns_locations(
     assert out.progress.total_locations == 0
     assert len(out.locations) == 1
     assert out.locations[0].items[0].status == "already_replied"
+    assert any(
+        event["message"] == "Google is connected. We're getting your reviews ready."
+        for event in out.events
+    )
 
     with pytest.raises(channels_router.HTTPException):
         await channels_router.get_google_import_session(

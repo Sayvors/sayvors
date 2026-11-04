@@ -1231,3 +1231,29 @@ class ConnectImportItem(Base):
         onupdate=lambda: datetime.now(timezone.utc),
     )
 
+
+class ConnectImportEvent(Base):
+    """Append-only, plain-language progress feed for the connect import modal.
+
+    The modal shows more than a percentage: reviews found, replies ready,
+    locations finished and posting results. Keeping the feed in the database
+    means closing and reopening the modal (or reloading) preserves the same
+    chronological story for every worker that touched the session.
+    """
+
+    __tablename__ = "connect_import_events"
+    __table_args__ = (
+        Index("ix_connect_import_events_session_created", "session_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    session_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("connect_import_sessions.id", ondelete="CASCADE"), index=True
+    )
+    # info | success | warning | error
+    level: Mapped[str] = mapped_column(String(16), default="info")
+    message: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+

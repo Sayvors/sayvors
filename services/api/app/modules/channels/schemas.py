@@ -120,6 +120,7 @@ class ConnectImportSessionOut(BaseModel):
     scope_days: int
     progress: ConnectImportProgressOut
     locations: list[ConnectImportLocationOut] = Field(default_factory=list)
+    events: list[dict] = Field(default_factory=list)
     summary: dict | None = None
     error: str | None = None
     created_at: str | None = None

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api-rag";
 import { clearActiveConnectImport } from "@/lib/connect-import";
@@ -29,6 +29,13 @@ export type ImportLocation = {
   items: ImportItem[];
 };
 
+export type ImportEvent = {
+  id: string;
+  level: string;
+  message: string;
+  created_at: string | null;
+};
+
 export type ImportSummary = {
   reviews_total: number;
   unanswered_before: number;
@@ -55,6 +62,7 @@ export type ImportSession = {
     drafts_failed: number;
   };
   locations: ImportLocation[];
+  events?: ImportEvent[];
   summary: ImportSummary | null;
   error: string | null;
   created_at: string | null;
@@ -78,6 +86,8 @@ const SCOPES = [
   { days: 0, label: "All time" },
 ];
 
+const ACTIVE_STATUSES = ["queued", "fetching", "awaiting_scope", "generating", "ready", "publishing"];
+
 function itemMatches(item: ImportItem, filter: Filter): boolean {
   if (filter === "all") return true;
   if (filter === "needs_reply") {
@@ -90,14 +100,41 @@ function itemMatches(item: ImportItem, filter: Filter): boolean {
 
 function statusLabel(status: string): string {
   const labels: Record<string, string> = {
-    pending: "Waiting",
-    generating: "Generating",
-    draft_ready: "Draft ready",
+    pending: "Queued",
+    generating: "Writing reply",
+    draft_ready: "Reply ready",
     already_replied: "Already replied",
     outside_scope: "Outside selected range",
-    failed: "Generation failed",
-    published: "Published",
-    publish_failed: "Publish failed",
+    failed: "Needs another try",
+    published: "Posted",
+    publish_failed: "Couldn't post",
+  };
+  return labels[status] ?? status.replaceAll("_", " ");
+}
+
+function sessionLabel(status: string): string {
+  const labels: Record<string, string> = {
+    queued: "Starting",
+    fetching: "Reading reviews",
+    awaiting_scope: "Choose a range",
+    generating: "Writing replies",
+    ready: "Ready to review",
+    publishing: "Posting replies",
+    completed: "Done",
+    failed: "Needs attention",
+  };
+  return labels[status] ?? status.replaceAll("_", " ");
+}
+
+function locationLabel(status: string): string {
+  const labels: Record<string, string> = {
+    fetching: "Reading reviews",
+    awaiting_scope: "Choose a range",
+    generating: "Writing replies",
+    publishing: "Posting replies",
+    attention: "Needs attention",
+    ready: "Replies ready",
+    completed: "Done",
   };
   return labels[status] ?? status.replaceAll("_", " ");
 }
@@ -251,6 +288,8 @@ export default function ConnectImportModal({
   const selectedDrafts = draftItems.filter((item) => selected.has(item.id)).length;
   const pct = session ? percentFor(session) : 0;
   const busy = start.isPending || publish.isPending || generateItem.isPending;
+  const events = session?.events ?? [];
+  const inProgress = session ? ACTIVE_STATUSES.includes(session.status) : true;
 
   function toggle(id: string) {
     setSelected((current) => {
@@ -277,13 +316,20 @@ export default function ConnectImportModal({
       aria-modal="true"
       aria-labelledby="connect-import-title"
     >
-      <div className="flex h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-t-[32px] bg-white shadow-[0_24px_80px_rgba(20,16,31,0.30)] sm:h-auto sm:max-h-[90vh] sm:rounded-[32px]">
-        <header className="shrink-0 border-b border-ink/[0.06] px-5 py-4 sm:px-7">
+      <div className="flex h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-t-lg bg-white shadow-[0_18px_60px_rgba(20,16,31,0.28)] sm:h-auto sm:max-h-[90vh] sm:rounded-lg">
+        <header className="shrink-0 border-b border-ink/[0.08] px-5 py-4 sm:px-7">
           <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-deep-violet/60">
-                Google Business Profile
-              </p>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-deep-violet/60">
+                  Google Business Profile
+                </p>
+                {session && (
+                  <span className="rounded-sm border border-ink/[0.08] bg-ink/[0.03] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-ink/45">
+                    {sessionLabel(session.status)}
+                  </span>
+                )}
+              </div>
               <h2 id="connect-import-title" className="mt-1 text-[20px] font-bold text-ink">
                 {session?.status === "completed" ? "Your Google import is complete" : "Importing reviews and drafting replies"}
               </h2>
@@ -296,7 +342,7 @@ export default function ConnectImportModal({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-[20px] border border-ink/10 bg-white px-3 py-2 text-[12px] font-bold text-ink/55 transition hover:bg-ink/[0.03] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-deep-violet"
+              className="shrink-0 rounded-md border border-ink/10 bg-white px-3 py-2 text-[12px] font-bold text-ink/55 transition hover:bg-ink/[0.03] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-deep-violet"
             >
               Close
             </button>
@@ -311,26 +357,26 @@ export default function ConnectImportModal({
                   {" · "}
                   {session.progress.drafts_ready} drafts
                 </span>
-                <span>{pct}%</span>
+                <span className="tabular-nums">{pct}%</span>
               </div>
-              <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-ink/[0.06]">
+              <div className="mt-1.5 h-1.5 overflow-hidden rounded-[2px] bg-ink/[0.08]">
                 <div
-                  className="h-full rounded-full bg-deep-violet transition-all duration-500"
-                  style={{ width: `${Math.max(4, pct)}%` }}
+                  className="h-full rounded-[2px] bg-deep-violet transition-all duration-500"
+                  style={{ width: `${Math.max(2, pct)}%` }}
                 />
               </div>
             </div>
           )}
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:px-7">
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-7">
           {message && (
-            <div className="mb-4 rounded-[20px] border border-deep-violet/15 bg-white px-4 py-3 text-[12px] text-ink/70">
+            <div className="mb-4 rounded-md border border-deep-violet/15 bg-ink/[0.02] px-3 py-2.5 text-[12px] text-ink/70">
               {message}
             </div>
           )}
           {query.isError && (
-            <div className="rounded-[20px] bg-rose-50 px-4 py-3 text-[12px] text-rose-700">
+            <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2.5 text-[12px] text-rose-700">
               {query.error instanceof Error ? query.error.message : "Could not load the import."}
             </div>
           )}
@@ -338,31 +384,36 @@ export default function ConnectImportModal({
             <div className="py-16 text-center text-[13px] text-ink/50">Loading import…</div>
           )}
 
-          {session?.status === "queued" || session?.status === "fetching" ? (
-            <FetchStage session={session} />
-          ) : null}
+          {session && inProgress ? (
+            <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start">
+              <div className="min-w-0">
+                {["queued", "fetching"].includes(session.status) && <FetchStage session={session} />}
 
-          {session?.status === "awaiting_scope" ? (
-            <ScopeStage
-              session={session}
-              scope={scope}
-              setScope={setScope}
-              busy={busy}
-              onStart={() => start.mutate()}
-            />
-          ) : null}
+                {session.status === "awaiting_scope" && (
+                  <ScopeStage
+                    session={session}
+                    scope={scope}
+                    setScope={setScope}
+                    busy={busy}
+                    onStart={() => start.mutate()}
+                  />
+                )}
 
-          {session && ["generating", "ready", "publishing"].includes(session.status) ? (
-            <WorkspaceStage
-              session={session}
-              filter={filter}
-              setFilter={setFilter}
-              selected={selected}
-              toggle={toggle}
-              selectAllDrafts={selectAllDrafts}
-              busy={busy}
-              onGenerate={(id) => generateItem.mutate(id)}
-            />
+                {["generating", "ready", "publishing"].includes(session.status) && (
+                  <WorkspaceStage
+                    session={session}
+                    filter={filter}
+                    setFilter={setFilter}
+                    selected={selected}
+                    toggle={toggle}
+                    selectAllDrafts={selectAllDrafts}
+                    busy={busy}
+                    onGenerate={(id) => generateItem.mutate(id)}
+                  />
+                )}
+              </div>
+              <ProgressFeed events={events} status={session.status} />
+            </div>
           ) : null}
 
           {session?.status === "completed" && session.summary ? (
@@ -370,13 +421,13 @@ export default function ConnectImportModal({
           ) : null}
 
           {session?.status === "completed" && !session.summary ? (
-            <div className="rounded-[24px] bg-ink/[0.025] p-5 text-[13px] text-ink/60">
+            <div className="rounded-md border border-ink/[0.08] bg-ink/[0.025] p-5 text-[13px] text-ink/60">
               The import completed. Reviews and drafts are available in Reviews and Outbox.
             </div>
           ) : null}
 
           {session?.status === "failed" && (
-            <div className="rounded-[24px] bg-rose-50 p-5 text-[13px] text-rose-800">
+            <div className="rounded-md border border-rose-200 bg-rose-50 p-5 text-[13px] text-rose-800">
               <p className="font-bold">The import stopped.</p>
               <p className="mt-1">{session.error || "Google or the AI provider returned an error."}</p>
               <p className="mt-2 text-[12px] text-rose-700/80">
@@ -387,12 +438,12 @@ export default function ConnectImportModal({
         </div>
 
         {session && session.status !== "completed" && (
-          <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-ink/[0.06] bg-white px-5 py-4 sm:px-7">
+          <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-ink/[0.08] bg-white px-5 py-4 sm:px-7">
             {session.status !== "failed" && (
               <button
                 type="button"
                 onClick={onClose}
-                className="rounded-[24px] border border-ink/10 bg-white px-4 py-2.5 text-[12px] font-bold text-ink/65 transition active:translate-y-[2px] active:scale-[0.98]"
+                className="rounded-md border border-ink/10 bg-white px-4 py-2.5 text-[12px] font-bold text-ink/65 transition active:translate-y-[2px] active:scale-[0.98]"
               >
                 Run in background
               </button>
@@ -407,7 +458,7 @@ export default function ConnectImportModal({
                   type="button"
                   onClick={() => publish.mutate(false)}
                   disabled={!selectedDrafts || busy}
-                  className="rounded-[24px] bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white transition active:translate-y-[2px] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded-md bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white transition active:translate-y-[2px] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {publish.isPending ? "Publishing…" : `Publish selected (${selectedDrafts})`}
                 </button>
@@ -415,7 +466,7 @@ export default function ConnectImportModal({
                   type="button"
                   onClick={() => publish.mutate(true)}
                   disabled={!draftItems.length || busy}
-                  className="rounded-[24px] border border-deep-violet/20 bg-white px-4 py-2.5 text-[12px] font-bold text-deep-violet transition active:translate-y-[2px] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded-md border border-deep-violet/25 bg-white px-4 py-2.5 text-[12px] font-bold text-deep-violet transition active:translate-y-[2px] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Publish all drafts
                 </button>
@@ -436,33 +487,95 @@ export default function ConnectImportModal({
   );
 }
 
+function ProgressFeed({ events, status }: { events: ImportEvent[]; status: string }) {
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const active = ["queued", "fetching", "awaiting_scope", "generating", "publishing"].includes(status);
+
+  useEffect(() => {
+    const box = boxRef.current;
+    if (box) box.scrollTop = box.scrollHeight;
+  }, [events.length]);
+
+  return (
+    <aside
+      aria-live="polite"
+      className="order-first overflow-hidden rounded-md border border-ink/[0.08] bg-ink/[0.025] lg:order-none"
+    >
+      <div className="flex items-center gap-2 border-b border-ink/[0.08] px-3 py-2">
+        <span
+          className={`h-1.5 w-1.5 rounded-full ${active ? "bg-emerald-500" : "bg-ink/20"}`}
+          aria-hidden
+        />
+        <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-ink/45">Progress</p>
+      </div>
+      <div ref={boxRef} className="max-h-[190px] overflow-y-auto px-3 py-2.5 lg:max-h-[420px]">
+        {events.length === 0 ? (
+          <p className="py-3 text-[11.5px] text-ink/40">
+            {status === "queued" ? "Getting things ready…" : "Waiting for the first update…"}
+          </p>
+        ) : (
+          <ol className="space-y-2">
+            {events.map((event) => (
+              <li key={event.id} className="flex gap-2 text-[11.5px] leading-snug">
+                <span
+                  className={`mt-[6px] h-1 w-1 shrink-0 rounded-full ${eventDot(event.level)}`}
+                  aria-hidden
+                />
+                <span className={eventTone(event.level)}>{event.message}</span>
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+    </aside>
+  );
+}
+
+function eventDot(level: string): string {
+  if (level === "success") return "bg-emerald-500/60";
+  if (level === "warning") return "bg-amber-500/70";
+  if (level === "error") return "bg-rose-500/70";
+  return "bg-ink/25";
+}
+
+function eventTone(level: string): string {
+  if (level === "warning") return "text-amber-700";
+  if (level === "error") return "text-rose-700";
+  return "text-ink/60";
+}
+
 function FetchStage({ session }: { session: ImportSession }) {
   return (
-    <div className="space-y-4">
-      <div className="rounded-[24px] bg-ink/[0.025] p-5">
+    <div className="space-y-3">
+      <div className="rounded-md border border-ink/[0.08] bg-white p-5">
         <p className="text-[13px] font-bold text-ink">Fetching every review from Google</p>
         <p className="mt-1 text-[12px] leading-relaxed text-ink/55">
           We are reading every location and review first. AI drafts start only after you choose a range.
         </p>
         <div className="mt-4 grid gap-2 sm:grid-cols-3">
-          <Metric label="Locations" value={`${session.progress.fetched_locations}/${session.progress.total_locations || "?"}`} />
+          <Metric
+            label="Locations"
+            value={`${session.progress.fetched_locations}/${session.progress.total_locations || "?"}`}
+          />
           <Metric label="Reviews found" value={String(session.progress.fetched_reviews)} />
           <Metric label="Status" value="Reading Google" />
         </div>
       </div>
       {session.locations.length === 0 ? (
-        <p className="rounded-[20px] bg-white px-4 py-3 text-[12px] text-ink/45">
+        <p className="rounded-md border border-ink/[0.08] bg-white px-4 py-3 text-[12px] text-ink/45">
           Waiting for the first location to return…
         </p>
       ) : (
         session.locations.map((location) => (
-          <div key={location.channel_id} className="rounded-[20px] border border-ink/[0.06] bg-white p-4">
+          <div key={location.channel_id} className="rounded-md border border-ink/[0.08] bg-white p-4">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-[13px] font-bold text-ink">{location.name}</p>
                 <p className="text-[11px] text-ink/40">{location.address || "Google location"}</p>
               </div>
-              <span className="text-[11px] font-semibold text-ink/45">{location.items.length} reviews</span>
+              <span className="text-[11px] font-semibold text-ink/45">
+                {location.items.length} reviews
+              </span>
             </div>
           </div>
         ))
@@ -486,8 +599,8 @@ function ScopeStage({
 }) {
   const longRange = scope === 365 || scope === 0;
   return (
-    <div className="space-y-5">
-      <div className="rounded-[24px] bg-ink/[0.025] p-5">
+    <div className="space-y-4">
+      <div className="rounded-md border border-ink/[0.08] bg-white p-5">
         <p className="text-[13px] font-bold text-ink">
           {session.progress.fetched_reviews} reviews imported across {session.progress.fetched_locations} locations
         </p>
@@ -502,10 +615,10 @@ function ScopeStage({
             key={option.days}
             type="button"
             onClick={() => setScope(option.days)}
-            className={`rounded-[24px] border p-4 text-left transition ${
+            className={`rounded-md border p-4 text-left transition ${
               scope === option.days
                 ? "border-deep-violet bg-deep-violet/[0.05]"
-                : "border-black/[0.06] bg-white hover:border-deep-violet/25"
+                : "border-ink/[0.08] bg-white hover:border-deep-violet/25"
             }`}
           >
             <span className="text-[13px] font-bold text-ink">{option.label}</span>
@@ -518,7 +631,7 @@ function ScopeStage({
         ))}
       </div>
       {longRange && (
-        <div className="rounded-[20px] bg-amber-50 px-4 py-3 text-[12px] leading-relaxed text-amber-800">
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] leading-relaxed text-amber-800">
           A longer range means more AI calls and a slower first import. Drafts are still never
           published automatically.
         </div>
@@ -527,7 +640,7 @@ function ScopeStage({
         type="button"
         onClick={onStart}
         disabled={busy}
-        className="rounded-[24px] bg-deep-violet px-5 py-3 text-[13px] font-bold text-white transition active:translate-y-[2px] active:scale-[0.98] disabled:opacity-40"
+        className="rounded-md bg-deep-violet px-5 py-3 text-[13px] font-bold text-white transition active:translate-y-[2px] active:scale-[0.98] disabled:opacity-40"
       >
         {busy ? "Starting…" : "Generate drafts"}
       </button>
@@ -555,8 +668,8 @@ function WorkspaceStage({
   onGenerate: (id: string) => void;
 }) {
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-1.5">
         {FILTERS.map((option) => {
           const count = totalFor(session, option.id);
           return (
@@ -564,13 +677,13 @@ function WorkspaceStage({
               key={option.id}
               type="button"
               onClick={() => setFilter(option.id)}
-              className={`rounded-full px-3 py-1.5 text-[11px] font-bold transition ${
+              className={`rounded border px-2.5 py-1.5 text-[11px] font-bold transition ${
                 filter === option.id
-                  ? "bg-deep-violet text-white"
-                  : "bg-ink/[0.05] text-ink/55 hover:bg-ink/[0.08]"
+                  ? "border-deep-violet bg-deep-violet text-white"
+                  : "border-ink/[0.08] bg-white text-ink/55 hover:border-ink/20 hover:text-ink/70"
               }`}
             >
-              {option.label} <span className="opacity-60">{count}</span>
+              {option.label} <span className="tabular-nums opacity-60">{count}</span>
             </button>
           );
         })}
@@ -585,7 +698,7 @@ function WorkspaceStage({
         )}
       </div>
       {session.error && (
-        <div className="rounded-[20px] bg-amber-50 px-4 py-3 text-[12px] text-amber-800">
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-800">
           {session.error}
         </div>
       )}
@@ -593,21 +706,21 @@ function WorkspaceStage({
         const visible = location.items.filter((item) => itemMatches(item, filter));
         if (!visible.length) return null;
         return (
-          <section key={location.channel_id} className="rounded-[24px] border border-ink/[0.06] bg-white">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-ink/[0.06] px-4 py-3">
+          <section key={location.channel_id} className="overflow-hidden rounded-md border border-ink/[0.08] bg-white">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-ink/[0.08] px-4 py-3">
               <div>
                 <p className="text-[13px] font-bold text-ink">{location.name}</p>
                 <p className="text-[11px] text-ink/40">{location.address || "Google location"}</p>
               </div>
-              <span className="rounded-full bg-ink/[0.05] px-2.5 py-1 text-[10px] font-bold capitalize text-ink/50">
-                {location.status.replaceAll("_", " ")}
+              <span className="rounded-sm border border-ink/[0.08] bg-ink/[0.03] px-2 py-0.5 text-[10px] font-bold capitalize text-ink/50">
+                {locationLabel(location.status)}
               </span>
             </div>
             {location.items.length > 0 && (
-              <div className="px-4 pt-2">
-                <div className="h-1 overflow-hidden rounded-full bg-ink/[0.06]">
+              <div className="px-4 pt-2.5">
+                <div className="h-1 overflow-hidden rounded-[2px] bg-ink/[0.06]">
                   <div
-                    className="h-full rounded-full bg-deep-violet/70 transition-all duration-500"
+                    className="h-full rounded-[2px] bg-deep-violet/70 transition-all duration-500"
                     style={{
                       width: `${Math.round(
                         (location.items.filter((item) =>
@@ -621,7 +734,7 @@ function WorkspaceStage({
                 </div>
               </div>
             )}
-            <div className="divide-y divide-ink/[0.05]">
+            <div className="divide-y divide-ink/[0.06]">
               {visible.map((item) => (
                 <ReviewRow
                   key={item.id}
@@ -637,7 +750,7 @@ function WorkspaceStage({
         );
       })}
       {session.locations.every((location) => !location.items.some((item) => itemMatches(item, filter))) && (
-        <p className="rounded-[20px] bg-white px-4 py-8 text-center text-[12px] text-ink/45">
+        <p className="rounded-md border border-ink/[0.08] bg-white px-4 py-8 text-center text-[12px] text-ink/45">
           No reviews match this filter.
         </p>
       )}
@@ -666,7 +779,7 @@ function ReviewRow({
         disabled={busy || item.status !== "draft_ready"}
         onChange={onToggle}
         aria-label={`Select review from ${item.reviewer_name || "customer"}`}
-        className="mt-1 h-4 w-4 shrink-0 rounded border-ink/20 text-deep-violet focus:ring-deep-violet disabled:opacity-30"
+        className="mt-1 h-4 w-4 shrink-0 rounded-[3px] border-ink/20 text-deep-violet focus:ring-deep-violet disabled:opacity-30"
       />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
@@ -675,7 +788,7 @@ function ReviewRow({
             {"★".repeat(Math.max(0, Math.min(5, item.rating)))}
             <span className="text-ink/15">{"★".repeat(Math.max(0, 5 - item.rating))}</span>
           </span>
-          <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${statusTone(item.status)}`}>
+          <span className={`rounded-sm px-1.5 py-0.5 text-[10px] font-bold ${statusTone(item.status)}`}>
             {statusLabel(item.status)}
           </span>
           {item.review_time && (
@@ -688,7 +801,7 @@ function ReviewRow({
           <p className="mt-1 line-clamp-3 text-[12px] leading-relaxed text-ink/65">{item.review_text}</p>
         )}
         {item.draft_text && (
-          <div className="mt-2 rounded-[16px] bg-deep-violet/[0.045] px-3 py-2">
+          <div className="mt-2 rounded border-l-2 border-deep-violet/30 bg-ink/[0.025] px-3 py-2">
             <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-deep-violet/55">
               {item.status === "already_replied"
                 ? "Existing reply"
@@ -699,15 +812,13 @@ function ReviewRow({
             <p className="mt-1 line-clamp-4 text-[12px] leading-relaxed text-ink/70">{item.draft_text}</p>
           </div>
         )}
-        {item.error && (
-          <p className="mt-1 text-[11px] text-rose-600">{item.error}</p>
-        )}
+        {item.error && <p className="mt-1 text-[11px] text-rose-600">{item.error}</p>}
         {["outside_scope", "failed"].includes(item.status) && (
           <button
             type="button"
             onClick={onGenerate}
             disabled={busy}
-            className="mt-2 rounded-full border border-deep-violet/20 bg-white px-3 py-1.5 text-[10px] font-bold text-deep-violet transition active:translate-y-[1px] active:scale-[0.98] disabled:opacity-40"
+            className="mt-2 rounded border border-deep-violet/25 bg-white px-3 py-1.5 text-[10px] font-bold text-deep-violet transition active:translate-y-[1px] active:scale-[0.98] disabled:opacity-40"
           >
             Generate draft
           </button>
@@ -720,27 +831,27 @@ function ReviewRow({
 function SummaryStage({ session, onClose }: { session: ImportSession; onClose: () => void }) {
   const summary = session.summary!;
   return (
-    <div className="space-y-5">
-      <div className="grid gap-3 sm:grid-cols-4">
+    <div className="space-y-4">
+      <div className="grid gap-2 sm:grid-cols-4">
         <Metric label="Unanswered before" value={String(summary.unanswered_before)} />
         <Metric label="Published now" value={String(summary.published_now)} />
         <Metric label="Already answered" value={String(summary.already_answered)} />
         <Metric label="Needs attention" value={String(summary.failed)} />
       </div>
-      <div className="rounded-[24px] bg-ink/[0.025] p-5">
+      <div className="rounded-md border border-ink/[0.08] bg-white p-5">
         <p className="text-[13px] font-bold text-ink">This business on Google</p>
         <p className="mt-1 text-[12px] text-ink/55">
-          Oldest connected location: <strong className="text-ink/75">{ageLabel(summary.business_age_months)}</strong>.
-          {" "}
+          Oldest connected location:{" "}
+          <strong className="text-ink/75">{ageLabel(summary.business_age_months)}</strong>.{" "}
           {summary.reviews_total} reviews were imported in this pass.
         </p>
       </div>
-      <div className="grid gap-4 lg:grid-cols-2">
-        <div className="rounded-[24px] border border-ink/[0.06] bg-white p-4">
+      <div className="grid gap-3 lg:grid-cols-2">
+        <div className="rounded-md border border-ink/[0.08] bg-white p-4">
           <p className="text-[12px] font-bold text-ink">Reviews received, last 12 months</p>
           <VolumeBars data={summary.review_volume} />
         </div>
-        <div className="rounded-[24px] border border-ink/[0.06] bg-white p-4">
+        <div className="rounded-md border border-ink/[0.08] bg-white p-4">
           <p className="text-[12px] font-bold text-ink">Rating over time</p>
           <RatingScatter data={summary.rating_scatter} />
         </div>
@@ -748,14 +859,14 @@ function SummaryStage({ session, onClose }: { session: ImportSession; onClose: (
       <div className="flex flex-wrap items-center justify-between gap-3">
         <a
           href={summary.analytics_url || "/dashboard/analytics"}
-          className="rounded-[24px] bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white transition active:translate-y-[2px] active:scale-[0.98]"
+          className="rounded-md bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white transition active:translate-y-[2px] active:scale-[0.98]"
         >
           View full analytics
         </a>
         <button
           type="button"
           onClick={onClose}
-          className="rounded-[24px] border border-ink/10 bg-white px-4 py-2.5 text-[12px] font-bold text-ink/65 transition active:translate-y-[2px] active:scale-[0.98]"
+          className="rounded-md border border-ink/10 bg-white px-4 py-2.5 text-[12px] font-bold text-ink/65 transition active:translate-y-[2px] active:scale-[0.98]"
         >
           Done
         </button>
@@ -770,9 +881,9 @@ function SummaryStage({ session, onClose }: { session: ImportSession; onClose: (
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[20px] bg-white p-3 shadow-[0_1px_0_rgba(255,255,255,0.8)_inset,0_4px_12px_rgba(20,16,31,0.04)]">
+    <div className="rounded-md border border-ink/[0.08] bg-white p-3">
       <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/35">{label}</p>
-      <p className="mt-1.5 text-[16px] font-bold text-ink">{value}</p>
+      <p className="mt-1.5 text-[16px] font-bold tabular-nums text-ink">{value}</p>
     </div>
   );
 }
@@ -785,7 +896,7 @@ function VolumeBars({ data }: { data: { month: string; count: number }[] }) {
       {data.map((d) => (
         <div key={d.month} className="flex min-w-0 flex-1 flex-col items-center justify-end gap-1">
           <div
-            className="w-full rounded-t-[4px] bg-deep-violet/70"
+            className="w-full rounded-t-[2px] bg-deep-violet/70"
             style={{ height: `${Math.max(4, (d.count / max) * 76)}px` }}
             title={`${d.month}: ${d.count}`}
           />

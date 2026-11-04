@@ -59,6 +59,20 @@ reopens the same session. If the scope has not been chosen yet, the button says
 - `summary` JSON, `error` text
 - timestamps
 
+### `connect_import_events`
+
+Append-only, plain-language progress feed for the modal, one row per
+worker/merchant action.
+
+- `id`, `session_id` (cascade delete)
+- `level`: info | success | warning | error
+- `message`
+- `created_at`, indexed with `session_id`
+
+Events are persisted so the chronological story survives closing the modal,
+navigation, reload and worker hand-off. The API returns the newest 120 in
+ascending order.
+
 ### `connect_import_items`
 
 One row per review in the session.
@@ -97,7 +111,7 @@ marked `already_replied` and never re-drafted.
 All routes are tenant-scoped and require `channels.view` / `channels.edit`.
 
 - `GET /api/v1/channels/google/import-sessions/{id}`
-  - session counters, locations, items, summary
+  - session counters, locations, items, events, summary
 - `POST /api/v1/channels/google/import-sessions/{id}/start`
   - body `{ scope_days }`, only from `awaiting_scope`
 - `POST /api/v1/channels/google/import-sessions/{id}/publish`
@@ -113,6 +127,14 @@ redirects with `import_session=<id>`.
 ### Modal
 
 Header: overall progress, location/review/draft counts.
+
+The body is split into a main column and a 300px progress panel. The panel is
+a plain-language, mostly-gray chronological feed (reviews found per location,
+reply ready or needs another try, location finished, posting result, done).
+It avoids technical wording, exception text and timestamps so a non-technical
+merchant sees reassurance rather than a log. On mobile it moves above the
+workspace. Surfaces use compact radii (8px cards, 6px buttons, 4px chips and
+status tags) instead of the previous pill-heavy layout.
 
 Step 1 — import:
 - per-location sections with fetch and draft counts
@@ -166,5 +188,7 @@ A client component mounted in the dashboard layout:
 - generation: bounded concurrency, draft row created, failure recorded.
 - publish: selected only, `all`, Google error leaves `publish_failed`.
 - endpoints: tenant isolation, invalid status transitions, summary shape.
+- events: per-location collection, draft ready/failed, publish success/failure
+  and completion rows; event ordering in the API response.
 - frontend: typecheck + build; modal state transitions and launcher persistence
   covered by a small unit test where practical.

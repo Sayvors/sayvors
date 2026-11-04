@@ -332,9 +332,10 @@ def _import_location_status(session_status: str, items: list) -> str:
 async def _import_session_out(
     db: AsyncSession, session, include_items: bool = True
 ) -> ConnectImportSessionOut:
-    from .connect_import import session_items
+    from .connect_import import session_events, session_items
 
     items = await session_items(db, session.id) if include_items else []
+    events = await session_events(db, session.id)
     channel_ids = sorted({item.channel_id for item in items})
     channels = {}
     if channel_ids:
@@ -418,6 +419,15 @@ async def _import_session_out(
             drafts_failed=session.drafts_failed,
         ),
         locations=locations,
+        events=[
+            {
+                "id": event.id,
+                "level": event.level,
+                "message": event.message,
+                "created_at": event.created_at.isoformat() if event.created_at else None,
+            }
+            for event in events
+        ],
         summary=session.summary,
         error=session.error,
         created_at=session.created_at.isoformat() if session.created_at else None,
