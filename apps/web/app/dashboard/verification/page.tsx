@@ -439,7 +439,7 @@ export default function VerificationPage() {
                       <span className="text-ink/45">
                         {item.createTime ? new Date(item.createTime).toLocaleDateString() : ""}
                       </span>
-                      <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${statusTone(String(item.state).toLowerCase())}`}>
+                      <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${statusTone(String(item.state).toLowerCase() === "completed" ? "verified" : String(item.state).toLowerCase())}`}>
                         {String(item.state || "").toLowerCase()}
                       </span>
                     </li>
