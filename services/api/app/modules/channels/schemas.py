@@ -80,6 +80,66 @@ class VerificationResponse(BaseModel):
     provider_error: str | None = None
 
 
+class ConnectImportItemOut(BaseModel):
+    id: str
+    channel_id: str
+    review_id: str
+    location_name: str | None = None
+    reviewer_name: str | None = None
+    rating: int
+    review_text: str | None = None
+    review_time: str | None = None
+    status: str
+    reply_id: str | None = None
+    draft_text: str | None = None
+    selected: bool = False
+    error: str | None = None
+
+
+class ConnectImportLocationOut(BaseModel):
+    channel_id: str
+    name: str
+    address: str | None = None
+    status: str
+    items: list[ConnectImportItemOut] = Field(default_factory=list)
+
+
+class ConnectImportProgressOut(BaseModel):
+    total_locations: int
+    fetched_locations: int
+    total_reviews: int
+    fetched_reviews: int
+    total_drafts: int
+    drafts_ready: int
+    drafts_failed: int
+
+
+class ConnectImportSessionOut(BaseModel):
+    id: str
+    status: str
+    scope_days: int
+    progress: ConnectImportProgressOut
+    locations: list[ConnectImportLocationOut] = Field(default_factory=list)
+    events: list[dict] = Field(default_factory=list)
+    summary: dict | None = None
+    error: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class ConnectImportLatestOut(BaseModel):
+    session: ConnectImportSessionOut | None = None
+
+
+class ConnectImportStart(BaseModel):
+    scope_days: int = Field(..., description="30, 180, 365 or 0 for all time")
+
+
+class ConnectImportPublish(BaseModel):
+    item_ids: list[str] = Field(default_factory=list)
+    all: bool = False
+
+
 class ServiceCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     category: str = Field("Custom", min_length=1, max_length=120)

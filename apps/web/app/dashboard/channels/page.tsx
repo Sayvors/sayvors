@@ -10,6 +10,7 @@ import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import MetaConnections from "@/components/channels/MetaConnections";
 import PlatformMark from "@/components/channels/PlatformMark";
+import { setActiveConnectImport } from "@/lib/connect-import";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -45,6 +46,7 @@ const GOOGLE_ERRORS: Record<string, string> = {
 
 const META_ERRORS: Record<string, string> = {
   unknown_provider: "Unknown provider.",
+  provider_disabled: "New connections for this channel are paused for now.",
   token_exchange_failed: "Meta rejected the connection. Please try again.",
   invalid_state: "The connect session expired. Please click Connect again.",
   missing_code: "Meta did not return an authorization code. Please try again.",
@@ -248,6 +250,11 @@ function ConnectHub() {
   const metaError = params.get("meta_error");
   const metaNext = params.get("next");
   const discoveryError = params.get("discovery_error");
+  const importSession = params.get("import_session");
+
+  useEffect(() => {
+    if (importSession) setActiveConnectImport(importSession);
+  }, [importSession]);
 
   const urlBanner = useMemo(() => {
     if (discoveryError) {

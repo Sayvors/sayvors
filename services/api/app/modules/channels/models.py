@@ -1148,3 +1148,112 @@ register_postgres_index_ddl(
     ],
     names=["ix_leads_pending_reminder"],
 )
+
+
+class ConnectImportSession(Base):
+    """One durable first-connect import for a tenant.
+
+    The modal is not a frontend timer: this row owns the fetch/generate/publish
+    lifecycle so closing the modal or reloading the page resumes exactly where
+    the worker left off.
+    """
+
+    __tablename__ = "connect_import_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(String(36), index=True)
+    # queued | fetching | awaiting_scope | generating | ready | publishing | completed | failed
+    status: Mapped[str] = mapped_column(String(30), default="queued", index=True)
+    # 30 / 180 / 365 / 0 (all time). Only controls automatic draft generation.
+    scope_days: Mapped[int] = mapped_column(Integer, default=180)
+    total_locations: Mapped[int] = mapped_column(Integer, default=0)
+    fetched_locations: Mapped[int] = mapped_column(Integer, default=0)
+    total_reviews: Mapped[int] = mapped_column(Integer, default=0)
+    fetched_reviews: Mapped[int] = mapped_column(Integer, default=0)
+    total_drafts: Mapped[int] = mapped_column(Integer, default=0)
+    drafts_ready: Mapped[int] = mapped_column(Integer, default=0)
+    drafts_failed: Mapped[int] = mapped_column(Integer, default=0)
+    # Crash-safe worker lease. Expired leases are reclaimable.
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    summary: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class ConnectImportItem(Base):
+    """One review inside a connect import session."""
+
+    __tablename__ = "connect_import_items"
+    __table_args__ = (
+        UniqueConstraint(
+            "session_id", "channel_id", "review_id",
+            name="uq_connect_import_session_review",
+        ),
+        Index("ix_connect_import_items_session_status", "session_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    session_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("connect_import_sessions.id", ondelete="CASCADE"), index=True
+    )
+    channel_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("channels.id", ondelete="CASCADE"), index=True
+    )
+    review_id: Mapped[str] = mapped_column(String(500), index=True)
+    location_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reviewer_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    rating: Mapped[int] = mapped_column(Integer, default=5)
+    review_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    review_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # pending | generating | draft_ready | already_replied | outside_scope |
+    # failed | published | publish_failed
+    status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
+    # Draft row in review_replies. Kept until publish so the draft survives a
+    # closed modal and appears in Outbox.
+    reply_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("review_replies.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    selected: Mapped[bool] = mapped_column(Boolean, default=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class ConnectImportEvent(Base):
+    """Append-only, plain-language progress feed for the connect import modal.
+
+    The modal shows more than a percentage: reviews found, replies ready,
+    locations finished and posting results. Keeping the feed in the database
+    means closing and reopening the modal (or reloading) preserves the same
+    chronological story for every worker that touched the session.
+    """
+
+    __tablename__ = "connect_import_events"
+    __table_args__ = (
+        Index("ix_connect_import_events_session_created", "session_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    session_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("connect_import_sessions.id", ondelete="CASCADE"), index=True
+    )
+    # info | success | warning | error
+    level: Mapped[str] = mapped_column(String(16), default="info")
+    message: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+

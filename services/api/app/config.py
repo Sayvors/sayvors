@@ -28,7 +28,7 @@ class Settings(BaseSettings):
         return mode
     JWT_SECRET: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"
-    JWT_ACCESS_EXPIRATION_MINUTES: int = 15
+    JWT_ACCESS_EXPIRATION_MINUTES: int = 60 * 24  # 24 hours; refreshed but long enough that a browser hiccup cannot log the user out mid-session
     JWT_REFRESH_EXPIRATION_DAYS: int = 7
     # "production" arms the fail-closed startup validation below.
     ENVIRONMENT: str = "development"
@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     # lanes. Lets a single lane be scaled independently (e.g. JOB_LANES=realtime
     # on a dedicated replica) without running every lane. Unknown names fail fast.
     JOB_LANES: str = ""
+    # Comma-separated worker-loop allowlist for `python -m app.workers`.
+    # Empty = every registered loop. Read through Settings so it works from
+    # .env locally as well as from Docker env_file in production. Include
+    # connect-import when selecting loops explicitly.
+    WORKER_LOOPS: str = ""
     # Per-lane in-flight caps. Bulk carries review-request sends (provider
     # I/O), so it defaults above the old serialized value; raise it on a
     # dedicated worker replica, not on the latency-critical API process.
@@ -103,7 +108,7 @@ class Settings(BaseSettings):
     REFRESH_COOKIE_NAME: str = "refresh_token"
     ACCESS_COOKIE_NAME: str = "access_token"
     REFRESH_COOKIE_MAX_AGE: int = 60 * 60 * 24 * 7  # 7 days
-    ACCESS_COOKIE_MAX_AGE: int = 15 * 60  # 15 minutes, matches JWT access expiry
+    ACCESS_COOKIE_MAX_AGE: int = 60 * 60 * 24  # 24 hours, matches JWT access expiry
     # Parent domain shared by the SPA and the API (e.g. ".sayvors.com").
     # Lets the SPA origin read the non-httpOnly CSRF cookie for the
     # X-CSRF-Token double-submit header in split-domain deployments.
@@ -287,6 +292,10 @@ class Settings(BaseSettings):
     def facebook_login_app_secret(self) -> str:
         return self.META_LOGIN_APP_SECRET or self.META_APP_SECRET
     META_GRAPH_API_VERSION: str = "v26.0"
+    # New Meta OAuth connections. Existing connections keep working when these
+    # are false; only the Connect flow is gated (UI + API + callback).
+    META_FACEBOOK_CONNECT_ENABLED: bool = False
+    META_INSTAGRAM_CONNECT_ENABLED: bool = False
     META_OAUTH_REDIRECT_URI: str = "http://localhost:8000/api/v1/meta/facebook/callback"
     META_WEBHOOK_VERIFY_TOKEN: str = ""
     # Embedded Signup v4 Builder configuration id (App Dashboard ->

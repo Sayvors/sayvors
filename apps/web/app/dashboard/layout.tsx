@@ -5,6 +5,7 @@ import TourProvider from "@/components/tour/TourProvider";
 import ToastProvider from "@/components/feedback/ToastStack";
 import MessageToasts from "@/components/feedback/MessageToasts";
 import UpgradePrompt from "@/components/billing/UpgradePrompt";
+import ConnectImportLauncher from "@/components/channels/ConnectImportLauncher";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthGuard } from "@/components/AuthGuard";
 import { I18nProvider } from "@/lib/i18n/I18nProvider";
@@ -27,6 +28,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <SayvorsChat />
               <MessageToasts />
               <UpgradePrompt />
+              <ConnectImportLauncher />
             </div>
           </TourProvider>
           </ToastProvider>

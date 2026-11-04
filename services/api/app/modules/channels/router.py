@@ -33,6 +33,13 @@ from .schemas import (
     ChannelMessageResponse,
     ChannelMessageSend,
     ChannelResponse,
+    ConnectImportLatestOut,
+    ConnectImportLocationOut,
+    ConnectImportItemOut,
+    ConnectImportProgressOut,
+    ConnectImportPublish,
+    ConnectImportSessionOut,
+    ConnectImportStart,
     InboxSendRequest,
     InboxLocationSendRequest,
     InboxContactSendRequest,
@@ -299,6 +306,239 @@ async def _google_channel(channel_id: str, user: User, db: AsyncSession) -> Chan
     if not channel or channel.platform != "google_reviews":
         raise HTTPException(status_code=404, detail="Google channel not found")
     return channel
+
+
+def _import_location_status(session_status: str, items: list) -> str:
+    if session_status in ("queued", "fetching"):
+        return "fetching"
+    if session_status == "awaiting_scope":
+        return "awaiting_scope"
+    if session_status == "completed":
+        return "completed"
+    if session_status == "publishing":
+        return "publishing"
+    if any(item.status in ("generating", "pending") for item in items):
+        return "generating"
+    if any(item.status in ("failed", "publish_failed") for item in items):
+        return "attention"
+    if items and all(
+        item.status in ("draft_ready", "already_replied", "published", "outside_scope")
+        for item in items
+    ):
+        return "ready"
+    return session_status
+
+
+async def _import_session_out(
+    db: AsyncSession, session, include_items: bool = True
+) -> ConnectImportSessionOut:
+    from .connect_import import session_events, session_items
+
+    items = await session_items(db, session.id) if include_items else []
+    events = await session_events(db, session.id)
+    channel_ids = sorted({item.channel_id for item in items})
+    channels = {}
+    if channel_ids:
+        channels = {
+            channel.id: channel
+            for channel in (
+                await db.execute(
+                    select(Channel).where(Channel.id.in_(channel_ids))
+                )
+            ).scalars().all()
+        }
+    grouped: dict[str, list] = {}
+    for item in items:
+        grouped.setdefault(item.channel_id, []).append(item)
+    reply_ids = [item.reply_id for item in items if item.reply_id]
+    replies = {}
+    if reply_ids:
+        replies = {
+            reply.id: reply
+            for reply in (
+                await db.execute(
+                    select(ReviewReply).where(ReviewReply.id.in_(reply_ids))
+                )
+            ).scalars().all()
+        }
+    locations: list[ConnectImportLocationOut] = []
+    for channel_id in channel_ids:
+        channel = channels.get(channel_id)
+        location_items = grouped.get(channel_id, [])
+        meta = {}
+        if channel is not None:
+            try:
+                import json as _json
+
+                meta = _json.loads(channel.metadata_json or "{}")
+            except (TypeError, ValueError):
+                meta = {}
+        locations.append(
+            ConnectImportLocationOut(
+                channel_id=channel_id,
+                name=(channel.display_name if channel else None) or "Google location",
+                address=str(meta.get("address") or "") or None,
+                status=_import_location_status(session.status, location_items),
+                items=[
+                    ConnectImportItemOut(
+                        id=item.id,
+                        channel_id=item.channel_id,
+                        review_id=item.review_id,
+                        location_name=item.location_name,
+                        reviewer_name=item.reviewer_name,
+                        rating=item.rating,
+                        review_text=item.review_text,
+                        review_time=(
+                            item.review_time.isoformat() if item.review_time else None
+                        ),
+                        status=item.status,
+                        reply_id=item.reply_id,
+                        draft_text=(
+                            replies[item.reply_id].reply_text
+                            if item.reply_id and item.reply_id in replies
+                            else None
+                        ),
+                        selected=bool(item.selected),
+                        error=item.error,
+                    )
+                    for item in location_items
+                ],
+            )
+        )
+    return ConnectImportSessionOut(
+        id=session.id,
+        status=session.status,
+        scope_days=session.scope_days,
+        progress=ConnectImportProgressOut(
+            total_locations=session.total_locations,
+            fetched_locations=session.fetched_locations,
+            total_reviews=session.total_reviews,
+            fetched_reviews=session.fetched_reviews,
+            total_drafts=session.total_drafts,
+            drafts_ready=session.drafts_ready,
+            drafts_failed=session.drafts_failed,
+        ),
+        locations=locations,
+        events=[
+            {
+                "id": event.id,
+                "level": event.level,
+                "message": event.message,
+                "created_at": event.created_at.isoformat() if event.created_at else None,
+            }
+            for event in events
+        ],
+        summary=session.summary,
+        error=session.error,
+        created_at=session.created_at.isoformat() if session.created_at else None,
+        updated_at=session.updated_at.isoformat() if session.updated_at else None,
+    )
+
+
+@router.get(
+    "/google/import-sessions/latest",
+    response_model=ConnectImportLatestOut,
+)
+async def latest_google_import_session(
+    ctx: TenantContext = Depends(require_perm("channels.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    from .connect_import import latest_active_session
+
+    session = await latest_active_session(db, tenant_id_of(ctx.user))
+    if session is None:
+        return ConnectImportLatestOut(session=None)
+    return ConnectImportLatestOut(
+        session=await _import_session_out(db, session, include_items=False)
+    )
+
+
+@router.get(
+    "/google/import-sessions/{session_id}",
+    response_model=ConnectImportSessionOut,
+)
+async def get_google_import_session(
+    session_id: str,
+    ctx: TenantContext = Depends(require_perm("channels.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    from .connect_import import get_session
+
+    session = await get_session(db, tenant_id_of(ctx.user), session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Import session not found")
+    return await _import_session_out(db, session)
+
+
+@router.post(
+    "/google/import-sessions/{session_id}/start",
+    response_model=ConnectImportSessionOut,
+)
+async def start_google_import_session(
+    session_id: str,
+    body: ConnectImportStart,
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
+    db: AsyncSession = Depends(get_db),
+):
+    from .connect_import import get_session, start_generation
+
+    session = await get_session(db, tenant_id_of(ctx.user), session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Import session not found")
+    try:
+        session = await start_generation(db, session, int(body.scope_days))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return await _import_session_out(db, session)
+
+
+@router.post(
+    "/google/import-sessions/{session_id}/items/{item_id}/generate",
+    response_model=ConnectImportSessionOut,
+)
+async def generate_google_import_item(
+    session_id: str,
+    item_id: str,
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
+    db: AsyncSession = Depends(get_db),
+):
+    from .connect_import import get_session, request_item_generation
+
+    session = await get_session(db, tenant_id_of(ctx.user), session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Import session not found")
+    try:
+        session = await request_item_generation(db, session, item_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return await _import_session_out(db, session)
+
+
+@router.post(
+    "/google/import-sessions/{session_id}/publish",
+    response_model=ConnectImportSessionOut,
+)
+async def publish_google_import_session(
+    session_id: str,
+    body: ConnectImportPublish,
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
+    db: AsyncSession = Depends(get_db),
+):
+    from .connect_import import get_session, request_publish
+
+    session = await get_session(db, tenant_id_of(ctx.user), session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Import session not found")
+    try:
+        session = await request_publish(
+            db,
+            session,
+            item_ids=body.item_ids,
+            publish_all=bool(body.all),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return await _import_session_out(db, session)
 
 
 def _verification_status(
@@ -2636,7 +2876,19 @@ async def google_callback(
 
     await rebuild_facts_safe(db, user_id)
     logger.info("Google Reviews connect: created %d channels for user %s", created, user_id)
-    return RedirectResponse(f"{base}?google_connected={created}")
+    import_session = None
+    try:
+        from .connect_import import create_session
+
+        connector = await db.get(User, user_id)
+        tenant_id = tenant_id_of(connector) if connector is not None else user_id
+        import_session = await create_session(db, tenant_id)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Could not create connect import session: %s", e)
+    redirect = f"{base}?google_connected={created}"
+    if import_session is not None:
+        redirect = f"{redirect}&import_session={import_session.id}"
+    return RedirectResponse(redirect)
 
 
 def _channel_meta_meta(channel: Channel) -> dict:
