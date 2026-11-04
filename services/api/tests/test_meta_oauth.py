@@ -12,6 +12,22 @@ from app.modules.channels.meta.models import MetaConnection, MetaOAuthTransactio
 pytestmark = pytest.mark.asyncio
 
 
+@pytest.fixture(autouse=True)
+def _meta_connect_flags_enabled(monkeypatch):
+    """OAuth mechanics tests exercise the flow, so open both providers.
+
+    Production defaults are false; the dedicated flag tests cover that.
+    """
+    monkeypatch.setattr(
+        "app.modules.channels.meta.router.settings.META_FACEBOOK_CONNECT_ENABLED",
+        True,
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.meta.router.settings.META_INSTAGRAM_CONNECT_ENABLED",
+        True,
+    )
+
+
 async def test_create_and_consume_valid(db):
     state, row = await _oauth.create_transaction(db, "tenant-a", "whatsapp")
     assert state and row.status == "pending"

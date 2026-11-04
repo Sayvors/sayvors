@@ -53,8 +53,9 @@ Current names are:
 - `escalation-sweeps`
 - `lead-digest`
 
-An unknown name fails startup rather than silently running no workers. The
-outbox drainer starts alongside the selected loops and is not selected through
+An unknown name fails startup rather than silently running no workers. If you
+set `WORKER_LOOPS`, include `connect-import` for the first-connect Google
+import and AI draft workspace. The outbox drainer starts alongside the selected loops and is not selected through
 `WORKER_LOOPS`.
 
 ## Unified job lanes

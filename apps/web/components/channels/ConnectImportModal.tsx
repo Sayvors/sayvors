@@ -690,7 +690,11 @@ function ReviewRow({
         {item.draft_text && (
           <div className="mt-2 rounded-[16px] bg-deep-violet/[0.045] px-3 py-2">
             <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-deep-violet/55">
-              AI draft
+              {item.status === "already_replied"
+                ? "Existing reply"
+                : item.status === "published"
+                  ? "Published reply"
+                  : "AI draft"}
             </p>
             <p className="mt-1 line-clamp-4 text-[12px] leading-relaxed text-ink/70">{item.draft_text}</p>
           </div>

@@ -14,7 +14,6 @@ true so a single uvicorn process stays self-sufficient.
 """
 import asyncio
 import logging
-import os
 import signal
 
 from ..config import settings
@@ -174,7 +173,7 @@ async def _amain() -> None:
     # lead-actions" -> an AI-only container on the same image). Unknown
     # names fail fast — a typo'd env var must not silently run nothing.
     # Unset = every loop, the default single-container topology.
-    only = os.environ.get("WORKER_LOOPS", "").strip()
+    only = settings.WORKER_LOOPS.strip()
     if only:
         wanted = {name.strip() for name in only.split(",") if name.strip()}
         unknown = wanted - loops.keys()

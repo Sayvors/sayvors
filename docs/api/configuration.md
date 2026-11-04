@@ -130,6 +130,10 @@ Native Google Business Profile OAuth is the only product path (reviews, replies,
 | `META_LOGIN_APP_ID` | Empty | Optional dedicated Facebook sign-in app ID; falls back to `META_APP_ID`. |
 | `META_LOGIN_APP_SECRET` | Empty | Optional dedicated Facebook sign-in secret; falls back to `META_APP_SECRET`. |
 | `META_GRAPH_API_VERSION` | `v26.0` | Meta Graph API version. |
+| `META_FACEBOOK_CONNECT_ENABLED` | `false` | Open new Facebook OAuth connections. Existing connections keep working. |
+| `META_INSTAGRAM_CONNECT_ENABLED` | `false` | Open new Instagram OAuth connections. Existing connections keep working. |
+| `NEXT_PUBLIC_META_FACEBOOK_CONNECT_ENABLED` | `false` | Browser flag for the Facebook Connect card; must be set at web build time. |
+| `NEXT_PUBLIC_META_INSTAGRAM_CONNECT_ENABLED` | `false` | Browser flag for the Instagram Connect card; must be set at web build time. |
 | `META_OAUTH_REDIRECT_URI` | Local API callback | Meta OAuth callback registered with Meta. |
 | `META_WEBHOOK_VERIFY_TOKEN` | Empty | Shared secret used to verify Meta webhook setup. |
 | `META_WHATSAPP_CONFIG_ID` | Empty | WhatsApp Embedded Signup configuration. |
@@ -155,11 +159,11 @@ as required by their respective flows. Configure the webhook callback as
 
 ## Worker-only settings
 
-These are consumed outside the main `Settings` class:
+These configure the dedicated worker process:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `WORKER_LOOPS` | Empty (all enabled loops) | Optional comma-separated worker loop selection for the dedicated worker process. |
+| `WORKER_LOOPS` | Empty (all enabled loops) | Optional comma-separated worker loop selection for the dedicated worker process. If set, include `connect-import` for first-connect Google imports. |
 | `LEAD_DIGEST_POLL_SECONDS` | `3600` | Lead digest worker polling interval. |
 | `META_EVENTS_POLL_SECONDS` | `5` | Meta event worker polling interval. |
 | `META_EVENTS_BATCH_SIZE` | `20` | Maximum Meta events claimed per batch. |

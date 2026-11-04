@@ -46,6 +46,7 @@ const GOOGLE_ERRORS: Record<string, string> = {
 
 const META_ERRORS: Record<string, string> = {
   unknown_provider: "Unknown provider.",
+  provider_disabled: "New connections for this channel are paused for now.",
   token_exchange_failed: "Meta rejected the connection. Please try again.",
   invalid_state: "The connect session expired. Please click Connect again.",
   missing_code: "Meta did not return an authorization code. Please try again.",

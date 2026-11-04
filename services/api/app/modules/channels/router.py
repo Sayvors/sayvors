@@ -2870,7 +2870,9 @@ async def google_callback(
     try:
         from .connect_import import create_session
 
-        import_session = await create_session(db, user_id)
+        connector = await db.get(User, user_id)
+        tenant_id = tenant_id_of(connector) if connector is not None else user_id
+        import_session = await create_session(db, tenant_id)
     except Exception as e:  # noqa: BLE001
         logger.warning("Could not create connect import session: %s", e)
     redirect = f"{base}?google_connected={created}"

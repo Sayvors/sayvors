@@ -38,10 +38,23 @@ const PROVIDERS: {
   name: string;
   blurb: string;
   tint: string;
+  enabled: boolean;
 }[] = [
-  { key: "whatsapp", name: "WhatsApp", blurb: "AI replies to customer chats", tint: "bg-emerald-600/10" },
-  { key: "facebook", name: "Facebook", blurb: "Page comments and Messenger", tint: "bg-blue-600/10" },
-  { key: "instagram", name: "Instagram", blurb: "Comments and DMs via your Page", tint: "bg-pink-600/10" },
+  { key: "whatsapp", name: "WhatsApp", blurb: "AI replies to customer chats", tint: "bg-emerald-600/10", enabled: true },
+  {
+    key: "facebook",
+    name: "Facebook",
+    blurb: "Page comments and Messenger",
+    tint: "bg-blue-600/10",
+    enabled: process.env.NEXT_PUBLIC_META_FACEBOOK_CONNECT_ENABLED === "true",
+  },
+  {
+    key: "instagram",
+    name: "Instagram",
+    blurb: "Comments and DMs via your Page",
+    tint: "bg-pink-600/10",
+    enabled: process.env.NEXT_PUBLIC_META_INSTAGRAM_CONNECT_ENABLED === "true",
+  },
 ];
 
 const CONNECT_HREF: Record<MetaProvider, string> = {
@@ -239,17 +252,28 @@ export default function MetaConnections({
                 <p className="mt-0.5 truncate text-[11.5px] text-ink/45 dark:text-fog/45" title={label}>
                   {label}
                 </p>
+                {!p.enabled && (
+                  <p className="mt-0.5 text-[10.5px] font-semibold text-amber-600 dark:text-amber-400">
+                    New connections paused for now
+                  </p>
+                )}
               </div>
             </div>
 
             <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-ink/[0.05] pt-3 dark:border-fog/[0.06]">
               {isDisconnected ? (
-                <Link
-                  href={CONNECT_HREF[p.key]}
-                  className="inline-flex min-h-8 items-center rounded-lg bg-deep-violet px-3 text-[12px] font-semibold text-white shadow-sm outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 focus-visible:ring-offset-2"
-                >
-                  Connect
-                </Link>
+                p.enabled ? (
+                  <Link
+                    href={CONNECT_HREF[p.key]}
+                    className="inline-flex min-h-8 items-center rounded-lg bg-deep-violet px-3 text-[12px] font-semibold text-white shadow-sm outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 focus-visible:ring-offset-2"
+                  >
+                    Connect
+                  </Link>
+                ) : (
+                  <span className="inline-flex min-h-8 items-center rounded-lg bg-ink/[0.05] px-3 text-[12px] font-semibold text-ink/45 dark:bg-fog/[0.07] dark:text-fog/45">
+                    Coming soon
+                  </span>
+                )
               ) : (
                 <>
                   {needsAsset && p.key === "facebook" && (

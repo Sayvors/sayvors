@@ -219,6 +219,11 @@ async def start_connect(
     resume there instead of the generic channels page. Only same-app paths
     are stored; the callback re-validates before using it.
     """
+    if not _connect_enabled(provider):
+        raise HTTPException(
+            status_code=403,
+            detail=f"{provider.title()} connections are paused for now.",
+        )
     origin = _request_origin(request)
     metadata: dict[str, str] = {}
     if origin:
@@ -233,6 +238,19 @@ async def start_connect(
         raise HTTPException(status_code=404, detail="Unknown Meta provider")
     except MetaAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
+
+
+def _connect_enabled(provider: str) -> bool:
+    """Whether new OAuth connections are open for this provider.
+
+    Existing connections and their messages are intentionally unaffected:
+    these flags gate the Connect entry point, not the provider runtime.
+    """
+    if provider == "facebook":
+        return bool(settings.META_FACEBOOK_CONNECT_ENABLED)
+    if provider == "instagram":
+        return bool(settings.META_INSTAGRAM_CONNECT_ENABLED)
+    return True
 
 
 def _frontend_base(next_path: str | None, origin: str | None = None) -> str:
@@ -375,7 +393,7 @@ async def meta_sdk_bundle():
 
 _META_ERROR_CODES = {
     "access_denied", "missing_code", "invalid_state", "token_exchange_failed",
-    "unknown_provider", "account_blocked", "server_error",
+    "unknown_provider", "account_blocked", "server_error", "provider_disabled",
 }
 
 
@@ -421,6 +439,8 @@ async def oauth_callback(
         (txn.transaction_metadata or {}).get("next"),
         (txn.transaction_metadata or {}).get("frontend_origin"),
     )
+    if not _connect_enabled(provider):
+        return RedirectResponse(f"{base}?meta_error=provider_disabled")
 
     adapter = _service.get_adapter(provider)
     try:

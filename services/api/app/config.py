@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     # lanes. Lets a single lane be scaled independently (e.g. JOB_LANES=realtime
     # on a dedicated replica) without running every lane. Unknown names fail fast.
     JOB_LANES: str = ""
+    # Comma-separated worker-loop allowlist for `python -m app.workers`.
+    # Empty = every registered loop. Read through Settings so it works from
+    # .env locally as well as from Docker env_file in production. Include
+    # connect-import when selecting loops explicitly.
+    WORKER_LOOPS: str = ""
     # Per-lane in-flight caps. Bulk carries review-request sends (provider
     # I/O), so it defaults above the old serialized value; raise it on a
     # dedicated worker replica, not on the latency-critical API process.
@@ -287,6 +292,10 @@ class Settings(BaseSettings):
     def facebook_login_app_secret(self) -> str:
         return self.META_LOGIN_APP_SECRET or self.META_APP_SECRET
     META_GRAPH_API_VERSION: str = "v26.0"
+    # New Meta OAuth connections. Existing connections keep working when these
+    # are false; only the Connect flow is gated (UI + API + callback).
+    META_FACEBOOK_CONNECT_ENABLED: bool = False
+    META_INSTAGRAM_CONNECT_ENABLED: bool = False
     META_OAUTH_REDIRECT_URI: str = "http://localhost:8000/api/v1/meta/facebook/callback"
     META_WEBHOOK_VERIFY_TOKEN: str = ""
     # Embedded Signup v4 Builder configuration id (App Dashboard ->

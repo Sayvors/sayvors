@@ -478,6 +478,28 @@ async def test_tenant_channels_lists_display_names(client, channel_id):
 
 
 @pytest.mark.asyncio
+async def test_accepting_an_invite_never_creates_a_google_import_session(db):
+    """Joining a workspace is not a Google connect and must not trigger the modal."""
+    from app.modules.channels.models import ConnectImportSession
+
+    await _make_owner(db)
+    roles = await service.ensure_system_roles(db, TENANT)
+    role = next(r for r in roles if r.name == "Agent")
+    member_user = await _make_member_user(db, email="joiner@acme.com")
+    member, _raw = await service.invite_member(
+        db, TENANT, OWNER_ID, member_user.email, role
+    )
+    await db.commit()
+    await service.join_existing_user(db, member, member_user)
+    await db.commit()
+
+    sessions = (
+        await db.execute(_sel(ConnectImportSession))
+    ).scalars().all()
+    assert sessions == []
+
+
+@pytest.mark.asyncio
 async def test_accept_new_user(client, db, no_email, monkeypatch):
     import app.modules.team.router as team_router
     monkeypatch.setattr(team_router, "store_session", _noop_store_session)
