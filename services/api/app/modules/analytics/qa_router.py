@@ -1,0 +1,353 @@
+"""Q&A sync and answer approval for Google Business Profile listings.
+
+Questions are pulled by the Google reviews worker and stored in
+`google_question_answers`. These endpoints expose the same review-style
+approval flow for answers: draft (AI or manual) → pending_approval →
+approve/post to Google, or reject/ignore.
+
+Google's v4 API identifies a merchant answer by `author.type == MERCHANT`;
+customer answers are stored read-only and never count as "answered".
+"""
+from fastapi import APIRouter, Depends, HTTPException, Query  # noqa: F401
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime, timezone
+
+from ...core.deps import get_db, get_current_user
+from ..team.context import TenantContext, require_perm, tenant_id_of
+from ..users.models import User
+from .models import GoogleQuestionAnswer
+from .schemas import (
+    GoogleQuestionAnswerIn,
+    GoogleQuestionAnswerListOut,
+    GoogleQuestionAnswerOut,
+    GoogleQuestionDraftIn,
+)
+
+router = APIRouter(prefix="/api/v1/analytics", tags=["analytics"])
+
+
+async def _owned_question(
+    db: AsyncSession, user: User, qa_id: str
+) -> tuple[GoogleQuestionAnswer, object]:
+    from ..channels.models import Channel
+
+    q = (
+        await db.execute(
+            select(GoogleQuestionAnswer).where(
+                GoogleQuestionAnswer.id == qa_id,
+                GoogleQuestionAnswer.user_id == tenant_id_of(user),
+            )
+        )
+    ).scalar_one_or_none()
+    if q is None:
+        raise HTTPException(status_code=404, detail="Question not found")
+    channel = await db.get(Channel, q.channel_id)
+    if channel is None or channel.user_id != tenant_id_of(user):
+        raise HTTPException(status_code=404, detail="Question not found")
+    return q, channel
+
+
+def _question_payload(q: GoogleQuestionAnswer) -> dict:
+    return GoogleQuestionAnswerOut.model_validate(q).model_dump()
+
+
+@router.get("/questions", response_model=GoogleQuestionAnswerListOut)
+async def list_google_questions(
+    channel_id: str | None = Query(None),
+    answered: bool | None = Query(None),
+    ignored: bool | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Google listing Q&A for this tenant, newest question first."""
+    uid = tenant_id_of(user)
+    filters = [GoogleQuestionAnswer.user_id == uid]
+    if channel_id:
+        filters.append(GoogleQuestionAnswer.channel_id == channel_id)
+    if answered is not None:
+        filters.append(GoogleQuestionAnswer.is_answered == answered)
+    if ignored is not None:
+        filters.append(GoogleQuestionAnswer.is_ignored == ignored)
+
+    total = (
+        await db.execute(
+            select(func.count()).select_from(GoogleQuestionAnswer).where(*filters)
+        )
+    ).scalar_one()
+    rows = (
+        await db.execute(
+            select(GoogleQuestionAnswer)
+            .where(*filters)
+            .order_by(
+                func.coalesce(
+                    GoogleQuestionAnswer.question_created_at,
+                    GoogleQuestionAnswer.created_at,
+                ).desc()
+            )
+            .limit(limit)
+            .offset(offset)
+        )
+    ).scalars().all()
+
+    base = [GoogleQuestionAnswer.user_id == uid]
+    if channel_id:
+        base.append(GoogleQuestionAnswer.channel_id == channel_id)
+    unanswered = (
+        await db.execute(
+            select(func.count())
+            .select_from(GoogleQuestionAnswer)
+            .where(
+                *base,
+                GoogleQuestionAnswer.is_answered.is_(False),
+                GoogleQuestionAnswer.is_ignored.is_(False),
+            )
+        )
+    ).scalar_one()
+    ignored_count = (
+        await db.execute(
+            select(func.count())
+            .select_from(GoogleQuestionAnswer)
+            .where(*base, GoogleQuestionAnswer.is_ignored.is_(True))
+        )
+    ).scalar_one()
+
+    return {
+        "items": [_question_payload(r) for r in rows],
+        "total": int(total),
+        "unanswered_count": int(unanswered),
+        "ignored_count": int(ignored_count),
+    }
+
+
+@router.get("/questions/{qa_id}", response_model=GoogleQuestionAnswerOut)
+async def get_google_question(
+    qa_id: str,
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    q, _channel = await _owned_question(db, user, qa_id)
+    return _question_payload(q)
+
+
+@router.post("/questions/{qa_id}/draft", response_model=GoogleQuestionAnswerOut)
+async def draft_google_answer(
+    qa_id: str,
+    body: GoogleQuestionDraftIn,
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create an answer draft (manual text or generated by the reply engine)."""
+    q, channel = await _owned_question(db, user, qa_id)
+    if not ctx.can_edit_channel(channel.id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    if q.is_answered:
+        raise HTTPException(status_code=409, detail="This question already has a merchant answer")
+
+    text = (body.answer_text or "").strip()
+    if not text:
+        from ..llm.gateway import LLMMessage, complete, resolve_tenant_model
+
+        try:
+            model_id = await resolve_tenant_model(db)
+            resp = await complete(
+                model=model_id,
+                messages=[
+                    LLMMessage(
+                        role="user",
+                        content=(
+                            "Write a concise public answer to this Google Business "
+                            "Profile question. Use only facts present in the "
+                            "question; never invent prices, hours, or policies. "
+                            "Return plain text under 350 characters.\n\n"
+                            f"Business: {channel.display_name or 'the business'}\n"
+                            f"Question: {q.question_text}"
+                        ),
+                    )
+                ],
+                system_prompt=(
+                    "You write helpful, factual public answers for a local "
+                    "business. Be brief and human. Do not use markdown."
+                ),
+                temperature=0.2,
+                max_tokens=300,
+                tenant_id=tenant_id_of(user),
+                channel_id=channel.id,
+                purpose="review.qa",
+            )
+            text = (resp.content or "").strip()
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception(
+                "Q&A draft generation failed question=%s channel=%s",
+                q.id,
+                channel.id,
+            )
+            raise HTTPException(
+                status_code=502,
+                detail="Could not generate an answer draft. Try again or write one manually.",
+            ) from None
+
+    if not text:
+        raise HTTPException(status_code=502, detail="The answer draft came back empty.")
+
+    q.draft_answer_text = text[:4000]
+    q.draft_status = "pending_approval"
+    q.draft_error = None
+    q.draft_generated_at = datetime.now(timezone.utc)
+    q.is_ignored = False
+    await db.commit()
+    await db.refresh(q)
+    return _question_payload(q)
+
+
+@router.patch("/questions/{qa_id}/draft", response_model=GoogleQuestionAnswerOut)
+async def edit_google_answer_draft(
+    qa_id: str,
+    body: GoogleQuestionAnswerIn,
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Edit a pending answer draft before approval."""
+    q, channel = await _owned_question(db, user, qa_id)
+    if not ctx.can_edit_channel(channel.id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    if q.is_answered:
+        raise HTTPException(status_code=409, detail="This question already has a merchant answer")
+
+    q.draft_answer_text = body.answer_text.strip()[:4000]
+    q.draft_status = "pending_approval"
+    q.draft_error = None
+    await db.commit()
+    await db.refresh(q)
+    return _question_payload(q)
+
+
+async def _post_question_answer(
+    db: AsyncSession, q: GoogleQuestionAnswer, channel, text: str
+) -> None:
+    """Publishing is no longer possible: Google retired the Q&A API.
+
+    The My Business Q&A API was discontinued on 2025-11-03. Keep historical
+    questions/drafts readable, but fail closed with a clear message instead
+    of sending a request that can only 404.
+    """
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "Google retired the Business Profile Q&A API on 3 Nov 2025. "
+            "Answers can no longer be published through the API; manage Q&A "
+            "in Google Maps."
+        ),
+    )
+
+
+@router.post("/questions/{qa_id}/approve", response_model=GoogleQuestionAnswerOut)
+async def approve_google_answer(
+    qa_id: str,
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.publish")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Approve the pending draft and publish it to Google."""
+    q, channel = await _owned_question(db, user, qa_id)
+    if not ctx.can_edit_channel(channel.id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    if q.is_answered:
+        raise HTTPException(status_code=409, detail="This question already has a merchant answer")
+    text = (q.draft_answer_text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="There is no draft to approve")
+    if q.draft_status != "pending_approval":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Answer draft is not pending approval (status={q.draft_status})",
+        )
+
+    await _post_question_answer(db, q, channel, text)
+    await db.commit()
+    await db.refresh(q)
+    return _question_payload(q)
+
+
+@router.post("/questions/{qa_id}/answer", response_model=GoogleQuestionAnswerOut)
+async def answer_google_question(
+    qa_id: str,
+    body: GoogleQuestionAnswerIn,
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.publish")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Publish a manually written answer immediately (no draft step)."""
+    q, channel = await _owned_question(db, user, qa_id)
+    if not ctx.can_edit_channel(channel.id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    if q.is_answered:
+        raise HTTPException(status_code=409, detail="This question already has a merchant answer")
+    await _post_question_answer(db, q, channel, body.answer_text.strip()[:4000])
+    await db.commit()
+    await db.refresh(q)
+    return _question_payload(q)
+
+
+@router.post("/questions/{qa_id}/reject", response_model=GoogleQuestionAnswerOut)
+async def reject_google_answer_draft(
+    qa_id: str,
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Discard the answer draft without posting anything to Google."""
+    q, channel = await _owned_question(db, user, qa_id)
+    if not ctx.can_edit_channel(channel.id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    q.draft_answer_text = None
+    q.draft_status = "rejected"
+    q.draft_error = None
+    q.draft_approved_at = None
+    await db.commit()
+    await db.refresh(q)
+    return _question_payload(q)
+
+
+@router.post("/questions/{qa_id}/ignore", response_model=GoogleQuestionAnswerOut)
+async def ignore_google_question(
+    qa_id: str,
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Stop counting a question as unanswered without answering it."""
+    q, channel = await _owned_question(db, user, qa_id)
+    if not ctx.can_edit_channel(channel.id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    q.is_ignored = True
+    q.draft_answer_text = None
+    q.draft_status = "none"
+    q.draft_error = None
+    await db.commit()
+    await db.refresh(q)
+    return _question_payload(q)
+
+
+@router.post("/questions/{qa_id}/unignore", response_model=GoogleQuestionAnswerOut)
+async def unignore_google_question(
+    qa_id: str,
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    q, channel = await _owned_question(db, user, qa_id)
+    if not ctx.can_edit_channel(channel.id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    q.is_ignored = False
+    await db.commit()
+    await db.refresh(q)
+    return _question_payload(q)

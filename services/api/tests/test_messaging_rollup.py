@@ -16,7 +16,13 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from app.modules.analytics.messaging_rollup import rollup_channel_days
+from app.modules.analytics.messaging_rollup import (
+    _BACKFILL_DAYS,
+    _BACKFILL_DAYS_PER_PASS,
+    CURRENT_ROLLUP_VERSION,
+    _rollup_days,
+    rollup_channel_days,
+)
 from app.modules.analytics.models import ChannelDailyMetric
 from app.modules.channels.models import Channel, ChannelMessage
 
@@ -39,14 +45,24 @@ async def _whatsapp_channel(db, user_id: str) -> Channel:
     return channel
 
 
-def _msg(db, channel: Channel, direction: str, minutes_ago: float, phone: str = "+966500000001"):
+def _msg(
+    db,
+    channel: Channel,
+    direction: str,
+    minutes_ago: float,
+    phone: str = "+966500000001",
+    contact_phone: str | None = None,
+):
     db.add(ChannelMessage(
         id=str(uuid4()),
         channel_id=channel.id,
         direction=direction,
         content="hi",
         status="sent",
-        contact_phone=phone,
+        # Ciphertext is intentionally non-deterministic in production; the
+        # rollup must key on the hash, not this value.
+        contact_phone=contact_phone or phone,
+        contact_phone_hash=f"hash:{phone}",
         created_at=_ts(minutes_ago),
     ))
 
@@ -109,6 +125,73 @@ async def test_rollup_response_health(db, user_id):
     assert len(again) == 2
     today_again = next(r for r in again if r.date == today)
     assert today_again.messages_in == 2
+
+
+@pytest.mark.asyncio
+async def test_contacts_new_counts_unique_hashes_not_ciphertexts(db, user_id):
+    """Fernet ciphertext changes per write; two messages from one contact are
+    still one new contact, and messages from two contacts are two."""
+    channel = await _whatsapp_channel(db, user_id)
+    _msg(db, channel, "inbound", 30, phone="+966500000001", contact_phone="ciphertext-a")
+    _msg(db, channel, "inbound", 20, phone="+966500000001", contact_phone="ciphertext-b")
+    _msg(db, channel, "inbound", 10, phone="+966500000002", contact_phone="ciphertext-c")
+    await db.commit()
+
+    today = datetime.now(timezone.utc).date()
+    await rollup_channel_days(db, channel, [today])
+
+    row = (await _rows(db, channel.id))[today]
+    assert row.messages_in == 3
+    assert row.conversations_in == 2
+    assert row.contacts_new == 2
+    assert row.rollup_version == CURRENT_ROLLUP_VERSION
+
+
+@pytest.mark.asyncio
+async def test_rollup_days_backfills_history_in_bounded_slices(db, user_id):
+    channel = await _whatsapp_channel(db, user_id)
+    today = datetime.now(timezone.utc).date()
+
+    days = await _rollup_days(db, channel, today)
+    assert len(days) == 3 + _BACKFILL_DAYS_PER_PASS, days
+    # Newest-first: the first slice covers the days immediately before the
+    # three hot days, so the default 30-day card heals first.
+    assert today - timedelta(days=3) in days
+    assert today - timedelta(days=_BACKFILL_DAYS - 1) not in days
+
+    for offset in range(_BACKFILL_DAYS):
+        db.add(ChannelDailyMetric(
+            id=f"daily-{offset}",
+            user_id=user_id,
+            channel_id=channel.id,
+            date=today - timedelta(days=offset),
+            rollup_version=CURRENT_ROLLUP_VERSION,
+        ))
+    await db.commit()
+
+    days = await _rollup_days(db, channel, today)
+    assert days == [today - timedelta(days=2), today - timedelta(days=1), today]
+
+
+@pytest.mark.asyncio
+async def test_rollup_days_recomputes_pre_fix_rows_in_bounded_slices(db, user_id):
+    """Rows written before the hash-grouping fix carry version 0 and must be
+    healed, not skipped just because a row exists."""
+    channel = await _whatsapp_channel(db, user_id)
+    today = datetime.now(timezone.utc).date()
+    # A recent stale row is picked before the older tail (newest-first).
+    stale_day = today - timedelta(days=4)
+    db.add(ChannelDailyMetric(
+        id="stale-row",
+        user_id=user_id,
+        channel_id=channel.id,
+        date=stale_day,
+        rollup_version=0,
+    ))
+    await db.commit()
+
+    days = await _rollup_days(db, channel, today)
+    assert stale_day in days
 
 
 @pytest.mark.asyncio

@@ -899,7 +899,22 @@ export interface BenchmarkResponse {
     stale?: boolean;
     median_rating?: number | null;
     median_reviews?: number | null;
-    peers?: { place_id: string; name: string; category: string | null; rating: number | null; review_count: number }[];
+    delta_window_days?: number | null;
+    median_rating_delta?: number | null;
+    median_reviews_delta?: number | null;
+    median_velocity_per_month?: number | null;
+    peers?: {
+      place_id: string;
+      name: string;
+      category: string | null;
+      rating: number | null;
+      review_count: number;
+      rating_delta?: number | null;
+      reviews_delta?: number | null;
+      velocity_per_month?: number | null;
+      baseline_at?: string | null;
+      baseline_days?: number | null;
+    }[];
   } | null;
 }
 

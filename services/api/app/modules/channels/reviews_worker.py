@@ -19,6 +19,7 @@ the same channel. The lock expires on its own (crash-safe).
 import asyncio
 import json
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, update
@@ -28,6 +29,7 @@ from ...config import settings
 from ..outbox.service import enqueue_event
 from .google_reviews import GoogleReviewsClient, GoogleReviewsError
 from .models import AutoReplyConfig, Channel, ChannelMessage, ReviewReply
+from ..analytics.models import GoogleQuestionAnswer
 from .review_reply import generate_auto_reply
 from ..notifications.service import notify
 from .service import decrypt_token, encrypt_message_content
@@ -73,6 +75,30 @@ def _is_in_health_backoff(channel: Channel, now: datetime) -> bool:
         return datetime.fromisoformat(until) > now
     except (ValueError, TypeError):
         return False
+
+
+def _qa_due(channel: Channel, now: datetime) -> bool:
+    """True when this channel's Q&A has not been polled within the interval."""
+    last = _channel_meta(channel).get("qa", {}).get("last_polled_at")
+    if not last:
+        return True
+    try:
+        stamp = datetime.fromisoformat(str(last))
+    except (ValueError, TypeError):
+        return True
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return now - stamp >= timedelta(seconds=settings.GOOGLE_QA_POLL_INTERVAL_SECONDS)
+
+
+def _mark_qa_polled(channel: Channel, now: datetime) -> None:
+    """Record the attempt time so Q&A is not fetched on every review cycle."""
+    try:
+        meta = json.loads(channel.metadata_json or "{}")
+    except (json.JSONDecodeError, TypeError):
+        meta = {}
+    meta["qa"] = {"last_polled_at": now.isoformat()}
+    channel.metadata_json = json.dumps(meta)
 
 
 async def _update_channel_health(
@@ -167,6 +193,35 @@ async def _release_channel(db: AsyncSession, config_id: str) -> None:
         .where(AutoReplyConfig.id == config_id)
         .values(polling_locked_until=None, last_polled_at=datetime.now(timezone.utc))
     )
+    await db.commit()
+
+
+async def _mark_reviews_seen(db: AsyncSession, channel: Channel, reviews) -> None:
+    """Record that this poll returned these reviews.
+
+    Removal detection only trusts `last_seen_at` written by a real provider
+    fetch (never a replayed Kafka event). The incremental poll is a real
+    fetch, so this is the writer that keeps the daily sweep's evidence warm.
+    """
+    from ..analytics.models import ReviewInsight
+
+    ids = [r.review_id for r in reviews if r.review_id]
+    if not ids:
+        return
+    now = datetime.now(timezone.utc)
+    for start in range(0, len(ids), 200):
+        chunk = ids[start:start + 200]
+        rows = (
+            await db.execute(
+                select(ReviewInsight).where(
+                    ReviewInsight.channel_id == channel.id,
+                    ReviewInsight.review_id.in_(chunk),
+                )
+            )
+        ).scalars().all()
+        for row in rows:
+            row.last_seen_at = now
+            row.removed_at = None
     await db.commit()
 
 
@@ -305,6 +360,184 @@ def _save_reply_row(
     )
 
 
+async def _adopt_existing_reply(db: AsyncSession, channel: Channel, review) -> bool:
+    """Import the merchant reply Google already shows for this review.
+
+    Without this, `_already_replied` only knew about rows Sayvors wrote, so a
+    review answered directly in the Business Profile looked unanswered and the
+    AI could overwrite that reply. The Google reply is the source of truth:
+    a pending/failed draft is superseded, the posted row is corrected if the
+    owner edited the reply in GBP, and analytics receives the provider's
+    publish time.
+
+    Returns True when a row was created or changed.
+    """
+    if not getattr(review, "has_reply", False):
+        return False
+
+    text = (getattr(review, "reply_text", None) or "").strip()
+    reply_updated_at = getattr(review, "reply_updated_at", None)
+    external_id = (
+        f"google:{reply_updated_at.isoformat()}" if reply_updated_at else None
+    )
+    rows = (
+        await db.execute(
+            select(ReviewReply)
+            .where(
+                ReviewReply.channel_id == channel.id,
+                ReviewReply.review_id == review.review_id,
+            )
+            .order_by(ReviewReply.created_at.desc())
+        )
+    ).scalars().all()
+    latest = rows[0] if rows else None
+
+    if latest is not None and latest.status == "posted":
+        same_id = external_id is None or latest.reply_external_id == external_id
+        if same_id and (latest.reply_text or "").strip() == text:
+            return False
+
+    if latest is None:
+        latest = ReviewReply(
+            channel_id=channel.id,
+            review_id=review.review_id,
+            rating=review.rating,
+            review_text=review.text,
+            reviewer_name=review.reviewer_name,
+            reply_text="",
+            status="posted",
+        )
+        db.add(latest)
+    else:
+        # Google's live reply outranks an unsent/failed draft. The merchant
+        # can still replace it deliberately, but the app must not silently
+        # publish over a response that is already public.
+        for sibling in rows[1:]:
+            if sibling.status in ("pending_approval", "failed", "approved"):
+                sibling.status = "rejected"
+                sibling.error = None
+
+    latest.rating = review.rating
+    latest.review_text = review.text
+    latest.reviewer_name = review.reviewer_name
+    latest.reply_text = text
+    latest.status = "posted"
+    latest.error = None
+    latest.reply_external_id = external_id
+    latest.replied_at = reply_updated_at
+    await db.commit()
+
+    try:
+        await _enqueue_review_replied(
+            db, channel, review, "posted", replied_at=reply_updated_at
+        )
+    except Exception as e:
+        logger.warning(
+            "review.replied enqueue failed for adopted reply %s: %s",
+            review.review_id, e,
+        )
+    return True
+
+
+async def _ensure_location_metadata(
+    db: AsyncSession, channel: Channel, client, location_id: str
+) -> None:
+    """Backfill Place ID, Maps URL, address, category, phone and website.
+
+    Channels created before `metadata` (and the profile fields) were requested
+    during OAuth have only the location id. The QR/review-request surfaces need
+    the Place ID; the dashboard completeness checks need phone/website. Fetch
+    once and persist; `profile_fields_checked` records that the answer is real,
+    including "Google returned no phone".
+    """
+    meta = _channel_meta(channel)
+    if meta.get("profile_fields_checked") and meta.get("place_metadata_checked"):
+        return
+    try:
+        loc = await client.get_location(location_id)
+    except Exception as e:
+        logger.warning("location metadata backfill failed for %s: %s", channel.id, e)
+        return
+    from .google_reviews import (
+        location_address,
+        location_category,
+        location_phone,
+        location_website,
+        location_description,
+        location_hours,
+        location_categories,
+        location_attributes,
+        location_service_area,
+        location_service_types,
+    )
+
+    try:
+        attributes = await client.get_attributes(location_id)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("attributes backfill failed for %s: %s", channel.id, e)
+        attributes = []
+
+    loc_meta = loc.get("metadata") or {}
+    meta["place_id"] = loc_meta.get("placeId")
+    meta["maps_url"] = loc_meta.get("mapsUrl")
+    meta["address"] = location_address(loc)
+    meta["category"] = location_category(loc)
+    meta["phone"] = location_phone(loc)
+    meta["website"] = location_website(loc)
+    meta["description"] = location_description(loc)
+    meta["hours"] = location_hours(loc)
+    meta["categories"] = location_categories(loc)
+    meta["attributes"] = location_attributes(attributes)
+    meta["service_area"] = location_service_area(loc)
+    meta["services"] = location_service_types(loc)
+    meta["profile_fields_checked"] = True
+    # Separate marker: a location with no Place ID yet (new/unverified) must
+    # not be re-fetched on every poll.
+    meta["place_metadata_checked"] = True
+    channel.metadata_json = json.dumps(meta)
+    from .service import sync_google_services
+
+    await sync_google_services(
+        db, channel, meta["services"], meta.get("category")
+    )
+    await db.commit()
+
+
+async def _backfill_existing_replies(
+    db: AsyncSession, channel: Channel, client, account_id: str, location_id: str
+) -> int:
+    """One-time full read so replies written before this fix are imported.
+
+    The regular poll only asks for reviews updated after the last poll, so
+    reviews imported before reply adoption existed would never be revisited.
+    This fetches the full feed once, adopts any live merchant replies, and
+    re-emits `review.discovered` so the analytics rating/content is corrected.
+    It never generates or publishes an AI reply.
+    """
+    reviews = await client.list_reviews(account_id, location_id)
+    adopted = 0
+    for review in reviews:
+        try:
+            await _store_inbound_review(db, channel.id, review)
+        except Exception as e:
+            logger.warning("reply backfill inbound store failed for %s: %s", review.review_id, e)
+        try:
+            if await _adopt_existing_reply(db, channel, review):
+                adopted += 1
+        except Exception as e:
+            logger.warning("reply backfill adoption failed for %s: %s", review.review_id, e)
+        try:
+            await _enqueue_review_discovered(db, channel, review)
+        except Exception as e:
+            logger.warning("reply backfill review.discovered failed for %s: %s", review.review_id, e)
+
+    meta = _channel_meta(channel)
+    meta["reply_backfill_done"] = True
+    channel.metadata_json = json.dumps(meta)
+    await db.commit()
+    return adopted
+
+
 async def _store_inbound_review(db: AsyncSession, channel_id: str, review) -> None:
     """Mirror the inbound review as a ChannelMessage so the UI can show it."""
     import uuid
@@ -391,6 +624,106 @@ def _google_reviewer_key(review) -> str:
     return f"google:{hashlib.sha256(identity.encode()).hexdigest()[:32]}"
 
 
+async def _store_question_answer(
+    db: AsyncSession, channel: Channel, question: dict
+) -> None:
+    """Upsert one Q&A pair from Google's questions list.
+
+    Google returns questions with optional answers. We store both the
+    question and any merchant answer. Customer answers are read-only;
+    only merchant answers are ever posted back to Google.
+    """
+    question_id = question.get("name", "")
+    if not question_id:
+        return
+
+    existing = (
+        await db.execute(
+            select(GoogleQuestionAnswer).where(
+                GoogleQuestionAnswer.channel_id == channel.id,
+                GoogleQuestionAnswer.question_id == question_id,
+            )
+        )
+    ).scalar_one_or_none()
+
+    asker = question.get("author") or {}
+    top_answers = question.get("topAnswers") or []
+    merchant_answer = next(
+        (
+            a
+            for a in top_answers
+            if str(((a.get("author") or {}).get("type") or "")).upper() == "MERCHANT"
+        ),
+        None,
+    )
+    answer = merchant_answer or {}
+    answer_text = (answer.get("text") or "").strip() or None
+    answer_author = answer.get("author") or {}
+
+    if existing is None:
+        db.add(
+            GoogleQuestionAnswer(
+                id=str(uuid.uuid4()),
+                user_id=channel.user_id,
+                channel_id=channel.id,
+                question_id=question_id,
+                question_text=question.get("text", "") or "",
+                asker_name=asker.get("displayName"),
+                asker_profile_photo_url=asker.get("profilePhotoUrl"),
+                question_created_at=_parse_google_time(question.get("createTime")),
+                answer_text=answer_text,
+                answerer_name=answer_author.get("displayName"),
+                answer_type=answer_author.get("type"),
+                answer_created_at=_parse_google_time(
+                    answer.get("createTime") or answer.get("updateTime")
+                ),
+                is_answered=bool(answer_text),
+                upvote_count=int(question.get("upvoteCount", 0) or 0),
+                draft_status="posted" if answer_text else "none",
+                draft_approved_at=(
+                    _parse_google_time(answer.get("createTime"))
+                    if answer_text
+                    else None
+                ),
+                last_synced_at=datetime.now(timezone.utc),
+            )
+        )
+    else:
+        existing.question_text = question.get("text", "") or ""
+        existing.asker_name = asker.get("displayName")
+        existing.asker_profile_photo_url = asker.get("profilePhotoUrl")
+        existing.question_created_at = _parse_google_time(
+            question.get("createTime")
+        )
+        existing.answer_text = answer_text
+        existing.answerer_name = answer_author.get("displayName")
+        existing.answer_type = answer_author.get("type")
+        existing.answer_created_at = _parse_google_time(
+            answer.get("createTime") or answer.get("updateTime")
+        )
+        existing.is_answered = bool(answer_text)
+        existing.upvote_count = int(question.get("upvoteCount", 0) or 0)
+        if answer_text:
+            existing.draft_status = "posted"
+            existing.draft_approved_at = (
+                existing.draft_approved_at
+                or _parse_google_time(answer.get("createTime"))
+            )
+        existing.last_synced_at = datetime.now(timezone.utc)
+        db.add(existing)
+
+
+def _parse_google_time(value: str | None) -> datetime | None:
+    """Parse a Google API RFC-3339 timestamp into an aware datetime."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
+
 async def _enqueue_review_discovered(db: AsyncSession, channel: Channel, review) -> None:
     """Emit review.discovered (outbox → Kafka) for the analytics pipeline.
 
@@ -437,8 +770,19 @@ async def _enqueue_review_discovered(db: AsyncSession, channel: Channel, review)
     )
 
 
-async def _enqueue_review_replied(db: AsyncSession, channel: Channel, review, status: str) -> None:
-    """Emit review.replied so analytics tracks response rate/time."""
+async def _enqueue_review_replied(
+    db: AsyncSession,
+    channel: Channel,
+    review,
+    status: str,
+    replied_at: datetime | None = None,
+) -> None:
+    """Emit review.replied so analytics tracks response rate/time.
+
+    An adopted Google reply carries the provider's `reviewReply.updateTime`,
+    so response-time metrics use the real publish time instead of the moment
+    Sayvors happened to import it.
+    """
     from ..outbox.service import enqueue_event_in
 
     await enqueue_event_in(
@@ -449,7 +793,7 @@ async def _enqueue_review_replied(db: AsyncSession, channel: Channel, review, st
             "channel_id": channel.id,
             "review_id": review.review_id,
             "status": status,
-            "replied_at": datetime.now(timezone.utc).isoformat(),
+            "replied_at": (replied_at or datetime.now(timezone.utc)).isoformat(),
         },
         topic=REVIEW_EVENTS_TOPIC,
     )
@@ -619,7 +963,7 @@ async def _refresh_edited_review_reply(
 
 async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyConfig) -> dict:
     """Poll one Google Reviews channel and auto-reply to new reviews."""
-    stats = {"reviews": 0, "replied": 0, "queued": 0, "skipped": 0, "errors": 0}
+    stats = {"reviews": 0, "replied": 0, "queued": 0, "skipped": 0, "adopted": 0, "errors": 0}
 
     mock_mode = settings.GOOGLE_REVIEWS_MOCK
     if mock_mode:
@@ -678,6 +1022,18 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                     logger.warning("Channel %s: no account/location configured", channel.id)
                     return stats
                 location_id = locations[0]["name"].split("/")[3]
+            await _ensure_location_metadata(db, channel, client, location_id)
+            if not _channel_meta(channel).get("reply_backfill_done"):
+                try:
+                    stats["adopted"] += await _backfill_existing_replies(
+                        db, channel, client, account_id, location_id
+                    )
+                except Exception as e:
+                    # A failed backfill is retried next poll; it must not stop
+                    # normal review polling.
+                    logger.warning(
+                        "reply backfill failed for channel %s: %s", channel.id, e
+                    )
             reviews = await client.list_reviews(
                 account_id, location_id, updated_after=config.last_polled_at
             )
@@ -689,6 +1045,8 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                 await _mark_channel_expired(db, channel, str(e))
                 await db.commit()
             raise
+
+        await _mark_reviews_seen(db, channel, reviews)
 
         for review in reviews:
             stats["reviews"] += 1
@@ -772,6 +1130,10 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                         )
             except Exception as e:
                 logger.warning("review issue classification failed for %s: %s", review.review_id, e)
+            if await _adopt_existing_reply(db, channel, review):
+                stats["adopted"] += 1
+                stats["skipped"] += 1
+                continue
             if await _already_replied(db, review.review_id):
                 # Idempotency: a draft is already queued (or posted) for
                 # this review — polling it again must not create a duplicate.
@@ -876,6 +1238,45 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                 except Exception as e:
                     logger.warning("review.replied enqueue failed for %s: %s", review.review_id, e)
 
+        # A complete sweep is intentionally rare: the normal poll is
+        # incremental, so removal detection needs one full read per day.
+        meta = _channel_meta(channel)
+        last_sweep = meta.get("removal_sweep_at")
+        try:
+            last_sweep_at = (
+                datetime.fromisoformat(last_sweep) if last_sweep else None
+            )
+        except (TypeError, ValueError):
+            last_sweep_at = None
+        now = datetime.now(timezone.utc)
+        if last_sweep_at is None or (now - last_sweep_at) > timedelta(hours=24):
+            try:
+                all_reviews = await client.list_reviews(account_id, location_id)
+                seen_ids = {r.review_id for r in all_reviews}
+                from .review_removal import mark_removed_reviews
+
+                removed = await mark_removed_reviews(
+                    db, channel, channel.user_id, seen_ids
+                )
+                meta["removal_sweep_at"] = now.isoformat()
+                channel.metadata_json = json.dumps(meta)
+                await db.commit()
+                if removed:
+                    logger.info(
+                        "Removal sweep marked %d review(s) for channel %s",
+                        len(removed), channel.id,
+                    )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "Removal sweep failed for channel %s: %s", channel.id, e
+                )
+
+        # Google discontinued the My Business Q&A API on 2025-11-03. There
+        # is no replacement; every native call now returns 404. Keep any
+        # previously stored questions read-only and never poll Google again.
+        # (`_store_question_answer` / `_qa_due` remain for the historical
+        # tests and for imported rows, but the worker no longer calls them.)
+
         return stats
     finally:
         if client:
@@ -898,7 +1299,7 @@ async def _poll_one_channel(
     """
     from ...database import async_session
 
-    stats = {"channels": 0, "reviews": 0, "replied": 0, "queued": 0, "skipped": 0, "errors": 0}
+    stats = {"channels": 0, "reviews": 0, "replied": 0, "queued": 0, "skipped": 0, "adopted": 0, "errors": 0}
 
     async with semaphore:
         async with async_session() as session:
@@ -927,7 +1328,7 @@ async def _poll_one_channel(
                 stats["channels"] += 1
                 try:
                     channel_stats = await process_channel(session, channel, config)
-                    for k in ("reviews", "replied", "queued", "skipped", "errors"):
+                    for k in ("reviews", "replied", "queued", "skipped", "adopted", "errors"):
                         stats[k] += channel_stats[k]
                 except Exception as e:
                     logger.error("Poll failed for channel %s: %s", channel.id, e)
@@ -950,7 +1351,7 @@ async def poll_once() -> dict:
     """
     from ...database import async_session
 
-    totals = {"channels": 0, "reviews": 0, "replied": 0, "queued": 0, "skipped": 0, "errors": 0}
+    totals = {"channels": 0, "reviews": 0, "replied": 0, "queued": 0, "skipped": 0, "adopted": 0, "errors": 0}
     now = datetime.now(timezone.utc)
     due_before = now - timedelta(seconds=settings.GOOGLE_REVIEWS_POLL_INTERVAL_SECONDS)
 
@@ -989,7 +1390,7 @@ async def poll_once() -> dict:
             logger.error("Poll task failed for channel %s: %r", ch_id, result, exc_info=result)
             totals["errors"] += 1
         else:
-            for k in ("channels", "reviews", "replied", "queued", "skipped", "errors"):
+            for k in ("channels", "reviews", "replied", "queued", "skipped", "adopted", "errors"):
                 totals[k] += result[k]
 
     return totals

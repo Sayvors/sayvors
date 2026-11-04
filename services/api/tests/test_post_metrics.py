@@ -1,8 +1,8 @@
 """Per-post Google metrics: matching, insight parsing, the sync flow.
 
-Google's localPosts:reportInsights is the only per-post metrics source
-(Localith exposes none), so the sync is exercised against a fake client
-with the exact response shapes the v4 reference documents.
+Google's localPosts:reportInsights is the only per-post metrics source,
+so the sync is exercised against a fake client with the exact response
+shapes the v4 reference documents.
 """
 import sys
 from datetime import datetime, timedelta, timezone
@@ -14,10 +14,11 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+import json
+
 from app.modules.channels import google_reviews as gr
 from app.modules.channels import service as channels_service
 from app.modules.channels.models import Channel
-from app.modules.localith.models import LocalithConnection
 from app.modules.posts import service as posts
 from app.modules.posts.models import LocationPost
 
@@ -44,18 +45,13 @@ def _row(db, user_id, row_id="r1", description="Weekend deal",
     return row
 
 
-async def _connection(db, user_id, google_id="g1"):
-    db.add(LocalithConnection(
-        id="conn-metrics", user_id=user_id, listing_id="loc-1",
-        listing_name="Test Place", listing_google_id=google_id,
-    ))
-
-
-async def _oauth_channel(db, user_id):
+async def _connection(db, user_id, google_id="loc-1"):
     db.add(Channel(
         id="ch-metrics", user_id=user_id, platform="google_reviews",
-        platform_user_id="acct-1", status="active",
-        access_token="enc-access", refresh_token="enc-refresh",
+        platform_user_id="acct-1", display_name="Test Place", status="active",
+        listing_key=google_id, access_token="enc-access",
+        refresh_token="enc-refresh",
+        metadata_json=json.dumps({"location_id": google_id}),
     ))
 
 
@@ -151,7 +147,7 @@ class _FakeClient:
         return [{"name": "accounts/acct-1"}]
 
     async def list_local_posts(self, account_id, location_id):
-        assert (account_id, location_id) == ("acct-1", "g1")
+        assert (account_id, location_id) == ("acct-1", "loc-1")
         return [self.gp] if hasattr(self, "gp") else []
 
     async def report_local_post_insights(self, account_id, location_id, names, start, end):
@@ -165,7 +161,6 @@ class _FakeClient:
 @pytest.mark.asyncio
 async def test_sync_stores_views_and_clicks(monkeypatch, db, user_id):
     await _connection(db, user_id)
-    await _oauth_channel(db, user_id)
     row = _row(db, user_id)
     await db.commit()
 
@@ -208,7 +203,11 @@ async def test_sync_stores_views_and_clicks(monkeypatch, db, user_id):
 
 @pytest.mark.asyncio
 async def test_sync_without_oauth_channel_returns_note(monkeypatch, db, user_id):
-    await _connection(db, user_id)
+    db.add(Channel(
+        id="ch-metrics-notokens", user_id=user_id, platform="google_reviews",
+        platform_user_id="acct-1", display_name="Test Place", status="active",
+        listing_key="loc-1", metadata_json=json.dumps({"location_id": "loc-1"}),
+    ))
     _row(db, user_id)
     await db.commit()
 
@@ -216,28 +215,23 @@ async def test_sync_without_oauth_channel_returns_note(monkeypatch, db, user_id)
     assert result["checked"] == 1
     assert result["matched"] == 0
     assert result["posts"] == []
-    assert "native" in (result["note"] or "")
+    assert "connected Google location" in (result["note"] or "")
 
 
 @pytest.mark.asyncio
-async def test_sync_without_google_location_id_notes(monkeypatch, db, user_id):
-    await _connection(db, user_id, google_id=None)
-    await _oauth_channel(db, user_id)
+async def test_sync_without_connected_location_notes(db, user_id):
     _row(db, user_id)
     await db.commit()
 
-    monkeypatch.setattr(gr, "GoogleReviewsClient", _FakeClient)
-    monkeypatch.setattr(channels_service, "decrypt_token", lambda v: "tok")
     result = await posts.sync_post_metrics(db, user_id, "loc-1")
     assert result["matched"] == 0
-    assert "location id" in (result["note"] or "")
+    assert "connected Google location" in (result["note"] or "")
 
 
 @pytest.mark.asyncio
 async def test_sync_unmatched_rows_stay_null(monkeypatch, db, user_id):
     """A post Google no longer lists (taken down) keeps its last numbers."""
     await _connection(db, user_id)
-    await _oauth_channel(db, user_id)
     row = _row(db, user_id, description="Taken down long ago")
     await db.commit()
 

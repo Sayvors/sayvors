@@ -107,7 +107,7 @@ Authorization: Bearer <token>
     "name": "My Business",
     "address": "123 Main St, City, State",
     "status": "active",
-    "source": "localith"
+    "source": "google"
   }
 ]
 ```
@@ -269,8 +269,9 @@ Authorization: Bearer <token>
 | GET | `/` | List channels |
 | GET | `/{channel_id}` | Get channel |
 | DELETE | `/{channel_id}` | Disconnect channel |
-| GET | `/{channel_id}/verification` | Get verification status |
-| POST | `/{channel_id}/verification` | Request verification |
+| GET | `/{channel_id}/verification` | Live Google state: Voice of Merchant, eligible methods and verification history |
+| POST | `/{channel_id}/verification` | Start a Google verification (`locations/{id}:verify`) |
+| POST | `/{channel_id}/verification/complete` | Submit the PIN for a PENDING verification |
 | GET | `/{channel_id}/services` | List business services |
 | POST | `/{channel_id}/services` | Create service |
 | PUT | `/{channel_id}/services/{service_id}` | Update service |
@@ -411,26 +412,6 @@ data: [DONE]
 | GET | `/business` | Read the generated business profile |
 | PUT | `/business` | Update the business profile |
 | POST | `/business/regenerate` | Regenerate the profile from databank content |
-
----
-
-## Localith (`/api/v1/integrations/localith`)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/config` | Check whether the server has a Localith API key configured |
-| GET | `/listings` | List listings available from Localith |
-| POST | `/test` | Test access to a listing |
-| POST | `/sync` | Sync one listing or all connected listings |
-| GET | `/connections` | List all connected listings |
-| GET | `/connection` | Get connection status |
-| GET | `/profile` | Read a connected listing's synced profile and metrics |
-| GET | `/profiles/aggregate` | Read aggregate totals across connected listings |
-| PUT | `/connection` | Connect a Localith listing |
-| PUT | `/connection/api-key` | Save a tenant-specific Localith API key |
-| DELETE | `/connection/api-key` | Remove the tenant-specific API key |
-| PATCH | `/listing` | Update a connected listing |
-| DELETE | `/connection` | Disconnect a Localith listing |
 
 ---
 

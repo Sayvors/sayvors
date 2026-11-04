@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import ChannelDailyMetric, LocationDailyMetric, ReviewInsight, SearchKeywordStat
+from .scoping import disconnected_channel_ids
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,12 @@ def _prev_window(days: int) -> tuple[datetime, datetime, datetime, datetime]:
 
 
 async def _totals(db: AsyncSession, user_id: str, channel_id: str | None, start: datetime, end: datetime) -> dict:
-    filters = [LocationDailyMetric.user_id == user_id, LocationDailyMetric.date >= start.date(), LocationDailyMetric.date < end.date()]
+    filters = [
+        LocationDailyMetric.user_id == user_id,
+        LocationDailyMetric.channel_id.notin_(disconnected_channel_ids(user_id)),
+        LocationDailyMetric.date >= start.date(),
+        LocationDailyMetric.date < end.date(),
+    ]
     if channel_id:
         filters.append(LocationDailyMetric.channel_id == channel_id)
     row = (
@@ -248,9 +254,9 @@ async def get_opportunities(db: AsyncSession, user_id: str, channel_id: str | No
 async def get_keywords(db: AsyncSession, user_id: str, channel_id: str | None, days: int = 30) -> dict:
     """Search keywords tenants were found by: keyword, impressions, trend.
 
-    `available` is False for Localith-only tenants — keyword breakdowns
-    come solely from the native Performance API, so the UI shows an honest
-    empty state instead of fake rows.
+    `available` is False when the tenant has no native Google channel —
+    keyword breakdowns come solely from the Performance API, so the UI
+    shows an honest empty state instead of fake rows.
     """
     from ..channels.models import Channel
 

@@ -33,9 +33,8 @@ Planned work that is designed but NOT yet implemented. When starting an entry, m
 - ✅ Per-location reviews already work via the `/dashboard/reviews` location dropdown.
 
 **Remaining gaps:**
-1. **Single Localith listing cap** — `localith_connections` unique on `user_id` (single-shared-key mode v1). Multi-location chains need multiple Localith listings or per-tenant keys (the model docstring already anticipates the per-tenant key upgrade).
-2. **"Add new location" wizard** — the button deep-links to the channels hub; a dedicated guided flow (choose listing → sync → set up autoreply) is not built.
-3. **Reviews UX** — reviews live in `/dashboard/reviews` with a location filter, not a per-location workspace; consider per-location review inboxes (channels `[slug]` workspace pattern exists).
+1. **"Add new location" wizard** — the button deep-links to the channels hub; a dedicated guided flow (choose listing → sync → set up autoreply) is not built.
+2. **Reviews UX** — reviews live in `/dashboard/reviews` with a location filter, not a per-location workspace; consider per-location review inboxes (channels `[slug]` workspace pattern exists).
 
 **Reference:** design sketch discussed 2026-09-14; full design TBD when picked up.
 

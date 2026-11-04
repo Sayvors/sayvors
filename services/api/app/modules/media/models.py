@@ -1,10 +1,9 @@
 """Location media (photos scheduled to go live on Google).
 
-Localith exposes no photo-library upload — the only photo path to Google
-is publishing a post that carries image URLs. So a "scheduled photo" here
-is a photo queued to go live inside a Google post at its time, via the
-same content_publishing_media endpoint posts use. Videos are stored as
-library rows only: the provider takes image URLs, not video.
+A media row is one photo. It can publish inside a Google local post, into the
+location gallery, or as the profile photo — all through the native Business
+Profile media API. Videos are stored as library rows only: the publisher
+takes image URLs, not video.
 """
 import uuid
 from datetime import datetime, timezone
@@ -40,11 +39,8 @@ class LocationMedia(Base):
         default="draft",
         index=True,
     )
-    # How this photo reaches Google. Only "post" is wired today (Localith
-    # publishes posts carrying image URLs; it offers no gallery upload and
-    # no profile/cover assignment). "gallery"/"profile" are stored intent
-    # for the day per-tenant native Google lands — the API rejects
-    # publishing anything but "post" until then.
+    # How this photo reaches Google: "post" (local post), "gallery" (location
+    # media in its category), or "profile" (PROFILE slot).
     publish_method: Mapped[str] = mapped_column(String(16), default="post")
     scheduled_on: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -52,10 +48,10 @@ class LocationMedia(Base):
     delete_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )
-    # Google-side post id captured at publish time, when the provider
-    # returns one (reserved for future remote deletion).
+    # Google-side post/media id captured at publish time (reserved for
+    # future remote deletion).
     google_post_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    localith_response: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    google_response: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Retry-then-park, same policy as posts.
     attempts: Mapped[int] = mapped_column(default=0, server_default="0")

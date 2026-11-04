@@ -149,7 +149,7 @@ async def _seed(db, user_id, channel_id, text, rating=1):
     row = ReviewInsight(
         id=f"ins-abuse-{abs(hash(text)) % 10**8}",
         user_id=user_id, channel_id=channel_id,
-        review_id=f"localith:abuse{abs(hash(text)) % 10**8}",
+        review_id=f"reviews/abuse{abs(hash(text)) % 10**8}",
         rating=rating, review_text=text, reviewer_name="Angry Person",
         sentiment="negative", sentiment_score=0.2,
         topics=[], products=[], problems=[], enrichment_status="done",

@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..channels.models import Channel
 from .models import ChannelDailyMetric, ReviewInsight, ReviewRequest
+from .scoping import disconnected_channel_ids
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,12 @@ async def get_growth_cards(
     prev_start = start - timedelta(days=days)
 
     empty = ReviewInsight.user_id == user_id
-    base = [empty, ReviewInsight.removed_at.is_(None), ReviewInsight.skipped.is_(False)]
+    base = [
+        empty,
+        ReviewInsight.channel_id.notin_(disconnected_channel_ids(user_id)),
+        ReviewInsight.removed_at.is_(None),
+        ReviewInsight.skipped.is_(False),
+    ]
     if channel_id:
         base.append(ReviewInsight.channel_id == channel_id)
     bucket = _bucket()

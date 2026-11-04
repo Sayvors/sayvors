@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import ReviewInsight
+from .scoping import disconnected_channel_ids
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,12 @@ def _bucket(expr):
 
 async def _fetch_rows(db: AsyncSession, user_id: str, channel_id: str | None, start: datetime, end: datetime):
     bucket = _bucket(ReviewInsight.review_updated_at)
-    filters = [ReviewInsight.user_id == user_id, bucket >= start, bucket < end]
+    filters = [
+        ReviewInsight.user_id == user_id,
+        ReviewInsight.channel_id.notin_(disconnected_channel_ids(user_id)),
+        bucket >= start,
+        bucket < end,
+    ]
     if channel_id:
         filters.append(ReviewInsight.channel_id == channel_id)
     return (

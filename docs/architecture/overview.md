@@ -26,7 +26,7 @@
               │  ┌──────────────────────────────────────────┐   │
               │  │              MODULES                      │   │
               │  │  auth  locations  posts  analytics       │   │
-              │  │  channels  llm  profile  localith        │   │
+              │  │  channels  llm  profile                 │   │
               │  │  tts  stt  rag  email  kafka  redis      │   │
               │  │  outbox  webhooks                         │   │
               │  └──────────────────────────────────────────┘   │
@@ -90,13 +90,12 @@ API Request → PostgreSQL (transaction) → Outbox Table
 ```
 services/api/app/modules/
 ├── auth/           # Authentication, sessions, passwords
-├── locations/      # Business locations (Google + Localith)
+├── locations/      # Business locations (native Google)
 ├── posts/          # Google Business posts (create, schedule, publish)
 ├── analytics/      # Reviews, insights, intelligence, benchmarks
 ├── channels/       # Multi-platform channels (Google, FB, Insta, etc.)
 ├── llm/            # LLM conversations, chat, streaming
 ├── profile/        # User profile, databanks, settings
-├── localith/       # EmbedSocial integration (listings, reviews, metrics)
 ├── tts/            # Text-to-speech
 ├── stt/            # Speech-to-text
 ├── rag/            # Retrieval-Augmented Generation

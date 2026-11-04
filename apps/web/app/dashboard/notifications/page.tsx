@@ -44,7 +44,7 @@ function DetailRows({ n }: { n: BellNotification }) {
   if (typeof data.rating === "number") rows.push(["Rating", `${data.rating} / 5`]);
   if (typeof data.previous_rating === "number") rows.push(["Was", `${data.previous_rating} / 5`]);
   if (typeof data.new_reviews === "number") rows.push(["New reviews", String(data.new_reviews)]);
-  if (typeof data.review_id === "string") rows.push(["Review", data.review_id.replace(/^localith:/, "").slice(0, 24)]);
+  if (typeof data.review_id === "string") rows.push(["Review", data.review_id.slice(-24)]);
   return rows.length === 0 ? null : (
     <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg bg-ink/[0.03] p-2.5 text-[11.5px] dark:bg-fog/[0.04]">
       {rows.map(([k, v]) => (

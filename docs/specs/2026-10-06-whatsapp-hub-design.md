@@ -27,7 +27,7 @@ Channels ▾ [badge: unread total + red dot if any number needs fix]
   Instagram [●]                      -> /dashboard/channels/instagram (same skeleton, different middle tab)
   Facebook [●]                       -> /dashboard/channels/facebook
   ──
-  All channels health / Connect more -> /dashboard/channels (overview grid: Localith + MetaConnections + soon)
+  All channels health / Connect more -> /dashboard/channels (overview grid: Google + MetaConnections + soon)
 ```
 
 - Clicking `Channels` parent itself = Inbox (daily triage). Subitems = Manage (weekly config). Separated by MANAGE label + divider so jobs never confuse.

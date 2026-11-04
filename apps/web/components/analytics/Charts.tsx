@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { TimeseriesPoint } from "@/lib/api-analytics";
+import { FactSource } from "@/components/analytics/FactSource";
 
 /* ── Metric switcher + area chart ─────────────────────────────────── */
 
@@ -62,7 +63,23 @@ function buildPath(values: number[], max: number, w: number, h: number, pad: num
   return { line, area };
 }
 
-export function MetricChart({ points, labels, locale = "en" }: { points: TimeseriesPoint[]; labels?: MetricChartLabels; locale?: string }) {
+export function MetricChart({
+  points,
+  labels,
+  locale = "en",
+  source,
+  sourceDetail,
+  sourceHref,
+  sourceLinkLabel,
+}: {
+  points: TimeseriesPoint[];
+  labels?: MetricChartLabels;
+  locale?: string;
+  source?: string;
+  sourceDetail?: string;
+  sourceHref?: string;
+  sourceLinkLabel?: string;
+}) {
   const [metric, setMetric] = useState<MetricKey>("reviews");
   const [hover, setHover] = useState<number | null>(null);
   const chartLabels = labels ?? DEFAULT_METRIC_CHART_LABELS;
@@ -209,6 +226,14 @@ export function MetricChart({ points, labels, locale = "en" }: { points: Timeser
           </div>
         </div>
       )}
+      {source && (
+        <FactSource
+          source={source}
+          detail={sourceDetail}
+          href={sourceHref}
+          linkLabel={sourceLinkLabel}
+        />
+      )}
     </div>
   );
 }
@@ -254,7 +279,23 @@ const STAR_COLORS: Record<number, string> = {
   1: "var(--ui-line-strong)",
 };
 
-export function RatingDistribution({ distribution, total, labels = { ariaLabel: "Rating distribution", reviewsTooltip: "{count} reviews ({percent}%)" } }: { distribution: Record<string, number>; total: number; labels?: { ariaLabel: string; reviewsTooltip: string } }) {
+export function RatingDistribution({
+  distribution,
+  total,
+  labels = { ariaLabel: "Rating distribution", reviewsTooltip: "{count} reviews ({percent}%)" },
+  source,
+  sourceDetail,
+  sourceHref,
+  sourceLinkLabel,
+}: {
+  distribution: Record<string, number>;
+  total: number;
+  labels?: { ariaLabel: string; reviewsTooltip: string };
+  source?: string;
+  sourceDetail?: string;
+  sourceHref?: string;
+  sourceLinkLabel?: string;
+}) {
   const max = Math.max(1, ...Object.values(distribution));
   return (
     <div className="space-y-3" aria-label={labels.ariaLabel}>
@@ -282,6 +323,14 @@ export function RatingDistribution({ distribution, total, labels = { ariaLabel: 
           </div>
         );
       })}
+      {source && (
+        <FactSource
+          source={source}
+          detail={sourceDetail}
+          href={sourceHref}
+          linkLabel={sourceLinkLabel}
+        />
+      )}
     </div>
   );
 }
@@ -292,10 +341,18 @@ export function SentimentSplitBar({
   positive,
   neutral,
   negative,
+  source,
+  sourceDetail,
+  sourceHref,
+  sourceLinkLabel,
 }: {
   positive: number;
   neutral: number;
   negative: number;
+  source?: string;
+  sourceDetail?: string;
+  sourceHref?: string;
+  sourceLinkLabel?: string;
 }) {
   const total = positive + neutral + negative;
   const seg = (n: number) => (total ? (n / total) * 100 : 0);
@@ -327,6 +384,14 @@ export function SentimentSplitBar({
           </div>
         ))}
       </div>
+      {source && (
+        <FactSource
+          source={source}
+          detail={sourceDetail}
+          href={sourceHref}
+          linkLabel={sourceLinkLabel}
+        />
+      )}
     </div>
   );
 }

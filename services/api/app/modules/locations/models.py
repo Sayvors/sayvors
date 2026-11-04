@@ -1,10 +1,10 @@
 """Location profiles — the Locations page backing store.
 
-Google-synced fields (name, phone, website, description) live on the
-Localith connection and are pushed to Google via the Localith API —
-or natively when LOCATIONS_WRITE_PROVIDER=google. Everything Google
-exposes (categories, hours, service area, attributes, opening date) is
-stored here per user+listing, so every tab persists for real.
+Google-synced fields (name, address, phone, website, description) live on
+the native Google channel metadata and are pushed with the Business
+Information API. Everything Google exposes as editable (categories, hours,
+service area, attributes, opening date, description override) is stored
+here per user+listing, so every tab persists for real.
 """
 import uuid
 from datetime import date, datetime, timezone
@@ -18,9 +18,9 @@ from ...database import Base
 class LocationGroup(Base):
     """A named set of listings, so bulk actions can target "North Riyadh"
     instead of every branch. Members live in `listing_ids` — a plain JSON
-    list of Localith listing IDs, deliberately not a join table: group
+    list of Google location IDs, deliberately not a join table: group
     membership is only ever read and written whole, never queried across
-    groups, and listings come and go from Localith independently."""
+    groups, and listings come and go from Google independently."""
     __tablename__ = "location_groups"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))

@@ -64,8 +64,8 @@ async def resolve_publish_channel(
 ) -> Channel | None:
     """The tenant's active channel for a publish destination, if any.
 
-    Google branches can be identified by their Localith listing id, their
-    Google location id, or both — so any of them match.
+    Google branches can be identified by their Google location id or their
+    dedupe key, so either matches.
     """
     result = await db.execute(
         select(Channel).where(

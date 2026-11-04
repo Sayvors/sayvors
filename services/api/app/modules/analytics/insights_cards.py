@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..channels.models import Channel
 from . import intelligence
 from .models import LocationIssue, ReviewInsight
+from .scoping import disconnected_channel_ids
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,7 @@ async def get_insights_cards(
     start = now - timedelta(days=days)
     base = [
         ReviewInsight.user_id == user_id,
+        ReviewInsight.channel_id.notin_(disconnected_channel_ids(user_id)),
         ReviewInsight.removed_at.is_(None),
         ReviewInsight.skipped.is_(False),
     ]

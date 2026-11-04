@@ -28,8 +28,18 @@ def test_regular_periods_normal_and_closed():
         "Tuesday": {"open": "", "close": "", "closed": True},
     })
     assert periods == [{
-        "openDay": "MONDAY", "openTime": "09:00",
-        "closeDay": "MONDAY", "closeTime": "17:00",
+        "openDay": "MONDAY", "openTime": {"hours": 9, "minutes": 0},
+        "closeDay": "MONDAY", "closeTime": {"hours": 17, "minutes": 0},
+    }]
+
+
+def test_regular_periods_all_day_closes_at_24():
+    periods = build_regular_periods({
+        "Monday": {"open": "00:00", "close": "00:00", "closed": False, "all_day": True},
+    })
+    assert periods == [{
+        "openDay": "MONDAY", "openTime": {"hours": 0, "minutes": 0},
+        "closeDay": "MONDAY", "closeTime": {"hours": 24, "minutes": 0},
     }]
 
 
@@ -52,8 +62,8 @@ def test_special_entry_range_and_closed():
     parsed = parse_special_entry(
         {"date": "2026-12-25", "hours": "09:00 - 13:00", "reason": "Xmas"})
     assert parsed["startDate"] == {"year": 2026, "month": 12, "day": 25}
-    assert parsed["openTime"] == "09:00"
-    assert parsed["closeTime"] == "13:00"
+    assert parsed["openTime"] == {"hours": 9, "minutes": 0}
+    assert parsed["closeTime"] == {"hours": 13, "minutes": 0}
     assert parse_special_entry(
         {"date": "2026-01-01", "hours": "closed", "reason": ""}) == {
         "startDate": {"year": 2026, "month": 1, "day": 1}, "closed": True}
@@ -176,11 +186,10 @@ def _native_channel(db, user_id, listing_id="loc-google-1"):
 
 
 @pytest.mark.asyncio
-async def test_seam_google_no_channel_saves_locally(db, user_id, monkeypatch):
+async def test_native_locations_no_channel_saves_locally(db, user_id):
     """No native channel: local save lands, google_synced stays empty."""
     from app.modules.locations import service as locations
 
-    monkeypatch.setenv("LOCATIONS_WRITE_PROVIDER", "google")
     out = await locations.update_profile(
         db, user_id, "loc-1", description="Hello",
         categories=None, hours=None, service_area=None, attributes=None,
@@ -190,7 +199,7 @@ async def test_seam_google_no_channel_saves_locally(db, user_id, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_seam_google_pushes_via_native_client(monkeypatch, db, user_id):
+async def test_native_locations_pushes_via_google_client(monkeypatch, db, user_id):
     from app.modules.channels import google_business as gb
     from app.modules.locations import service as locations
 
@@ -204,7 +213,6 @@ async def test_seam_google_pushes_via_native_client(monkeypatch, db, user_id):
         return {"pushed": ["description", "categories"], "skipped": {}}
 
     monkeypatch.setattr(gb.GoogleBusinessClient, "push_profile", _push)
-    monkeypatch.setenv("LOCATIONS_WRITE_PROVIDER", "google")
     out = await locations.update_profile(
         db, user_id, "loc-google-1", description="Hello",
         categories={"primary": "Software company"}, hours=None,

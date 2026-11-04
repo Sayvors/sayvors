@@ -13,15 +13,12 @@ metrics used to be written into this table and surfaced as real dashboard
 numbers — that path is removed. In mock mode the sync is a logged no-op.
 """
 import asyncio
-import importlib
 import json
 import logging
-import sys
 import uuid
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from ...config import settings
 from ...database import async_session
@@ -33,21 +30,22 @@ from .models import LocationDailyMetric, SearchKeywordStat
 
 logger = logging.getLogger(__name__)
 
-# integrations/ lives at the repo root (same pattern as localith/service.py).
-_API_ROOT = Path(__file__).resolve().parents[4]
-_REPO_ROOT = _API_ROOT.parent
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
-embedsocial = importlib.import_module("integrations.channels.embedsocial")  # type: ignore[arg-type]
-
-# Metric name -> LocationDailyMetric column
+# Metric name -> LocationDailyMetric column. These are the current
+# Business Profile Performance API enum names; the old DIRECTION_REQUESTS /
+# BUSINESS_IMPRESSIONS_DESKTOP / _MOBILE names are rejected by Google.
 _METRIC_COLUMNS = {
     "WEBSITE_CLICKS": "website_clicks",
     "CALL_CLICKS": "call_clicks",
-    "DIRECTION_REQUESTS": "direction_requests",
-    "BUSINESS_IMPRESSIONS_DESKTOP": "impressions_maps_desktop",
-    "BUSINESS_IMPRESSIONS_MOBILE": "impressions_maps_mobile",
+    "BUSINESS_DIRECTION_REQUESTS": "direction_requests",
+    "BUSINESS_IMPRESSIONS_DESKTOP_MAPS": "impressions_maps_desktop",
+    "BUSINESS_IMPRESSIONS_MOBILE_MAPS": "impressions_maps_mobile",
 }
+# Search impressions have no dedicated column; they ride in `extra` and are
+# summed from desktop + mobile into one per-day value.
+_SEARCH_IMPRESSION_METRICS = (
+    "BUSINESS_IMPRESSIONS_DESKTOP_SEARCH",
+    "BUSINESS_IMPRESSIONS_MOBILE_SEARCH",
+)
 
 
 def _channel_meta(channel: Channel) -> dict:
@@ -76,9 +74,13 @@ async def _sync_channel(channel: Channel) -> int:
     access_token = decrypt_token(channel.access_token) if channel.access_token else None
     refresh_token = decrypt_token(channel.refresh_token) if channel.refresh_token else None
     if not access_token and not refresh_token:
-        # No OAuth tokens: Localith-backed channel. Same table, same shape —
-        # pulled from Localith's daily metrics instead of Google's.
-        return await _sync_localith_channel(channel)
+        # A channel without OAuth tokens cannot reach Google; skip it instead
+        # of burning a request. Historical rows remain readable.
+        logger.debug(
+            "Performance sync skipped for %s: no Google OAuth credentials",
+            channel.id,
+        )
+        return 0
     client = GoogleReviewsClient(access_token or "", refresh_token)
     client.set_known_expiry(channel.token_expires_at)
     try:
@@ -90,6 +92,13 @@ async def _sync_channel(channel: Channel) -> int:
             keywords = {}
     finally:
         await client.close()
+
+    # Search impressions are split desktop/mobile by Google but share one
+    # `extra.impressions_search` value in the daily row.
+    search_totals: dict = {}
+    for metric in _SEARCH_IMPRESSION_METRICS:
+        for day, value in series.get(metric, []):
+            search_totals[day] = search_totals.get(day, 0) + int(value)
 
     days_touched: set = set()
     async with async_session() as db:
@@ -114,8 +123,37 @@ async def _sync_channel(channel: Channel) -> int:
                         date=day,
                     )
                 setattr(row, column, int(value))
+                if day in search_totals:
+                    extra = dict(row.extra) if isinstance(row.extra, dict) else {}
+                    extra["impressions_search"] = search_totals[day]
+                    row.extra = extra
                 db.add(row)
                 days_touched.add(day)
+        # A day can have search impressions but no maps/action metric; it
+        # still needs a row so the growth charts see the search views.
+        for day, value in search_totals.items():
+            if day in days_touched:
+                continue
+            row = (
+                await db.execute(
+                    select(LocationDailyMetric).where(
+                        LocationDailyMetric.channel_id == channel.id,
+                        LocationDailyMetric.date == day,
+                    )
+                )
+            ).scalar_one_or_none()
+            if not row:
+                row = LocationDailyMetric(
+                    id=str(uuid.uuid4()),
+                    channel_id=channel.id,
+                    user_id=channel.user_id,
+                    date=day,
+                )
+            extra = dict(row.extra) if isinstance(row.extra, dict) else {}
+            extra["impressions_search"] = value
+            row.extra = extra
+            db.add(row)
+            days_touched.add(day)
         for keyword, dated_values in keywords.items():
             for day, value in dated_values:
                 existing = (
@@ -161,168 +199,6 @@ async def _sync_channel(channel: Channel) -> int:
             )
         await db.commit()
     return len(days_touched)
-
-
-# Localith daily ingest: same table as the OAuth path, so charts can't tell
-# the source apart. Backfill is self-completing — each pass syncs up to
-# _LOCALITH_DAYS_PER_PASS missing days (oldest first); afterwards the
-# trailing window refreshes (verified live 2026-11-02: Localith materializes
-# a day's metrics days late — T+1 returns an empty listings array, T+2/T+3
-# return all-zero rows, real numbers appear around T+4..5 — so a day must be
-# re-fetched on later passes or its zeros are baked in permanently).
-_LOCALITH_BACKFILL_DAYS = 90
-_LOCALITH_DAYS_PER_PASS = 14
-_LOCALITH_METRICS_LAG_DAYS = 7
-# An all-zero day is re-fetched until it returns data or this many all-zero
-# rewrites confirm it is genuinely quiet — bounded API spend, convergent.
-_LOCALITH_ZERO_RECHECKS = 2
-
-
-async def _upsert_localith_day(db, channel: Channel, day, nums: dict) -> None:
-    """Write one Localith day into the same table the OAuth path uses."""
-    row = (
-        await db.execute(
-            select(LocationDailyMetric).where(
-                LocationDailyMetric.channel_id == channel.id,
-                LocationDailyMetric.date == day,
-            )
-        )
-    ).scalar_one_or_none()
-    if not row:
-        row = LocationDailyMetric(
-            id=str(uuid.uuid4()),
-            channel_id=channel.id,
-            user_id=channel.user_id,
-            date=day,
-        )
-    row.impressions_maps_desktop = nums["impressions_maps_desktop"]
-    row.impressions_maps_mobile = nums["impressions_maps_mobile"]
-    row.website_clicks = nums["website_clicks"]
-    row.call_clicks = nums["call_clicks"]
-    row.direction_requests = nums["direction_requests"]
-    extra = {
-        "impressions_search": nums["impressions_search"],
-        "messages": nums["messages"],
-        "bookings": nums["bookings"],
-        "source": "localith",
-    }
-    if not any(nums.values()):
-        # All-zero: premature or quiet — keep the re-check counter so the
-        # suspect-day query above can decide whether the day is worth
-        # re-walking. Any real value clears it.
-        prev = row.extra if isinstance(row.extra, dict) else {}
-        extra["zero_checks"] = int(prev.get("zero_checks") or 0) + 1
-    row.extra = extra
-    db.add(row)
-
-
-async def _sync_localith_channel(channel: Channel) -> int:
-    """Daily metrics for a Localith-backed channel via single-day calls."""
-    meta = _channel_meta(channel)
-    listing_id = meta.get("listing_id") or meta.get("location_id") or ""
-    if not listing_id:
-        logger.warning("Performance sync: channel %s has no listing id", channel.id)
-        return 0
-
-    end_date = datetime.now(timezone.utc).date() - timedelta(days=1)
-    async with async_session() as db:
-        latest = (
-            await db.execute(
-                select(LocationDailyMetric.date)
-                .where(LocationDailyMetric.channel_id == channel.id)
-                .order_by(LocationDailyMetric.date.desc())
-                .limit(1)
-            )
-        ).scalar_one_or_none()
-        oldest_wanted = end_date - timedelta(days=_LOCALITH_BACKFILL_DAYS - 1)
-        # Days Localith hasn't materialized yet when first fetched (see the
-        # lag note above) — always re-walk the trailing window so those zeros
-        # are overwritten once the real numbers land. The upsert below is
-        # idempotent, so the re-fetch is free.
-        trailing = [
-            end_date - timedelta(days=i) for i in range(_LOCALITH_METRICS_LAG_DAYS)
-        ]
-        # Suspect rows: a day fetched before Localith's numbers materialized
-        # is an all-zero row that may not be quiet — re-walk zero rows whose
-        # zero_checks counter (bumped on every all-zero rewrite, see
-        # _upsert_localith_day) is still under the cap, oldest first. A
-        # genuinely quiet day converges to fetched-and-confirmed in at most
-        # _LOCALITH_ZERO_RECHECKS re-walks and then stops costing calls; a
-        # lagged day heals on the next pass. Without this, history fetched
-        # during a laggy era stays zero forever.
-        suspect = list(
-            (
-                await db.execute(
-                    select(LocationDailyMetric.date)
-                    .where(
-                        LocationDailyMetric.channel_id == channel.id,
-                        LocationDailyMetric.impressions_maps_desktop
-                        + LocationDailyMetric.impressions_maps_mobile
-                        == 0,
-                        LocationDailyMetric.website_clicks == 0,
-                        LocationDailyMetric.call_clicks == 0,
-                        LocationDailyMetric.direction_requests == 0,
-                        func.coalesce(
-                            LocationDailyMetric.extra["zero_checks"].as_integer(), 0
-                        )
-                        < _LOCALITH_ZERO_RECHECKS,
-                        LocationDailyMetric.date
-                        < end_date - timedelta(days=_LOCALITH_METRICS_LAG_DAYS),
-                        LocationDailyMetric.date >= oldest_wanted,
-                    )
-                    .order_by(LocationDailyMetric.date)
-                    .limit(_LOCALITH_DAYS_PER_PASS)
-                )
-            ).scalars().all()
-        )
-        gap_start = max(
-            (latest + timedelta(days=1)) if latest else oldest_wanted,
-            oldest_wanted,
-        )
-        # Older missing days backfill oldest-first, after the suspect heal and
-        # the trailing refresh, under the same per-pass cap.
-        gap_days = [
-            gap_start + timedelta(days=i)
-            for i in range((end_date - gap_start).days + 1)
-            if gap_start + timedelta(days=i) <= end_date - timedelta(
-                days=_LOCALITH_METRICS_LAG_DAYS
-            )
-        ]
-        seen: set = set()
-        days = [
-            d
-            for d in (trailing + suspect + gap_days)
-            if not (d in seen or seen.add(d))
-        ][: max(_LOCALITH_DAYS_PER_PASS, len(trailing))]
-        if not days:
-            return 0
-        touched_days: set = set()
-        for day in days:
-            try:
-                nums = await asyncio.to_thread(
-                    embedsocial.fetch_listing_metrics_for_day, listing_id, day
-                )
-            except Exception as e:
-                logger.warning(
-                    "Localith daily metrics failed for %s on %s: %s",
-                    channel.id, day.isoformat(), e,
-                )
-                continue
-            await _upsert_localith_day(db, channel, day, nums)
-            touched_days.add(day)
-
-        from ..outbox.service import enqueue_event_in
-
-        for day in sorted(touched_days):
-            await enqueue_event_in(
-                db,
-                "metrics.synced",
-                {"user_id": channel.user_id, "channel_id": channel.id,
-                 "date": day.isoformat(), "source": "localith"},
-                topic="metrics-events",
-            )
-        await db.commit()
-    return len(touched_days)
 
 
 async def run_performance_sync_worker() -> None:

@@ -1,38 +1,22 @@
-"""Posts service: CRUD + Google publishing via Localith.
+"""Posts service: CRUD + native Google Business Profile publishing.
 
-Sayvors is the schedule of record. Publishing pushes a post through
-Localith's content_publishing_media endpoint right away (publish now) or
-when its time comes (background worker over due scheduled rows). Localith
-exposes no read/update/delete for posts, so edits and deletes apply to
-our stored copy only.
-
-Posts stay on Localith permanently by decision (Google's Posts API is
-hotel-only, so there is no native provider to seam to) — unlike locations
-write-back and media publishing, which have provider seams in
-app/core/providers.py for the GBP-API cutover.
+Sayvors is the schedule of record. Publishing creates a GBP `localPost`
+right away (publish now) or when its time comes (background worker over due
+scheduled rows). One row is one post; editing/deleting updates our copy, and
+the Google-side copy follows its own lifecycle.
 """
-import asyncio
 import logging
-import sys
 import uuid
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 from sqlalchemy import select, text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..jobs.models import Job
-from ..localith.models import LocalithConnection
 from ..notifications.service import notify
 from .models import LocationPost
 
 logger = logging.getLogger(__name__)
-
-# integrations/ lives at the repo root; make it importable like localith does.
-_API_ROOT = Path(__file__).resolve().parents[4]
-_REPO_ROOT = _API_ROOT.parent
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
 
 PUBLISHABLE_FROM = ("draft", "scheduled", "failed")
 
@@ -113,18 +97,18 @@ async def _owned_post(db: AsyncSession, user_id: str, post_id: str) -> LocationP
     return result.scalar_one_or_none()
 
 
-async def _require_localith_listing(db: AsyncSession, user_id: str, listing_id: str) -> LocalithConnection:
-    """Posts can only publish to a connected Localith listing (any branch)."""
-    result = await db.execute(
-        select(LocalithConnection).where(
-            LocalithConnection.user_id == user_id,
-            LocalithConnection.listing_id == listing_id,
-        )
+async def _require_google_channel(db: AsyncSession, user_id: str, listing_id: str):
+    """Posts publish to a connected native Google location only."""
+    from ..locations.service import channel_for_listing
+
+    channel = await channel_for_listing(
+        db, user_id, listing_id, statuses=("active", "expired")
     )
-    connection = result.scalar_one_or_none()
-    if connection is None:
-        raise ValueError("Connect that branch in Localith before publishing posts.")
-    return connection
+    if channel is None:
+        raise ValueError(
+            "Connect that Google location in Channels before publishing posts."
+        )
+    return channel
 
 
 def _parse_dt(value: str | None) -> datetime | None:
@@ -150,14 +134,10 @@ def _validate_delete_at(delete_at: datetime | None, scheduled_on: datetime | Non
         raise ValueError("delete_at must be after the scheduled publish time.")
 
 
-def _google_caption(description: str | None, terms: str | None) -> str:
-    """Caption text Google shows. Localith's wrapper exposes no separate
-    terms field, so offer terms travel inside the caption."""
-    text = (description or "").strip()
-    terms = (terms or "").strip()
-    if terms:
-        text = f"{text}\n\nTerms: {terms}" if text else f"Terms: {terms}"
-    return text
+def _google_caption(description: str | None, terms: str | None = None) -> str:
+    """The post summary Google shows. Offer terms are sent in Google's
+    dedicated `termsConditions` field, not concatenated into the summary."""
+    return (description or "").strip()
 
 
 def _effective_end_date(post: LocationPost) -> datetime | None:
@@ -176,7 +156,12 @@ def _effective_end_date(post: LocationPost) -> datetime | None:
 async def list_posts(
     db: AsyncSession, user_id: str, listing_id: str | None = None
 ) -> list[dict]:
+    from ..locations.service import disconnected_listing_ids
+
     filters = [LocationPost.user_id == user_id]
+    hidden = await disconnected_listing_ids(db, user_id)
+    if hidden:
+        filters.append(LocationPost.listing_id.notin_(hidden))
     if listing_id:
         filters.append(LocationPost.listing_id == listing_id)
     rows = (
@@ -326,7 +311,7 @@ async def delete_post(db: AsyncSession, user_id: str, post_id: str) -> None:
 async def publish_post(
     db: AsyncSession, user_id: str, post_id: str, notify_user: bool = True
 ) -> dict:
-    """Publish one post to Google via Localith right now.
+    """Publish one post natively to Google right now.
 
     Publishing is NOT idempotent (a double call posts twice on Google), so
     the post's advisory lock is held for the whole call: manual clicks, the
@@ -345,40 +330,60 @@ async def publish_post(
 async def _publish_post_inner(
     db: AsyncSession, user_id: str, post_id: str, notify_user: bool = True
 ) -> dict:
-    from integrations.channels import embedsocial
+    from ..channels.meta.providers.google_publish import GoogleBusinessPublisher
+    from ..channels.service import decrypt_token, encrypt_token
+    from ..locations.service import listing_id_of
 
     post = await _owned_post(db, user_id, post_id)
     if post is None:
         raise ValueError("Post not found.")
     if post.status not in PUBLISHABLE_FROM:
         raise ValueError(f"Cannot publish a {post.status} post.")
-    connection = await _require_localith_listing(db, user_id, post.listing_id)
-    from ..localith.service import _connection_api_key
-
-    api_key = _connection_api_key(connection)
+    channel = await _require_google_channel(db, user_id, post.listing_id)
+    if channel.status != "active":
+        raise ValueError(
+            "Google connection expired — reconnect Google before publishing."
+        )
 
     sent = [u for u in (post.image_urls or []) if u.startswith("http")]
     skipped = len(post.image_urls or []) - len(sent)
     effective_end = _effective_end_date(post)
+
+    access = decrypt_token(channel.access_token) if channel.access_token else None
+    refresh = decrypt_token(channel.refresh_token) if channel.refresh_token else None
+    if not access and not refresh:
+        raise ValueError("Reconnect Google in Channels before publishing posts.")
+
+    publisher = GoogleBusinessPublisher(access or "", refresh)
+    publisher.set_known_expiry(channel.token_expires_at)
+
+    async def _persist(new_access: str, new_expires) -> None:
+        channel.access_token = encrypt_token(new_access)
+        channel.token_expires_at = new_expires
+        await db.commit()
+
+    publisher.set_token_persister(_persist)
     try:
-        response = await asyncio.to_thread(
-            embedsocial.publish_media_post,
-            post.listing_id,
-            post_type=post.post_type,
-            title=post.title or None,
-            caption=_google_caption(post.description, post.terms_conditions),
-            image_urls=sent,
+        response = await publisher.publish_post(
+            "",
+            listing_id_of(channel),
+            post.post_type,
+            sent[0] if sent else None,
+            "image",
+            _google_caption(post.description, post.terms_conditions),
+            post.description or "",
+            # Our scheduler owns timing: the worker calls this only when the
+            # post is due, so Google must publish immediately. A future
+            # scheduledPublishTime here can be rejected once it is in the past.
+            None,
+            account_id=channel.platform_user_id,
+            media_urls=sent,
             cta_type=post.cta_type,
             cta_url=post.cta_url,
-            # Previously dropped on the floor: `scheduled_on` was stored on the
-            # row but never handed to the API, so a "scheduled" post was
-            # published the moment the worker picked it up rather than being
-            # scheduled with Google.
-            scheduled_on=post.scheduled_on,
             start_date=post.start_date.isoformat() if post.start_date else None,
             end_date=effective_end.isoformat() if effective_end else None,
-            voucher_code=post.coupon_code or None,
-            api_key=api_key,
+            coupon_code=post.coupon_code,
+            terms_conditions=post.terms_conditions,
         )
     except Exception as e:
         _register_publish_failure(post, str(e)[:500])
@@ -393,13 +398,15 @@ async def _publish_post_inner(
             )
         await db.commit()
         raise RuntimeError(f"Google publish failed: {e}")
+    finally:
+        await publisher.close()
 
     post.status = "published"
     post.published_at = datetime.now(timezone.utc)
     post.error = None
     post.attempts = 0
     post.next_retry_at = None
-    post.localith_response = response
+    post.google_response = response
     google_id = _google_post_id(response)
     if google_id:
         post.google_post_id = google_id
@@ -738,7 +745,8 @@ async def draft_post_content(
 
 # ── Per-post Google metrics (localPosts:reportInsights) ──────────────
 #
-# Localith publishes our posts but exposes no post-level metrics, so the
+# Google local-post insights are per-post; the row is matched to the remote
+# post by caption + publish-time proximity, then views/clicks are filled in.
 # numbers come from Google's own API — which needs a native OAuth channel
 # (the same `business.manage` grant the reviews client uses). Rows are
 # matched to Google's copies by normalized caption prefix (the provider
@@ -842,14 +850,13 @@ async def sync_post_metrics(
 ) -> dict:
     """Pull per-post views + call-to-action clicks from Google.
 
-    Requires a native OAuth Google channel — Localith's API has no
-    post-level metrics. Returns {checked, matched, synced, posts, note};
+    Requires a connected native Google channel. Returns {checked, matched, synced, posts, note};
     ``posts`` carries the matched rows serialized with fresh numbers so
     the UI can update in place. Google errors raise RuntimeError (502).
     """
     from ..channels.google_reviews import GoogleReviewsClient, GoogleReviewsError
-    from ..channels.models import Channel
     from ..channels.service import decrypt_token, encrypt_token
+    from ..locations.service import listing_id_of, native_channels
 
     filters = [LocationPost.user_id == user_id, LocationPost.status == "published"]
     if listing_id:
@@ -864,73 +871,45 @@ async def sync_post_metrics(
 
     matched_rows: list[LocationPost] = []
 
-    channel = (
-        await db.execute(
-            select(Channel).where(
-                Channel.platform == "google_reviews",
-                Channel.status == "active",
-                Channel.user_id == user_id,
-            )
-        )
-    ).scalars().all()
-    oauth_channel = next((c for c in channel if c.access_token or c.refresh_token), None)
-    if oauth_channel is None:
-        return _result(note=(
-            "Views and clicks need a native Google connection — "
-            "connect your Google Business Profile in Channels."
-        ))
-
-    conns = (
-        await db.execute(
-            select(LocalithConnection).where(LocalithConnection.user_id == user_id)
-        )
-    ).scalars().all()
-    google_ids = {
-        c.listing_id: (c.listing_google_id or "").strip()
-        for c in conns
-    }
     listings: dict[str, list[LocationPost]] = {}
     for row in rows:
         listings.setdefault(row.listing_id, []).append(row)
+    channels = [
+        ch for ch in await native_channels(db, user_id)
+        if ch.access_token or ch.refresh_token
+    ]
     targets = {
-        lid: gid
-        for lid, gid in google_ids.items()
-        if lid in listings and gid
+        listing_id_of(ch): ch
+        for ch in channels
+        if listing_id_of(ch) in listings
     }
     if not targets:
         return _result(note=(
-            "No Google-side location id for this listing yet — "
-            "re-sync the branch connection to enable metrics."
+            "Views and clicks need a connected Google location — "
+            "reconnect Google Business Profile in Channels."
         ))
-
-    access_token = (
-        decrypt_token(oauth_channel.access_token) if oauth_channel.access_token else None
-    )
-    refresh_token = (
-        decrypt_token(oauth_channel.refresh_token) if oauth_channel.refresh_token else None
-    )
-    client = GoogleReviewsClient(access_token or "", refresh_token)
-
-    async def _persist(new_access_token: str, new_expires_at) -> None:
-        oauth_channel.access_token = encrypt_token(new_access_token)
-        oauth_channel.token_expires_at = new_expires_at
-        await db.commit()
-
-    client.set_token_persister(_persist)
-    client.set_known_expiry(oauth_channel.token_expires_at)
 
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=540)  # Google caps insight ranges at 18 months
     matched = 0
     synced = 0
-    try:
-        account_id = (oauth_channel.platform_user_id or "").strip()
-        if not account_id:
-            accounts = await client.list_accounts()
-            if not accounts:
-                return _result(note="No Google Business Profile account on this connection.")
-            account_id = str(accounts[0].get("name") or "").split("/")[-1]
-        for lid, gid in targets.items():
+    for lid, channel in targets.items():
+        access = decrypt_token(channel.access_token) if channel.access_token else None
+        refresh = decrypt_token(channel.refresh_token) if channel.refresh_token else None
+        client = GoogleReviewsClient(access or "", refresh)
+
+        async def _persist(new_access: str, new_expires, ch=channel) -> None:
+            ch.access_token = encrypt_token(new_access)
+            ch.token_expires_at = new_expires
+            await db.commit()
+
+        client.set_token_persister(_persist)
+        client.set_known_expiry(channel.token_expires_at)
+        try:
+            account_id = (channel.platform_user_id or "").strip()
+            if not account_id:
+                continue
+            gid = listing_id_of(channel)
             google_posts = await client.list_local_posts(account_id, gid)
             listing_rows = listings[lid]
             pairs = match_google_posts(listing_rows, google_posts)
@@ -956,11 +935,11 @@ async def sync_post_metrics(
                     row.cta_clicks = clicks
                     synced += 1
                 row.metrics_synced_at = end
-        await db.commit()
-    except GoogleReviewsError as e:
-        await db.rollback()
-        raise RuntimeError(f"Google metrics sync failed: {e}") from e
-    finally:
-        await client.close()
+        except GoogleReviewsError as e:
+            await db.rollback()
+            raise RuntimeError(f"Google metrics sync failed: {e}") from e
+        finally:
+            await client.close()
+    await db.commit()
 
     return _result(matched=matched, synced=synced)

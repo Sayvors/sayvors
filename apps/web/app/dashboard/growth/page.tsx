@@ -14,43 +14,11 @@ import {
   fetchGrowthCards,
   type TimeseriesPoint,
 } from "@/lib/api-analytics";
-import { apiFetch } from "@/lib/api-rag";
 import { RangeChannelControls, useGoogleChannels } from "@/components/analytics/Controls";
 import { StatCard } from "@/components/analytics/StatCard";
+import { FactSource } from "@/components/analytics/FactSource";
+import { GBP_DASHBOARD_URL } from "@/lib/google-links";
 import GrowthCardsSection from "@/components/analytics/GrowthCards";
-
-function num(v: unknown): number {
-  const n = typeof v === "number" ? v : parseFloat(String(v ?? ""));
-  return Number.isFinite(n) ? n : 0;
-}
-
-interface PresencePerf {
-  searchViews: number;
-  mapViews: number;
-  websiteClicks: number;
-  directionRequests: number;
-  phoneCalls: number;
-  windowLabel: string;
-}
-
-function presencePerf(prof: {
-  connection?: { metrics_start?: string | null; metrics_end?: string | null };
-  metrics?: { listings?: Record<string, number | string | null>[] };
-} | null): PresencePerf | null {
-  const row = prof?.metrics?.listings?.[0];
-  if (!row) return null;
-  const conn = prof?.connection ?? {};
-  return {
-    searchViews: num(row.googleSearchDesktop) + num(row.googleSearchMobile),
-    mapViews: num(row.googleMapsDesktop) + num(row.googleMapsMobile),
-    websiteClicks: num(row.websiteClicks),
-    directionRequests: num(row.directions),
-    phoneCalls: num(row.callClicks),
-    windowLabel: conn.metrics_start && conn.metrics_end
-      ? `${conn.metrics_start} → ${conn.metrics_end}`
-      : "last 30 days",
-  };
-}
 
 const TYPE_STYLES: Record<string, { bg: string; label: string }> = {
   operations: { bg: "bg-[var(--ui-sunken)] text-[var(--ui-ink)]", label: "Operations" },
@@ -187,7 +155,7 @@ export default function GrowthPage() {
   const growthQuery = useQuery({
     queryKey: queryKeys.growth.all(days, channelId),
     queryFn: async () => {
-      const [v, a, o, t, k, ov, mg, prof, gc] = await Promise.all([
+      const [v, a, o, t, k, ov, mg, gc] = await Promise.all([
         fetchVisibility(days, channelId),
         fetchAcquisition(days, channelId),
         fetchOpportunities(days, channelId),
@@ -195,7 +163,6 @@ export default function GrowthPage() {
         fetchKeywords(days, channelId).catch(() => null),
         fetchOverview(days, channelId).catch(() => null),
         fetchMessagingGrowth(days, channelId).catch(() => null),
-        apiFetch("/api/v1/integrations/localith/profile").catch(() => null),
         fetchGrowthCards(days, channelId).catch(() => null),
       ]);
       return {
@@ -206,7 +173,6 @@ export default function GrowthPage() {
         keywords: k,
         overview: ov,
         messagingGrowth: mg,
-        presence: presencePerf(prof),
         growthCards: gc,
       };
     },
@@ -219,36 +185,20 @@ export default function GrowthPage() {
   const keywords = growthQuery.data?.keywords ?? null;
   const overview = growthQuery.data?.overview ?? null;
   const messagingGrowth = growthQuery.data?.messagingGrowth ?? null;
-  const presence = growthQuery.data?.presence ?? null;
   const growthCards = growthQuery.data?.growthCards ?? null;
   const loading = growthQuery.isPending;
   const error = growthQuery.isError && !growthQuery.data;
 
   const fmt = (n: number) => new Intl.NumberFormat("en").format(n);
   const nativePerf = !!visibility && visibility.impressions_maps > 0;
-  // Localith snapshot fills the cards when the native daily sync has no rows yet.
-  const usePresence = !nativePerf && !!presence;
-  const impressions = nativePerf
-    ? (visibility?.impressions_maps ?? 0)
-    : (presence ? presence.searchViews + presence.mapViews : 0);
-  const website = nativePerf
-    ? (acquisition?.website_clicks.total ?? 0)
-    : (presence?.websiteClicks ?? 0);
-  const calls = nativePerf
-    ? (acquisition?.call_clicks.total ?? 0)
-    : (presence?.phoneCalls ?? 0);
-  const directions = nativePerf
-    ? (acquisition?.direction_requests.total ?? 0)
-    : (presence?.directionRequests ?? 0);
+  const impressions = visibility?.impressions_maps ?? 0;
+  const website = acquisition?.website_clicks.total ?? 0;
+  const calls = acquisition?.call_clicks.total ?? 0;
+  const directions = acquisition?.direction_requests.total ?? 0;
   const actions = website + calls + directions;
-  const ctr = nativePerf
-    ? (visibility?.click_through_pct ?? null)
-    : impressions > 0
-      ? Math.round((actions / impressions) * 100 * 100) / 100
-      : null;
-  const viaNote = usePresence ? " · via Localith" : "";
+  const ctr = visibility?.click_through_pct ?? null;
   const hasOpps = (opportunities?.opportunities.length ?? 0) > 0;
-  const showMain = nativePerf || usePresence;
+  const showMain = nativePerf;
   const showEmpty = !showMain && !hasOpps && !loading;
 
   return (
@@ -274,7 +224,11 @@ export default function GrowthPage() {
       </div>
 
       <div className="mb-5">
-        <GrowthCardsSection cards={growthCards} loading={loading} />
+        <GrowthCardsSection
+          cards={growthCards}
+          loading={loading}
+          googleConnected={channels.length > 0}
+        />
       </div>
 
       {error && !loading ? (
@@ -304,37 +258,53 @@ export default function GrowthPage() {
               loading={loading}
               label="Maps impressions"
               value={fmt(impressions)}
-              sub={usePresence ? `people who saw you${viaNote}` : "people who saw you"}
-              delta={nativePerf ? visibility?.impressions_trend_pct : undefined}
+              sub="people who saw you"
+              delta={visibility?.impressions_trend_pct}
               accent="bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
               icon={ACTION_ICONS.impressions}
+              source="Google Business Profile"
+              sourceDetail={`last ${days} days`}
+              sourceHref={channels.length > 0 ? GBP_DASHBOARD_URL : undefined}
+              sourceLinkLabel="Open GBP dashboard"
             />
             <StatCard
               loading={loading}
               label="Website clicks"
               value={fmt(website)}
-              sub={usePresence ? `last ${days} days${viaNote}` : undefined}
-              delta={nativePerf ? acquisition?.website_clicks.trend_pct : undefined}
+              sub={`last ${days} days`}
+              delta={acquisition?.website_clicks.trend_pct}
               accent="bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
               icon={ACTION_ICONS.website}
+              source="Google Business Profile"
+              sourceDetail={`last ${days} days`}
+              sourceHref={channels.length > 0 ? GBP_DASHBOARD_URL : undefined}
+              sourceLinkLabel="Open GBP dashboard"
             />
             <StatCard
               loading={loading}
               label="Calls"
               value={fmt(calls)}
-              sub={usePresence ? `last ${days} days${viaNote}` : undefined}
-              delta={nativePerf ? acquisition?.call_clicks.trend_pct : undefined}
+              sub={`last ${days} days`}
+              delta={acquisition?.call_clicks.trend_pct}
               accent="bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
               icon={ACTION_ICONS.calls}
+              source="Google Business Profile"
+              sourceDetail={`last ${days} days`}
+              sourceHref={channels.length > 0 ? GBP_DASHBOARD_URL : undefined}
+              sourceLinkLabel="Open GBP dashboard"
             />
             <StatCard
               loading={loading}
               label="Directions"
               value={fmt(directions)}
-              sub={usePresence ? `last ${days} days${viaNote}` : undefined}
-              delta={nativePerf ? acquisition?.direction_requests.trend_pct : undefined}
+              sub={`last ${days} days`}
+              delta={acquisition?.direction_requests.trend_pct}
               accent="bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
               icon={ACTION_ICONS.directions}
+              source="Google Business Profile"
+              sourceDetail={`last ${days} days`}
+              sourceHref={channels.length > 0 ? GBP_DASHBOARD_URL : undefined}
+              sourceLinkLabel="Open GBP dashboard"
             />
           </div>
 
@@ -345,7 +315,7 @@ export default function GrowthPage() {
               <p className="mt-3 text-[32px] font-bold text-[var(--ui-ink)]">
                 {ctr !== null ? `${ctr}%` : "—"}
               </p>
-              <p className="text-[11px] text-[var(--ui-ink-2)]">of impressions became a click, call or direction request{usePresence ? " · via Localith" : ""}</p>
+              <p className="text-[11px] text-[var(--ui-ink-2)]">of impressions became a click, call or direction request</p>
               <div className="mt-4 space-y-2 border-t border-[var(--ui-line)] pt-4 text-[12px] text-[var(--ui-ink-2)]">
                 <p className="flex justify-between">
                   <span>Customer actions</span>
@@ -360,11 +330,17 @@ export default function GrowthPage() {
                   <span className="font-semibold text-[var(--ui-ink)]">{overview ? `${Math.round(overview.response_rate)}%` : "—"}</span>
                 </p>
               </div>
+              <FactSource
+                source="Google Business Profile"
+                detail={`last ${days} days`}
+                href={channels.length > 0 ? GBP_DASHBOARD_URL : null}
+                linkLabel="Open GBP dashboard"
+              />
           </div>
           )}
 
           {/* Trends — daily / monthly, fed by location_daily_metrics
-              (native OAuth + Localith daily ingest alike) */}
+              (native Google Performance API) */}
           {showMain && (
           <section aria-label="Trends" className="ui-card p-5">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
@@ -413,6 +389,12 @@ export default function GrowthPage() {
             ) : (
               <TrendChart points={points} metric={trendMetric} granularity={granularity} />
             )}
+            <FactSource
+              source="Google Business Profile"
+              detail={`${granularity === "day" ? "daily" : "monthly"} · last ${days} days`}
+              href={channels.length > 0 ? GBP_DASHBOARD_URL : null}
+              linkLabel="Open GBP dashboard"
+            />
           </section>
           )}
 
@@ -445,6 +427,15 @@ export default function GrowthPage() {
                 ))}
               </ol>
             )}
+            <p className="mt-2 text-[10px] text-[var(--ui-ink-2)]">
+              Google reports keyword impressions monthly; the selected range buckets them by month.
+            </p>
+            <FactSource
+              source="Google Business Profile search terms"
+              detail={`last ${days} days · native Google connection`}
+              href={channels.length > 0 ? GBP_DASHBOARD_URL : null}
+              linkLabel="Open GBP dashboard"
+            />
           </section>
 
           {/* Opportunities — independent of performance data */}
@@ -479,6 +470,12 @@ export default function GrowthPage() {
                 })}
               </ol>
             )}
+            <FactSource
+              source="Sayvors analysis of your Google data"
+              detail="recommendations, not measured facts"
+              href={channels.length > 0 ? GBP_DASHBOARD_URL : null}
+              linkLabel="Open GBP dashboard"
+            />
           </section>
 
           {/* Messaging growth — customer growth from stored daily rollups */}
@@ -536,6 +533,10 @@ export default function GrowthPage() {
                   )}
                 </div>
               )}
+              <FactSource
+                source="Sayvors message rollup"
+                detail={`last ${days} days`}
+              />
             </section>
           )}
         </div>

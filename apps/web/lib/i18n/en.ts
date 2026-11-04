@@ -202,6 +202,8 @@ const en = {
       noLocations: "No locations",
       googleConnected: "Google connected",
       googleNotConnected: "Google not connected",
+      googleExpired: "Google reconnection needed",
+      reconnectGoogle: "Your Google connection expired. Reconnect Google Business Profile in Channels to update this location.",
       createLocation: "+ Create location",
       createLocationTitle: "Create a new Google business location",
       multiLocationHint:
@@ -233,7 +235,7 @@ const en = {
       detailsSubtitle: "Edit your location's core information.",
       syncedToGoogle: "Synced to Google",
       storedInSayvors: "Stored in Sayvors",
-      syncedViaLocalith: "Synced from Google via Localith",
+      syncedViaGoogle: "Synced from your Google Business Profile",
       viewOnMaps: "View on Maps",
       addressReadOnlyTitle: "Address is synced from Google — edit it in your Google Business dashboard",
       fieldPhone: "Phone",
@@ -276,7 +278,7 @@ const en = {
       addPhone: "Add phone number",
       reviewsLabel: "reviews",
       completenessFootnote:
-        "Description, hours & category aren't returned by the Localith API.",
+        "Description, hours & category are managed in Sayvors and sync to Google when you save.",
       bulkEditingAll: "Editing ALL {count} branches — {branches}",
       bulkEditingAllSub:
         "Every save below applies to each branch listed. Name and address stay per-branch — switch to one branch to change those.",
@@ -285,6 +287,7 @@ const en = {
       hoursHint:
         "Untick Open for closed days. Overnight ranges (e.g. 20:00–02:00) roll over to the next day.",
       openLabel: "Open",
+      open24Hours: "Open 24 hours",
       closedLabel: "Closed",
       toLabel: "to",
       saveHours: "Save Hours",
@@ -371,7 +374,7 @@ const en = {
     },
     presence: {
       title: "Google presence",
-      viaLocalith: "via Localith",
+      viaGoogle: "via Google Business Profile",
       last30Days: "Last 30 days",
       searchViews: "Search views",
       mapViews: "Map views",
@@ -389,6 +392,8 @@ const en = {
       messages: "Messages",
       bookings: "Bookings",
       reviewsMetric: "Reviews",
+      reviewsAllTime: "Reviews (all time)",
+      ratingShort: "{rating}★ avg",
       repliesMetric: "Replies",
       customerActions: "Customer actions",
       totalLabel: "total",
@@ -398,9 +403,9 @@ const en = {
       on: "on",
       scopeTotal: "Total",
       scopeByBranch: "By branch",
-      noMetricYet: "No {metric} recorded yet",
-      noMetricHint: "Daily Google metrics arrive as the performance sync runs. They plot here once collected.",
-      periodTotals: "Period totals from Localith. Pick a metric for its daily trend.",
+      noMetricYet: "No {metric} in this period",
+      noMetricHint: "Daily Google metrics appear after the performance sync. Try a wider range if the data is older.",
+      periodTotals: "Period totals from Google Business Profile. Pick a metric for its daily trend.",
     },
   },
   dashboard: {

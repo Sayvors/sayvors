@@ -70,6 +70,8 @@ async def test_update_maps_to_the_standard_topic():
     assert captured["body"]["summary"] == "Grand opening"
     assert "event" not in captured["body"]
     assert "offer" not in captured["body"]
+    # localPosts exists on v4; v1 returns Google's HTML 404.
+    assert "/v4/accounts/1/locations/2/localPosts" in captured["url"]
 
 
 @pytest.mark.asyncio
@@ -92,9 +94,20 @@ async def test_event_carries_the_date_google_requires():
 
 
 @pytest.mark.asyncio
+async def test_call_to_action_maps_to_google_action_type():
+    captured = await _publish(
+        "update", cta_type="shop", cta_url="https://shop.example.com"
+    )
+    assert captured["body"]["callToAction"] == {
+        "actionType": "SHOP",
+        "url": "https://shop.example.com",
+    }
+
+
+@pytest.mark.asyncio
 async def test_offer_carries_terms_google_requires():
     """An OFFER post needs at least one of the offer fields."""
-    captured = await _publish("offer")
+    captured = await _publish("offer", terms_conditions="Come say hello")
     body = captured["body"]
     assert body["topicType"] == "OFFER"
     assert body["offer"]["description"] == "Grand opening"

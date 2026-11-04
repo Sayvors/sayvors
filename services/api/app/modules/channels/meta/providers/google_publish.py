@@ -24,7 +24,7 @@ from ...google_reviews import GoogleReviewsClient, GoogleReviewsError
 
 logger = logging.getLogger(__name__)
 
-GBP_LOCAL_POSTS_API = "https://mybusiness.googleapis.com/v1"
+GBP_LOCAL_POSTS_API = "https://mybusiness.googleapis.com/v4"
 
 # Location photos live in the v4.9 Business Profile API — v1 has no media
 # resource. Both versions are served from the same host and take the same
@@ -39,6 +39,16 @@ _LOCATION_IMAGE_CATEGORY = {
     "profile": "PROFILE",
     "banner": "COVER",
 }
+
+
+def _parse_google_dt(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
 class GoogleBusinessPublisher:
@@ -73,6 +83,14 @@ class GoogleBusinessPublisher:
         description: str,
         scheduled_at: str | None,
         account_id: str | None = None,
+        *,
+        media_urls: list[str] | None = None,
+        cta_type: str | None = None,
+        cta_url: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        coupon_code: str | None = None,
+        terms_conditions: str | None = None,
     ) -> dict:
         """Publish one post to one GBP location.
 
@@ -121,37 +139,48 @@ class GoogleBusinessPublisher:
         if summary:
             body["summary"] = summary[:1500]
 
-        if media_url:
+        urls = [u for u in (media_urls or ([media_url] if media_url else [])) if u]
+        if urls:
             body["media"] = [
                 {
                     "mediaFormat": "PHOTO" if (media_type or "image") == "image" else "VIDEO",
-                    "sourceUrl": media_url,
+                    "sourceUrl": url,
                 }
+                for url in urls[:10]
             ]
 
-        # EVENT posts require an event object with a title and a start
-        # date. The composer does not collect dates yet, so default to a
-        # 7-day window from now — Google rejects a bare STANDARD payload
-        # with topicType EVENT.
+        # EVENT posts require an event object with a title and a start date.
         if topic_type == "EVENT":
             from datetime import timedelta
 
             now = datetime.now(timezone.utc)
-            end = now + timedelta(days=7)
+            start = _parse_google_dt(start_date) or now
+            end = _parse_google_dt(end_date) or (start + timedelta(days=7))
             body["event"] = {
                 "title": (summary[:60] if summary else "Event"),
-                "startDate": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "startDate": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "endDate": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
             }
 
-        # OFFER posts require at least one of couponCode, redeemOnlineUrl,
-        # termsConditions, or description. Send description + terms so the
-        # offer renders even without a coupon code.
+        # OFFER posts carry a coupon / redeem link and terms.
         if topic_type == "OFFER":
-            body["offer"] = {
+            offer: dict[str, Any] = {
                 "description": (summary[:300] if summary else ""),
-                "termsConditions": (description or "Terms apply")[:300],
+                "termsConditions": (terms_conditions or "Terms apply")[:300],
             }
+            if coupon_code:
+                offer["couponCode"] = coupon_code[:64]
+            if cta_url:
+                offer["redeemOnlineUrl"] = cta_url[:1000]
+            body["offer"] = offer
+
+        cta_map = {
+            "book": "BOOK", "order": "ORDER", "shop": "SHOP",
+            "learn_more": "LEARN_MORE", "sign_up": "SIGN_UP", "call": "CALL",
+        }
+        action = cta_map.get((cta_type or "").strip().lower())
+        if action and cta_url and topic_type != "OFFER":
+            body["callToAction"] = {"actionType": action, "url": cta_url[:1000]}
 
         if scheduled_at:
             try:
@@ -162,10 +191,7 @@ class GoogleBusinessPublisher:
             except ValueError:
                 logger.warning("invalid scheduled_at %r - publishing immediately", scheduled_at)
 
-        url = (
-            f"https://mybusiness.googleapis.com/v1/"
-            f"{account}/{location}/localPosts"
-        )
+        url = f"{GBP_LOCAL_POSTS_API}/{account}/{location}/localPosts"
         resp = await self._client._authed_request("POST", url, json=body)
         if resp.status_code not in (200, 201):
             raise GoogleReviewsError(
@@ -188,6 +214,8 @@ class GoogleBusinessPublisher:
         method: str,
         media_url: str,
         account_id: str | None = None,
+        *,
+        category_override: str | None = None,
     ) -> dict:
         """Replace a location's profile picture or cover image.
 
@@ -203,10 +231,13 @@ class GoogleBusinessPublisher:
         ``asset_id`` is the location id; ``account_id`` is the Google
         account id.
         """
-        category = _LOCATION_IMAGE_CATEGORY.get(method)
-        if category is None:
+        category = (category_override or _LOCATION_IMAGE_CATEGORY.get(method) or "").upper()
+        if category not in {
+            "PROFILE", "COVER", "LOGO", "EXTERIOR", "INTERIOR", "PRODUCT",
+            "FOOD_AND_DRINK", "MENU", "COMMON_AREA", "ROOMS", "TEAM", "ADDITIONAL",
+        }:
             raise GoogleReviewsError(
-                f"GBP location images are 'profile' or 'banner', got {method!r}", 400
+                f"GBP location media category is invalid: {category or method!r}", 400
             )
         if not media_url:
             raise GoogleReviewsError("a location image needs a media URL", 400)
@@ -257,7 +288,7 @@ class GoogleBusinessPublisher:
                 "post_id must be the full localPost resource name", 400
             )
 
-        url = f"https://mybusiness.googleapis.com/v1/{post_id}"
+        url = f"{GBP_LOCAL_POSTS_API}/{post_id}"
         resp = await self._client._authed_request("DELETE", url)
         if resp.status_code not in (200, 204):
             raise GoogleReviewsError(

@@ -19,7 +19,7 @@ services/api/
 │       ├── auth/ users/ admin/ team/ billing/
 │       ├── locations/ channels/ posts/ media/ storage/
 │       ├── analytics/ review_engine/ assistant/
-│       ├── profile/ localith/ rag/ retrieval/
+│       ├── profile/ rag/ retrieval/
 │       ├── llm/ tts/ stt/
 │       ├── email/ notifications/ user_feedback/
 │       ├── jobs/ outbox/ kafka/ redis/
@@ -45,7 +45,6 @@ async def lifespan(app: FastAPI):
     5. Always start the retention cleanup loop
     6. When RUN_BACKGROUND_WORKERS=true, start queue/poll workers:
        - Google Reviews poll worker
-       - Localith sync worker
        - Scheduled post publisher
        - Analytics Kafka consumer
        - Google performance and messaging rollup workers
@@ -132,10 +131,6 @@ class Settings(BaseSettings):
     GOOGLE_REVIEWS_REDIRECT_URI: str = "http://localhost:8000/api/v1/channels/google/callback"
     GOOGLE_REVIEWS_MOCK: bool = False
     GOOGLE_REVIEWS_POLL_INTERVAL_SECONDS: int = 300
-    
-    # Localith
-    LOCALITH_API_KEY: str = ""
-    LOCALITH_SYNC_INTERVAL_SECONDS: int = 60
     
     # Analytics
     ANALYTICS_PERFORMANCE_SYNC_INTERVAL_SECONDS: int = 6 * 3600
@@ -330,7 +325,6 @@ async def login(body: LoginRequest, db: AsyncSession, user_agent: str, ip: str):
 # All started as asyncio tasks
 retention_task = asyncio.create_task(run_retention_loop())
 reviews_task = asyncio.create_task(run_google_reviews_worker())
-localith_sync_task = asyncio.create_task(run_localith_sync_worker())
 posts_publish_task = asyncio.create_task(run_post_publish_worker())
 analytics_consumer_task = asyncio.create_task(run_analytics_consumer())
 performance_sync_task = asyncio.create_task(run_performance_sync_worker())

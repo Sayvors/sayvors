@@ -2,9 +2,12 @@
 
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import PresenceChart from "@/components/analytics/PresenceChart";
+import { FactSource } from "@/components/analytics/FactSource";
+import { GBP_DASHBOARD_URL, listingMapsUrl } from "@/lib/google-links";
+import { timeAgo } from "@/lib/relative-time";
 import type { TimeseriesPoint } from "@/lib/api-analytics";
 
-/* ── Google presence (Localith snapshot — live even with 0 reviews) ── */
+/* ── Google presence (native performance rollups) ── */
 
 export interface PresenceData {
   listingName: string;
@@ -16,33 +19,12 @@ export interface PresenceData {
   phoneCalls: number;
   totalReviews: number;
   averageRating: number;
-}
-
-function num(v: unknown): number {
-  const n = typeof v === "number" ? v : parseFloat(String(v ?? ""));
-  return Number.isFinite(n) ? n : 0;
-}
-
-export function presenceFromProfile(prof: {
-  connection?: { listing_name?: string; metrics_start?: string | null; metrics_end?: string | null; total_reviews?: number; average_rating?: number };
-  metrics?: { listings?: Record<string, number | string | null>[] };
-  item_metrics?: { listings?: Record<string, number | string | null>[] };
-} | null): PresenceData | null {
-  const perf = prof?.metrics?.listings?.[0];
-  const rev = prof?.item_metrics?.listings?.[0];
-  if (!perf && !rev) return null;
-  const conn = prof?.connection ?? {};
-  return {
-    listingName: conn.listing_name ?? "",
-    windowLabel: conn.metrics_start && conn.metrics_end ? `${conn.metrics_start} → ${conn.metrics_end}` : null,
-    searchViews: num(perf?.googleSearchDesktop) + num(perf?.googleSearchMobile),
-    mapViews: num(perf?.googleMapsDesktop) + num(perf?.googleMapsMobile),
-    websiteClicks: num(perf?.websiteClicks),
-    directionRequests: num(perf?.directions),
-    phoneCalls: num(perf?.callClicks),
-    totalReviews: num(rev?.numberOfReviews ?? conn.total_reviews),
-    averageRating: num(rev?.averageRating ?? conn.average_rating),
-  };
+  /** Google's own Maps URL / place id; either one makes a real verify link. */
+  mapsUrl?: string | null;
+  placeId?: string | null;
+  /** When the underlying performance snapshot was last refreshed. */
+  syncedAt?: string | null;
+  branchCount?: number;
 }
 
 /* Two chart groups plus the snapshot's window footnote. Theme: the Team
@@ -66,6 +48,22 @@ export default function PresenceSection({
   const { t } = useI18n();
   const copy = t.analytics.presence;
   const p = presence;
+  // Prefer the listing's own Maps URL / place id. An aggregate view has no
+  // single listing, so it links to the GBP location manager instead of
+  // pretending a search result is the tenant's listing.
+  const mapsHref = listingMapsUrl({ mapsUrl: p.mapsUrl, placeId: p.placeId });
+  const verifyHref = mapsHref ?? GBP_DASHBOARD_URL;
+  const synced = timeAgo(p.syncedAt);
+  const branchNote =
+    p.branchCount && p.branchCount > 1 ? `${p.branchCount} branches` : null;
+  const fmtNum = (value: number) => new Intl.NumberFormat(locale).format(value);
+  const snapshotTiles = [
+    { label: copy.searchViews, value: p.searchViews },
+    { label: copy.mapViews, value: p.mapViews },
+    { label: copy.websiteClicks, value: p.websiteClicks },
+    { label: copy.directionRequests, value: p.directionRequests },
+    { label: copy.phoneCalls, value: p.phoneCalls },
+  ];
 
   const labels = {
     discovery: copy.presenceDiscovery,
@@ -103,6 +101,10 @@ export default function PresenceSection({
           locale={locale}
           loading={loading}
           scopeLabel={scopeLabel}
+          source="Google Business Profile"
+          sourceDetail={p.windowLabel ?? copy.last30Days}
+          sourceHref={verifyHref}
+          sourceLinkLabel={mapsHref ? "Verify on Google Maps" : "Open GBP dashboard"}
         />
         <PresenceChart
           points={points}
@@ -112,6 +114,10 @@ export default function PresenceSection({
           locale={locale}
           loading={loading}
           scopeLabel={scopeLabel}
+          source="Google Business Profile"
+          sourceDetail={p.windowLabel ?? copy.last30Days}
+          sourceHref={verifyHref}
+          sourceLinkLabel={mapsHref ? "Verify on Google Maps" : "Open GBP dashboard"}
         />
       </div>
       <div className="ui-card p-4 sm:p-5">
@@ -121,9 +127,43 @@ export default function PresenceSection({
             {p.listingName ? ` — ${p.listingName}` : ""}
           </h3>
           <p className="text-[11px] text-[var(--ui-ink-2)]">
-            {p.windowLabel ?? copy.last30Days} · {copy.viaLocalith}
+            {p.windowLabel ?? copy.last30Days} · {copy.viaGoogle}
           </p>
         </div>
+        <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 lg:grid-cols-6">
+          {snapshotTiles.map(({ label, value }) => (
+            <div key={label}>
+              <dt className="text-[9px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
+                {label}
+              </dt>
+              <dd className="mt-0.5 text-[16px] font-black tabular-nums text-[var(--ui-ink)]">
+                {fmtNum(value)}
+              </dd>
+            </div>
+          ))}
+          <div>
+            <dt className="text-[9px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
+              {copy.reviewsAllTime}
+            </dt>
+            <dd className="mt-0.5 text-[16px] font-black tabular-nums text-[var(--ui-ink)]">
+              {fmtNum(p.totalReviews)}
+            </dd>
+            <p className="text-[10px] text-[var(--ui-ink-2)]">
+              {p.averageRating > 0
+                ? copy.ratingShort.replace("{rating}", p.averageRating.toFixed(1))
+                : "—"}
+            </p>
+          </div>
+        </dl>
+        <FactSource
+          source="Google Business Profile"
+          detail={p.windowLabel ?? copy.last30Days}
+          note={[branchNote, synced ? `synced ${synced}` : null]
+            .filter(Boolean)
+            .join(" · ") || null}
+          href={verifyHref}
+          linkLabel={mapsHref ? "Verify on Google Maps" : "Open GBP dashboard"}
+        />
       </div>
     </div>
   );

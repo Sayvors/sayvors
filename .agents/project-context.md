@@ -14,7 +14,7 @@
 ```
 apps/              web, admin, docs (docs is a placeholder)
 services/api/      FastAPI backend (the only active service)
-integrations/      channels (embedsocial.py adapter), payments, ai, storage, email, sms, webhooks
+integrations/      channels (Google Business Profile publisher), payments, ai, storage, email, sms, webhooks
 deployments/       empty scaffold
 configs/           empty scaffold
 tests/             empty
@@ -35,7 +35,6 @@ docs/              architecture, security, specs, tracking
   - `app/modules/llm/` — chat, providers (openai_compatible, gemini), TTS/STT
   - `app/modules/channels/` — Google OAuth, reviews worker, auto-reply, approval workflow
   - `app/modules/profile/` — user profile, onboarding, feedback (Redis cache + Kafka events)
-  - `app/modules/localith/` — Localith (EmbedSocial) connect, listings, connection CRUD
   - `app/modules/analytics/` — review insights, daily metrics, performance sync
   - `app/modules/redis/` — connection manager + health router
   - `app/modules/kafka/` — producer/consumer + health router
@@ -43,36 +42,14 @@ docs/              architecture, security, specs, tracking
   - `app/security.py` — token encode/decode (PyJWT)
   - `app/config.py` — pydantic-settings (all keys in `.env`)
   - `app/database.py` — SQLAlchemy engine
-- **Migrations:** alembic; latest `f6a7b8c9d0e1` (localith_connections)
+- **Migrations:** alembic; latest `b7e4f1a9c2d8` (Localith retirement)
 
 ### Alembic chain (leaf → root)
 ```
-f6a7b8c9d0e1  localith_connections         ← NEW
-  ← f5a6b7c8d9e0  databank_database_sources
-    ← e4f5a6b7c8d9  profile_fields_and_feedback
-      ← d9e8c7b6a5f4  response_engine
-        ← c8d2f4a6b9e1  analytics
-          ← b7c4d9e2f1a3  google_autoreply
-            ← f3b1e7a9d0c2  onboarded
-              ← ceab557d4a2e  event_outbox
-                ← a1b2c3d4e5f6  user_defaults
-                  ← 9528ad5dd83e  rag_auth
-                    ← 8f77db8fd33e  create_all_modules (baseline)
+b7e4f1a9c2d8  drop_localith                ← NEW
+  ← f5a8c2d6e9b14375  channel_daily_rollup_version
+    ← (earlier migrations)
 ```
-
-## Localith Integration (current work)
-- **Adapter:** `integrations/channels/embedsocial.py` — listings, listing detail, items (paginated),
-  listing_metrics + listing_item_metrics (require DD-MM-YYYY dates), update_listing (PATCH), publish stub
-- **Key:** `LOCALITH_API_KEY` in `.env` (shared across all Sayvors users for v1)
-- **Listing proved:** `Sayvors-Al Malqa` (googleId `ChIJi0iBWpblLj4RYFeIukBn_OI`), verified, 0 reviews
-- **DB table:** `localith_connections` + profile snapshot cols + raw JSON snapshots (listing/metrics/item_metrics)
-  — migrations `f6a7b8c9d0e1` → `g7h8i9j0k1l2`, heads merged in `a091b0730d72`
-- **Router:** `app/modules/localith/router.py` — config, listings, test, connection CRUD, `POST /sync`
-  (profile+reviews+metrics), `GET /profile` (full snapshot), `PATCH /listing` (write-back to Google)
-- **Worker:** `app/modules/localith/worker.py` — background auto-sync every `LOCALITH_SYNC_INTERVAL_SECONDS`
-  (default 900s), wired into app lifespan; per-connection error isolation, idempotent
-- **UI:** channels page Localith card (profile + metrics + Sync now), locations DetailsTab reads snapshot,
-  Save writes back via PATCH
 
 ## Frontend (`apps/web/`)
 - **Framework:** Next.js 16.2.12, React 19.2.4, Tailwind 4.3.3, TypeScript 5
@@ -81,7 +58,7 @@ f6a7b8c9d0e1  localith_connections         ← NEW
   - Sidebar: branded avatar + popover, active-route highlight
   - Header: settings gear, help `?`, quick-create `+`, Auto Pilot pill toggle
   - Greeting: typewriter effect with Sayvors logo cursor
-  - Channels: Google Reviews connect (real OAuth), Localith connect (middleware), coming-soon cards
+  - Channels: Google Business Profile connect (real OAuth), coming-soon cards
 - **i18n:** English + Arabic (ar), RTL support via I18nProvider
 - **Key libs:** `lib/api.ts`, `lib/api-rag.ts`, `lib/auth-context.tsx`, `middleware.ts`
 - **Components:** LogoLoader (brand ring + signal arcs), AutoPilotDialog, DatabaseTab, RetrievalTab
@@ -111,5 +88,4 @@ cd apps/web && npx tsc --noEmit --pretty           # clean
 - **Frontend:** no tests, no lint CI
 - **Gemini:** project 707788193034 returns 403 on generate/embed — needs billing enabled
 - **Google:** `mybusinessaccountmanagement.googleapis.com` quota exhausted (429 on connect)
-- **Localith reviews:** empty (`items` endpoint returns `[]`) — waiting for Localith sync
 - **Docker:** Redis + Kafka running; Postgres stopped (using local)

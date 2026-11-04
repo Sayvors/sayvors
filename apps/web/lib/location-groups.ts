@@ -1,6 +1,6 @@
 /* Location groups — shared selector helpers.
  *
- * Groups are stored server-side against Localith `listing_id`s. Pages differ
+ * Groups are stored server-side against Google `listing_id`s. Pages differ
  * in what they key locations by: Locations uses listing IDs directly, while
  * Posts / Services / Reviews work in channel IDs. So a group is resolved
  * through a caller-supplied `listingId -> local id` map, and members with no

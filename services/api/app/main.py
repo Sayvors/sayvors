@@ -33,10 +33,10 @@ from .modules.kafka.router import router as kafka_router
 from .modules.rag.router import router as rag_router
 from .modules.memory.router import router as memory_router
 from .modules.analytics.router import router as analytics_router
+from .modules.analytics.qa_router import router as analytics_qa_router
 from .modules.analytics.abuse_router import router as analytics_abuse_router
 from .modules.profile.router import router as profile_router
 from .modules.onboarding.router import router as onboarding_router
-from .modules.localith.router import router as localith_router
 from .modules.locations.router import router as locations_router
 from .modules.posts.router import router as posts_router
 from .modules.media.router import router as media_router
@@ -442,7 +442,6 @@ async def lifespan(app: FastAPI):
     outbox_worker = None
     if settings.RUN_BACKGROUND_WORKERS:
         from .modules.channels.reviews_worker import run_google_reviews_worker
-        from .modules.localith.worker import run_localith_sync_worker
         from .modules.posts.worker import run_post_publish_worker
         from .modules.analytics.consumer import run_analytics_consumer
         from .modules.analytics.messaging_rollup import run_messaging_rollup_worker
@@ -457,7 +456,6 @@ async def lifespan(app: FastAPI):
 
         bg_tasks.append(asyncio.create_task(run_hold_reaper()))
         bg_tasks.append(asyncio.create_task(run_google_reviews_worker()))
-        bg_tasks.append(asyncio.create_task(run_localith_sync_worker()))
         bg_tasks.append(asyncio.create_task(run_post_publish_worker()))
         bg_tasks.append(asyncio.create_task(run_analytics_consumer()))
         bg_tasks.append(asyncio.create_task(run_performance_sync_worker()))
@@ -570,6 +568,7 @@ app.include_router(inbox_router)
 app.include_router(meta_router)
 app.include_router(meta_webhooks_router)
 app.include_router(analytics_router)
+app.include_router(analytics_qa_router)
 app.include_router(analytics_abuse_router)
 app.include_router(redis_router)
 app.include_router(kafka_router)
@@ -577,7 +576,6 @@ app.include_router(rag_router)
 app.include_router(memory_router)
 app.include_router(profile_router)
 app.include_router(onboarding_router)
-app.include_router(localith_router)
 app.include_router(locations_router)
 app.include_router(posts_router)
 app.include_router(media_router)

@@ -474,8 +474,8 @@ async def batch_delete_published_posts(
         )
         channel = None
         if platform == "google_reviews":
-            # A branch can be identified by its Localith listing id, its
-            # Google location id, or both — accept any of them.
+            # A branch can be identified by its Google location id or its
+            # dedupe key - accept either.
             for ch in result.scalars().all():
                 if str(external_asset_id) in channel_location_ids(ch):
                     channel = ch
@@ -726,8 +726,8 @@ async def delete_published_post(
     )
     channel = None
     if platform == "google_reviews":
-        # A branch can be identified by its Localith listing id, its Google
-        # location id, or both — accept any of them.
+        # A branch can be identified by its Google location id or its dedupe
+        # key - accept either.
         for ch in result.scalars().all():
             if str(external_asset_id) in channel_location_ids(ch):
                 channel = ch

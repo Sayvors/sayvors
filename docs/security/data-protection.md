@@ -93,7 +93,7 @@ def derive_key(passphrase: str, salt: bytes) -> bytes:
 | Name | Signup | Account lifetime | Contract |
 | IP Address | Request metadata | 30 days (login_attempts) | Legitimate interest |
 | User Agent | Request metadata | 30 days | Legitimate interest |
-| Location (business) | Google/EmbedSocial | Account lifetime | Contract |
+| Location (business) | Google Business Profile | Account lifetime | Contract |
 | Reviews (customer) | Platform APIs | 2 years | Legitimate interest |
 
 ### Data Minimization
@@ -183,7 +183,6 @@ OPENAI_API_KEY=
 XAI_API_KEY=
 GROQ_API_KEY=
 GEMINI_API_KEY=
-LOCALITH_API_KEY=
 ```
 
 ### Secret Handling Rules
@@ -324,7 +323,6 @@ async def cleanup_expired_data(db: AsyncSession):
 | Processor | Purpose | DPA | Location |
 |-----------|---------|-----|----------|
 | Google | Business Profile API | Yes | Global |
-| EmbedSocial (Localith) | Reviews/locations sync | Yes | EU/US |
 | Resend | Transactional email | Yes | US |
 | Groq/OpenAI/Gemini | LLM inference | Yes | US |
 | Redis Cloud | Caching/rate limiting | Yes | Global |

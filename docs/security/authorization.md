@@ -47,7 +47,7 @@ async def get_resource(db: AsyncSession, user_id: str, resource_id: str):
 |----------|-------------|----------------|
 | User Profile | `id` | Self only (`/auth/me`) |
 | Sessions | `user_id` | Self only (`/auth/sessions`) |
-| Locations | `user_id` (via Channel/LocalithConnection) | List/Get/Update own |
+| Locations | `user_id` (via Channel) | List/Get/Update own |
 | Posts | `user_id` | CRUD own |
 | Channels | `user_id` | CRUD own |
 | Databanks | `user_id` | CRUD own |

@@ -249,14 +249,13 @@ def parse_channel_metadata(metadata_json: str | None) -> dict:
 def channel_listing_key(platform: str, metadata: dict) -> str | None:
     """Stable per-location identity for google_reviews channels.
 
-    Localith-mirrored rows carry listing_id; native OAuth rows carry
-    location_id. Different ID spaces, so the two sources never collide.
-    None for channels with no location identity (never deduped).
+    Native OAuth rows carry the Google location id. None for channels with
+    no location identity (never deduped).
     """
     if not isinstance(metadata, dict):
         return None
     if platform == "google_reviews":
-        key = metadata.get("listing_id") or metadata.get("location_id")
+        key = metadata.get("location_id")
         return str(key) if key else None
     return None
 
@@ -264,10 +263,8 @@ def channel_listing_key(platform: str, metadata: dict) -> str | None:
 def channel_location_ids(channel: Channel) -> set[str]:
     """Every id that identifies one Google location of this channel.
 
-    A branch can be identified by its Localith listing id, its Google
-    location id, or both (a Localith branch that was later connected
-    through Google's own OAuth). Publishing resolves the channel from
-    whichever id the client holds, so all of them are accepted.
+    Publishing resolves the channel from whichever id the client holds, so
+    both the Google location id and the dedupe key are accepted.
     """
     ids: set[str] = set()
     try:
@@ -277,10 +274,9 @@ def channel_location_ids(channel: Channel) -> set[str]:
     except (ValueError, TypeError):
         meta = {}
     if isinstance(meta, dict):
-        for key in ("location_id", "listing_id"):
-            value = meta.get(key)
-            if value:
-                ids.add(str(value))
+        value = meta.get("location_id")
+        if value:
+            ids.add(str(value))
     if channel.listing_key:
         ids.add(str(channel.listing_key))
     return ids
@@ -301,20 +297,33 @@ async def find_channel_by_key(
 
 
 async def list_channels(
-    user: User, db: AsyncSession, limit: int = 20, offset: int = 0
+    user: User,
+    db: AsyncSession,
+    limit: int = 20,
+    offset: int = 0,
+    include_disconnected: bool = False,
 ) -> tuple[list[Channel], int]:
-    count_result = await db.execute(
-        select(func.count()).where(Channel.user_id == tenant_id_of(user))
-    )
+    """List channels for the tenant.
+
+    Disconnected channels are hidden by default: every product surface that
+    reads channels must stop showing their reviews, metrics and locations the
+    moment Google is disconnected. The connector page opts in explicitly so it
+    can offer "Reconnect".
+    """
+    filters = [Channel.user_id == tenant_id_of(user)]
+    if not include_disconnected:
+        filters.append(Channel.status != "disconnected")
+    count_result = await db.execute(select(func.count()).where(*filters))
     total = count_result.scalar() or 0
     result = await db.execute(
         select(Channel)
-        .where(Channel.user_id == tenant_id_of(user))
+        .where(*filters)
         .order_by(Channel.created_at.desc())
         .limit(limit)
         .offset(offset)
     )
-    return list(result.scalars().all()), total
+    rows = list(result.scalars().all())
+    return rows, total
 
 
 async def get_channel(
@@ -333,6 +342,44 @@ async def delete_channel(channel_id: str, user: User, db: AsyncSession) -> bool:
     await db.delete(channel)
     await db.commit()
     return True
+
+
+async def sync_google_services(
+    db: AsyncSession,
+    channel: Channel,
+    names: list[str],
+    category: str | None = None,
+) -> int:
+    """Insert Google-declared service types that are not stored yet.
+
+    Google's category `serviceTypes` are the merchant's declared services.
+    They are inserted as source="google"; a local row with the same name is
+    never overwritten or removed, and a user deletion is re-added on the next
+    metadata sync because Google still declares it.
+    """
+    from .models import BusinessService
+
+    existing = (
+        await db.execute(
+            select(BusinessService.name).where(BusinessService.channel_id == channel.id)
+        )
+    ).scalars().all()
+    have = {str(name or "").strip().lower() for name in existing}
+    inserted = 0
+    for raw in names or []:
+        name = str(raw or "").strip()
+        if not name or name.lower() in have:
+            continue
+        db.add(BusinessService(
+            channel_id=channel.id,
+            name=name[:200],
+            category=(category or "Google")[:120],
+            source="google",
+            is_offered=True,
+        ))
+        have.add(name.lower())
+        inserted += 1
+    return inserted
 
 
 async def send_message(

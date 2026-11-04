@@ -70,27 +70,29 @@ export default function AskForReview() {
     let cancelled = false;
     (async () => {
       try {
-        const data = await apiFetch("/api/v1/integrations/localith/connections");
+        const data = await apiFetch("/api/v1/channels?limit=100");
         if (cancelled) return;
-        const conns = (Array.isArray(data) ? data : (data.connections ?? [])) as {
-          id?: string; listing_id?: string | null; listing_name?: string | null;
-          listing_google_id?: string | null; maps_url?: string | null; website_url?: string | null;
+        const channels = (data.channels ?? []) as {
+          id: string;
+          platform: string;
+          status: string;
+          display_name: string | null;
+          listing_id?: string | null;
+          place_id?: string | null;
+          maps_url?: string | null;
         }[];
-        setBusinesses(
-          conns
-            .filter((c) => c.listing_id || c.id)
-            .map((c) => ({
-              id: c.listing_id ?? c.id!,
-              name: c.listing_name ?? "Location",
-              // place_id link opens the review composer; profile/maps links
-              // leave the customer to find "Write a review" themselves.
-              reviewUrl:
-                (c.listing_google_id && `https://search.google.com/local/writereview?placeid=${c.listing_google_id}`) ||
-                c.maps_url ||
-                c.website_url ||
-                `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(c.listing_name ?? "")}`,
-            }))
-        );
+        const businesses = channels
+          .filter((c) => c.platform === "google_reviews" && c.status === "active")
+          .flatMap((c) => {
+            // A Place ID opens Google's review composer directly. A Maps URL
+            // is a real listing link; never fall back to a name search.
+            const reviewUrl = c.place_id
+              ? `https://search.google.com/local/writereview?placeid=${encodeURIComponent(c.place_id)}`
+              : c.maps_url;
+            if (!reviewUrl) return [];
+            return [{ id: c.id, name: c.display_name ?? "Location", reviewUrl }];
+          });
+        setBusinesses(businesses);
       } catch {
         if (!cancelled) setBusinesses([]);
       }
@@ -180,6 +182,8 @@ export default function AskForReview() {
   const allContactsSelected = filteredContacts.length > 0 && filteredContacts.every((c) => selectedContactIds.has(c.id));
   const allWhatsAppSelected = visibleWhatsappContacts.length > 0 && visibleWhatsappContacts.every((c) => selectedContactIds.has(c.id));
   const allBusinessesSelected = businesses.length > 0 && businesses.every((b) => selectedBusinessIds.has(b.id));
+  const selectedBusiness =
+    businesses.find((b) => selectedBusinessIds.has(b.id)) ?? businesses[0] ?? null;
 
   const toggleAllContacts = (list: PlatformContact[] = filteredContacts) => {
     const every = list.length > 0 && list.every((c) => selectedContactIds.has(c.id));
@@ -231,6 +235,7 @@ export default function AskForReview() {
     const win = window.open("about:blank", "_blank");
     try {
       const req = await recordReviewRequest({
+        channel_id: selectedBusiness?.id ?? null,
         channel: "whatsapp",
         trigger: "manual",
         contact: cleaned,
@@ -257,6 +262,7 @@ export default function AskForReview() {
     setEmailMsg(null);
     try {
       const res = await recordReviewRequest({
+        channel_id: selectedBusiness?.id ?? null,
         channel: "email",
         contact: emailAddress.trim(),
         contact_name: emailName.trim() || null,

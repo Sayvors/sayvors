@@ -27,6 +27,8 @@ GBP_API = "https://mybusinessbusinessinformation.googleapis.com/v1"
 GBP_ACCOUNTS_API = "https://mybusinessaccountmanagement.googleapis.com/v1"
 # The reviews endpoints live on the older mybusiness API domain:
 GBP_REVIEWS_API = "https://mybusiness.googleapis.com/v4"
+# My Business Verifications API (locations/{id}:verify, VoiceOfMerchantState)
+GBP_VERIFICATIONS_API = "https://mybusinessverifications.googleapis.com/v1"
 
 # Full Google Business Profile access (locations, reviews, replies)
 GOOGLE_SCOPES = [
@@ -115,6 +117,11 @@ class GoogleReview:
     reviewer_photo_url: str | None = None
     updated_at: datetime | None = None
     has_reply: bool = False
+    # The merchant reply Google already shows. Without this the sync only
+    # knew "has_reply=True" and could not show (or preserve) the actual
+    # response the business had already written on the listing.
+    reply_text: str | None = None
+    reply_updated_at: datetime | None = None
     # Photos the reviewer attached. Google returns these as
     # `reviewMediaItems: [{thumbnailUrl, videoUrl, thumbnailLabel}]`.
     media: list[dict] = field(default_factory=list)
@@ -133,6 +140,215 @@ def _parse_rating(raw) -> int:
         return max(1, min(5, int(raw)))
     except (TypeError, ValueError):
         return 5
+
+
+def location_address(loc: dict) -> str | None:
+    """Flatten Google's `storefrontAddress` into the free-text shape the
+    benchmark city parser understands."""
+    addr = (loc or {}).get("storefrontAddress") or {}
+    lines = addr.get("addressLines") or []
+    parts = [
+        *[str(line) for line in lines if line],
+        addr.get("locality"),
+        addr.get("administrativeArea"),
+        addr.get("postalCode"),
+    ]
+    text = ", ".join(str(p).strip() for p in parts if p and str(p).strip())
+    return text or None
+
+
+def location_category(loc: dict) -> str | None:
+    """Primary Google category display name, when the location has one."""
+    cats = (loc or {}).get("categories") or {}
+    primary = (cats.get("primaryCategory") or {}).get("displayName")
+    return str(primary).strip() if primary else None
+
+
+def location_phone(loc: dict) -> str | None:
+    """Primary phone number on the listing, when the profile has one."""
+    phone = ((loc or {}).get("phoneNumbers") or {}).get("primaryPhone")
+    return str(phone).strip() if phone else None
+
+
+def location_website(loc: dict) -> str | None:
+    """Website linked to the listing, when the profile has one."""
+    site = (loc or {}).get("websiteUri")
+    return str(site).strip() if site else None
+
+
+def location_description(loc: dict) -> str | None:
+    """Google's business description, when the profile has one."""
+    desc = ((loc or {}).get("profile") or {}).get("description")
+    return str(desc).strip() if desc else None
+
+
+_DAYS = ("MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY")
+_HOURS_DAY_LABEL = {d: d.title() for d in _DAYS}
+_MORE_HOURS_LABEL = {
+    "ACCESS": "Access", "BREAKFAST": "Breakfast", "BRUNCH": "Brunch",
+    "DELIVERY": "Delivery", "DINNER": "Dinner", "DRIVE_THROUGH": "Drive-through",
+    "HAPPY_HOUR": "Happy Hour", "KITCHEN": "Kitchen", "LUNCH": "Lunch",
+    "ONLINE_SERVICE_HOURS": "Online service", "PICKUP": "Pickup",
+    "SENIOR_HOURS": "Senior hours", "TAKEOUT": "Takeout",
+}
+
+
+def _google_time(value: dict | None) -> str:
+    """TimeOfDay → "HH:MM". An empty object is Google's midnight."""
+    if not value:
+        return "00:00"
+    hours = int(value.get("hours") or 0)
+    minutes = int(value.get("minutes") or 0)
+    return f"{hours:02d}:{minutes:02d}"
+
+
+def location_hours(loc: dict) -> dict:
+    """Google regular/special/more hours → the Locations page shape.
+
+    A day with no regular period is closed in Google's model. A 24-hour day
+    is open 00:00 and closes at 24:00; the UI carries `all_day` so it can say
+    "Open 24 hours" instead of showing 00:00–00:00.
+    """
+    regular = {
+        _HOURS_DAY_LABEL[day]: {"open": "", "close": "", "closed": True}
+        for day in _DAYS
+    }
+    for period in ((loc or {}).get("regularHours") or {}).get("periods") or []:
+        day = str(period.get("openDay") or "").upper()
+        if day not in _HOURS_DAY_LABEL:
+            continue
+        opened = _google_time(period.get("openTime"))
+        closed = _google_time(period.get("closeTime"))
+        all_day = opened == "00:00" and closed == "24:00"
+        regular[_HOURS_DAY_LABEL[day]] = {
+            "open": "00:00" if all_day else opened,
+            "close": "00:00" if all_day else closed,
+            "closed": False,
+            **({"all_day": True} if all_day else {}),
+        }
+
+    special: list[dict] = []
+    for period in ((loc or {}).get("specialHours") or {}).get("specialHourPeriods") or []:
+        start = period.get("startDate") or {}
+        if not start:
+            continue
+        date = f"{int(start.get('year', 0)):04d}-{int(start.get('month', 0)):02d}-{int(start.get('day', 0)):02d}"
+        if period.get("closed"):
+            hours = "closed"
+        else:
+            hours = f"{_google_time(period.get('openTime'))} - {_google_time(period.get('closeTime'))}"
+        special.append({"date": date, "hours": hours, "reason": ""})
+
+    more: list[dict] = []
+    for entry in ((loc or {}).get("moreHours") or []):
+        periods = entry.get("periods") or []
+        type_id = str(entry.get("hoursTypeId") or "").upper()
+        if not periods or not type_id:
+            continue
+        period = periods[0]
+        more.append({
+            "type": _MORE_HOURS_LABEL.get(type_id, type_id.replace("_", " ").title()),
+            "open": _google_time(period.get("openTime")),
+            "close": _google_time(period.get("closeTime")),
+        })
+
+    return {"regular": regular, "special": special, "more": more}
+
+
+def location_categories(loc: dict) -> dict:
+    """Google category display names → the profile's categories shape."""
+    cats = (loc or {}).get("categories") or {}
+    primary = ((cats.get("primaryCategory") or {}).get("displayName") or "").strip()
+    additional = [
+        str((c or {}).get("displayName") or "").strip()
+        for c in (cats.get("additionalCategories") or [])
+        if str((c or {}).get("displayName") or "").strip()
+    ]
+    return {"primary": primary, "additional": additional}
+
+
+_ATTRIBUTE_LABEL = {
+    "wheelchair_accessible_entrance": "Wheelchair accessible entrance",
+    "wheelchair_accessible_parking": "Wheelchair accessible parking",
+    "wheelchair_accessible_restroom": "Wheelchair accessible restroom",
+    "wheelchair_accessible_seating": "Wheelchair accessible seating",
+    "has_wifi": "Free wifi",
+    "has_outdoor_seating": "Outdoor seating",
+    "has_dine_in": "Dine in",
+    "has_takeout": "Takeout",
+    "has_delivery": "Delivery",
+    "has_drive_through": "Drive through",
+    "accepts_credit_cards": "Accepts credit cards",
+    "accepts_debit_cards": "Accepts debit cards",
+    "accepts_cash_only": "Accepts cash",
+    "has_gender_neutral_restrooms": "Gender neutral restroom",
+    "is_family_friendly": "Family friendly",
+    "is_good_for_children": "Good for children",
+    "has_free_parking_lot": "Free parking",
+    "has_paid_parking_lot": "Paid parking",
+    "has_free_street_parking": "Street parking",
+    "allows_dogs": "Pet friendly",
+    "has_air_conditioning": "Air conditioning",
+    "has_live_music": "Live music",
+    "is_sports_bar": "Sports bar",
+    "has_online_appointments": "Online appointments",
+    "has_on_site_services": "On site services",
+}
+
+
+def location_attributes(attributes: list[dict] | None) -> dict[str, str]:
+    """Google merchant attributes → the profile's boolean key/value shape.
+
+    Google returns `name: "attributes/has_wifi"` with `boolValue`; URL-valued
+    attributes (text messaging links) are not boolean and are skipped.
+    """
+    out: dict[str, str] = {}
+    for attr in attributes or []:
+        raw = str((attr or {}).get("name") or "").split("/")[-1]
+        if not raw:
+            continue
+        values = (attr or {}).get("values") or []
+        bool_value = None
+        for value in values:
+            if "boolValue" in value:
+                bool_value = bool(value["boolValue"])
+                break
+        if bool_value is None:
+            continue
+        label = _ATTRIBUTE_LABEL.get(raw, raw.replace("_", " ").title())
+        out[label] = "yes" if bool_value else "no"
+    return out
+
+
+def location_service_area(loc: dict) -> list[str]:
+    """Google serviceArea → the profile's free-text area list."""
+    area = (loc or {}).get("serviceArea") or {}
+    places = [
+        str(p.get("placeName") or p.get("placeId") or "").strip()
+        for p in (area.get("places") or [])
+        if str(p.get("placeName") or p.get("placeId") or "").strip()
+    ]
+    region = str(area.get("regionCode") or "").strip()
+    if region and region not in places:
+        places.append(region)
+    return places
+
+
+def location_service_types(loc: dict) -> list[str]:
+    """Google category serviceTypes (the services a merchant declares)."""
+    categories = (loc or {}).get("categories") or {}
+    groups = [categories.get("primaryCategory")] + list(
+        categories.get("additionalCategories") or []
+    )
+    out: list[str] = []
+    for category in groups:
+        for service in (category or {}).get("serviceTypes") or []:
+            name = str((service or {}).get("displayName") or "").strip()
+            if name and name not in out:
+                out.append(name)
+    return out
+
+
 
 
 def _parse_media(raw) -> list[dict]:
@@ -349,17 +565,48 @@ class GoogleReviewsClient:
         resp = await self._authed_request(
             "GET",
             f"{GBP_API}/accounts/{account_id}/locations",
-            params={"readMask": "name,title,storefrontAddress"},
+            params={"readMask": "name,title,storefrontAddress,categories,phoneNumbers,websiteUri,profile,regularHours,specialHours,moreHours,serviceArea,metadata"},
         )
         if resp.status_code != 200:
             raise GoogleReviewsError(f"list_locations failed: {resp.status_code}", resp.status_code)
         return resp.json().get("locations", [])
 
+    async def get_location(self, location_id: str) -> dict:
+        """One location with its Google Place ID / Maps URL metadata."""
+        resp = await self._authed_request(
+            "GET",
+            f"{GBP_API}/locations/{location_id}",
+            params={"readMask": "name,title,storefrontAddress,categories,phoneNumbers,websiteUri,profile,regularHours,specialHours,moreHours,serviceArea,metadata"},
+        )
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"get_location failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        return resp.json()
+
+    async def get_attributes(self, location_id: str) -> list[dict]:
+        """Merchant attributes (wifi, accessibility, …) for one location.
+
+        Attributes live on a separate sub-resource; they are not a valid
+        Location readMask field.
+        """
+        resp = await self._authed_request(
+            "GET", f"{GBP_API}/locations/{location_id}/attributes"
+        )
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"get_attributes failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        data = resp.json()
+        return list(data.get("attributes") or []) if isinstance(data, dict) else []
+
     # ── Local posts (v4) ─────────────────────────────────
 
     # Per-post performance metrics (reportInsights): views on Google Search
     # and call-to-action button clicks. The only per-post numbers Google
-    # exposes — Localith's API has no post-level metrics at all.
+    # exposes.
     LOCAL_POST_METRICS = (
         "LOCAL_POST_VIEWS_SEARCH",
         "LOCAL_POST_ACTIONS_CALL_TO_ACTION",
@@ -478,16 +725,37 @@ class GoogleReviewsClient:
                         )
                     except ValueError:
                         pass
-                if updated_after and updated and updated <= updated_after:
-                    continue
+                reply = r.get("reviewReply") or {}
+                reply_updated = None
+                if reply.get("updateTime"):
+                    try:
+                        reply_updated = datetime.fromisoformat(
+                            reply["updateTime"].replace("Z", "+00:00")
+                        )
+                    except ValueError:
+                        pass
+                if updated_after:
+                    # A merchant reply added/edited directly in GBP changes
+                    # `reviewReply.updateTime`, not necessarily the review's
+                    # own updateTime. Let either timestamp make the review due.
+                    review_changed = updated is not None and updated > updated_after
+                    reply_changed = (
+                        reply_updated is not None and reply_updated > updated_after
+                    )
+                    if not review_changed and not reply_changed:
+                        continue
                 all_reviews.append(
                     GoogleReview(
+                        # GBP v4 uses `starRating` ("FIVE"); the old
+                        # `rating` fallback keeps the fake/test shape working.
+                        rating=_parse_rating(r.get("starRating") or r.get("rating")),
                         review_id=r.get("name", ""),
-                        rating=_parse_rating(r.get("rating", 5)),
                         text=(r.get("comment") or "") or None,
                         reviewer_name=(r.get("reviewer") or {}).get("displayName"),
                         updated_at=updated,
-                        has_reply=bool(r.get("reviewReply")),
+                        has_reply=bool(reply),
+                        reply_text=((reply.get("comment") or "").strip() or None),
+                        reply_updated_at=reply_updated,
                         reviewer_photo_url=_photo_url((r.get("reviewer") or {}).get("profilePhotoUrl")),
                         media=_parse_media(r.get("reviewMediaItems")),
                     )
@@ -550,6 +818,75 @@ class GoogleReviewsClient:
                 await asyncio.sleep(2)
         return False
 
+    # ── Questions & Answers (Google Business Profile Q&A v4) ──────────────
+
+    async def list_questions(
+        self, account_id: str, location_id: str
+    ) -> list[dict]:
+        """List all questions for a location.
+
+        Returns raw question dicts (one per page of results). Each dict
+        carries ``name`` (full resource name), ``questionText``,
+        ``askerProfile`` (displayName, profilePhotoUrl), ``createTime``,
+        ``answer`` (if a merchant answer exists), ``upvoteCount``, etc.
+
+        Google pages results; the caller should page through until
+        ``nextPageToken`` is absent.
+        """
+        url = f"{GBP_REVIEWS_API}/accounts/{account_id}/locations/{location_id}/questions"
+        out: list[dict] = []
+        page_token: str | None = None
+        for _ in range(10):  # safety cap; real listings rarely exceed a few pages
+            params: dict = {"pageSize": 50}
+            if page_token:
+                params["pageToken"] = page_token
+            resp = await self._authed_request("GET", url, params=params)
+            if resp.status_code != 200:
+                raise GoogleReviewsError(
+                    f"list_questions failed ({resp.status_code}): {resp.text[:300]}",
+                    resp.status_code,
+                )
+            data = resp.json()
+            out.extend(data.get("questions", []) or [])
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                break
+        return out
+
+    async def answer_question(self, question_id: str, comment: str) -> None:
+        """Create or update the merchant answer to a question.
+
+        ``question_id`` is the full resource name
+        ``accounts/{a}/locations/{l}/questions/{q}``. Google's v4 method is
+        ``questions/{q}/answers:upsert``; there is no ``:answer`` method.
+        """
+        url = f"{GBP_REVIEWS_API}/{question_id}/answers:upsert"
+        resp = await self._authed_request(
+            "POST", url, json={"answer": {"text": comment}}
+        )
+        if resp.status_code not in (200, 201):
+            raise GoogleReviewsError(
+                f"answerQuestion failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+
+    async def get_question(self, question_resource: str) -> dict:
+        """Fetch one question by full resource name.
+
+        Returns the raw question dict, or {} when the question no longer
+        exists (404).
+        """
+        resp = await self._authed_request("GET", f"{GBP_REVIEWS_API}/{question_resource}")
+        if resp.status_code == 404:
+            return {}
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"get_question failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        data = resp.json()
+        return data if isinstance(data, dict) else {}
+
     # ── Performance (Business Profile Performance API v1) ──────────────────
 
     PERFORMANCE_API = "https://businessprofileperformance.googleapis.com/v1"
@@ -559,28 +896,37 @@ class GoogleReviewsClient:
     ) -> dict[str, list[tuple]]:
         """Daily performance metrics for a location.
 
-        Returns {metric_type: [(date, value), ...]} for the supported
-        DailyMetricType values (customer actions + impressions). The map is
-        keyed by the raw Google metric names, e.g. "WEBSITE_CLICKS".
+        Returns {metric: [(date, value), ...]} keyed by Google's daily
+        metric names. The endpoint is a GET with repeated `dailyMetrics`
+        query parameters (not a POST body), and the response nests the
+        series under `multiDailyMetricTimeSeries[].dailyMetricTimeSeries[]`.
         """
-        def _d(d: datetime) -> dict:
-            return {"year": d.year, "month": d.month, "day": d.day}
-
         url = (
             f"{self.PERFORMANCE_API}/locations/{location_id}"
             f":fetchMultiDailyMetricsTimeSeries"
         )
-        body = {
-            "dailyMetrics": [
+        params = [
+            ("dailyMetrics", metric)
+            for metric in (
                 "WEBSITE_CLICKS",
                 "CALL_CLICKS",
-                "DIRECTION_REQUESTS",
-                "BUSINESS_IMPRESSIONS_DESKTOP",
-                "BUSINESS_IMPRESSIONS_MOBILE",
-            ],
-            "dailyRange": {"startDate": _d(start_date), "endDate": _d(end_date)},
-        }
-        resp = await self._authed_request("POST", url, json=body)
+                "BUSINESS_DIRECTION_REQUESTS",
+                # The old DIRECTION_REQUESTS / BUSINESS_IMPRESSIONS_* enum
+                # names are rejected by the current API.
+                "BUSINESS_IMPRESSIONS_DESKTOP_MAPS",
+                "BUSINESS_IMPRESSIONS_DESKTOP_SEARCH",
+                "BUSINESS_IMPRESSIONS_MOBILE_MAPS",
+                "BUSINESS_IMPRESSIONS_MOBILE_SEARCH",
+            )
+        ] + [
+            ("dailyRange.startDate.year", str(start_date.year)),
+            ("dailyRange.startDate.month", str(start_date.month)),
+            ("dailyRange.startDate.day", str(start_date.day)),
+            ("dailyRange.endDate.year", str(end_date.year)),
+            ("dailyRange.endDate.month", str(end_date.month)),
+            ("dailyRange.endDate.day", str(end_date.day)),
+        ]
+        resp = await self._authed_request("GET", url, params=params)
         if resp.status_code != 200:
             raise GoogleReviewsError(
                 f"fetch_performance_timeseries failed ({resp.status_code}): {resp.text[:300]}",
@@ -588,73 +934,199 @@ class GoogleReviewsClient:
             )
 
         out: dict[str, list[tuple]] = {}
-        for series in resp.json().get("multiDailyMetricTimeSeries", []):
-            metric = series.get("dailyMetricType", "")
-            dated: list[tuple] = []
-            for v in (series.get("timeSeries") or {}).get("datedValues", []):
-                d = v.get("date") or {}
-                raw_value = v.get("value")
-                if not raw_value:
-                    continue
-                try:
-                    day = datetime(int(d["year"]), int(d["month"]), int(d["day"]), tzinfo=timezone.utc)
-                    dated.append((day.date(), int(raw_value)))
-                except (KeyError, TypeError, ValueError):
-                    continue
-            if metric and dated:
-                out[metric] = dated
+        for group in resp.json().get("multiDailyMetricTimeSeries", []):
+            for series in group.get("dailyMetricTimeSeries", []):
+                metric = series.get("dailyMetric", "")
+                dated: list[tuple] = []
+                for v in (series.get("timeSeries") or {}).get("datedValues", []):
+                    d = v.get("date") or {}
+                    raw_value = v.get("value")
+                    if raw_value is None:
+                        continue
+                    try:
+                        day = datetime(int(d["year"]), int(d["month"]), int(d["day"]), tzinfo=timezone.utc)
+                        dated.append((day.date(), int(raw_value)))
+                    except (KeyError, TypeError, ValueError):
+                        continue
+                if metric and dated:
+                    out[metric] = dated
         return out
 
     async def fetch_keyword_timeseries(
         self, location_id: str, start_date: datetime, end_date: datetime
     ) -> dict[str, list[tuple]]:
-        """Daily search-keyword impressions for a location.
+        """Monthly search-keyword impressions for a location.
 
-        Returns {keyword: [(date, impressions), ...]}. Only the native
-        Google path can produce this — Localith has no keyword endpoint,
-        so Localith-only tenants get an honest empty state, never fake rows.
+        Google exposes keyword impressions only at monthly granularity via
+        `locations.searchkeywords.impressions.monthly` — not as a daily
+        metric. Each keyword's aggregate is stored on the first day of its
+        month. The fetch covers the trailing six months (not just the daily
+        sync window) because completed months are what Google returns and
+        the Growth card's 90-day view needs them. Google returns low-volume
+        terms as a threshold ("at least 15") rather than an exact count;
+        those are omitted instead of being presented as precise numbers.
         """
-        def _d(d: datetime) -> dict:
-            return {"year": d.year, "month": d.month, "day": d.day}
+        def _first_of_month(value):
+            if isinstance(value, datetime):
+                value = value.date()
+            return value.replace(day=1)
+
+        def _next_month(day):
+            return (day.replace(day=28) + timedelta(days=4)).replace(day=1)
 
         url = (
             f"{self.PERFORMANCE_API}/locations/{location_id}"
-            f":fetchMultiDailyMetricsTimeSeries"
+            f"/searchkeywords/impressions/monthly"
         )
-        body = {
-            "dailyMetrics": ["SEARCH_KEYWORD_IMPRESSIONS"],
-            "dailyRange": {"startDate": _d(start_date), "endDate": _d(end_date)},
-        }
-        resp = await self._authed_request("POST", url, json=body)
-        if resp.status_code != 200:
-            raise GoogleReviewsError(
-                f"fetch_keyword_timeseries failed ({resp.status_code}): {resp.text[:300]}",
-                resp.status_code,
-            )
-
         out: dict[str, list[tuple]] = {}
-        for series in resp.json().get("multiDailyMetricTimeSeries", []):
-            for kw_block in series.get("searchKeywordImpressions", []):
-                keyword = (kw_block.get("searchKeyword") or "").strip()
-                if not keyword:
-                    continue
-                dated: list[tuple] = []
-                inner = (kw_block.get("dailyMetricTimeSeries") or {}).get(
-                    "timeSeries", {})
-                for v in inner.get("datedValues", []):
-                    d = v.get("date") or {}
-                    raw_value = v.get("value")
-                    if not raw_value:
+        last_month = _first_of_month(end_date)
+        month = _first_of_month(last_month - timedelta(days=180))
+        while month <= last_month:
+            base_params = [
+                ("monthlyRange.startMonth.year", str(month.year)),
+                ("monthlyRange.startMonth.month", str(month.month)),
+                ("monthlyRange.endMonth.year", str(month.year)),
+                ("monthlyRange.endMonth.month", str(month.month)),
+                ("pageSize", "100"),
+            ]
+            page_token: str | None = None
+            for _ in range(10):  # bounded pagination
+                params = list(base_params)
+                if page_token:
+                    params.append(("pageToken", page_token))
+                resp = await self._authed_request("GET", url, params=params)
+                if resp.status_code != 200:
+                    raise GoogleReviewsError(
+                        f"fetch_keyword_timeseries failed ({resp.status_code}): {resp.text[:300]}",
+                        resp.status_code,
+                    )
+                data = resp.json()
+                for item in data.get("searchKeywordsCounts", []) or []:
+                    keyword = (item.get("searchKeyword") or "").strip()
+                    insights = item.get("insightsValue") or {}
+                    raw_value = insights.get("value")
+                    # `threshold` is a lower bound, not an exact count.
+                    if not keyword or raw_value is None:
                         continue
                     try:
-                        day = datetime(int(d["year"]), int(d["month"]), int(d["day"]),
-                                       tzinfo=timezone.utc)
-                        dated.append((day.date(), int(raw_value)))
-                    except (KeyError, TypeError, ValueError):
+                        value = int(raw_value)
+                    except (TypeError, ValueError):
                         continue
-                if dated:
-                    out.setdefault(keyword, []).extend(dated)
+                    out.setdefault(keyword, []).append((month, value))
+                page_token = data.get("nextPageToken")
+                if not page_token:
+                    break
+            month = _next_month(month)
         return out
+
+    # ── Verification (My Business Verifications API) ─────
+
+    async def get_voice_of_merchant_state(self, location_id: str) -> dict:
+        """Whether Google considers this location verified and in good standing."""
+        resp = await self._authed_request(
+            "GET",
+            f"{GBP_VERIFICATIONS_API}/locations/{location_id}/VoiceOfMerchantState",
+        )
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"VoiceOfMerchantState failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        return resp.json() or {}
+
+    async def fetch_verification_options(
+        self, location_id: str, language_code: str = "en"
+    ) -> list[dict]:
+        """Eligible verification methods and the contact data Google will use.
+
+        Google returns an empty object when the location is already verified
+        or when no method is currently eligible; both are honest empty states,
+        not errors.
+        """
+        resp = await self._authed_request(
+            "POST",
+            f"{GBP_VERIFICATIONS_API}/locations/{location_id}:fetchVerificationOptions",
+            json={"languageCode": language_code or "en"},
+        )
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"fetchVerificationOptions failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        data = resp.json() or {}
+        return data.get("options", []) or []
+
+    async def list_verifications(self, location_id: str) -> list[dict]:
+        """Every verification request Google has recorded for the location."""
+        out: list[dict] = []
+        page_token: str | None = None
+        for _ in range(10):  # bounded pagination
+            params: dict = {"pageSize": 100}
+            if page_token:
+                params["pageToken"] = page_token
+            resp = await self._authed_request(
+                "GET",
+                f"{GBP_VERIFICATIONS_API}/locations/{location_id}/verifications",
+                params=params,
+            )
+            if resp.status_code != 200:
+                raise GoogleReviewsError(
+                    f"list verifications failed ({resp.status_code}): {resp.text[:300]}",
+                    resp.status_code,
+                )
+            data = resp.json() or {}
+            out.extend(data.get("verifications", []) or [])
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                break
+        return out
+
+    async def verify_location(
+        self,
+        location_id: str,
+        *,
+        method: str,
+        language_code: str = "en",
+        phone_number: str | None = None,
+        email_address: str | None = None,
+        mailer_contact: str | None = None,
+        trusted_partner_token: str | None = None,
+    ) -> dict:
+        """Start a verification request and return Google's verification."""
+        body: dict = {"method": method, "languageCode": language_code or "en"}
+        if phone_number:
+            body["phoneNumber"] = phone_number
+        if email_address:
+            body["emailAddress"] = email_address
+        if mailer_contact:
+            body["mailerContact"] = mailer_contact
+        if trusted_partner_token:
+            body["token"] = {"tokenString": trusted_partner_token}
+        resp = await self._authed_request(
+            "POST",
+            f"{GBP_VERIFICATIONS_API}/locations/{location_id}:verify",
+            json=body,
+        )
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"verify location failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        return (resp.json() or {}).get("verification") or {}
+
+    async def complete_verification(self, name: str, pin: str) -> dict:
+        """Complete a PENDING verification with the PIN the merchant received."""
+        resp = await self._authed_request(
+            "POST",
+            f"{GBP_VERIFICATIONS_API}/{name}:complete",
+            json={"pin": pin},
+        )
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"complete verification failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        return (resp.json() or {}).get("verification") or {}
 
 
 def parse_review_resource(review_id: str) -> tuple[str, str] | None:

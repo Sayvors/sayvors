@@ -9,16 +9,60 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from app.modules.localith.models import LocalithConnection
 from app.modules.media import service as media
 
 
-async def _connection(db, user_id):
-    db.add(LocalithConnection(
-        id="conn-media-1", user_id=user_id, listing_id="loc-1",
-        listing_name="Test Place", listing_google_id="g1",
+async def _connection(db, user_id, listing_id="loc-1"):
+    import json
+
+    from app.modules.channels.models import Channel
+    from app.modules.channels.service import encrypt_token
+
+    db.add(Channel(
+        id=f"ch-media-{user_id[-12:]}-{listing_id}", user_id=user_id,
+        platform="google_reviews", platform_user_id="acct-media",
+        display_name="Test Place", status="active", listing_key=listing_id,
+        access_token=encrypt_token("at"), refresh_token=encrypt_token("rt"),
+        metadata_json=json.dumps({"location_id": listing_id}),
     ))
     await db.commit()
+
+
+def _patch_post(monkeypatch, *, result=None, error=None):
+    calls = []
+
+    async def _fake(self, token, asset_id, method, media_url, media_type,
+                    caption, description, scheduled_at, account_id=None, **kw):
+        calls.append({"asset_id": asset_id, **kw})
+        if error:
+            raise error
+        return result or {"id": "mpub-1"}
+
+    monkeypatch.setattr(
+        "app.modules.channels.meta.providers.google_publish.GoogleBusinessPublisher.publish_post",
+        _fake,
+    )
+    return calls
+
+
+def _patch_image(monkeypatch, *, result=None, error=None):
+    calls = []
+
+    async def _fake(self, token, asset_id, method, media_url, account_id=None,
+                    *, category_override=None):
+        calls.append({
+            "asset_id": asset_id, "method": method,
+            "category_override": category_override,
+        })
+        if error:
+            raise error
+        return result or {"id": "mimg-1"}
+
+    monkeypatch.setattr(
+        "app.modules.channels.meta.providers.google_publish.GoogleBusinessPublisher.set_location_image",
+        _fake,
+    )
+    return calls
 
 
 def _photo(**over):
@@ -58,34 +102,19 @@ async def test_create_rejects_non_url_and_bad_schedule(db, user_id):
 @pytest.mark.asyncio
 async def test_publish_now_posts_photo_inside_google_post(monkeypatch, db, user_id):
     await _connection(db, user_id)
-    calls = []
-
-    def _fake_publish(listing_id, **kw):
-        calls.append((listing_id, kw))
-        return {"id": "mpub-1"}
-
-    monkeypatch.setattr(
-        "integrations.channels.embedsocial.publish_media_post", _fake_publish
-    )
+    calls = _patch_post(monkeypatch, result={"id": "mpub-1"})
     created = await media.create_media(db, user_id, _photo())
     res = await media.publish_media(db, user_id, created["media"]["id"])
     assert res["google_published"] is True
     assert res["media"]["status"] == "published"
     assert res["media"]["google_post_id"] == "mpub-1"
-    assert calls[0][0] == "loc-1"
-    assert calls[0][1]["image_urls"] == ["https://example.com/shop.jpg"]
+    assert calls[0]["asset_id"] == "loc-1"
+    assert calls[0]["media_urls"] == ["https://example.com/shop.jpg"]
 
 
 @pytest.mark.asyncio
 async def test_video_publish_refused(monkeypatch, db, user_id):
     await _connection(db, user_id)
-
-    def _boom(*a, **k):
-        raise AssertionError("must not reach Google")
-
-    monkeypatch.setattr(
-        "integrations.channels.embedsocial.publish_media_post", _boom
-    )
     created = await media.create_media(db, user_id, _photo(type="VIDEO"))
     with pytest.raises(ValueError, match="Video"):
         await media.publish_media(db, user_id, created["media"]["id"])
@@ -94,13 +123,7 @@ async def test_video_publish_refused(monkeypatch, db, user_id):
 @pytest.mark.asyncio
 async def test_retry_then_park(monkeypatch, db, user_id):
     await _connection(db, user_id)
-
-    def _fail(*a, **k):
-        raise RuntimeError("down")
-
-    monkeypatch.setattr(
-        "integrations.channels.embedsocial.publish_media_post", _fail
-    )
+    _patch_post(monkeypatch, error=RuntimeError("down"))
     past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
     created = await media.create_media(db, user_id, _photo())
     pid = created["media"]["id"]
@@ -126,15 +149,7 @@ async def test_retry_then_park(monkeypatch, db, user_id):
 @pytest.mark.asyncio
 async def test_publish_due_only_publishes_due(monkeypatch, db, user_id):
     await _connection(db, user_id)
-    calls = []
-
-    def _fake_publish(listing_id, **kw):
-        calls.append(listing_id)
-        return {"id": "mpub-x"}
-
-    monkeypatch.setattr(
-        "integrations.channels.embedsocial.publish_media_post", _fake_publish
-    )
+    calls = _patch_post(monkeypatch, result={"id": "mpub-x"})
     past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
     future = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
     due = await media.create_media(db, user_id, _photo())
@@ -146,7 +161,7 @@ async def test_publish_due_only_publishes_due(monkeypatch, db, user_id):
     totals = await media.publish_due(db)
     assert totals["checked"] == 1
     assert totals["published"] == 1
-    assert calls == ["loc-1"]
+    assert calls[0]["asset_id"] == "loc-1"
 
 
 @pytest.mark.asyncio
@@ -166,21 +181,28 @@ async def test_delete_and_update_flags(db, user_id):
 
 
 @pytest.mark.asyncio
-async def test_gallery_method_blocked_until_native_google(db, user_id):
-    """Gallery/profile publishing is stored intent, never executed —
-    Localith offers no gallery upload."""
-    with pytest.raises(ValueError, match="native Google"):
-        await media.create_media(
-            db, user_id,
-            {**_photo(), "publish_method": "gallery", "action": "schedule",
-             "scheduled_on": _future()},
-        )
-    created = await media.create_media(
-        db, user_id, {**_photo(), "publish_method": "gallery"}
+async def test_gallery_and_profile_publish_natively(monkeypatch, db, user_id):
+    """Gallery/profile are native now: gallery uses the media category,
+    profile maps to Google's PROFILE slot."""
+    await _connection(db, user_id)
+    calls = _patch_image(monkeypatch, result={"id": "mimg-1"})
+
+    gallery = await media.create_media(
+        db, user_id, {**_photo(), "publish_method": "gallery",
+                      "action": "schedule", "scheduled_on": _future()}
     )
-    assert created["media"]["publish_method"] == "gallery"
-    with pytest.raises(ValueError, match="native Google"):
-        await media.publish_media(db, user_id, created["media"]["id"])
+    assert gallery["media"]["publish_method"] == "gallery"
+    res = await media.publish_media(db, user_id, gallery["media"]["id"])
+    assert res["media"]["status"] == "published"
+    assert calls[0]["method"] == "gallery"
+    assert calls[0]["category_override"] == "EXTERIOR"
+
+    profile = await media.create_media(
+        db, user_id, {**_photo(), "publish_method": "profile"}
+    )
+    await media.publish_media(db, user_id, profile["media"]["id"])
+    assert calls[1]["method"] == "profile"
+    assert calls[1]["category_override"] is None
 
 
 @pytest.mark.asyncio
@@ -362,13 +384,7 @@ async def _notif_types(db, user_id):
 @pytest.mark.asyncio
 async def test_media_schedule_publish_and_park_notify(db, user_id, monkeypatch):
     await _connection(db, user_id)
-
-    def _fake_publish(listing_id, **kw):
-        return {"id": "mpub-n"}
-
-    monkeypatch.setattr(
-        "integrations.channels.embedsocial.publish_media_post", _fake_publish
-    )
+    _patch_post(monkeypatch, result={"id": "mpub-n"})
     past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
     created = await media.create_media(db, user_id, _photo())
     pid = created["media"]["id"]
@@ -376,12 +392,7 @@ async def test_media_schedule_publish_and_park_notify(db, user_id, monkeypatch):
     await media.publish_media(db, user_id, pid)
     assert "media_published" in await _notif_types(db, user_id)
 
-    def _fail(*a, **k):
-        raise RuntimeError("down")
-
-    monkeypatch.setattr(
-        "integrations.channels.embedsocial.publish_media_post", _fail
-    )
+    _patch_post(monkeypatch, error=RuntimeError("down"))
     created2 = await media.create_media(db, user_id, _photo())
     pid2 = created2["media"]["id"]
     await media.update_media(db, user_id, pid2, {"status": "scheduled", "scheduled_on": past})

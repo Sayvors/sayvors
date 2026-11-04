@@ -316,7 +316,11 @@ export default function OutboxPage() {
     return () => {
       cancelled = true;
     };
-  }, [loadScope]);
+    // Load the channel list once. Depending on loadScope here created a loop:
+    // setChannels() rebuilt listingMap -> resolveScope -> loadScope, which
+    // re-ran this effect and fetched channels again forever.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const changeScope = (scope: string) => {
     setSelected(scope);
@@ -389,19 +393,19 @@ export default function OutboxPage() {
             checked: number;
             confirmed: number;
             corrected: number;
-            skipped_localith?: number;
+            skipped_non_google?: number;
           };
           checked += res.checked;
           confirmed += res.confirmed;
           corrected += res.corrected;
-          skipped += res.skipped_localith ?? 0;
+          skipped += res.skipped_non_google ?? 0;
         } catch {
           /* one branch failing must not block the others */
         }
       }
       let text: string;
       if (checked === 0 && skipped > 0) {
-        text = `${skipped} Localith-published ${skipped === 1 ? "reply" : "replies"} — confirmed at publish time, nothing to re-check.`;
+        text = `${skipped} legacy ${skipped === 1 ? "reply" : "replies"} skipped — no native Google review id to check.`;
       } else if (checked === 0) {
         text = "Nothing to verify right now.";
       } else if (corrected > 0) {

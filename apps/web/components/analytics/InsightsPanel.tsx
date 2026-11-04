@@ -22,6 +22,8 @@ import {
   useGoogleChannels,
 } from "@/components/analytics/Controls";
 import InsightsCardsSection from "@/components/analytics/InsightsCards";
+import { FactSource } from "@/components/analytics/FactSource";
+import { GBP_DASHBOARD_URL } from "@/lib/google-links";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 
 type InsightsCopy = ReturnType<typeof useI18n>["t"]["analytics"]["insights"];
@@ -129,11 +131,13 @@ function ComplaintsByArea({
   days,
   loading,
   copy,
+  googleConnected,
 }: {
   areas: import("@/lib/api-analytics").ComplaintArea[];
   days: number;
   loading: boolean;
   copy: InsightsCopy;
+  googleConnected: boolean;
 }) {
   if (loading) {
     return (
@@ -210,6 +214,12 @@ function ComplaintsByArea({
           );
         })}
       </ul>
+      <FactSource
+        source="Connected review text"
+        detail={`last ${days} days vs the prior ${days}`}
+        href={googleConnected ? GBP_DASHBOARD_URL : null}
+        linkLabel="Open GBP dashboard"
+      />
     </section>
   );
 }
@@ -389,10 +399,18 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
           ) : null}
 
           {facts.length > 0 ? (
-            <div className="ui-card mb-6 flex flex-col gap-2 p-3 sm:flex-row">
-              {facts.map((fact) => (
-                <HeroStat key={fact.label} {...fact} />
-              ))}
+            <div className="ui-card mb-6 p-3">
+              <div className="flex flex-col gap-2 sm:flex-row">
+                {facts.map((fact) => (
+                  <HeroStat key={fact.label} {...fact} />
+                ))}
+              </div>
+              <FactSource
+                source="Connected review text"
+                detail={`last ${days} days`}
+                href={channels.length > 0 ? GBP_DASHBOARD_URL : null}
+                linkLabel="Open GBP dashboard"
+              />
             </div>
           ) : null}
 
@@ -432,6 +450,12 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
                   </li>
                 ))}
               </ul>
+              <FactSource
+                source="Connected review text"
+                detail={`last ${days} days`}
+                href={channels.length > 0 ? GBP_DASHBOARD_URL : null}
+                linkLabel="Open GBP dashboard"
+              />
             </section>
           ) : null}
 
@@ -442,13 +466,18 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
                 days={days}
                 loading={false}
                 copy={copy}
+                googleConnected={channels.length > 0}
               />
             </div>
           ) : null}
 
           {hasCards ? (
             <div className="mb-6">
-              <InsightsCardsSection cards={cards} loading={false} />
+              <InsightsCardsSection
+                cards={cards}
+                loading={false}
+                googleConnected={channels.length > 0}
+              />
             </div>
           ) : null}
 
@@ -528,6 +557,10 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
                   </p>
                 </div>
               </div>
+              <FactSource
+                source="Sayvors message rollup"
+                detail={`last ${days} days`}
+              />
             </div>
           ) : null}
 
@@ -598,6 +631,16 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
                   </div>
                 </div>
               )}
+              <FactSource
+                source="Sayvors conversation insights"
+                detail={
+                  conversationInsights!.computed_at
+                    ? `computed ${new Date(
+                        conversationInsights!.computed_at,
+                      ).toLocaleDateString()}`
+                    : `${conversationInsights!.message_count} inbound messages`
+                }
+              />
             </div>
           ) : null}
 

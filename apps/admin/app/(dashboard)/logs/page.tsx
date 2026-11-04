@@ -175,7 +175,7 @@ export default function AdminLogsPage() {
                   } catch (e) { setError(e instanceof Error ? e.message : "Load failed."); }
                   finally { setProbing(false); }
                 })();
-              }} disabled={probing || loading} title="Live probe hits Localith + each AI provider (free list calls)" className="rounded-[2px] bg-deep-violet px-3.5 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-50">
+              }} disabled={probing || loading} title="Live probe hits the database, cache, Kafka and each configured AI provider (free list calls)" className="rounded-[2px] bg-deep-violet px-3.5 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-50">
                 {probing ? "Probing…" : "Live check"}
               </button>
             </div>

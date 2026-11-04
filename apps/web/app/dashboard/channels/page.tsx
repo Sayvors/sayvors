@@ -19,8 +19,6 @@ interface ApiChannel {
   display_name: string | null;
   status: string;
   created_at: string;
-  // "localith" = mirrored from a Localith listing sync (managed on the
-  // Localith card); "google" = native Google OAuth. Absent on old backends.
   source?: string | null;
   listing_id?: string | null;
 }
@@ -36,49 +34,8 @@ interface AutoReply {
   custom_instructions?: string | null;
 }
 
-interface LocalithListing {
-  id: string;
-  name?: string;
-  google_id?: string;
-  googleId?: string;
-  source?: string;
-  address?: string;
-}
-
-interface LocalithConnection {
-  id: string;
-  listing_id: string;
-  listing_name: string;
-  listing_google_id: string | null;
-  last_synced_at: string | null;
-  has_api_key?: boolean;
-  created_at: string;
-  address?: string | null;
-  phone_number?: string | null;
-  website_url?: string | null;
-  maps_url?: string | null;
-  store_code?: string | null;
-  is_verified?: boolean | null;
-  is_disabled?: boolean | null;
-  is_suspended?: boolean | null;
-  total_reviews?: number;
-  average_rating?: number;
-  last_review_on?: string | null;
-  last_reply_on?: string | null;
-  profile_synced_at?: string | null;
-  metrics_start?: string | null;
-  metrics_end?: string | null;
-  metrics_synced_at?: string | null;
-}
-
-interface LocalithProfile {
-  connection: LocalithConnection;
-  listing: Record<string, unknown>;
-  metrics: { listings?: Record<string, number | string | null>[] };
-  item_metrics: { listings?: Record<string, number | string | null>[] };
-}
-
-const GOOGLE_ERRORS: Record<string, string> = {  no_business_account: "No Google Business Profile was found on that Google account.",
+const GOOGLE_ERRORS: Record<string, string> = {
+  no_business_account: "No Google Business Profile was found on that Google account.",
   accounts_unavailable: "Google couldn't list your Business Profiles just now (rate limit or permissions). Please try again in a minute.",
   token_exchange_failed: "Google rejected the connection. Please try again.",
   invalid_state: "The connect session expired. Please click Connect again.",
@@ -94,11 +51,6 @@ const META_ERRORS: Record<string, string> = {
   access_denied: "You cancelled the Meta consent screen.",
 };
 
-function num(v: unknown): number {
-  const n = typeof v === "number" ? v : parseFloat(String(v ?? ""));
-  return Number.isFinite(n) ? n : 0;
-}
-
 /* ── Backend error bodies are JSON {"detail": "..."} — surface the real cause ── */
 function errDetail(e: unknown, fallback: string): string {
   const msg = e instanceof Error ? e.message : String(e ?? "");
@@ -113,8 +65,6 @@ function errDetail(e: unknown, fallback: string): string {
   const t = msg.trim();
   return (t || fallback).slice(0, 300);
 }
-
-/* ── AI auto-reply controls: one copy, used by native Google cards AND Localith rows ── */
 
 function AiReplyControls({
   channel,
@@ -273,219 +223,6 @@ function AiReplyControls({
   );
 }
 
-/* ── One connected branch (Localith listing): profile, per-branch sync ── */
-
-function LocalithListingRow({
-  listing,
-  conn,
-  profile,
-  busy,
-  onEnable,
-  onDisable,
-  onResync,
-  ai,
-  approvalDraft,
-  toneDraft,
-  voiceDraft,
-  savingConfig,
-  onToggleAi,
-  onOpenAi,
-  onApprovalAi,
-  onToneAi,
-  onVoiceAi,
-  onSaveAi,
-}: {
-  listing: { id: string; name: string; address?: string | null };
-  conn: LocalithConnection | null;
-  profile: LocalithProfile | null;
-  busy: boolean;
-  onEnable: (listingId: string) => void;
-  onDisable: (listingId: string) => void;
-  onResync: (listingId: string) => void;
-  ai: { channel: ApiChannel; cfg: AutoReply | null; busy: boolean; open: boolean; pending: number } | null;
-  approvalDraft: "auto" | "approval";
-  toneDraft: string;
-  voiceDraft: string;
-  savingConfig: boolean;
-  onToggleAi: (channelId: string, enable: boolean) => void;
-  onOpenAi: (channelId: string) => void;
-  onApprovalAi: (v: "auto" | "approval") => void;
-  onToneAi: (v: string) => void;
-  onVoiceAi: (v: string) => void;
-  onSaveAi: (channelId: string) => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const connected = conn !== null;
-  const perf = profile?.metrics?.listings?.[0];
-  const rev = profile?.item_metrics?.listings?.[0];
-  return (
-    <div className={`rounded-xl border p-3 transition ${connected ? "border-emerald-200 bg-emerald-50/60 dark:border-emerald-500/20 dark:bg-emerald-500/[0.06]" : "border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink"}`}>
-      <div className="flex flex-wrap items-center gap-2.5">
-        <button
-          onClick={() => setExpanded((e) => !e)}
-          aria-expanded={expanded}
-          aria-label={expanded ? "Collapse listing details" : "Expand listing details"}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-ink/40 outline-none transition hover:bg-ink/[0.05] hover:text-ink focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:text-fog/40 dark:hover:bg-fog/[0.06] dark:hover:text-fog"
-        >
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" className={`h-3 w-3 transition-transform ${expanded ? "rotate-180" : ""}`} aria-hidden>
-            <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
-        <span
-          aria-hidden
-          title={connected ? "Connected" : "Not connected"}
-          className={`h-2 w-2 shrink-0 rounded-full ${connected ? "bg-emerald-500" : "bg-ink/20 dark:bg-fog/20"}`}
-        />
-        <div className="min-w-0 flex-1 sm:min-w-[9rem]">
-          <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 truncate text-[13px] font-semibold text-ink dark:text-fog">
-            <span className="truncate">{connected ? conn.listing_name : listing.name}</span>
-            {connected ? (
-              <>
-                {conn.is_verified === true && (
-                  <span className="rounded-full bg-emerald-600/15 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Verified</span>
-                )}
-                {typeof conn.total_reviews === "number" && conn.total_reviews > 0 && (
-                  <span className="text-[10px] font-medium text-ink/40 dark:text-fog/40">★ {conn.average_rating?.toFixed(1) ?? "–"} · {conn.total_reviews}</span>
-                )}
-              </>
-            ) : (
-              <span className="rounded-full bg-ink/[0.05] px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-ink/40 dark:bg-fog/[0.06] dark:text-fog/40">Not connected</span>
-            )}
-          </p>
-          {(listing.address || conn?.address) && (
-            <p className="truncate text-[11px] text-ink/45 dark:text-fog/45">
-              {listing.address || conn?.address}
-            </p>
-          )}
-        </div>
-        {connected && (
-          <button
-            onClick={() => onResync(listing.id)}
-            disabled={busy}
-            className="min-h-8 shrink-0 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[11px] font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"
-          >
-            {busy ? <LogoLoader size={14} /> : "Sync now"}
-          </button>
-        )}
-        <select
-          value={connected ? "enabled" : "disabled"}
-          disabled={busy}
-          onChange={(e) => {
-            if (e.target.value === "enabled") onEnable(listing.id);
-            else onDisable(listing.id);
-          }}
-          aria-label={`Enable ${listing.name} in Sayvors`}
-          title={connected ? "Disable this listing" : "Enable this listing"}
-          className="min-h-8 shrink-0 rounded-lg border border-ink/[0.08] bg-white px-2 py-1.5 text-[11px] font-semibold text-ink outline-none transition focus:border-deep-violet/30 disabled:opacity-50 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
-        >
-          <option value="disabled">Disabled</option>
-          <option value="enabled">Enabled</option>
-        </select>
-      </div>
-
-      {expanded && conn && (
-      <>
-      {/* Profile snapshot */}
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
-        {typeof conn.total_reviews === "number" && (
-          <span>★ {conn.average_rating?.toFixed(1) ?? "–"} · {conn.total_reviews} review(s)</span>
-        )}
-        {conn.phone_number && <span>☎ {conn.phone_number}</span>}
-        {conn.website_url && (
-          <a href={conn.website_url} target="_blank" rel="noreferrer" className="font-semibold underline underline-offset-2 hover:opacity-80">
-            Website
-          </a>
-        )}
-        {conn.maps_url && (
-          <a href={conn.maps_url} target="_blank" rel="noreferrer" className="font-semibold underline underline-offset-2 hover:opacity-80">
-            Google Maps
-          </a>
-        )}
-        {conn.last_synced_at && (
-          <span className="ml-auto opacity-70">
-            Synced {new Date(conn.last_synced_at).toLocaleString()}
-          </span>
-        )}
-      </div>
-
-      {/* Metrics snapshot (trailing window) */}
-      {(() => {
-        if (!perf && !rev) return null;
-        const impressions = perf
-          ? num(perf.googleMapsDesktop) + num(perf.googleMapsMobile) + num(perf.googleSearchDesktop) + num(perf.googleSearchMobile)
-          : 0;
-        const cells: [string, string][] = [];
-        if (perf) {
-          cells.push(["Impressions", String(impressions)]);
-          cells.push(["Website clicks", String(num(perf.websiteClicks))]);
-          cells.push(["Calls", String(num(perf.callClicks))]);
-          cells.push(["Directions", String(num(perf.directions))]);
-        }
-        if (rev) {
-          cells.push(["Replies", String(num(rev.numberReplies))]);
-          cells.push(["👍/😐/👎", `${num(rev.positiveReviews)}/${num(rev.neutralReviews)}/${num(rev.negativeReviews)}`]);
-        }
-        return (
-          <div>
-            <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700/60 dark:text-emerald-300/60">
-              Last {conn.metrics_start && conn.metrics_end
-                ? `${conn.metrics_start} → ${conn.metrics_end}`
-                : "30 days"}
-            </p>
-            <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
-              {cells.map(([label, value]) => (
-                <div key={label} className="rounded-lg bg-white/70 px-2 py-1.5 text-center ring-1 ring-emerald-200/50 dark:bg-emerald-500/[0.08]">
-                  <p className="text-[14px] font-bold text-emerald-900 dark:text-emerald-100">{value}</p>
-                  <p className="text-[9px] font-medium uppercase tracking-wide text-emerald-700/60 dark:text-emerald-300/60">{label}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        );
-              })()}
-      {expanded && ai && (
-        <div className="mt-2 border-t border-emerald-200/60 pt-2 dark:border-emerald-500/10">
-          <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-emerald-700/60 dark:text-emerald-300/60">
-            AI replies
-          </p>
-          <AiReplyControls
-            channel={ai.channel}
-            cfg={ai.cfg}
-            busy={ai.busy}
-            expanded={ai.open}
-            approvalDraft={approvalDraft}
-            toneDraft={toneDraft}
-            voiceDraft={voiceDraft}
-            saving={savingConfig}
-            pendingCount={ai.pending}
-            onToggle={onToggleAi}
-            onToggleExpand={onOpenAi}
-            onApproval={onApprovalAi}
-            onTone={onToneAi}
-            onVoice={onVoiceAi}
-            onSave={onSaveAi}
-          />
-        </div>
-      )}
-      {conn && (
-        <div className="mt-2 flex items-center justify-between gap-2 border-t border-emerald-200/60 pt-2 dark:border-emerald-500/10">
-          <span className="text-[11px] text-emerald-700/60 dark:text-emerald-300/60">
-            {conn.last_synced_at ? `Synced ${new Date(conn.last_synced_at).toLocaleString()}` : "Not synced yet"}
-          </span>
-          <button
-            onClick={() => onDisable(conn.listing_id)}
-            disabled={busy}
-            className="rounded-lg px-2 py-1 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-100 dark:text-emerald-300 dark:hover:bg-emerald-500/10 disabled:opacity-50"
-          >
-            Disconnect
-          </button>
-        </div>
-      )}
-      </>)}
-    </div>
-  );
-}
-
 function ConnectHub() {
   const params = useSearchParams();
   const queryClient = useQueryClient();
@@ -500,19 +237,10 @@ function ConnectHub() {
   const [savingConfig, setSavingConfig] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+  const [googleBusy, setGoogleBusy] = useState(false);
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [urlDismissed, setUrlDismissed] = useState(false);
-
-  // Syncs pull reviews + generate AI drafts server-side and can take a
-  // while — give them 3 minutes instead of the default 60s timeout.
-  const SYNC_TIMEOUT_MS = 180000;
-
-  // ── Localith state: every connected branch is stored, never replaced ──
-  const [localithConns, setLocalithConns] = useState<LocalithConnection[]>([]);
-  const [localithProfiles, setLocalithProfiles] = useState<Record<string, LocalithProfile>>({});
-  const [localithListings, setLocalithListings] = useState<LocalithListing[]>([]);
-  const [localithListingsUnavailable, setLocalithListingsUnavailable] = useState<string | null>(null);
-  const [busyBranch, setBusyBranch] = useState<string | null>(null); // listing_id | "all"
+  const [confirmGoogleDisconnect, setConfirmGoogleDisconnect] = useState(false);
 
   const connectedCount = params.get("google_connected");
   const googleError = params.get("google_error");
@@ -521,7 +249,6 @@ function ConnectHub() {
   const metaNext = params.get("next");
   const discoveryError = params.get("discovery_error");
 
-  // URL-driven banner derived during render (no effect needed)
   const urlBanner = useMemo(() => {
     if (discoveryError) {
       return {
@@ -531,10 +258,7 @@ function ConnectHub() {
     }
     if (metaConnected !== null) {
       if (metaConnected === "facebook" && metaNext === "instagram_select") {
-        return {
-          kind: "ok" as const,
-          text: "Instagram connected — looking for accounts linked to your Pages…",
-        };
+        return { kind: "ok" as const, text: "Instagram connected — looking for accounts linked to your Pages…" };
       }
       return {
         kind: "ok" as const,
@@ -545,22 +269,13 @@ function ConnectHub() {
       };
     }
     if (metaError) {
-      return {
-        kind: "err" as const,
-        text: META_ERRORS[metaError] ?? `Meta connect failed (${metaError}).`,
-      };
+      return { kind: "err" as const, text: META_ERRORS[metaError] ?? `Meta connect failed (${metaError}).` };
     }
     if (connectedCount !== null) {
-      return {
-        kind: "ok" as const,
-        text: `Google Reviews connected! ${connectedCount} location(s) added.`,
-      };
+      return { kind: "ok" as const, text: `Google Business Profile connected! ${connectedCount} location(s) added.` };
     }
     if (googleError) {
-      return {
-        kind: "err" as const,
-        text: GOOGLE_ERRORS[googleError] ?? `Google connect failed (${googleError}).`,
-      };
+      return { kind: "err" as const, text: GOOGLE_ERRORS[googleError] ?? `Google connect failed (${googleError}).` };
     }
     return null;
   }, [connectedCount, googleError, metaConnected, metaError, metaNext, discoveryError]);
@@ -569,7 +284,6 @@ function ConnectHub() {
   const dismissBanner = useCallback(() => {
     setBanner(null);
     setUrlDismissed(true);
-    // Strip the OAuth result params so refresh/back never resurrects the banner.
     try {
       window.history.replaceState(null, "", "/dashboard/channels");
     } catch {
@@ -577,85 +291,48 @@ function ConnectHub() {
     }
   }, []);
 
-  // ── Localith connections + profiles + listings (TanStack Query) ──
-  const localithQuery = useQuery({
-    queryKey: ["localith", "all"],
-    queryFn: async () => {
-      let conns: LocalithConnection[] = [];
-      const profs: Record<string, LocalithProfile> = {};
-      try {
-        const data = await apiFetch("/api/v1/integrations/localith/connections");
-        conns = (data ?? []) as LocalithConnection[];
-        await Promise.all(
-          conns.map(async (c: LocalithConnection) => {
-            try {
-              const prof = await apiFetch(
-                `/api/v1/integrations/localith/profile?listing_id=${encodeURIComponent(c.listing_id)}`,
-              );
-              if (prof) profs[c.listing_id] = prof as LocalithProfile;
-            } catch {
-              /* snapshot missing for this branch — fine */
-            }
-          }),
-        );
-      } catch {
-        /* not connected — fine */
-      }
-      let listings: LocalithListing[] = [];
-      let listingsUnavailable: string | null = null;
-      try {
-        const data = await apiFetch("/api/v1/integrations/localith/listings");
-        listings = (data.listings ?? []) as LocalithListing[];
-        listingsUnavailable = (data.unavailable ?? null) as string | null;
-      } catch {
-        /* rows fall back to connected branches only */
-      }
-      return { conns, profs, listings, listingsUnavailable };
-    },
-    staleTime: 5 * 60 * 1000,
-  });
-  useEffect(() => {
-    const d = localithQuery.data;
-    if (!d) return;
-    setLocalithConns(d.conns);
-    setLocalithProfiles(d.profs);
-    setLocalithListings(d.listings);
-    setLocalithListingsUnavailable(d.listingsUnavailable);
-  }, [localithQuery.data]);
-
-  const refreshLocalithConns = useCallback(async () => {
+  const connectGoogle = useCallback(async () => {
+    setGoogleBusy(true);
+    setBanner(null);
     try {
-      const data = await apiFetch("/api/v1/integrations/localith/connections");
-      const conns = (data ?? []) as LocalithConnection[];
-      setLocalithConns(conns);
-      void queryClient.invalidateQueries({ queryKey: ["localith", "all"] });
-      return conns;
-    } catch {
-      return null; // keep stale list
-    }
-  }, [queryClient]);
-
-  const refreshLocalithProfile = useCallback(async (listingId: string) => {
-    try {
-      const prof = await apiFetch(
-        `/api/v1/integrations/localith/profile?listing_id=${encodeURIComponent(listingId)}`
-      );
-      if (prof) setLocalithProfiles((prev) => ({ ...prev, [listingId]: prof as LocalithProfile }));
-    } catch {
-      /* keep stale snapshot */
+      const data = await apiFetch("/api/v1/channels/google/connect-ticket", { method: "POST" });
+      const ticket = typeof data?.ticket === "string" ? data.ticket : "";
+      if (!ticket) throw new Error("Google connect is not configured yet.");
+      window.location.href = `${API}/api/v1/channels/google/connect?ticket=${encodeURIComponent(ticket)}&next=/dashboard/channels`;
+    } catch (e) {
+      setBanner({ kind: "err", text: errDetail(e, "Could not start Google connect. Please try again.") });
+      setGoogleBusy(false);
     }
   }, []);
+
+  const disconnectGoogle = useCallback(async () => {
+    setGoogleBusy(true);
+    try {
+      const res = await apiFetch("/api/v1/channels/google/disconnect", { method: "POST" });
+      const count = typeof res?.disconnected === "number" ? res.disconnected : 0;
+      setBanner({
+        kind: "ok",
+        text: `Google disconnected (${count} location${count === 1 ? "" : "s"}). Your data is kept and will return when you reconnect.`,
+      });
+      setConfirmGoogleDisconnect(false);
+      await queryClient.invalidateQueries();
+    } catch (e) {
+      setBanner({ kind: "err", text: errDetail(e, "Could not disconnect Google. Please try again.") });
+    } finally {
+      setGoogleBusy(false);
+    }
+  }, [queryClient]);
 
   const channelsQuery = useQuery({
     queryKey: queryKeys.channels.list(100),
     queryFn: async () => {
-      const data = await apiFetch("/api/v1/channels?limit=100");
+      const data = await apiFetch("/api/v1/channels?limit=100&include_disconnected=true");
       const chs = (data.channels ?? []) as ApiChannel[];
       const configs: Record<string, AutoReply> = {};
       const pend: Record<string, number> = {};
       await Promise.all(
         chs
-          .filter((c: ApiChannel) => c.platform === "google_reviews")
+          .filter((c: ApiChannel) => c.platform === "google_reviews" && c.status === "active")
           .map(async (c: ApiChannel) => {
             try {
               const cfg = await apiFetch(`/api/v1/channels/${c.id}/autoreply`);
@@ -669,7 +346,7 @@ function ConnectHub() {
             } catch {
               pend[c.id] = 0;
             }
-          }),
+          })
       );
       return { channels: chs, configs, pend };
     },
@@ -722,207 +399,12 @@ function ConnectHub() {
     }
   };
 
-  // ── Localith: enable one listing (adds a branch — never replaces) ──
-  const enableListing = async (listingId: string) => {
-    const keyOf = (l: LocalithListing) => l.id ?? l.googleId ?? l.google_id;
-    const chosen = localithListings.find((l) => keyOf(l) === listingId);
-    if (!chosen) return;
-    setBusyBranch(listingId);
-    try {
-      await apiFetch("/api/v1/integrations/localith/connection", {
-        method: "PUT",
-        body: JSON.stringify({
-          listing_id: listingId,
-          listing_name: chosen.name ?? "Unknown listing",
-          listing_google_id: chosen.googleId ?? chosen.google_id ?? null,
-        }),
-      });
-      await refreshLocalithConns();
-      try {
-        await apiFetch(
-          `/api/v1/integrations/localith/sync?listing_id=${encodeURIComponent(listingId)}`,
-          { method: "POST" },
-          SYNC_TIMEOUT_MS
-        );
-        await refreshLocalithConns();
-        await refreshLocalithProfile(listingId);
-        setBanner({ kind: "ok", text: `“${chosen.name ?? listingId}” enabled — synced.` });
-      } catch {
-        setBanner({ kind: "ok", text: "Listing enabled. Initial sync will retry later." });
-      }
-    } catch {
-      setBanner({ kind: "err", text: "Could not enable listing." });
-    } finally {
-      setBusyBranch(null);
-    }
-  };
-
-  // ── Localith: re-sync one branch (or everything when omitted) ──
-  const resyncLocalith = async (listingId?: string) => {
-    setBusyBranch(listingId ?? "all");
-    try {
-      const url = listingId
-        ? `/api/v1/integrations/localith/sync?listing_id=${encodeURIComponent(listingId)}`
-        : "/api/v1/integrations/localith/sync";
-      const syncRes = await apiFetch(url, { method: "POST" }, SYNC_TIMEOUT_MS);
-      const conns = await refreshLocalithConns();
-      if (listingId) {
-        await refreshLocalithProfile(listingId);
-      } else if (conns) {
-        await Promise.all(conns.map((c) => refreshLocalithProfile(c.listing_id)));
-      }
-      const bits: string[] = [];
-      if (typeof syncRes?.fetched === "number") bits.push(`${syncRes.fetched} review(s)`);
-      setBanner({ kind: "ok", text: `Localith re-synced: ${bits.join(" · ") || "nothing new"}.` });
-    } catch (e) {
-      setBanner({ kind: "err", text: errDetail(e, "Localith sync failed — try again in a minute.") });
-    } finally {
-      setBusyBranch(null);
-    }
-  };
-
-  // ── Localith: disconnect one branch (with destructive-data confirmation) ──
-  const [confirmDisconnect, setConfirmDisconnect] = useState<string | null>(null);
-
-  // ── Localith: tenant API key (account-wide, encrypted at rest) ──
-  const [apiKeyDraft, setApiKeyDraft] = useState("");
-  const [showKeyForm, setShowKeyForm] = useState(false);
-  const [keyBusy, setKeyBusy] = useState(false);
-  const hasOwnKey = localithConns.some((c) => c.has_api_key);
-
-  const saveApiKey = async () => {
-    if (apiKeyDraft.trim().length < 8) {
-      setBanner({ kind: "err", text: "That API key looks too short — paste the full key." });
-      return;
-    }
-    setKeyBusy(true);
-    try {
-      await apiFetch("/api/v1/integrations/localith/connection/api-key", {
-        method: "PUT",
-        body: JSON.stringify({ api_key: apiKeyDraft.trim() }),
-      });
-      setLocalithConns((prev) => prev.map((c) => ({ ...c, has_api_key: true })));
-      setApiKeyDraft("");
-      setShowKeyForm(false);
-      setBanner({ kind: "ok", text: "Your Localith API key is saved (encrypted) — syncs and publishes now use it." });
-    } catch (e) {
-      setBanner({ kind: "err", text: errDetail(e, "Could not save the API key.") });
-    } finally {
-      setKeyBusy(false);
-    }
-  };
-
-  const removeApiKey = async () => {
-    setKeyBusy(true);
-    try {
-      await apiFetch("/api/v1/integrations/localith/connection/api-key", { method: "DELETE" });
-      setLocalithConns((prev) => prev.map((c) => ({ ...c, has_api_key: false })));
-      setShowKeyForm(false);
-      setBanner({ kind: "ok", text: "Own API key removed — back to the shared server key." });
-    } catch (e) {
-      setBanner({ kind: "err", text: errDetail(e, "Could not remove the API key.") });
-    } finally {
-      setKeyBusy(false);
-    }
-  };
-
-  const disconnectLocalith = async () => {
-    const listingId = confirmDisconnect;
-    if (!listingId) return;
-    setConfirmDisconnect(null);
-    setBusyBranch(listingId);
-    try {
-      await apiFetch(
-        `/api/v1/integrations/localith/connection?listing_id=${encodeURIComponent(listingId)}`,
-        { method: "DELETE" }
-      );
-      setLocalithConns((prev) => prev.filter((c) => c.listing_id !== listingId));
-      setLocalithProfiles((prev) => {
-        const next = { ...prev };
-        delete next[listingId];
-        return next;
-      });
-      setBanner({ kind: "ok", text: "Branch disconnected — its related data was deleted. Other branches untouched." });
-    } catch (e) {
-      const detail = e instanceof Error ? e.message.slice(0, 200) : "Could not disconnect Localith.";
-      setBanner({ kind: "err", text: detail });
-    } finally {
-      setBusyBranch(null);
-    }
-  };
-
-  const disconnectTarget = confirmDisconnect
-    ? localithConns.find((c) => c.listing_id === confirmDisconnect) ?? null
-    : null;
-
   const googleChannels = channels.filter((c) => c.platform === "google_reviews");
-
-  // Localith-mirrored channels are managed on the Localith card above — the
-  // bottom list shows native Google OAuth locations only, so each branch
-  // appears exactly once. Falls back to name-matching when the backend
-  // predates the `source` field.
-  const hasChannelSource = googleChannels.some((c) => c.source != null);
-  const localithNameSet = useMemo(
-    () => new Set(localithConns.map((c) => c.listing_name.toLowerCase())),
-    [localithConns]
-  );
-  const isLocalithBacked = useCallback(
-    (c: ApiChannel) => {
-      if (c.source === "localith") return true;
-      if (c.source != null) return false;
-      if (hasChannelSource) return false;
-      return localithNameSet.has((c.display_name || "").toLowerCase());
-    },
-    [hasChannelSource, localithNameSet]
-  );
-  const googleChannelsNative = googleChannels.filter((c) => !isLocalithBacked(c));
-  const localithChannelByKey = useMemo(() => {
-    const m = new Map<string, ApiChannel>();
-    for (const c of googleChannels) {
-      if (!isLocalithBacked(c)) continue;
-      if (c.listing_id) m.set(c.listing_id, c);
-      if (c.display_name) m.set(c.display_name.toLowerCase(), c);
-    }
-    return m;
-  }, [googleChannels, isLocalithBacked]);
-  const aiForRow = useCallback(
-    (conn: LocalithConnection | null) => {
-      if (!conn) return null;
-      const ch =
-        localithChannelByKey.get(conn.listing_id) ??
-        localithChannelByKey.get((conn.listing_name || "").toLowerCase()) ??
-        null;
-      if (!ch) return null;
-      return {
-        channel: ch,
-        cfg: autoreply[ch.id] ?? null,
-        busy: busy === ch.id,
-        open: expandedConfig === ch.id,
-        pending: pending[ch.id] ?? 0,
-      };
-    },
-    [localithChannelByKey, autoreply, busy, expandedConfig, pending]
-  );
-
-  // Every listing on the Localith account, joined with connection state.
-  // Connected branches missing from the API list are appended so nothing vanishes.
-  const listingRows = useMemo(() => {
-    const keyOf = (l: LocalithListing) => l.id ?? l.googleId ?? l.google_id ?? "";
-    const rows = localithListings
-      .filter((l) => keyOf(l))
-      .map((l) => {
-        const id = keyOf(l);
-        const conn =
-          localithConns.find((c) => c.listing_id === id || c.listing_google_id === id) ?? null;
-        return { id, name: l.name ?? id, address: l.address ?? null, conn };
-      });
-    for (const c of localithConns) {
-      if (!rows.some((r) => r.id === c.listing_id)) {
-        rows.push({ id: c.listing_id, name: c.listing_name, address: c.address ?? null, conn: c });
-      }
-    }
-    return rows;
-  }, [localithListings, localithConns]);
+  const googleActive = googleChannels.filter((c) => c.status === "active");
+  const googleExpired = googleChannels.filter((c) => c.status === "expired");
+  const googleDisconnected = googleChannels.filter((c) => c.status === "disconnected");
+  const hasGoogle = googleChannels.length > 0;
+  const needsReconnect = googleExpired.length > 0 || (googleActive.length === 0 && googleDisconnected.length > 0);
 
   return (
     <div className="h-full overflow-y-auto p-4 pb-24 space-y-5 sm:p-6">
@@ -943,166 +425,120 @@ function ConnectHub() {
         >
           <div className="flex items-center justify-between gap-3">
             <span>{activeBanner.text}</span>
-            <button
-              className="shrink-0 text-[12px] underline underline-offset-2"
-              onClick={dismissBanner}
-            >
+            <button className="shrink-0 text-[12px] underline underline-offset-2" onClick={dismissBanner}>
               dismiss
             </button>
           </div>
         </div>
       )}
 
-      {/* ── Google reviews & locations ── */}
       <section className="space-y-2">
         <h2 className="text-[11px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">
           Google reviews &amp; locations
         </h2>
-        {/* Localith — ONE card: every listing on the account, enabled per row */}
-        <div className="rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink" data-tour="connect-location">
+        <div className="rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
           <div className="flex flex-wrap items-center gap-4">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 text-white shadow-sm">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
-                <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
-              </svg>
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-ink/[0.06] bg-white dark:border-fog/[0.08] dark:bg-ink">
+              <PlatformMark platform="google_reviews" size={24} />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-[14px] font-semibold text-ink dark:text-fog">
-                Localith
-                {localithConns.length > 0 && (
-                  <span className="ml-2 rounded-full bg-emerald-600/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
-                    {localithConns.length} connected
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-[14px] font-semibold text-ink dark:text-fog">Google Business Profile</p>
+                <span className="rounded-full bg-[#1a73e8]/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#1a73e8] dark:bg-[#8ab4f8]/15 dark:text-[#8ab4f8]">
+                  Official API
+                </span>
+                {googleActive.length > 0 && (
+                  <span className="rounded-full bg-emerald-600/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+                    {googleActive.length} connected
                   </span>
                 )}
-              </p>
-              <p className="text-[12px] text-ink/40 dark:text-fog/40">Import reviews via middleware — enable each listing below</p>
-            </div>
-            <button
-              onClick={() => void resyncLocalith()}
-              disabled={busyBranch !== null || localithConns.length === 0}
-              data-tour="sync-now"
-              title="Sync every connected branch"
-              className="min-h-8 shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-[12px] font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"
-            >
-              {busyBranch === "all" ? <LogoLoader size={14} /> : "Sync all"}
-            </button>
-          </div>
-          <div className="mt-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] px-3 py-2 dark:border-fog/[0.08] dark:bg-fog/[0.03]">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[12px] font-semibold text-ink dark:text-fog">API key</span>
-              {hasOwnKey ? (
-                <span className="rounded-full bg-emerald-600/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
-                  own key in use
-                </span>
-              ) : (
-                <span className="text-[11px] text-ink/45 dark:text-fog/45">
-                  using the shared server key
-                </span>
-              )}
-              <span className="flex-1" />
-              {!showKeyForm && (
-                <button
-                  onClick={() => setShowKeyForm(true)}
-                  disabled={keyBusy || localithConns.length === 0}
-                  title={localithConns.length === 0 ? "Connect a listing first" : hasOwnKey ? "Rotate your key" : "Use your own Localith key"}
-                  className="min-h-8 shrink-0 rounded-lg border border-ink/10 px-2.5 py-1 text-[11px] font-semibold text-ink/60 transition hover:border-emerald-500/40 hover:text-emerald-700 disabled:opacity-50 dark:border-fog/10 dark:text-fog/60"
-                >
-                  {hasOwnKey ? "Rotate" : "Set key"}
-                </button>
-              )}
-              {hasOwnKey && !showKeyForm && (
-                <button
-                  onClick={() => void removeApiKey()}
-                  disabled={keyBusy}
-                  className="min-h-8 shrink-0 rounded-lg border border-ink/10 px-2.5 py-1 text-[11px] font-semibold text-ink/60 transition hover:border-red-400/50 hover:text-red-600 disabled:opacity-50 dark:border-fog/10 dark:text-fog/60"
-                >
-                  Remove
-                </button>
-              )}
-            </div>
-            {showKeyForm && (
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <input
-                  type="password"
-                  value={apiKeyDraft}
-                  onChange={(e) => setApiKeyDraft(e.target.value)}
-                  placeholder="Paste your Localith API key"
-                  autoComplete="off"
-                  className="min-w-0 flex-1 rounded-lg border border-ink/10 bg-white px-2.5 py-1.5 text-[12px] text-ink outline-none focus:border-emerald-500/50 dark:border-fog/10 dark:bg-ink dark:text-fog"
-                />
-                <button
-                  onClick={() => void saveApiKey()}
-                  disabled={keyBusy}
-                  className="min-h-8 shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"
-                >
-                  {keyBusy ? "Saving…" : "Save"}
-                </button>
-                <button
-                  onClick={() => { setShowKeyForm(false); setApiKeyDraft(""); }}
-                  disabled={keyBusy}
-                  className="min-h-8 shrink-0 rounded-lg px-2 py-1.5 text-[11px] font-semibold text-ink/50 disabled:opacity-50 dark:text-fog/50"
-                >
-                  Cancel
-                </button>
+                {googleExpired.length > 0 && (
+                  <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:text-amber-300">
+                    reconnection needed
+                  </span>
+                )}
+                {googleActive.length === 0 && googleDisconnected.length > 0 && (
+                  <span className="rounded-full bg-ink/[0.06] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink/50 dark:bg-fog/[0.08] dark:text-fog/50">
+                    disconnected
+                  </span>
+                )}
               </div>
-            )}
-            <p className="mt-1.5 text-[11px] leading-snug text-ink/40 dark:text-fog/40">
-              Optional. Your key is encrypted on our server and never shown again — it applies to every connected listing on your account.
-            </p>
-          </div>
-          <div className="mt-3 space-y-2">
-            {listingRows.map((row) => (
-              <LocalithListingRow
-                key={row.id}
-                listing={row}
-                conn={row.conn}
-                profile={row.conn ? localithProfiles[row.conn.listing_id] ?? null : null}
-                busy={busyBranch !== null}
-                onEnable={(id) => void enableListing(id)}
-                onDisable={(id) => setConfirmDisconnect(id)}
-                onResync={(id) => void resyncLocalith(id)}
-                ai={aiForRow(row.conn)}
-                approvalDraft={approvalDraft}
-                toneDraft={toneDraft}
-                voiceDraft={voiceDraft}
-                savingConfig={savingConfig}
-                onToggleAi={(id, enable) => void toggleAutoReply(id, enable)}
-                onOpenAi={openConfig}
-                onApprovalAi={setApprovalDraft}
-                onToneAi={setToneDraft}
-                onVoiceAi={setVoiceDraft}
-                onSaveAi={(id) => void saveConfig(id)}
-              />
-            ))}
-            {listingRows.length === 0 && (
-              <p className="rounded-lg bg-ink/[0.03] px-3 py-2.5 text-[12px] text-ink/45 dark:bg-fog/[0.04] dark:text-fog/45">
-                {localithListingsUnavailable
-                  ? `Localith listings are temporarily unavailable: ${localithListingsUnavailable}`
-                  : "No listings found on the Localith account yet. Add your locations in Localith first, then enable them here."}
+              <p className="text-[12px] text-ink/40 dark:text-fog/40">
+                Connect your Business Profile directly — reviews, replies, locations and performance sync from Google.
               </p>
-            )}
+              {needsReconnect && (
+                <p className="mt-1 text-[11px] leading-snug text-amber-700 dark:text-amber-300">
+                  {googleDisconnected.length > 0 && googleActive.length === 0
+                    ? "Google is disconnected. Your locations, reviews and analytics are hidden — nothing was deleted. Reconnect to restore the same data."
+                    : "Your Google connection expired. Reconnect to keep syncing reviews and performance."}
+                </p>
+              )}
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {googleActive.length > 0 && (
+                <button
+                  onClick={() => setConfirmGoogleDisconnect(true)}
+                  disabled={googleBusy}
+                  className="min-h-8 rounded-lg border border-red-200 px-3 py-1.5 text-[12px] font-semibold text-red-600 transition hover:bg-red-50 disabled:opacity-50 dark:border-red-500/30 dark:text-red-400 dark:hover:bg-red-500/10"
+                >
+                  Disconnect Google
+                </button>
+              )}
+              <button
+                onClick={() => void connectGoogle()}
+                disabled={googleBusy}
+                className="min-h-8 rounded-lg bg-[#1a73e8] px-3 py-1.5 text-[12px] font-semibold text-white transition hover:bg-[#1765cc] disabled:opacity-50"
+              >
+                {googleBusy ? (
+                  <LogoLoader size={14} />
+                ) : hasGoogle ? (
+                  "Reconnect / add locations"
+                ) : (
+                  "Connect Google Business"
+                )}
+              </button>
+            </div>
           </div>
         </div>
+
+        {googleActive.length > 0 && (
+          <div className="space-y-3">
+            <h3 className="text-[13px] font-semibold text-ink dark:text-fog">Google Business locations</h3>
+            {googleActive.map((c) => (
+              <div key={c.id} className="rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
+                <p className="mb-2 text-[14px] font-semibold text-ink dark:text-fog">
+                  {c.display_name || "Business location"}
+                </p>
+                <AiReplyControls
+                  channel={c}
+                  cfg={autoreply[c.id] ?? null}
+                  busy={busy === c.id}
+                  expanded={expandedConfig === c.id}
+                  approvalDraft={approvalDraft}
+                  toneDraft={toneDraft}
+                  voiceDraft={voiceDraft}
+                  saving={savingConfig}
+                  pendingCount={pending[c.id] ?? 0}
+                  onToggle={(id, enable) => void toggleAutoReply(id, enable)}
+                  onToggleExpand={openConfig}
+                  onApproval={setApprovalDraft}
+                  onTone={setToneDraft}
+                  onVoice={setVoiceDraft}
+                  onSave={(id) => void saveConfig(id)}
+                />
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
-      {/* ── Messaging channels: one card per provider, each with its own
-          guided onboarding screen. ── */}
-      <section className="space-y-2">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 className="text-[11px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">
-            Messaging channels
-          </h2>
-          <p className="text-[11px] text-ink/35 dark:text-fog/35">
-            Meta — your own business accounts
-          </p>
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-[15px] font-semibold text-ink dark:text-fog">Messaging &amp; social</h2>
+          <p className="text-[11px] text-ink/35 dark:text-fog/35">Meta — your own business accounts</p>
         </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {/* Meta connections — tenant-owned WhatsApp / Facebook / Instagram */}
-          <MetaConnections
-            onNotice={(kind, text) => setBanner({ kind, text })}
-          />
-
-          {/* Coming soon */}
+          <MetaConnections onNotice={(kind, text) => setBanner({ kind, text })} />
           <article className="flex flex-col rounded-xl border border-ink/[0.06] bg-white p-4 opacity-70 dark:border-fog/[0.06] dark:bg-ink">
             <div className="flex items-start gap-3">
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-ink/[0.04] dark:bg-fog/[0.06]">
@@ -1115,85 +551,43 @@ function ConnectHub() {
                     Soon
                   </span>
                 </div>
-                <p className="mt-0.5 truncate text-[11.5px] text-ink/45 dark:text-fog/45">
-                  Auto-reply to DMs
-                </p>
+                <p className="mt-0.5 truncate text-[11.5px] text-ink/45 dark:text-fog/45">Auto-reply to DMs</p>
               </div>
             </div>
           </article>
         </div>
       </section>
 
-      {/* ── Native Google OAuth locations only. Localith-mirrored branches
-          live on the Localith card above (with their AI controls), so each
-          branch appears exactly once. ── */}
-      {googleChannelsNative.length > 0 && (
-        <div className="space-y-3">
-          <h2 className="text-[15px] font-semibold text-ink dark:text-fog">Google Business locations</h2>
-          {googleChannelsNative.map((c) => (
-            <div
-              key={c.id}
-              className="rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink"
-            >
-              <p className="mb-2 text-[14px] font-semibold text-ink dark:text-fog">
-                {c.display_name || "Business location"}
-              </p>
-              <AiReplyControls
-                channel={c}
-                cfg={autoreply[c.id] ?? null}
-                busy={busy === c.id}
-                expanded={expandedConfig === c.id}
-                approvalDraft={approvalDraft}
-                toneDraft={toneDraft}
-                voiceDraft={voiceDraft}
-                saving={savingConfig}
-                pendingCount={pending[c.id] ?? 0}
-                onToggle={(id, enable) => void toggleAutoReply(id, enable)}
-                onToggleExpand={openConfig}
-                onApproval={setApprovalDraft}
-                onTone={setToneDraft}
-                onVoice={setVoiceDraft}
-                onSave={(id) => void saveConfig(id)}
-              />
-            </div>
-          ))}
-        </div>
-      )}
+      {loading && <p className="text-[12px] text-ink/40 dark:text-fog/40">Loading your channels…</p>}
 
-      {loading && (
-        <p className="text-[12px] text-ink/40 dark:text-fog/40">Loading your channels…</p>
-      )}
-
-      {/* Disconnect confirmation — destructive, must be explicit, per branch */}
-      {confirmDisconnect && (
+      {confirmGoogleDisconnect && (
         <div
           role="alertdialog"
           aria-modal="true"
-          aria-label="Confirm Localith disconnect"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-sm"
+          aria-label="Confirm Google disconnect"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4"
         >
           <div className="w-full max-w-md rounded-2xl border border-ink/[0.06] bg-white p-4 shadow-2xl dark:border-fog/[0.08] dark:bg-ink sm:p-5">
-            <h2 className="text-[15px] font-bold text-ink dark:text-fog">
-              Disconnect{disconnectTarget ? ` “${disconnectTarget.listing_name}”` : " branch"}?
-            </h2>
+            <h2 className="text-[15px] font-bold text-ink dark:text-fog">Disconnect Google Business Profile?</h2>
             <p className="mt-2 text-[13px] leading-relaxed text-ink/60 dark:text-fog/60">
-              All data related to this branch will be <strong className="text-red-600">deleted from the database</strong> — location,
-              reviews, stats, drafts and settings. Other branches are untouched. This cannot be undone.
+              Your Google locations, reviews, analytics and posts will be <strong>hidden from Sayvors</strong>.
+              Nothing is deleted — the data stays in Sayvors and on Google. Reconnecting restores the same
+              locations, reviews and history.
             </p>
             <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <button
-                onClick={() => setConfirmDisconnect(null)}
-                disabled={busyBranch !== null}
-                className="rounded-lg px-3.5 py-2 text-[12px] font-semibold text-ink/60 transition hover:bg-ink/[0.04] dark:text-fog/60 disabled:opacity-50"
+                onClick={() => setConfirmGoogleDisconnect(false)}
+                disabled={googleBusy}
+                className="rounded-lg border border-ink/10 px-3.5 py-2 text-[12px] font-semibold text-ink/70 dark:border-fog/10 dark:text-fog/70"
               >
                 Cancel
               </button>
               <button
-                onClick={disconnectLocalith}
-                disabled={busyBranch !== null}
-                className="rounded-lg bg-red-600 px-3.5 py-2 text-[12px] font-semibold text-white shadow-sm transition hover:bg-red-700 disabled:opacity-50"
+                onClick={() => void disconnectGoogle()}
+                disabled={googleBusy}
+                className="rounded-lg bg-red-600 px-3.5 py-2 text-[12px] font-semibold text-white transition hover:bg-red-700 disabled:opacity-50"
               >
-                {busyBranch ? "Deleting…" : "Yes, disconnect & delete data"}
+                {googleBusy ? <LogoLoader size={14} /> : "Disconnect Google"}
               </button>
             </div>
           </div>

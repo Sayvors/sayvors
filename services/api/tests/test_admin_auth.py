@@ -241,7 +241,6 @@ async def test_admin_token_rejected_on_tenant_routes(client, monkeypatch):
             "/api/v1/analytics/overview?days=30",
             "/api/v1/analytics/reviews/insights",
             "/api/v1/channels?limit=100",
-            "/api/v1/integrations/localith/connection",
         ):
             r = client.get(path, headers=headers)
             assert r.status_code == 401, (path, r.status_code, r.text[:120])
@@ -256,16 +255,11 @@ async def test_admin_overview_counts(db, user_id, channel_id):
 
     from app.modules.analytics.models import ReviewInsight
     from app.modules.admin import service as admin_service
-    from app.modules.localith.models import LocalithConnection
     from app.modules.users.models import User
 
     db.add(User(
         id=user_id, email="test@sayvors.com", first_name="Test",
         last_name="User", password_hash="x", onboarded=True,
-    ))
-    db.add(LocalithConnection(
-        id="conn-admin-1", user_id=user_id, listing_id="loc-1",
-        listing_name="T", listing_google_id="g",
     ))
     db.add(ReviewInsight(
         id="ins-admin-1", user_id=user_id, channel_id=channel_id,
@@ -289,7 +283,7 @@ async def test_admin_overview_counts(db, user_id, channel_id):
 
     detail = await admin_service.get_tenant(db, user_id)
     assert detail is not None
-    assert detail["listing_name"] == "T"
+    assert detail["listing_name"] == "Test Burgers"
     assert len(detail["recent_reviews"]) >= 1
 
     assert await admin_service.get_tenant(db, "no-such-user") is None
@@ -315,7 +309,6 @@ async def test_admin_health_structure(db):
     assert "Database" in names
     assert "Redis" in names
     assert "Kafka" in names
-    assert "Localith" in names
     # AI services only appear when at least one LLM provider is configured in
     # the DB. The test DB has none, so skip the assertion when the list is empty.
     if any(isinstance(s, dict) and s.get("kind") == "llm" for s in health["services"]):

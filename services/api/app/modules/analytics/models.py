@@ -7,13 +7,13 @@ Everything the intelligence layer needs is stored in PostgreSQL:
 - LocationDailyMetric per-channel daily rollups (review counts, sentiment
                       split, Google impressions/actions) — the "Grow" data set
 - SearchKeywordStat per-channel daily search-keyword impressions (native
-                      Google only — Localith exposes no keyword data)
+                      Google Performance API only)
 
 Events flow through the outbox → Kafka (`review-events`, `metrics-events`),
 mirroring the existing event architecture in `modules/outbox`.
 """
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Enum, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
@@ -54,8 +54,7 @@ class ReviewInsight(Base):
     rating: Mapped[int] = mapped_column(Integer)
     review_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     reviewer_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    # Reviewer profile photo (Google profilePhotoUrl on the native path;
-    # upstream photo field on Localith when present). UI falls back to
+    # Reviewer profile photo (Google profilePhotoUrl). UI falls back to
     # initials when null.
     reviewer_photo_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     # positive / neutral / negative (LLM or heuristic)
@@ -85,7 +84,7 @@ class ReviewInsight(Base):
     # the review is still cached locally but no reply is possible.
     skipped: Mapped[bool] = mapped_column(Boolean, default=False)
     # Reviewer edited the review after we first synced it (detected by
-    # content comparison at sync time — Localith sends no edit timestamp).
+    # content comparison at sync time).
     # Cleared when the updated reply is posted or the edit is dismissed.
     edited: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -95,7 +94,7 @@ class ReviewInsight(Base):
     # not auto-draft again. Cleared when the reviewer edits the review
     # (new content) — manual regenerate/retry bypass it regardless.
     draft_dismissed: Mapped[bool] = mapped_column(Boolean, default=False)
-    # Link to the review on Google (Localith `reviewLink`), for "View on Google".
+    # Link to the review on Google, for "View on Google".
     review_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     # Photos the reviewer attached, stored as
     # [{url, kind, label, source_url}]. `url` points at OUR copy under
@@ -313,7 +312,7 @@ class ChannelDailyMetric(Base):
     table serves stored rows; nothing derives numbers from
     `channel_messages` at request time.
 
-    Response-time semantics: a conversation is (channel_id, contact_phone).
+    Response-time semantics: a conversation is (channel_id, contact_phone_hash).
     FRT = the day's first inbound → the next outbound in that thread, and a
     reply may land up to 48h after the inbound — each worker pass recomputes
     the last 2 days so late replies land in the right row, and rows freeze
@@ -373,6 +372,13 @@ class ChannelDailyMetric(Base):
     by_hour_in: Mapped[list] = mapped_column(JSON, default=list, server_default=_EMPTY_JSON)
 
     computed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Bumped when the rollup logic changes in a way that invalidates stored
+    # rows (the contact grouping moved from Fernet ciphertext to the stable
+    # HMAC). 0 = pre-versioned; the worker recomputes stale rows in bounded
+    # slices, then a normal pass is back to the last three days.
+    rollup_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
@@ -440,9 +446,8 @@ class SearchKeywordStat(Base):
     """Daily search-keyword impressions per channel (Grow data set).
 
     Populated ONLY for native-Google channels: keyword breakdowns come from
-    the Business Profile Performance API (SEARCH_KEYWORD_IMPRESSIONS),
-    which Localith does not expose. Localith-only tenants get an honest
-    empty state in the UI until native Google OAuth lands — never fake rows.
+    the Business Profile Performance API (SEARCH_KEYWORD_IMPRESSIONS). A
+    channel without native OAuth gets an honest empty state, never fake rows.
     """
 
     __tablename__ = "search_keyword_stats"
@@ -546,6 +551,81 @@ register_postgres_index_ddl(
 )
 
 
+class GoogleQuestionAnswer(Base):
+    """One Q&A pair from a Google Business Profile listing.
+
+    Google sends no webhooks for questions, so they are discovered by
+    polling `accounts/{account}/locations/{location}/questions` (see
+    reviews_worker.py). Merchant answers and customer questions are both
+    stored; only merchant answers are ever posted back to Google.
+
+    `question_id` is the full resource name
+    ``accounts/{a}/locations/{l}/questions/{q}``.
+    """
+
+    __tablename__ = "google_question_answers"
+    __table_args__ = (
+        # One question per listing — duplicates across polls are deduped.
+        UniqueConstraint("channel_id", "question_id", name="uq_google_qa_channel_question"),
+        # The dashboard reads “my open questions, newest first”; this composite
+        # serves filter + ORDER BY without a sort.
+        Index("ix_google_qa_channel_created", "channel_id", "created_at"),
+        # Answering status is a common filter (“needs my answer”).
+        Index("ix_google_qa_channel_answered", "channel_id", "is_answered"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(String(36), index=True)
+    channel_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("channels.id", ondelete="CASCADE"), index=True
+    )
+    # Google question resource name: accounts/{a}/locations/{l}/questions/{q}
+    question_id: Mapped[str] = mapped_column(String(500), index=True)
+    question_text: Mapped[str] = mapped_column(Text)
+    asker_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    asker_profile_photo_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    question_created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Only merchant answers are posted back to Google. Customer answers are
+    # stored read-only.
+    answer_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    answerer_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    answer_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    answer_created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    is_answered: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    is_ignored: Mapped[bool] = mapped_column(Boolean, default=False)
+    upvote_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Merchant draft flowing through the same approval gate as review replies.
+    # The draft is never visible on Google; `answer_text` is the live posted
+    # answer. `draft_status`: none | pending_approval | posted | rejected |
+    # failed.
+    draft_answer_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    draft_status: Mapped[str] = mapped_column(
+        String(24), default="none", server_default="none", index=True
+    )
+    draft_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    draft_generated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    draft_approved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
 class ReviewRequest(Base):
     """One review-request send, recorded when a merchant asks a customer.
 
@@ -611,6 +691,54 @@ class ReviewRequest(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class CompetitorSnapshotHistory(Base):
+    """One monthly history row for an external competitor.
+
+    CompetitorSnapshot is the current peer set (one row per place). This table
+    keeps one row per peer per calendar month so rating/review-count deltas and
+    velocity can be shown without growing on every manual refresh. Refreshes
+    upsert the current month's row; the comparison reads the latest prior
+    month. That keeps the table bounded at ~20 peers × 24 months per active
+    tenant instead of one row per click.
+    """
+
+    __tablename__ = "competitor_snapshot_history"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "place_id", "source", "period_start",
+            name="uq_competitor_history_period",
+        ),
+        Index(
+            "ix_competitor_history_user_place_period",
+            "user_id", "place_id", "period_start",
+        ),
+        Index("ix_competitor_history_user_period", "user_id", "period_start"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    place_id: Mapped[str] = mapped_column(String(255))
+    name: Mapped[str] = mapped_column(String(255))
+    category: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    address: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    rating: Mapped[float | None] = mapped_column(Float, nullable=True)
+    review_count: Mapped[int] = mapped_column(Integer, default=0)
+    source: Mapped[str] = mapped_column(String(20), default="google_places", server_default="google_places")
+    query_radius_m: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    query_category: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # First day of the month this row describes; the unique key is per month.
+    period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    # Last time this month's row was refreshed.
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
 
 

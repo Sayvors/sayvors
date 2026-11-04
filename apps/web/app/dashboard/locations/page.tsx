@@ -42,17 +42,16 @@ interface LocationGroup {
   position: number;
 }
 
-interface LocalithConn {
+interface LocationSnapshot {
   listing_id: string;
-  listing_name: string;
+  name: string;
   address?: string | null;
-  phone_number?: string | null;
-  website_url?: string | null;
+  phone?: string | null;
+  website?: string | null;
   maps_url?: string | null;
-  is_verified?: boolean | null;
-  is_suspended?: boolean | null;
-  total_reviews?: number;
-  average_rating?: number;
+  status: string;
+  rating?: number | null;
+  reviews?: number | null;
 }
 
 /* ── Bulk edit: "All branches" scope. Tabs stay untouched in shape —
@@ -96,7 +95,7 @@ interface FullProfile {
   is_verified?: boolean | null;
   description?: string | null;
   categories: { primary?: string; additional?: string[] };
-  hours: { regular?: Record<string, { open: string; close: string; closed: boolean }>; special?: { date: string; hours: string; reason: string }[]; more?: { type: string; open: string; close: string }[] };
+  hours: { regular?: Record<string, { open: string; close: string; closed: boolean; all_day?: boolean }>; special?: { date: string; hours: string; reason: string }[]; more?: { type: string; open: string; close: string }[] };
   service_area: string[];
   attributes: Record<string, string>;
   opening_date?: string | null;
@@ -121,16 +120,16 @@ function CompletenessCard({
   fullProfile,
   copy,
 }: {
-  profile: LocalithConn;
+  profile: LocationSnapshot;
   fullProfile?: FullProfile | null;
   copy: LocationsCopy;
 }) {
-  const displayName = fullProfile?.name ?? profile.listing_name;
+  const displayName = fullProfile?.name ?? profile.name;
   const essentials: { label: string; done: boolean; hint?: string }[] = [
     { label: copy.essentialName, done: !!displayName },
     { label: copy.essentialAddress, done: !!profile.address },
-    { label: copy.essentialWebsite, done: !!profile.website_url },
-    { label: copy.essentialPhone, done: !!profile.phone_number, hint: !profile.phone_number ? copy.addPhone : undefined },
+    { label: copy.essentialWebsite, done: !!profile.website },
+    { label: copy.essentialPhone, done: !!profile.phone, hint: !profile.phone ? copy.addPhone : undefined },
   ];
   const done = essentials.filter((e) => e.done).length;
   if (done >= essentials.length) return null;
@@ -159,7 +158,7 @@ function CompletenessCard({
         ))}
       </ul>
       <p className="mt-3 border-t border-ink/[0.05] pt-2 text-[11px] text-ink/40 dark:text-fog/40">
-        ★ {(profile.average_rating ?? 0).toFixed(1)} · {profile.total_reviews ?? 0}{" "}
+        ★ {(profile.rating ?? 0).toFixed(1)} · {profile.reviews ?? 0}{" "}
         {copy.reviewsLabel} · {copy.completenessFootnote}
       </p>
     </div>
@@ -206,8 +205,8 @@ export default function LocationsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<string>("details");
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
-  const [localith, setLocalith] = useState<LocalithConn | null>(null);
-  const [localithConns, setLocalithConns] = useState<Record<string, LocalithConn>>({});
+  const [snapshot, setSnapshot] = useState<LocationSnapshot | null>(null);
+  const [snapshots, setSnapshots] = useState<Record<string, LocationSnapshot>>({});
   const [fullProfile, setFullProfile] = useState<FullProfile | null>(null);
   const [bulkProfiles, setBulkProfiles] = useState<Record<string, FullProfile>>({});
   const [createOpen, setCreateOpen] = useState(false);
@@ -336,16 +335,13 @@ export default function LocationsPage() {
     await Promise.all(
       targets.map(async (t) => {
         try {
-          await apiFetch(
-            `/api/v1/integrations/localith/listing?listing_id=${encodeURIComponent(t.id)}`,
-            {
-              method: "PATCH",
-              body: JSON.stringify({
-                ...(data.phone !== undefined ? { phone_number: data.phone || undefined } : {}),
-                ...(data.website !== undefined ? { website_url: data.website || undefined } : {}),
-              }),
-            }
-          );
+          await apiFetch(`/api/v1/locations/${t.id}`, {
+            method: "PUT",
+            body: JSON.stringify({
+              ...(data.phone !== undefined ? { phone: data.phone || undefined } : {}),
+              ...(data.website !== undefined ? { website: data.website || undefined } : {}),
+            }),
+          });
           ok++;
         } catch (e) {
           failed.push({
@@ -357,10 +353,10 @@ export default function LocationsPage() {
       })
     );
     try {
-      const data = await apiFetch("/api/v1/integrations/localith/connections");
-      const byId: Record<string, LocalithConn> = {};
-      for (const c of (data ?? []) as LocalithConn[]) byId[c.listing_id] = c;
-      setLocalithConns(byId);
+      const list = (await apiFetch("/api/v1/locations")) as LocationSnapshot[];
+      const byId: Record<string, LocationSnapshot> = {};
+      for (const c of list) byId[c.listing_id] = c;
+      setSnapshots(byId);
     } catch {
       /* non-fatal */
     }
@@ -443,39 +439,29 @@ export default function LocationsPage() {
   const locationsQuery = useQuery({
     queryKey: ["locations", "list"],
     queryFn: async () => {
-      // Localith snapshots first — they carry the real address/phone/website.
-      // Every connected branch is listed; nothing is hidden or overwritten.
+      // Native Google listings only. /locations already returns the merged
+      // profile fields (address/phone/website/rating), so the page does not
+      // read any second provider.
       try {
-        const conns = (await apiFetch("/api/v1/integrations/localith/connections")) as LocalithConn[];
-        if (Array.isArray(conns) && conns.length > 0) {
-          const byId: Record<string, LocalithConn> = {};
-          const opts = conns.map((c) => {
-            byId[c.listing_id] = c;
-            return {
-              id: c.listing_id,
-              name: c.listing_name,
-              address: c.address ?? "",
-              status: c.is_suspended ? "suspended" : c.is_verified ? "active" : "pending",
-            };
-          });
-          return { localithConns: byId, localith: byId[opts[0].id] ?? null, locations: opts, selectedId: opts[0].id };
-        }
+        const list = (await apiFetch("/api/v1/locations")) as LocationSnapshot[];
+        const byId: Record<string, LocationSnapshot> = {};
+        const opts = list.map((l) => {
+          byId[l.listing_id] = l;
+          return {
+            id: l.listing_id,
+            name: l.name,
+            address: l.address ?? "",
+            status: l.status,
+          };
+        });
+        return {
+          snapshots: byId,
+          snapshot: opts.length ? byId[opts[0].id] ?? null : null,
+          locations: opts,
+          selectedId: opts.length ? opts[0].id : null,
+        };
       } catch {
-        /* no Localith connections — fall through to channels */
-      }
-      try {
-        const data = await apiFetch("/api/v1/channels?limit=100");
-        const googleChannels = (data.channels ?? [])
-          .filter((channel: { platform: string }) => channel.platform === "google_reviews")
-          .map((channel: { id: string; display_name: string | null; status: string }) => ({
-            id: channel.id,
-            name: channel.display_name ?? "",
-            address: "",
-            status: channel.status,
-          }));
-        return { localithConns: {}, localith: null, locations: googleChannels, selectedId: googleChannels.length ? googleChannels[0].id : null };
-      } catch {
-        return { localithConns: {}, localith: null, locations: [], selectedId: null };
+        return { snapshots: {}, snapshot: null, locations: [], selectedId: null };
       }
     },
     staleTime: 5 * 60 * 1000,
@@ -484,8 +470,8 @@ export default function LocationsPage() {
   useEffect(() => {
     const d = locationsQuery.data;
     if (!d) return;
-    setLocalithConns(d.localithConns);
-    setLocalith(d.localith);
+    setSnapshots(d.snapshots);
+    setSnapshot(d.snapshot);
     setLocations(d.locations);
     if (d.selectedId) setSelectedId((prev) => prev ?? d.selectedId);
     setLoading(false);
@@ -497,14 +483,14 @@ export default function LocationsPage() {
 
    const selectedLocation = isBulk ? null : (locations.find((l) => l.id === selectedId) ?? locations[0] ?? null);
 
-   // Keep the displayed Localith snapshot scoped to the selected branch.
+   // Keep the displayed snapshot scoped to the selected branch.
    useEffect(() => {
      if (!selectedId || isBulk) return;
-     setLocalith((prev) => {
-       const next = localithConns[selectedId] ?? null;
+     setSnapshot((prev) => {
+       const next = snapshots[selectedId] ?? null;
        return prev?.listing_id === next?.listing_id ? prev : next;
      });
-   }, [selectedId, localithConns, isBulk]);
+   }, [selectedId, snapshots, isBulk]);
 
    // Bulk mode: load every branch profile in scope for "varies" comparison.
    useEffect(() => {
@@ -544,8 +530,8 @@ export default function LocationsPage() {
        const vals = ids.map((id) => JSON.stringify(fn(id) ?? null));
        return new Set(vals).size > 1;
      };
-     if (differs((id) => localithConns[id]?.phone_number || "")) set.add("phone");
-     if (differs((id) => localithConns[id]?.website_url || "")) set.add("website");
+     if (differs((id) => snapshots[id]?.phone || "")) set.add("phone");
+     if (differs((id) => snapshots[id]?.website || "")) set.add("website");
      if (differs((id) => bulkProfiles[id]?.categories?.primary || "")) set.add("primary");
      if (differs((id) => bulkProfiles[id]?.categories?.additional ?? [])) set.add("additional");
      if (differs((id) => bulkProfiles[id]?.hours?.regular ?? {})) set.add("hours");
@@ -555,7 +541,7 @@ export default function LocationsPage() {
      if (differs((id) => bulkProfiles[id]?.attributes ?? {})) set.add("attributes");
      if (differs((id) => bulkProfiles[id]?.description || "")) set.add("description");
      return set;
-    }, [isBulk, bulkBranches, localithConns, bulkProfiles]);
+    }, [isBulk, bulkBranches, snapshots, bulkProfiles]);
 
 const bulk: BulkScope | null = isBulk
       ? {
@@ -566,8 +552,8 @@ const bulk: BulkScope | null = isBulk
               f,
               Object.fromEntries(
                 bulkBranches.map((l) => {
-                  const c = localithConns[l.id];
-                  const v = f === "phone" ? c?.phone_number : c?.website_url;
+                  const c = snapshots[l.id];
+                  const v = f === "phone" ? c?.phone : c?.website;
                   return [l.id, (v ?? "").trim()];
                 })
               ),
@@ -577,9 +563,9 @@ const bulk: BulkScope | null = isBulk
       : null;
 
 
-   // Bulk mode has no single profile — leave the updates tab behind too.
+   // Bulk mode has no single profile — the services tab is per-branch.
    useEffect(() => {
-     if (isBulk && activeTab === "google-updates") setActiveTab("details");
+     if (isBulk && activeTab === "services") setActiveTab("details");
    }, [isBulk, activeTab]);
 
    // Load the merged profile (Google snapshot + Sayvors store) per location.
@@ -601,7 +587,7 @@ const bulk: BulkScope | null = isBulk
      return () => { cancelled = true; };
    }, [selectedId]);
 
-    // Use fullProfile.name (actual business name) over localith.listing_name when available.
+    // Use fullProfile.name (actual business name) over the list snapshot when available.
     useEffect(() => {
       const name = fullProfile?.name?.trim();
       if (!name || !selectedId) return;
@@ -621,7 +607,6 @@ const bulk: BulkScope | null = isBulk
     { key: "attributes", label: copy.tabAttributes },
     { key: "description", label: copy.tabDescription },
     { key: "services", label: copy.tabServices },
-    { key: "google-updates", label: copy.tabGoogleUpdates },
   ];
 
   // Groups are shared across pages, so fetch once on mount and refresh from
@@ -655,17 +640,18 @@ const bulk: BulkScope | null = isBulk
   const mapLocations = useMemo(
     () =>
       locations.map((l) => {
-        const conn = localithConns[l.id];
+        const snap = snapshots[l.id];
         return {
           id: l.id,
           name: l.name,
           address: l.address,
-          rating: conn?.average_rating ?? null,
-          reviews: conn?.total_reviews ?? null,
+          rating: snap?.rating ?? null,
+          reviews: snap?.reviews ?? null,
         };
       }),
-    [locations, localithConns]
+    [locations, snapshots]
   );
+  const hasExpired = locations.some((l) => l.status === "expired");
 
   return (
     <div className="h-full space-y-5 overflow-y-auto p-4 sm:p-6">
@@ -674,11 +660,16 @@ const bulk: BulkScope | null = isBulk
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2">
             <h1 className="text-[20px] font-bold tracking-tight text-ink dark:text-fog">{copy.title}</h1>
-            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${locations.length ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"}`}>
-              {locations.length ? copy.googleConnected : copy.googleNotConnected}
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${hasExpired ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" : locations.length ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"}`}>
+              {hasExpired ? copy.googleExpired : locations.length ? copy.googleConnected : copy.googleNotConnected}
             </span>
           </div>
           <p className="text-[13px] text-ink/45 dark:text-fog/45">{copy.subtitle}</p>
+          {hasExpired && (
+            <p className="rounded-xl border border-amber-500/20 bg-amber-50 px-3.5 py-2 text-[12px] text-amber-800 dark:border-amber-400/20 dark:bg-amber-900/20 dark:text-amber-200">
+              {copy.reconnectGoogle}
+            </p>
+          )}
         </div>
 
         {/* Toolbar row: location selector + actions */}
@@ -864,8 +855,8 @@ const bulk: BulkScope | null = isBulk
         />
       )}
 
-      {/* Profile completeness (Localith snapshot) — per-branch only */}
-      {!isBulk && localith && <CompletenessCard profile={localith} fullProfile={fullProfile} copy={copy} />}
+      {/* Profile completeness (native Google listing) — per-branch only */}
+      {!isBulk && snapshot && <CompletenessCard profile={snapshot} fullProfile={fullProfile} copy={copy} />}
 
       {loading ? (
         <div className="flex items-center justify-center py-20">
@@ -876,7 +867,7 @@ const bulk: BulkScope | null = isBulk
           {/* Tabs (google-updates is per-branch, hidden in bulk) */}
           <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1">
             <div role="tablist" className="flex gap-1 rounded-xl bg-ink/[0.03] p-1 dark:bg-fog/[0.04]">
-              {tabs.filter((tab) => !isBulk || tab.key !== "google-updates").map((tab) => (
+              {tabs.map((tab) => (
                 <button
                   key={tab.key}
                   role="tab"
@@ -911,19 +902,18 @@ const bulk: BulkScope | null = isBulk
             {activeTab === "details" && (
               <DetailsTab
                 location={selectedLocation}
-                profile={isBulk ? null : localith}
+                profile={isBulk ? null : snapshot}
                 fullProfile={isBulk ? null : fullProfile}
                 copy={copy}
                 onSave={(text, kind) => showBanner(kind ?? "ok", text)}
-                onProfile={async (c) => {
-                  setLocalith(c);
+                onSaved={() => {
+                  void locationsQuery.refetch();
                   if (selectedId && !isBulk) {
-                    try {
-                      const refreshed = await apiFetch(`/api/v1/locations/${selectedId}`);
-                      setFullProfile(refreshed as FullProfile);
-                    } catch {
-                      /* ignore refresh failure — locations update already applied */
-                    }
+                    apiFetch(`/api/v1/locations/${selectedId}`)
+                      .then((refreshed) => setFullProfile(refreshed as FullProfile))
+                      .catch(() => {
+                        /* ignore refresh failure — locations update already applied */
+                      });
                   }
                 }}
                 bulk={bulk}
@@ -1062,10 +1052,9 @@ const bulk: BulkScope | null = isBulk
                 }
               />
             )}
-            {activeTab === "google-updates" && (
-              <GoogleUpdatesTab copy={copy} />
+            {activeTab === "services" && (
+              <ServicesPanel embedded listingId={isBulk ? undefined : snapshot?.listing_id} />
             )}
-            {activeTab === "services" && <ServicesPanel embedded />}
           </div>
 
           <div className="mt-6">
@@ -1088,16 +1077,16 @@ function DetailsTab({
   profile,
   fullProfile,
   onSave,
-  onProfile,
+  onSaved,
   bulk,
   onBulkSave,
   copy,
 }: {
   location: LocationOption | null;
-  profile: LocalithConn | null;
+  profile: LocationSnapshot | null;
   fullProfile?: FullProfile | null;
   onSave: (text: string, kind?: "ok" | "err") => void;
-  onProfile: (c: LocalithConn) => void;
+  onSaved: () => void;
   bulk?: BulkScope | null;
   onBulkSave?: ((data: { phone: string; website: string }) => void) | null;
   copy: LocationsCopy;
@@ -1105,8 +1094,8 @@ function DetailsTab({
   const displayName = fullProfile?.name ?? location?.name ?? "";
   const [name, setName] = useState(displayName);
   const [address, setAddress] = useState(location?.address ?? "");
-  const [phone, setPhone] = useState(profile?.phone_number ?? "");
-  const [website, setWebsite] = useState(profile?.website_url ?? "");
+  const [phone, setPhone] = useState(profile?.phone ?? "");
+  const [website, setWebsite] = useState(profile?.website ?? "");
   const [saving, setSaving] = useState(false);
   // Details is a long form; collapsed by default so the map and the other
   // tabs stay reachable without scrolling past every field.
@@ -1115,12 +1104,16 @@ function DetailsTab({
   useEffect(() => {
     setName(fullProfile?.name ?? location?.name ?? "");
     setAddress(location?.address ?? "");
-    setPhone(profile?.phone_number ?? "");
-    setWebsite(profile?.website_url ?? "");
+    setPhone(profile?.phone ?? "");
+    setWebsite(profile?.website ?? "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location?.id, profile?.listing_id, fullProfile?.name]);
 
   const handleSave = async () => {
+    if (profile?.status === "expired") {
+      onSave(copy.reconnectGoogle, "err");
+      return;
+    }
     if (bulk && onBulkSave) {
       onBulkSave({ phone: phone.trim(), website: website.trim() });
       return;
@@ -1131,16 +1124,22 @@ function DetailsTab({
     }
     setSaving(true);
     try {
-      const updated = await apiFetch("/api/v1/integrations/localith/listing", {
-        method: "PATCH",
+      const updated = await apiFetch(`/api/v1/locations/${profile.listing_id}`, {
+        method: "PUT",
         body: JSON.stringify({
           name: name.trim() || undefined,
-          phone_number: phone.trim() || undefined,
-          website_url: website.trim() || undefined,
+          phone: phone.trim() || undefined,
+          website: website.trim() || undefined,
         }),
       });
-      onProfile(updated as LocalithConn);
-      onSave("Details saved to Google via Localith.", "ok");
+      const synced = (updated as FullProfile)?.google_synced ?? [];
+      onSave(
+        synced.length > 0
+          ? `Details saved · Synced to Google (${synced.join(", ")}).`
+          : "Details saved.",
+        "ok"
+      );
+      onSaved();
     } catch (e) {
       onSave(e instanceof Error ? e.message.slice(0, 160) : "Could not save details.", "err");
     } finally {
@@ -1170,7 +1169,7 @@ function DetailsTab({
       <>
       {profile && (
         <p className="-mt-2 text-[11px] text-ink/45 dark:text-fog/45">
-          {copy.syncedViaLocalith}
+          {copy.syncedViaGoogle}
           {profile.maps_url && (
             <> · <a href={profile.maps_url} target="_blank" rel="noreferrer" className="font-semibold text-deep-violet underline underline-offset-2">{copy.viewOnMaps}</a></>
           )}
@@ -1227,7 +1226,7 @@ function DetailsTab({
         </Field>
       )}
       <div className="pt-2 sm:flex sm:justify-end">
-        <button onClick={handleSave} disabled={saving} className="btn-primary w-full justify-center sm:w-auto">
+        <button onClick={handleSave} disabled={saving || profile?.status === "expired"} className="btn-primary w-full justify-center sm:w-auto">
           {saving
             ? <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> {copy.saving}</span>
             : bulk
@@ -1326,13 +1325,13 @@ function CategoriesTab({ initial, onSave, bulk, copy }: {
 }
 
 function HoursTab({ initial, onSave, bulk, copy }: {
-  initial?: Record<string, { open: string; close: string; closed: boolean }>;
-  onSave: (regular: Record<string, { open: string; close: string; closed: boolean }>) => Promise<void>;
+  initial?: Record<string, { open: string; close: string; closed: boolean; all_day?: boolean }>;
+  onSave: (regular: Record<string, { open: string; close: string; closed: boolean; all_day?: boolean }>) => Promise<void>;
   bulk?: BulkScope | null;
   copy: LocationsCopy;
 }) {
   const blank = () => Object.fromEntries(HOURS_DAYS.map((d) => [d, { open: "", close: "", closed: false }]));
-  const [hours, setHours] = useState<Record<string, { open: string; close: string; closed: boolean }>>(
+  const [hours, setHours] = useState<Record<string, { open: string; close: string; closed: boolean; all_day?: boolean }>>(
     { ...blank(), ...(initial ?? {}) }
   );
   const [saving, setSaving] = useState(false);
@@ -1344,7 +1343,14 @@ function HoursTab({ initial, onSave, bulk, copy }: {
   }, [JSON.stringify(initial)]);
 
   const updateDay = (day: string, field: string, value: string | boolean) => {
-    setHours({ ...hours, [day]: { ...hours[day], [field]: value } });
+    setHours({ ...hours, [day]: { ...hours[day], [field]: value, ...(field === "open" || field === "close" ? { all_day: false } : {}) } });
+  };
+  const toggleAllDay = (day: string) => {
+    const next = !hours[day].all_day;
+    setHours({
+      ...hours,
+      [day]: { ...hours[day], closed: false, all_day: next, open: next ? "00:00" : "", close: next ? "00:00" : "" },
+    });
   };
 
   const handleSave = async () => {
@@ -1381,9 +1387,23 @@ function HoursTab({ initial, onSave, bulk, copy }: {
             </label>
             {!hours[day].closed ? (
               <div className="flex items-center gap-2">
-                <input type="time" value={hours[day].open} onChange={(e) => updateDay(day, "open", e.target.value)} className="input-field w-28" />
-                <span className="text-[12px] text-ink/40">{copy.toLabel}</span>
-                <input type="time" value={hours[day].close} onChange={(e) => updateDay(day, "close", e.target.value)} className="input-field w-28" />
+                <button
+                  type="button"
+                  onClick={() => toggleAllDay(day)}
+                  aria-pressed={!!hours[day].all_day}
+                  className={`rounded-full border px-2 py-0.5 text-[10px] font-bold transition ${hours[day].all_day ? "border-deep-violet/30 bg-deep-violet/10 text-deep-violet" : "border-ink/10 text-ink/45 dark:border-fog/10 dark:text-fog/45"}`}
+                >
+                  24h
+                </button>
+                {hours[day].all_day ? (
+                  <span className="text-[12px] font-medium text-ink/60 dark:text-fog/60">{copy.open24Hours}</span>
+                ) : (
+                  <>
+                    <input type="time" value={hours[day].open} onChange={(e) => updateDay(day, "open", e.target.value)} className="input-field w-28" />
+                    <span className="text-[12px] text-ink/40">{copy.toLabel}</span>
+                    <input type="time" value={hours[day].close} onChange={(e) => updateDay(day, "close", e.target.value)} className="input-field w-28" />
+                  </>
+                )}
               </div>
             ) : (
               <span className="text-[12px] font-medium text-ink/30 dark:text-fog/30">{copy.closedLabel}</span>
@@ -1807,40 +1827,6 @@ function DescriptionTab({ initial, initialOpeningDate, onSave, bulk, copy }: {
               : copy.saveDescription}
         </button>
       </div>
-    </div>
-  );
-}
-
-function GoogleUpdatesTab({ copy }: { copy: LocationsCopy }) {
-  const [updates, setUpdates] = useState<{ id: string; field: string; current: string; proposed: string; status: string }[]>([]);
-
-  return (
-      <div className="space-y-5">
-        <SectionTitle title={copy.tabGoogleUpdates} subtitle={copy.googleUpdatesSubtitle} />
-        <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.googleUpdatesHint}</p>
-      {updates.length === 0 ? (
-        <div className="flex flex-col items-center py-10">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-2 h-8 w-8 text-ink/20 dark:text-fog/20">
-            <path d="M22 11.08V12a10 10 0 11-5.93-9.14" strokeLinecap="round" />
-            <path d="M22 4L12 14.01l-3-3" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          <p className="text-[13px] text-ink/40 dark:text-fog/40">{copy.googleUpdatesEmpty}</p>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {updates.map((u) => (
-            <div key={u.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 sm:flex-nowrap sm:gap-4 dark:border-fog/[0.06] dark:bg-fog/[0.02]">
-              <div className="min-w-0 flex-1">
-                <p className="text-[12px] font-semibold text-ink dark:text-fog">{u.field}</p>
-                <p className="text-[11px] text-ink/40 dark:text-fog/40">{copy.currentLabel} {u.current}</p>
-                <p className="text-[11px] text-deep-violet">{copy.proposedLabel} {u.proposed}</p>
-              </div>
-              <button className="rounded-lg bg-emerald-500 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-600">{copy.accept}</button>
-              <button className="rounded-lg border border-ink/[0.1] px-2.5 py-1 text-[11px] font-semibold text-ink/50 hover:bg-ink/[0.04] dark:text-fog/50">{copy.reject}</button>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

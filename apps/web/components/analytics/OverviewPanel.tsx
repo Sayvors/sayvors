@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api-rag";
 import { dedupeBusinesses } from "@/lib/channel-identity";
+import { GBP_DASHBOARD_URL } from "@/lib/google-links";
 import {
   fetchOverview,
   fetchTimeseries,
@@ -14,7 +15,6 @@ import MessagingSection from "@/components/analytics/MessagingSection";
 import { MetricChart, RatingDistribution, SentimentSplitBar } from "@/components/analytics/Charts";
 import PulseCards from "@/components/analytics/PulseCards";
 import PresenceSection, {
-  presenceFromProfile,
   type PresenceData,
 } from "@/components/analytics/PresenceSection";
 import { useI18n } from "@/lib/i18n/I18nProvider";
@@ -52,25 +52,27 @@ export default function OverviewPanel() {
           (c: { platform: string }) => c.platform === "google_reviews"
         )
       );
-      const channels = google.map((c: { id: string; display_name: string | null }) => ({
+      const channels = google.map((c: {
+        id: string;
+        display_name: string | null;
+        place_id?: string | null;
+        maps_url?: string | null;
+      }) => ({
         id: c.id,
         label: c.display_name ?? "Google Business",
+        placeId: c.place_id ?? null,
+        mapsUrl: c.maps_url ?? null,
       }));
       const labelMap: Record<string, string> = {};
       for (const c of google as { id: string; display_name: string | null }[]) {
         if (c.id) labelMap[c.id] = c.display_name ?? "Google Business";
       }
-      const idMap: Record<string, string> = {};
-      for (const c of google as { id: string; listing_id?: string | null }[]) {
-        if (c.id && c.listing_id) idMap[c.id] = c.listing_id;
-      }
-      return { channels, labelMap, idMap };
+      return { channels, labelMap };
     },
     staleTime: 5 * 60 * 1000,
   });
   const channels = channelsQuery.data?.channels ?? [];
   const channelLabels = channelsQuery.data?.labelMap ?? {};
-  const channelListingIds = channelsQuery.data?.idMap ?? {};
 
   // Overview + timeseries (refetch on days/channel/refresh).
   const overviewQuery = useQuery({
@@ -89,41 +91,35 @@ export default function OverviewPanel() {
   const loading = channelsQuery.isPending || overviewQuery.isPending;
   const error = overviewQuery.isError && !overviewQuery.data;
 
-  // Google presence snapshot (per branch or aggregate).
-  const presenceQuery = useQuery({
-    queryKey: queryKeys.analytics.presence(channelId),
-    queryFn: async () => {
-      if (channelId) {
-        const listingId = channelListingIds[channelId] ?? null;
-        if (!listingId) return null;
-        const prof = await apiFetch(
-          `/api/v1/integrations/localith/profile?listing_id=${encodeURIComponent(listingId)}`
-        ).catch(() => null);
-        return presenceFromProfile(prof);
-      }
-      const agg = await apiFetch("/api/v1/integrations/localith/profiles/aggregate").catch(() => null);
-      if (!agg) return null;
-      const n = (k: string) => {
-        const v = agg[k];
-        const f = typeof v === "number" ? v : parseFloat(String(v ?? ""));
-        return Number.isFinite(f) ? f : 0;
-      };
-      return {
-        listingName: typeof agg.listing_name === "string" ? agg.listing_name : "",
-        windowLabel: typeof agg.window_label === "string" ? agg.window_label : null,
-        searchViews: n("search_views"),
-        mapViews: n("map_views"),
-        websiteClicks: n("website_clicks"),
-        directionRequests: n("direction_requests"),
-        phoneCalls: n("phone_calls"),
-        totalReviews: n("total_reviews"),
-        averageRating: n("average_rating"),
-      } as PresenceData;
-    },
-    enabled: !channelsQuery.isPending,
-    staleTime: 60 * 1000,
-  });
-  const presence = presenceQuery.data ?? null;
+  // Google presence snapshot from the native performance rollups. No second
+  // provider profile is involved; the selected branch supplies its Maps link.
+  const presence = useMemo<PresenceData | null>(() => {
+    if (channels.length === 0) return null;
+    const sum = (values: Array<number | undefined>): number =>
+      values.reduce<number>((acc, value) => acc + (Number(value) || 0), 0);
+    const selected = channelId
+      ? channels.find((c) => c.id === channelId) ?? null
+      : null;
+    const branchCount = channelId ? 1 : channels.length;
+    return {
+      listingName:
+        selected?.label ??
+        (channels.length > 1
+          ? `All businesses (${channels.length} branches)`
+          : channels[0]?.label ?? "Google Business"),
+      windowLabel: `last ${days} days`,
+      searchViews: sum(points.map((p) => p.impressions_search)),
+      mapViews: sum(points.map((p) => p.impressions_maps)),
+      websiteClicks: sum(points.map((p) => p.website_clicks)),
+      directionRequests: sum(points.map((p) => p.direction_requests)),
+      phoneCalls: sum(points.map((p) => p.call_clicks)),
+      totalReviews: overview?.total_reviews ?? 0,
+      averageRating: overview?.avg_rating ?? 0,
+      mapsUrl: selected?.mapsUrl ?? null,
+      placeId: selected?.placeId ?? null,
+      branchCount,
+    };
+  }, [channels, channelId, days, overview, points]);
 
   const hasData = !!overview && overview.total_reviews > 0;
   const hasPresence = !!presence;
@@ -233,7 +229,13 @@ export default function OverviewPanel() {
               {loading ? (
                 <div className="h-48 animate-pulse rounded-[2px] bg-[var(--ui-sunken)] sm:h-72" aria-hidden />
               ) : (
-                <MetricChart points={points} />
+                <MetricChart
+                  points={points}
+                  source="Connected review channels"
+                  sourceDetail={`last ${days} days`}
+                  sourceHref={channels.length > 0 ? GBP_DASHBOARD_URL : undefined}
+                  sourceLinkLabel="Open GBP dashboard"
+                />
               )}
             </div>
             <div className="space-y-5 sm:space-y-6">
@@ -246,7 +248,16 @@ export default function OverviewPanel() {
                     ))}
                   </div>
                 ) : (
-                  overview && <RatingDistribution distribution={overview.rating_distribution} total={overview.total_reviews} />
+                  overview && (
+                    <RatingDistribution
+                      distribution={overview.rating_distribution}
+                      total={overview.total_reviews}
+                      source="Connected review channels"
+                      sourceDetail={`last ${days} days`}
+                      sourceHref={channels.length > 0 ? GBP_DASHBOARD_URL : undefined}
+                      sourceLinkLabel="Open GBP dashboard"
+                    />
+                  )
                 )}
               </div>
               <div className="ui-card p-4 sm:p-5">
@@ -259,6 +270,10 @@ export default function OverviewPanel() {
                       positive={overview.sentiment.positive}
                       neutral={overview.sentiment.neutral}
                       negative={overview.sentiment.negative}
+                      source="Sayvors sentiment model"
+                      sourceDetail={`connected review text · last ${days} days`}
+                      sourceHref={channels.length > 0 ? GBP_DASHBOARD_URL : undefined}
+                      sourceLinkLabel="Open GBP dashboard"
                     />
                   )
                 )}

@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { TimeseriesPoint } from "@/lib/api-analytics";
+import { FactSource } from "@/components/analytics/FactSource";
 
 /**
  * Google-presence chart, Analytics-style: pick a metric, read the trend.
@@ -128,6 +129,10 @@ export default function PresenceChart({
   locale = "en",
   loading = false,
   scopeLabel,
+  source,
+  sourceDetail,
+  sourceHref,
+  sourceLinkLabel,
 }: {
   points: TimeseriesPoint[];
   channelLabels: Record<string, string>;
@@ -136,6 +141,10 @@ export default function PresenceChart({
   locale?: string;
   loading?: boolean;
   scopeLabel: string;
+  source?: string;
+  sourceDetail?: string;
+  sourceHref?: string;
+  sourceLinkLabel?: string;
 }) {
   const metrics = useMemo(() => METRICS.filter((m) => m.group === group), [group]);
   const firstKey = metrics[0]?.key ?? "impressions";
@@ -457,6 +466,14 @@ export default function PresenceChart({
             </li>
           ))}
         </ul>
+      )}
+      {source && (
+        <FactSource
+          source={source}
+          detail={sourceDetail}
+          href={sourceHref}
+          linkLabel={sourceLinkLabel}
+        />
       )}
     </section>
   );

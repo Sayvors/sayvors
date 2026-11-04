@@ -1,8 +1,8 @@
 """Google Business Profile (Business Information) adapter — locations read/write.
 
-Used when LOCATIONS_WRITE_PROVIDER=google (GBP API access granted). Same
-OAuth app and tenant tokens as the reviews client — the `business.manage`
-scope already covers these endpoints.
+The Locations page writes exclusively through this client using each
+tenant's native Google OAuth tokens — the `business.manage` scope already
+covers these endpoints.
 
 Reference: https://developers.google.com/my-business/reference/businessinformation
 
@@ -108,12 +108,21 @@ def _parse_hhmm(value: str) -> tuple[int, int] | None:
     return None
 
 
-def build_regular_periods(regular: dict) -> list[dict]:
-    """Our {Day: {open, close, closed}} → GBP periods (string "HH:MM" times).
+def _tod(value: tuple[int, int] | None, *, end_of_day: bool = False) -> dict:
+    """(h, m) → Google TimeOfDay. `end_of_day` means midnight at 24:00."""
+    if end_of_day:
+        return {"hours": 24, "minutes": 0}
+    h, m = value or (0, 0)
+    return {"hours": h, "minutes": m}
 
-    Overnight ranges (close <= open) roll closeDay to the next day.
-    Closed days are omitted (absence = closed in the GBP model).
-    Stored day names are matched case-insensitively ("Monday" or "MONDAY").
+
+def build_regular_periods(regular: dict) -> list[dict]:
+    """Our {Day: {open, close, closed, all_day}} → GBP periods.
+
+    Google's regularHours.periods take TimeOfDay objects, not "HH:MM"
+    strings. Overnight ranges (close < open) roll closeDay to the next day;
+    an all-day day closes at 24:00 on the same day. Closed days are omitted
+    (absence = closed in the GBP model). Day names match case-insensitively.
     """
     by_day = {str(k or "").strip().lower(): v for k, v in (regular or {}).items()}
     periods: list[dict] = []
@@ -123,16 +132,24 @@ def build_regular_periods(regular: dict) -> list[dict]:
             continue
         opened = _parse_hhmm(str(cfg.get("open") or ""))
         closed = _parse_hhmm(str(cfg.get("close") or ""))
+        if cfg.get("all_day") or (opened and closed and opened == closed == (0, 0)):
+            periods.append({
+                "openDay": day,
+                "openTime": _tod((0, 0)),
+                "closeDay": day,
+                "closeTime": _tod((0, 0), end_of_day=True),
+            })
+            continue
         if not opened or not closed:
             continue
         close_day = day
-        if closed <= opened:
+        if closed < opened:
             close_day = DAYS[(_DAY_INDEX[day] + 1) % 7]
         periods.append({
             "openDay": day,
-            "openTime": f"{opened[0]:02d}:{opened[1]:02d}",
+            "openTime": _tod(opened),
             "closeDay": close_day,
-            "closeTime": f"{closed[0]:02d}:{closed[1]:02d}",
+            "closeTime": _tod(closed),
         })
     return periods
 
@@ -160,8 +177,8 @@ def parse_special_entry(entry: dict) -> dict | None:
     opened, closed = _parse_hhmm(m.group(1)), _parse_hhmm(m.group(2))
     if not opened or not closed:
         return None
-    period["openTime"] = f"{opened[0]:02d}:{opened[1]:02d}"
-    period["closeTime"] = f"{closed[0]:02d}:{closed[1]:02d}"
+    period["openTime"] = _tod(opened)
+    period["closeTime"] = _tod(closed)
     return period
 
 
@@ -180,9 +197,9 @@ def build_more_hours(entries: list[dict]) -> tuple[list[dict], list[str]]:
             "hoursTypeId": hours_type,
             "periods": [{
                 "openDay": "MONDAY",
-                "openTime": f"{opened[0]:02d}:{opened[1]:02d}",
+                "openTime": _tod(opened),
                 "closeDay": "SUNDAY",
-                "closeTime": f"{closed[0]:02d}:{closed[1]:02d}",
+                "closeTime": _tod(closed),
             }],
         })
     return built, skipped
@@ -324,11 +341,15 @@ class GoogleBusinessClient(GoogleReviewsClient):
         self,
         location_id: str,
         *,
+        name: str | None = None,
+        phone: str | None = None,
+        website: str | None = None,
         description: str | None = None,
         categories: dict | None = None,
         hours: dict | None = None,
         opening_date: str | None = None,
         attributes: dict | None = None,
+        service_area: list | None = None,
     ) -> dict:
         """Push profile sections, one API call per section group.
 
@@ -341,9 +362,11 @@ class GoogleBusinessClient(GoogleReviewsClient):
 
         core_body: dict = {}
         core_mask: list[str] = []
+        core_sections: list[str] = []
         if description is not None:
             core_body["profile"] = {"description": description[:750]}
             core_mask.append("profile.description")
+            core_sections.append("description")
         if opening_date:
             import datetime as _dt
 
@@ -352,16 +375,66 @@ class GoogleBusinessClient(GoogleReviewsClient):
                 core_body["openInfo"] = {"openingDate": {
                     "year": day.year, "month": day.month, "day": day.day}}
                 core_mask.append("openInfo.openingDate")
+                core_sections.append("opening_date")
             except ValueError:
                 skipped["opening_date"] = f"unparseable date {opening_date!r}"
         if core_body:
             try:
                 await self.patch_location(location_id, core_body, ",".join(core_mask))
-                pushed.append("description" if description is not None else "core")
-                if "openInfo.openingDate" in core_mask:
-                    pushed.append("opening_date")
+                pushed.extend(core_sections)
             except GoogleReviewsError as e:
                 skipped["core"] = str(e)[:200]
+
+        # Service areas are place IDs, not free text. Resolve through Places
+        # API (New) only when the merchant actually changed the list.
+        if service_area is not None:
+            from ..locations.places import PlacesError, resolve_service_area
+
+            names = [str(name).strip() for name in service_area if str(name).strip()]
+            if not names:
+                skipped["service_area"] = "empty; Google keeps the current area"
+            else:
+                try:
+                    place_infos = await resolve_service_area(names)
+                except PlacesError as e:
+                    skipped["service_area"] = str(e)[:200]
+                else:
+                    if not place_infos:
+                        skipped["service_area"] = (
+                            "no service area resolved to a Google region place"
+                        )
+                    else:
+                        try:
+                            await self.patch_location(
+                                location_id,
+                                {"serviceArea": {"places": {"placeInfos": place_infos}}},
+                                "serviceArea.places.placeInfos",
+                            )
+                            pushed.append("service_area")
+                        except GoogleReviewsError as e:
+                            skipped["service_area"] = str(e)[:200]
+
+        # Identity fields are patched one by one so a title Google reserves
+        # for verified locations cannot block a phone or website update.
+        identity_sections: list[tuple[str, dict, str]] = []
+        if name is not None:
+            identity_sections.append(("name", {"title": name[:255]}, "title"))
+        if phone is not None:
+            identity_sections.append((
+                "phone",
+                {"phoneNumbers": {"primaryPhone": phone[:40]}},
+                "phoneNumbers.primaryPhone",
+            ))
+        if website is not None:
+            identity_sections.append((
+                "website", {"websiteUri": website[:255]}, "websiteUri"
+            ))
+        for section, body, mask in identity_sections:
+            try:
+                await self.patch_location(location_id, body, mask)
+                pushed.append(section)
+            except GoogleReviewsError as e:
+                skipped[section] = str(e)[:200]
 
         if categories is not None:
             try:

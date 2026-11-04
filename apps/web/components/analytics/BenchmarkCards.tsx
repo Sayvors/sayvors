@@ -1,6 +1,8 @@
 "use client";
 
 import type { BenchmarkResponse } from "@/lib/api-analytics";
+import { FactSource } from "@/components/analytics/FactSource";
+import { GBP_DASHBOARD_URL, mapsPlaceUrl } from "@/lib/google-links";
 
 function Row({
   label,
@@ -37,11 +39,14 @@ export default function BenchmarkCards({
   loading,
   onRefreshExternal,
   refreshingExternal,
+  googleConnected = false,
 }: {
   benchmark: BenchmarkResponse | null;
   loading: boolean;
   onRefreshExternal?: () => void;
   refreshingExternal?: boolean;
+  /** Whether a Google Business Profile is connected; gates the GBP link. */
+  googleConnected?: boolean;
 }) {
   if (loading || !benchmark) {
     return (
@@ -66,6 +71,12 @@ export default function BenchmarkCards({
   const ratingDelta = benchmark.current_avg_rating - benchmark.similar_avg_rating;
   const reviewsDelta = benchmark.current_reviews_total - benchmark.similar_reviews_total;
   const responseDelta = benchmark.current_response_rate - benchmark.similar_response_rate;
+  const ext = benchmark.external;
+  const deltaWindow = ext?.delta_window_days ?? 30;
+  const fmtDelta = (value: number | null | undefined, suffix = "") => {
+    if (value === null || value === undefined) return "—";
+    return `${value > 0 ? "+" : ""}${value}${suffix}`;
+  };
 
   return (
     <div className="space-y-4 sm:space-y-5">
@@ -112,6 +123,13 @@ export default function BenchmarkCards({
               You are the first business in this market on Sayvors. The peer median will appear as others join.
             </p>
           )}
+          <FactSource
+            source="Sayvors connected listings"
+            detail={`Google reviews · last ${benchmark.days} days`}
+            note="median of real connected businesses, not a national average"
+            href={googleConnected ? GBP_DASHBOARD_URL : null}
+            linkLabel="Open GBP dashboard"
+          />
         </section>
 
         {/* Gap to 4.5 */}
@@ -137,6 +155,16 @@ export default function BenchmarkCards({
               {gap.math && <p className="mt-1 break-all text-[10px] text-[var(--ui-ink-2)]">{gap.math}</p>}
             </>
           )}
+          <FactSource
+            source="Google review ratings"
+            detail={
+              gap
+                ? `${gap.current_reviews} reviews across your connected listings`
+                : "no review data yet"
+            }
+            href={googleConnected ? GBP_DASHBOARD_URL : null}
+            linkLabel="Open GBP dashboard"
+          />
         </section>
       </div>
 
@@ -172,6 +200,13 @@ export default function BenchmarkCards({
         <p className="mt-3 text-[10px] text-[var(--ui-ink-2)]">
           Median is the middle business in this peer set, not a national average. Sayvors-connected businesses only — not every competitor on Google. Treat small cohorts as directional.
         </p>
+        <FactSource
+          source="Sayvors connected listings"
+          detail="Google reviews · aggregated by city/category"
+          note="methodology card: median, not a national average"
+          href={googleConnected ? GBP_DASHBOARD_URL : null}
+          linkLabel="Open GBP dashboard"
+        />
       </section>
 
       {benchmark.external && (
@@ -222,22 +257,83 @@ export default function BenchmarkCards({
                   <p className="text-[22px] font-black tabular-nums text-[var(--ui-ink)]">{benchmark.external.count}</p>
                 </div>
               </div>
-              <p className="mt-2 text-[10px] text-[var(--ui-ink-2)]">
-                {benchmark.external.radius_m ? `Within ${benchmark.external.radius_m}m` : "Radius not recorded"}
-                {benchmark.external.category ? ` · ${benchmark.external.category}` : ""}
-                {benchmark.external.fetched_at ? ` · fetched ${new Date(benchmark.external.fetched_at).toLocaleDateString()}` : ""}
-                {benchmark.external.stale ? " · stale" : ""}
-              </p>
+              {(benchmark.external.median_rating_delta != null ||
+                benchmark.external.median_reviews_delta != null ||
+                benchmark.external.median_velocity_per_month != null) && (
+                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                  <div className="rounded-[2px] bg-[var(--ui-sunken)] p-2.5">
+                    <p className="text-[9px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">Peer rating Δ · {deltaWindow}d</p>
+                    <p className="mt-1 text-[16px] font-black tabular-nums text-[var(--ui-ink)]">
+                      {fmtDelta(benchmark.external.median_rating_delta, "★")}
+                    </p>
+                  </div>
+                  <div className="rounded-[2px] bg-[var(--ui-sunken)] p-2.5">
+                    <p className="text-[9px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">Peer reviews Δ · {deltaWindow}d</p>
+                    <p className="mt-1 text-[16px] font-black tabular-nums text-[var(--ui-ink)]">
+                      {fmtDelta(benchmark.external.median_reviews_delta)}
+                    </p>
+                  </div>
+                  <div className="rounded-[2px] bg-[var(--ui-sunken)] p-2.5">
+                    <p className="text-[9px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">Peer velocity · /mo</p>
+                    <p className="mt-1 text-[16px] font-black tabular-nums text-[var(--ui-ink)]">
+                      {fmtDelta(benchmark.external.median_velocity_per_month)}
+                    </p>
+                  </div>
+                </div>
+              )}
+              <FactSource
+                source="Google Places"
+                detail={[
+                  benchmark.external.radius_m
+                    ? `within ${benchmark.external.radius_m}m`
+                    : "radius not recorded",
+                  benchmark.external.category,
+                  benchmark.external.fetched_at
+                    ? `fetched ${new Date(benchmark.external.fetched_at).toLocaleDateString()}`
+                    : null,
+                  benchmark.external.stale ? "stale" : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+                note={
+                  benchmark.external.peers?.length
+                    ? "each peer name opens its Google Maps place"
+                    : null
+                }
+              />
               {benchmark.external.peers && benchmark.external.peers.length > 0 && (
                 <ul className="mt-3 grid gap-1 sm:grid-cols-2">
-                  {benchmark.external.peers.slice(0, 6).map((p) => (
-                    <li key={p.place_id} className="flex items-center gap-2 text-[11px]">
-                      <span className="min-w-0 flex-1 truncate text-[var(--ui-ink)]">{p.name}</span>
-                      <span className="shrink-0 tabular-nums text-[var(--ui-ink-2)]">
-                        {p.rating !== null ? p.rating.toFixed(1) + "★" : "—"} · {p.review_count}
-                      </span>
-                    </li>
-                  ))}
+                  {benchmark.external.peers.slice(0, 6).map((p) => {
+                    const href = mapsPlaceUrl(p.place_id);
+                    return (
+                      <li key={p.place_id} className="flex items-center gap-2 text-[11px]">
+                        {href ? (
+                          <a
+                            href={href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={`${p.name} on Google Maps`}
+                            className="inline-flex min-w-0 flex-1 items-center gap-1 truncate text-[var(--ui-ink)] underline decoration-[var(--ui-line-strong)] underline-offset-2 outline-none transition hover:decoration-[var(--ui-ink)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+                          >
+                            <span className="truncate">{p.name}</span>
+                            <span aria-hidden className="shrink-0 text-[9px]">↗</span>
+                            <span className="sr-only"> (opens in a new tab)</span>
+                          </a>
+                        ) : (
+                          <span className="min-w-0 flex-1 truncate text-[var(--ui-ink)]">{p.name}</span>
+                        )}
+                        <span className="shrink-0 tabular-nums text-[var(--ui-ink-2)]">
+                          {p.rating !== null ? p.rating.toFixed(1) + "★" : "—"} · {p.review_count}
+                        </span>
+                        {(p.rating_delta != null || p.reviews_delta != null) && (
+                          <span className="w-20 shrink-0 text-right text-[10px] font-semibold tabular-nums text-[var(--ui-ink-2)]">
+                            {p.rating_delta != null ? `${p.rating_delta > 0 ? "+" : ""}${p.rating_delta.toFixed(2)}★` : ""}
+                            {p.reviews_delta != null ? ` · ${p.reviews_delta > 0 ? "+" : ""}${p.reviews_delta}` : ""}
+                          </span>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </>

@@ -5,7 +5,7 @@ import { apiFetch } from "./api-rag";
 
 /*
  * Location posts are the pre-composer Google posts: one row per branch in
- * the location_posts table, published through Localith by the posts worker.
+ * the location_posts table, published through Google by the posts worker.
  * They never pass through the publishing job queue, so the composer's job
  * feed cannot see them — this hook loads them on the same 15s cycle so the
  * posts & media feed shows the whole history, not just composer posts.

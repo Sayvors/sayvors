@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..channels.models import Channel
 from .models import LocationDailyMetric, ReviewInsight
+from .scoping import disconnected_channel_ids
 from .service import get_overview, reputation_score
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,17 @@ def _parse_city(address: str | None) -> str | None:
     if first in SAUDI_CITIES:
         return first
     return first if len(first) >= 3 and first.isalpha() else None
+
+
+def _channel_meta(channel: Channel) -> dict:
+    """The native channel's stored address/category/Place ID metadata."""
+    import json
+
+    try:
+        meta = json.loads(channel.metadata_json or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return meta if isinstance(meta, dict) else {}
 
 
 def _median(values: list[float]) -> float | None:
@@ -174,7 +186,6 @@ async def _tenant_cohort(
     insights). Scope widens city+category → city → whole network until it
     finds anyone; empty network returns an honest empty cohort.
     """
-    from ..localith.models import LocalithConnection
     from ..users.models import User
 
     now = datetime.now(timezone.utc)
@@ -182,22 +193,46 @@ async def _tenant_cohort(
 
     me = await db.get(User, user_id)
     my_category = ((getattr(me, "business_type", None) or "").strip() or None) if me else None
-    my_conns = (
+
+    my_channels = (
         await db.execute(
-            select(LocalithConnection).where(LocalithConnection.user_id == user_id)
+            select(Channel).where(
+                Channel.user_id == user_id,
+                Channel.platform == "google_reviews",
+                Channel.status == "active",
+            )
         )
     ).scalars().all()
     city_counts: dict[str, int] = {}
-    for c in my_conns:
-        city = _parse_city(c.address)
+    for ch in my_channels:
+        meta = _channel_meta(ch)
+        city = _parse_city(meta.get("address"))
         if city:
             city_counts[city] = city_counts.get(city, 0) + 1
+        if not my_category:
+            my_category = (meta.get("category") or "").strip() or None
     my_city = max(city_counts, key=city_counts.get) if city_counts else None
 
-    all_conns = (
-        await db.execute(select(LocalithConnection).order_by(LocalithConnection.created_at))
+    # Native Google locations are the peer set; every active Google channel
+    # belongs to a real Sayvors business.
+    all_other = (
+        await db.execute(
+            select(Channel)
+            .where(
+                Channel.platform == "google_reviews",
+                Channel.status == "active",
+                Channel.user_id != user_id,
+            )
+            .order_by(Channel.created_at)
+        )
     ).scalars().all()
-    other = [c for c in all_conns if c.user_id != user_id]
+    # Real peers are either native Google channels with OAuth credentials or
+    # A seeded/demo row with neither credentials nor stored reviews is not a
+    # business and must not enter the market ranking.
+    other = [
+        ch for ch in all_other
+        if ch.access_token or ch.refresh_token
+    ]
     if not other:
         return {"scope": "none", "label": "Sayvors network", "city": my_city,
                 "category": my_category, "count": 0, "competitors": [],
@@ -207,7 +242,7 @@ async def _tenant_cohort(
                 "median_positive_pct": None, "median_reputation": None,
                 "median_recency_pct": None}
 
-    other_ids = list({c.user_id for c in other})
+    other_ids = list({ch.user_id for ch in other})
     users = {
         u.id: u
         for u in (
@@ -215,41 +250,33 @@ async def _tenant_cohort(
         ).scalars().all()
     }
 
-    def _cat(uid: str) -> str | None:
-        u = users.get(uid)
-        return ((getattr(u, "business_type", None) or "").strip() or None) if u else None
+    def _cat(ch: Channel) -> str | None:
+        meta = _channel_meta(ch)
+        u = users.get(ch.user_id)
+        return (
+            (meta.get("category") or "").strip()
+            or ((getattr(u, "business_type", None) or "").strip() if u else "")
+            or None
+        )
+
+    def _city(ch: Channel) -> str | None:
+        return _parse_city(_channel_meta(ch).get("address"))
 
     levels: list[tuple[str, list]] = []
     if my_city and my_category:
         levels.append(("city_category", [
-            c for c in other
-            if _parse_city(c.address) == my_city
-            and (_cat(c.user_id) or "").lower() == my_category.lower()
+            ch for ch in other
+            if _city(ch) == my_city
+            and (_cat(ch) or "").lower() == my_category.lower()
         ]))
     if my_city:
-        levels.append(("city", [c for c in other if _parse_city(c.address) == my_city]))
+        levels.append(("city", [ch for ch in other if _city(ch) == my_city]))
     levels.append(("network", list(other)))
 
     scope, picked = next(((s, rows) for s, rows in levels if rows), ("none", []))
     picked = picked[:50]  # bounded: ranking stays instant at any network size
 
-    # Channels + insights for the picked branches (batched, two queries).
-    picked_ids = list({c.user_id for c in picked})
-    ch_rows = (
-        await db.execute(
-            select(Channel).where(
-                Channel.user_id.in_(picked_ids),
-                Channel.platform == "google_reviews",
-            )
-        )
-    ).scalars().all()
-    chan_by_listing: dict[tuple[str, str], list[Channel]] = {}
-    for ch in ch_rows:
-        key = ch.listing_key or ""
-        chan_by_listing.setdefault((ch.user_id, key), []).append(ch)
-        chan_by_listing.setdefault((ch.user_id, (ch.display_name or "").lower()), []).append(ch)
-
-    chan_ids = [ch.id for ch in ch_rows]
+    chan_ids = [ch.id for ch in picked]
     insights: list[ReviewInsight] = []
     if chan_ids:
         insights = (
@@ -262,12 +289,10 @@ async def _tenant_cohort(
         ins_by_chan.setdefault(ins.channel_id, []).append(ins)
 
     competitors: list[dict] = []
-    for c in picked:
-        chans = (chan_by_listing.get((c.user_id, c.listing_id))
-                 or chan_by_listing.get((c.user_id, (c.listing_name or "").lower()))
-                 or [])
-        rows = [ins for ch in chans for ins in ins_by_chan.get(ch.id, [])]
+    for ch in picked:
+        rows = ins_by_chan.get(ch.id, [])
         total = len(rows)
+        avg_rating = round(sum(r.rating for r in rows) / total, 2) if total else 0.0
         replied = sum(1 for r in rows if r.replied)
         positives = sum(1 for r in rows if (r.sentiment or "") == "positive")
         response_rate = round(replied / total * 100, 1) if total else None
@@ -279,21 +304,21 @@ async def _tenant_cohort(
         )
         recency_pct = round(recent_90 / total * 100, 1) if total else None
         competitors.append({
-            "name": c.listing_name or "Nearby business",
-            "city": _parse_city(c.address),
-            "avg_rating": c.average_rating or 0.0,
-            "reviews_total": c.total_reviews or 0,
+            "name": ch.display_name or "Nearby business",
+            "city": _city(ch),
+            "avg_rating": avg_rating,
+            "reviews_total": total,
             "response_rate": response_rate,
             "velocity_per_month": velocity,
             "recency_pct": recency_pct,
             "positive_pct": round(positive_pct * 100, 1) if positive_pct is not None else None,
             "reputation_score": reputation_score(
-                c.average_rating or 0.0,
+                avg_rating,
                 (response_rate / 100.0) if response_rate is not None else 0.0,
                 positive_pct if positive_pct is not None else 0.5,
             ),
             "is_you": False,
-            "listing_id": c.listing_id,
+            "listing_id": ch.listing_key or ch.id,
         })
 
     ratings = [e["avg_rating"] for e in competitors if e["avg_rating"] > 0] or [e["avg_rating"] for e in competitors]
@@ -317,7 +342,7 @@ async def _tenant_cohort(
         "category": my_category,
         "count": len(competitors),
         "competitors": competitors,
-        "user_ids": sorted({c.user_id for c in picked}),
+        "user_ids": sorted({ch.user_id for ch in picked}),
         "median_rating": round(_median(ratings) or 0.0, 2) if ratings else None,
         "median_reviews": int(_median(reviews) or 0) if reviews else None,
         "top3_median_rating": round(_median(top3) or 0.0, 2) if top3 else None,
@@ -506,6 +531,7 @@ async def get_benchmark(
     now = datetime.now(timezone.utc)
     live = [
         ReviewInsight.user_id == user_id,
+        ReviewInsight.channel_id.notin_(disconnected_channel_ids(user_id)),
         ReviewInsight.removed_at.is_(None),
         ReviewInsight.skipped.is_(False),
     ]

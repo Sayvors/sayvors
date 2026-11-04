@@ -80,25 +80,20 @@ async def primary_card(db, tenant_id: str) -> PrimaryCard | None:
     to text; a location row without a maps URL still yields a contact card
     when a phone exists.
     """
-    from sqlalchemy import select
+    from ...locations.service import channel_meta, native_channels
 
-    from ...localith.models import LocalithConnection
-
-    row = (
-        await db.execute(
-            select(LocalithConnection)
-            .where(LocalithConnection.user_id == tenant_id)
-            .order_by(LocalithConnection.created_at)
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-    if row is None:
+    channels = await native_channels(
+        db, tenant_id, statuses=("active", "expired")
+    )
+    if not channels:
         return None
-    coords = coordinates_from_maps_url(row.maps_url)
+    channel = channels[0]
+    meta = channel_meta(channel)
+    coords = coordinates_from_maps_url(meta.get("maps_url"))
     return PrimaryCard(
-        name=(row.listing_name or "").strip() or None,
-        address=(row.address or "").strip() or None,
-        phone=(row.phone_number or "").strip() or None,
+        name=(channel.display_name or "").strip() or None,
+        address=str(meta.get("address") or "").strip() or None,
+        phone=str(meta.get("phone") or "").strip() or None,
         latitude=coords[0] if coords else None,
         longitude=coords[1] if coords else None,
     )

@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import type { GrowthCards } from "@/lib/api-analytics";
+import { FactSource } from "@/components/analytics/FactSource";
+import { GBP_DASHBOARD_URL } from "@/lib/google-links";
 
 function platformLabel(p: string): string {
   const map: Record<string, string> = {
@@ -36,9 +38,12 @@ function FunnelStep({ label, value, sub }: { label: string; value: string; sub?:
 export default function GrowthCardsSection({
   cards,
   loading,
+  googleConnected = false,
 }: {
   cards: GrowthCards | null;
   loading: boolean;
+  /** Whether a Google Business Profile is connected; gates the GBP link. */
+  googleConnected?: boolean;
 }) {
   if (loading || !cards) {
     return (
@@ -55,6 +60,7 @@ export default function GrowthCardsSection({
   const byTrigger = f.by_trigger ?? [];
   const byChannel = f.by_channel ?? [];
   const actions = cards.actions ?? [];
+  const contactPlatforms = c.by_platform.filter((p) => p.contacts > 0);
 
   return (
     <div className="space-y-4 sm:space-y-5">
@@ -143,6 +149,16 @@ export default function GrowthCardsSection({
           {f.failed > 0 ? ` ${f.failed} request${f.failed === 1 ? "" : "s"} failed to send — check the provider/contact.` : ""}
           {!f.delivery_tracked && !f.click_tracked ? " SMS/email delivery and click tracking need provider credentials; missing stages are labelled, never faked." : ""}
         </p>
+        <FactSource
+          source={
+            googleConnected
+              ? "Sayvors request log + Google reviews"
+              : "Sayvors request log"
+          }
+          detail={`last ${cards.days} days · attribution window ${f.attribution_window_days}d`}
+          href={googleConnected ? GBP_DASHBOARD_URL : null}
+          linkLabel="Open GBP dashboard"
+        />
       </section>
 
       {/* Contacts + retention */}
@@ -159,9 +175,9 @@ export default function GrowthCardsSection({
               </span>
             )}
           </div>
-          {c.by_platform.length > 0 ? (
+          {c.new_contacts > 0 && contactPlatforms.length > 0 ? (
             <ul className="mt-3 space-y-1">
-              {c.by_platform.map((p) => (
+              {contactPlatforms.map((p) => (
                 <li key={p.platform} className="flex items-center justify-between text-[11px]">
                   <span className="text-[var(--ui-ink)]">{platformLabel(p.platform)}</span>
                   <span className="tabular-nums text-[var(--ui-ink-2)]">{p.contacts}</span>
@@ -174,6 +190,10 @@ export default function GrowthCardsSection({
           <p className="mt-3 text-[10px] text-[var(--ui-ink-2)]">
             Source attribution is <strong>unknown</strong> until booking/CRM data is connected.
           </p>
+          <FactSource
+            source="Sayvors message rollup"
+            detail={`last ${cards.days} days`}
+          />
         </section>
 
         <section aria-label="Retention" className="ui-card p-5">
@@ -225,6 +245,12 @@ export default function GrowthCardsSection({
             ))}
           </ul>
         )}
+        <FactSource
+          source="Sayvors funnel analysis"
+          detail="derived from the numbers above, not a new measurement"
+          href={googleConnected ? GBP_DASHBOARD_URL : null}
+          linkLabel="Open GBP dashboard"
+        />
       </section>
     </div>
   );

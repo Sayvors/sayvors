@@ -102,20 +102,19 @@ must use appropriately separated storage/access policies.
 | `GLITCHTIP_DSN` | Empty | Server-side error-reporting DSN. |
 | `GLITCHTIP_SECRET_KEY` | Empty | Optional server-side GlitchTip integration secret. |
 
-## Google Business Profile and Localith
+## Google Business Profile
+
+Native Google Business Profile OAuth is the only product path (reviews, replies, verification, performance, posts, media, locations). Google retired the Q&A API on 2025-11-03, so stored Q&A is read-only and no longer polled. Posts and media publish as GBP local posts/media, and the Locations page lists and writes only native Google channels (Business Information API). The OAuth callback and review worker snapshot each Google location into channel metadata — title, address, phone, website, description, categories, regular/special/more hours, service area, boolean attributes and category service types. The Locations read path falls back to that snapshot section-by-section; local edits win and are pushed back to Google. Service-area edits resolve to Place IDs through Places API (New) when `GOOGLE_PLACES_API_KEY` is set. The Locations map uses `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` (frontend, restricted by HTTP referrer). Disconnecting Google is soft: the channel rows keep their reviews, metrics, profile and drafts, while OAuth tokens are cleared and every product surface hides the disconnected data. Reconnecting with the same Google account finds the existing rows by location key and restores them instead of re-importing. Connect through **Channels → Google Business Profile**; existing Google replies are imported automatically and the AI will not overwrite them.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `GOOGLE_CLIENT_ID` | Empty | Google OAuth client ID for Business Profile reviews. |
 | `GOOGLE_CLIENT_SECRET` | Empty | Google OAuth client secret; server-side only. |
-| `GOOGLE_REVIEWS_REDIRECT_URI` | Local callback URL | OAuth redirect URI registered with Google. |
+| `GOOGLE_REVIEWS_REDIRECT_URI` | Local callback URL | OAuth redirect URI registered with Google; must match the API origin used by the browser. |
 | `GOOGLE_REVIEWS_MOCK` | `false` | Use generated review data instead of live OAuth/provider data. |
 | `GOOGLE_REVIEWS_POLL_INTERVAL_SECONDS` | `300` | Review polling interval. |
-| `LOCALITH_API_KEY` | Empty | EmbedSocial/Localith API key. |
-| `LOCALITH_BASE_URL` | `https://embedsocial.com/app/api` | Localith API base URL. |
-| `LOCALITH_ITEMS_PATH` | `rest/v1/items` | Localith items endpoint path. |
-| `BUSINESS_DATA_PROVIDER` | `localith` | Selected business-data provider. |
-| `LOCALITH_SYNC_INTERVAL_SECONDS` | `60` | Background Localith sync interval. |
+| `GOOGLE_QA_POLL_INTERVAL_SECONDS` | `3600` | Deprecated: Google retired the Q&A API on 2025-11-03; the worker no longer polls it. |
+| `GOOGLE_PLACES_API_KEY` | Empty | Server-side Places API (New) key for service-area resolution and benchmark peers. Empty keeps service-area edits local and shows the benchmark as not connected. |
 | `ANALYTICS_PERFORMANCE_SYNC_INTERVAL_SECONDS` | `21600` | Google performance metrics sync interval. |
 | `ANALYTICS_PERFORMANCE_DAYS_BACK` | `30` | Days of historical performance metrics requested per sync. |
 | `MESSAGING_ROLLUP_INTERVAL_SECONDS` | `900` | Messaging metrics rollup interval. |

@@ -236,10 +236,14 @@ async def _team(db, tenant_id: str) -> list[dict]:
 
 
 async def _locations(db, tenant_id: str) -> list[dict]:
-    """Every location with its address and normalised hours."""
+    """Every native Google location with its address and normalised hours."""
     try:
-        from ..localith.models import LocalithConnection
         from ..locations.models import LocationProfile
+        from ..locations.service import (
+            channel_meta,
+            listing_id_of,
+            native_channels,
+        )
 
         profiles = (
             await db.execute(
@@ -248,25 +252,33 @@ async def _locations(db, tenant_id: str) -> list[dict]:
                 .order_by(LocationProfile.updated_at.desc())
             )
         ).scalars().all()
-        connections = (
-            await db.execute(
-                select(LocalithConnection).where(LocalithConnection.user_id == tenant_id)
-            )
-        ).scalars().all()
+        channels = await native_channels(
+            db, tenant_id, statuses=("active", "expired")
+        )
     except Exception as e:  # noqa: BLE001
         logger.warning("location facts failed tenant=%s: %s", tenant_id, e)
         return []
 
-    by_listing = {str(c.listing_id): c for c in connections}
+    by_listing = {listing_id_of(ch): ch for ch in channels}
+
     out: list[dict] = []
     for profile in profiles:
-        connection = by_listing.get(str(profile.listing_id))
+        listing_id = str(profile.listing_id)
+        channel = by_listing.get(listing_id)
+        if channel is None:
+            # A legacy profile with no native Google channel is not a live
+            # location; do not expose it to the assistant.
+            continue
+        meta = channel_meta(channel)
         schedule = compress_schedule(normalise_schedule(profile.hours))
+        name = (channel.display_name or "").strip()
+        address = str(meta.get("address") or "").strip()
+        website = str(meta.get("website") or "").strip()
         out.append({
-            "listing_id": str(profile.listing_id),
-            "name": (getattr(connection, "listing_name", "") or "").strip(),
-            "address": (getattr(connection, "address", "") or "").strip(),
-            "website": (getattr(connection, "website_url", "") or "").strip(),
+            "listing_id": listing_id,
+            "name": name,
+            "address": address,
+            "website": website,
             "schedule": schedule,
         })
     return out

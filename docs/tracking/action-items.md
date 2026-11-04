@@ -82,7 +82,7 @@ Source files are referenced by path. Items marked **"For later"** need a product
 |----|------|--------|--------|-------|
 | P-1 | Facebook dashboard section | `⏸️ Pending` | `PENDING-QUEUE.md` #1 | Deferred by user request |
 | P-2 | Response tone selector | `✅ Done` | `PENDING-QUEUE.md` #2 | Already implemented |
-| P-3 | Multi-location expansion | `⚠️ Partial` | `PENDING-QUEUE.md` #3 | Gaps: Localith cap, add-location wizard, reviews UX |
+| P-3 | Multi-location expansion | `⚠️ Partial` | `PENDING-QUEUE.md` #3 | Gaps: add-location wizard, reviews UX |
 
 ---
 

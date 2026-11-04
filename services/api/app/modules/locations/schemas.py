@@ -7,8 +7,13 @@ class LocationSummary(BaseModel):
     listing_id: str
     name: str
     address: str | None = None
+    phone: str | None = None
+    website: str | None = None
+    maps_url: str | None = None
     status: str
-    source: str  # "localith" | "channel"
+    rating: float | None = None
+    reviews: int = 0
+    source: str  # "google"
 
 
 class CategoriesIn(BaseModel):
@@ -23,6 +28,11 @@ class HoursIn(BaseModel):
 
 
 class LocationUpdate(BaseModel):
+    # Google Business Information API identity fields. Address is read-only:
+    # Google expects a structured postal address, not free text.
+    name: str | None = Field(None, max_length=255)
+    phone: str | None = Field(None, max_length=40)
+    website: str | None = Field(None, max_length=255)
     description: str | None = Field(None, max_length=750)
     categories: CategoriesIn | None = None
     hours: HoursIn | None = None

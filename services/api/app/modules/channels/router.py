@@ -49,6 +49,7 @@ from .schemas import (
     ServiceResponse,
     ServiceUpdate,
     ThreadStateOut,
+    VerificationCompleteRequest,
     VerificationRequest,
     VerificationResponse,
 )
@@ -89,9 +90,8 @@ router = APIRouter(prefix="/api/v1/channels", tags=["channels"])
 def _channel_source_info(channel: Channel) -> tuple[str | None, str | None]:
     """(source, listing_id) for a channel.
 
-    "localith" = mirrored from a Localith listing sync (managed on the
-    Localith card); "google" = native Google OAuth channel. parsed from
-    metadata_json so the UI can show each branch exactly once.
+    Google OAuth channels are the only source. Parsed from metadata_json so
+    the UI can show each branch exactly once.
     """
     import json as _json
 
@@ -101,9 +101,6 @@ def _channel_source_info(channel: Channel) -> tuple[str | None, str | None]:
         meta = {}
     if not isinstance(meta, dict):
         return None, None
-    provider = str(meta.get("provider") or "").lower()
-    if provider == "localith" or "listing_id" in meta:
-        return "localith", str(meta.get("listing_id") or meta.get("location_id") or "")
     if channel.platform == "google_reviews":
         loc = meta.get("location_id")
         return "google", str(loc) if loc else None
@@ -111,7 +108,15 @@ def _channel_source_info(channel: Channel) -> tuple[str | None, str | None]:
 
 
 def _channel_response(channel: Channel) -> ChannelResponse:
+    import json as _json
+
     source, listing_id = _channel_source_info(channel)
+    try:
+        meta = _json.loads(channel.metadata_json or "{}")
+    except (ValueError, TypeError):
+        meta = {}
+    if not isinstance(meta, dict):
+        meta = {}
     return ChannelResponse(
         id=channel.id,
         platform=channel.platform,
@@ -122,6 +127,27 @@ def _channel_response(channel: Channel) -> ChannelResponse:
         created_at=channel.created_at.isoformat(),
         source=source,
         listing_id=listing_id or None,
+        place_id=(
+            str(meta.get("place_id")).strip()
+            if meta.get("place_id")
+            else None
+        ),
+        maps_url=(
+            str(meta.get("maps_url")).strip()
+            if meta.get("maps_url")
+            else None
+        ),
+        phone=(
+            str(meta.get("phone")).strip()
+            if meta.get("phone")
+            else None
+        ),
+        website=(
+            str(meta.get("website")).strip()
+            if meta.get("website")
+            else None
+        ),
+        profile_fields_checked=meta.get("profile_fields_checked") is True,
     )
 
 
@@ -160,10 +186,13 @@ async def connect_channel(
 async def get_channels(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    include_disconnected: bool = Query(False),
     ctx: TenantContext = Depends(require_perm("channels.view")),
     db: AsyncSession = Depends(get_db),
 ):
-    channels, total = await list_channels(ctx.user, db, limit, offset)
+    channels, total = await list_channels(
+        ctx.user, db, limit, offset, include_disconnected=include_disconnected
+    )
     # A member with no role-wide channel default only sees channels they
     # were explicitly granted (per-channel overrides), never the rest.
     visible = ctx.visible_channel_ids()
@@ -190,6 +219,56 @@ async def get_channel_by_id(
     return _channel_response(channel)
 
 
+@router.post("/google/disconnect")
+async def disconnect_google(
+    ctx: TenantContext = Depends(require_perm("channels.remove")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Soft-disconnect every Google channel for the tenant.
+
+    The rows, reviews, metrics, drafts and profile data are kept. Only the
+    OAuth tokens and status change, so reconnecting restores the same data
+    instead of re-importing it. Best-effort token revocation at Google too.
+    """
+    import httpx
+
+    from .service import decrypt_token
+
+    uid = tenant_id_of(ctx.user)
+    channels = (
+        await db.execute(
+            select(Channel).where(
+                Channel.user_id == uid,
+                Channel.platform == "google_reviews",
+                Channel.status != "disconnected",
+            )
+        )
+    ).scalars().all()
+
+    for channel in channels:
+        token = decrypt_token(channel.refresh_token) if channel.refresh_token else None
+        if token:
+            try:
+                async with httpx.AsyncClient(timeout=10) as client:
+                    await client.post(
+                        "https://oauth2.googleapis.com/revoke",
+                        params={"token": token},
+                    )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Google token revoke failed for %s: %s", channel.id, e)
+        channel.status = "disconnected"
+        channel.access_token = None
+        channel.refresh_token = None
+        channel.token_expires_at = None
+    await db.commit()
+
+    # The assistant's facts must stop including disconnected locations.
+    from ..profile.facts_store import rebuild_facts_safe
+
+    await rebuild_facts_safe(db, uid)
+    return {"disconnected": len(channels)}
+
+
 @router.delete("/{channel_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def disconnect_channel(
     channel_id: str,
@@ -198,6 +277,18 @@ async def disconnect_channel(
 ):
     if not ctx.can_edit_channel(channel_id):
         raise HTTPException(status_code=404, detail="Channel not found")
+    channel = await get_channel(channel_id, ctx.user, db)
+    if not channel:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    if channel.platform == "google_reviews":
+        # Google disconnects are always soft: rows, reviews and metrics are
+        # kept so reconnecting restores the same data.
+        channel.status = "disconnected"
+        channel.access_token = None
+        channel.refresh_token = None
+        channel.token_expires_at = None
+        await db.commit()
+        return
     deleted = await delete_channel(channel_id, ctx.user, db)
     if not deleted:
         raise HTTPException(status_code=404, detail="Channel not found")
@@ -210,29 +301,219 @@ async def _google_channel(channel_id: str, user: User, db: AsyncSession) -> Chan
     return channel
 
 
-def _verification_response(record: VerificationRecord | None, channel_id: str) -> VerificationResponse:
-    return VerificationResponse(
-        channel_id=channel_id,
-        status=record.status if record else "unstarted",
-        method=record.method if record else None,
-        contact_target=record.contact_target if record else None,
-        attempts=record.attempts if record else 0,
-        requested_at=record.requested_at.isoformat() if record and record.requested_at else None,
-        verified_at=record.verified_at.isoformat() if record and record.verified_at else None,
+def _verification_status(
+    state: dict, verifications: list[dict]
+) -> tuple[str, dict | None, str | None]:
+    """Derive a UI status from Google's merchant state and verification list."""
+    latest = None
+    if verifications:
+        latest = max(
+            verifications,
+            key=lambda item: str(item.get("createTime") or ""),
+        )
+    if state.get("hasVoiceOfMerchant"):
+        return "verified", latest, None
+    if state.get("complyWithGuidelines") is not None:
+        return "guidelines", latest, None
+    if state.get("resolveOwnershipConflict") is not None:
+        return "ownership_conflict", latest, None
+    if state.get("waitForVoiceOfMerchant") is not None:
+        return "under_review", latest, None
+    if latest:
+        provider_state = str(latest.get("state") or "").upper()
+        if provider_state == "COMPLETED":
+            return "verified", latest, None
+        if provider_state == "PENDING":
+            return "pending", latest, None
+        if provider_state == "FAILED":
+            return "failed", latest, None
+    if state.get("verify") is not None:
+        return "required", latest, None
+    return "unstarted", latest, None
+
+
+def _verification_contact(latest: dict | None, options: list[dict]) -> tuple[str | None, str | None]:
+    """(method, contact target) from the latest request or eligible option."""
+    if latest:
+        method = latest.get("method")
+        if method:
+            return str(method), None
+    if options:
+        first = options[0]
+        method = str(first.get("verificationMethod") or "") or None
+        target = first.get("phoneNumber")
+        if not target:
+            email = first.get("emailData") or {}
+            user = str(email.get("user") or "")
+            domain = str(email.get("domain") or "")
+            target = f"{user}@{domain}" if user and domain else None
+        return method, str(target) if target else None
+    return None, None
+
+
+async def _verification_snapshot(
+    db: AsyncSession,
+    channel: Channel,
+    client,
+    location_id: str,
+    language_code: str = "en",
+) -> VerificationResponse:
+    """Read Google's live verification state and mirror it into our row."""
+    from .google_reviews import GoogleReviewsError
+
+    state = await client.get_voice_of_merchant_state(location_id)
+    options: list[dict] = []
+    verifications: list[dict] = []
+    provider_error: str | None = None
+    try:
+        options = await client.fetch_verification_options(location_id, language_code)
+    except GoogleReviewsError:
+        provider_error = "Google did not return verification options."
+    try:
+        verifications = await client.list_verifications(location_id)
+    except GoogleReviewsError:
+        provider_error = provider_error or "Google did not return verification history."
+
+    # Google sometimes returns a placeholder option (`{}`) when the caller is
+    # not eligible to verify. It is not a method and must never reach the UI as
+    # a blank card.
+    options = [
+        option for option in options if option.get("verificationMethod")
+    ]
+
+    status, latest, _ = _verification_status(state, verifications)
+    method, contact = _verification_contact(latest, options)
+
+    if provider_error is None and not options and status != "verified":
+        if state.get("hasBusinessAuthority") is False:
+            provider_error = (
+                "Google reports this account does not have business authority "
+                "for this location yet, so the API cannot offer a verification "
+                "method. Some locations require video verification, which Google "
+                "only exposes in Google Business Profile. Complete verification "
+                "there, then refresh. If Google says you do not have access, ask "
+                "the profile owner to grant owner or manager access."
+            )
+        elif latest and str(latest.get("state") or "").upper() == "FAILED":
+            provider_error = (
+                "Google's last verification attempt failed and no new method is "
+                "currently eligible through the API. Try again from Google "
+                "Business Profile or contact Google support."
+            )
+        else:
+            provider_error = (
+                "Google did not return an eligible verification method for this "
+                "location."
+            )
+
+    result = await db.execute(
+        select(VerificationRecord).where(VerificationRecord.channel_id == channel.id)
     )
+    record = result.scalar_one_or_none()
+    if record is None and (verifications or "verify" in state or status == "verified"):
+        record = VerificationRecord(channel_id=channel.id)
+        db.add(record)
+
+    if record is not None:
+        record.status = status
+        record.method = method or record.method
+        record.contact_target = contact or record.contact_target
+        record.provider_name = (
+            str(latest.get("name"))
+            if latest and str(latest.get("state") or "").upper() == "PENDING"
+            else None
+        )
+        record.attempts = max(record.attempts or 0, len(verifications))
+        if latest and latest.get("createTime") and record.requested_at is None:
+            try:
+                record.requested_at = datetime.fromisoformat(
+                    str(latest["createTime"]).replace("Z", "+00:00")
+                )
+            except ValueError:
+                pass
+        if status == "verified":
+            if record.verified_at is None:
+                completed_at = None
+                if latest and latest.get("createTime"):
+                    try:
+                        completed_at = datetime.fromisoformat(
+                            str(latest["createTime"]).replace("Z", "+00:00")
+                        )
+                    except ValueError:
+                        completed_at = None
+                record.verified_at = completed_at or datetime.now(timezone.utc)
+        else:
+            record.verified_at = None
+        await db.commit()
+        await db.refresh(record)
+
+    return VerificationResponse(
+        channel_id=channel.id,
+        status=status,
+        method=method or (record.method if record else None),
+        contact_target=contact or (record.contact_target if record else None),
+        attempts=record.attempts if record else len(verifications),
+        requested_at=(
+            record.requested_at.isoformat() if record and record.requested_at else None
+        ),
+        verified_at=(
+            record.verified_at.isoformat() if record and record.verified_at else None
+        ),
+        has_voice_of_merchant=bool(state.get("hasVoiceOfMerchant")),
+        has_business_authority=bool(state.get("hasBusinessAuthority")),
+        options=options,
+        verifications=verifications,
+        provider_name=record.provider_name if record else None,
+        provider_error=provider_error,
+    )
+
+
+async def _verification_client(channel: Channel, db: AsyncSession):
+    """Google client + location id for a connected channel."""
+    from ..locations.service import listing_id_of
+    from .google_reviews import GoogleReviewsClient
+    from .service import decrypt_token, encrypt_token
+
+    access_token = decrypt_token(channel.access_token) if channel.access_token else None
+    refresh_token = decrypt_token(channel.refresh_token) if channel.refresh_token else None
+    if not access_token and not refresh_token:
+        raise HTTPException(
+            status_code=409,
+            detail="Google is disconnected. Reconnect it to manage verification.",
+        )
+    client = GoogleReviewsClient(access_token or "", refresh_token)
+    client.set_known_expiry(channel.token_expires_at)
+
+    async def _persist(new_access_token: str, new_expires_at) -> None:
+        channel.access_token = encrypt_token(new_access_token)
+        channel.token_expires_at = new_expires_at
+        db.add(channel)
+        await db.commit()
+
+    client.set_token_persister(_persist)
+    return client, listing_id_of(channel)
 
 
 @router.get("/{channel_id}/verification", response_model=VerificationResponse)
 async def get_verification(
     channel_id: str,
+    language: str = Query("en", min_length=2, max_length=20),
     ctx: TenantContext = Depends(require_perm("channels.view")),
     db: AsyncSession = Depends(get_db),
 ):
     if ctx.channel_level(channel_id) == "none":
         raise HTTPException(status_code=404, detail="Channel not found")
-    await _google_channel(channel_id, ctx.user, db)
-    result = await db.execute(select(VerificationRecord).where(VerificationRecord.channel_id == channel_id))
-    return _verification_response(result.scalar_one_or_none(), channel_id)
+    channel = await _google_channel(channel_id, ctx.user, db)
+    client, location_id = await _verification_client(channel, db)
+    try:
+        return await _verification_snapshot(db, channel, client, location_id, language)
+    except Exception as e:  # noqa: BLE001
+        raise upstream_http_error(
+            e, context=f"Google verification read failed for {channel_id}",
+            detail="Google could not return verification details for this location.",
+        ) from None
+    finally:
+        await client.close()
 
 
 @router.post("/{channel_id}/verification", response_model=VerificationResponse)
@@ -245,23 +526,108 @@ async def request_verification(
     if not ctx.can_edit_channel(channel_id):
         raise HTTPException(status_code=403, detail="No edit access to this channel")
     channel = await _google_channel(channel_id, ctx.user, db)
-    result = await db.execute(select(VerificationRecord).where(VerificationRecord.channel_id == channel_id))
-    record = result.scalar_one_or_none()
-    now = datetime.now(timezone.utc)
-    if record is None:
-        record = VerificationRecord(channel_id=channel_id)
-        db.add(record)
-    record.status = "requested"
-    record.method = body.method
-    record.contact_target = body.contact_target
-    record.attempts += 1
-    record.requested_at = now
-    from ..outbox.service import enqueue_event_in
+    client, location_id = await _verification_client(channel, db)
+    try:
+        verification = await client.verify_location(
+            location_id,
+            method=body.method,
+            language_code=body.language_code,
+            phone_number=body.phone_number,
+            email_address=body.email_address,
+            mailer_contact=body.mailer_contact,
+            trusted_partner_token=body.trusted_partner_token,
+        )
+        result = await db.execute(
+            select(VerificationRecord).where(VerificationRecord.channel_id == channel_id)
+        )
+        record = result.scalar_one_or_none()
+        if record is None:
+            record = VerificationRecord(channel_id=channel_id)
+            db.add(record)
+        provider_state = str(verification.get("state") or "").upper()
+        record.status = {
+            "COMPLETED": "verified",
+            "FAILED": "failed",
+            "PENDING": "pending",
+        }.get(provider_state, "requested")
+        record.method = body.method
+        record.contact_target = (
+            body.phone_number or body.email_address or body.mailer_contact
+        )
+        record.provider_name = (
+            str(verification.get("name")) if verification.get("name") else None
+        )
+        record.attempts = (record.attempts or 0) + 1
+        record.requested_at = datetime.now(timezone.utc)
+        if record.status == "verified":
+            record.verified_at = datetime.now(timezone.utc)
+        await db.commit()
+        await db.refresh(record)
+        return await _verification_snapshot(
+            db, channel, client, location_id, body.language_code
+        )
+    except Exception as e:  # noqa: BLE001
+        status_code = getattr(e, "status_code", 502)
+        raise upstream_http_error(
+            e,
+            context=f"Google verification request failed for {channel_id}",
+            status_code=400 if status_code in (400, 422) else 502,
+            detail=(
+                "Google rejected the verification request. Check the method and "
+                "contact details and try again."
+                if status_code in (400, 422)
+                else "Google could not start verification for this location."
+            ),
+        ) from None
+    finally:
+        await client.close()
 
-    await enqueue_event_in(db, "google.verification.requested", {"channel_id": channel.id, "method": body.method}, "google-business-events")
-    await db.commit()
-    await db.refresh(record)
-    return _verification_response(record, channel_id)
+
+@router.post("/{channel_id}/verification/complete", response_model=VerificationResponse)
+async def complete_verification(
+    channel_id: str,
+    body: VerificationCompleteRequest,
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
+    db: AsyncSession = Depends(get_db),
+):
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    channel = await _google_channel(channel_id, ctx.user, db)
+    result = await db.execute(
+        select(VerificationRecord).where(VerificationRecord.channel_id == channel_id)
+    )
+    record = result.scalar_one_or_none()
+    if record is None or not record.provider_name:
+        raise HTTPException(
+            status_code=409,
+            detail="Start a verification request before submitting a PIN.",
+        )
+    client, location_id = await _verification_client(channel, db)
+    try:
+        verification = await client.complete_verification(record.provider_name, body.pin)
+        provider_state = str(verification.get("state") or "").upper()
+        record.status = "verified" if provider_state == "COMPLETED" else "pending"
+        if record.status == "verified":
+            record.verified_at = datetime.now(timezone.utc)
+            record.provider_name = None
+        await db.commit()
+        await db.refresh(record)
+        return await _verification_snapshot(db, channel, client, location_id)
+    except Exception as e:  # noqa: BLE001
+        status_code = getattr(e, "status_code", 502)
+        raise upstream_http_error(
+            e,
+            context=f"Google verification complete failed for {channel_id}",
+            status_code=400 if status_code in (400, 422) else 502,
+            detail=(
+                "The PIN is not valid or has expired. Request a new verification "
+                "code and try again."
+                if status_code in (400, 422)
+                else "Google could not complete verification for this location."
+            ),
+        ) from None
+    finally:
+        await client.close()
 
 
 def _service_response(service: BusinessService) -> ServiceResponse:
@@ -2058,7 +2424,22 @@ async def google_callback(
     for every Business Profile location found."""
     import uuid as _uuid
     from fastapi.responses import RedirectResponse
-    from .google_reviews import exchange_code, list_accounts, GoogleReviewsClient, GoogleReviewsError
+    from .google_reviews import (
+        exchange_code,
+        list_accounts,
+        location_address,
+        location_category,
+        location_phone,
+        location_website,
+        location_description,
+        location_hours,
+        location_categories,
+        location_attributes,
+        location_service_area,
+        location_service_types,
+        GoogleReviewsClient,
+        GoogleReviewsError,
+    )
     from .service import encrypt_token
     from ...config import settings as cfg
 
@@ -2101,8 +2482,15 @@ async def google_callback(
         account_name = account.get("accountName") or account.get("name", "")
 
         client = GoogleReviewsClient(access_token, refresh_token)
+        attributes_by_location: dict[str, list[dict]] = {}
         try:
             locations = await client.list_locations(account_id)
+            for loc in locations:
+                lid = loc.get("name", "locations/").split("/")[-1]
+                try:
+                    attributes_by_location[lid] = await client.get_attributes(lid)
+                except GoogleReviewsError as e:
+                    logger.debug("attributes unavailable for %s: %s", lid, e)
         except GoogleReviewsError as e:
             logger.warning("No locations for account %s: %s", account_id, e)
             continue
@@ -2143,7 +2531,6 @@ async def google_callback(
                     select(Channel).where(
                         Channel.user_id == user_id,
                         Channel.platform == "google_reviews",
-                        Channel.status == "active",
                     )
                 )
                 for c in legacy.scalars().all():
@@ -2153,16 +2540,46 @@ async def google_callback(
                             c.listing_key = key
                         break
             if matching is not None:
-                # Re-consent heals tokens: a fresh refresh_token repairs
-                # channels that can't publish ("No refresh token available").
+                # Re-consent heals tokens and reactivates a soft-disconnected
+                # channel: the same row, reviews, metrics and drafts return.
                 # Never overwrite a stored refresh token with nothing —
                 # Google only sends one on fresh consent.
-                if refresh_token:
+                matching.status = "active"
+                if access_token:
                     matching.access_token = encrypt_token(access_token)
+                if refresh_token:
                     matching.refresh_token = encrypt_token(refresh_token)
-                    matching.token_expires_at = token_expires_at
+                matching.token_expires_at = token_expires_at
+                matching.display_name = title
+                matching.listing_key = key
+                existing_meta = _channel_meta_meta(matching)
+                existing_meta.update({
+                    "location_id": location_id,
+                    "account_name": account_name,
+                    "place_id": loc.get("metadata", {}).get("placeId"),
+                    "maps_url": loc.get("metadata", {}).get("mapsUrl"),
+                    "address": location_address(loc),
+                    "category": location_category(loc),
+                    "phone": location_phone(loc),
+                    "website": location_website(loc),
+                    "description": location_description(loc),
+                    "hours": location_hours(loc),
+                    "categories": location_categories(loc),
+                    "attributes": location_attributes(attributes_by_location.get(location_id)),
+                    "service_area": location_service_area(loc),
+                    "services": location_service_types(loc),
+                    "profile_fields_checked": True,
+                })
+                matching.metadata_json = _json.dumps(existing_meta)
+                from .service import sync_google_services
+
+                await sync_google_services(
+                    db, matching, location_service_types(loc),
+                    location_category(loc),
+                )
                 continue
 
+            loc_meta = loc.get("metadata") or {}
             channel = Channel(
                 id=str(_uuid.uuid4()),
                 user_id=user_id,
@@ -2173,7 +2590,23 @@ async def google_callback(
                 refresh_token=encrypt_token(refresh_token) if refresh_token else None,
                 token_expires_at=token_expires_at,
                 status="active",
-                metadata_json=_json.dumps({"location_id": location_id, "account_name": account_name}),
+                metadata_json=_json.dumps({
+                    "location_id": location_id,
+                    "account_name": account_name,
+                    "place_id": loc_meta.get("placeId"),
+                    "maps_url": loc_meta.get("mapsUrl"),
+                    "address": location_address(loc),
+                    "category": location_category(loc),
+                    "phone": location_phone(loc),
+                    "website": location_website(loc),
+                    "description": location_description(loc),
+                    "hours": location_hours(loc),
+                    "categories": location_categories(loc),
+                    "attributes": location_attributes(attributes_by_location.get(location_id)),
+                    "service_area": location_service_area(loc),
+                    "services": location_service_types(loc),
+                    "profile_fields_checked": True,
+                }),
                 listing_key=key,
             )
             db.add(channel)
@@ -2190,9 +2623,18 @@ async def google_callback(
                     matching.refresh_token = encrypt_token(refresh_token)
                     matching.token_expires_at = token_expires_at
                 continue
+            from .service import sync_google_services
+
+            await sync_google_services(
+                db, channel, location_service_types(loc), location_category(loc)
+            )
             created += 1
 
     await db.commit()
+    # Reconnect restores the same rows; rebuild the assistant's location facts.
+    from ..profile.facts_store import rebuild_facts_safe
+
+    await rebuild_facts_safe(db, user_id)
     logger.info("Google Reviews connect: created %d channels for user %s", created, user_id)
     return RedirectResponse(f"{base}?google_connected={created}")
 
@@ -2481,17 +2923,16 @@ async def verify_posted_replies(
         )
     ).scalars().all()
 
-    # Localith rows were confirmed at approve time by the Localith API —
-    # they can't (and must not) be re-verified against Google directly.
-    rows = [r for r in all_posted if not r.review_id.startswith("localith:")]
-    skipped_localith = len(all_posted) - len(rows)
+    # Only native Google review resource names can be verified against Google.
+    rows = [r for r in all_posted if r.review_id.startswith("accounts/")]
+    skipped_non_google = len(all_posted) - len(rows)
     if not rows:
         return {
             "channel_id": channel.id,
             "checked": 0,
             "confirmed": 0,
             "corrected": 0,
-            "skipped_localith": skipped_localith,
+            "skipped_non_google": skipped_non_google,
         }
 
     access_token = decrypt_token(channel.access_token) if channel.access_token else None
@@ -2530,7 +2971,7 @@ async def verify_posted_replies(
         "checked": len(rows),
         "confirmed": confirmed,
         "corrected": corrected,
-        "skipped_localith": skipped_localith,
+        "skipped_non_google": skipped_non_google,
     }
 
 
@@ -2618,76 +3059,49 @@ async def approve_review_reply(
             detail="Mock mode: connect a real Google Business Profile to publish replies.",
         )
 
-    if reply.review_id.startswith("localith:"):
-        # Localith-sourced review: publish through Localith's
-        # POST /items/{id}/replies — as a GBP partner they post it live
-        # on the connected listing, no per-tenant Google OAuth needed.
-        from ..localith.service import post_reply as localith_post_reply
-
-        item_id = reply.review_id.split(":", 1)[1]
-        try:
-            await localith_post_reply(item_id, reply.reply_text)
-        except Exception as e:
-            logger.warning("Localith reply publish failed review=%s item=%s: %s", reply.review_id, item_id, e)
+    access_token = decrypt_token(channel.access_token) if channel.access_token else None
+    refresh_token = decrypt_token(channel.refresh_token) if channel.refresh_token else None
+    if not access_token and not refresh_token:
+        # No Google tokens: nothing can reach Google. Leave the draft
+        # pending and tell the merchant the only fix is re-consent.
+        raise HTTPException(
+            status_code=401,
+            detail="Google account not connected. Reconnect Google on the Connect page, then approve again.",
+        )
+    client = GoogleReviewsClient(access_token or "", refresh_token)
+    try:
+        if not access_token:
+            await client.refresh_access_token()
+        await client.reply_to_review(reply.review_id, reply.reply_text)
+        # "posted" must mean live on Google: confirm by reading the
+        # review back before stamping the status.
+        if not await client.confirm_reply_live(reply.review_id):
             reply.status = "failed"
-            reply.error = str(e)[:2000]
+            reply.error = (
+                "Google accepted the reply but it is not showing on the "
+                "listing. Approve again to retry."
+            )
             await db.commit()
-            await _notify_reply_failed(db, ctx.user.id, channel, reply, str(e))
-            raise upstream_http_error(
-                e,
-                context="Localith reply publish failed",
-                detail="Could not post the reply through Localith. Try again shortly.",
-            ) from None
+            await _notify_reply_failed(db, ctx.user.id, channel, reply, reply.error)
+            raise HTTPException(status_code=502, detail=reply.error)
         reply.status = "posted"
         reply.error = None
         await db.commit()
         await _clear_edited_flag(db, channel.id, reply.review_id)
         await db.commit()
         await _notify_reply_posted(db, ctx.user.id, channel, reply)
-    else:
-        access_token = decrypt_token(channel.access_token) if channel.access_token else None
-        refresh_token = decrypt_token(channel.refresh_token) if channel.refresh_token else None
-        if not access_token and not refresh_token:
-            # No Google tokens: nothing can reach Google. Leave the draft
-            # pending and tell the merchant the only fix is re-consent.
-            raise HTTPException(
-                status_code=401,
-                detail="Google account not connected. Reconnect Google on the Connect page, then approve again.",
-            )
-        client = GoogleReviewsClient(access_token or "", refresh_token)
-        try:
-            if not access_token:
-                await client.refresh_access_token()
-            await client.reply_to_review(reply.review_id, reply.reply_text)
-            # "posted" must mean live on Google: confirm by reading the
-            # review back before stamping the status.
-            if not await client.confirm_reply_live(reply.review_id):
-                reply.status = "failed"
-                reply.error = (
-                    "Google accepted the reply but it is not showing on the "
-                    "listing. Approve again to retry."
-                )
-                await db.commit()
-                await _notify_reply_failed(db, ctx.user.id, channel, reply, reply.error)
-                raise HTTPException(status_code=502, detail=reply.error)
-            reply.status = "posted"
-            reply.error = None
-            await db.commit()
-            await _clear_edited_flag(db, channel.id, reply.review_id)
-            await db.commit()
-            await _notify_reply_posted(db, ctx.user.id, channel, reply)
-        except GoogleReviewsError as e:
-            reply.status = "failed"
-            reply.error = str(e)[:2000]
-            await db.commit()
-            await _notify_reply_failed(db, ctx.user.id, channel, reply, str(e))
-            # Surface the real reason (e.g. "No refresh token available") —
-            # a generic message hides that re-consent is the only fix.
-            raise HTTPException(
-                status_code=e.status_code, detail=f"Failed to post reply to Google: {e}"
-            )
-        finally:
-            await client.close()
+    except GoogleReviewsError as e:
+        reply.status = "failed"
+        reply.error = str(e)[:2000]
+        await db.commit()
+        await _notify_reply_failed(db, ctx.user.id, channel, reply, str(e))
+        # Surface the real reason (e.g. "No refresh token available") —
+        # a generic message hides that re-consent is the only fix.
+        raise HTTPException(
+            status_code=e.status_code, detail=f"Failed to post reply to Google: {e}"
+        )
+    finally:
+        await client.close()
 
     # Collapse duplicate drafts for the same review: approving one
     # withdraws its siblings (pending or failed) so the same review can

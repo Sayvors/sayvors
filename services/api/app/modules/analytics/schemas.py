@@ -897,3 +897,46 @@ class ReviewTemplateOut(BaseModel):
     subject: str
     body: str
     source: str  # ai | fallback
+
+
+class GoogleQuestionAnswerOut(BaseModel):
+    id: str
+    channel_id: str
+    question_id: str
+    question_text: str
+    asker_name: str | None = None
+    asker_profile_photo_url: str | None = None
+    question_created_at: datetime | None = None
+    answer_text: str | None = None
+    answerer_name: str | None = None
+    answer_type: str | None = None
+    answer_created_at: datetime | None = None
+    last_synced_at: datetime | None = None
+    is_answered: bool = False
+    is_ignored: bool = False
+    upvote_count: int = 0
+    draft_answer_text: str | None = None
+    draft_status: str = "none"
+    draft_error: str | None = None
+    draft_generated_at: datetime | None = None
+    draft_approved_at: datetime | None = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class GoogleQuestionAnswerListOut(BaseModel):
+    items: list[GoogleQuestionAnswerOut] = []
+    total: int
+    unanswered_count: int
+    ignored_count: int
+
+
+class GoogleQuestionDraftIn(BaseModel):
+    # Optional manual text. When omitted, the reply engine generates a draft.
+    answer_text: str | None = Field(None, min_length=1, max_length=4000)
+
+
+class GoogleQuestionAnswerIn(BaseModel):
+    answer_text: str = Field(..., min_length=1, max_length=4000)

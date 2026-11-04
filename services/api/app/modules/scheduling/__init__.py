@@ -1,6 +1,6 @@
 """Shared scheduling primitives — one copy, used by every worker.
 
-Posts, media, and Localith syncs all coordinate across uvicorn workers
+Posts and media coordinate across uvicorn workers
 with the same Postgres advisory-lock pattern and the same retry-then-park
 policy. This module is the single implementation; feature modules keep
 thin wrappers (same names) so existing callers and tests don't churn.
@@ -61,9 +61,9 @@ async def take_lock(db: AsyncSession, blocking: bool, namespace: str, key: str |
     in the open transaction (commit does not — we run expire_on_commit=False),
     so the next plain attribute access on an object the caller already holds
     triggers a lazy load that AsyncSession cannot await: MissingGreenlet
-    ("greenlet_spawn has not been called"). That surfaced as a 502 "Localith
-    sync failed" for a request whose `User` row was loaded by the auth
-    dependency on this very session. Same isolation notify() uses for inserts.
+    ("greenlet_spawn has not been called"). That surfaced as a 502 for a request
+    whose `User` row was loaded by the auth dependency on this very session.
+    Same isolation notify() uses for inserts.
     """
     if not is_postgres(db):
         return True
@@ -105,8 +105,7 @@ def retry_delay(attempts: int, base: int = RETRY_BASE_SECONDS, cap: int = RETRY_
 
 
 def provider_post_id(response: object) -> str | None:
-    """Provider's object id, when it returns one (reserved for future
-    remote deletion: per-tenant native Google or a Localith delete)."""
+    """Provider's object id from a publish response, when it returns one."""
     if not isinstance(response, dict):
         return None
     for key in ("id", "postId", "post_id", "mediaId", "media_id"):

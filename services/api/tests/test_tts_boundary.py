@@ -11,7 +11,7 @@ from pathlib import Path
 TTS_DIR = Path(__file__).resolve().parents[1] / "app" / "modules" / "tts"
 
 # Capability modules an extracted TTS service must not need.
-FORBIDDEN = {"channels", "posts", "localith", "analytics", "review_engine"}
+FORBIDDEN = {"channels", "posts", "locations", "analytics", "review_engine"}
 
 
 def _imported_modules(tree: ast.AST):

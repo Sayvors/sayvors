@@ -1,11 +1,11 @@
-"""Media service: scheduled photos that go live on Google inside posts.
+"""Media service: scheduled photos that go live on Google.
 
-Localith has no photo-library upload — image URLs travel inside
-content_publishing_media posts. So publishing one photo = publishing one
-Google post carrying it. Same robustness contract as posts: per-item
-advisory locks (double publish impossible), retry-then-park, delete-due.
+One row is one photo. Publish either creates a Google local post carrying the
+photo, adds it to the location gallery, or replaces the profile/cover image —
+all through the native Business Profile media API. Same robustness contract
+as posts: per-item advisory locks (double publish impossible), retry-then-park,
+delete-due.
 """
-import asyncio
 import logging
 import os
 import uuid
@@ -16,8 +16,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import settings
-from ...core.providers import GOOGLE, google_not_ready, media_publish_provider
-from ..localith.models import LocalithConnection
 from ..notifications.service import notify
 from ..scheduling import (
     MAX_PUBLISH_ATTEMPTS,
@@ -192,20 +190,24 @@ def _require_http_url(url: str) -> str:
 
 
 def _check_method_publishable(method: str | None, action: str) -> None:
-    """Only the post path is wired (Localith). Gallery/profile are stored
-    intent until per-tenant native Google lands — fail loudly, never
-    silently pretend."""
-    if action in ("publish", "schedule") and (method or "post") != "post":
+    """Native Google accepts post, gallery, and profile/cover destinations."""
+    if action in ("publish", "schedule") and (method or "post") not in (
+        "post", "gallery", "profile",
+    ):
         raise ValueError(
-            "Direct gallery/profile publishing needs the native Google "
-            "connection — coming soon. Publish inside a post for now."
+            "publish_method must be 'post', 'gallery' or 'profile'."
         )
 
 
 async def list_media(
     db: AsyncSession, user_id: str, listing_id: str | None = None
 ) -> list[dict]:
+    from ..locations.service import disconnected_listing_ids
+
     filters = [LocationMedia.user_id == user_id]
+    hidden = await disconnected_listing_ids(db, user_id)
+    if hidden:
+        filters.append(LocationMedia.listing_id.notin_(hidden))
     if listing_id:
         filters.append(LocationMedia.listing_id == listing_id)
     rows = (
@@ -319,12 +321,13 @@ async def delete_media(db: AsyncSession, user_id: str, media_id: str) -> None:
 async def publish_media(
     db: AsyncSession, user_id: str, media_id: str, notify_user: bool = True
 ) -> dict:
-    """Publish one photo to Google right now (inside a Google post).
+    """Publish one photo to Google right now.
 
-    Held under the item's advisory lock: a double publish would post the
-    photo twice on Google. Videos are library-only — the provider takes
-    image URLs, not video. notify_user=False lets batch callers (worker)
-    emit one summary instead of a row per photo.
+    Destination comes from `publish_method`: a local post, the location
+    gallery, or the profile/cover image. Held under the item's advisory lock:
+    a double publish would post the photo twice on Google. Videos are
+    library-only. notify_user=False lets batch callers (worker) emit one
+    summary instead of a row per photo.
     """
     locked = await _acquire_media_lock(db, media_id)
     try:
@@ -337,50 +340,68 @@ async def publish_media(
 async def _publish_media_inner(
     db: AsyncSession, user_id: str, media_id: str, notify_user: bool = True
 ) -> dict:
-    from integrations.channels import embedsocial
+    from ..channels.meta.providers.google_publish import GoogleBusinessPublisher
+    from ..channels.service import decrypt_token, encrypt_token
+    from ..locations.service import channel_for_listing, listing_id_of
 
     item = await _owned_media(db, user_id, media_id)
     if item is None:
         raise ValueError("Media not found.")
     if item.status not in PUBLISHABLE_FROM:
         raise ValueError(f"Cannot publish {item.status} media.")
-    if (item.publish_method or "post") != "post":
-        raise ValueError(
-            "Direct gallery/profile publishing needs the native Google "
-            "connection — coming soon. Publish inside a post for now."
-        )
     if item.type != "PHOTO":
         raise ValueError("Video auto-publishing is not supported by the provider yet — photos only.")
-    conn = (
-        await db.execute(
-            select(LocalithConnection).where(
-                LocalithConnection.user_id == user_id,
-                LocalithConnection.listing_id == item.listing_id,
-            )
+    channel = await channel_for_listing(
+        db, user_id, item.listing_id, statuses=("active", "expired")
+    )
+    if channel is None:
+        raise ValueError(
+            "Connect that Google location in Channels before publishing media."
         )
-    ).scalar_one_or_none()
-    if conn is None:
-        raise ValueError("Connect that branch in Localith before publishing media.")
-    from ..localith.service import _connection_api_key
+    if channel.status != "active":
+        raise ValueError(
+            "Google connection expired — reconnect Google before publishing."
+        )
 
-    api_key = _connection_api_key(conn)
+    access = decrypt_token(channel.access_token) if channel.access_token else None
+    refresh = decrypt_token(channel.refresh_token) if channel.refresh_token else None
+    if not access and not refresh:
+        raise ValueError("Reconnect Google in Channels before publishing media.")
 
-    # Provider seam: Localith today; the google branch lands with GBP API
-    # access (see app/core/providers.py). Checked BEFORE the try below so
-    # a premature flip fails loudly — never registered as a publish
-    # failure, never notified, never retried.
-    if media_publish_provider() == GOOGLE:
-        raise google_not_ready("media publishing")
+    publisher = GoogleBusinessPublisher(access or "", refresh)
+    publisher.set_known_expiry(channel.token_expires_at)
 
+    async def _persist(new_access: str, new_expires) -> None:
+        channel.access_token = encrypt_token(new_access)
+        channel.token_expires_at = new_expires
+        await db.commit()
+
+    publisher.set_token_persister(_persist)
+    method = item.publish_method or "post"
+    caption = item.caption or item.category.replace("_", " ").title()
     try:
-        response = await asyncio.to_thread(
-            embedsocial.publish_media_post,
-            item.listing_id,
-            post_type="update",
-            caption=item.caption or item.category.replace("_", " ").title(),
-            image_urls=[item.image_url],
-            api_key=api_key,
-        )
+        if method == "post":
+            response = await publisher.publish_post(
+                "",
+                listing_id_of(channel),
+                "update",
+                item.image_url,
+                "image",
+                caption,
+                caption,
+                None,
+                account_id=channel.platform_user_id,
+                media_urls=[item.image_url],
+            )
+        else:
+            response = await publisher.set_location_image(
+                "",
+                listing_id_of(channel),
+                method,
+                item.image_url,
+                account_id=channel.platform_user_id,
+                category_override=item.category if method == "gallery" else None,
+            )
     except Exception as e:
         _register_publish_failure(item, str(e)[:500])
         if notify_user and item.status == "failed":
@@ -394,13 +415,15 @@ async def _publish_media_inner(
             )
         await db.commit()
         raise RuntimeError(f"Google media publish failed: {e}")
+    finally:
+        await publisher.close()
 
     item.status = "published"
     item.published_at = datetime.now(timezone.utc)
     item.error = None
     item.attempts = 0
     item.next_retry_at = None
-    item.localith_response = response
+    item.google_response = response
     google_id = _google_post_id(response)
     if google_id:
         item.google_post_id = google_id

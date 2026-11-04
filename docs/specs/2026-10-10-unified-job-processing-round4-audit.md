@@ -83,7 +83,6 @@ The design bounds C3's **effects**, not its occurrence:
 |---|---|---|---|
 | LLM completion | n/a — **no external side effect** | n/a | cost only |
 | Meta Graph send (`consumer.py:583`, `:1290`) | **No** | **No lookup API** | duplicate customer message |
-| EmbedSocial / Localith publish (`posts/service.py:363`) | **No** | **No lookup API** | duplicate Google post |
 | Google GBP reply | **No** | `confirm_reply_live` (`google_reviews.py:465-476`) is a *verification* poll, not a lookup | duplicate review reply |
 
 **Only the LLM path is free of correctness harm.** The design consequence is

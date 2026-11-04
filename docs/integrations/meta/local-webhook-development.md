@@ -121,7 +121,7 @@ Invoke-WebRequest -Uri "https://<NGROK_DOMAIN>/api/v1/meta/webhooks?hub.mode=sub
 Expect `12345` (the challenge echoed back) with HTTP 200. With a wrong
 token you get `403 Forbidden`.
 
-You can also curl the Localith/`localhost` variant to sanity-check before
+You can also curl the `localhost` variant to sanity-check before
 involving ngrok:
 
 ```powershell

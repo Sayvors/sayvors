@@ -27,6 +27,10 @@ from .schemas import (
     PulseResponse,
     InsightsCardsResponse,
     GrowthCardsResponse,
+    GoogleQuestionAnswerIn,
+    GoogleQuestionAnswerListOut,
+    GoogleQuestionAnswerOut,
+    GoogleQuestionDraftIn,
     ReviewRequestIn,
     ReviewRequestOut,
     ReviewRequestBulkIn,
@@ -92,10 +96,12 @@ async def _held_out_counts(
     review loading — so the gap is never invisible.
     """
     from .models import ReviewInsight
+    from .scoping import disconnected_channel_ids
 
     def _filters():
         f = [
             ReviewInsight.user_id == user_id,
+            ReviewInsight.channel_id.notin_(disconnected_channel_ids(user_id)),
             ReviewInsight.removed_at.is_(None),
         ]
         if channel_id:
@@ -361,8 +367,8 @@ async def get_timeseries(
     ]
 
     # Real inbox message volume per day from ChannelMessage (the `messages`
-    # extra on analytics rows only carries Embedsocial's reporting, which is
-    # normally empty). Merge so the Messages chart shows actual traffic.
+    # extra on analytics rows is normally empty). Merge so the Messages chart
+    # shows actual traffic.
     from ..channels.models import Channel, ChannelMessage
 
     cutoff_dt = datetime.now(timezone.utc) - timedelta(days=days)
@@ -1182,7 +1188,7 @@ async def refresh_external_benchmark(
     """
     from ..billing.entitlements import get_entitlements
     from ..channels.models import Channel
-    from ..localith.models import LocalithConnection
+    import json as _json
 
     uid = tenant_id_of(user)
     ent = await get_entitlements(uid, db)
@@ -1192,22 +1198,27 @@ async def refresh_external_benchmark(
         raise entitlement_403("External benchmarking is a Pro feature.", "benchmark_external")
 
     name = address = category = None
-    conn = (
+    channel = (
         await db.execute(
-            select(LocalithConnection).where(LocalithConnection.user_id == uid).limit(1)
+            select(Channel)
+            .where(
+                Channel.user_id == uid,
+                Channel.platform == "google_reviews",
+                Channel.status == "active",
+            )
+            .order_by(Channel.created_at)
+            .limit(1)
         )
     ).scalar_one_or_none()
-    if conn is not None:
-        name = conn.listing_name
-        address = conn.address
-    if not name:
-        channel = (
-            await db.execute(
-                select(Channel).where(Channel.user_id == uid).limit(1)
-            )
-        ).scalar_one_or_none()
-        if channel is not None:
-            name = channel.display_name
+    if channel is not None:
+        name = channel.display_name
+        try:
+            meta = _json.loads(channel.metadata_json or "{}")
+        except (TypeError, ValueError):
+            meta = {}
+        if isinstance(meta, dict):
+            address = meta.get("address")
+            category = meta.get("category")
     return await competitors.refresh_external_peers(
         db, uid, name=name, address=address, category=category
     )

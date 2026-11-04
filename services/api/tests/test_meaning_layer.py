@@ -265,7 +265,7 @@ async def _insight(db, user_id, channel_id, text, rating=2):
     row = ReviewInsight(
         id=f"ins-m-{abs(hash(text)) % 10**8}",
         user_id=user_id, channel_id=channel_id,
-        review_id=f"localith:m{abs(hash(text)) % 10**8}",
+        review_id=f"reviews/m{abs(hash(text)) % 10**8}",
         rating=rating, review_text=text, reviewer_name="Tester",
         sentiment="negative", sentiment_score=0.2,
         topics=[], products=[], problems=[], enrichment_status="done",
@@ -292,7 +292,7 @@ def _row(*, rid, user_id, channel_id, text, rating, sentiment, problems=None,
         id=f"ins-r-{rid}",
         user_id=user_id,
         channel_id=channel_id,
-        review_id=f"localith:{rid}",
+        review_id=f"reviews/{rid}",
         rating=rating,
         review_text=text,
         reviewer_name="Tester",
@@ -384,7 +384,7 @@ async def test_replay_still_extracts_meaning_for_legacy_rows(
     payload = {
         "event": "review.discovered",
         "channel_id": channel_id,
-        "review_id": "localith:legacy",
+        "review_id": "reviews/legacy",
         "text": AR_BUILDING,
         "rating": 2,
         "reviewer_name": "Tester",
@@ -430,7 +430,7 @@ async def test_replay_never_overwrites_a_human_correction(
     payload = {
         "event": "review.discovered",
         "channel_id": channel_id,
-        "review_id": "localith:fixed",
+        "review_id": "reviews/fixed",
         "text": AR_BUILDING,
         "rating": 2,
         "reviewer_name": "Tester",
@@ -478,7 +478,7 @@ async def test_reviewer_edit_invalidates_a_stale_human_correction(
     payload = {
         "event": "review.discovered",
         "channel_id": channel_id,
-        "review_id": "localith:changed",
+        "review_id": "reviews/changed",
         "text": "you charged me twice",
         "rating": 1,
         "reviewer_name": "Tester",
@@ -542,7 +542,7 @@ async def test_replay_never_claims_a_review_was_just_seen(
 
     await consumer._handle_discovered({
         "event": "review.discovered", "channel_id": channel_id,
-        "review_id": "localith:old", "text": "an old review", "rating": 5,
+        "review_id": "reviews/old", "text": "an old review", "rating": 5,
         "reviewer_name": "Tester",
         "review_updated_at": stale.isoformat(),
     })
@@ -587,7 +587,7 @@ async def test_replay_does_not_resurrect_a_genuinely_removed_review(
 
     await consumer._handle_discovered({
         "event": "review.discovered", "channel_id": channel_id,
-        "review_id": "localith:gone2", "text": "deleted by reviewer", "rating": 1,
+        "review_id": "reviews/gone2", "text": "deleted by reviewer", "rating": 1,
         "reviewer_name": "Tester",
         "review_updated_at": datetime.now(timezone.utc).isoformat(),
     })
