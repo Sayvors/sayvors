@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..analytics.models import ReviewInsight
 from ..channels.models import Channel, ChannelMessage
-from ..localith.models import LocalithConnection
 from ..posts.models import LocationPost
 from ..users.models import User
 
@@ -130,9 +129,10 @@ async def _window_counts(db: AsyncSession, since: datetime) -> dict:
     )
     businesses = await _count(
         db,
-        select(func.count())
-        .select_from(LocalithConnection)
-        .where(LocalithConnection.created_at >= since),
+        select(func.count(func.distinct(Channel.user_id))).where(
+            Channel.platform == "google_reviews",
+            Channel.created_at >= since,
+        ),
     )
     reviews = await _count(
         db,
@@ -177,7 +177,10 @@ async def get_stats(db: AsyncSession, window: str = "30d") -> dict:
             db, select(func.count()).select_from(User).where(owner)
         ),
         "businesses": await _count(
-            db, select(func.count()).select_from(LocalithConnection)
+            db,
+            select(func.count(func.distinct(Channel.user_id))).where(
+                Channel.platform == "google_reviews"
+            ),
         ),
         "reviews": await _count(db, select(func.count()).select_from(ReviewInsight)),
         "messages": await _count(db, select(func.count()).select_from(ChannelMessage)),
@@ -223,18 +226,21 @@ async def get_live_stats(db: AsyncSession, minutes: int = 30) -> dict:
     ).all()
     top = max(volume_rows, key=lambda row: row[1]) if volume_rows else None
 
-    # Connection state is "right now", not windowed: healthy listings vs
-    # disabled/suspended ones.
-    total_businesses = await _count(db, select(func.count()).select_from(LocalithConnection))
+    # Connection state is "right now", not windowed: healthy Google channels
+    # vs expired/disconnected ones.
+    total_businesses = await _count(
+        db,
+        select(func.count(func.distinct(Channel.user_id))).where(
+            Channel.platform == "google_reviews"
+        ),
+    )
     businesses_down = await _count(
         db,
         select(func.count())
-        .select_from(LocalithConnection)
+        .select_from(Channel)
         .where(
-            or_(
-                LocalithConnection.is_disabled == True,  # noqa: E712
-                LocalithConnection.is_suspended == True,  # noqa: E712
-            )
+            Channel.platform == "google_reviews",
+            Channel.status.in_(("expired", "disconnected")),
         ),
     )
 

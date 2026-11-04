@@ -300,6 +300,17 @@ async def find_channel_by_key(
     return result.scalar_one_or_none()
 
 
+def is_localith_mirror(channel: Channel) -> bool:
+    """Legacy Localith listing mirrored as a Google channel row."""
+    try:
+        meta = json.loads(channel.metadata_json or "{}")
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(meta, dict):
+        return False
+    return str(meta.get("provider") or "").lower() == "localith" or "listing_id" in meta
+
+
 async def list_channels(
     user: User,
     db: AsyncSession,
@@ -326,7 +337,10 @@ async def list_channels(
         .limit(limit)
         .offset(offset)
     )
-    return list(result.scalars().all()), total
+    rows = list(result.scalars().all())
+    # Localith-mirrored rows are retired; never surface them as Google
+    # locations. They stay in the database for the rollback window.
+    return [c for c in rows if not is_localith_mirror(c)], total
 
 
 async def get_channel(

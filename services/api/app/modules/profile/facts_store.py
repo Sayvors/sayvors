@@ -236,12 +236,7 @@ async def _team(db, tenant_id: str) -> list[dict]:
 
 
 async def _locations(db, tenant_id: str) -> list[dict]:
-    """Every location with its address and normalised hours.
-
-    Native Google metadata wins. A listing with no native channel keeps the
-    legacy Localith snapshot as a read-only fallback until it is reconnected —
-    without that, a tenant mid-migration would lose its address in AI facts.
-    """
+    """Every native Google location with its address and normalised hours."""
     try:
         from ..locations.models import LocationProfile
         from ..locations.service import (
@@ -265,41 +260,20 @@ async def _locations(db, tenant_id: str) -> list[dict]:
         return []
 
     by_listing = {listing_id_of(ch): ch for ch in channels}
-    legacy: dict[str, object] = {}
-    if any(str(p.listing_id) not in by_listing for p in profiles):
-        try:
-            from ..localith.models import LocalithConnection
-
-            rows = (
-                await db.execute(
-                    select(LocalithConnection).where(
-                        LocalithConnection.user_id == tenant_id
-                    )
-                )
-            ).scalars().all()
-            legacy = {
-                str(c.listing_id): c
-                for c in rows
-                if str(c.listing_id) not in by_listing
-            }
-        except Exception as e:  # noqa: BLE001
-            logger.warning("legacy location fallback failed tenant=%s: %s", tenant_id, e)
 
     out: list[dict] = []
     for profile in profiles:
         listing_id = str(profile.listing_id)
-        schedule = compress_schedule(normalise_schedule(profile.hours))
         channel = by_listing.get(listing_id)
-        if channel is not None:
-            meta = channel_meta(channel)
-            name = (channel.display_name or "").strip()
-            address = str(meta.get("address") or "").strip()
-            website = str(meta.get("website") or "").strip()
-        else:
-            connection = legacy.get(listing_id)
-            name = str(getattr(connection, "listing_name", "") or "").strip()
-            address = str(getattr(connection, "address", "") or "").strip()
-            website = str(getattr(connection, "website_url", "") or "").strip()
+        if channel is None:
+            # A legacy profile with no native Google channel is not a live
+            # location; do not expose it to the assistant.
+            continue
+        meta = channel_meta(channel)
+        schedule = compress_schedule(normalise_schedule(profile.hours))
+        name = (channel.display_name or "").strip()
+        address = str(meta.get("address") or "").strip()
+        website = str(meta.get("website") or "").strip()
         out.append({
             "listing_id": listing_id,
             "name": name,

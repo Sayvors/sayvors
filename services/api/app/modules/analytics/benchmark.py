@@ -231,7 +231,7 @@ async def _tenant_cohort(
     # with neither is not a business and must not enter the market ranking.
     other = [
         ch for ch in all_other
-        if ch.access_token or ch.refresh_token or "localith" in (ch.metadata_json or "")
+        if ch.access_token or ch.refresh_token
     ]
     if not other:
         return {"scope": "none", "label": "Sayvors network", "city": my_city,

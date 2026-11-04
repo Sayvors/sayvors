@@ -1,8 +1,8 @@
 """Ask Sayvors: chat endpoint grounding answers in live business data.
 
 Context layers, cheapest first:
-  1. Structured snapshot — Localith profile, review stats, attention counts,
-     reply activity (today / last 7 days).
+  1. Structured snapshot — native Google locations, review stats, attention
+     counts, reply activity (today / last 7 days).
   2. Agentic RAG over the tenant's Databank (documents + live connected
      databases) via rag.agent.ask_question — reasoned by the tenant's own
      configured model, and degraded gracefully when no Databank exists or
@@ -104,32 +104,28 @@ async def _business_snapshot(db: AsyncSession, user: User, limit: int = DETAIL_L
     say "I can't see it" instead of inventing reviews, users, dates, or
     reply text.
     """
-    from ..localith.models import LocalithConnection
+    from ..locations.service import channel_meta, native_channels
 
     owner_name = " ".join(
         p for p in [user.first_name, user.last_name] if p
     ).strip() or None
 
-    conns = (
-        await db.execute(
-            select(LocalithConnection).where(LocalithConnection.user_id == tenant_id_of(user))
-        )
-    ).scalars().all()
-    locations = [
-        {
-            "name": c.listing_name,
-            "address": c.address,
-            "phone": c.phone_number,
-            "website": c.website_url,
-            "maps_url": c.maps_url,
-            "verified": c.is_verified,
-            "total_reviews_on_google": c.total_reviews,
-            "average_rating_on_google": c.average_rating,
-            "last_review_on": _iso(c.last_review_on),
-            "last_reply_on": _iso(c.last_reply_on),
-        }
-        for c in conns
-    ]
+    native = await native_channels(
+        db, tenant_id_of(user), statuses=("active", "expired")
+    )
+    locations = []
+    for c in native:
+        meta = channel_meta(c)
+        locations.append({
+            "name": c.display_name,
+            "address": meta.get("address"),
+            "phone": meta.get("phone"),
+            "website": meta.get("website"),
+            "maps_url": meta.get("maps_url"),
+            "category": meta.get("category"),
+            "hours": meta.get("hours"),
+            "status": c.status,
+        })
 
     channels = (
         await db.execute(
@@ -148,28 +144,42 @@ async def _business_snapshot(db: AsyncSession, user: User, limit: int = DETAIL_L
         ],
     }
     visibility: dict = {}
-    for c in conns:
-        raw = c.raw_metrics_json or {}
-        listings = raw.get("listings") if isinstance(raw, dict) else None
-        if not listings:
+    from ..analytics.models import LocationDailyMetric
+
+    window_start = (datetime.now(timezone.utc) - timedelta(days=30)).date()
+    metric_rows = (
+        await db.execute(
+            select(LocationDailyMetric).where(
+                LocationDailyMetric.user_id == tenant_id_of(user),
+                LocationDailyMetric.channel_id.in_(channel_ids),
+                LocationDailyMetric.date >= window_start,
+            )
+        )
+    ).scalars().all()
+    by_channel: dict[str, dict] = {}
+    for row in metric_rows:
+        slot = by_channel.setdefault(row.channel_id, {
+            "found_via_google_search": 0,
+            "found_via_google_maps": 0,
+            "direction_requests": 0,
+            "call_clicks": 0,
+            "website_clicks": 0,
+        })
+        extra = row.extra if isinstance(row.extra, dict) else {}
+        slot["found_via_google_search"] += int(extra.get("impressions_search", 0) or 0)
+        slot["found_via_google_maps"] += int(row.impressions_maps_desktop or 0) + int(
+            row.impressions_maps_mobile or 0
+        )
+        slot["direction_requests"] += int(row.direction_requests or 0)
+        slot["call_clicks"] += int(row.call_clicks or 0)
+        slot["website_clicks"] += int(row.website_clicks or 0)
+    for channel in channels:
+        if channel.id not in by_channel:
             continue
-        window = (raw.get("dateRange") or {}) if isinstance(raw, dict) else {}
-        for listing in listings:
-            search_imp = int(listing.get("googleSearchDesktop", 0) or 0) + int(
-                listing.get("googleSearchMobile", 0) or 0)
-            maps_imp = int(listing.get("googleMapsDesktop", 0) or 0) + int(
-                listing.get("googleMapsMobile", 0) or 0)
-            visibility[c.listing_name or c.listing_id] = {
-                "window": f"{window.get('startDate')} to {window.get('endDate')}",
-                "found_via_google_search": search_imp,
-                "found_via_google_maps": maps_imp,
-                "direction_requests": int(listing.get("directions", 0) or 0),
-                "call_clicks": int(listing.get("callClicks", 0) or 0),
-                "website_clicks": int(listing.get("websiteClicks", 0) or 0),
-                "messages": int(listing.get("messages", 0) or 0),
-                "bookings": int(listing.get("bookings", 0) or 0),
-                "review_response_percentage": listing.get("reviewResponsePercentage"),
-            }
+        visibility[channel.display_name or channel.id] = {
+            "window": f"{window_start.isoformat()} to {datetime.now(timezone.utc).date().isoformat()}",
+            **by_channel[channel.id],
+        }
     stats: dict = {
         "connected_locations": [c.display_name or c.id for c in channels if c.status == "active"],
         "visibility": visibility,

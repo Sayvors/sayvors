@@ -1,4 +1,5 @@
 """Platform overview + tenant queries. Read-only by design (v1)."""
+import json
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -7,8 +8,7 @@ from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..analytics.models import ReviewInsight
-from ..channels.models import ReviewReply
-from ..localith.models import LocalithConnection
+from ..channels.models import Channel, ReviewReply
 from ..media.models import LocationMedia
 from ..outbox.models import EventOutbox
 from ..posts.models import LocationPost
@@ -30,6 +30,19 @@ async def _counts_by_user(db: AsyncSession, model, user_col="user_id") -> dict[s
     return {str(uid): int(n) for uid, n in rows}
 
 
+def _last_sync(channel: Channel) -> str | None:
+    """Last successful Google sync, or the channel row's last update."""
+    try:
+        meta = json.loads(channel.metadata_json or "{}")
+    except (TypeError, ValueError):
+        meta = {}
+    health = meta.get("health") if isinstance(meta, dict) else {}
+    value = (health or {}).get("last_success_at") if isinstance(health, dict) else None
+    if value:
+        return str(value)
+    return channel.updated_at.isoformat() if channel.updated_at else None
+
+
 async def get_overview(db: AsyncSession) -> dict:
     now = datetime.now(timezone.utc)
     users_total = (await db.execute(select(func.count()).select_from(User))).scalar() or 0
@@ -41,12 +54,16 @@ async def get_overview(db: AsyncSession) -> dict:
             select(func.count()).select_from(User).where(User.created_at >= now - timedelta(days=7))
         )
     ).scalar() or 0
-    connections = (
-        await db.execute(select(func.count()).select_from(LocalithConnection))
-    ).scalar() or 0
-    last_sync = (
-        await db.execute(select(func.max(LocalithConnection.last_synced_at)))
-    ).scalar()
+    google_channels = (
+        await db.execute(
+            select(Channel).where(Channel.platform == "google_reviews")
+        )
+    ).scalars().all()
+    connections = len({c.user_id for c in google_channels})
+    last_sync = max(
+        (_last_sync(c) for c in google_channels if _last_sync(c)),
+        default=None,
+    )
     reviews = (
         await db.execute(select(func.count()).select_from(ReviewInsight))
     ).scalar() or 0
@@ -88,7 +105,7 @@ async def get_overview(db: AsyncSession) -> dict:
         "users_verified": users_verified,
         "signups_last_7d": signups,
         "connections": connections,
-        "last_synced_at": last_sync.isoformat() if last_sync else None,
+        "last_synced_at": last_sync,
         "reviews_total": reviews,
         "posts_total": sum(posts_by_status.values()),
         "posts_by_status": posts_by_status,
@@ -128,7 +145,13 @@ async def list_tenants(
 
     ids = [u.id for u in users]
     conns = (
-        await db.execute(select(LocalithConnection).where(LocalithConnection.user_id.in_(ids)))
+        await db.execute(
+            select(Channel).where(
+                Channel.user_id.in_(ids),
+                Channel.platform == "google_reviews",
+                Channel.status != "disconnected",
+            )
+        )
     ).scalars().all()
     conn_by_user: dict[str, list] = {}
     for c in conns:
@@ -149,9 +172,9 @@ async def list_tenants(
             "email_verified": bool(u.email_verified),
             "created_at": u.created_at.isoformat() if u.created_at else None,
             "has_connection": c is not None,
-            "listing_name": c.listing_name if c else None,
+            "listing_name": c.display_name if c else None,
             "listings_count": len(user_conns),
-            "last_synced_at": c.last_synced_at.isoformat() if c and c.last_synced_at else None,
+            "last_synced_at": _last_sync(c) if c else None,
             "reviews": review_counts.get(u.id, 0),
             "posts": post_counts.get(u.id, 0),
             "databanks": bank_counts.get(u.id, 0),
@@ -165,13 +188,18 @@ async def get_tenant(db: AsyncSession, user_id: str) -> dict | None:
     user = await db.get(User, user_id)
     if user is None:
         return None
-    conn = (
+    conns = (
         await db.execute(
-            select(LocalithConnection)
-            .where(LocalithConnection.user_id == user_id)
-            .order_by(LocalithConnection.created_at)
+            select(Channel)
+            .where(
+                Channel.user_id == user_id,
+                Channel.platform == "google_reviews",
+                Channel.status != "disconnected",
+            )
+            .order_by(Channel.created_at)
         )
-    ).scalars().first()
+    ).scalars().all()
+    conn = conns[0] if conns else None
     review_counts = await _counts_by_user(db, ReviewInsight)
     post_counts = await _counts_by_user(db, LocationPost)
     bank_counts = await _counts_by_user(db, Databank)
@@ -183,8 +211,8 @@ async def get_tenant(db: AsyncSession, user_id: str) -> dict | None:
         "email_verified": bool(user.email_verified),
         "created_at": user.created_at.isoformat() if user.created_at else None,
         "has_connection": conn is not None,
-        "listing_name": conn.listing_name if conn else None,
-        "last_synced_at": conn.last_synced_at.isoformat() if conn and conn.last_synced_at else None,
+        "listing_name": conn.display_name if conn else None,
+        "last_synced_at": _last_sync(conn) if conn else None,
         "reviews": review_counts.get(user.id, 0),
         "posts": post_counts.get(user.id, 0),
         "databanks": bank_counts.get(user.id, 0),
@@ -358,21 +386,6 @@ async def _probe_ai_provider(name: str, url: str, timeout: int = 10) -> str:
     return f"reachable ({n} models listed)"
 
 
-async def _check_localith(probe: bool) -> str:
-    from ...config import settings
-
-    if not settings.LOCALITH_API_KEY:
-        raise RuntimeError("LOCALITH_API_KEY not set")
-    if not probe:
-        return "API key configured"
-    import asyncio as _asyncio
-
-    from integrations.channels import embedsocial
-
-    listings = await _asyncio.to_thread(embedsocial.fetch_listings)
-    return f"reachable ({len(listings)} listing(s))"
-
-
 async def _provider_rows(db: AsyncSession) -> dict[str, dict]:
     from app.modules.llm.models import ProviderConfig
 
@@ -398,9 +411,6 @@ async def get_health(db: AsyncSession, probe: bool = False) -> dict:
 
     ok, ms, detail = await _timed(_check_kafka())
     services.append({"name": "Kafka", "kind": "events", "ok": ok, "latency_ms": ms, "detail": detail})
-
-    ok, ms, detail = await _timed(_check_localith(probe))
-    services.append({"name": "Localith", "kind": "business-data", "ok": ok, "latency_ms": ms, "detail": detail})
 
     db_rows = await _provider_rows(db)
     for provider in _ai_providers_configured(db_rows):

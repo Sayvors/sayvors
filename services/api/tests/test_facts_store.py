@@ -4,6 +4,8 @@ One row per tenant, built from the same sources the reply used to query one by
 one. The interesting part is hours: several locations, some sharing a
 schedule, some not — the assistant must be able to say that in one sentence.
 """
+import json
+
 import pytest
 
 from app.modules.profile.facts_store import (
@@ -39,7 +41,6 @@ LATE = {day: {"open": "10:00", "close": "22:00"} for day in (
 async def _seed(db, *, late_branch: bool = True, locations: bool = True, legacy: bool = False):
     from app.modules.channels.models import BusinessService, Channel
     from app.modules.channels.meta.models import MetaAsset, MetaConnection
-    from app.modules.localith.models import LocalithConnection
     from app.modules.locations.models import LocationProfile
     from app.modules.team.models import TeamMember, TeamRole
     from app.modules.users.models import User
@@ -84,9 +85,13 @@ async def _seed(db, *, late_branch: bool = True, locations: bool = True, legacy:
                 id=f"facts-{listing_id}", user_id=TENANT, listing_id=listing_id,
                 hours={"regular": schedule},
             ))
-            db.add(LocalithConnection(
-                id=f"facts-conn-{listing_id}", user_id=TENANT, listing_id=listing_id,
-                listing_name=name, address=address,
+            db.add(Channel(
+                id=f"facts-conn-{listing_id}", user_id=TENANT,
+                platform="google_reviews", platform_user_id=f"acct-{listing_id}",
+                display_name=name, status="active", listing_key=listing_id,
+                metadata_json=json.dumps({
+                    "location_id": listing_id, "address": address,
+                }),
             ))
 
     conn = MetaConnection(

@@ -39,7 +39,6 @@ from app.modules.channels.service import (
     encrypt_message_content,
     hash_contact_phone,
 )
-from app.modules.localith.models import LocalithConnection
 from app.modules.users.models import User
 from conftest import TEST_ENGINE
 
@@ -120,14 +119,14 @@ async def _seed(db, user_id, *, preferred_language: str | None = "en"):
         language="en",
         preferred_language=preferred_language,
     ))
-    db.add(LocalithConnection(
+    db.add(Channel(
         id=str(uuid.uuid4()),
         user_id=user_id,
-        listing_id="loc-1",
-        listing_name="Aster Coffee",
-        address="Olaya St, Riyadh",
-        phone_number="+966500000000",
-        maps_url="https://www.google.com/maps/@24.7136,46.6753,17z",
+        platform="google_reviews",
+        platform_user_id="acct-ai-card",
+        display_name="Aster Coffee",
+        status="active",
+        metadata_json='{"address": "Olaya St, Riyadh", "phone": "+966500000000", "maps_url": "https://www.google.com/maps/@24.7136,46.6753,17z"}',
     ))
     await db.commit()
     return channel
