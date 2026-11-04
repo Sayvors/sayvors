@@ -136,6 +136,17 @@ There are two operator paths:
 Both require an admin session (`require_admin`), are rate-limited, and are
 recorded in the admin audit middleware. A customer cannot call either route.
 
+### Tenant lifecycle controls
+
+The console can grant a plan and add manual AI credit. It does **not** yet
+have a tenant-level suspend/disable switch, a promotion-code system, or a
+tenant purge. `TenantSubscription.status = canceled` changes billing state; it
+does not block login. The customer deletion route is a 30-day personal-data
+anonymization that retains business records, not a tenant purge.
+
+Planned controls and their required safety properties are tracked as AT-1 to
+AT-6 in `readiness-report.html#admin-tenant-controls`.
+
 The customer-facing plans page is read-only. There is **no downgrade action**;
 the current plan is disabled. Starter/Pro/Growth are disabled until a real
 payment provider and webhook exist. Enterprise opens an email to
