@@ -353,10 +353,11 @@ export default function VerificationPage() {
               <section className="rounded-[32px] bg-white p-6 shadow-[0_12px_30px_rgba(20,16,31,0.07)]">
                 <h2 className="text-[16px] font-bold text-ink">No eligible methods returned</h2>
                 <p className="mt-2 max-w-2xl text-[12.5px] leading-relaxed text-ink/55">
-                  Google is not offering a verification method through the API for this
-                  location. This usually means the connected Google account is not the
-                  profile owner, or the last attempt failed. You can still complete
-                  verification from Google Business Profile.
+                  Google requires verification for this location, but no API method is
+                  eligible. Some locations require video verification, which is only
+                  available in Google Business Profile. Complete it there, then refresh.
+                  If Google says you do not have access, ask the profile owner to add
+                  this Google account as an owner or manager.
                 </p>
                 <a
                   href={GBP_DASHBOARD_URL}

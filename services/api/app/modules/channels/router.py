@@ -388,9 +388,11 @@ async def _verification_snapshot(
         if state.get("hasBusinessAuthority") is False:
             provider_error = (
                 "Google reports this account does not have business authority "
-                "for this location, so the API cannot offer a verification "
-                "method. Ask the profile owner to grant owner or manager access "
-                "in Google Business Profile, then refresh."
+                "for this location yet, so the API cannot offer a verification "
+                "method. Some locations require video verification, which Google "
+                "only exposes in Google Business Profile. Complete verification "
+                "there, then refresh. If Google says you do not have access, ask "
+                "the profile owner to grant owner or manager access."
             )
         elif latest and str(latest.get("state") or "").upper() == "FAILED":
             provider_error = (
