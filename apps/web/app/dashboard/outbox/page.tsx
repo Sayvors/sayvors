@@ -316,7 +316,11 @@ export default function OutboxPage() {
     return () => {
       cancelled = true;
     };
-  }, [loadScope]);
+    // Load the channel list once. Depending on loadScope here created a loop:
+    // setChannels() rebuilt listingMap -> resolveScope -> loadScope, which
+    // re-ran this effect and fetched channels again forever.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const changeScope = (scope: string) => {
     setSelected(scope);
