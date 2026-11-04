@@ -301,15 +301,27 @@ async def find_channel_by_key(
 
 
 async def list_channels(
-    user: User, db: AsyncSession, limit: int = 20, offset: int = 0
+    user: User,
+    db: AsyncSession,
+    limit: int = 20,
+    offset: int = 0,
+    include_disconnected: bool = False,
 ) -> tuple[list[Channel], int]:
-    count_result = await db.execute(
-        select(func.count()).where(Channel.user_id == tenant_id_of(user))
-    )
+    """List channels for the tenant.
+
+    Disconnected channels are hidden by default: every product surface that
+    reads channels must stop showing their reviews, metrics and locations the
+    moment Google is disconnected. The connector page opts in explicitly so it
+    can offer "Reconnect".
+    """
+    filters = [Channel.user_id == tenant_id_of(user)]
+    if not include_disconnected:
+        filters.append(Channel.status != "disconnected")
+    count_result = await db.execute(select(func.count()).where(*filters))
     total = count_result.scalar() or 0
     result = await db.execute(
         select(Channel)
-        .where(Channel.user_id == tenant_id_of(user))
+        .where(*filters)
         .order_by(Channel.created_at.desc())
         .limit(limit)
         .offset(offset)

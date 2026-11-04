@@ -563,9 +563,9 @@ const bulk: BulkScope | null = isBulk
       : null;
 
 
-   // Bulk mode has no single profile — leave the updates tab behind too.
+   // Bulk mode has no single profile — the services tab is per-branch.
    useEffect(() => {
-     if (isBulk && activeTab === "google-updates") setActiveTab("details");
+     if (isBulk && activeTab === "services") setActiveTab("details");
    }, [isBulk, activeTab]);
 
    // Load the merged profile (Google snapshot + Sayvors store) per location.
@@ -607,7 +607,6 @@ const bulk: BulkScope | null = isBulk
     { key: "attributes", label: copy.tabAttributes },
     { key: "description", label: copy.tabDescription },
     { key: "services", label: copy.tabServices },
-    { key: "google-updates", label: copy.tabGoogleUpdates },
   ];
 
   // Groups are shared across pages, so fetch once on mount and refresh from
@@ -868,7 +867,7 @@ const bulk: BulkScope | null = isBulk
           {/* Tabs (google-updates is per-branch, hidden in bulk) */}
           <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1">
             <div role="tablist" className="flex gap-1 rounded-xl bg-ink/[0.03] p-1 dark:bg-fog/[0.04]">
-              {tabs.filter((tab) => !isBulk || tab.key !== "google-updates").map((tab) => (
+              {tabs.map((tab) => (
                 <button
                   key={tab.key}
                   role="tab"
@@ -1053,10 +1052,9 @@ const bulk: BulkScope | null = isBulk
                 }
               />
             )}
-            {activeTab === "google-updates" && (
-              <GoogleUpdatesTab copy={copy} />
+            {activeTab === "services" && (
+              <ServicesPanel embedded listingId={isBulk ? undefined : snapshot?.listing_id} />
             )}
-            {activeTab === "services" && <ServicesPanel embedded />}
           </div>
 
           <div className="mt-6">
@@ -1808,40 +1806,6 @@ function DescriptionTab({ initial, initialOpeningDate, onSave, bulk, copy }: {
               : copy.saveDescription}
         </button>
       </div>
-    </div>
-  );
-}
-
-function GoogleUpdatesTab({ copy }: { copy: LocationsCopy }) {
-  const [updates, setUpdates] = useState<{ id: string; field: string; current: string; proposed: string; status: string }[]>([]);
-
-  return (
-      <div className="space-y-5">
-        <SectionTitle title={copy.tabGoogleUpdates} subtitle={copy.googleUpdatesSubtitle} />
-        <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.googleUpdatesHint}</p>
-      {updates.length === 0 ? (
-        <div className="flex flex-col items-center py-10">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-2 h-8 w-8 text-ink/20 dark:text-fog/20">
-            <path d="M22 11.08V12a10 10 0 11-5.93-9.14" strokeLinecap="round" />
-            <path d="M22 4L12 14.01l-3-3" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          <p className="text-[13px] text-ink/40 dark:text-fog/40">{copy.googleUpdatesEmpty}</p>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {updates.map((u) => (
-            <div key={u.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 sm:flex-nowrap sm:gap-4 dark:border-fog/[0.06] dark:bg-fog/[0.02]">
-              <div className="min-w-0 flex-1">
-                <p className="text-[12px] font-semibold text-ink dark:text-fog">{u.field}</p>
-                <p className="text-[11px] text-ink/40 dark:text-fog/40">{copy.currentLabel} {u.current}</p>
-                <p className="text-[11px] text-deep-violet">{copy.proposedLabel} {u.proposed}</p>
-              </div>
-              <button className="rounded-lg bg-emerald-500 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-600">{copy.accept}</button>
-              <button className="rounded-lg border border-ink/[0.1] px-2.5 py-1 text-[11px] font-semibold text-ink/50 hover:bg-ink/[0.04] dark:text-fog/50">{copy.reject}</button>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

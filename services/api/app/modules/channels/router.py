@@ -189,10 +189,13 @@ async def connect_channel(
 async def get_channels(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    include_disconnected: bool = Query(False),
     ctx: TenantContext = Depends(require_perm("channels.view")),
     db: AsyncSession = Depends(get_db),
 ):
-    channels, total = await list_channels(ctx.user, db, limit, offset)
+    channels, total = await list_channels(
+        ctx.user, db, limit, offset, include_disconnected=include_disconnected
+    )
     # A member with no role-wide channel default only sees channels they
     # were explicitly granted (per-channel overrides), never the rest.
     visible = ctx.visible_channel_ids()
@@ -219,6 +222,56 @@ async def get_channel_by_id(
     return _channel_response(channel)
 
 
+@router.post("/google/disconnect")
+async def disconnect_google(
+    ctx: TenantContext = Depends(require_perm("channels.remove")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Soft-disconnect every Google channel for the tenant.
+
+    The rows, reviews, metrics, drafts and profile data are kept. Only the
+    OAuth tokens and status change, so reconnecting restores the same data
+    instead of re-importing it. Best-effort token revocation at Google too.
+    """
+    import httpx
+
+    from .service import decrypt_token
+
+    uid = tenant_id_of(ctx.user)
+    channels = (
+        await db.execute(
+            select(Channel).where(
+                Channel.user_id == uid,
+                Channel.platform == "google_reviews",
+                Channel.status != "disconnected",
+            )
+        )
+    ).scalars().all()
+
+    for channel in channels:
+        token = decrypt_token(channel.refresh_token) if channel.refresh_token else None
+        if token:
+            try:
+                async with httpx.AsyncClient(timeout=10) as client:
+                    await client.post(
+                        "https://oauth2.googleapis.com/revoke",
+                        params={"token": token},
+                    )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Google token revoke failed for %s: %s", channel.id, e)
+        channel.status = "disconnected"
+        channel.access_token = None
+        channel.refresh_token = None
+        channel.token_expires_at = None
+    await db.commit()
+
+    # The assistant's facts must stop including disconnected locations.
+    from ..profile.facts_store import rebuild_facts_safe
+
+    await rebuild_facts_safe(db, uid)
+    return {"disconnected": len(channels)}
+
+
 @router.delete("/{channel_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def disconnect_channel(
     channel_id: str,
@@ -227,6 +280,18 @@ async def disconnect_channel(
 ):
     if not ctx.can_edit_channel(channel_id):
         raise HTTPException(status_code=404, detail="Channel not found")
+    channel = await get_channel(channel_id, ctx.user, db)
+    if not channel:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    if channel.platform == "google_reviews":
+        # Google disconnects are always soft: rows, reviews and metrics are
+        # kept so reconnecting restores the same data.
+        channel.status = "disconnected"
+        channel.access_token = None
+        channel.refresh_token = None
+        channel.token_expires_at = None
+        await db.commit()
+        return
     deleted = await delete_channel(channel_id, ctx.user, db)
     if not deleted:
         raise HTTPException(status_code=404, detail="Channel not found")
@@ -2182,7 +2247,6 @@ async def google_callback(
                     select(Channel).where(
                         Channel.user_id == user_id,
                         Channel.platform == "google_reviews",
-                        Channel.status == "active",
                     )
                 )
                 for c in legacy.scalars().all():
@@ -2192,14 +2256,32 @@ async def google_callback(
                             c.listing_key = key
                         break
             if matching is not None:
-                # Re-consent heals tokens: a fresh refresh_token repairs
-                # channels that can't publish ("No refresh token available").
+                # Re-consent heals tokens and reactivates a soft-disconnected
+                # channel: the same row, reviews, metrics and drafts return.
                 # Never overwrite a stored refresh token with nothing —
                 # Google only sends one on fresh consent.
-                if refresh_token:
+                matching.status = "active"
+                if access_token:
                     matching.access_token = encrypt_token(access_token)
+                if refresh_token:
                     matching.refresh_token = encrypt_token(refresh_token)
-                    matching.token_expires_at = token_expires_at
+                matching.token_expires_at = token_expires_at
+                matching.display_name = title
+                matching.listing_key = key
+                existing_meta = _channel_meta_meta(matching)
+                existing_meta.update({
+                    "location_id": location_id,
+                    "account_name": account_name,
+                    "place_id": loc.get("metadata", {}).get("placeId"),
+                    "maps_url": loc.get("metadata", {}).get("mapsUrl"),
+                    "address": location_address(loc),
+                    "category": location_category(loc),
+                    "phone": location_phone(loc),
+                    "website": location_website(loc),
+                    "description": location_description(loc),
+                    "profile_fields_checked": True,
+                })
+                matching.metadata_json = _json.dumps(existing_meta)
                 continue
 
             loc_meta = loc.get("metadata") or {}
@@ -2244,6 +2326,10 @@ async def google_callback(
             created += 1
 
     await db.commit()
+    # Reconnect restores the same rows; rebuild the assistant's location facts.
+    from ..profile.facts_store import rebuild_facts_safe
+
+    await rebuild_facts_safe(db, user_id)
     logger.info("Google Reviews connect: created %d channels for user %s", created, user_id)
     return RedirectResponse(f"{base}?google_connected={created}")
 

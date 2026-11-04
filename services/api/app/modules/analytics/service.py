@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..channels.models import ReviewReply
 from .models import ChannelDailyMetric, LocationDailyMetric, ReviewInsight
+from .scoping import disconnected_channel_ids
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,11 @@ async def get_overview(
 
     review_filter = [ReviewInsight.user_id == user_id]
     metric_filter = [LocationDailyMetric.user_id == user_id]
+    # Disconnected Google channels are hidden everywhere; their rows stay in
+    # the database untouched for reconnect.
+    hidden_channels = disconnected_channel_ids(user_id)
+    review_filter.append(ReviewInsight.channel_id.notin_(hidden_channels))
+    metric_filter.append(LocationDailyMetric.channel_id.notin_(hidden_channels))
     if channel_id:
         review_filter.append(ReviewInsight.channel_id == channel_id)
         metric_filter.append(LocationDailyMetric.channel_id == channel_id)
@@ -253,6 +259,7 @@ async def _review_rollup_fallback(
         )
         .where(
             ReviewInsight.user_id == user_id,
+            ReviewInsight.channel_id.notin_(disconnected_channel_ids(user_id)),
             ReviewInsight.removed_at.is_(None),
             bucket >= since,
         )
@@ -288,6 +295,7 @@ async def _review_rollup_fallback(
         .join(ReviewReply, ReviewReply.review_id == ReviewInsight.review_id)
         .where(
             ReviewInsight.user_id == user_id,
+            ReviewInsight.channel_id.notin_(disconnected_channel_ids(user_id)),
             ReviewInsight.removed_at.is_(None),
             ReviewInsight.replied.is_(True),
             ReviewReply.status == "posted",
@@ -311,7 +319,11 @@ async def get_timeseries(
     since = (datetime.now(timezone.utc) - timedelta(days=days)).date()
     stmt = (
         select(LocationDailyMetric)
-        .where(LocationDailyMetric.user_id == user_id, LocationDailyMetric.date >= since)
+        .where(
+            LocationDailyMetric.user_id == user_id,
+            LocationDailyMetric.channel_id.notin_(disconnected_channel_ids(user_id)),
+            LocationDailyMetric.date >= since,
+        )
         .order_by(LocationDailyMetric.date)
     )
     if channel_id:
@@ -383,7 +395,10 @@ async def list_insights(
     default because a review Google dropped is not a review the merchant can
     act on, and leaving it in skews the response-rate counts.
     """
-    filters = [ReviewInsight.user_id == user_id]
+    filters = [
+        ReviewInsight.user_id == user_id,
+        ReviewInsight.channel_id.notin_(disconnected_channel_ids(user_id)),
+    ]
     if channel_id:
         filters.append(ReviewInsight.channel_id == channel_id)
     if sentiment in ("positive", "neutral", "negative"):

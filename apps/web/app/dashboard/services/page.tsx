@@ -23,7 +23,7 @@ type Service = { id: string; channel_id: string; name: string; category: string;
 
 type ServicesCopy = ReturnType<typeof useI18n>["t"]["dashboard"]["services"];
 
-export default function ServicesPage({ embedded = false }: { embedded?: boolean }) {
+export default function ServicesPage({ embedded = false, listingId }: { embedded?: boolean; listingId?: string }) {
   const { t } = useI18n();
   const copy = t.dashboard.services;
   const queryClient = useQueryClient();
@@ -39,6 +39,12 @@ export default function ServicesPage({ embedded = false }: { embedded?: boolean 
   });
   const channels = channelsQuery.data ?? [];
   const [selectedId, setSelectedId] = useState("");
+  // Embedded on the Locations page: preselect that branch once channels load.
+  useEffect(() => {
+    if (!listingId) return;
+    const match = channels.find((c) => c.listing_id === listingId);
+    if (match) setSelectedId(match.id);
+  }, [listingId, channels]);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [name, setName] = useState("");

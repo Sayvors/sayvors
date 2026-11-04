@@ -96,10 +96,12 @@ async def _held_out_counts(
     review loading — so the gap is never invisible.
     """
     from .models import ReviewInsight
+    from .scoping import disconnected_channel_ids
 
     def _filters():
         f = [
             ReviewInsight.user_id == user_id,
+            ReviewInsight.channel_id.notin_(disconnected_channel_ids(user_id)),
             ReviewInsight.removed_at.is_(None),
         ]
         if channel_id:

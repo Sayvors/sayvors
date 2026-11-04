@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .dimensions import score_dimensions
 from .models import ReviewInsight
+from .scoping import disconnected_channel_ids
 from ..team.context import tenant_id_of
 
 logger = logging.getLogger(__name__)
@@ -208,6 +209,7 @@ async def _load_reviews(
     """
     filters = [
         ReviewInsight.user_id == user_id,
+        ReviewInsight.channel_id.notin_(disconnected_channel_ids(user_id)),
         ReviewInsight.review_updated_at.is_not(None),
         # A review Google no longer serves is not part of the merchant's
         # performance. Including it inflated the report's counts (9 reviews
@@ -349,6 +351,9 @@ async def _competitive_facts(
 
         since = datetime.now(timezone.utc) - timedelta(days=max(1, days))
         filters = [ReviewInsight.user_id != user_id,
+                   ReviewInsight.channel_id.in_(select(Channel.id).where(
+                       Channel.status.in_(("active", "expired"))
+                   )),
                    ReviewInsight.review_updated_at.is_not(None),
                    ReviewInsight.review_updated_at >= since]
         if channel_id:
@@ -974,7 +979,10 @@ async def _current_review_count(
 
     from .models import ReviewInsight
 
-    filters = [ReviewInsight.user_id == user_id]
+    filters = [
+        ReviewInsight.user_id == user_id,
+        ReviewInsight.channel_id.notin_(disconnected_channel_ids(user_id)),
+    ]
     if channel_id:
         filters.append(ReviewInsight.channel_id == channel_id)
     if date_from is not None:

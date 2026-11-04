@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..channels.models import Channel
 from .models import LocationDailyMetric, ReviewInsight
+from .scoping import disconnected_channel_ids
 from .service import get_overview, reputation_score
 
 logger = logging.getLogger(__name__)
@@ -530,6 +531,7 @@ async def get_benchmark(
     now = datetime.now(timezone.utc)
     live = [
         ReviewInsight.user_id == user_id,
+        ReviewInsight.channel_id.notin_(disconnected_channel_ids(user_id)),
         ReviewInsight.removed_at.is_(None),
         ReviewInsight.skipped.is_(False),
     ]
