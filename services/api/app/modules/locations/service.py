@@ -41,10 +41,17 @@ def listing_id_of(channel: Channel) -> str:
     )
 
 
-def is_native_google(channel: Channel) -> bool:
-    """True for a Google-OAuth channel. Localith-mirrored rows carry a
-    `listing_id`/`provider=localith` marker in their metadata and are skipped."""
-    if channel.platform != "google_reviews" or channel.status != "active":
+def is_native_google(
+    channel: Channel, statuses: tuple[str, ...] = ("active",)
+) -> bool:
+    """True for a Google-OAuth channel in one of `statuses`.
+
+    Localith-mirrored rows carry a `listing_id`/`provider=localith` marker in
+    their metadata and are skipped. Expired channels are still listed so the
+    merchant can see their data and a reconnect prompt instead of an empty
+    Locations page.
+    """
+    if channel.platform != "google_reviews" or channel.status not in statuses:
         return False
     meta = channel_meta(channel)
     if str(meta.get("provider") or "").lower() == "localith":
@@ -52,26 +59,33 @@ def is_native_google(channel: Channel) -> bool:
     return "listing_id" not in meta
 
 
-async def native_channels(db: AsyncSession, user_id: str) -> list[Channel]:
-    """Every active native Google listing for the tenant, oldest first."""
+async def native_channels(
+    db: AsyncSession,
+    user_id: str,
+    statuses: tuple[str, ...] = ("active",),
+) -> list[Channel]:
+    """Every native Google listing for the tenant, oldest first."""
     rows = (
         await db.execute(
             select(Channel)
             .where(
                 Channel.user_id == user_id,
                 Channel.platform == "google_reviews",
-                Channel.status == "active",
+                Channel.status.in_(statuses),
             )
             .order_by(Channel.created_at)
         )
     ).scalars().all()
-    return [ch for ch in rows if is_native_google(ch)]
+    return [ch for ch in rows if is_native_google(ch, statuses)]
 
 
 async def channel_for_listing(
-    db: AsyncSession, user_id: str, listing_id: str
+    db: AsyncSession,
+    user_id: str,
+    listing_id: str,
+    statuses: tuple[str, ...] = ("active",),
 ) -> Channel | None:
-    for channel in await native_channels(db, user_id):
+    for channel in await native_channels(db, user_id, statuses):
         if listing_id_of(channel) == listing_id or channel.id == listing_id:
             return channel
     return None
@@ -130,7 +144,9 @@ async def get_profile(
     # rolls the session back, and rollback expires every loaded object.
     # Touching an expired attribute below would trigger a sync lazy-load
     # (MissingGreenlet); a fresh select repopulates it inside the await.
-    channel = await channel_for_listing(db, user_id, listing_id)
+    channel = await channel_for_listing(
+        db, user_id, listing_id, statuses=("active", "expired")
+    )
     meta = channel_meta(channel) if channel is not None else {}
 
     merged = {
@@ -246,6 +262,15 @@ async def update_profile(
 
     profile = await _profile(db, user_id, listing_id)
     channel = await channel_for_listing(db, user_id, listing_id)
+    if channel is None:
+        expired = await channel_for_listing(
+            db, user_id, listing_id, statuses=("expired",)
+        )
+        if expired is not None:
+            raise ValueError(
+                "Google connection expired — reconnect Google before updating "
+                "this location."
+            )
 
     # Only changed values are pushed. A bulk save sends every column for every
     # row; without this, an unchanged branch would cost four Google patches.

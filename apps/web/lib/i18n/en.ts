@@ -202,6 +202,8 @@ const en = {
       noLocations: "No locations",
       googleConnected: "Google connected",
       googleNotConnected: "Google not connected",
+      googleExpired: "Google reconnection needed",
+      reconnectGoogle: "Your Google connection expired. Reconnect Google Business Profile in Channels to update this location.",
       createLocation: "+ Create location",
       createLocationTitle: "Create a new Google business location",
       multiLocationHint:

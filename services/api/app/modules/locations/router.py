@@ -42,7 +42,9 @@ async def list_locations(
     from ..analytics.models import ReviewInsight
 
     uid = tenant_id_of(user)
-    channels = await service.native_channels(db, uid)
+    channels = await service.native_channels(
+        db, uid, statuses=("active", "expired")
+    )
     stats: dict[str, tuple[float | None, int]] = {}
     if channels:
         rows = (

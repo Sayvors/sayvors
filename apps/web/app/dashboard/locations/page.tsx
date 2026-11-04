@@ -652,6 +652,7 @@ const bulk: BulkScope | null = isBulk
       }),
     [locations, snapshots]
   );
+  const hasExpired = locations.some((l) => l.status === "expired");
 
   return (
     <div className="h-full space-y-5 overflow-y-auto p-4 sm:p-6">
@@ -660,11 +661,16 @@ const bulk: BulkScope | null = isBulk
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2">
             <h1 className="text-[20px] font-bold tracking-tight text-ink dark:text-fog">{copy.title}</h1>
-            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${locations.length ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"}`}>
-              {locations.length ? copy.googleConnected : copy.googleNotConnected}
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${hasExpired ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" : locations.length ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"}`}>
+              {hasExpired ? copy.googleExpired : locations.length ? copy.googleConnected : copy.googleNotConnected}
             </span>
           </div>
           <p className="text-[13px] text-ink/45 dark:text-fog/45">{copy.subtitle}</p>
+          {hasExpired && (
+            <p className="rounded-xl border border-amber-500/20 bg-amber-50 px-3.5 py-2 text-[12px] text-amber-800 dark:border-amber-400/20 dark:bg-amber-900/20 dark:text-amber-200">
+              {copy.reconnectGoogle}
+            </p>
+          )}
         </div>
 
         {/* Toolbar row: location selector + actions */}
@@ -1106,6 +1112,10 @@ function DetailsTab({
   }, [location?.id, profile?.listing_id, fullProfile?.name]);
 
   const handleSave = async () => {
+    if (profile?.status === "expired") {
+      onSave(copy.reconnectGoogle, "err");
+      return;
+    }
     if (bulk && onBulkSave) {
       onBulkSave({ phone: phone.trim(), website: website.trim() });
       return;
@@ -1218,7 +1228,7 @@ function DetailsTab({
         </Field>
       )}
       <div className="pt-2 sm:flex sm:justify-end">
-        <button onClick={handleSave} disabled={saving} className="btn-primary w-full justify-center sm:w-auto">
+        <button onClick={handleSave} disabled={saving || profile?.status === "expired"} className="btn-primary w-full justify-center sm:w-auto">
           {saving
             ? <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> {copy.saving}</span>
             : bulk

@@ -257,7 +257,9 @@ async def _locations(db, tenant_id: str) -> list[dict]:
                 .order_by(LocationProfile.updated_at.desc())
             )
         ).scalars().all()
-        channels = await native_channels(db, tenant_id)
+        channels = await native_channels(
+            db, tenant_id, statuses=("active", "expired")
+        )
     except Exception as e:  # noqa: BLE001
         logger.warning("location facts failed tenant=%s: %s", tenant_id, e)
         return []

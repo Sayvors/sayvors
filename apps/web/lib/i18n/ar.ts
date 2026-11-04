@@ -204,6 +204,8 @@ const ar: Dict = {
       noLocations: "لا توجد فروع",
       googleConnected: "مترابط مع Google",
       googleNotConnected: "غير مترابط مع Google",
+      googleExpired: "يلزم إعادة ربط Google",
+      reconnectGoogle: "انتهت صلاحية اتصال Google. أعد ربط Google Business Profile من صفحة القنوات لتحديث هذا الموقع.",
       createLocation: "+ إنشاء فرع",
       createLocationTitle: "إنشاء فرع جديد على Google Business",
       multiLocationHint:

@@ -225,6 +225,32 @@ async def test_unchanged_save_does_not_call_google(monkeypatch, db, user_id):
 
 
 @pytest.mark.asyncio
+async def test_expired_channel_is_readable_but_not_writable(db, user_id):
+    """A 403 marks a channel expired; the page must still show its data and
+    refuse edits with a reconnect message instead of pretending it vanished."""
+    await _connection(db, user_id)
+    channel = await locations.channel_for_listing(db, user_id, "loc-1")
+    channel.status = "expired"
+    await db.commit()
+
+    assert await locations.native_channels(db, user_id) == []
+    readable = await locations.native_channels(
+        db, user_id, statuses=("active", "expired")
+    )
+    assert [locations.listing_id_of(ch) for ch in readable] == ["loc-1"]
+
+    profile = await locations.get_profile(db, user_id, "loc-1")
+    assert profile["name"] == "Test Place"
+    assert profile["status"] == "expired"
+
+    with pytest.raises(ValueError, match="reconnect Google"):
+        await locations.update_profile(
+            db, user_id, "loc-1", description="Nope", categories=None,
+            hours=None, service_area=None, attributes=None,
+        )
+
+
+@pytest.mark.asyncio
 async def test_create_group_keeps_members_and_position(db, user_id):
     first = await locations.create_group(db, user_id, "North Riyadh", ["loc-1", "loc-2", "loc-1"])
     second = await locations.create_group(db, user_id, "South", ["loc-3"])
