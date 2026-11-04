@@ -2528,6 +2528,7 @@ from users where id = '&lt;tenant id&gt;';</code></pre>
     </tbody>
   </table>
   <p class="note"><strong>Default scope:</strong> last 6 months. Every review is imported and counted; only automatic draft generation is limited by scope. Reviews outside the range remain visible and can be drafted individually later. No draft is ever published without an explicit merchant action.</p>
+  <p class="note"><strong>2026-11-04 follow-up:</strong> when nothing needs a draft, the modal now stops on a completion checkpoint (“Nothing needed a reply”, reviews found / already answered / drafts created) and waits for the merchant to click “View summary &amp; analytics”. Imported reviews are still enriched for analytics, so the credit ledger now shows the purpose of every AI call (“Used for”) instead of only the model.</p>
 </section>
 <section id="admin-tenant-controls">
   <div class="eyebrow">&sect;&sect; 25 - Admin tenant controls - planned 2026-11-04</div>

@@ -402,6 +402,46 @@ async def test_trial_grant_is_idempotent(db):
 
 
 @pytest.mark.asyncio
+async def test_tenant_billing_surfaces_what_used_the_credit(db):
+    from app.modules.admin.service import get_tenant_billing
+    from app.modules.billing.models import BillingEvent
+    from app.modules.llm.models import LLMUsageEvent
+    from app.modules.users.models import User
+
+    uid = "billing-purpose-user-0001"
+    db.add(User(id=uid, email="purpose@sayvors.com", first_name="P",
+                last_name="U", password_hash="x", plan="free-trial",
+                ai_credit_cents=999))
+    event = BillingEvent(
+        id="billing-purpose-event-0001",
+        tenant_id=uid,
+        kind="ai_usage",
+        status="settled",
+        amount_cents=-1,
+        reserved_cents=5,
+        balance_after_cents=999,
+        model_id="groq:qwen",
+    )
+    db.add(event)
+    db.add(LLMUsageEvent(
+        id="billing-purpose-usage-0001",
+        tenant_id=uid,
+        provider="groq",
+        model_id="groq:qwen",
+        api_model="qwen",
+        purpose="analytics.enrichment",
+        ledger_id=event.id,
+        cost_cents=1,
+        status="ok",
+    ))
+    await db.commit()
+
+    billing = await get_tenant_billing(db, uid)
+    row = next(e for e in billing["ledger"] if e["id"] == event.id)
+    assert row["purpose"] == "analytics.enrichment"
+
+
+@pytest.mark.asyncio
 async def test_grant_plan_bundles_pro_credits(db):
     """First Pro grant → plan=pro + $20 bundled; ledger row; Redis synced."""
     from app.modules.billing import service as billing_service

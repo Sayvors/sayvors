@@ -39,6 +39,21 @@ the script is a dry run.
 - Starting a paid plan is an operator action until checkout is implemented
   (`POST /api/v1/admin/tenants/{id}/plan` writes the plan, wallet and ledger).
 
+### What spends AI credit
+
+The wallet is charged for every metered LLM call, not only for generated replies:
+
+- review enrichment, meaning extraction and issue classification — **including
+  reviews that already have a reply**, because they still build the analytics;
+- review reply generation;
+- assistant chat and analytics summaries;
+- databank answers, memory extraction and voice synthesis.
+
+The **Credit ledger** shows a “Used for” column with the purpose of each call
+(review analysis, reply generation, assistant chat, etc.). A small reserved
+hold is taken before the provider call and the amount column shows the settled
+cost; a `$0.05` hold is not a `$0.05` charge.
+
 ### Billing details
 
 Save the billing name and supported billing address/tax fields from the Billing

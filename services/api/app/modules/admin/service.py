@@ -543,6 +543,7 @@ async def get_tenant_billing(db: AsyncSession, user_id: str) -> dict | None:
     from sqlalchemy import select as _select
 
     from ..billing.models import BillingEvent
+    from ..llm.models import LLMUsageEvent
     from ..users.models import User
 
     user = await db.get(User, user_id)
@@ -571,6 +572,22 @@ async def get_tenant_billing(db: AsyncSession, user_id: str) -> dict | None:
         )
     ).scalars().all()
 
+    # A ledger row carries the model and money, but not why the call happened.
+    # The purpose lives on the metered usage row (review analysis, reply,
+    # assistant, etc.), linked by ledger_id. Surface it so the tenant can see
+    # what consumed their credit instead of a wall of identical model rows.
+    usage_purposes: dict[str, str | None] = {}
+    usage_ids = [e.id for e in ledger_rows if e.kind == "ai_usage"]
+    if usage_ids:
+        purpose_rows = (
+            await db.execute(
+                _select(LLMUsageEvent.ledger_id, LLMUsageEvent.purpose).where(
+                    LLMUsageEvent.ledger_id.in_(usage_ids)
+                )
+            )
+        ).all()
+        usage_purposes = {ledger_id: purpose for ledger_id, purpose in purpose_rows if ledger_id}
+
     def _row(e: BillingEvent) -> dict:
         return {
             "id": e.id,
@@ -580,6 +597,7 @@ async def get_tenant_billing(db: AsyncSession, user_id: str) -> dict | None:
             "reserved_cents": int(e.reserved_cents or 0),
             "balance_after_cents": e.balance_after_cents,
             "model_id": e.model_id,
+            "purpose": usage_purposes.get(e.id),
             "prompt_tokens": int(e.prompt_tokens or 0),
             "completion_tokens": int(e.completion_tokens or 0),
             "idempotency_key": e.idempotency_key,

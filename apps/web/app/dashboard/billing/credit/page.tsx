@@ -36,6 +36,39 @@ function kindLabel(k: string): string {
   }
 }
 
+const PURPOSE_LABELS: Record<string, string> = {
+  "review_engine.generate": "Review reply",
+  "review_engine.analysis": "Review analysis",
+  "review_engine.relevance_judge": "Review relevance",
+  "analytics.enrichment": "Review enrichment",
+  "analytics.meaning": "Review meaning",
+  "analytics.intelligence": "Analytics insight",
+  "analytics.summary": "Analytics summary",
+  "analytics.mine_conversations": "Conversation mining",
+  "analytics.abuse_triage": "Abuse triage",
+  "conversation.context": "Conversation context",
+  "review.qa": "Review Q&A",
+  "review_request.template": "Review request",
+  "chat.message": "Assistant chat",
+  "assistant.chat": "Assistant chat",
+  "posts.ai_draft": "Post draft",
+  "memory.extract": "Memory extraction",
+  "databank.business_profile": "Business profile",
+  "databank.ask": "Databank answer",
+  "whatsapp.render_style": "Reply style",
+  "whatsapp.thread_stats": "Thread stats",
+  "instagram.caption_suggest": "Instagram caption",
+  meta_voice_note: "Voice note",
+  "voice.tts": "Text to speech",
+  "tts.job": "Text to speech",
+  "admin.test": "Admin test",
+};
+
+function purposeLabel(purpose: string | null): string | null {
+  if (!purpose) return null;
+  return PURPOSE_LABELS[purpose] ?? purpose.replaceAll("_", " ").replaceAll(".", " · ");
+}
+
 export default function CreditLedgerPage() {
   const [budget, setBudget] = useState<Budget | null>(null);
   const [billing, setBilling] = useState<TenantBilling | null>(null);
@@ -79,6 +112,10 @@ export default function CreditLedgerPage() {
         <p className="mt-2 max-w-[640px] text-[13px] font-medium leading-relaxed text-ink/60 dark:text-fog/60">
           Your AI credit is held in a durable balance. Every LLM call reserves a small hold, then settles to the real cost.
           Redis is only a cache — deleting it never changes your balance.
+        </p>
+        <p className="mt-2 max-w-[640px] text-[12px] font-medium leading-relaxed text-ink/45 dark:text-fog/45">
+          The “Used for” column shows what consumed the credit: review analysis, reply generation, assistant chat, and so on.
+          Review enrichment runs on imported reviews even when every review already has a reply.
         </p>
       </div>
 
@@ -170,6 +207,7 @@ export default function CreditLedgerPage() {
                 <tr className="border-b border-ink/[0.06] text-left text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40 dark:border-fog/[0.06] dark:text-fog/40">
                   <th className="px-3 py-2">When</th>
                   <th className="px-3 py-2">Kind</th>
+                  <th className="px-3 py-2">Used for</th>
                   <th className="px-3 py-2">Status</th>
                   <th className="px-3 py-2">Model</th>
                   <th className="px-3 py-2 text-right">Amount</th>
@@ -183,6 +221,9 @@ export default function CreditLedgerPage() {
                     <td className="px-3 py-2 tabular-nums text-ink/45 dark:text-fog/45">{e.created_at ? new Date(e.created_at).toLocaleString() : "—"}</td>
                     <td className="px-3 py-2">
                       <span className="rounded-full bg-ink/[0.06] px-2 py-0.5 text-[10px] font-bold uppercase text-ink/60 dark:bg-fog/[0.08] dark:text-fog/60">{kindLabel(e.kind)}</span>
+                    </td>
+                    <td className="px-3 py-2 text-ink/60 dark:text-fog/60">
+                      {purposeLabel(e.purpose) ?? "—"}
                     </td>
                     <td className="px-3 py-2">
                       <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${e.status === "settled" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300" : e.status === "pending" ? "bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300" : e.status === "released" ? "bg-sky-50 text-sky-700 dark:bg-sky-900/20 dark:text-sky-300" : e.status === "expired" ? "bg-coral/10 text-coral" : "bg-ink/[0.06] text-ink/50 dark:bg-fog/[0.08] dark:text-fog/50"}`}>
