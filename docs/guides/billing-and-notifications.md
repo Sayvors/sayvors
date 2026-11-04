@@ -54,6 +54,10 @@ The **Credit ledger** shows a “Used for” column with the purpose of each cal
 hold is taken before the provider call and the amount column shows the settled
 cost; a `$0.05` hold is not a `$0.05` charge.
 
+The provider and model are deliberately **not exposed to tenants**. The
+tenant-facing ledger omits the model column; platform admins keep it in the
+admin console for operations.
+
 ### Billing details
 
 Save the billing name and supported billing address/tax fields from the Billing

@@ -539,7 +539,11 @@ async def get_billing_overview(db: AsyncSession) -> list[dict]:
     return out
 
 
-async def get_tenant_billing(db: AsyncSession, user_id: str) -> dict | None:
+async def get_tenant_billing(
+    db: AsyncSession, user_id: str, *, include_model: bool = True
+) -> dict | None:
+    """Tenant billing view. Admin callers keep the model id; tenant callers
+    must not see which provider/model the platform uses."""
     from sqlalchemy import select as _select
 
     from ..billing.models import BillingEvent
@@ -589,14 +593,13 @@ async def get_tenant_billing(db: AsyncSession, user_id: str) -> dict | None:
         usage_purposes = {ledger_id: purpose for ledger_id, purpose in purpose_rows if ledger_id}
 
     def _row(e: BillingEvent) -> dict:
-        return {
+        row = {
             "id": e.id,
             "kind": e.kind,
             "status": e.status,
             "amount_cents": int(e.amount_cents or 0),
             "reserved_cents": int(e.reserved_cents or 0),
             "balance_after_cents": e.balance_after_cents,
-            "model_id": e.model_id,
             "purpose": usage_purposes.get(e.id),
             "prompt_tokens": int(e.prompt_tokens or 0),
             "completion_tokens": int(e.completion_tokens or 0),
@@ -606,6 +609,9 @@ async def get_tenant_billing(db: AsyncSession, user_id: str) -> dict | None:
             "note": e.note,
             "created_at": e.created_at.isoformat() if e.created_at else None,
         }
+        if include_model:
+            row["model_id"] = e.model_id
+        return row
 
     balance = int(user.ai_credit_cents or 0)
     status = "debt" if balance < 0 else "empty" if balance == 0 else "low" if balance < 100 else "ok"

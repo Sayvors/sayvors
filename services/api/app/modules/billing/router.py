@@ -142,7 +142,7 @@ async def read_ledger(user=Depends(get_current_user), db: AsyncSession = Depends
     and recent ledger rows. Employees see the owner's workspace ledger."""
     from ..admin.service import get_tenant_billing
 
-    result = await get_tenant_billing(db, tenant_id_of(user))
+    result = await get_tenant_billing(db, tenant_id_of(user), include_model=False)
     if result is None:
         raise HTTPException(status_code=404, detail="Tenant not found.")
     return result

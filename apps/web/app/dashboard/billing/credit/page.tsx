@@ -167,7 +167,6 @@ export default function CreditLedgerPage() {
               <thead>
                 <tr className="border-b border-ink/[0.06] text-left text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40 dark:border-fog/[0.06] dark:text-fog/40">
                   <th className="px-3 py-2">Hold</th>
-                  <th className="px-3 py-2">Model</th>
                   <th className="px-3 py-2 text-right">Reserved</th>
                   <th className="px-3 py-2 text-right">Expires</th>
                 </tr>
@@ -176,7 +175,6 @@ export default function CreditLedgerPage() {
                 {billing.holds.map((h) => (
                   <tr key={h.id}>
                     <td className="px-3 py-2 font-mono text-[10px] text-ink/45 dark:text-fog/45">{h.id.slice(0, 8)}…</td>
-                    <td className="px-3 py-2 text-ink/70 dark:text-fog/70">{h.model_id ?? "—"}</td>
                     <td className="px-3 py-2 text-right tabular-nums font-semibold text-deep-violet dark:text-violet-soft">{fmtCents(h.reserved_cents)}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-ink/45 dark:text-fog/45">{h.expires_at ? new Date(h.expires_at).toLocaleTimeString() : "—"}</td>
                   </tr>
@@ -209,7 +207,6 @@ export default function CreditLedgerPage() {
                   <th className="px-3 py-2">Kind</th>
                   <th className="px-3 py-2">Used for</th>
                   <th className="px-3 py-2">Status</th>
-                  <th className="px-3 py-2">Model</th>
                   <th className="px-3 py-2 text-right">Amount</th>
                   <th className="px-3 py-2 text-right">Reserved</th>
                   <th className="px-3 py-2 text-right">Balance after</th>
@@ -230,7 +227,6 @@ export default function CreditLedgerPage() {
                         {e.status}
                       </span>
                     </td>
-                    <td className="px-3 py-2 text-ink/60 dark:text-fog/60">{e.model_id ?? "—"}</td>
                     <td className={`px-3 py-2 text-right tabular-nums font-semibold ${e.amount_cents < 0 ? "text-coral" : e.amount_cents > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-ink/30 dark:text-fog/30"}`}>
                       {e.amount_cents === 0 ? "—" : `${e.amount_cents > 0 ? "+" : ""}${fmtCents(e.amount_cents)}`}
                     </td>

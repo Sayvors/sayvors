@@ -134,7 +134,6 @@ export interface BillingLedgerEntry {
   amount_cents: number;
   reserved_cents: number;
   balance_after_cents: number | null;
-  model_id: string | null;
   purpose: string | null;
   prompt_tokens: number;
   completion_tokens: number;

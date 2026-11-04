@@ -439,6 +439,14 @@ async def test_tenant_billing_surfaces_what_used_the_credit(db):
     billing = await get_tenant_billing(db, uid)
     row = next(e for e in billing["ledger"] if e["id"] == event.id)
     assert row["purpose"] == "analytics.enrichment"
+    assert row["model_id"] == "groq:qwen"
+
+    tenant_billing = await get_tenant_billing(db, uid, include_model=False)
+    tenant_row = next(
+        e for e in tenant_billing["ledger"] if e["id"] == event.id
+    )
+    assert tenant_row["purpose"] == "analytics.enrichment"
+    assert "model_id" not in tenant_row
 
 
 @pytest.mark.asyncio
