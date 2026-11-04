@@ -98,6 +98,7 @@ async def _amain() -> None:
     from ..modules.channels.meta.escalation_worker import run_escalation_sweeps
     from ..modules.billing.ledger import run_hold_reaper
     from ..modules.channels.reviews_worker import run_google_reviews_worker
+    from ..modules.channels.connect_import import run_connect_import_worker
     from ..modules.jobs.reaper import run_job_reaper
     from ..modules.jobs.runner import JobRunner
     from ..modules.posts.worker import run_post_publish_worker
@@ -124,6 +125,7 @@ async def _amain() -> None:
 
     loops = {
         "google-reviews-auto-reply": run_google_reviews_worker,
+        "connect-import": run_connect_import_worker,
         "post-publisher": run_post_publish_worker,
         "analytics-consumer": run_analytics_consumer,
         "performance-sync": run_performance_sync_worker,

@@ -10,6 +10,7 @@ import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import MetaConnections from "@/components/channels/MetaConnections";
 import PlatformMark from "@/components/channels/PlatformMark";
+import { setActiveConnectImport } from "@/lib/connect-import";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -248,6 +249,11 @@ function ConnectHub() {
   const metaError = params.get("meta_error");
   const metaNext = params.get("next");
   const discoveryError = params.get("discovery_error");
+  const importSession = params.get("import_session");
+
+  useEffect(() => {
+    if (importSession) setActiveConnectImport(importSession);
+  }, [importSession]);
 
   const urlBanner = useMemo(() => {
     if (discoveryError) {

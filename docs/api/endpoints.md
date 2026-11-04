@@ -281,7 +281,12 @@ Authorization: Bearer <token>
 | POST | `/webhook/{platform}` | Receive webhook |
 | POST | `/google/connect-ticket` | Create a short-lived ticket for Google channel connection |
 | GET | `/google/connect` | Start Google OAuth |
-| GET | `/google/callback` | Google OAuth callback |
+| GET | `/google/callback` | Google OAuth callback; creates the first-connect import session |
+| GET | `/google/import-sessions/latest` | Active first-connect import for the tenant |
+| GET | `/google/import-sessions/{session_id}` | Import progress, locations, reviews and drafts |
+| POST | `/google/import-sessions/{session_id}/start` | Choose the draft range and start AI generation |
+| POST | `/google/import-sessions/{session_id}/items/{item_id}/generate` | Generate one draft outside the selected range or retry a failure |
+| POST | `/google/import-sessions/{session_id}/publish` | Publish selected drafts or all drafts |
 | GET | `/{channel_id}/autoreply` | Get auto-reply config |
 | PUT | `/{channel_id}/autoreply` | Update auto-reply config |
 | GET | `/{channel_id}/reviews` | List review replies |
