@@ -46,6 +46,39 @@ Enforcement points:
 - **Channel/location connects:** the connect path checks the plan's channel
   limits before creating rows.
 
+### Enforced feature keys
+
+The admin catalog contains 25 keys. Only the keys below are wired into a
+request path today; the rest are stored and displayed but do not gate
+anything.
+
+| Key | Enforced at | What it actually blocks |
+|---|---|---|
+| `channels` | `channels/router.py` connect path | Starting a new channel connection |
+| `messaging` | inbox send path | Human outbound messages |
+| `ai_replies` | `llm/gateway.py` | Every LLM call through the gateway (review replies, assistant, AI analytics, chat) |
+| `benchmark_external` | analytics external-peer endpoints | Fetching/refreshing external competitor peers |
+
+The plan limits `max_channels` and `max_messages_per_month` are also enforced
+at those same paths. A per-tenant `features_override` works for the four keys
+above; for every other catalog key it persists but has no runtime effect yet.
+
+`ai_replies` is currently a master AI switch, not a review-only flag. Turning
+it off disables every budgeted LLM call. The separate `assistant`, `reviews`,
+`analytics` and `voice` keys are not independently enforced.
+
+The full catalog keys that are **catalog-only today**:
+
+`reviews`, `posts`, `media`, `analytics`, `automation`, `databank`, `leads`,
+`voice`, `scheduling`, `assistant`, `social_response_style`, `bulk_edit_csv`,
+`benchmarking`, `ai_search`, `verifications`, `growth`, `ticket_assignment`,
+`voice_replies`, `ask_sayvors_premium`, `priority_support`, `sla`.
+
+Wiring a key means adding `has_feature`/`check_feature` at the write path and a
+negative test proving the request is denied with the entitlement header. Do
+not hide read-only data, and do not gate shared plumbing (auth, storage,
+webhooks) behind a product feature.
+
 The resolver takes the tenant id from the authenticated context, never from a
 request body, so a tenant cannot ask for another tenant's plan or override.
 
