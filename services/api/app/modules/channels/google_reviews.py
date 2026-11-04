@@ -180,6 +180,175 @@ def location_description(loc: dict) -> str | None:
     return str(desc).strip() if desc else None
 
 
+_DAYS = ("MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY")
+_HOURS_DAY_LABEL = {d: d.title() for d in _DAYS}
+_MORE_HOURS_LABEL = {
+    "ACCESS": "Access", "BREAKFAST": "Breakfast", "BRUNCH": "Brunch",
+    "DELIVERY": "Delivery", "DINNER": "Dinner", "DRIVE_THROUGH": "Drive-through",
+    "HAPPY_HOUR": "Happy Hour", "KITCHEN": "Kitchen", "LUNCH": "Lunch",
+    "ONLINE_SERVICE_HOURS": "Online service", "PICKUP": "Pickup",
+    "SENIOR_HOURS": "Senior hours", "TAKEOUT": "Takeout",
+}
+
+
+def _google_time(value: dict | None) -> str:
+    """TimeOfDay → "HH:MM". An empty object is Google's midnight."""
+    if not value:
+        return "00:00"
+    hours = int(value.get("hours") or 0)
+    minutes = int(value.get("minutes") or 0)
+    return f"{hours:02d}:{minutes:02d}"
+
+
+def location_hours(loc: dict) -> dict:
+    """Google regular/special/more hours → the Locations page shape.
+
+    A day with no regular period is closed in Google's model. A 24-hour day
+    is open 00:00 and closes at 24:00; the UI carries `all_day` so it can say
+    "Open 24 hours" instead of showing 00:00–00:00.
+    """
+    regular = {
+        _HOURS_DAY_LABEL[day]: {"open": "", "close": "", "closed": True}
+        for day in _DAYS
+    }
+    for period in ((loc or {}).get("regularHours") or {}).get("periods") or []:
+        day = str(period.get("openDay") or "").upper()
+        if day not in _HOURS_DAY_LABEL:
+            continue
+        opened = _google_time(period.get("openTime"))
+        closed = _google_time(period.get("closeTime"))
+        all_day = opened == "00:00" and closed == "24:00"
+        regular[_HOURS_DAY_LABEL[day]] = {
+            "open": "00:00" if all_day else opened,
+            "close": "00:00" if all_day else closed,
+            "closed": False,
+            **({"all_day": True} if all_day else {}),
+        }
+
+    special: list[dict] = []
+    for period in ((loc or {}).get("specialHours") or {}).get("specialHourPeriods") or []:
+        start = period.get("startDate") or {}
+        if not start:
+            continue
+        date = f"{int(start.get('year', 0)):04d}-{int(start.get('month', 0)):02d}-{int(start.get('day', 0)):02d}"
+        if period.get("closed"):
+            hours = "closed"
+        else:
+            hours = f"{_google_time(period.get('openTime'))} - {_google_time(period.get('closeTime'))}"
+        special.append({"date": date, "hours": hours, "reason": ""})
+
+    more: list[dict] = []
+    for entry in ((loc or {}).get("moreHours") or []):
+        periods = entry.get("periods") or []
+        type_id = str(entry.get("hoursTypeId") or "").upper()
+        if not periods or not type_id:
+            continue
+        period = periods[0]
+        more.append({
+            "type": _MORE_HOURS_LABEL.get(type_id, type_id.replace("_", " ").title()),
+            "open": _google_time(period.get("openTime")),
+            "close": _google_time(period.get("closeTime")),
+        })
+
+    return {"regular": regular, "special": special, "more": more}
+
+
+def location_categories(loc: dict) -> dict:
+    """Google category display names → the profile's categories shape."""
+    cats = (loc or {}).get("categories") or {}
+    primary = ((cats.get("primaryCategory") or {}).get("displayName") or "").strip()
+    additional = [
+        str((c or {}).get("displayName") or "").strip()
+        for c in (cats.get("additionalCategories") or [])
+        if str((c or {}).get("displayName") or "").strip()
+    ]
+    return {"primary": primary, "additional": additional}
+
+
+_ATTRIBUTE_LABEL = {
+    "wheelchair_accessible_entrance": "Wheelchair accessible entrance",
+    "wheelchair_accessible_parking": "Wheelchair accessible parking",
+    "wheelchair_accessible_restroom": "Wheelchair accessible restroom",
+    "wheelchair_accessible_seating": "Wheelchair accessible seating",
+    "has_wifi": "Free wifi",
+    "has_outdoor_seating": "Outdoor seating",
+    "has_dine_in": "Dine in",
+    "has_takeout": "Takeout",
+    "has_delivery": "Delivery",
+    "has_drive_through": "Drive through",
+    "accepts_credit_cards": "Accepts credit cards",
+    "accepts_debit_cards": "Accepts debit cards",
+    "accepts_cash_only": "Accepts cash",
+    "has_gender_neutral_restrooms": "Gender neutral restroom",
+    "is_family_friendly": "Family friendly",
+    "is_good_for_children": "Good for children",
+    "has_free_parking_lot": "Free parking",
+    "has_paid_parking_lot": "Paid parking",
+    "has_free_street_parking": "Street parking",
+    "allows_dogs": "Pet friendly",
+    "has_air_conditioning": "Air conditioning",
+    "has_live_music": "Live music",
+    "is_sports_bar": "Sports bar",
+    "has_online_appointments": "Online appointments",
+    "has_on_site_services": "On site services",
+}
+
+
+def location_attributes(attributes: list[dict] | None) -> dict[str, str]:
+    """Google merchant attributes → the profile's boolean key/value shape.
+
+    Google returns `name: "attributes/has_wifi"` with `boolValue`; URL-valued
+    attributes (text messaging links) are not boolean and are skipped.
+    """
+    out: dict[str, str] = {}
+    for attr in attributes or []:
+        raw = str((attr or {}).get("name") or "").split("/")[-1]
+        if not raw:
+            continue
+        values = (attr or {}).get("values") or []
+        bool_value = None
+        for value in values:
+            if "boolValue" in value:
+                bool_value = bool(value["boolValue"])
+                break
+        if bool_value is None:
+            continue
+        label = _ATTRIBUTE_LABEL.get(raw, raw.replace("_", " ").title())
+        out[label] = "yes" if bool_value else "no"
+    return out
+
+
+def location_service_area(loc: dict) -> list[str]:
+    """Google serviceArea → the profile's free-text area list."""
+    area = (loc or {}).get("serviceArea") or {}
+    places = [
+        str(p.get("placeName") or p.get("placeId") or "").strip()
+        for p in (area.get("places") or [])
+        if str(p.get("placeName") or p.get("placeId") or "").strip()
+    ]
+    region = str(area.get("regionCode") or "").strip()
+    if region and region not in places:
+        places.append(region)
+    return places
+
+
+def location_service_types(loc: dict) -> list[str]:
+    """Google category serviceTypes (the services a merchant declares)."""
+    categories = (loc or {}).get("categories") or {}
+    groups = [categories.get("primaryCategory")] + list(
+        categories.get("additionalCategories") or []
+    )
+    out: list[str] = []
+    for category in groups:
+        for service in (category or {}).get("serviceTypes") or []:
+            name = str((service or {}).get("displayName") or "").strip()
+            if name and name not in out:
+                out.append(name)
+    return out
+
+
+
+
 def _parse_media(raw) -> list[dict]:
     """Normalise GBP `reviewMediaItems` into the shape we store.
 
@@ -394,7 +563,7 @@ class GoogleReviewsClient:
         resp = await self._authed_request(
             "GET",
             f"{GBP_API}/accounts/{account_id}/locations",
-            params={"readMask": "name,title,storefrontAddress,categories,phoneNumbers,websiteUri,profile,metadata"},
+            params={"readMask": "name,title,storefrontAddress,categories,phoneNumbers,websiteUri,profile,regularHours,specialHours,moreHours,serviceArea,metadata"},
         )
         if resp.status_code != 200:
             raise GoogleReviewsError(f"list_locations failed: {resp.status_code}", resp.status_code)
@@ -405,7 +574,7 @@ class GoogleReviewsClient:
         resp = await self._authed_request(
             "GET",
             f"{GBP_API}/locations/{location_id}",
-            params={"readMask": "name,title,storefrontAddress,categories,phoneNumbers,websiteUri,profile,metadata"},
+            params={"readMask": "name,title,storefrontAddress,categories,phoneNumbers,websiteUri,profile,regularHours,specialHours,moreHours,serviceArea,metadata"},
         )
         if resp.status_code != 200:
             raise GoogleReviewsError(
@@ -413,6 +582,23 @@ class GoogleReviewsClient:
                 resp.status_code,
             )
         return resp.json()
+
+    async def get_attributes(self, location_id: str) -> list[dict]:
+        """Merchant attributes (wifi, accessibility, …) for one location.
+
+        Attributes live on a separate sub-resource; they are not a valid
+        Location readMask field.
+        """
+        resp = await self._authed_request(
+            "GET", f"{GBP_API}/locations/{location_id}/attributes"
+        )
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"get_attributes failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        data = resp.json()
+        return list(data.get("attributes") or []) if isinstance(data, dict) else []
 
     # ── Local posts (v4) ─────────────────────────────────
 

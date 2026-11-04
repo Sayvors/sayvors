@@ -28,8 +28,18 @@ def test_regular_periods_normal_and_closed():
         "Tuesday": {"open": "", "close": "", "closed": True},
     })
     assert periods == [{
-        "openDay": "MONDAY", "openTime": "09:00",
-        "closeDay": "MONDAY", "closeTime": "17:00",
+        "openDay": "MONDAY", "openTime": {"hours": 9, "minutes": 0},
+        "closeDay": "MONDAY", "closeTime": {"hours": 17, "minutes": 0},
+    }]
+
+
+def test_regular_periods_all_day_closes_at_24():
+    periods = build_regular_periods({
+        "Monday": {"open": "00:00", "close": "00:00", "closed": False, "all_day": True},
+    })
+    assert periods == [{
+        "openDay": "MONDAY", "openTime": {"hours": 0, "minutes": 0},
+        "closeDay": "MONDAY", "closeTime": {"hours": 24, "minutes": 0},
     }]
 
 
@@ -52,8 +62,8 @@ def test_special_entry_range_and_closed():
     parsed = parse_special_entry(
         {"date": "2026-12-25", "hours": "09:00 - 13:00", "reason": "Xmas"})
     assert parsed["startDate"] == {"year": 2026, "month": 12, "day": 25}
-    assert parsed["openTime"] == "09:00"
-    assert parsed["closeTime"] == "13:00"
+    assert parsed["openTime"] == {"hours": 9, "minutes": 0}
+    assert parsed["closeTime"] == {"hours": 13, "minutes": 0}
     assert parse_special_entry(
         {"date": "2026-01-01", "hours": "closed", "reason": ""}) == {
         "startDate": {"year": 2026, "month": 1, "day": 1}, "closed": True}

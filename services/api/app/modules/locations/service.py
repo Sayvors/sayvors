@@ -157,6 +157,23 @@ async def get_profile(
     )
     meta = channel_meta(channel) if channel is not None else {}
 
+    # Local edits win section-by-section; anything never edited locally falls
+    # back to the Google snapshot fetched at connect/worker time.
+    local_hours = dict(profile.hours or {})
+    hours = dict(meta.get("hours") or {})
+    for section in ("regular", "special", "more"):
+        if section in local_hours:
+            hours[section] = local_hours[section]
+    local_categories = dict(profile.categories or {})
+    categories = (
+        local_categories
+        if local_categories
+        else dict(meta.get("categories") or {})
+    )
+    local_attributes = dict(profile.attributes or {})
+    attributes = local_attributes or dict(meta.get("attributes") or {})
+    service_area = list(profile.service_area or []) or list(meta.get("service_area") or [])
+
     merged = {
         "listing_id": listing_id,
         "name": "",
@@ -167,10 +184,10 @@ async def get_profile(
         "status": "unknown",
         "is_verified": None,
         "description": profile.description,
-        "categories": dict(profile.categories or {}),
-        "hours": dict(profile.hours or {}),
-        "service_area": list(profile.service_area or []),
-        "attributes": dict(profile.attributes or {}),
+        "categories": categories,
+        "hours": hours,
+        "service_area": service_area,
+        "attributes": attributes,
         "opening_date": profile.opening_date.isoformat() if profile.opening_date else None,
         "google_synced": [],
         "updated_at": profile.updated_at.isoformat() if profile.updated_at else None,

@@ -435,7 +435,18 @@ async def _ensure_location_metadata(
         location_phone,
         location_website,
         location_description,
+        location_hours,
+        location_categories,
+        location_attributes,
+        location_service_area,
+        location_service_types,
     )
+
+    try:
+        attributes = await client.get_attributes(location_id)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("attributes backfill failed for %s: %s", channel.id, e)
+        attributes = []
 
     loc_meta = loc.get("metadata") or {}
     meta["place_id"] = loc_meta.get("placeId")
@@ -445,11 +456,21 @@ async def _ensure_location_metadata(
     meta["phone"] = location_phone(loc)
     meta["website"] = location_website(loc)
     meta["description"] = location_description(loc)
+    meta["hours"] = location_hours(loc)
+    meta["categories"] = location_categories(loc)
+    meta["attributes"] = location_attributes(attributes)
+    meta["service_area"] = location_service_area(loc)
+    meta["services"] = location_service_types(loc)
     meta["profile_fields_checked"] = True
     # Separate marker: a location with no Place ID yet (new/unverified) must
     # not be re-fetched on every poll.
     meta["place_metadata_checked"] = True
     channel.metadata_json = json.dumps(meta)
+    from .service import sync_google_services
+
+    await sync_google_services(
+        db, channel, meta["services"], meta.get("category")
+    )
     await db.commit()
 
 

@@ -2160,6 +2160,11 @@ async def google_callback(
         location_phone,
         location_website,
         location_description,
+        location_hours,
+        location_categories,
+        location_attributes,
+        location_service_area,
+        location_service_types,
         GoogleReviewsClient,
         GoogleReviewsError,
     )
@@ -2205,8 +2210,15 @@ async def google_callback(
         account_name = account.get("accountName") or account.get("name", "")
 
         client = GoogleReviewsClient(access_token, refresh_token)
+        attributes_by_location: dict[str, list[dict]] = {}
         try:
             locations = await client.list_locations(account_id)
+            for loc in locations:
+                lid = loc.get("name", "locations/").split("/")[-1]
+                try:
+                    attributes_by_location[lid] = await client.get_attributes(lid)
+                except GoogleReviewsError as e:
+                    logger.debug("attributes unavailable for %s: %s", lid, e)
         except GoogleReviewsError as e:
             logger.warning("No locations for account %s: %s", account_id, e)
             continue
@@ -2279,9 +2291,20 @@ async def google_callback(
                     "phone": location_phone(loc),
                     "website": location_website(loc),
                     "description": location_description(loc),
+                    "hours": location_hours(loc),
+                    "categories": location_categories(loc),
+                    "attributes": location_attributes(attributes_by_location.get(location_id)),
+                    "service_area": location_service_area(loc),
+                    "services": location_service_types(loc),
                     "profile_fields_checked": True,
                 })
                 matching.metadata_json = _json.dumps(existing_meta)
+                from .service import sync_google_services
+
+                await sync_google_services(
+                    db, matching, location_service_types(loc),
+                    location_category(loc),
+                )
                 continue
 
             loc_meta = loc.get("metadata") or {}
@@ -2305,6 +2328,11 @@ async def google_callback(
                     "phone": location_phone(loc),
                     "website": location_website(loc),
                     "description": location_description(loc),
+                    "hours": location_hours(loc),
+                    "categories": location_categories(loc),
+                    "attributes": location_attributes(attributes_by_location.get(location_id)),
+                    "service_area": location_service_area(loc),
+                    "services": location_service_types(loc),
                     "profile_fields_checked": True,
                 }),
                 listing_key=key,
@@ -2323,6 +2351,11 @@ async def google_callback(
                     matching.refresh_token = encrypt_token(refresh_token)
                     matching.token_expires_at = token_expires_at
                 continue
+            from .service import sync_google_services
+
+            await sync_google_services(
+                db, channel, location_service_types(loc), location_category(loc)
+            )
             created += 1
 
     await db.commit()

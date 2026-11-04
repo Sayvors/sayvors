@@ -108,12 +108,21 @@ def _parse_hhmm(value: str) -> tuple[int, int] | None:
     return None
 
 
-def build_regular_periods(regular: dict) -> list[dict]:
-    """Our {Day: {open, close, closed}} → GBP periods (string "HH:MM" times).
+def _tod(value: tuple[int, int] | None, *, end_of_day: bool = False) -> dict:
+    """(h, m) → Google TimeOfDay. `end_of_day` means midnight at 24:00."""
+    if end_of_day:
+        return {"hours": 24, "minutes": 0}
+    h, m = value or (0, 0)
+    return {"hours": h, "minutes": m}
 
-    Overnight ranges (close <= open) roll closeDay to the next day.
-    Closed days are omitted (absence = closed in the GBP model).
-    Stored day names are matched case-insensitively ("Monday" or "MONDAY").
+
+def build_regular_periods(regular: dict) -> list[dict]:
+    """Our {Day: {open, close, closed, all_day}} → GBP periods.
+
+    Google's regularHours.periods take TimeOfDay objects, not "HH:MM"
+    strings. Overnight ranges (close < open) roll closeDay to the next day;
+    an all-day day closes at 24:00 on the same day. Closed days are omitted
+    (absence = closed in the GBP model). Day names match case-insensitively.
     """
     by_day = {str(k or "").strip().lower(): v for k, v in (regular or {}).items()}
     periods: list[dict] = []
@@ -123,16 +132,24 @@ def build_regular_periods(regular: dict) -> list[dict]:
             continue
         opened = _parse_hhmm(str(cfg.get("open") or ""))
         closed = _parse_hhmm(str(cfg.get("close") or ""))
+        if cfg.get("all_day") or (opened and closed and opened == closed == (0, 0)):
+            periods.append({
+                "openDay": day,
+                "openTime": _tod((0, 0)),
+                "closeDay": day,
+                "closeTime": _tod((0, 0), end_of_day=True),
+            })
+            continue
         if not opened or not closed:
             continue
         close_day = day
-        if closed <= opened:
+        if closed < opened:
             close_day = DAYS[(_DAY_INDEX[day] + 1) % 7]
         periods.append({
             "openDay": day,
-            "openTime": f"{opened[0]:02d}:{opened[1]:02d}",
+            "openTime": _tod(opened),
             "closeDay": close_day,
-            "closeTime": f"{closed[0]:02d}:{closed[1]:02d}",
+            "closeTime": _tod(closed),
         })
     return periods
 
@@ -160,8 +177,8 @@ def parse_special_entry(entry: dict) -> dict | None:
     opened, closed = _parse_hhmm(m.group(1)), _parse_hhmm(m.group(2))
     if not opened or not closed:
         return None
-    period["openTime"] = f"{opened[0]:02d}:{opened[1]:02d}"
-    period["closeTime"] = f"{closed[0]:02d}:{closed[1]:02d}"
+    period["openTime"] = _tod(opened)
+    period["closeTime"] = _tod(closed)
     return period
 
 
@@ -180,9 +197,9 @@ def build_more_hours(entries: list[dict]) -> tuple[list[dict], list[str]]:
             "hoursTypeId": hours_type,
             "periods": [{
                 "openDay": "MONDAY",
-                "openTime": f"{opened[0]:02d}:{opened[1]:02d}",
+                "openTime": _tod(opened),
                 "closeDay": "SUNDAY",
-                "closeTime": f"{closed[0]:02d}:{closed[1]:02d}",
+                "closeTime": _tod(closed),
             }],
         })
     return built, skipped

@@ -287,6 +287,7 @@ const en = {
       hoursHint:
         "Untick Open for closed days. Overnight ranges (e.g. 20:00–02:00) roll over to the next day.",
       openLabel: "Open",
+      open24Hours: "Open 24 hours",
       closedLabel: "Closed",
       toLabel: "to",
       saveHours: "Save Hours",

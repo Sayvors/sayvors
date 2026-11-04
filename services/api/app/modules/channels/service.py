@@ -347,6 +347,44 @@ async def delete_channel(channel_id: str, user: User, db: AsyncSession) -> bool:
     return True
 
 
+async def sync_google_services(
+    db: AsyncSession,
+    channel: Channel,
+    names: list[str],
+    category: str | None = None,
+) -> int:
+    """Insert Google-declared service types that are not stored yet.
+
+    Google's category `serviceTypes` are the merchant's declared services.
+    They are inserted as source="google"; a local row with the same name is
+    never overwritten or removed, and a user deletion is re-added on the next
+    metadata sync because Google still declares it.
+    """
+    from .models import BusinessService
+
+    existing = (
+        await db.execute(
+            select(BusinessService.name).where(BusinessService.channel_id == channel.id)
+        )
+    ).scalars().all()
+    have = {str(name or "").strip().lower() for name in existing}
+    inserted = 0
+    for raw in names or []:
+        name = str(raw or "").strip()
+        if not name or name.lower() in have:
+            continue
+        db.add(BusinessService(
+            channel_id=channel.id,
+            name=name[:200],
+            category=(category or "Google")[:120],
+            source="google",
+            is_offered=True,
+        ))
+        have.add(name.lower())
+        inserted += 1
+    return inserted
+
+
 async def send_message(
     channel_id: str,
     body: ChannelMessageSend,

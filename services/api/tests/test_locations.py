@@ -171,6 +171,37 @@ async def test_description_pushes_to_google(monkeypatch, db, user_id):
 
 
 @pytest.mark.asyncio
+async def test_google_hours_snapshot_used_until_local_save(db, user_id):
+    """Hours come from Google until the merchant saves an override."""
+    await _connection(db, user_id)
+    channel = await locations.channel_for_listing(db, user_id, "loc-1")
+    meta = locations.channel_meta(channel)
+    meta["hours"] = {
+        "regular": {
+            "Monday": {"open": "00:00", "close": "00:00", "closed": False,
+                       "all_day": True},
+            "Tuesday": {"open": "", "close": "", "closed": True},
+        },
+        "special": [], "more": [],
+    }
+    channel.metadata_json = json.dumps(meta)
+    await db.commit()
+
+    profile = await locations.get_profile(db, user_id, "loc-1")
+    assert profile["hours"]["regular"]["Monday"]["all_day"] is True
+    assert profile["hours"]["regular"]["Tuesday"]["closed"] is True
+
+    await locations.update_profile(
+        db, user_id, "loc-1", description=None, categories=None,
+        hours={"regular": {"Monday": {"open": "09:00", "close": "17:00", "closed": False}}},
+        service_area=None, attributes=None,
+    )
+    again = await locations.get_profile(db, user_id, "loc-1")
+    assert again["hours"]["regular"]["Monday"]["open"] == "09:00"
+    assert "all_day" not in again["hours"]["regular"]["Monday"]
+
+
+@pytest.mark.asyncio
 async def test_identity_fields_save_locally_and_push(monkeypatch, db, user_id):
     await _connection(db, user_id)
     from app.modules.channels.service import encrypt_token

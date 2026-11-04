@@ -95,7 +95,7 @@ interface FullProfile {
   is_verified?: boolean | null;
   description?: string | null;
   categories: { primary?: string; additional?: string[] };
-  hours: { regular?: Record<string, { open: string; close: string; closed: boolean }>; special?: { date: string; hours: string; reason: string }[]; more?: { type: string; open: string; close: string }[] };
+  hours: { regular?: Record<string, { open: string; close: string; closed: boolean; all_day?: boolean }>; special?: { date: string; hours: string; reason: string }[]; more?: { type: string; open: string; close: string }[] };
   service_area: string[];
   attributes: Record<string, string>;
   opening_date?: string | null;
@@ -1325,13 +1325,13 @@ function CategoriesTab({ initial, onSave, bulk, copy }: {
 }
 
 function HoursTab({ initial, onSave, bulk, copy }: {
-  initial?: Record<string, { open: string; close: string; closed: boolean }>;
-  onSave: (regular: Record<string, { open: string; close: string; closed: boolean }>) => Promise<void>;
+  initial?: Record<string, { open: string; close: string; closed: boolean; all_day?: boolean }>;
+  onSave: (regular: Record<string, { open: string; close: string; closed: boolean; all_day?: boolean }>) => Promise<void>;
   bulk?: BulkScope | null;
   copy: LocationsCopy;
 }) {
   const blank = () => Object.fromEntries(HOURS_DAYS.map((d) => [d, { open: "", close: "", closed: false }]));
-  const [hours, setHours] = useState<Record<string, { open: string; close: string; closed: boolean }>>(
+  const [hours, setHours] = useState<Record<string, { open: string; close: string; closed: boolean; all_day?: boolean }>>(
     { ...blank(), ...(initial ?? {}) }
   );
   const [saving, setSaving] = useState(false);
@@ -1343,7 +1343,14 @@ function HoursTab({ initial, onSave, bulk, copy }: {
   }, [JSON.stringify(initial)]);
 
   const updateDay = (day: string, field: string, value: string | boolean) => {
-    setHours({ ...hours, [day]: { ...hours[day], [field]: value } });
+    setHours({ ...hours, [day]: { ...hours[day], [field]: value, ...(field === "open" || field === "close" ? { all_day: false } : {}) } });
+  };
+  const toggleAllDay = (day: string) => {
+    const next = !hours[day].all_day;
+    setHours({
+      ...hours,
+      [day]: { ...hours[day], closed: false, all_day: next, open: next ? "00:00" : "", close: next ? "00:00" : "" },
+    });
   };
 
   const handleSave = async () => {
@@ -1380,9 +1387,23 @@ function HoursTab({ initial, onSave, bulk, copy }: {
             </label>
             {!hours[day].closed ? (
               <div className="flex items-center gap-2">
-                <input type="time" value={hours[day].open} onChange={(e) => updateDay(day, "open", e.target.value)} className="input-field w-28" />
-                <span className="text-[12px] text-ink/40">{copy.toLabel}</span>
-                <input type="time" value={hours[day].close} onChange={(e) => updateDay(day, "close", e.target.value)} className="input-field w-28" />
+                <button
+                  type="button"
+                  onClick={() => toggleAllDay(day)}
+                  aria-pressed={!!hours[day].all_day}
+                  className={`rounded-full border px-2 py-0.5 text-[10px] font-bold transition ${hours[day].all_day ? "border-deep-violet/30 bg-deep-violet/10 text-deep-violet" : "border-ink/10 text-ink/45 dark:border-fog/10 dark:text-fog/45"}`}
+                >
+                  24h
+                </button>
+                {hours[day].all_day ? (
+                  <span className="text-[12px] font-medium text-ink/60 dark:text-fog/60">{copy.open24Hours}</span>
+                ) : (
+                  <>
+                    <input type="time" value={hours[day].open} onChange={(e) => updateDay(day, "open", e.target.value)} className="input-field w-28" />
+                    <span className="text-[12px] text-ink/40">{copy.toLabel}</span>
+                    <input type="time" value={hours[day].close} onChange={(e) => updateDay(day, "close", e.target.value)} className="input-field w-28" />
+                  </>
+                )}
               </div>
             ) : (
               <span className="text-[12px] font-medium text-ink/30 dark:text-fog/30">{copy.closedLabel}</span>
