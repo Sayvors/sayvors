@@ -13,8 +13,8 @@ class MediaCreate(BaseModel):
     scheduled_on: str | None = None  # ISO datetime, required for schedule
     # ISO datetime: auto-delete our copy (Google follows its own lifecycle).
     delete_at: str | None = None
-    # post = inside a Google post (wired via Localith). gallery / profile =
-    # stored intent only until per-tenant native Google lands.
+    # post = inside a Google local post; gallery = location media;
+    # profile = replace the Google profile photo.
     publish_method: str = Field("post", pattern="^(post|gallery|profile)$")
 
 

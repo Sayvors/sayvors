@@ -239,7 +239,7 @@ function AttentionQueue() {
         }
         try {
           // Scheduled items are keyed by the native Google location id. The
-          // dashboard never reads Localith listings.
+          // dashboard never reads legacy provider listings.
           const locs = googleChannels
             .filter((c) => c.listing_id)
             .slice(0, 10);

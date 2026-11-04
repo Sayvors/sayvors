@@ -20,10 +20,10 @@ import { METHOD_META, PLATFORM_META, type PlatformKey } from "@/components/dashb
  * platform and the outcome on each card.
  *
  * Two sources feed the list: publishing jobs (the cross-platform composer)
- * and legacy Google location posts (the old per-branch flow, published via
- * Localith). Composer posts can be removed from the platform they went out
- * on (checked, then delete) or cancelled before they go out; legacy posts
- * are display-only — Localith exposes no delete API.
+ * and legacy Google location posts (the old per-branch flow). Composer posts
+ * can be removed from the platform they went out on (checked, then delete) or
+ * cancelled before they go out; legacy posts are display-only because the
+ * Google-side copy keeps its own lifecycle.
  */
 
 /** One feed row: a composer job or a legacy Google location post. */
@@ -286,8 +286,8 @@ function legacyChip(post: LocationPost): Chip {
 }
 
 /** A Google post from the old per-branch flow. It never passed through the
- * publishing job queue, so it has no remove/cancel actions — Localith
- * exposes no delete API and the Google-side copy keeps its own lifecycle. */
+ * publishing job queue, so it has no remove/cancel actions — the Google-side
+ * copy keeps its own lifecycle. */
 function LegacyPostCard({ post }: { post: LocationPost }) {
   const chip = legacyChip(post);
   const text = post.title ? [post.title, post.description].filter(Boolean).join(" — ") : post.description;

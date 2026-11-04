@@ -82,8 +82,8 @@ async def sync_post_metrics(
     """Pull per-post views + CTA clicks from Google (reportInsights).
 
     Called by the posts UI on feed load; numbers land on the rows and come
-    back for in-place refresh. Needs a native Google OAuth channel —
-    Localith-backed tenants get a note, never an error. Rate limited to
+    back for in-place refresh. Needs a connected native Google channel —
+    unconnected tenants get a note, never an error. Rate limited to
     30/hour per tenant (the whole point is one or two calls per visit)."""
     import sys as _sys
 

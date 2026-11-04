@@ -1,12 +1,10 @@
-"""Location posts (Google Posts via Localith).
+"""Location posts (native Google Business Profile local posts).
 
 Sayvors is the schedule of record: drafts/scheduled posts live here and a
-background worker publishes due rows. Publishing goes through Localith's
-content_publishing_media endpoint; Localith exposes no post read/update/
-delete, so Google-side edits/deletes are impossible — EXCEPT the post
-lifecycle Google itself honors: event/offer posts carry an end_date that
-Google uses to take them down. Our stored copy is authoritative for
-everything else, including scheduled local deletion (delete_at).
+background worker publishes due rows as GBP `localPosts`. Google-side edits/
+deletes are limited to the post lifecycle Google honors (event/offer end
+dates); our stored copy is authoritative for everything else, including
+scheduled local deletion (delete_at).
 """
 import uuid
 from datetime import datetime, timezone
@@ -59,22 +57,19 @@ class LocationPost(Base):
     delete_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )
-    # Event/offer end date, forwarded to Localith at publish time — the one
+    # Event/offer end date, forwarded to Google at publish time — the one
     # Google-side removal lever that exists (Google takes down ended posts).
     end_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Event start date (required by Google for events).
     start_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    # Offer fields. Google has no separate coupon/terms inputs in Localith's
-    # wrapper: coupon_code travels as voucherCode; terms_conditions are
-    # appended to the caption text that Google shows.
+    # Offer fields. Native Google takes coupon_code and terms_conditions in
+    # the offer object; both are sent separately now.
     coupon_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     terms_conditions: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Google-side post id captured at publish time, when the provider
-    # returns one. Reserved for true remote deletion the day an API
-    # (Localith delete or per-tenant native Google) supports it.
+    # Google-side post id captured at publish time (the localPost resource
+    # name), when the provider returns one. Reserved for true remote deletion.
     google_post_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    # Per-post performance, pulled from Google's reportInsights (native
-    # OAuth path only — Localith exposes no post-level metrics). None =
+    # Per-post performance, pulled from Google's reportInsights. None =
     # never synced (or no native Google connection). Rows are matched to
     # Google's copies by caption prefix, publish time as fallback.
     views: Mapped[int | None] = mapped_column(nullable=True)

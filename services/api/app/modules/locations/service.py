@@ -91,6 +91,14 @@ async def channel_for_listing(
     return None
 
 
+async def disconnected_listing_ids(db: AsyncSession, user_id: str) -> set[str]:
+    """Listing ids whose Google connection is explicitly disconnected."""
+    return {
+        listing_id_of(ch)
+        for ch in await native_channels(db, user_id, statuses=("disconnected",))
+    }
+
+
 async def _profile(db: AsyncSession, user_id: str, listing_id: str) -> LocationProfile:
     try:
         result = await db.execute(

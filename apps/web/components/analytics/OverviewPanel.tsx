@@ -91,8 +91,8 @@ export default function OverviewPanel() {
   const loading = channelsQuery.isPending || overviewQuery.isPending;
   const error = overviewQuery.isError && !overviewQuery.data;
 
-  // Google presence snapshot from the native performance rollups. No
-  // Localith profile is involved; the selected branch supplies its Maps link.
+  // Google presence snapshot from the native performance rollups. No second
+  // provider profile is involved; the selected branch supplies its Maps link.
   const presence = useMemo<PresenceData | null>(() => {
     if (channels.length === 0) return null;
     const sum = (values: Array<number | undefined>): number =>

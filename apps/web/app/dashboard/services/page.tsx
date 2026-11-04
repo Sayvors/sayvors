@@ -56,7 +56,7 @@ export default function ServicesPage({ embedded = false, listingId }: { embedded
   const [addLocIds, setAddLocIds] = useState<string[]>([]);
 
   const { groups } = useLocationGroups();
-  // Groups key on Localith listing_id; this page keys on channel id.
+  // Groups key on the Google location id; this page keys on channel id.
   const listingMap: Record<string, string> = Object.fromEntries(
     channels.filter((c) => c.listing_id).map((c) => [c.listing_id as string, c.id]),
   );

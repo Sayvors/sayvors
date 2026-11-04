@@ -23,7 +23,7 @@ class PostCreate(BaseModel):
     # ISO datetime: event start (required by Google for events).
     start_date: str | None = None
     # Offer headline code (voucherCode). Terms travel inside the caption —
-    # Localith's wrapper exposes no separate terms field.
+    # Native Google offer field; also appended to nothing else.
     coupon_code: str | None = Field(None, max_length=64)
     terms_conditions: str | None = Field(None, max_length=2000)
 

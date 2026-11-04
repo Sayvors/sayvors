@@ -9,16 +9,45 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from app.modules.localith.models import LocalithConnection
 from app.modules.posts import service as posts
 
 
-async def _connection(db, user_id):
-    db.add(LocalithConnection(
-        id="conn-post-1", user_id=user_id, listing_id="loc-1",
-        listing_name="Test Place", listing_google_id="g1",
+async def _connection(db, user_id, listing_id="loc-1"):
+    import json
+
+    from app.modules.channels.models import Channel
+    from app.modules.channels.service import encrypt_token
+
+    db.add(Channel(
+        id=f"ch-post-{user_id[-12:]}-{listing_id}", user_id=user_id,
+        platform="google_reviews",
+        platform_user_id="acct-post", display_name="Test Place", status="active",
+        listing_key=listing_id, access_token=encrypt_token("at"),
+        refresh_token=encrypt_token("rt"),
+        metadata_json=json.dumps({"location_id": listing_id}),
     ))
     await db.commit()
+
+
+def _patch_publish(monkeypatch, *, result=None, error=None):
+    """Replace the native publisher with an async recorder."""
+    calls = []
+
+    async def _fake(self, token, asset_id, method, media_url, media_type,
+                    caption, description, scheduled_at, account_id=None, **kw):
+        calls.append({
+            "asset_id": asset_id, "method": method, "caption": caption,
+            "scheduled_at": scheduled_at, "account_id": account_id, **kw,
+        })
+        if error:
+            raise error
+        return result or {"id": "pub-1"}
+
+    monkeypatch.setattr(
+        "app.modules.channels.meta.providers.google_publish.GoogleBusinessPublisher.publish_post",
+        _fake,
+    )
+    return calls
 
 
 def _draft(listing_id="loc-1", **over):
@@ -53,51 +82,31 @@ async def test_create_schedule_requires_future_date(db, user_id):
 
 
 @pytest.mark.asyncio
-async def test_publish_now_calls_localith(monkeypatch, db, user_id):
+async def test_publish_now_calls_google(monkeypatch, db, user_id):
     await _connection(db, user_id)
-    calls = []
-
-    def _fake_publish(listing_id, **kw):
-        calls.append((listing_id, kw))
-        return {"id": "pub-1"}
-
-    monkeypatch.setattr(
-        "integrations.channels.embedsocial.publish_media_post", _fake_publish
-    )
+    calls = _patch_publish(monkeypatch, result={"id": "pub-1"})
     created = await posts.create_post(db, user_id, _draft())
     res = await posts.publish_post(db, user_id, created["post"]["id"])
     assert res["google_published"] is True
     assert res["post"]["status"] == "published"
     assert res["post"]["published_at"]
-    assert calls[0][0] == "loc-1"
-    assert calls[0][1]["caption"] == "Weekend deal"
+    assert calls[0]["asset_id"] == "loc-1"
+    assert calls[0]["account_id"] == "acct-post"
+    assert calls[0]["caption"] == "Weekend deal"
 
 
 @pytest.mark.asyncio
-async def test_publish_rejects_unconnected_listing(monkeypatch, db, user_id):
+async def test_publish_rejects_unconnected_listing(db, user_id):
     await _connection(db, user_id)
-
-    def _boom(*a, **k):
-        raise AssertionError("must not reach Google")
-
-    monkeypatch.setattr(
-        "integrations.channels.embedsocial.publish_media_post", _boom
-    )
     created = await posts.create_post(db, user_id, _draft(listing_id="other"))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Connect that Google location"):
         await posts.publish_post(db, user_id, created["post"]["id"])
 
 
 @pytest.mark.asyncio
 async def test_failed_publish_marks_row(monkeypatch, db, user_id):
     await _connection(db, user_id)
-
-    def _fail(*a, **k):
-        raise RuntimeError("Localith exploded")
-
-    monkeypatch.setattr(
-        "integrations.channels.embedsocial.publish_media_post", _fail
-    )
+    _patch_publish(monkeypatch, error=RuntimeError("Google exploded"))
     created = await posts.create_post(db, user_id, _draft())
     with pytest.raises(RuntimeError):
         await posts.publish_post(db, user_id, created["post"]["id"])
@@ -121,15 +130,7 @@ async def test_update_and_delete(db, user_id):
 @pytest.mark.asyncio
 async def test_publish_due_only_publishes_due(monkeypatch, db, user_id):
     await _connection(db, user_id)
-    calls = []
-
-    def _fake_publish(listing_id, **kw):
-        calls.append(listing_id)
-        return {"id": "pub-x"}
-
-    monkeypatch.setattr(
-        "integrations.channels.embedsocial.publish_media_post", _fake_publish
-    )
+    calls = _patch_publish(monkeypatch)
     past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
     future = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
     # Bypass the future-date guard by creating drafts then marking scheduled.
@@ -142,7 +143,7 @@ async def test_publish_due_only_publishes_due(monkeypatch, db, user_id):
     totals = await posts.publish_due(db)
     assert totals == {"checked": 1, "published": 1, "failed": 0,
                       "retried": 0, "skipped": 0, "errors": []}
-    assert calls == ["loc-1"]
+    assert calls[0]["asset_id"] == "loc-1"
 
 
 @pytest.mark.asyncio
@@ -197,15 +198,7 @@ async def test_update_delete_at_set_and_cancel(db, user_id):
 @pytest.mark.asyncio
 async def test_publish_stores_google_id_and_end_date(monkeypatch, db, user_id):
     await _connection(db, user_id)
-    calls = []
-
-    def _fake_publish(listing_id, **kw):
-        calls.append(kw)
-        return {"id": "pub-9"}
-
-    monkeypatch.setattr(
-        "integrations.channels.embedsocial.publish_media_post", _fake_publish
-    )
+    calls = _patch_publish(monkeypatch, result={"id": "pub-9"})
     created = await posts.create_post(db, user_id, _draft(end_date=_future(48)))
     res = await posts.publish_post(db, user_id, created["post"]["id"])
     assert res["post"]["google_post_id"] == "pub-9"
@@ -215,13 +208,7 @@ async def test_publish_stores_google_id_and_end_date(monkeypatch, db, user_id):
 @pytest.mark.asyncio
 async def test_retry_then_park(monkeypatch, db, user_id):
     await _connection(db, user_id)
-
-    def _fail(*a, **k):
-        raise RuntimeError("down")
-
-    monkeypatch.setattr(
-        "integrations.channels.embedsocial.publish_media_post", _fail
-    )
+    _patch_publish(monkeypatch, error=RuntimeError("down"))
     past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
     created = await posts.create_post(db, user_id, _draft())
     pid = created["post"]["id"]
@@ -298,13 +285,7 @@ async def test_schedule_create_notifies(db, user_id):
 @pytest.mark.asyncio
 async def test_manual_publish_notifies_published(monkeypatch, db, user_id):
     await _connection(db, user_id)
-
-    def _fake_publish(listing_id, **kw):
-        return {"id": "pub-n"}
-
-    monkeypatch.setattr(
-        "integrations.channels.embedsocial.publish_media_post", _fake_publish
-    )
+    _patch_publish(monkeypatch, result={"id": "pub-n"})
     created = await posts.create_post(db, user_id, _draft())
     await posts.publish_post(db, user_id, created["post"]["id"])
     assert "post_published" in await _notif_types(db, user_id)
@@ -313,13 +294,7 @@ async def test_manual_publish_notifies_published(monkeypatch, db, user_id):
 @pytest.mark.asyncio
 async def test_parked_failure_notifies_but_retry_does_not(monkeypatch, db, user_id):
     await _connection(db, user_id)
-
-    def _fail(*a, **k):
-        raise RuntimeError("down")
-
-    monkeypatch.setattr(
-        "integrations.channels.embedsocial.publish_media_post", _fail
-    )
+    _patch_publish(monkeypatch, error=RuntimeError("down"))
     past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
     created = await posts.create_post(db, user_id, _draft())
     pid = created["post"]["id"]
@@ -342,21 +317,15 @@ async def test_parked_failure_notifies_but_retry_does_not(monkeypatch, db, user_
 
 
 @pytest.mark.asyncio
-async def test_localith_error_body_reaches_post_error(monkeypatch, db, user_id):
-    """A 400 from Localith must surface its body (which field, what limit)
-    on the row — previously only a bare status code survived."""
-    import httpx
-
-    from integrations.channels import embedsocial
+async def test_google_error_body_reaches_post_error(monkeypatch, db, user_id):
+    """A Google 400 must surface its body (which field, what limit) on the row."""
+    from app.modules.channels.google_reviews import GoogleReviewsError
 
     await _connection(db, user_id)
-
-    def _fake_post(url, **kw):
-        req = httpx.Request("POST", url)
-        return httpx.Response(400, text='{"errors":{"caption":"too long"}}', request=req)
-
-    monkeypatch.setattr(embedsocial.httpx, "post", _fake_post)
-    monkeypatch.setenv("LOCALITH_API_KEY", "test-key")
+    _patch_publish(
+        monkeypatch,
+        error=GoogleReviewsError('create_local_post failed (400): {"error":"caption too long"}', 400),
+    )
     created = await posts.create_post(db, user_id, _draft())
     pid = created["post"]["id"]
     await posts.update_post(db, user_id, pid,
@@ -381,18 +350,10 @@ async def test_worker_summary_one_row_per_user(monkeypatch, db, user_id):
     uid2 = f"{user_id}-b"
     db.add(User(id=uid2, first_name="T", last_name="U",
                 email="second@example.com", password_hash="x"))
-    db.add(__import__("app.modules.localith.models", fromlist=["LocalithConnection"]).LocalithConnection(
-        id="conn-post-2", user_id=uid2, listing_id="loc-1",
-        listing_name="Test Place", listing_google_id="g1",
-    ))
+    await _connection(db, uid2)
     await db.commit()
 
-    def _fake_publish(listing_id, **kw):
-        return {"id": "pub-w"}
-
-    monkeypatch.setattr(
-        "integrations.channels.embedsocial.publish_media_post", _fake_publish
-    )
+    _patch_publish(monkeypatch, result={"id": "pub-w"})
     past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
     for uid in (user_id, uid2):
         created = await posts.create_post(db, uid, _draft())
@@ -444,15 +405,7 @@ async def test_offer_requires_start_and_end_dates(db, user_id):
 @pytest.mark.asyncio
 async def test_offer_maps_coupon_terms_cta_to_google(monkeypatch, db, user_id):
     await _connection(db, user_id)
-    calls = []
-
-    def _fake_publish(listing_id, **kw):
-        calls.append(kw)
-        return {"id": "pub-offer"}
-
-    monkeypatch.setattr(
-        "integrations.channels.embedsocial.publish_media_post", _fake_publish
-    )
+    calls = _patch_publish(monkeypatch)
     created = await posts.create_post(
         db, user_id,
         _draft(post_type="offer", title="20% Off",
@@ -463,9 +416,9 @@ async def test_offer_maps_coupon_terms_cta_to_google(monkeypatch, db, user_id):
     assert created["post"]["coupon_code"] == "SAVE20"
     await posts.publish_post(db, user_id, created["post"]["id"])
     body = calls[0]
-    assert body["post_type"] == "offer"
-    assert body["voucher_code"] == "SAVE20"
-    assert "Dine-in only." in body["caption"]
+    assert body["method"] == "offer"
+    assert body["coupon_code"] == "SAVE20"
+    assert body["terms_conditions"] == "Dine-in only."
     assert "Weekend deal" in body["caption"]
     assert body["cta_type"] == "shop"
     assert body["cta_url"] == "https://shop.example.com"
@@ -473,18 +426,9 @@ async def test_offer_maps_coupon_terms_cta_to_google(monkeypatch, db, user_id):
 
 @pytest.mark.asyncio
 async def test_delete_at_becomes_google_end_for_dated_posts(monkeypatch, db, user_id):
-    """Scheduled deletion removes the Google copy too — via endDate, the
-    only Google-side removal Localith supports (no post delete exists)."""
+    """Scheduled deletion removes the Google copy too — via the end date."""
     await _connection(db, user_id)
-    calls = []
-
-    def _fake_publish(listing_id, **kw):
-        calls.append(kw)
-        return {"id": "pub-end"}
-
-    monkeypatch.setattr(
-        "integrations.channels.embedsocial.publish_media_post", _fake_publish
-    )
+    calls = _patch_publish(monkeypatch, result={"id": "pub-end"})
     delete_at = _future(72)
     created = await posts.create_post(
         db, user_id,
@@ -503,54 +447,6 @@ async def test_delete_at_becomes_google_end_for_dated_posts(monkeypatch, db, use
     # Postgres keeps them) — compare instants.
     assert _instant(calls[0]["end_date"]) == _instant(delete_at)
     assert calls[0]["start_date"]
-
-
-def test_adapter_body_uses_localith_field_names(monkeypatch):
-    """The Google-bound JSON must carry voucherCode/startDate/endDate —
-    this is the exact contract Localith documents."""
-    from integrations.channels import embedsocial
-
-    seen = {}
-
-    class _Resp:
-        status_code = 200
-        text = "{}"
-
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {"id": "x"}
-
-    def _fake_post(url, **kw):
-        seen.update(kw["json"])
-        return _Resp()
-
-    monkeypatch.setattr(embedsocial.httpx, "post", _fake_post)
-    monkeypatch.setenv("LOCALITH_API_KEY", "test-key")
-    embedsocial.publish_media_post(
-        "loc-1", post_type="offer", title="Deal", caption="Hi",
-        voucher_code="SAVE20", start_date="2026-10-01T10:00:00Z",
-        end_date="2026-10-31T10:00:00Z",
-    )
-    # `offer` is downgraded to `update` on purpose: Localith's
-    # content_publishing_media endpoint 400s on offer/event for this account
-    # regardless of field combination, and publishing as an update beats
-    # failing a post the merchant could otherwise publish. The caller's intent
-    # ("offer") is NOT what goes on the wire.
-    assert seen["type"] == "update"
-    assert seen["voucherCode"] == "SAVE20"
-    assert seen["startDate"] == "2026-10-01T10:00:00Z"
-    assert seen["endDate"] == "2026-10-31T10:00:00Z"
-
-
-def test_adapter_rejects_unknown_post_type(monkeypatch):
-    """The offer->update downgrade must not become a silent catch-all."""
-    from integrations.channels import embedsocial
-
-    monkeypatch.setenv("LOCALITH_API_KEY", "test-key")
-    with pytest.raises(ValueError, match="Unsupported post type"):
-        embedsocial.publish_media_post("loc-1", post_type="livestream")
 
 
 def _fake_llm_provider(content: str, fail_first: bool = False):

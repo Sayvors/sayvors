@@ -1,7 +1,8 @@
 """Media API — schedule photos to go live on Google, plus library CRUD.
 
-Photos publish inside Google posts (the only photo path Localith offers);
-videos are stored as library rows (provider takes image URLs, not video).
+Photos publish as a Google local post, into the location gallery, or as the
+profile photo; videos are stored as library rows (the publisher takes image
+URLs, not video).
 
 GET    /api/v1/media                list (?listing_id=)
 POST   /api/v1/media                create (publish now | schedule | draft)

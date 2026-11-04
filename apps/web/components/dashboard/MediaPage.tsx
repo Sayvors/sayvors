@@ -103,10 +103,8 @@ function MediaInner({ initialLocationId, autoUpload, focusMediaId, onExit }: Med
   const [uploadUrl, setUploadUrl] = useState("");
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadDescription, setUploadDescription] = useState("");
-  // How the photo reaches Google. Only "post" is wired (Localith publishes
-  // posts carrying image URLs; it offers no gallery upload or profile/cover
-  // assignment). Gallery/profile are honest disabled options until the
-  // native Google connection lands.
+  // How the photo reaches Google. All three are native: a local post, the
+  // location gallery, or the profile photo.
   const [publishMethod, setPublishMethod] = useState<"post" | "gallery" | "profile">("post");
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
   const [scheduledAt, setScheduledAt] = useState("");
@@ -265,7 +263,7 @@ function MediaInner({ initialLocationId, autoUpload, focusMediaId, onExit }: Med
       setBanner({
         kind: "ok",
         text: scheduleEnabled
-          ? "Photo scheduled — it goes live on Google inside a post at that time."
+          ? "Photo scheduled — it goes live on Google at that time."
           : "Photo published to Google.",
       });
       setTimeout(() => setBanner(null), 4000);
@@ -482,9 +480,9 @@ function MediaInner({ initialLocationId, autoUpload, focusMediaId, onExit }: Med
                 <label className="mb-1 block text-[12px] font-medium text-ink/50">Publish to Google as</label>
                 <div className="space-y-1.5">
                   {([
-                    { key: "post", title: "Google post", note: "Photo goes live inside a post — works today.", wired: true },
-                    { key: "gallery", title: "Photo gallery", note: "Straight into the gallery — needs the native Google connection.", wired: false },
-                    { key: "profile", title: "Profile / cover photo", note: "Set as profile or cover — needs the native Google connection.", wired: false },
+                    { key: "post", title: "Google post", note: "Photo goes live inside a Google post.", wired: true },
+                    { key: "gallery", title: "Photo gallery", note: "Adds the photo to the location gallery.", wired: true },
+                    { key: "profile", title: "Profile photo", note: "Replaces the Google profile photo.", wired: true },
                   ] as const).map((m) => (
                     <button
                       key={m.key}
@@ -597,7 +595,7 @@ function MediaInner({ initialLocationId, autoUpload, focusMediaId, onExit }: Med
                 <div><p className="text-ink/40">Views</p><p className="font-semibold text-ink dark:text-fog">{viewing.views.toLocaleString()}</p></div>
                 <div><p className="text-ink/40">Source</p><p className="font-semibold text-ink dark:text-fog">{viewing.source === "CUSTOMER" ? "Customer" : "Business"}</p></div>
                 <div><p className="text-ink/40">Uploaded</p><p className="font-semibold text-ink dark:text-fog">{viewing.createdAt}</p></div>
-                <div><p className="text-ink/40">Goes live as</p><p className="font-semibold text-ink dark:text-fog">{viewing.method === "gallery" ? "Photo gallery" : viewing.method === "profile" ? "Profile / cover" : "Google post"}</p></div>
+                <div><p className="text-ink/40">Goes live as</p><p className="font-semibold text-ink dark:text-fog">{viewing.method === "gallery" ? "Photo gallery" : viewing.method === "profile" ? "Profile photo" : "Google post"}</p></div>
               </div>
               {viewing.attribution && (
                 <p className="rounded-[2px] bg-ink/[0.03] px-3 py-2 text-[12px] text-ink/50 dark:bg-fog/[0.04] dark:text-fog/50">By {viewing.attribution}</p>
