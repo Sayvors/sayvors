@@ -148,6 +148,7 @@ function ReviewsInner() {
   const [aiTrace, setAiTrace] = useState<StreamEvent[] | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const fetchInFlight = useRef(false);
   const [channelNames, setChannelNames] = useState<Record<string, string>>({});
 
   // Groups key on listing_id, which is also what this page's locations are, so
@@ -241,16 +242,12 @@ function ReviewsInner() {
   const loadPendingReplies = async () => {
     // Same source as the dashboard "Needs attention" queue: the
     // review_replies table via /channels/{id}/reviews?status=pending_approval.
-    let ids: string[] = locations.map((l) => l.channelId).filter(Boolean) as string[];
+    // Use the channels already loaded by the page — re-fetching /channels here
+    // doubled the request volume on every refresh.
+    const ids = locations.map((l) => l.channelId).filter(Boolean) as string[];
     if (ids.length === 0) {
-      try {
-        const data = await apiFetch("/api/v1/channels?limit=100");
-        ids = (data.channels ?? [])
-          .filter((c: { platform: string }) => c.platform === "google_reviews")
-          .map((c: { id: string }) => c.id);
-      } catch {
-        ids = [];
-      }
+      setPendingReplies([]);
+      return;
     }
     const lists: ReviewReplyDTO[][] = await Promise.all(
       ids.map(async (id) => {
@@ -273,6 +270,10 @@ function ReviewsInner() {
   };
 
   const fetchReviews = async (withSync: boolean) => {
+    // Mutations and the Reconcile button can fire while the query is still
+    // loading; one in-flight pass is enough and prevents request storms.
+    if (fetchInFlight.current) return;
+    fetchInFlight.current = true;
     setRefreshing(true);
     try {
       const loc = locations.find((l) => l.id === selectedId);
@@ -286,6 +287,7 @@ function ReviewsInner() {
       setReviews([]);
       setBanner({ kind: "err", text: "Could not load reviews. Is the backend running?" });
     } finally {
+      fetchInFlight.current = false;
       setRefreshing(false);
     }
   };
@@ -298,8 +300,12 @@ function ReviewsInner() {
       await loadPendingReplies();
       return items;
     },
-    enabled: true,
-    staleTime: 30 * 1000,
+    // Wait for the channel snapshot: firing before it made the query run
+    // once with an empty location list and again after channels arrived.
+    enabled: !loading,
+    staleTime: 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
   useEffect(() => {
     const items = reviewsQuery.data;
