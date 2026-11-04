@@ -525,8 +525,18 @@ function UsageCard({ rail }: { rail: boolean }) {
     };
   }, []);
 
-  const pro = budget?.plan === "pro";
-  const planLabel = pro ? t.sidebar.managePlan : t.sidebar.upgradePlan;
+  const planNames: Record<string, string> = {
+    "free-trial": "Free Trial",
+    free: t.sidebar.freePlan,
+    starter: "Starter",
+    pro: "Pro",
+    growth: "Growth",
+    enterprise: "Enterprise",
+  };
+  const planName = budget ? planNames[budget.plan] || budget.plan : "";
+  const hasPlan = !!budget && budget.plan !== "free";
+  const hasCredit = (budget?.balance_cents ?? 0) > 0;
+  const planLabel = hasPlan ? t.sidebar.managePlan : t.sidebar.upgradePlan;
 
   if (rail) {
     return (
@@ -575,13 +585,13 @@ function UsageCard({ rail }: { rail: boolean }) {
             aria-label={t.sidebar.viewUsage}
             className="block truncate rounded-[6px] text-[15px] font-bold leading-tight outline-none focus-visible:ring-2 focus-visible:ring-ink/30"
           >
-            {pro ? t.sidebar.proPlan : t.sidebar.freePlan}
+            {planName}
           </Link>
           <Link
-            href={pro ? "/dashboard/usage" : "/dashboard/billing"}
+            href={hasPlan ? "/dashboard/usage" : "/dashboard/billing"}
             className="mt-0.5 block truncate rounded-[4px] text-[10.5px] font-medium tabular-nums text-ink/55 outline-none transition hover:text-ink/80 focus-visible:ring-2 focus-visible:ring-ink/30"
           >
-            {pro ? `$${budget.balance_dollars.toFixed(2)} ${t.sidebar.creditLeft}` : t.sidebar.freeHint}
+            {hasCredit ? `$${budget.balance_dollars.toFixed(2)} ${t.sidebar.creditLeft}` : t.sidebar.freeHint}
           </Link>
         </div>
       ) : (

@@ -104,7 +104,11 @@ polling:
   state change.
 
 Reviews already having `pending_approval`, `posted` or `approved` replies are
-marked `already_replied` and never re-drafted.
+marked `already_replied` and never re-drafted. A review with a live merchant
+reply on Google is adopted first (`reviews_worker._adopt_existing_reply`), so a
+reply written directly in the Business Profile is never overwritten by the
+first-connect import; resuming an import also corrects an old failed row when
+Google now shows a reply.
 
 ## API
 

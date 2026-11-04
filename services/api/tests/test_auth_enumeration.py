@@ -56,6 +56,28 @@ async def test_signup_is_identical_for_new_and_existing_email(
     user = (
         await db.execute(select(User).where(User.email == SIGNUP_BODY["email"]))
     ).scalar_one()
+    assert user.plan == "free-trial"
+    assert user.ai_credit_cents == 1000
+
+    from app.modules.billing.models import BillingEvent, TenantSubscription
+
+    sub = (
+        await db.execute(
+            select(TenantSubscription).where(TenantSubscription.tenant_id == user.id)
+        )
+    ).scalar_one()
+    assert sub.status == "active"
+    trial_events = (
+        await db.execute(
+            select(BillingEvent).where(
+                BillingEvent.tenant_id == user.id,
+                BillingEvent.idempotency_key == f"trial:{user.id}",
+            )
+        )
+    ).scalars().all()
+    assert len(trial_events) == 1
+    assert trial_events[0].amount_cents == 1000
+
     user.email_verified = True
     await db.commit()
 

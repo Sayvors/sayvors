@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
 import LogoLoader from "@/components/LogoLoader";
@@ -25,33 +24,45 @@ function fmtCents(c: number): string {
   return `$${(c / 100).toFixed(0)}`;
 }
 
+const PLAN_LABELS: Record<string, string> = {
+  "free-trial": "Free Trial",
+  "free": "Free",
+  starter: "Starter",
+  pro: "Pro",
+  growth: "Growth",
+  enterprise: "Enterprise",
+};
+
+// Online card payments are not connected yet. Until they are, only the
+// included free trial and the sales-assisted Enterprise plan are actionable;
+// showing "pay" for Starter/Pro/Growth would be a fake checkout.
+const ENABLED_PLAN_SLUGS = new Set(["free-trial", "enterprise"]);
+const TRIAL_CREDIT_CENTS = 1000; // $10 - keep in step with TRIAL_CREDIT_CENTS
+
+function planLabel(slug: string | undefined, fallback = ""): string {
+  return (slug && PLAN_LABELS[slug]) || fallback || slug || "Free Trial";
+}
+
 function PlanCard({
   plan,
   current,
-  recommended,
   onSelect,
-  busy,
 }: {
   plan: WebPlan;
   current: boolean;
-  recommended: boolean;
   onSelect: () => void;
-  busy: boolean;
 }) {
   const features = FEATURE_ORDER.filter((k) => (plan.features || {})[k]);
+  const isEnterprise = plan.slug === "enterprise";
+  const isTrial = plan.slug === "free-trial";
+  const enabled = ENABLED_PLAN_SLUGS.has(plan.slug);
+  const creditCents = isTrial ? TRIAL_CREDIT_CENTS : plan.included_credit_cents;
   return (
     <div
-      className={`relative flex flex-col rounded-3xl border p-6 transition-all duration-300 ${
-        recommended
-          ? "border-transparent bg-gradient-to-b from-deep-violet/10 via-white to-white shadow-[0_20px_60px_-20px_rgba(124,58,237,0.35)] dark:from-deep-violet/20 dark:via-ink dark:to-ink scale-[1.02]"
-          : "border-ink/[0.08] bg-white/70 backdrop-blur dark:border-fog/[0.08] dark:bg-ink/60"
-      } ${current ? "ring-2 ring-emerald-400/60" : ""}`}
+      className={`relative flex flex-col rounded-3xl border border-ink/[0.08] bg-white p-6 ${
+        current ? "ring-2 ring-emerald-400/60" : ""
+      }`}
     >
-      {recommended && (
-        <div className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-gradient-to-r from-deep-violet to-fuchsia-500 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-white shadow-lg">
-          Recommended
-        </div>
-      )}
       {current && (
         <div className="absolute -top-3 right-4 rounded-full bg-emerald-500 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-white shadow-lg">
           Current
@@ -65,9 +76,9 @@ function PlanCard({
 
       <div className="mb-5 flex items-baseline gap-1">
         <span className="text-[34px] font-extrabold tracking-tight text-ink dark:text-fog">
-          {plan.price_cents === 0 ? "Free" : fmtCents(plan.price_cents)}
+          {isEnterprise ? "Custom" : plan.price_cents === 0 ? "Free" : fmtCents(plan.price_cents)}
         </span>
-        {plan.price_cents > 0 && (
+        {!isEnterprise && plan.price_cents > 0 && (
           <span className="text-[13px] text-ink/45 dark:text-fog/45">/month</span>
         )}
       </div>
@@ -75,20 +86,24 @@ function PlanCard({
       <div className="mb-5 grid grid-cols-2 gap-2 text-[11px]">
         <div className="rounded-xl bg-ink/[0.03] px-3 py-2 dark:bg-fog/[0.04]">
           <div className="text-ink/45 dark:text-fog/45">AI credit</div>
-          <div className="font-semibold text-ink dark:text-fog">{fmtCents(plan.included_credit_cents)}</div>
+          <div className="font-semibold text-ink dark:text-fog">
+            {isEnterprise ? "Custom" : fmtCents(creditCents)}
+          </div>
         </div>
         <div className="rounded-xl bg-ink/[0.03] px-3 py-2 dark:bg-fog/[0.04]">
           <div className="text-ink/45 dark:text-fog/45">Channels</div>
           <div className="font-semibold text-ink dark:text-fog">
-            {plan.max_channels == null ? "Unlimited" : plan.max_channels}
+            {isEnterprise ? "Custom" : plan.max_channels == null ? "Unlimited" : plan.max_channels}
           </div>
         </div>
         <div className="col-span-2 rounded-xl bg-ink/[0.03] px-3 py-2 dark:bg-fog/[0.04]">
           <div className="text-ink/45 dark:text-fog/45">Messages / month</div>
           <div className="font-semibold text-ink dark:text-fog">
-            {plan.max_messages_per_month == null
-              ? "Unlimited"
-              : plan.max_messages_per_month.toLocaleString()}
+            {isEnterprise
+              ? "Custom"
+              : plan.max_messages_per_month == null
+                ? "Unlimited"
+                : plan.max_messages_per_month.toLocaleString()}
           </div>
         </div>
       </div>
@@ -108,25 +123,28 @@ function PlanCard({
 
       <button
         onClick={onSelect}
-        disabled={busy || current}
+        disabled={current || !enabled}
         className={`w-full rounded-2xl px-4 py-3 text-[13px] font-bold transition-all ${
           current
             ? "cursor-default bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-            : recommended
-            ? "bg-gradient-to-r from-deep-violet to-fuchsia-500 text-white shadow-lg hover:shadow-xl hover:scale-[1.02] active:scale-[0.98]"
-            : "bg-ink/[0.06] text-ink hover:bg-ink/[0.1] dark:bg-fog/[0.08] dark:text-fog dark:hover:bg-fog/[0.14]"
-        } disabled:opacity-60`}
+            : enabled
+              ? "bg-deep-violet text-white hover:bg-deep-violet/90 active:scale-[0.98]"
+              : "cursor-not-allowed bg-ink/[0.06] text-ink/45 dark:bg-fog/[0.08] dark:text-fog/45"
+        }`}
       >
-        {current ? "Your current plan" : plan.price_cents === 0 ? "Downgrade to free" : "Request upgrade"}
+        {current
+          ? "Your current plan"
+          : isEnterprise
+            ? "Contact us"
+            : enabled
+              ? "Included"
+              : "Coming soon"}
       </button>
     </div>
   );
 }
 
 export default function PlansPage() {
-  const [busy, setBusy] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
-
   const { data: plans, isLoading: plansLoading } = useQuery({
     queryKey: queryKeys.billing.plans(),
     queryFn: getPlans,
@@ -148,27 +166,12 @@ export default function PlansPage() {
   const channelCount = channels?.items?.length ?? channels?.total ?? 0;
   const maxChannels = entitlements?.max_channels ?? null;
 
-  const recommendedSlug = useMemo(() => {
-    if (!plans || !currentSlug) return null;
-    const idx = plans.findIndex((p) => p.slug === currentSlug);
-    // recommend the next tier up
-    if (idx >= 0 && idx + 1 < plans.length) return plans[idx + 1].slug;
-    return null;
-  }, [plans, currentSlug]);
-
-  const handleSelect = async (plan: WebPlan) => {
-    if (plan.slug === currentSlug) return;
-    setBusy(true);
-    setToast(null);
-    try {
-      // Self-serve checkout is not wired yet (no payment gateway). Until Phase D,
-      // upgrades are activated by an admin via grant-plan; surface a clear request
-      // so the tenant knows what to expect instead of silently failing.
-      setToast(
-        `Upgrade to ${plan.name} requested. Our team will activate it and email you — usually within one business day.`
-      );
-    } finally {
-      setBusy(false);
+  const handleSelect = (plan: WebPlan) => {
+    if (plan.slug === "enterprise") {
+      window.location.href =
+        "mailto:sales@sayvors.com?subject=" +
+        encodeURIComponent("Sayvors Enterprise plan inquiry");
+      return;
     }
   };
 
@@ -180,17 +183,14 @@ export default function PlansPage() {
     );
   }
 
-  const sortedPlans = [...(plans || [])].sort((a, b) => a.sort_order - b.sort_order);
+  const sortedPlans = [...(plans || [])]
+    // A legacy "free" row duplicates the free trial card and invites a
+    // downgrade we do not offer. The trial is the only entry plan.
+    .filter((p) => p.slug !== "free")
+    .sort((a, b) => a.sort_order - b.sort_order);
 
   return (
     <div className="relative h-full overflow-y-auto">
-      {/* ambient background */}
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute -top-40 -left-40 h-96 w-96 rounded-full bg-deep-violet/20 blur-3xl animate-pulse" />
-        <div className="absolute top-20 right-0 h-80 w-80 rounded-full bg-fuchsia-500/15 blur-3xl animate-pulse" style={{ animationDelay: "1s" }} />
-        <div className="absolute bottom-0 left-1/3 h-72 w-72 rounded-full bg-sky-500/10 blur-3xl animate-pulse" style={{ animationDelay: "2s" }} />
-      </div>
-
       <div className="relative mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         {/* header */}
         <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -203,25 +203,21 @@ export default function PlansPage() {
               Choose the plan that fits your business
             </h1>
             <p className="mt-1 max-w-2xl text-[14px] text-ink/55 dark:text-fog/55">
-              Upgrade anytime. AI credit, channel limits and feature access update instantly.
+              Every new business starts with a free trial and $10 of AI credit. Upgrade when you are ready.
             </p>
           </div>
           {entitlements && (
-            <div className="rounded-2xl border border-ink/[0.08] bg-white/60 px-4 py-3 backdrop-blur dark:border-fog/[0.08] dark:bg-ink/60">
+            <div className="rounded-2xl border border-ink/[0.08] bg-white px-4 py-3 dark:border-fog/[0.08] dark:bg-ink/60">
               <div className="text-[10px] uppercase tracking-wider text-ink/45 dark:text-fog/45">Current plan</div>
-              <div className="mt-0.5 text-[16px] font-bold text-ink dark:text-fog">{entitlements.plan_name}</div>
+              <div className="mt-0.5 text-[16px] font-bold text-ink dark:text-fog">
+                {planLabel(currentSlug, entitlements.plan_name)}
+              </div>
               <div className="text-[11px] text-ink/50 dark:text-fog/50">
                 {entitlements.promo_active ? "Promo active" : entitlements.status}
               </div>
             </div>
           )}
         </div>
-
-        {toast && (
-          <div className="mb-6 rounded-2xl border border-deep-violet/20 bg-deep-violet/5 px-4 py-3 text-[13px] text-deep-violet dark:border-deep-violet/30 dark:bg-deep-violet/10 dark:text-fuchsia-300">
-            {toast}
-          </div>
-        )}
 
         {/* usage strip */}
         {entitlements && (
@@ -230,21 +226,21 @@ export default function PlansPage() {
               label="Channels"
               used={channelCount}
               max={maxChannels}
-              color="from-sky-400 to-blue-500"
+              barClass="bg-sky-500"
             />
             <UsageMeter
               label="AI credit balance"
               used={budget ? (budget.balance_cents / 100) : 0}
               max={null}
               suffix="$"
-              color="from-emerald-400 to-teal-500"
+              barClass="bg-emerald-500"
               display={budget ? `$${(budget.balance_cents / 100).toFixed(2)}` : "—"}
             />
             <UsageMeter
               label="Messages / month"
               used={0}
               max={entitlements.max_messages_per_month ?? null}
-              color="from-amber-400 to-orange-500"
+              barClass="bg-amber-500"
               display={
                 entitlements.max_messages_per_month == null
                   ? "Unlimited"
@@ -261,9 +257,7 @@ export default function PlansPage() {
               key={p.id}
               plan={p}
               current={p.slug === currentSlug}
-              recommended={p.slug === recommendedSlug}
               onSelect={() => handleSelect(p)}
-              busy={busy}
             />
           ))}
         </div>
@@ -271,7 +265,7 @@ export default function PlansPage() {
         {/* feature matrix */}
         <div className="mt-12">
           <h2 className="mb-4 text-[18px] font-bold text-ink dark:text-fog">Feature comparison</h2>
-          <div className="overflow-x-auto rounded-3xl border border-ink/[0.08] bg-white/60 backdrop-blur dark:border-fog/[0.08] dark:bg-ink/60">
+          <div className="overflow-x-auto rounded-3xl border border-ink/[0.08] bg-white dark:border-fog/[0.08] dark:bg-ink/60">
             <table className="w-full text-[12px]">
               <thead>
                 <tr className="border-b border-ink/[0.06] dark:border-fog/[0.06]">
@@ -316,7 +310,8 @@ export default function PlansPage() {
         </div>
 
         <p className="mt-8 text-center text-[11px] text-ink/40 dark:text-fog/40">
-          Prices in USD. Upgrades take effect immediately; downgrades apply at the end of the billing period.
+          Prices in USD. The free trial includes $10 of AI credit. Online upgrades for Starter, Pro and Growth
+          are coming soon; Enterprise is custom — contact us.
         </p>
       </div>
     </div>
@@ -327,20 +322,20 @@ function UsageMeter({
   label,
   used,
   max,
-  color,
+  barClass,
   suffix,
   display,
 }: {
   label: string;
   used: number;
   max: number | null;
-  color: string;
+  barClass: string;
   suffix?: string;
   display?: string;
 }) {
   const pct = max && max > 0 ? Math.min(100, (used / max) * 100) : 0;
   return (
-    <div className="rounded-2xl border border-ink/[0.08] bg-white/60 p-4 backdrop-blur dark:border-fog/[0.08] dark:bg-ink/60">
+    <div className="rounded-2xl border border-ink/[0.08] bg-white p-4 dark:border-fog/[0.08] dark:bg-ink/60">
       <div className="flex items-center justify-between">
         <span className="text-[11px] font-medium text-ink/55 dark:text-fog/55">{label}</span>
         <span className="text-[12px] font-bold text-ink dark:text-fog">
@@ -349,7 +344,7 @@ function UsageMeter({
       </div>
       <div className="mt-2 h-2 overflow-hidden rounded-full bg-ink/[0.06] dark:bg-fog/[0.08]">
         <div
-          className={`h-full rounded-full bg-gradient-to-r ${color} transition-all duration-700`}
+          className={`h-full rounded-full ${barClass} transition-all duration-700`}
           style={{ width: `${max == null ? 0 : pct}%` }}
         />
       </div>

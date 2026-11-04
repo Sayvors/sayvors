@@ -10,6 +10,35 @@ edit billing details, and manage saved payment methods. The account's plan and
 credit grants are managed by platform operations; customers should contact
 support for plan changes or credit top-ups.
 
+### Free trial
+
+Every new tenant starts on the **Free Trial** plan with **$10 of AI credit**.
+The credit is granted once per tenant at signup through the durable ledger
+(`TRIAL_CREDIT_CENTS`, default `1000`). The trial stays active until the tenant
+moves to another plan; there is no countdown and no automatic downgrade.
+
+Accounts created before the trial grant shipped can be backfilled:
+
+```bash
+python -m scripts.backfill_trial_credits --email user@example.com --apply
+```
+
+Omit `--email` to grant every eligible zero-credit tenant. Without `--apply`
+the script is a dry run.
+
+### Plans page
+
+- **Free Trial** is the entry plan; it includes $10 of AI credit.
+- **Starter, Pro and Growth** are shown for comparison but are disabled until a
+  real payment gateway is connected. The app must never show a fake “pay”
+  button or activate a paid plan without a payment.
+- **Enterprise** is custom: the button opens a sales email instead of showing a
+  price or charging a card.
+- There is **no downgrade action** in the UI. Current plans show
+  “Your current plan” and are disabled.
+- Starting a paid plan is an operator action until checkout is implemented
+  (`POST /api/v1/admin/tenants/{id}/plan` writes the plan, wallet and ledger).
+
 ### Billing details
 
 Save the billing name and supported billing address/tax fields from the Billing

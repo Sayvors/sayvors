@@ -285,7 +285,7 @@ export default function WhatsAppSettings({
             <p className="mt-2 text-[12px] text-[var(--wa-text-2)]">
               <span className="font-bold text-[var(--wa-text)]">{usage.used_this_month.toLocaleString()}</span> of{" "}
               {usage.monthly_limit.toLocaleString()} outbound messages this month ·{" "}
-              {usage.plan === "pro" ? "Pro" : "Free"} plan
+              {usage.plan === "pro" ? "Pro" : usage.plan === "free-trial" ? "Free Trial" : "Free"} plan
             </p>
           </div>
         )}

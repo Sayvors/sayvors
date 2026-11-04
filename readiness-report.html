@@ -1084,12 +1084,13 @@
   <h3>Plans (implemented, 2026-10-27)</h3>
   <div class="scroll"><table>
     <tr><th>Slug</th><th>Name</th><th>Price (cents)</th><th>Included credit (cents)</th><th>Max channels</th><th>Max msgs/mo</th></tr>
-    <tr><td><code>free-trial</code></td><td>Free Trial</td><td>0</td><td>5,000</td><td>unlimited</td><td>1,000</td></tr>
+    <tr><td><code>free-trial</code></td><td>Free Trial</td><td>0</td><td>1,000</td><td>unlimited</td><td>1,000</td></tr>
     <tr><td><code>starter</code></td><td>Starter</td><td>4,000</td><td>4,000</td><td>1</td><td>5,000</td></tr>
     <tr><td><code>pro</code></td><td>Pro</td><td>10,000</td><td>10,000</td><td>5</td><td>25,000</td></tr>
     <tr><td><code>growth</code></td><td>Growth</td><td>50,000</td><td>50,000</td><td>25</td><td>100,000</td></tr>
     <tr><td><code>enterprise</code></td><td>Enterprise</td><td>100,000</td><td>100,000</td><td>unlimited</td><td>unlimited</td></tr>
   </table></div>
+  <p class="note"><strong>2026-11-04 launch rule:</strong> every signup starts on <code>free-trial</code> with a one-time <strong>$10</strong> credit written through the durable ledger (<code>TRIAL_CREDIT_CENTS=1000</code>). The plans page offers only the included trial and an Enterprise “Contact us” action; Starter/Pro/Growth stay disabled until a real payment gateway and webhook exist. There is no downgrade action. Existing zero-credit tenants are backfilled with <code>scripts/backfill_trial_credits.py --apply</code>. Implementation and threat model: <code>docs/security/plans-and-credits.md</code>.</p>
   <p class="note"><strong>Admin endpoints (shipped):</strong> <code>GET/POST/PATCH /api/v1/admin/plans</code> (CRUD), <code>GET /api/v1/admin/tenants/{id}/subscription</code>, <code>POST /api/v1/admin/tenants/{id}/grant-plan</code> (with optional <code>granted_until</code> promo expiry). <strong>Per-tenant feature overrides:</strong> <code>PUT /api/v1/admin/tenants/{id}/features</code> writes <code>tenant_subscriptions.features_override</code>, a JSONB dict merged over the plan's <code>features</code> per key (<code>true</code> forces on, <code>false</code> forces off, absent inherits; unknown keys dropped). <code>GET /api/v1/admin/tenants/special</code> lists only the tenants carrying at least one override — the admin <strong>Special list</strong> — and a tenant leaves it the moment the dict is cleared to <code>{}</code>. The tenant detail page opens this as a Plan-card modal with feature checkboxes against the plan baseline (<code>GET /api/v1/admin/tenants/{id}/entitlements</code> now returns <code>plan_features</code> and <code>features_override</code>). Overrides never touch the plan row, so customising one tenant leaves every other tenant on that plan unchanged. <strong>Tenant endpoint:</strong> <code>GET /api/v1/billing/plan</code>. <strong>Billable rate card:</strong> <code>GET/PUT /api/v1/admin/pricing</code> — LLM input/output per provider family, ASR per audio minute, TTS per 1k characters; see <a href="#pricing">§19b</a>. <strong>Backfill:</strong> <code>scripts/backfill_plans.py</code> (idempotent — 22 tenants backfilled to free-trial). Features per plan are placeholders pending product decision; admin can edit via PATCH.</p>
 
   <h3>Activation — one function, three sources</h3>
@@ -1152,7 +1153,7 @@
   <p>Managed through the admin Plans page (feature checkboxes + numeric caps). Below is the full recommended set of limitable Sayvors features and suggested tier values. Numeric caps are nullable = unlimited. Feature flags are booleans. Values are starting points; tune in admin without a deploy.</p>
   <div class="scroll"><table>
     <tr><th>Feature (limit key)</th><th>Trial</th><th>Starter</th><th>Pro</th><th>Growth</th><th>Enterprise</th><th>Notes</th></tr>
-    <tr><td><strong>AI credit (cents/mo)</strong> <code>included_credit_cents</code></td><td>5,000</td><td>4,000</td><td>10,000</td><td>50,000</td><td>100,000+</td><td>Granted on activation/renewal</td></tr>
+    <tr><td><strong>AI credit (cents/mo)</strong> <code>included_credit_cents</code></td><td>1,000</td><td>4,000</td><td>10,000</td><td>50,000</td><td>100,000+</td><td>Granted on activation/renewal</td></tr>
     <tr><td><strong>Channel connections</strong> <code>max_channels</code></td><td>unlimited (demo)</td><td>1</td><td>5</td><td>25</td><td>unlimited</td><td>Enforced at connect</td></tr>
     <tr><td><strong>Messages / month</strong> <code>max_messages_per_month</code></td><td>1,000</td><td>5,000</td><td>25,000</td><td>100,000</td><td>unlimited</td><td>Enforced at inbox send</td></tr>
     <tr><td><strong>Locations</strong> <code>max_locations</code></td><td>1</td><td>1</td><td>5</td><td>25</td><td>unlimited</td><td>New cap to add</td></tr>

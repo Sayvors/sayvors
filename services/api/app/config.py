@@ -154,6 +154,11 @@ class Settings(BaseSettings):
     # shape with "console" / "json". Anything else falls back to auto.
     LOG_FORMAT: str = ""
 
+    # ── Plans / trial ───────────────────────────────────
+    # Every new tenant starts on the free-trial plan with this much AI credit.
+    # Granted once per tenant through the durable ledger at signup.
+    TRIAL_CREDIT_CENTS: int = 1000  # $10
+
     # ── File uploads ────────────────────────────────────
     UPLOAD_DIR: str = "./data/uploads"
     MAX_UPLOAD_SIZE_MB: int = 100
