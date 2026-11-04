@@ -1978,7 +1978,13 @@ function ReviewsInner() {
                 <QRCodeGenerator />
               </div>
               <div className="mt-4">
-                <BulkReviewRequests />
+                <BulkReviewRequests
+                  channelId={
+                    selectedId && selectedId !== ALL_BRANCHES
+                      ? locations.find((l) => l.id === selectedId)?.channelId ?? null
+                      : null
+                  }
+                />
               </div>
               <div className="mt-4">
                 <ReviewRequestLog />

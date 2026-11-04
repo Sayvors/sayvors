@@ -90,7 +90,7 @@ export default function AskForReview() {
               ? `https://search.google.com/local/writereview?placeid=${encodeURIComponent(c.place_id)}`
               : c.maps_url;
             if (!reviewUrl) return [];
-            return [{ id: c.listing_id ?? c.id, name: c.display_name ?? "Location", reviewUrl }];
+            return [{ id: c.id, name: c.display_name ?? "Location", reviewUrl }];
           });
         setBusinesses(businesses);
       } catch {
@@ -182,6 +182,8 @@ export default function AskForReview() {
   const allContactsSelected = filteredContacts.length > 0 && filteredContacts.every((c) => selectedContactIds.has(c.id));
   const allWhatsAppSelected = visibleWhatsappContacts.length > 0 && visibleWhatsappContacts.every((c) => selectedContactIds.has(c.id));
   const allBusinessesSelected = businesses.length > 0 && businesses.every((b) => selectedBusinessIds.has(b.id));
+  const selectedBusiness =
+    businesses.find((b) => selectedBusinessIds.has(b.id)) ?? businesses[0] ?? null;
 
   const toggleAllContacts = (list: PlatformContact[] = filteredContacts) => {
     const every = list.length > 0 && list.every((c) => selectedContactIds.has(c.id));
@@ -233,6 +235,7 @@ export default function AskForReview() {
     const win = window.open("about:blank", "_blank");
     try {
       const req = await recordReviewRequest({
+        channel_id: selectedBusiness?.id ?? null,
         channel: "whatsapp",
         trigger: "manual",
         contact: cleaned,
@@ -259,6 +262,7 @@ export default function AskForReview() {
     setEmailMsg(null);
     try {
       const res = await recordReviewRequest({
+        channel_id: selectedBusiness?.id ?? null,
         channel: "email",
         contact: emailAddress.trim(),
         contact_name: emailName.trim() || null,

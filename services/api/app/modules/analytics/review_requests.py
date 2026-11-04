@@ -46,13 +46,18 @@ def _review_url_from_place(place_id: str | None, maps_url: str | None) -> str | 
 async def resolve_review_url(db: AsyncSession, user_id: str, channel_id: str | None) -> str | None:
     """The listing's Google review composer URL, from the native channel.
 
-    Localith used to be the source of the review link. Native Google now
-    stores the Place ID / Maps URL in the channel metadata; when no channel
-    is selected, the tenant's first active Google location is used.
+    The Place ID / Maps URL is stored in the Google channel metadata; when no
+    channel is selected, the tenant's first active Google location is used.
     """
     import json
 
     channel = await db.get(Channel, channel_id) if channel_id else None
+    if channel is not None and (
+        channel.user_id != user_id
+        or channel.platform != "google_reviews"
+        or channel.status != "active"
+    ):
+        channel = None
     if channel is None:
         channel = (
             await db.execute(

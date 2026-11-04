@@ -164,7 +164,7 @@ async def test_rejected_status_round_trips(db, user_id, channel_id):
     from app.modules.channels.models import ReviewReply
 
     db.add(ReviewReply(
-        id="rr-rej-1", channel_id=channel_id, review_id="localith:x",
+        id="rr-rej-1", channel_id=channel_id, review_id="accounts/a/locations/l/reviews/x",
         rating=4, review_text="t", reviewer_name="n",
         reply_text="draft", status="rejected",
     ))
@@ -300,7 +300,7 @@ async def test_retry_failed_reply_returns_to_queue(db, user_id, channel_id, clie
     from app.modules.channels.models import ReviewReply
 
     db.add(ReviewReply(
-        id="rr-retry-1", channel_id=channel_id, review_id="localith:xyz",
+        id="rr-retry-1", channel_id=channel_id, review_id="accounts/a/locations/l/reviews/xyz",
         rating=5, review_text="Great", reviewer_name="Ali",
         reply_text="Thanks, Ali!", status="failed", error="No refresh token available",
     ))
@@ -322,7 +322,7 @@ async def test_retry_failed_reply_regenerates_empty_text(db, user_id, channel_id
     from app.modules.channels.models import ReviewReply
 
     db.add(ReviewReply(
-        id="rr-retry-2", channel_id=channel_id, review_id="localith:xyz2",
+        id="rr-retry-2", channel_id=channel_id, review_id="accounts/a/locations/l/reviews/xyz2",
         rating=4, review_text="Nice place", reviewer_name="Omar",
         reply_text="", status="failed", error="LLM down",
     ))
@@ -345,7 +345,7 @@ async def test_retry_rejects_non_failed(db, user_id, channel_id, client):
     from app.modules.channels.models import ReviewReply
 
     db.add(ReviewReply(
-        id="rr-retry-3", channel_id=channel_id, review_id="localith:xyz3",
+        id="rr-retry-3", channel_id=channel_id, review_id="accounts/a/locations/l/reviews/xyz3",
         rating=5, review_text="Great", reviewer_name="Ali",
         reply_text="Thanks!", status="posted",
     ))
@@ -364,7 +364,7 @@ def _reply(row_id, channel_id, status, **over):
     from app.modules.channels.models import ReviewReply
 
     base = dict(
-        id=row_id, channel_id=channel_id, review_id="localith:edit-1",
+        id=row_id, channel_id=channel_id, review_id="accounts/a/locations/l/reviews/edit-1",
         rating=5, review_text="Great", reviewer_name="Ali",
         reply_text="Thanks!", status=status,
     )
@@ -426,7 +426,7 @@ async def test_reject_marks_draft_dismissed(db, user_id, channel_id, client):
     from app.modules.analytics.models import ReviewInsight
 
     db.add(ReviewInsight(
-        channel_id=channel_id, review_id="localith:edit-1", user_id=user_id,
+        channel_id=channel_id, review_id="accounts/a/locations/l/reviews/edit-1", user_id=user_id,
         rating=5, review_text="Great", reviewer_name="Ali",
     ))
     db.add(_reply("rr-reject-1", channel_id, "pending_approval"))
@@ -445,7 +445,7 @@ async def test_reject_marks_draft_dismissed(db, user_id, channel_id, client):
     insight = (await db.execute(
         _select(ReviewInsight).where(
             ReviewInsight.channel_id == channel_id,
-            ReviewInsight.review_id == "localith:edit-1",
+            ReviewInsight.review_id == "accounts/a/locations/l/reviews/edit-1",
         )
     )).scalar_one()
     assert insight.draft_dismissed is True
@@ -460,7 +460,7 @@ async def test_insights_carry_latest_response(db, user_id, channel_id, client):
 
     db.add(ReviewInsight(
         id="ins-resp-1", user_id=user_id, channel_id=channel_id,
-        review_id="localith:edit-1", rating=5, review_text="Great",
+        review_id="accounts/a/locations/l/reviews/edit-1", rating=5, review_text="Great",
         reviewer_name="Ali", sentiment="positive", sentiment_score=0.9,
         topics=[], products=[], problems=[], enrichment_status="done",
         replied=True, review_updated_at=datetime.now(timezone.utc),
@@ -484,23 +484,41 @@ async def test_approve_clears_edited_flag(db, user_id, channel_id, client, monke
     from sqlalchemy import select as _select
 
     from app.modules.analytics.models import ReviewInsight
+    from app.modules.channels import google_reviews
+    from app.modules.channels import service as channels_service
     from app.modules.channels import router as channels_router
-    from app.modules.localith import service as localith_service
 
     monkeypatch.setattr(channels_router.settings, "GOOGLE_REVIEWS_MOCK", False)
+    monkeypatch.setattr(channels_service, "decrypt_token", lambda v: "tok")
 
-    async def _posted(item_id, text):
-        return {"ok": True}
+    class _FakeClient:
+        def __init__(self, access_token, refresh_token=None):
+            pass
 
-    monkeypatch.setattr(localith_service, "post_reply", _posted)
+        async def reply_to_review(self, review_id, text):
+            self.review_id = review_id
+
+        async def confirm_reply_live(self, review_id, attempts=2):
+            return True
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(google_reviews, "GoogleReviewsClient", _FakeClient)
+    from app.modules.channels.models import Channel
+
+    channel = await db.get(Channel, channel_id)
+    channel.access_token = "enc-access"
+    channel.refresh_token = "enc-refresh"
+    native_id = "accounts/a/locations/l/reviews/r9"
     db.add(ReviewInsight(
-        channel_id=channel_id, review_id="localith:edit-9", user_id=user_id,
+        channel_id=channel_id, review_id=native_id, user_id=user_id,
         rating=5, review_text="New text", reviewer_name="Ali",
         edited=True, edited_at=datetime.now(timezone.utc),
         previous_review_text="Old text",
     ))
     db.add(_reply("rr-approve-9", channel_id, "pending_approval",
-                  **{"review_id": "localith:edit-9", "review_text": "New text"}))
+                  **{"review_id": native_id, "review_text": "New text"}))
     await db.commit()
 
     r = client.post(
@@ -514,7 +532,7 @@ async def test_approve_clears_edited_flag(db, user_id, channel_id, client, monke
     insight = (await db.execute(
         _select(ReviewInsight).where(
             ReviewInsight.channel_id == channel_id,
-            ReviewInsight.review_id == "localith:edit-9",
+            ReviewInsight.review_id == native_id,
         )
     )).scalar_one()
     assert insight.edited is False

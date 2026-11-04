@@ -417,23 +417,39 @@ async def test_reply_generate_followup_for_edited_review(client, db, channel_id,
 
 
 @pytest.mark.asyncio
-async def test_reply_approve_then_reject(client, channel_id, monkeypatch):
-    # Publish through the Localith path with a patched poster — mock mode
-    # refuses GBP publishing by design (no real listing in tests).
+async def test_reply_approve_then_reject(client, channel_id, db, monkeypatch):
+    # Publish through the native Google path with a patched client — mock
+    # mode refuses GBP publishing by design.
+    from app.modules.channels import google_reviews
     from app.modules.channels import router as channels_router
-    from app.modules.localith import service as localith_service
+    from app.modules.channels import service as channels_service
+    from app.modules.channels.models import Channel
 
     monkeypatch.setattr(channels_router.settings, "GOOGLE_REVIEWS_MOCK", False)
+    monkeypatch.setattr(channels_service, "decrypt_token", lambda v: "tok")
+    channel = await db.get(Channel, channel_id)
+    channel.access_token = "enc-access"
+    channel.refresh_token = "enc-refresh"
+    await db.commit()
     posted: list[tuple[str, str]] = []
 
-    async def _post(item_id, text):
-        posted.append((item_id, text))
-        return {"ok": True}
+    class _FakeClient:
+        def __init__(self, access_token, refresh_token=None):
+            pass
 
-    monkeypatch.setattr(localith_service, "post_reply", _post)
+        async def reply_to_review(self, review_id, text):
+            posted.append((review_id, text))
 
+        async def confirm_reply_live(self, review_id, attempts=2):
+            return True
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(google_reviews, "GoogleReviewsClient", _FakeClient)
+    native_id = "accounts/a/locations/l/reviews/abc123"
     payload = {
-        "review_id": "localith:abc123",
+        "review_id": native_id,
         "rating": 2,
         "review_text": "Slow service, rude staff, dirty tables.",
         "reviewer_name": "Aisha K.",
@@ -449,11 +465,11 @@ async def test_reply_approve_then_reject(client, channel_id, monkeypatch):
     assert edited.status_code == 200
     assert edited.json()["reply_text"].startswith("Thank you")
 
-    # approve (Localith publish path, patched poster)
+    # approve (native Google publish path, patched client)
     approved = client.post(f"/api/v1/channels/{channel_id}/reviews/{reply_id}/approve")
     assert approved.status_code == 200
     assert approved.json()["status"] == "posted"
-    assert posted == [("abc123", "Thank you — we're sorry and we're fixing this.")]
+    assert posted == [(native_id, "Thank you — we're sorry and we're fixing this.")]
 
     # cannot reject an already-published reply
     rejected = client.delete(f"/api/v1/channels/{channel_id}/reviews/{reply_id}")
