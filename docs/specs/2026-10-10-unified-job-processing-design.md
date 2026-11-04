@@ -342,7 +342,7 @@ Two supporting fixes:
   (`posts/service.py:399` does reset).
 
 For providers that accept an idempotency key, use it and skip reconciliation.
-EmbedSocial/Localith does not; Meta Graph does not for messaging. That is the gap.
+Meta Graph does not for messaging. That is the gap.
 
 ---
 

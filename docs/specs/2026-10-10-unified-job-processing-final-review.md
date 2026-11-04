@@ -467,7 +467,6 @@ outcome is genuinely unknown. That is a distinct state, not a retryable failure.
 | Provider | Idempotency key? | Reconciliation possible? |
 |---|---|---|
 | Meta Graph messaging | No | **Partly** — a returned `messages[0].id` is lost with the response |
-| EmbedSocial / Localith publish | No | **No** — `publish_media_post` returns an item id we would have lost |
 | Google GBP reviews (reply) | No | No |
 
 So for the publish path the honest sequence is:

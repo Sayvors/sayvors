@@ -1,8 +1,8 @@
 """One listing = one channel row, at any worker count.
 
 Covers the twin-row prevention stack:
-- channel_listing_key: identity comes from the stable API IDs
-  (Localith listing_id, Google location_id) — never the display name.
+- channel_listing_key: identity comes from the stable API ID
+  (Google location_id) — never the display name.
 - Unique index (user_id, platform, listing_key): the second insert for one
   key fails, on sqlite (tests) exactly as on Postgres (prod).
 - find_channel_by_key + create_channel: losers reuse the winner's row
@@ -44,14 +44,6 @@ def _user(uid: str) -> User:
 # ── key derivation: IDs in, names never ──────────────────────────────
 
 
-def test_localith_key_uses_listing_id():
-    key = channel_listing_key(
-        "google_reviews",
-        {"provider": "localith", "listing_id": "abc123", "location_id": "ChIJX"},
-    )
-    assert key == "abc123"
-
-
 def test_native_key_uses_location_id():
     key = channel_listing_key(
         "google_reviews", {"location_id": "locations/456", "account_name": "A"}
@@ -61,15 +53,15 @@ def test_native_key_uses_location_id():
 
 def test_same_name_different_ids_are_different_listings():
     # Two branches sharing a display name must NEVER collapse.
-    a = channel_listing_key("google_reviews", {"listing_id": "branch-1"})
-    b = channel_listing_key("google_reviews", {"listing_id": "branch-2"})
+    a = channel_listing_key("google_reviews", {"location_id": "branch-1"})
+    b = channel_listing_key("google_reviews", {"location_id": "branch-2"})
     assert a != b
 
 
 def test_key_none_without_identity():
     assert channel_listing_key("google_reviews", {}) is None
-    assert channel_listing_key("google_reviews", {"provider": "localith"}) is None
-    assert channel_listing_key("facebook", {"listing_id": "x"}) is None
+    assert channel_listing_key("google_reviews", {"provider": "google"}) is None
+    assert channel_listing_key("facebook", {"location_id": "x"}) is None
 
 
 def test_parse_metadata_never_raises():
@@ -192,17 +184,17 @@ async def test_merge_twins_with_identical_reviews(db, user_id):
     db.add_all([surv, dupe])
     await db.commit()
     # Same review on both: survivor bare, dupe enriched.
-    db.add(_insight(user_id, surv.id, "localith:r1"))
+    db.add(_insight(user_id, surv.id, "reviews/r1"))
     db.add(
         _insight(
-            user_id, dupe.id, "localith:r1",
+            user_id, dupe.id, "reviews/r1",
             review_text="Great!", reviewer_name="Sara",
             replied=True, enrichment_status="done",
             sentiment="positive", topics=[{"name": "service"}],
         )
     )
     # Review only on the dupe: must move over.
-    db.add(_insight(user_id, dupe.id, "localith:r2", review_text="Ok"))
+    db.add(_insight(user_id, dupe.id, "reviews/r2", review_text="Ok"))
     db.add(
         ChannelMessage(
             id=str(uuid.uuid4()), channel_id=dupe.id,
@@ -222,8 +214,8 @@ async def test_merge_twins_with_identical_reviews(db, user_id):
         )
     ).scalars().all()
     by_review = {r.review_id: r for r in rows}
-    assert set(by_review) == {"localith:r1", "localith:r2"}
-    r1 = by_review["localith:r1"]
+    assert set(by_review) == {"reviews/r1", "reviews/r2"}
+    r1 = by_review["reviews/r1"]
     assert r1.review_text == "Great!"
     assert r1.reviewer_name == "Sara"
     assert r1.replied is True

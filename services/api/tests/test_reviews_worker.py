@@ -536,6 +536,29 @@ async def test_pipeline_model_resolution_supplies_required_rating(db, monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_poll_marks_seen_reviews_for_removal_evidence(
+    db, user_id, channel_id
+):
+    """The daily sweep trusts only sightings written by a real provider fetch."""
+    from app.modules.analytics.models import ReviewInsight
+
+    row = ReviewInsight(
+        id="seen-review-1", user_id=user_id, channel_id=channel_id,
+        review_id="ggreview-seen", rating=5, review_text="Hi",
+        reviewer_name="Tester", sentiment="neutral", sentiment_score=0.5,
+        topics=[], products=[], problems=[], enrichment_status="done",
+    )
+    db.add(row)
+    await db.commit()
+    channel = await db.get(Channel, channel_id)
+
+    await reviews_worker._mark_reviews_seen(db, channel, [_review("ggreview-seen")])
+    await db.refresh(row)
+    assert row.last_seen_at is not None
+    assert row.removed_at is None
+
+
+@pytest.mark.asyncio
 async def test_poll_once_sums_every_channel_field(db, channel_id, config_id, monkeypatch):
     """The pass total must include the channel count, not just review counts."""
     import asyncio

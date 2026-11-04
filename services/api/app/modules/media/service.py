@@ -423,7 +423,7 @@ async def _publish_media_inner(
     item.error = None
     item.attempts = 0
     item.next_retry_at = None
-    item.localith_response = response
+    item.google_response = response
     google_id = _google_post_id(response)
     if google_id:
         item.google_post_id = google_id

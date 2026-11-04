@@ -12,7 +12,7 @@ Full findings summarized in session 2026-10-10; this file is the build plan.
 first.** Background jobs precompute daily rollups; AI analyses run in workers and persist
 their output; endpoints read stored rows only. No LLM calls, no cross-thread SQL
 derivations, no live Meta calls in the analytics request path. This mirrors existing
-patterns: `location_daily_metrics` (Google daily ingest), Localith daily ingest,
+patterns: `location_daily_metrics` (Google daily ingest),
 review-intelligence persistence.
 
 Corollaries:

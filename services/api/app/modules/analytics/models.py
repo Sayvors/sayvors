@@ -7,7 +7,7 @@ Everything the intelligence layer needs is stored in PostgreSQL:
 - LocationDailyMetric per-channel daily rollups (review counts, sentiment
                       split, Google impressions/actions) — the "Grow" data set
 - SearchKeywordStat per-channel daily search-keyword impressions (native
-                      Google only — Localith exposes no keyword data)
+                      Google Performance API only)
 
 Events flow through the outbox → Kafka (`review-events`, `metrics-events`),
 mirroring the existing event architecture in `modules/outbox`.
@@ -54,8 +54,7 @@ class ReviewInsight(Base):
     rating: Mapped[int] = mapped_column(Integer)
     review_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     reviewer_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    # Reviewer profile photo (Google profilePhotoUrl on the native path;
-    # upstream photo field on Localith when present). UI falls back to
+    # Reviewer profile photo (Google profilePhotoUrl). UI falls back to
     # initials when null.
     reviewer_photo_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     # positive / neutral / negative (LLM or heuristic)
@@ -85,7 +84,7 @@ class ReviewInsight(Base):
     # the review is still cached locally but no reply is possible.
     skipped: Mapped[bool] = mapped_column(Boolean, default=False)
     # Reviewer edited the review after we first synced it (detected by
-    # content comparison at sync time — Localith sends no edit timestamp).
+    # content comparison at sync time).
     # Cleared when the updated reply is posted or the edit is dismissed.
     edited: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -95,7 +94,7 @@ class ReviewInsight(Base):
     # not auto-draft again. Cleared when the reviewer edits the review
     # (new content) — manual regenerate/retry bypass it regardless.
     draft_dismissed: Mapped[bool] = mapped_column(Boolean, default=False)
-    # Link to the review on Google (Localith `reviewLink`), for "View on Google".
+    # Link to the review on Google, for "View on Google".
     review_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     # Photos the reviewer attached, stored as
     # [{url, kind, label, source_url}]. `url` points at OUR copy under
@@ -447,9 +446,8 @@ class SearchKeywordStat(Base):
     """Daily search-keyword impressions per channel (Grow data set).
 
     Populated ONLY for native-Google channels: keyword breakdowns come from
-    the Business Profile Performance API (SEARCH_KEYWORD_IMPRESSIONS),
-    which Localith does not expose. Localith-only tenants get an honest
-    empty state in the UI until native Google OAuth lands — never fake rows.
+    the Business Profile Performance API (SEARCH_KEYWORD_IMPRESSIONS). A
+    channel without native OAuth gets an honest empty state, never fake rows.
     """
 
     __tablename__ = "search_keyword_stats"

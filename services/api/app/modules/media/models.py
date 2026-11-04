@@ -51,7 +51,7 @@ class LocationMedia(Base):
     # Google-side post/media id captured at publish time (reserved for
     # future remote deletion).
     google_post_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    localith_response: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    google_response: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Retry-then-park, same policy as posts.
     attempts: Mapped[int] = mapped_column(default=0, server_default="0")

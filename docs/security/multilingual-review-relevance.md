@@ -83,7 +83,7 @@ question, English praise) with a mocked LLM.
 ## Rollout
 
 Phases A–C are implemented and tested. Remaining work:
-- Hours/location sync (Localith `openingHours` → `LocationProfile`) for factual
+- Hours/location sync (Google `regularHours` → `LocationProfile`) for factual
   answerability of hours questions.
 - Complaint aggregation (per-location, 30-day trend).
 - Dialect auto-detection (currently tenant-configured).

@@ -196,6 +196,35 @@ async def _release_channel(db: AsyncSession, config_id: str) -> None:
     await db.commit()
 
 
+async def _mark_reviews_seen(db: AsyncSession, channel: Channel, reviews) -> None:
+    """Record that this poll returned these reviews.
+
+    Removal detection only trusts `last_seen_at` written by a real provider
+    fetch (never a replayed Kafka event). The incremental poll is a real
+    fetch, so this is the writer that keeps the daily sweep's evidence warm.
+    """
+    from ..analytics.models import ReviewInsight
+
+    ids = [r.review_id for r in reviews if r.review_id]
+    if not ids:
+        return
+    now = datetime.now(timezone.utc)
+    for start in range(0, len(ids), 200):
+        chunk = ids[start:start + 200]
+        rows = (
+            await db.execute(
+                select(ReviewInsight).where(
+                    ReviewInsight.channel_id == channel.id,
+                    ReviewInsight.review_id.in_(chunk),
+                )
+            )
+        ).scalars().all()
+        for row in rows:
+            row.last_seen_at = now
+            row.removed_at = None
+    await db.commit()
+
+
 async def _already_replied(db: AsyncSession, review_id: str) -> bool:
     """True if this review already has a queued or posted reply.
 
@@ -1017,6 +1046,8 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                 await db.commit()
             raise
 
+        await _mark_reviews_seen(db, channel, reviews)
+
         for review in reviews:
             stats["reviews"] += 1
             await _store_inbound_review(db, channel.id, review)
@@ -1206,6 +1237,39 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                     await _enqueue_review_replied(db, channel, review, "pending_approval")
                 except Exception as e:
                     logger.warning("review.replied enqueue failed for %s: %s", review.review_id, e)
+
+        # A complete sweep is intentionally rare: the normal poll is
+        # incremental, so removal detection needs one full read per day.
+        meta = _channel_meta(channel)
+        last_sweep = meta.get("removal_sweep_at")
+        try:
+            last_sweep_at = (
+                datetime.fromisoformat(last_sweep) if last_sweep else None
+            )
+        except (TypeError, ValueError):
+            last_sweep_at = None
+        now = datetime.now(timezone.utc)
+        if last_sweep_at is None or (now - last_sweep_at) > timedelta(hours=24):
+            try:
+                all_reviews = await client.list_reviews(account_id, location_id)
+                seen_ids = {r.review_id for r in all_reviews}
+                from .review_removal import mark_removed_reviews
+
+                removed = await mark_removed_reviews(
+                    db, channel, channel.user_id, seen_ids
+                )
+                meta["removal_sweep_at"] = now.isoformat()
+                channel.metadata_json = json.dumps(meta)
+                await db.commit()
+                if removed:
+                    logger.info(
+                        "Removal sweep marked %d review(s) for channel %s",
+                        len(removed), channel.id,
+                    )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "Removal sweep failed for channel %s: %s", channel.id, e
+                )
 
         # Google discontinued the My Business Q&A API on 2025-11-03. There
         # is no replacement; every native call now returns 404. Keep any

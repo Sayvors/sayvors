@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 # Default rates (requests per second). Override via settings if needed.
 DEFAULT_RATES: dict[str, float] = {
     "meta": 10.0,
-    "localith": 5.0,
     "google": 5.0,
 }
 

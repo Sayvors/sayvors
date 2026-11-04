@@ -349,6 +349,7 @@ class GoogleBusinessClient(GoogleReviewsClient):
         hours: dict | None = None,
         opening_date: str | None = None,
         attributes: dict | None = None,
+        service_area: list | None = None,
     ) -> dict:
         """Push profile sections, one API call per section group.
 
@@ -383,6 +384,35 @@ class GoogleBusinessClient(GoogleReviewsClient):
                 pushed.extend(core_sections)
             except GoogleReviewsError as e:
                 skipped["core"] = str(e)[:200]
+
+        # Service areas are place IDs, not free text. Resolve through Places
+        # API (New) only when the merchant actually changed the list.
+        if service_area is not None:
+            from ..locations.places import PlacesError, resolve_service_area
+
+            names = [str(name).strip() for name in service_area if str(name).strip()]
+            if not names:
+                skipped["service_area"] = "empty; Google keeps the current area"
+            else:
+                try:
+                    place_infos = await resolve_service_area(names)
+                except PlacesError as e:
+                    skipped["service_area"] = str(e)[:200]
+                else:
+                    if not place_infos:
+                        skipped["service_area"] = (
+                            "no service area resolved to a Google region place"
+                        )
+                    else:
+                        try:
+                            await self.patch_location(
+                                location_id,
+                                {"serviceArea": {"places": {"placeInfos": place_infos}}},
+                                "serviceArea.places.placeInfos",
+                            )
+                            pushed.append("service_area")
+                        except GoogleReviewsError as e:
+                            skipped["service_area"] = str(e)[:200]
 
         # Identity fields are patched one by one so a title Google reserves
         # for verified locations cannot block a phone or website update.

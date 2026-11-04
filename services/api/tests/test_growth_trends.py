@@ -18,50 +18,6 @@ def _day(n: int) -> date:
     return (datetime.now(timezone.utc) - timedelta(days=n)).date()
 
 
-def test_fetch_day_parses_listing_row(monkeypatch):
-    from integrations.channels import embedsocial
-
-    monkeypatch.setattr(
-        embedsocial,
-        "fetch_listing_metrics",
-        lambda start, end, listing_id=None, **kw: {
-            "listings": [{
-                "googleMapsDesktop": 10, "googleMapsMobile": 20,
-                "googleSearchDesktop": 5, "googleSearchMobile": 7,
-                "websiteClicks": 3, "callClicks": 2, "directions": 1,
-                "messages": 4, "bookings": 0,
-            }]
-        },
-    )
-    nums = embedsocial.fetch_listing_metrics_for_day("loc-1", _day(1))
-    assert nums["impressions_maps_desktop"] == 10
-    assert nums["impressions_maps_mobile"] == 20
-    assert nums["impressions_search"] == 12
-    assert nums["website_clicks"] == 3
-    assert nums["direction_requests"] == 1
-
-
-def test_fetch_day_empty_payload_is_zeros(monkeypatch):
-    from integrations.channels import embedsocial
-
-    monkeypatch.setattr(
-        embedsocial, "fetch_listing_metrics",
-        lambda start, end, listing_id=None, **kw: {},
-    )
-    nums = embedsocial.fetch_listing_metrics_for_day("loc-1", _day(1))
-    assert sum(nums.values()) == 0
-
-
-def test_fetch_day_api_error_is_zeros(monkeypatch):
-    from integrations.channels import embedsocial
-
-    def _boom(*a, **k):
-        raise RuntimeError("down")
-
-    monkeypatch.setattr(embedsocial, "fetch_listing_metrics", _boom)
-    assert sum(embedsocial.fetch_listing_metrics_for_day("loc-1", _day(1)).values()) == 0
-
-
 @pytest.mark.asyncio
 async def test_keywords_unavailable_without_native_channel(db, user_id, channel_id):
     """Fixture channel has no OAuth tokens → honest empty state."""

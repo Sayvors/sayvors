@@ -75,7 +75,7 @@ streams pinning the DB pool).
 | 5 | Fernet key = sha256(JWT_SECRET) | **FIXED** | Dedicated `CHANNEL_ENCRYPTION_KEY`, fail-fast in production, legacy-key fallback for rotation (`core/crypto.py`, `config.py:345-347`) |
 | 6 | Access-token blacklist not checked | **FIXED** | `is_token_blacklisted(jti)` + `ver` claim vs `user.token_version` on every authenticated request (`core/deps.py:76-81`) |
 | 7 | Tokens in URL query strings | **FIXED** | 120 s single-use `google_connect` tickets replace `?token=` (`channels/router.py:1373+`) |
-| 8 | Shared Localith account across tenants | **FIXED** | Per-tenant Fernet-encrypted API keys (`localith/models.py:35`) |
+| 8 | Shared business-data account across tenants | **FIXED** | Native per-tenant Google OAuth; channel tokens encrypted at rest |
 | 9 | RAG data-source SSRF / port-scan oracle | **FIXED** | `_assert_connectable_host` blocks private/loopback/link-local with rebinding-safe resolution; driver errors sanitized (`rag/connectors.py:150-197`) |
 | 10 | Kafka consumer trusts payload `user_id` | **FIXED** | Consumer re-resolves channel owner from DB; forged `user_id` logged and ignored; unknown channel dropped (`analytics/consumer.py:45-80`) |
 | 11 | 7 in-process workers in the API pod | **FIXED** | Dedicated worker process, lane sharding, leases, reaper (`workers/main.py`, `modules/jobs/`) |

@@ -2,11 +2,11 @@
 
 Runs every queue/poll workload OUTSIDE the HTTP process — the WhatsApp
 AI reply pipeline (webhook events -> LLM -> Cloud API send), the Google
-Reviews auto-reply worker, the Localith background sync, the scheduled
-post publisher, the analytics Kafka consumer + performance sync, and the
-outbox drainer. These are the same loops the API's lifespan used to run
-inline; isolating them guarantees dashboard traffic can never delay a
-message reply, and the worker scales independently of the API.
+Reviews auto-reply worker, the scheduled post publisher, the analytics
+Kafka consumer + performance sync, and the outbox drainer. These are the
+same loops the API's lifespan used to run inline; isolating them
+guarantees dashboard traffic can never delay a message reply, and the
+worker scales independently of the API.
 
 The api service sets RUN_BACKGROUND_WORKERS=false in the worker
 deployment (docker-compose worker service). Locally the flag defaults
@@ -72,7 +72,7 @@ async def _amain() -> None:
 
     # The worker is a separate process from the API, and sentry_sdk patches
     # handlers in-process only. Without this call every failure in the
-    # outbox/review/localith/post-publish loops is invisible in GlitchTip.
+    # outbox/review/post-publish loops is invisible in GlitchTip.
     init_observability("worker")
 
     if not settings.RUN_BACKGROUND_WORKERS:
@@ -100,8 +100,6 @@ async def _amain() -> None:
     from ..modules.channels.reviews_worker import run_google_reviews_worker
     from ..modules.jobs.reaper import run_job_reaper
     from ..modules.jobs.runner import JobRunner
-    # Localith was the temporary middleware; native Google OAuth is the
-    # production path. The Localith sync loop is intentionally not registered.
     from ..modules.posts.worker import run_post_publish_worker
     from ..modules.rag import jobs as rag_jobs
     from ..modules.redis.client import run_redis_rearmer

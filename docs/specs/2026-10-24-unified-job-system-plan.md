@@ -42,7 +42,7 @@ rebuild them; it completes the migration and closes the gaps that block
 | `enqueue_event` (commit-then-signal) still used at ~25 call sites | At-most-once dispatch on crash | 1 |
 | No per-tenant fairness in claim query (priority aging) | One noisy tenant starves others | 2 |
 | No provider rate-limit pacer (429 handling) | Rate-limit violations → dead jobs | 2 |
-| Slow endpoints still run inline (publish 500 calls, posts 50, Localith, media) | Request timeouts, connection exhaustion | 2 |
+| Slow endpoints still run inline (publish 500 calls, posts 50, media) | Request timeouts, connection exhaustion | 2 |
 | `rag.jobs` worker not registered in `loops` dict | RAG ingest runs per-process, not scalable | 2 |
 | No dead-letter replay endpoint | Dead jobs require manual DB intervention | 1 |
 | No `max_poll_interval_ms` passed to consumer (uses default, which is fine but explicit is safer) | — | 0 |

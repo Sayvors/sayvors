@@ -26,7 +26,7 @@
               │  ┌──────────────────────────────────────────┐   │
               │  │              MODULES                      │   │
               │  │  auth  locations  posts  analytics       │   │
-              │  │  channels  llm  profile  localith        │   │
+              │  │  channels  llm  profile                 │   │
               │  │  tts  stt  rag  email  kafka  redis      │   │
               │  │  outbox  webhooks                         │   │
               │  └──────────────────────────────────────────┘   │
@@ -96,7 +96,6 @@ services/api/app/modules/
 ├── channels/       # Multi-platform channels (Google, FB, Insta, etc.)
 ├── llm/            # LLM conversations, chat, streaming
 ├── profile/        # User profile, databanks, settings
-├── localith/       # EmbedSocial integration (listings, reviews, metrics)
 ├── tts/            # Text-to-speech
 ├── stt/            # Speech-to-text
 ├── rag/            # Retrieval-Augmented Generation

@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/sayvors"
     DATABASE_READER_URL: str = ""  # empty = reads also hit DATABASE_URL (no replica yet)
     DB_POOL_MODE: str = "session"  # session | transaction — PgBouncer pool mode
-    # AsyncPG pool: workers hold sessions across network calls (Localith,
+    # AsyncPG pool: workers hold sessions across network calls (Google,
     # Groq), so size generously and fail fast instead of hanging forever.
     DB_POOL_SIZE: int = 5
     DB_POOL_MAX_OVERFLOW: int = 5
@@ -213,10 +213,11 @@ class Settings(BaseSettings):
     # Dev/test mode for Google Reviews: fabricate sample reviews.
     GOOGLE_REVIEWS_MOCK: bool = False
 
-    # ── External benchmarking (Pro feature) ──────────────────────────────
-    # Google Places API (New) key for the nearby-competitor peer set. Empty
-    # means the feature is dormant: the UI shows "not connected" rather than
-    # a fabricated peer set. Never log or return this value.
+    # ── Google Places API (New) ──────────────────────────────────────────
+    # Server-side key for two features: resolving free-text service areas to
+    # Google Place IDs, and the nearby-competitor peer set. Empty means both
+    # degrade honestly (local save / "not connected") rather than inventing
+    # place IDs or peers. Never log or return this value.
     GOOGLE_PLACES_API_KEY: str = ""
     # Radius for the nearby search and how long a snapshot stays fresh.
     BENCHMARK_PEER_RADIUS_METERS: int = 5000
@@ -254,14 +255,6 @@ class Settings(BaseSettings):
     STT_VAD_FILTER: bool = True          # voice activity detection: skips silent segments
     STT_MAX_FILE_MB: int = 100           # max audio file size for transcription
 
-    # ── Localith (EmbedSocial) ──────────────────────────────
-    LOCALITH_API_KEY: str = ""
-    LOCALITH_BASE_URL: str = "https://app.localith.ai/app/api"
-    LOCALITH_ITEMS_PATH: str = "rest/v1/items"
-    BUSINESS_DATA_PROVIDER: str = "localith"
-    # Background auto-sync: every connected listing is re-synced on this
-    # cadence (profile + reviews + metrics). Manual "Sync now" still works.
-    LOCALITH_SYNC_INTERVAL_SECONDS: int = 300  # 5 min (reviews don't need 60s SLA)
     # Scheduled-post publisher: how often due posts are pushed to Google.
     POSTS_PUBLISH_INTERVAL_SECONDS: int = 300  # 5 min
     # Scheduled-media publisher: how often due photos go live on Google.

@@ -46,17 +46,10 @@ def is_native_google(
 ) -> bool:
     """True for a Google-OAuth channel in one of `statuses`.
 
-    Localith-mirrored rows carry a `listing_id`/`provider=localith` marker in
-    their metadata and are skipped. Expired channels are still listed so the
-    merchant can see their data and a reconnect prompt instead of an empty
-    Locations page.
+    Expired channels are still listed so the merchant can see their data and a
+    reconnect prompt instead of an empty Locations page.
     """
-    if channel.platform != "google_reviews" or channel.status not in statuses:
-        return False
-    meta = channel_meta(channel)
-    if str(meta.get("provider") or "").lower() == "localith":
-        return False
-    return "listing_id" not in meta
+    return channel.platform == "google_reviews" and channel.status in statuses
 
 
 async def native_channels(
@@ -222,6 +215,7 @@ async def _push_profile_native(
     hours: dict | None = None,
     opening_date: str | None = None,
     attributes: dict | None = None,
+    service_area: list | None = None,
 ) -> list[str]:
     """Best-effort native push of the sections that changed in this save.
 
@@ -251,6 +245,7 @@ async def _push_profile_native(
             hours=hours,
             opening_date=opening_date,
             attributes=attributes,
+            service_area=service_area,
         )
     except Exception as e:
         logger.warning("Native locations push failed for %s: %s", google_id, e)
@@ -353,8 +348,12 @@ async def update_profile(
         if merged_hours != old_hours:
             profile.hours = merged_hours
             push_hours = merged_hours
+    push_service_area = None
     if service_area is not None:
-        profile.service_area = [str(a)[:255] for a in service_area][:100]
+        cleaned_areas = [str(a).strip()[:255] for a in service_area if str(a).strip()][:100]
+        if cleaned_areas != list(profile.service_area or []):
+            profile.service_area = cleaned_areas
+            push_service_area = cleaned_areas
     push_attributes = None
     if attributes is not None:
         old_attributes = dict(profile.attributes or {})
@@ -394,6 +393,7 @@ async def update_profile(
             hours=push_hours,
             opening_date=push_opening_date,
             attributes=push_attributes,
+            service_area=push_service_area,
         )
     out = await get_profile(db, user_id, listing_id)
     out["google_synced"] = pushed

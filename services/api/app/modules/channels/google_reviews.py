@@ -27,6 +27,8 @@ GBP_API = "https://mybusinessbusinessinformation.googleapis.com/v1"
 GBP_ACCOUNTS_API = "https://mybusinessaccountmanagement.googleapis.com/v1"
 # The reviews endpoints live on the older mybusiness API domain:
 GBP_REVIEWS_API = "https://mybusiness.googleapis.com/v4"
+# My Business Verifications API (locations/{id}:verify, VoiceOfMerchantState)
+GBP_VERIFICATIONS_API = "https://mybusinessverifications.googleapis.com/v1"
 
 # Full Google Business Profile access (locations, reviews, replies)
 GOOGLE_SCOPES = [
@@ -604,7 +606,7 @@ class GoogleReviewsClient:
 
     # Per-post performance metrics (reportInsights): views on Google Search
     # and call-to-action button clicks. The only per-post numbers Google
-    # exposes — Localith's API has no post-level metrics at all.
+    # exposes.
     LOCAL_POST_METRICS = (
         "LOCAL_POST_VIEWS_SEARCH",
         "LOCAL_POST_ACTIONS_CALL_TO_ACTION",
@@ -1016,6 +1018,115 @@ class GoogleReviewsClient:
                     break
             month = _next_month(month)
         return out
+
+    # ── Verification (My Business Verifications API) ─────
+
+    async def get_voice_of_merchant_state(self, location_id: str) -> dict:
+        """Whether Google considers this location verified and in good standing."""
+        resp = await self._authed_request(
+            "GET",
+            f"{GBP_VERIFICATIONS_API}/locations/{location_id}/VoiceOfMerchantState",
+        )
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"VoiceOfMerchantState failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        return resp.json() or {}
+
+    async def fetch_verification_options(
+        self, location_id: str, language_code: str = "en"
+    ) -> list[dict]:
+        """Eligible verification methods and the contact data Google will use.
+
+        Google returns an empty object when the location is already verified
+        or when no method is currently eligible; both are honest empty states,
+        not errors.
+        """
+        resp = await self._authed_request(
+            "POST",
+            f"{GBP_VERIFICATIONS_API}/locations/{location_id}:fetchVerificationOptions",
+            json={"languageCode": language_code or "en"},
+        )
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"fetchVerificationOptions failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        data = resp.json() or {}
+        return data.get("options", []) or []
+
+    async def list_verifications(self, location_id: str) -> list[dict]:
+        """Every verification request Google has recorded for the location."""
+        out: list[dict] = []
+        page_token: str | None = None
+        for _ in range(10):  # bounded pagination
+            params: dict = {"pageSize": 100}
+            if page_token:
+                params["pageToken"] = page_token
+            resp = await self._authed_request(
+                "GET",
+                f"{GBP_VERIFICATIONS_API}/locations/{location_id}/verifications",
+                params=params,
+            )
+            if resp.status_code != 200:
+                raise GoogleReviewsError(
+                    f"list verifications failed ({resp.status_code}): {resp.text[:300]}",
+                    resp.status_code,
+                )
+            data = resp.json() or {}
+            out.extend(data.get("verifications", []) or [])
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                break
+        return out
+
+    async def verify_location(
+        self,
+        location_id: str,
+        *,
+        method: str,
+        language_code: str = "en",
+        phone_number: str | None = None,
+        email_address: str | None = None,
+        mailer_contact: str | None = None,
+        trusted_partner_token: str | None = None,
+    ) -> dict:
+        """Start a verification request and return Google's verification."""
+        body: dict = {"method": method, "languageCode": language_code or "en"}
+        if phone_number:
+            body["phoneNumber"] = phone_number
+        if email_address:
+            body["emailAddress"] = email_address
+        if mailer_contact:
+            body["mailerContact"] = mailer_contact
+        if trusted_partner_token:
+            body["token"] = {"tokenString": trusted_partner_token}
+        resp = await self._authed_request(
+            "POST",
+            f"{GBP_VERIFICATIONS_API}/locations/{location_id}:verify",
+            json=body,
+        )
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"verify location failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        return (resp.json() or {}).get("verification") or {}
+
+    async def complete_verification(self, name: str, pin: str) -> dict:
+        """Complete a PENDING verification with the PIN the merchant received."""
+        resp = await self._authed_request(
+            "POST",
+            f"{GBP_VERIFICATIONS_API}/{name}:complete",
+            json={"pin": pin},
+        )
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"complete verification failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        return (resp.json() or {}).get("verification") or {}
 
 
 def parse_review_resource(review_id: str) -> tuple[str, str] | None:

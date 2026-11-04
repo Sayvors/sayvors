@@ -28,10 +28,10 @@ function isGoogleHost(hostname: string): boolean {
 /**
  * Return a stored Maps URL only when it is HTTPS and actually on Google.
  *
- * `maps_url` is written by the Localith/GBP sync, but it is still stored data
- * rendered into an anchor. An unexpected `javascript:` or third-party URL is
- * dropped rather than rendered — the card then falls back to the place id or
- * the GBP dashboard.
+ * `maps_url` is written by the Google Business Profile sync, but it is still
+ * stored data rendered into an anchor. An unexpected `javascript:` or
+ * third-party URL is dropped rather than rendered — the card then falls back
+ * to the place id or the GBP dashboard.
  */
 export function safeMapsUrl(raw: string | null | undefined): string | null {
   const href = safeHref(raw ?? "");

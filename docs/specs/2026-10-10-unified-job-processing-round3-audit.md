@@ -249,7 +249,7 @@ bounds the burst.
 ### 5.3 Correction to the comment
 
 `config.py:6-7` justifies the large pool with *"workers hold sessions across network
-calls (Localith, Groq)"* — that describes `localith` and the publish path today. Under
+calls (Google, Groq)"* — that describes the publish path today. Under
 this design it becomes false and must be updated, or the next reader will size the pool
 for a constraint that no longer exists.
 

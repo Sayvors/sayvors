@@ -56,8 +56,8 @@ class Channel(Base):
     avatar_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     webhook_secret: Mapped[str | None] = mapped_column(String(100), nullable=True)
     metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Stable dedupe key: Localith listing_id, or Google location_id for
-    # native OAuth channels. NULL for channels with no location identity.
+    # Stable dedupe key: Google location_id for native OAuth channels. NULL
+    # for channels with no location identity.
     # Uniqueness is enforced by a partial unique index
     # (user_id, platform, listing_key) WHERE listing_key IS NOT NULL, so a
     # race between workers can never twin a row — the loser reuses the
@@ -911,6 +911,10 @@ class VerificationRecord(Base):
         String(36), ForeignKey("channels.id", ondelete="CASCADE"), unique=True, index=True
     )
     status: Mapped[str] = mapped_column(String(30), default="unstarted")
+    # Google's resource name for the latest PENDING verification:
+    # locations/{location}/verifications/{verification}. Required to complete
+    # it with the PIN the merchant received.
+    provider_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     method: Mapped[str | None] = mapped_column(String(30), nullable=True)
     contact_target: Mapped[str | None] = mapped_column(String(255), nullable=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
@@ -962,8 +966,8 @@ class ReviewReply(Base):
     reviewer_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     reply_text: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(
-        # "approved" = merchant approved a Localith draft; it is NOT on
-        # Google yet — they post it from their Localith/GBP dashboard.
+        # "approved" = merchant approved a draft that has not been confirmed
+        # as posted yet (kept for rows created before native publishing).
         Enum("posted", "pending_approval", "failed", "rejected", "approved",
              name="review_reply_status"),
         default="pending_approval",
@@ -974,9 +978,8 @@ class ReviewReply(Base):
         Integer, nullable=False, default=1, server_default="1"
     )
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Set when the row is adopted from a reply Google already shows (the
-    # Localith sync pulls the live reply text on every poll). Identifies the
-    # provider-side reply so a later poll can tell "same reply" from "the
+    # Set when the row is adopted from a reply Google already shows. Identifies
+    # the provider-side reply so a later poll can tell "same reply" from "the
     # business edited it directly in the Google Business Profile".
     reply_external_id: Mapped[str | None] = mapped_column(
         String(64), nullable=True, index=True

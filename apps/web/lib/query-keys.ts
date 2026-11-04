@@ -20,11 +20,6 @@ export const queryKeys = {
     connections: () => ["meta", "connections"] as const,
     assets: (provider: string) => ["meta", "assets", provider] as const,
   },
-  localith: {
-    connections: () => ["localith", "connections"] as const,
-    listings: () => ["localith", "listings"] as const,
-    profile: (listingId: string) => ["localith", "profile", listingId] as const,
-  },
   reviewIssues: {
     all: () => ["review-issues"] as const,
     list: (status: string, ticketed: boolean, limit: number) =>

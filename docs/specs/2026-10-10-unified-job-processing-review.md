@@ -354,7 +354,7 @@ final count.
 
 `publishing` = 12: the publish path is provider-rate-bound, not CPU-bound, and
 `posts/service.py:51` already caps at `MAX_PER_PASS=50` per pass. Twelve partitions is
-comfortable; the constraint is Localith quota, not partition count.
+comfortable; the constraint is provider quota, not partition count.
 `media` = 6 and `bulk` = 6: both are deliberately low-rate lanes that must never
 compete with realtime, and are on separate topics so they physically cannot.
 

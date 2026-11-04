@@ -74,9 +74,8 @@ async def _sync_channel(channel: Channel) -> int:
     access_token = decrypt_token(channel.access_token) if channel.access_token else None
     refresh_token = decrypt_token(channel.refresh_token) if channel.refresh_token else None
     if not access_token and not refresh_token:
-        # Native Google is the only analytics source now. A channel without
-        # OAuth tokens is a legacy Localith row; do not call Localith from the
-        # analytics worker. Its historical rows remain readable.
+        # A channel without OAuth tokens cannot reach Google; skip it instead
+        # of burning a request. Historical rows remain readable.
         logger.debug(
             "Performance sync skipped for %s: no Google OAuth credentials",
             channel.id,

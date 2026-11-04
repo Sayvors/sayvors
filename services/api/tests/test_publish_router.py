@@ -337,9 +337,8 @@ def test_publish_rejects_past_schedule(client):
 # ── Google destination ids ─────────────────────────────────────────────
 
 
-def test_channel_location_ids_covers_every_id_space():
-    """A branch is named by its Localith listing id, its Google location id,
-    or both — a publish destination may carry any of them."""
+def test_channel_location_ids_covers_native_ids():
+    """A branch is named by its Google location id or its dedupe key."""
     from app.modules.channels.models import Channel
     from app.modules.channels.service import channel_location_ids
 
@@ -350,12 +349,12 @@ def test_channel_location_ids_covers_every_id_space():
         platform_user_id="accounts/123",
         display_name="Branch",
         status="active",
-        listing_key="localith-listing-9",
-        metadata_json='{"listing_id": "localith-listing-9", "location_id": "google-loc-9"}',
+        listing_key="google-loc-9",
+        metadata_json='{"location_id": "google-loc-9"}',
     )
     ids = channel_location_ids(ch)
-    assert "localith-listing-9" in ids
     assert "google-loc-9" in ids
+    assert ids == {"google-loc-9"}
 
 
 def test_channel_location_ids_survives_broken_metadata():
@@ -377,7 +376,7 @@ def test_channel_location_ids_survives_broken_metadata():
 
 def test_google_location_id_prefers_the_google_id():
     """Google's API only knows the location id, so the publish call must use
-    it even when the destination was named by the Localith listing id."""
+    it even when the dedupe key looks like a different id."""
     from app.modules.channels.models import Channel
     from app.modules.jobs.handlers.post_publish import _google_location_id
 
@@ -388,8 +387,8 @@ def test_google_location_id_prefers_the_google_id():
         platform_user_id="accounts/123",
         display_name="Branch",
         status="active",
-        listing_key="localith-listing-9",
-        metadata_json='{"listing_id": "localith-listing-9", "location_id": "google-loc-9"}',
+        listing_key="google-loc-9",
+        metadata_json='{"location_id": "google-loc-9"}',
     )
     assert _google_location_id(ch) == "google-loc-9"
 

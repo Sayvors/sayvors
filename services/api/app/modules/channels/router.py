@@ -49,6 +49,7 @@ from .schemas import (
     ServiceResponse,
     ServiceUpdate,
     ThreadStateOut,
+    VerificationCompleteRequest,
     VerificationRequest,
     VerificationResponse,
 )
@@ -89,9 +90,8 @@ router = APIRouter(prefix="/api/v1/channels", tags=["channels"])
 def _channel_source_info(channel: Channel) -> tuple[str | None, str | None]:
     """(source, listing_id) for a channel.
 
-    "localith" = mirrored from a Localith listing sync (managed on the
-    Localith card); "google" = native Google OAuth channel. parsed from
-    metadata_json so the UI can show each branch exactly once.
+    Google OAuth channels are the only source. Parsed from metadata_json so
+    the UI can show each branch exactly once.
     """
     import json as _json
 
@@ -101,9 +101,6 @@ def _channel_source_info(channel: Channel) -> tuple[str | None, str | None]:
         meta = {}
     if not isinstance(meta, dict):
         return None, None
-    provider = str(meta.get("provider") or "").lower()
-    if provider == "localith" or "listing_id" in meta:
-        return "localith", str(meta.get("listing_id") or meta.get("location_id") or "")
     if channel.platform == "google_reviews":
         loc = meta.get("location_id")
         return "google", str(loc) if loc else None
@@ -304,29 +301,190 @@ async def _google_channel(channel_id: str, user: User, db: AsyncSession) -> Chan
     return channel
 
 
-def _verification_response(record: VerificationRecord | None, channel_id: str) -> VerificationResponse:
-    return VerificationResponse(
-        channel_id=channel_id,
-        status=record.status if record else "unstarted",
-        method=record.method if record else None,
-        contact_target=record.contact_target if record else None,
-        attempts=record.attempts if record else 0,
-        requested_at=record.requested_at.isoformat() if record and record.requested_at else None,
-        verified_at=record.verified_at.isoformat() if record and record.verified_at else None,
+def _verification_status(
+    state: dict, verifications: list[dict]
+) -> tuple[str, dict | None, str | None]:
+    """Derive a UI status from Google's merchant state and verification list."""
+    latest = None
+    if verifications:
+        latest = max(
+            verifications,
+            key=lambda item: str(item.get("createTime") or ""),
+        )
+    if state.get("hasVoiceOfMerchant"):
+        return "verified", latest, None
+    if state.get("complyWithGuidelines") is not None:
+        return "guidelines", latest, None
+    if state.get("resolveOwnershipConflict") is not None:
+        return "ownership_conflict", latest, None
+    if state.get("waitForVoiceOfMerchant") is not None:
+        return "under_review", latest, None
+    if latest:
+        provider_state = str(latest.get("state") or "").upper()
+        if provider_state == "COMPLETED":
+            return "verified", latest, None
+        if provider_state == "PENDING":
+            return "pending", latest, None
+        if provider_state == "FAILED":
+            return "failed", latest, None
+    if state.get("verify") is not None:
+        return "required", latest, None
+    return "unstarted", latest, None
+
+
+def _verification_contact(latest: dict | None, options: list[dict]) -> tuple[str | None, str | None]:
+    """(method, contact target) from the latest request or eligible option."""
+    if latest:
+        method = latest.get("method")
+        if method:
+            return str(method), None
+    if options:
+        first = options[0]
+        method = str(first.get("verificationMethod") or "") or None
+        target = first.get("phoneNumber")
+        if not target:
+            email = first.get("emailData") or {}
+            user = str(email.get("user") or "")
+            domain = str(email.get("domain") or "")
+            target = f"{user}@{domain}" if user and domain else None
+        return method, str(target) if target else None
+    return None, None
+
+
+async def _verification_snapshot(
+    db: AsyncSession,
+    channel: Channel,
+    client,
+    location_id: str,
+    language_code: str = "en",
+) -> VerificationResponse:
+    """Read Google's live verification state and mirror it into our row."""
+    from .google_reviews import GoogleReviewsError
+
+    state = await client.get_voice_of_merchant_state(location_id)
+    options: list[dict] = []
+    verifications: list[dict] = []
+    provider_error: str | None = None
+    try:
+        options = await client.fetch_verification_options(location_id, language_code)
+    except GoogleReviewsError:
+        provider_error = "Google did not return verification options."
+    try:
+        verifications = await client.list_verifications(location_id)
+    except GoogleReviewsError:
+        provider_error = provider_error or "Google did not return verification history."
+
+    status, latest, _ = _verification_status(state, verifications)
+    method, contact = _verification_contact(latest, options)
+
+    result = await db.execute(
+        select(VerificationRecord).where(VerificationRecord.channel_id == channel.id)
     )
+    record = result.scalar_one_or_none()
+    if record is None and (verifications or "verify" in state or status == "verified"):
+        record = VerificationRecord(channel_id=channel.id)
+        db.add(record)
+
+    if record is not None:
+        record.status = status
+        record.method = method or record.method
+        record.contact_target = contact or record.contact_target
+        record.provider_name = (
+            str(latest.get("name"))
+            if latest and str(latest.get("state") or "").upper() == "PENDING"
+            else None
+        )
+        record.attempts = max(record.attempts or 0, len(verifications))
+        if latest and latest.get("createTime") and record.requested_at is None:
+            try:
+                record.requested_at = datetime.fromisoformat(
+                    str(latest["createTime"]).replace("Z", "+00:00")
+                )
+            except ValueError:
+                pass
+        if status == "verified":
+            if record.verified_at is None:
+                completed_at = None
+                if latest and latest.get("createTime"):
+                    try:
+                        completed_at = datetime.fromisoformat(
+                            str(latest["createTime"]).replace("Z", "+00:00")
+                        )
+                    except ValueError:
+                        completed_at = None
+                record.verified_at = completed_at or datetime.now(timezone.utc)
+        else:
+            record.verified_at = None
+        await db.commit()
+        await db.refresh(record)
+
+    return VerificationResponse(
+        channel_id=channel.id,
+        status=status,
+        method=method or (record.method if record else None),
+        contact_target=contact or (record.contact_target if record else None),
+        attempts=record.attempts if record else len(verifications),
+        requested_at=(
+            record.requested_at.isoformat() if record and record.requested_at else None
+        ),
+        verified_at=(
+            record.verified_at.isoformat() if record and record.verified_at else None
+        ),
+        has_voice_of_merchant=bool(state.get("hasVoiceOfMerchant")),
+        has_business_authority=bool(state.get("hasBusinessAuthority")),
+        options=options,
+        verifications=verifications,
+        provider_name=record.provider_name if record else None,
+        provider_error=provider_error,
+    )
+
+
+async def _verification_client(channel: Channel, db: AsyncSession):
+    """Google client + location id for a connected channel."""
+    from ..locations.service import listing_id_of
+    from .google_reviews import GoogleReviewsClient
+    from .service import decrypt_token, encrypt_token
+
+    access_token = decrypt_token(channel.access_token) if channel.access_token else None
+    refresh_token = decrypt_token(channel.refresh_token) if channel.refresh_token else None
+    if not access_token and not refresh_token:
+        raise HTTPException(
+            status_code=409,
+            detail="Google is disconnected. Reconnect it to manage verification.",
+        )
+    client = GoogleReviewsClient(access_token or "", refresh_token)
+    client.set_known_expiry(channel.token_expires_at)
+
+    async def _persist(new_access_token: str, new_expires_at) -> None:
+        channel.access_token = encrypt_token(new_access_token)
+        channel.token_expires_at = new_expires_at
+        db.add(channel)
+        await db.commit()
+
+    client.set_token_persister(_persist)
+    return client, listing_id_of(channel)
 
 
 @router.get("/{channel_id}/verification", response_model=VerificationResponse)
 async def get_verification(
     channel_id: str,
+    language: str = Query("en", min_length=2, max_length=20),
     ctx: TenantContext = Depends(require_perm("channels.view")),
     db: AsyncSession = Depends(get_db),
 ):
     if ctx.channel_level(channel_id) == "none":
         raise HTTPException(status_code=404, detail="Channel not found")
-    await _google_channel(channel_id, ctx.user, db)
-    result = await db.execute(select(VerificationRecord).where(VerificationRecord.channel_id == channel_id))
-    return _verification_response(result.scalar_one_or_none(), channel_id)
+    channel = await _google_channel(channel_id, ctx.user, db)
+    client, location_id = await _verification_client(channel, db)
+    try:
+        return await _verification_snapshot(db, channel, client, location_id, language)
+    except Exception as e:  # noqa: BLE001
+        raise upstream_http_error(
+            e, context=f"Google verification read failed for {channel_id}",
+            detail="Google could not return verification details for this location.",
+        ) from None
+    finally:
+        await client.close()
 
 
 @router.post("/{channel_id}/verification", response_model=VerificationResponse)
@@ -339,23 +497,108 @@ async def request_verification(
     if not ctx.can_edit_channel(channel_id):
         raise HTTPException(status_code=403, detail="No edit access to this channel")
     channel = await _google_channel(channel_id, ctx.user, db)
-    result = await db.execute(select(VerificationRecord).where(VerificationRecord.channel_id == channel_id))
-    record = result.scalar_one_or_none()
-    now = datetime.now(timezone.utc)
-    if record is None:
-        record = VerificationRecord(channel_id=channel_id)
-        db.add(record)
-    record.status = "requested"
-    record.method = body.method
-    record.contact_target = body.contact_target
-    record.attempts += 1
-    record.requested_at = now
-    from ..outbox.service import enqueue_event_in
+    client, location_id = await _verification_client(channel, db)
+    try:
+        verification = await client.verify_location(
+            location_id,
+            method=body.method,
+            language_code=body.language_code,
+            phone_number=body.phone_number,
+            email_address=body.email_address,
+            mailer_contact=body.mailer_contact,
+            trusted_partner_token=body.trusted_partner_token,
+        )
+        result = await db.execute(
+            select(VerificationRecord).where(VerificationRecord.channel_id == channel_id)
+        )
+        record = result.scalar_one_or_none()
+        if record is None:
+            record = VerificationRecord(channel_id=channel_id)
+            db.add(record)
+        provider_state = str(verification.get("state") or "").upper()
+        record.status = {
+            "COMPLETED": "verified",
+            "FAILED": "failed",
+            "PENDING": "pending",
+        }.get(provider_state, "requested")
+        record.method = body.method
+        record.contact_target = (
+            body.phone_number or body.email_address or body.mailer_contact
+        )
+        record.provider_name = (
+            str(verification.get("name")) if verification.get("name") else None
+        )
+        record.attempts = (record.attempts or 0) + 1
+        record.requested_at = datetime.now(timezone.utc)
+        if record.status == "verified":
+            record.verified_at = datetime.now(timezone.utc)
+        await db.commit()
+        await db.refresh(record)
+        return await _verification_snapshot(
+            db, channel, client, location_id, body.language_code
+        )
+    except Exception as e:  # noqa: BLE001
+        status_code = getattr(e, "status_code", 502)
+        raise upstream_http_error(
+            e,
+            context=f"Google verification request failed for {channel_id}",
+            status_code=400 if status_code in (400, 422) else 502,
+            detail=(
+                "Google rejected the verification request. Check the method and "
+                "contact details and try again."
+                if status_code in (400, 422)
+                else "Google could not start verification for this location."
+            ),
+        ) from None
+    finally:
+        await client.close()
 
-    await enqueue_event_in(db, "google.verification.requested", {"channel_id": channel.id, "method": body.method}, "google-business-events")
-    await db.commit()
-    await db.refresh(record)
-    return _verification_response(record, channel_id)
+
+@router.post("/{channel_id}/verification/complete", response_model=VerificationResponse)
+async def complete_verification(
+    channel_id: str,
+    body: VerificationCompleteRequest,
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
+    db: AsyncSession = Depends(get_db),
+):
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    channel = await _google_channel(channel_id, ctx.user, db)
+    result = await db.execute(
+        select(VerificationRecord).where(VerificationRecord.channel_id == channel_id)
+    )
+    record = result.scalar_one_or_none()
+    if record is None or not record.provider_name:
+        raise HTTPException(
+            status_code=409,
+            detail="Start a verification request before submitting a PIN.",
+        )
+    client, location_id = await _verification_client(channel, db)
+    try:
+        verification = await client.complete_verification(record.provider_name, body.pin)
+        provider_state = str(verification.get("state") or "").upper()
+        record.status = "verified" if provider_state == "COMPLETED" else "pending"
+        if record.status == "verified":
+            record.verified_at = datetime.now(timezone.utc)
+            record.provider_name = None
+        await db.commit()
+        await db.refresh(record)
+        return await _verification_snapshot(db, channel, client, location_id)
+    except Exception as e:  # noqa: BLE001
+        status_code = getattr(e, "status_code", 502)
+        raise upstream_http_error(
+            e,
+            context=f"Google verification complete failed for {channel_id}",
+            status_code=400 if status_code in (400, 422) else 502,
+            detail=(
+                "The PIN is not valid or has expired. Request a new verification "
+                "code and try again."
+                if status_code in (400, 422)
+                else "Google could not complete verification for this location."
+            ),
+        ) from None
+    finally:
+        await client.close()
 
 
 def _service_response(service: BusinessService) -> ServiceResponse:
@@ -2785,14 +3028,6 @@ async def approve_review_reply(
         raise HTTPException(
             status_code=503,
             detail="Mock mode: connect a real Google Business Profile to publish replies.",
-        )
-
-    if reply.review_id.startswith("localith:"):
-        # Legacy Localith review ids cannot be sent to Google. The review is
-        # re-imported with a native id when the merchant reconnects Google.
-        raise HTTPException(
-            status_code=400,
-            detail="This review came from the retired Localith sync. Reconnect Google to import it before replying.",
         )
 
     access_token = decrypt_token(channel.access_token) if channel.access_token else None

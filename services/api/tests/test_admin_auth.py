@@ -241,7 +241,6 @@ async def test_admin_token_rejected_on_tenant_routes(client, monkeypatch):
             "/api/v1/analytics/overview?days=30",
             "/api/v1/analytics/reviews/insights",
             "/api/v1/channels?limit=100",
-            "/api/v1/integrations/localith/connection",
         ):
             r = client.get(path, headers=headers)
             assert r.status_code == 401, (path, r.status_code, r.text[:120])

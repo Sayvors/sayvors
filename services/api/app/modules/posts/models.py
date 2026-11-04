@@ -50,7 +50,7 @@ class LocationPost(Base):
     )
     scheduled_on: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    localith_response: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    google_response: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Scheduled local deletion (ISO in, UTC out). The Google copy follows
     # Google's own lifecycle (end_date below); Sayvors rows vanish here.

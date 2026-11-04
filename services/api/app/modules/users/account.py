@@ -33,7 +33,6 @@ async def _collect_tenant_data(db: AsyncSession, tenant_id: str, user: User) -> 
     )
     from ..jobs.models import Job
     from ..llm.models import LLMUsageEvent
-    from ..localith.models import LocalithConnection
     from ..notifications.models import Notification
     from ..outbox.models import EventOutbox
 
@@ -122,15 +121,6 @@ async def _collect_tenant_data(db: AsyncSession, tenant_id: str, user: User) -> 
         {"id": i.id, "review_id": i.review_id, "rating": i.rating,
          "sentiment": i.sentiment, "created_at": i.created_at.isoformat() if i.created_at else None}
         for i in insights
-    ]
-
-    # Localith connections
-    conns = (await db.execute(
-        select(LocalithConnection).where(LocalithConnection.user_id == tenant_id)
-    )).scalars().all()
-    data["localith_connections"] = [
-        {"id": c.id, "listing_id": c.listing_id, "listing_name": c.listing_name}
-        for c in conns
     ]
 
     # Meta assets
@@ -262,7 +252,6 @@ async def _hard_delete_account(
     from ..channels.models import Channel, ChannelMessage, ContactProfile, ReviewIssue, ReviewReply
     from ..jobs.models import Job
     from ..llm.models import LLMUsageEvent
-    from ..localith.models import LocalithConnection
     from ..notifications.models import Notification
     from ..outbox.models import EventOutbox
     from ..team.models import TeamMember
@@ -280,7 +269,6 @@ async def _hard_delete_account(
     await db.execute(delete(Notification).where(Notification.user_id == tenant_id))
     await db.execute(delete(LLMUsageEvent).where(LLMUsageEvent.tenant_id == tenant_id))
     await db.execute(delete(ReviewInsight).where(ReviewInsight.tenant_id == tenant_id))
-    await db.execute(delete(LocalithConnection).where(LocalithConnection.user_id == tenant_id))
     await db.execute(delete(MetaAsset).where(MetaAsset.tenant_id == tenant_id))
     await db.execute(delete(MetaWebhookEvent).where(MetaWebhookEvent.tenant_id == tenant_id))
     await db.execute(delete(Job).where(Job.tenant_id == tenant_id))

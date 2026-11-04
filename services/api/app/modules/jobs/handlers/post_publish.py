@@ -104,9 +104,8 @@ async def handle_post_publish(job: Job, db: AsyncSession) -> dict | None:
         # persister that writes refreshed tokens back to the channel row.
         publisher = GoogleBusinessPublisher(access_token or "", refresh_token)
         account_id = channel.platform_user_id
-        # The Google API needs the location id in Google's own id space. The
-        # destination may have been named by its Localith listing id, so take
-        # the location id off the resolved channel, not off the request.
+        # The Google API needs the location id in Google's own id space. Read
+        # it off the resolved channel, not off the request.
         location_id = _google_location_id(channel) or external_asset_id
         if account_id and "/" not in account_id:
             account_id = f"accounts/{account_id}"
@@ -377,10 +376,8 @@ async def _whatsapp_waba_id(
 def _google_location_id(channel: Channel) -> str | None:
     """The channel's Google location id, in Google's own id space.
 
-    A Localith-mirrored branch is identified by its listing id locally, but
-    Google's API only knows the location id, so the location id is read from
-    the channel metadata (the listing id is a fallback for channels that
-    never carried one).
+    The location id is read from channel metadata; the dedupe key is the
+    fallback for rows that never carried a metadata snapshot.
     """
     try:
         import json as _json
@@ -405,11 +402,8 @@ async def _resolve_channel(
     Both are tenant-scoped.
     """
     if platform == "google_reviews":
-        # The location id lives in metadata_json, not platform_user_id. A
-        # Localith-mirrored branch carries a listing_id while a native OAuth
-        # channel carries a location_id, and a branch can carry both, so the
-        # channel matches on ANY of its ids (metadata location_id, metadata
-        # listing_id, the listing_id column).
+        # The location id lives in metadata_json, not platform_user_id, so
+        # the channel matches on any of its Google ids.
         rows = await db.execute(
             select(Channel).where(
                 Channel.user_id == tenant_id,

@@ -213,8 +213,8 @@ async def _tenant_cohort(
             my_category = (meta.get("category") or "").strip() or None
     my_city = max(city_counts, key=city_counts.get) if city_counts else None
 
-    # Native Google locations are the peer set. Localith is no longer a
-    # source; every active Google channel is a real Sayvors business.
+    # Native Google locations are the peer set; every active Google channel
+    # belongs to a real Sayvors business.
     all_other = (
         await db.execute(
             select(Channel)
@@ -227,8 +227,8 @@ async def _tenant_cohort(
         )
     ).scalars().all()
     # Real peers are either native Google channels with OAuth credentials or
-    # legacy Localith-backed channels with stored reviews. A seeded/demo row
-    # with neither is not a business and must not enter the market ranking.
+    # A seeded/demo row with neither credentials nor stored reviews is not a
+    # business and must not enter the market ranking.
     other = [
         ch for ch in all_other
         if ch.access_token or ch.refresh_token

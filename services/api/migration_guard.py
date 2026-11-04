@@ -324,7 +324,6 @@ def _model_tables() -> dict[str, set[str]]:
         import app.modules.channels.meta.models  # noqa: F401
         import app.modules.jobs.models  # noqa: F401
         import app.modules.llm.models  # noqa: F401
-        import app.modules.localith.models  # noqa: F401
         import app.modules.notifications.models  # noqa: F401
         import app.modules.outbox.models  # noqa: F401
         import app.modules.posts.models  # noqa: F401

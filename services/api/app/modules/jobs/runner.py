@@ -171,9 +171,9 @@ class JobRunner:
         # Provider rate-limit pacer: if the provider is cooled down, move
         # the job to blocked instead of burning an attempt.
         _PROVIDER_MAP = {
-            "post.publish": "localith",
-            "post.delete": "localith",
-            "media.publish": "localith",
+            "post.publish": "google",
+            "post.delete": "google",
+            "media.publish": "google",
             "meta.send_reply": "meta",
             "meta.send_template": "meta",
         }

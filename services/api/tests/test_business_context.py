@@ -359,9 +359,8 @@ async def test_post_draft_prompt_includes_service(monkeypatch, db, user_id, chan
 async def test_failed_probe_does_not_expire_caller_session(db, user_id, channel_id):
     """Missing-table probe (e.g. unmigrated prod DB) must not poison the sync.
 
-    Regression test for "Localith sync failed: greenlet_spawn has not been
-    called": the old code rolled back the CALLER's session on probe failure,
-    expiring every ORM object — the next attribute access raised
+    The old code rolled back the CALLER's session on probe failure,
+    expiring every ORM object - the next attribute access raised
     MissingGreenlet. Savepoint isolation keeps caller state intact.
     """
     from sqlalchemy import select as _select
@@ -441,7 +440,7 @@ async def test_insight_photo_roundtrip(client, db, user_id, channel_id):
     from app.modules.analytics.models import ReviewInsight
 
     db.add(ReviewInsight(
-        channel_id=channel_id, review_id="localith:photo-1", user_id=user_id,
+        channel_id=channel_id, review_id="reviews/photo-1", user_id=user_id,
         rating=5, review_text="Great", reviewer_name="Sara",
         reviewer_photo_url="https://lh3.googleusercontent.com/a-/x",
     ))
@@ -449,5 +448,5 @@ async def test_insight_photo_roundtrip(client, db, user_id, channel_id):
 
     r = client.get("/api/v1/analytics/reviews/insights", headers={"host": "localhost"})
     assert r.status_code == 200
-    item = [i for i in r.json()["items"] if i["review_id"] == "localith:photo-1"][0]
+    item = [i for i in r.json()["items"] if i["review_id"] == "reviews/photo-1"][0]
     assert item["reviewer_photo_url"] == "https://lh3.googleusercontent.com/a-/x"

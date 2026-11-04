@@ -1,8 +1,8 @@
 """Per-post Google metrics: matching, insight parsing, the sync flow.
 
-Google's localPosts:reportInsights is the only per-post metrics source
-(Localith exposes none), so the sync is exercised against a fake client
-with the exact response shapes the v4 reference documents.
+Google's localPosts:reportInsights is the only per-post metrics source,
+so the sync is exercised against a fake client with the exact response
+shapes the v4 reference documents.
 """
 import sys
 from datetime import datetime, timedelta, timezone

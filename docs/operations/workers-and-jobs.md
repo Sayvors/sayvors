@@ -38,7 +38,6 @@ WORKER_LOOPS=meta-events-ai-replies,lead-actions
 Current names are:
 
 - `google-reviews-auto-reply`
-- `localith-sync`
 - `post-publisher`
 - `analytics-consumer`
 - `performance-sync`

@@ -19,11 +19,10 @@ class ChannelResponse(BaseModel):
     status: str
     avatar_url: str | None = None
     created_at: str
-    # Where this channel came from: "localith" = mirrored from a Localith
-    # listing sync (managed on the Localith card), "google" = native Google
-    # OAuth. Lets the UI show each branch once.
+    # Where this channel came from: "google" = native Google OAuth. Lets the
+    # UI show each branch once.
     source: str | None = None
-    # Localith listing_id (or Google location_id for native channels).
+    # Google location id for native channels.
     listing_id: str | None = None
     # Google Place ID / Maps URL, when the provider supplied them. Native
     # Google channels need the Place ID for the review-request QR/link.
@@ -42,8 +41,25 @@ class ChannelListResponse(BaseModel):
 
 
 class VerificationRequest(BaseModel):
-    method: str = Field(..., pattern="^(phone|sms|email|postcard|video|live_video)$")
-    contact_target: str | None = Field(None, max_length=255)
+    # Google's own method enum. The Verifications API does not support the
+    # old video/live-video options; only the methods returned by
+    # fetchVerificationOptions are accepted.
+    method: str = Field(
+        ..., pattern="^(PHONE_CALL|SMS|EMAIL|ADDRESS|AUTO|TRUSTED_PARTNER)$"
+    )
+    language_code: str = Field("en", min_length=2, max_length=20)
+    # PHONE_CALL/SMS: one of the phone numbers Google returned.
+    phone_number: str | None = Field(None, max_length=40)
+    # EMAIL: one of the addresses Google returned (local part may be editable).
+    email_address: str | None = Field(None, max_length=255)
+    # ADDRESS: contact name for the postcard.
+    mailer_contact: str | None = Field(None, max_length=255)
+    # TRUSTED_PARTNER: token from the partner integration.
+    trusted_partner_token: str | None = Field(None, max_length=500)
+
+
+class VerificationCompleteRequest(BaseModel):
+    pin: str = Field(..., min_length=1, max_length=20)
 
 
 class VerificationResponse(BaseModel):
@@ -55,6 +71,13 @@ class VerificationResponse(BaseModel):
     requested_at: str | None
     verified_at: str | None
     provider_managed: bool = True
+    # Live Google state, refreshed on every read.
+    has_voice_of_merchant: bool | None = None
+    has_business_authority: bool | None = None
+    options: list[dict] = Field(default_factory=list)
+    verifications: list[dict] = Field(default_factory=list)
+    provider_name: str | None = None
+    provider_error: str | None = None
 
 
 class ServiceCreate(BaseModel):

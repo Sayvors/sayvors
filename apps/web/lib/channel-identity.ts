@@ -7,8 +7,8 @@
 export interface BusinessChannel {
   id: string;
   display_name: string | null;
-  // Localith listing_id, or Google location_id for native OAuth rows.
-  // Absent on old backends — callers then fall back to the row id.
+  // Google location_id for native OAuth rows. Absent on old backends —
+  // callers then fall back to the row id.
   listing_id?: string | null;
   source?: string | null;
 }

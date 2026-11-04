@@ -518,8 +518,8 @@ async def admin_health(
 ):
     """Per-service status + recent failures.
 
-    Fast metadata checks by default; probe=true also hits Localith and
-    each configured AI provider live (free list-models calls, no tokens).
+    Fast metadata checks by default; probe=true also hits each configured
+    AI provider live (free list-models calls, no tokens).
     """
     return AdminHealth(**await admin_service.get_health(db, probe))
 

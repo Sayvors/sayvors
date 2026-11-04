@@ -406,7 +406,7 @@ async def _publish_post_inner(
     post.error = None
     post.attempts = 0
     post.next_retry_at = None
-    post.localith_response = response
+    post.google_response = response
     google_id = _google_post_id(response)
     if google_id:
         post.google_post_id = google_id

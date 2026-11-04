@@ -32,19 +32,9 @@ async def _connection(db, user_id, listing_id="loc-1", name="Test Place"):
 
 
 @pytest.mark.asyncio
-async def test_locations_endpoint_lists_native_only(client, db, user_id):
+async def test_locations_endpoint_lists_google_channels(client, db, user_id):
     """Router level: the page's list and profile routes exist and are native."""
     await _connection(db, user_id)
-    db.add(Channel(
-        id="ch-legacy-1", user_id=user_id, platform="google_reviews",
-        platform_user_id="legacy-loc", display_name="Legacy", status="active",
-        metadata_json=json.dumps({
-            "provider": "localith",
-            "listing_id": "legacy-loc",
-            "location_id": "legacy-loc",
-        }),
-    ))
-    await db.commit()
 
     listed = client.get("/api/v1/locations")
     assert listed.status_code == 200, listed.text
@@ -73,24 +63,6 @@ async def test_get_profile_merges_google_and_local(db, user_id):
     assert "description" in profile["google_synced"]
     assert profile["categories"] == {}
     assert profile["service_area"] == []
-
-
-@pytest.mark.asyncio
-async def test_list_returns_only_native_google_channels(db, user_id):
-    """Localith-mirrored rows are not locations any more."""
-    await _connection(db, user_id)
-    db.add(Channel(
-        id="ch-legacy-1", user_id=user_id, platform="google_reviews",
-        platform_user_id="legacy-loc", display_name="Legacy", status="active",
-        metadata_json=json.dumps({
-            "provider": "localith",
-            "listing_id": "legacy-loc",
-            "location_id": "legacy-loc",
-        }),
-    ))
-    await db.commit()
-    channels = await locations.native_channels(db, user_id)
-    assert [locations.listing_id_of(ch) for ch in channels] == ["loc-1"]
 
 
 @pytest.mark.asyncio

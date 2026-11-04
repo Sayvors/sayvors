@@ -63,7 +63,7 @@ Upload a CSV file. Returns a per-row report:
 - **Tenant isolation**: only the tenant's own listings can be updated.
 - **Per-row atomicity**: one row failure doesn't block others; failed rows are reported.
 - **Idempotent**: re-running the same CSV is safe.
-- **Google push**: updates flow through `update_profile()`, so description changes push to Google/Localith as usual.
+- **Google push**: updates flow through `update_profile()`, so description changes push to Google as usual.
 
 ## Hours format
 

@@ -367,8 +367,8 @@ async def get_timeseries(
     ]
 
     # Real inbox message volume per day from ChannelMessage (the `messages`
-    # extra on analytics rows only carries Embedsocial's reporting, which is
-    # normally empty). Merge so the Messages chart shows actual traffic.
+    # extra on analytics rows is normally empty). Merge so the Messages chart
+    # shows actual traffic.
     from ..channels.models import Channel, ChannelMessage
 
     cutoff_dt = datetime.now(timezone.utc) - timedelta(days=days)

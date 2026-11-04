@@ -249,14 +249,13 @@ def parse_channel_metadata(metadata_json: str | None) -> dict:
 def channel_listing_key(platform: str, metadata: dict) -> str | None:
     """Stable per-location identity for google_reviews channels.
 
-    Localith-mirrored rows carry listing_id; native OAuth rows carry
-    location_id. Different ID spaces, so the two sources never collide.
-    None for channels with no location identity (never deduped).
+    Native OAuth rows carry the Google location id. None for channels with
+    no location identity (never deduped).
     """
     if not isinstance(metadata, dict):
         return None
     if platform == "google_reviews":
-        key = metadata.get("listing_id") or metadata.get("location_id")
+        key = metadata.get("location_id")
         return str(key) if key else None
     return None
 
@@ -264,10 +263,8 @@ def channel_listing_key(platform: str, metadata: dict) -> str | None:
 def channel_location_ids(channel: Channel) -> set[str]:
     """Every id that identifies one Google location of this channel.
 
-    A branch can be identified by its Localith listing id, its Google
-    location id, or both (a Localith branch that was later connected
-    through Google's own OAuth). Publishing resolves the channel from
-    whichever id the client holds, so all of them are accepted.
+    Publishing resolves the channel from whichever id the client holds, so
+    both the Google location id and the dedupe key are accepted.
     """
     ids: set[str] = set()
     try:
@@ -277,10 +274,9 @@ def channel_location_ids(channel: Channel) -> set[str]:
     except (ValueError, TypeError):
         meta = {}
     if isinstance(meta, dict):
-        for key in ("location_id", "listing_id"):
-            value = meta.get(key)
-            if value:
-                ids.add(str(value))
+        value = meta.get("location_id")
+        if value:
+            ids.add(str(value))
     if channel.listing_key:
         ids.add(str(channel.listing_key))
     return ids
@@ -298,17 +294,6 @@ async def find_channel_by_key(
         )
     )
     return result.scalar_one_or_none()
-
-
-def is_localith_mirror(channel: Channel) -> bool:
-    """Legacy Localith listing mirrored as a Google channel row."""
-    try:
-        meta = json.loads(channel.metadata_json or "{}")
-    except (TypeError, ValueError):
-        return False
-    if not isinstance(meta, dict):
-        return False
-    return str(meta.get("provider") or "").lower() == "localith" or "listing_id" in meta
 
 
 async def list_channels(
@@ -338,9 +323,7 @@ async def list_channels(
         .offset(offset)
     )
     rows = list(result.scalars().all())
-    # Localith-mirrored rows are retired; never surface them as Google
-    # locations. They stay in the database for the rollback window.
-    return [c for c in rows if not is_localith_mirror(c)], total
+    return rows, total
 
 
 async def get_channel(
