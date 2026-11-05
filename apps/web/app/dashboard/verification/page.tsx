@@ -410,13 +410,14 @@ export default function VerificationPage() {
 
             {!verified && options.length === 0 && (
               <section className="rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)] p-5 sm:p-6">
-                <h2 className="text-[16px] font-bold text-ink">No eligible methods returned</h2>
+                <h2 className="text-[16px] font-bold text-ink">Verification needs Google Business Profile</h2>
                 <p className="mt-2 max-w-2xl text-[12.5px] leading-relaxed text-ink/55">
-                  Google requires verification for this location, but no API method is
-                  eligible. Some locations require video verification, which is only
-                  available in Google Business Profile. Complete it there, then refresh.
-                  If Google says you do not have access, ask the profile owner to add
-                  this Google account as an owner or manager.
+                  Google reports this account does not have business authority for this
+                  location yet, so Sayvors can&apos;t offer a verification method. Some
+                  locations require video verification, which Google only exposes in
+                  Google Business Profile. Complete verification there, then refresh. If
+                  Google says you do not have access, ask the profile owner to grant owner
+                  or manager access.
                 </p>
                 <a
                   href={GBP_DASHBOARD_URL}
