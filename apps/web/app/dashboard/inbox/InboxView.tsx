@@ -29,6 +29,7 @@ import {
   type InboxThread,
   type ThreadState,
 } from "@/lib/api-inbox";
+import { apiFetch } from "@/lib/api-rag";
 import { useAuth } from "@/lib/auth-context";
 import { platformMeta } from "@/lib/platform";
 import { resolveMediaUrl } from "@/lib/media-url";
@@ -1206,6 +1207,32 @@ export default function InboxView() {
     return [...set];
   }, [threads]);
 
+  const channelsQuery = useQuery({
+    queryKey: ["inbox", "connected-channels"],
+    queryFn: async () => {
+      const data = (await apiFetch("/api/v1/channels")) as {
+        channels?: { platform?: string; status?: string }[];
+      };
+      return (data.channels ?? [])
+        .filter((c) => c.status === "active" && c.platform)
+        .map((c) => c.platform as string);
+    },
+    staleTime: 60_000,
+  });
+
+  const connectedPlatforms = useMemo(() => {
+    const present = new Set(channelsQuery.data ?? platformsPresent);
+    const order = ["whatsapp", "google_reviews", "google", "facebook", "instagram"];
+    const seenLabels = new Set<string>();
+    return order.filter((p) => {
+      if (!present.has(p)) return false;
+      const label = platformMeta(p).label;
+      if (seenLabels.has(label)) return false;
+      seenLabels.add(label);
+      return true;
+    });
+  }, [channelsQuery.data, platformsPresent]);
+
   const visible = useMemo(() => {
     let rows = threads;
     if (!showArchived) rows = rows.filter((t) => !t.archived);
@@ -1474,6 +1501,51 @@ export default function InboxView() {
                 ))}
               </select>
             </div>
+            {connectedPlatforms.length > 0 && (
+              <div className="mt-2 flex items-center gap-1.5 overflow-x-auto border-t border-ink/[0.05] pt-2 dark:border-fog/[0.06]">
+                <button
+                  type="button"
+                  onClick={() => setPlatformFilter("all")}
+                  aria-pressed={platformFilter === "all"}
+                  className={`shrink-0 rounded-lg border px-2 py-1 text-[10px] font-bold uppercase tracking-wide transition ${
+                    platformFilter === "all"
+                      ? "border-deep-violet bg-deep-violet/10 text-deep-violet"
+                      : "border-ink/[0.08] bg-white text-ink/45 hover:text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog/45"
+                  }`}
+                >
+                  All
+                </button>
+                {connectedPlatforms.map((p) => {
+                  const meta = platformMeta(p);
+                  const active = platformFilter === p;
+                  return (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => setPlatformFilter(active ? "all" : p)}
+                      aria-pressed={active}
+                      title={meta.label}
+                      className={`flex shrink-0 items-center gap-1.5 rounded-lg border px-2 py-1 text-[10px] font-semibold transition ${
+                        active
+                          ? "border-deep-violet bg-deep-violet/10 text-deep-violet"
+                          : "border-ink/[0.08] bg-white text-ink/50 hover:text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog/50"
+                      }`}
+                    >
+                      {meta.icon && (
+                        <Image
+                          src={meta.icon}
+                          alt=""
+                          width={14}
+                          height={14}
+                          className="h-3.5 w-3.5 rounded-full"
+                        />
+                      )}
+                      <span>{meta.label.replace(" Messenger", "")}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           <div ref={threadListRef} className="min-h-0 flex-1 overflow-y-auto">
@@ -2435,10 +2507,16 @@ export default function InboxView() {
         {/* Contact info sidebar */}
         <aside className={`${showInfo ? "flex" : "hidden"} absolute inset-0 z-20 min-h-0 flex-col overflow-y-auto rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink lg:static lg:z-auto`}>
           <div className="mb-3 flex items-center justify-between lg:hidden">
-            <p className="text-[13px] font-bold text-ink dark:text-fog">Contact profile</p>
-            <button onClick={() => setShowInfo(false)} aria-label="Close contact profile" className="rounded-lg px-2 py-1 text-[13px] font-semibold text-deep-violet">
-              Close
+            <button
+              type="button"
+              onClick={() => setShowInfo(false)}
+              aria-label="Back to conversation"
+              className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[13px] font-semibold text-deep-violet"
+            >
+              ← Back
             </button>
+            <p className="text-[13px] font-bold text-ink dark:text-fog">Contact profile</p>
+            <span className="w-12" aria-hidden />
           </div>
           {!target ? (
             <p className="text-[12px] text-ink/40">Select a conversation to see contact details.</p>
