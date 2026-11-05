@@ -3,7 +3,15 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import LogoLoader from "@/components/LogoLoader";
-import { getBudget, getLedger, type Budget, type TenantBilling, type BillingLedgerEntry } from "@/lib/api-billing";
+import {
+  getLedger,
+  type BillingLedgerEntry,
+  type LedgerSort,
+  type TenantBilling,
+} from "@/lib/api-billing";
+
+/** Rows per page. Small enough to stay readable on a phone. */
+const PAGE_SIZE = 20;
 
 function fmtCents(c: number): string {
   const sign = c < 0 ? "-" : "";
@@ -69,19 +77,71 @@ function purposeLabel(purpose: string | null): string | null {
   return PURPOSE_LABELS[purpose] ?? purpose.replaceAll("_", " ").replaceAll(".", " · ");
 }
 
+function statusPillClass(status: string): string {
+  if (status === "settled") return "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300";
+  if (status === "pending") return "bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300";
+  if (status === "released") return "bg-sky-50 text-sky-700 dark:bg-sky-900/20 dark:text-sky-300";
+  if (status === "expired") return "bg-coral/10 text-coral";
+  return "bg-ink/[0.06] text-ink/50 dark:bg-fog/[0.08] dark:text-fog/50";
+}
+
+function amountText(cents: number): string {
+  return cents === 0 ? "—" : `${cents > 0 ? "+" : ""}${fmtCents(cents)}`;
+}
+
+function amountTone(cents: number): string {
+  if (cents < 0) return "text-coral";
+  if (cents > 0) return "text-emerald-600 dark:text-emerald-400";
+  return "text-ink/30 dark:text-fog/30";
+}
+
+const SORT_OPTIONS: { value: LedgerSort; label: string }[] = [
+  { value: "newest", label: "Newest first" },
+  { value: "oldest", label: "Oldest first" },
+  { value: "cost_high", label: "Highest cost" },
+  { value: "cost_low", label: "Lowest cost" },
+];
+
 export default function CreditLedgerPage() {
-  const [budget, setBudget] = useState<Budget | null>(null);
   const [billing, setBilling] = useState<TenantBilling | null>(null);
+  const [sort, setSort] = useState<LedgerSort>("newest");
+  const [offset, setOffset] = useState(0);
+  const [reloadKey, setReloadKey] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [pageLoading, setPageLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // One page at a time. Sorting and paging refetch only the ledger slice;
+  // the wallet cards above stay stable while the request is in flight.
   useEffect(() => {
     let cancelled = false;
-    Promise.all([getBudget(), getLedger()])
-      .then(([b, bl]) => { if (!cancelled) { setBudget(b); setBilling(bl); setLoading(false); } })
-      .catch((e) => { if (!cancelled) { setError(e instanceof Error ? e.message : "Load failed."); setLoading(false); } });
-    return () => { cancelled = true; };
-  }, []);
+    setPageLoading(true);
+    getLedger({ limit: PAGE_SIZE, offset, sort })
+      .then((bl) => {
+        if (cancelled) return;
+        setBilling(bl);
+        setError(null);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : "Load failed.");
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setPageLoading(false);
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [offset, sort, reloadKey]);
+
+  // A deleted row (or a stale page in another tab) can leave the offset past
+  // the end. Snap back to the last page that still has entries.
+  useEffect(() => {
+    if (!billing || offset === 0 || offset < billing.total) return;
+    setOffset(Math.max(0, Math.floor((billing.total - 1) / PAGE_SIZE) * PAGE_SIZE));
+  }, [billing, offset]);
 
   if (loading) {
     return (
@@ -90,18 +150,30 @@ export default function CreditLedgerPage() {
       </div>
     );
   }
-  if (error) {
+  if (!billing) {
     return (
       <div className="p-6">
         <div className="rounded-2xl border border-coral/30 bg-coral/5 p-6 text-center">
-          <p className="text-[14px] font-bold text-ink dark:text-fog">{error}</p>
+          <p className="text-[14px] font-bold text-ink dark:text-fog">{error ?? "Load failed."}</p>
           <p className="mt-1 text-[12px] text-ink/45 dark:text-fog/45">Could not load your credit ledger.</p>
+          <button
+            type="button"
+            onClick={() => setReloadKey((k) => k + 1)}
+            className="mt-4 rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-semibold text-white"
+          >
+            Try again
+          </button>
         </div>
       </div>
     );
   }
 
-  const st = billing ? statusStyle(billing.status) : null;
+  const st = statusStyle(billing.status);
+  const total = billing.total ?? billing.ledger.length;
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const currentPage = Math.floor(offset / PAGE_SIZE) + 1;
+  const firstRow = total === 0 ? 0 : offset + 1;
+  const lastRow = Math.min(offset + billing.ledger.length, total);
 
   return (
     <div className="mx-auto h-full max-w-5xl space-y-6 overflow-y-auto p-4 pb-24 sm:p-6 sm:pb-8">
@@ -139,7 +211,7 @@ export default function CreditLedgerPage() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-ink/40 dark:text-fog/40">Plan</p>
-            <p className="mt-1 text-[18px] font-bold capitalize text-ink dark:text-fog">{budget?.plan ?? "—"}</p>
+            <p className="mt-1 text-[18px] font-bold capitalize text-ink dark:text-fog">{billing.plan}</p>
           </div>
           {st && (
             <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide ${st.pill}`}>
@@ -187,19 +259,59 @@ export default function CreditLedgerPage() {
 
       {/* Ledger history */}
       <section className="rounded-2xl border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.06] dark:bg-ink">
-        <h2 className="text-[15px] font-bold text-ink dark:text-fog">Ledger history</h2>
-        <p className="mt-0.5 text-[12px] text-ink/45 dark:text-fog/45">
-          {billing?.ledger.length ?? 0} recent entries. Each AI call is one row: reserved on request, settled to the real cost.
-        </p>
-        {!billing || billing.ledger.length === 0 ? (
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-[15px] font-bold text-ink dark:text-fog">Ledger history</h2>
+            <p className="mt-0.5 text-[12px] text-ink/45 dark:text-fog/45">
+              {total} {total === 1 ? "entry" : "entries"}. Each AI call is one row: reserved on request, settled to the real cost.
+            </p>
+          </div>
+          <label className="flex shrink-0 items-center gap-2">
+            <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40 dark:text-fog/40">
+              Sort
+            </span>
+            <select
+              value={sort}
+              onChange={(e) => {
+                setSort(e.target.value as LedgerSort);
+                setOffset(0);
+              }}
+              aria-label="Sort ledger entries"
+              className="h-9 flex-1 rounded-xl border border-ink/[0.08] bg-white px-2.5 text-[12px] font-semibold text-ink outline-none dark:border-fog/[0.1] dark:bg-ink dark:text-fog sm:flex-none"
+            >
+              {SORT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        {error && (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-coral/30 bg-coral/5 px-3 py-2">
+            <p className="text-[12px] font-semibold text-coral">Could not load this page of the ledger.</p>
+            <button
+              type="button"
+              onClick={() => setReloadKey((k) => k + 1)}
+              className="text-[12px] font-bold text-deep-violet dark:text-violet-soft"
+            >
+              Try again
+            </button>
+          </div>
+        )}
+
+        {billing.ledger.length === 0 ? (
           <div className="mt-4 rounded-2xl border border-dashed border-ink/[0.1] p-8 text-center dark:border-fog/[0.1]">
-            <p className="text-[13px] font-semibold text-ink/70 dark:text-fog/70">No ledger entries yet</p>
+            <p className="text-[13px] font-semibold text-ink/70 dark:text-fog/70">
+              {total > 0 ? "No entries on this page" : "No ledger entries yet"}
+            </p>
             <p className="mx-auto mt-1 max-w-[360px] text-[12px] leading-relaxed text-ink/45 dark:text-fog/45">
-              Make an AI call and it will appear here with the reserved hold and the final charge.
+              {total > 0
+                ? "Use the page controls below to return to a page with entries."
+                : "Make an AI call and it will appear here with the reserved hold and the final charge."}
             </p>
           </div>
         ) : (
-          <div className="mt-4 overflow-x-auto">
+          <div className={`mt-4 hidden overflow-x-auto transition-opacity sm:block ${pageLoading ? "opacity-50" : ""}`}>
             <table className="w-full text-[12px]">
               <thead>
                 <tr className="border-b border-ink/[0.06] text-left text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40 dark:border-fog/[0.06] dark:text-fog/40">
@@ -223,12 +335,12 @@ export default function CreditLedgerPage() {
                       {purposeLabel(e.purpose) ?? "—"}
                     </td>
                     <td className="px-3 py-2">
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${e.status === "settled" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300" : e.status === "pending" ? "bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300" : e.status === "released" ? "bg-sky-50 text-sky-700 dark:bg-sky-900/20 dark:text-sky-300" : e.status === "expired" ? "bg-coral/10 text-coral" : "bg-ink/[0.06] text-ink/50 dark:bg-fog/[0.08] dark:text-fog/50"}`}>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${statusPillClass(e.status)}`}>
                         {e.status}
                       </span>
                     </td>
-                    <td className={`px-3 py-2 text-right tabular-nums font-semibold ${e.amount_cents < 0 ? "text-coral" : e.amount_cents > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-ink/30 dark:text-fog/30"}`}>
-                      {e.amount_cents === 0 ? "—" : `${e.amount_cents > 0 ? "+" : ""}${fmtCents(e.amount_cents)}`}
+                    <td className={`px-3 py-2 text-right tabular-nums font-semibold ${amountTone(e.amount_cents)}`}>
+                      {amountText(e.amount_cents)}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums text-ink/45 dark:text-fog/45">{e.reserved_cents > 0 ? fmtCents(e.reserved_cents) : "—"}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-ink/60 dark:text-fog/60">{e.balance_after_cents == null ? "—" : fmtCents(e.balance_after_cents)}</td>
@@ -236,6 +348,71 @@ export default function CreditLedgerPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* Phones: a card per row, because the seven-column table would hide
+            the amount and balance behind a horizontal scroll. */}
+        {billing.ledger.length > 0 && (
+          <div className={`mt-4 space-y-2 transition-opacity sm:hidden ${pageLoading ? "opacity-50" : ""}`}>
+            {billing.ledger.map((e: BillingLedgerEntry) => (
+              <div
+                key={e.id}
+                className="rounded-xl border border-ink/[0.06] bg-white p-3 dark:border-fog/[0.08] dark:bg-ink"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-[13px] font-semibold text-ink dark:text-fog">
+                      {purposeLabel(e.purpose) ?? kindLabel(e.kind)}
+                    </p>
+                    <p className="mt-0.5 text-[10px] tabular-nums text-ink/40 dark:text-fog/40">
+                      {e.created_at ? new Date(e.created_at).toLocaleString() : "—"}
+                    </p>
+                  </div>
+                  <p className={`shrink-0 text-[14px] font-bold tabular-nums ${amountTone(e.amount_cents)}`}>
+                    {amountText(e.amount_cents)}
+                  </p>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-ink/45 dark:text-fog/45">
+                  <span className={`rounded-full px-2 py-0.5 font-bold uppercase ${statusPillClass(e.status)}`}>
+                    {e.status}
+                  </span>
+                  {e.reserved_cents > 0 && <span>Reserved {fmtCents(e.reserved_cents)}</span>}
+                  {e.balance_after_cents != null && (
+                    <span>Balance {fmtCents(e.balance_after_cents)}</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {total > 0 && (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-ink/[0.06] pt-3 dark:border-fog/[0.06]">
+            <p className="text-[11px] tabular-nums text-ink/45 dark:text-fog/45">
+              Showing {firstRow}–{lastRow} of {total}
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+                disabled={offset === 0 || pageLoading}
+                className="rounded-xl border border-ink/[0.08] bg-white px-3 py-1.5 text-[12px] font-semibold text-ink transition hover:border-deep-violet/30 disabled:cursor-not-allowed disabled:opacity-40 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+              >
+                Previous
+              </button>
+              <span className="text-[11px] font-semibold tabular-nums text-ink/45 dark:text-fog/45">
+                Page {currentPage} of {pageCount}
+              </span>
+              <button
+                type="button"
+                onClick={() => setOffset(offset + PAGE_SIZE)}
+                disabled={offset + PAGE_SIZE >= total || pageLoading}
+                className="rounded-xl border border-ink/[0.08] bg-white px-3 py-1.5 text-[12px] font-semibold text-ink transition hover:border-deep-violet/30 disabled:cursor-not-allowed disabled:opacity-40 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+              >
+                Next
+              </button>
+            </div>
           </div>
         )}
       </section>

@@ -450,6 +450,94 @@ async def test_tenant_billing_surfaces_what_used_the_credit(db):
 
 
 @pytest.mark.asyncio
+async def test_tenant_billing_paginates_and_sorts_the_ledger(db):
+    from datetime import datetime, timedelta, timezone
+
+    from app.modules.admin.service import get_tenant_billing
+    from app.modules.billing.models import BillingEvent
+    from app.modules.users.models import User
+
+    uid = "billing-page-user-0001"
+    db.add(User(id=uid, email="paging@sayvors.com", first_name="P",
+                last_name="U", password_hash="x", plan="free-trial",
+                ai_credit_cents=985))
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    amounts = [-5, -1, -9, 1000]
+    for i, cents in enumerate(amounts):
+        db.add(BillingEvent(
+            id=f"billing-page-event-{i:04d}",
+            tenant_id=uid,
+            kind="ai_usage" if cents < 0 else "plan_grant",
+            status="settled",
+            amount_cents=cents,
+            created_at=base + timedelta(days=i),
+        ))
+    await db.commit()
+
+    def amounts_of(page: dict) -> list[int]:
+        return [row["amount_cents"] for row in page["ledger"]]
+
+    newest = await get_tenant_billing(db, uid, limit=2, offset=0, sort="newest")
+    assert newest["total"] == 4
+    assert amounts_of(newest) == [1000, -9]
+
+    newest_page_2 = await get_tenant_billing(db, uid, limit=2, offset=2, sort="newest")
+    assert newest_page_2["total"] == 4
+    assert amounts_of(newest_page_2) == [-1, -5]
+
+    oldest = await get_tenant_billing(db, uid, limit=2, offset=0, sort="oldest")
+    assert amounts_of(oldest) == [-5, -1]
+
+    high = await get_tenant_billing(db, uid, limit=2, offset=0, sort="cost_high")
+    assert amounts_of(high) == [-9, -5]
+
+    # Grants are not spend, so they stay after every debit in both cost views.
+    low = await get_tenant_billing(db, uid, limit=2, offset=0, sort="cost_low")
+    assert amounts_of(low) == [-1, -5]
+    low_page_2 = await get_tenant_billing(db, uid, limit=2, offset=2, sort="cost_low")
+    assert amounts_of(low_page_2) == [-9, 1000]
+
+    with pytest.raises(ValueError):
+        await get_tenant_billing(db, uid, sort="random")
+
+
+@pytest.mark.asyncio
+async def test_ledger_endpoint_forwards_pagination_and_sort(client, db, user_id):
+    from app.modules.billing.models import BillingEvent
+    from app.modules.users.models import User
+
+    db.add(User(id=user_id, email="ledger-api@sayvors.com", first_name="L",
+                last_name="A", password_hash="x", plan="free-trial",
+                ai_credit_cents=994))
+    for i, cents in enumerate([-1, -6, -3]):
+        db.add(BillingEvent(
+            id=f"ledger-api-event-{i:04d}",
+            tenant_id=user_id,
+            kind="ai_usage",
+            status="settled",
+            amount_cents=cents,
+            model_id="groq:qwen",
+        ))
+    await db.commit()
+
+    r = client.get("/api/v1/billing/ledger?limit=2&offset=0&sort=cost_high")
+    assert r.status_code == 200, r.text[:200]
+    body = r.json()
+    assert body["total"] == 3
+    assert [row["amount_cents"] for row in body["ledger"]] == [-6, -3]
+    # The tenant call must never expose the provider/model.
+    assert "model_id" not in body["ledger"][0]
+
+    page2 = client.get("/api/v1/billing/ledger?limit=2&offset=2&sort=cost_high")
+    assert page2.status_code == 200
+    assert [row["amount_cents"] for row in page2.json()["ledger"]] == [-1]
+    assert page2.json()["total"] == 3
+
+    assert client.get("/api/v1/billing/ledger?sort=bogus").status_code == 422
+    assert client.get("/api/v1/billing/ledger?limit=500").status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_grant_plan_bundles_pro_credits(db):
     """First Pro grant → plan=pro + $20 bundled; ledger row; Redis synced."""
     from app.modules.billing import service as billing_service

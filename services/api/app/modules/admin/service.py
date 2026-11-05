@@ -539,12 +539,28 @@ async def get_billing_overview(db: AsyncSession) -> list[dict]:
     return out
 
 
+LEDGER_SORTS = ("newest", "oldest", "cost_high", "cost_low")
+DEFAULT_LEDGER_LIMIT = 75
+MAX_LEDGER_LIMIT = 200
+
+
 async def get_tenant_billing(
-    db: AsyncSession, user_id: str, *, include_model: bool = True
+    db: AsyncSession,
+    user_id: str,
+    *,
+    include_model: bool = True,
+    limit: int = DEFAULT_LEDGER_LIMIT,
+    offset: int = 0,
+    sort: str = "newest",
 ) -> dict | None:
     """Tenant billing view. Admin callers keep the model id; tenant callers
-    must not see which provider/model the platform uses."""
-    from sqlalchemy import select as _select
+    must not see which provider/model the platform uses.
+
+    ``limit``/``offset`` page the ledger rows only; the wallet and pending
+    holds are always complete. ``total`` is the full ledger row count so the
+    caller can render page controls without a second request.
+    """
+    from sqlalchemy import case, select as _select
 
     from ..billing.models import BillingEvent
     from ..llm.models import LLMUsageEvent
@@ -567,12 +583,52 @@ async def get_tenant_billing(
     ).scalars().all()
     held_cents = int(sum(h.reserved_cents or 0 for h in held_rows))
 
+    limit = max(1, min(int(limit), MAX_LEDGER_LIMIT))
+    offset = max(0, int(offset))
+    if sort not in LEDGER_SORTS:
+        raise ValueError(f"Unsupported ledger sort: {sort}")
+
+    total = int(
+        (
+            await db.execute(
+                _select(func.count())
+                .select_from(BillingEvent)
+                .where(BillingEvent.tenant_id == user_id)
+            )
+        ).scalar_one()
+    )
+
+    # Cost sorting ranks money leaving the wallet. Grants and adjustments are
+    # positive, so they are parked at the end instead of topping "lowest cost"
+    # or "highest cost" every time — those views exist to inspect AI spend.
+    spend_case = case(
+        (BillingEvent.amount_cents < 0, BillingEvent.amount_cents),
+        else_=None,
+    )
+    if sort == "oldest":
+        order_by = (BillingEvent.created_at.asc(), BillingEvent.id.asc())
+    elif sort == "cost_high":
+        order_by = (
+            spend_case.asc().nulls_last(),
+            BillingEvent.created_at.desc(),
+            BillingEvent.id.desc(),
+        )
+    elif sort == "cost_low":
+        order_by = (
+            spend_case.desc().nulls_last(),
+            BillingEvent.created_at.desc(),
+            BillingEvent.id.desc(),
+        )
+    else:
+        order_by = (BillingEvent.created_at.desc(), BillingEvent.id.desc())
+
     ledger_rows = (
         await db.execute(
             _select(BillingEvent)
             .where(BillingEvent.tenant_id == user_id)
-            .order_by(BillingEvent.created_at.desc(), BillingEvent.id.desc())
-            .limit(75)
+            .order_by(*order_by)
+            .limit(limit)
+            .offset(offset)
         )
     ).scalars().all()
 
@@ -623,6 +679,7 @@ async def get_tenant_billing(
         "held_cents": held_cents,
         "total_cents": balance + held_cents,
         "status": status,
+        "total": total,
         "holds": [_row(h) for h in held_rows],
         "ledger": [_row(e) for e in ledger_rows],
     }

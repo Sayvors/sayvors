@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -137,12 +139,28 @@ async def delete_method(
 
 
 @router.get("/ledger")
-async def read_ledger(user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """Durable AI credit ledger for the workspace: wallet, pending holds,
-    and recent ledger rows. Employees see the owner's workspace ledger."""
+async def read_ledger(
+    limit: int = Query(20, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    sort: Literal["newest", "oldest", "cost_high", "cost_low"] = "newest",
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Durable AI credit ledger for the workspace: wallet, pending holds, and
+    one page of ledger rows. Employees see the owner's workspace ledger.
+
+    Cost sorting ranks spend (negative amounts) only; grants stay at the end.
+    """
     from ..admin.service import get_tenant_billing
 
-    result = await get_tenant_billing(db, tenant_id_of(user), include_model=False)
+    result = await get_tenant_billing(
+        db,
+        tenant_id_of(user),
+        include_model=False,
+        limit=limit,
+        offset=offset,
+        sort=sort,
+    )
     if result is None:
         raise HTTPException(status_code=404, detail="Tenant not found.")
     return result
