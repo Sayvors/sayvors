@@ -10,7 +10,7 @@ import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import GoogleReviewCard, { GoogleStars, ReviewAvatar } from "@/components/reviews/GoogleReviewCard";
 import { streamReviewReply, type StreamEvent } from "@/lib/api-review-engine";
-import { approveReply, dismissReviewEdit, editReply, generateReply, regenerateReply, type ReviewInsight, type ReviewReplyDTO } from "@/lib/api-analytics";
+import { approveReply, dismissReviewEdit, editReply, generateReply, regenerateReply, rejectReply, type ReviewInsight, type ReviewReplyDTO } from "@/lib/api-analytics";
 import { clearAbuseFlag, flagReviewAbusive, markAbuseReported, setAbuseVerdict } from "@/lib/api-abuse";
 import MeaningInspector from "@/components/reviews/MeaningInspector";
 import AskForReview from "@/components/dashboard/AskForReview";
@@ -141,6 +141,7 @@ function ReviewsInner() {
    const [approvingId, setApprovingId] = useState<string | null>(null);
    const [pendingReplies, setPendingReplies] = useState<ReviewReplyDTO[]>([]);
    const [skippingId, setSkippingId] = useState<string | null>(null);
+  const [discardingId, setDiscardingId] = useState<string | null>(null);
   const [draftTexts, setDraftTexts] = useState<Record<string, string>>({});
   // Inline editing of the shown response (any status) in review detail.
   const [editingResponse, setEditingResponse] = useState<string | null>(null);
@@ -607,6 +608,22 @@ function ReviewsInner() {
       setTimeout(() => setBanner(null), 6000);
     } finally {
       setApprovingId(null);
+    }
+  }
+
+  async function discardDraft(d: ReviewReplyDTO) {
+    setDiscardingId(d.id);
+    try {
+      await rejectReply(d.channel_id, d.id);
+      setPendingReplies((prev) => prev.filter((x) => x.id !== d.id));
+      setBanner({ kind: "ok", text: "Draft discarded - nothing was published to Google." });
+      setTimeout(() => setBanner(null), 3000);
+      void fetchReviews(false);
+    } catch (e) {
+      setBanner({ kind: "err", text: detailMsg(e, "Could not discard that draft.") });
+      setTimeout(() => setBanner(null), 5000);
+    } finally {
+      setDiscardingId(null);
     }
   }
 
@@ -1192,6 +1209,13 @@ function ReviewsInner() {
                                         Save edits
                                       </button>
                                     )}
+                                    <button
+                                      onClick={() => void discardDraft(d)}
+                                      disabled={busy || discardingId === d.id || approvingAllPending}
+                                      className="rounded-xl px-3.5 py-2 text-[12px] font-semibold text-rose-600 outline-none transition hover:bg-rose-500/[0.08] focus-visible:ring-2 focus-visible:ring-rose-500/40 disabled:opacity-50"
+                                    >
+                                      {discardingId === d.id ? "Discarding…" : "Discard"}
+                                    </button>
                                   </div>
                                 </article>
                               );
