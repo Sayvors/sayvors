@@ -64,6 +64,7 @@ interface ReviewItem {
   abuseVerdict: string | null;
   abuseReported: boolean;
   reply_text?: string;
+  repliedAt?: string;
   status?: string;
   replyId?: string;
 }
@@ -1223,6 +1224,8 @@ function ReviewsInner() {
                                 createdAt: r.createdAt,
                                 locationName: r.locationName,
                                 replied: r.replied,
+                                replyText: r.reply_text,
+                                replyAt: r.repliedAt,
                                  skipped: r.skipped,
                                  edited: r.edited,
                                  previousText: r.previousText,
@@ -2073,6 +2076,7 @@ function mapInsights(raw: unknown, channelNames: Record<string, string>, fallbac
       abuseVerdict: typeof r.abuse_verdict === "string" ? r.abuse_verdict : null,
       abuseReported: typeof r.abuse_reported_at === "string",
       reply_text: typeof r.reply_text === "string" ? r.reply_text : undefined,
+      repliedAt: typeof r.replied_at === "string" ? r.replied_at : undefined,
       // The API sends the response row's state as `reply_status`; reading
       // `status` always yielded undefined, so the badge and the
       // "sends this back for approval" hint never rendered.
