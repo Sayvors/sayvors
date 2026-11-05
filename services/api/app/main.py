@@ -273,12 +273,12 @@ class AdminAuditMiddleware(BaseHTTPMiddleware):
                 db.add(AdminAuditLog(
                     operator_id=operator_id,
                     operator_username=operator_username,
-                    action=f"{request.method} {path}",
+                    action=f"{request.method} {path}"[:64],
                     method=request.method,
                     path=path[:256],
                     status_code=response.status_code,
-                    ip=ip,
-                    user_agent=request.headers.get("user-agent"),
+                    ip=(ip or "")[:64] or None,
+                    user_agent=(request.headers.get("user-agent") or "")[:256] or None,
                 ))
                 await db.commit()
         except Exception as e:

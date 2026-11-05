@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { use, useCallback, useEffect, useMemo, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { adminFetch, type AdminTenantDetail } from "@/lib/admin-api";
 import {
   fetchPlanFeatures,
   fetchTenantBilling,
   fetchTenantEntitlements,
+  grantTenantCredit,
   reconcileWallet,
   saveTenantFeatures,
   type PlanFeatureSpec,
@@ -131,6 +132,14 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
   const [reconciling, setReconciling] = useState(false);
   const [reconcileResult, setReconcileResult] = useState<WalletReconcileResult | null>(null);
   const [reconcileError, setReconcileError] = useState<string | null>(null);
+
+  // Manual AI credit top-up (works for free-trial and enterprise tenants).
+  const [creditAmount, setCreditAmount] = useState("25");
+  const [creditNote, setCreditNote] = useState("");
+  const [creditBusy, setCreditBusy] = useState(false);
+  const [creditMessage, setCreditMessage] = useState<string | null>(null);
+  const [creditError, setCreditError] = useState<string | null>(null);
+  const creditKeyRef = useRef<string>("");
 
   // Plan + per-tenant feature overrides
   const [ent, setEnt] = useState<TenantEntitlements | null>(null);
@@ -305,6 +314,50 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
       setReconciling(false);
     }
   }, [id, reconcileDry, reloadBilling]);
+
+  const addCredit = useCallback(async () => {
+    const dollars = Number(creditAmount);
+    if (!Number.isFinite(dollars) || dollars <= 0) {
+      setCreditError("Enter a positive dollar amount.");
+      return;
+    }
+    const cents = Math.round(dollars * 100);
+    if (cents > 1_000_000) {
+      setCreditError("The per-grant limit is $10,000.");
+      return;
+    }
+    setCreditBusy(true);
+    setCreditError(null);
+    setCreditMessage(null);
+    if (!creditKeyRef.current) {
+      creditKeyRef.current =
+        typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `topup-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
+    try {
+      const result = await grantTenantCredit(
+        id,
+        cents,
+        creditNote.trim() || null,
+        creditKeyRef.current,
+      );
+      creditKeyRef.current = "";
+      setCreditMessage(
+        result.duplicate
+          ? "This top-up was already applied — no second grant was made."
+          : `${fmtCents(result.granted_cents)} added. New balance: ${fmtCents(result.balance_cents)}.`,
+      );
+      setCreditNote("");
+      setCreditAmount("25");
+      await reloadBilling();
+      await loadEntitlements();
+    } catch (e) {
+      setCreditError(e instanceof Error ? e.message : "Top-up failed.");
+    } finally {
+      setCreditBusy(false);
+    }
+  }, [creditAmount, creditNote, id, loadEntitlements, reloadBilling]);
 
   const retryUsage = useCallback(() => {
     setUsageLoading(true);
@@ -715,6 +768,90 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
                   </span>
                 </span>
               </button>
+            </div>
+
+            {/* manual credit top-up */}
+            <div className="mt-4 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-3.5">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink/50">
+                    Add AI credit
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-ink/45">
+                    Top up this tenant without changing their plan. Every grant is a ledger row.
+                  </p>
+                </div>
+                <span className="rounded-full bg-deep-violet/10 px-2.5 py-1 text-[11px] font-bold tabular-nums text-deep-violet">
+                  {fmtCents(billing.balance_cents)} available
+                </span>
+              </div>
+
+              <div className="mt-3 grid gap-2 sm:grid-cols-[150px_minmax(0,1fr)_auto]">
+                <label className="block">
+                  <span className="mb-1 block text-[9px] font-bold uppercase tracking-[0.1em] text-ink/40">Amount</span>
+                  <div className="flex h-9 items-center rounded-[2px] border border-[var(--ui-line)] bg-white px-2.5 focus-within:border-deep-violet">
+                    <span className="text-[12px] font-semibold text-ink/40">$</span>
+                    <input
+                      type="number"
+                      min="0.01"
+                      max="10000"
+                      step="0.01"
+                      value={creditAmount}
+                      onChange={(event) => setCreditAmount(event.target.value)}
+                      aria-label="Credit amount in dollars"
+                      className="min-w-0 flex-1 bg-transparent px-1.5 text-[12px] font-semibold text-ink outline-none"
+                    />
+                  </div>
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-[9px] font-bold uppercase tracking-[0.1em] text-ink/40">Note (optional)</span>
+                  <input
+                    value={creditNote}
+                    onChange={(event) => setCreditNote(event.target.value)}
+                    maxLength={500}
+                    placeholder="Goodwill, enterprise allowance, promotion…"
+                    className="h-9 w-full rounded-[2px] border border-[var(--ui-line)] bg-white px-2.5 text-[12px] text-ink outline-none focus:border-deep-violet"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => void addCredit()}
+                  disabled={creditBusy}
+                  className={`h-9 self-end rounded-[2px] bg-deep-violet px-4 text-[11.5px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-50 ${FOCUS_RING}`}
+                >
+                  {creditBusy ? "Adding…" : "Add credit"}
+                </button>
+              </div>
+
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                {[10, 25, 50, 100, 500].map((amount) => (
+                  <button
+                    key={amount}
+                    type="button"
+                    onClick={() => setCreditAmount(String(amount))}
+                    disabled={creditBusy}
+                    className={`rounded-full border px-2.5 py-1 text-[10px] font-bold transition disabled:opacity-40 ${
+                      creditAmount === String(amount)
+                        ? "border-deep-violet bg-deep-violet/[0.08] text-deep-violet"
+                        : "border-[var(--ui-line)] text-ink/50 hover:border-deep-violet/40 hover:text-deep-violet"
+                    } ${FOCUS_RING}`}
+                  >
+                    ${amount}
+                  </button>
+                ))}
+                <span className="ml-auto text-[10px] text-ink/35">Max $10,000 per grant · duplicate-safe</span>
+              </div>
+
+              {creditError && (
+                <p role="alert" className="mt-2 rounded-[2px] border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-medium text-red-700">
+                  {creditError}
+                </p>
+              )}
+              {creditMessage && (
+                <p role="status" className="mt-2 rounded-[2px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-medium text-emerald-800">
+                  {creditMessage}
+                </p>
+              )}
             </div>
 
             {/* reconcile */}

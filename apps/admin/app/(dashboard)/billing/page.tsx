@@ -232,7 +232,7 @@ export default function BillingOverviewPage() {
                           href={`/tenants/${encodeURIComponent(r.tenant_id)}#billing`}
                           className={`inline-flex items-center gap-1 rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2.5 py-1 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet hover:text-deep-violet ${FOCUS_RING}`}
                         >
-                          Ledger
+                          Ledger &amp; top up
                           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" aria-hidden><path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg>
                         </Link>
                       </td>

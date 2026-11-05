@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
@@ -445,4 +446,113 @@ async def grant_plan(user_id: str, plan: str, add_credit_cents: int,
         "balance_cents": new_balance,
         "balance_dollars": round(new_balance / 100, 2),
         "currency": "usd",
+    }
+
+
+async def grant_credit(
+    user_id: str,
+    amount_cents: int,
+    note: str | None,
+    created_by: str | None,
+    db: AsyncSession,
+    *,
+    idempotency_key: str | None = None,
+) -> dict:
+    """Add AI credit without changing the tenant's plan.
+
+    Unlike the legacy ``grant_plan`` flow this works for free-trial and
+    enterprise tenants too. The wallet row is locked, the ledger row and the
+    balance move in one transaction, and an optional idempotency key makes a
+    double-click or a retried request harmless.
+    """
+    from ..users.models import User
+    from .budget import sync_balance
+    from .ledger import ensure_ledger_initialized
+
+    amount = int(amount_cents or 0)
+    if amount <= 0:
+        raise ValueError("Credit amount must be greater than zero.")
+    if amount > 1_000_000:
+        raise ValueError("Credit amount exceeds the per-grant limit.")
+
+    if idempotency_key:
+        existing = (
+            await db.execute(
+                select(BillingEvent).where(
+                    BillingEvent.tenant_id == user_id,
+                    BillingEvent.idempotency_key == idempotency_key,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            user = await db.get(User, user_id)
+            if user is None:
+                raise ValueError("Tenant not found.")
+            return {
+                "plan": user.plan or "free",
+                "balance_cents": int(user.ai_credit_cents or 0),
+                "balance_dollars": round(int(user.ai_credit_cents or 0) / 100, 2),
+                "currency": "usd",
+                "granted_cents": 0,
+                "duplicate": True,
+            }
+
+    user = (
+        await db.execute(
+            select(User).where(User.id == user_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if user is None:
+        raise ValueError("Tenant not found.")
+
+    before = int(await ensure_ledger_initialized(user_id, db))
+    new_balance = before + amount
+    user.ai_credit_cents = new_balance
+    db.add(
+        BillingEvent(
+            id=str(uuid.uuid4()),
+            tenant_id=user_id,
+            kind="credit_topup",
+            status="posted",
+            amount_cents=amount,
+            reserved_cents=0,
+            balance_after_cents=new_balance,
+            note=note,
+            created_by=created_by,
+            idempotency_key=idempotency_key,
+        )
+    )
+    try:
+        await db.commit()
+    except IntegrityError:
+        # A concurrent request with the same idempotency key won the unique
+        # index. The grant already exists; report the current wallet.
+        await db.rollback()
+        user = await db.get(User, user_id)
+        if user is None:
+            raise ValueError("Tenant not found.")
+        return {
+            "plan": user.plan or "free",
+            "balance_cents": int(user.ai_credit_cents or 0),
+            "balance_dollars": round(int(user.ai_credit_cents or 0) / 100, 2),
+            "currency": "usd",
+            "granted_cents": 0,
+            "duplicate": True,
+        }
+
+    synced = await sync_balance(user_id, new_balance)
+    if not synced:
+        logger.warning(
+            "Credit top-up committed; Redis mirror sync failed: tenant=%s balance=%s¢",
+            user_id,
+            new_balance,
+        )
+    logger.info("Credit top-up: tenant=%s +%s¢ (by=%s)", user_id, amount, created_by)
+    return {
+        "plan": user.plan or "free",
+        "balance_cents": new_balance,
+        "balance_dollars": round(new_balance / 100, 2),
+        "currency": "usd",
+        "granted_cents": amount,
+        "duplicate": False,
     }

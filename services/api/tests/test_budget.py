@@ -538,6 +538,73 @@ async def test_ledger_endpoint_forwards_pagination_and_sort(client, db, user_id)
 
 
 @pytest.mark.asyncio
+async def test_admin_credit_topup_works_for_free_trial_and_enterprise(client, db, user_id, _allow_admin_auth):
+    """Admins can add credit without changing the tenant's plan."""
+    from app.modules.billing.models import BillingEvent
+    from app.modules.users.models import User
+    from app.security import create_admin_token
+
+    db.add(User(id=user_id, email="topup@sayvors.com", first_name="T",
+                last_name="U", password_hash="x", plan="free-trial",
+                ai_credit_cents=1000))
+    db.add(BillingEvent(
+        id="topup-trial-grant",
+        tenant_id=user_id,
+        kind="plan_grant",
+        status="posted",
+        amount_cents=1000,
+        balance_after_cents=1000,
+        idempotency_key="trial:topup-test",
+    ))
+    await db.commit()
+    headers = {"Authorization": f"Bearer {create_admin_token()}"}
+
+    r = client.post(
+        f"/api/v1/admin/tenants/{user_id}/credit",
+        json={"amount_cents": 5000, "note": "goodwill", "idempotency_key": "topup-1"},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text[:200]
+    body = r.json()
+    assert body["balance_cents"] == 6000
+    assert body["granted_cents"] == 5000
+    assert body["duplicate"] is False
+    assert body["plan"] == "free-trial"
+
+    # Same key: no second grant, same balance.
+    repeat = client.post(
+        f"/api/v1/admin/tenants/{user_id}/credit",
+        json={"amount_cents": 5000, "idempotency_key": "topup-1"},
+        headers=headers,
+    )
+    assert repeat.status_code == 200
+    assert repeat.json()["balance_cents"] == 6000
+    assert repeat.json()["granted_cents"] == 0
+    assert repeat.json()["duplicate"] is True
+
+    # Enterprise is still a tenant; a top-up must not be blocked by the
+    # legacy free/pro-only plan grant.
+    user = await db.get(User, user_id)
+    user.plan = "enterprise"
+    await db.commit()
+    ent = client.post(
+        f"/api/v1/admin/tenants/{user_id}/credit",
+        json={"amount_cents": 2500, "idempotency_key": "topup-2"},
+        headers=headers,
+    )
+    assert ent.status_code == 200
+    assert ent.json()["balance_cents"] == 8500
+    assert ent.json()["plan"] == "enterprise"
+
+    bad = client.post(
+        f"/api/v1/admin/tenants/{user_id}/credit",
+        json={"amount_cents": 0},
+        headers=headers,
+    )
+    assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_grant_plan_bundles_pro_credits(db):
     """First Pro grant → plan=pro + $20 bundled; ledger row; Redis synced."""
     from app.modules.billing import service as billing_service

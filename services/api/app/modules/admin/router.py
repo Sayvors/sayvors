@@ -410,6 +410,22 @@ class PlanGrantResponse(BaseModel):
     currency: str = "usd"
 
 
+class CreditGrantRequest(BaseModel):
+    amount_cents: int = Field(..., gt=0, le=1_000_000)
+    note: str | None = Field(default=None, max_length=500)
+    # Client-generated so a double click or retry cannot grant twice.
+    idempotency_key: str | None = Field(default=None, max_length=64)
+
+
+class CreditGrantResponse(BaseModel):
+    plan: str
+    balance_cents: int
+    balance_dollars: float
+    currency: str = "usd"
+    granted_cents: int = 0
+    duplicate: bool = False
+
+
 class WalletResyncRequest(BaseModel):
     """Preview by default; applying a repair requires dry_run=false."""
 
@@ -448,6 +464,35 @@ async def admin_grant_plan(
     try:
         return await billing_service.grant_plan(
             user_id, body.plan, body.add_credit_cents, body.note, "admin", db
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404 if "not found" in str(e) else 400, detail=str(e))
+
+
+@router.post("/tenants/{user_id}/credit", response_model=CreditGrantResponse)
+async def admin_grant_credit(
+    user_id: str,
+    body: CreditGrantRequest,
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Add AI credit to a tenant without changing their plan.
+
+    Works for free-trial and enterprise tenants, which the legacy plan-grant
+    endpoint cannot do. Every top-up is a durable ``credit_topup`` ledger row;
+    the optional idempotency key is the duplicate boundary.
+    """
+    from ..billing import service as billing_service
+
+    try:
+        return await billing_service.grant_credit(
+            user_id,
+            body.amount_cents,
+            body.note,
+            "admin",
+            db,
+            idempotency_key=body.idempotency_key,
         )
     except ValueError as e:
         raise HTTPException(status_code=404 if "not found" in str(e) else 400, detail=str(e))
