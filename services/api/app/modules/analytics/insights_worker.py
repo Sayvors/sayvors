@@ -30,6 +30,35 @@ _SAMPLE_CAP = 200
 _WINDOW_DAYS = 30
 
 
+def _extract_insights_json(raw: str) -> dict | None:
+    """Parse the model's JSON, tolerating fences and surrounding prose.
+
+    Returns None when the payload is truncated or not JSON. The caller keeps
+    the previous insight row in that case; writing the old ``{"raw": ...}``
+    fallback replaced good insights with an empty shell.
+    """
+    text = (raw or "").strip()
+    if "```" in text:
+        parts = text.split("```")
+        if len(parts) >= 2:
+            text = parts[1].strip()
+            if text.startswith("json"):
+                text = text[4:].strip()
+    try:
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        pass
+    start, end = text.find("{"), text.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            parsed = json.loads(text[start : end + 1])
+            return parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError:
+            pass
+    return None
+
+
 async def mine_tenant(db, tenant_id: str) -> dict:
     """Mine one tenant's conversations and persist insights. Returns stats."""
     stats = {"messages": 0, "insights": 0, "error": None}
@@ -125,23 +154,20 @@ async def mine_tenant(db, tenant_id: str) -> dict:
             messages=[LLMMessage(role="user", content=prompt)],
             system_prompt="You extract structured insights from customer messages. Return only valid JSON.",
             temperature=0.1,
-            max_tokens=1024,
+            max_tokens=2048,
             tenant_id=None,
             purpose="analytics.mine_conversations",
         )
         raw = (resp.content or "").strip()
-        # Try to parse JSON from the response.
-        insights = {}
-        try:
-            # Handle markdown code blocks
-            if "```" in raw:
-                raw = raw.split("```")[1].split("```")[0].strip()
-                if raw.startswith("json"):
-                    raw = raw[4:].strip()
-            insights = json.loads(raw)
-        except (json.JSONDecodeError, IndexError):
-            logger.warning("Failed to parse insights JSON for tenant %s: %s", tenant_id, raw[:200])
-            insights = {"raw": raw[:500]}
+        insights = _extract_insights_json(raw)
+        if insights is None:
+            logger.warning(
+                "Failed to parse insights JSON for tenant %s: %s",
+                tenant_id,
+                raw[:200],
+            )
+            stats["error"] = "invalid_json"
+            return stats
         stats["insights"] = len(insights.get("top_questions", []))
     except Exception as e:
         logger.error("LLM mining failed for tenant %s: %s", tenant_id, e)
