@@ -5,6 +5,8 @@ import Image from "next/image";
 import { setChatOpen, useChatOpen } from "@/lib/chat-store";
 import { safeHref } from "@/lib/safe-url";
 import { streamAssistantChat } from "@/lib/api-assistant";
+import { isChatChart, type ChatChart } from "@/lib/chat-charts";
+import ChatChartView from "@/components/chat/ChatChart";
 import FeedbackPanel from "@/components/FeedbackPanel";
 
 interface ChatMsg {
@@ -12,6 +14,7 @@ interface ChatMsg {
   content: string;
   /** Short process trail (databank lookups, thinking) kept with the answer. */
   steps?: Step[];
+  charts?: ChatChart[];
 }
 
 /** One line in the process trail: a short label plus an optional detail. */
@@ -91,6 +94,9 @@ function loadSessions(): { sessions: ChatSession[]; activeId: string } {
                   ? m.steps
                       .filter((st) => st && typeof st.id === "string" && typeof st.label === "string")
                       .map((st) => ({ id: st.id, label: st.label, detail: st.detail ?? null }))
+                  : undefined,
+                charts: Array.isArray(m.charts)
+                  ? m.charts.filter(isChatChart)
                   : undefined,
               })),
             updatedAt: typeof s.updatedAt === "number" ? s.updatedAt : 0,
@@ -317,7 +323,7 @@ export default function SayvorsChat() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** In-flight answer: the process trail plus the text typed so far. */
-  const [live, setLive] = useState<{ steps: Step[]; text: string } | null>(null);
+  const [live, setLive] = useState<{ steps: Step[]; text: string; charts: ChatChart[] } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -409,11 +415,12 @@ export default function SayvorsChat() {
     setInput("");
     setBusy(true);
     setError(null);
-    setLive({ steps: [], text: "" });
+    setLive({ steps: [], text: "", charts: [] });
 
     const controller = new AbortController();
     abortRef.current = controller;
     const steps: Step[] = [];
+    const charts: ChatChart[] = [];
     let answer = "";
 
     const addStep = (label: string, detail?: string | null, id?: string) => {
@@ -425,16 +432,38 @@ export default function SayvorsChat() {
       } else {
         steps.push({ id: stepId, label, detail: detail ?? null });
       }
-      setLive({ steps: steps.map((s) => ({ ...s })), text: answer });
+      setLive({
+        steps: steps.map((s) => ({ ...s })),
+        text: answer,
+        charts: [...charts],
+      });
+    };
+
+    const addChart = (chart: ChatChart) => {
+      if (charts.some((c) => c.id === chart.id)) return;
+      charts.push(chart);
+      setLive({
+        steps: steps.map((s) => ({ ...s })),
+        text: answer,
+        charts: [...charts],
+      });
     };
 
     try {
-      for await (const ev of streamAssistantChat(text, history, controller.signal)) {
+      for await (const ev of streamAssistantChat(text, history, active.id, controller.signal)) {
         if (ev.type === "step" && ev.label) {
           addStep(ev.label, ev.detail, ev.id);
         } else if (ev.type === "delta" && ev.text) {
           answer += ev.text;
-          setLive({ steps: steps.map((s) => ({ ...s })), text: answer });
+          setLive({
+            steps: steps.map((s) => ({ ...s })),
+            text: answer,
+            charts: [...charts],
+          });
+        } else if (ev.type === "chart" && ev.chart && isChatChart(ev.chart)) {
+          addChart(ev.chart);
+        } else if (ev.type === "done" && Array.isArray(ev.charts)) {
+          ev.charts.filter(isChatChart).forEach(addChart);
         } else if (ev.type === "error") {
           throw new Error(ev.message || "Assistant is unavailable right now.");
         }
@@ -442,7 +471,15 @@ export default function SayvorsChat() {
       if (!answer.trim()) throw new Error("The assistant returned an empty reply.");
       patchActive((s) => ({
         ...s,
-        messages: [...s.messages, { role: "assistant", content: answer, steps }],
+        messages: [
+          ...s.messages,
+          {
+            role: "assistant",
+            content: answer,
+            steps,
+            charts: charts.length > 0 ? charts : undefined,
+          },
+        ],
         updatedAt: Date.now(),
       }));
       setLive(null);
@@ -466,7 +503,15 @@ export default function SayvorsChat() {
         if (answer.trim()) {
           patchActive((s) => ({
             ...s,
-            messages: [...s.messages, { role: "assistant", content: answer, steps }],
+            messages: [
+              ...s.messages,
+              {
+                role: "assistant",
+                content: answer,
+                steps,
+                charts: charts.length > 0 ? charts : undefined,
+              },
+            ],
             updatedAt: Date.now(),
           }));
         }
@@ -570,11 +615,18 @@ export default function SayvorsChat() {
                     {m.content}
                   </p>
                 ) : (
-                  <div className="max-w-[88%] space-y-1.5">
+                  <div className={`${m.charts && m.charts.length > 0 ? "w-full" : "max-w-[88%]"} space-y-1.5`}>
                     {m.steps && m.steps.length > 0 && <StepTrail steps={m.steps} done />}
                     <div className="space-y-1 rounded-[2px] bg-ink/[0.05] px-3.5 py-2 text-[12.5px] text-ink dark:bg-fog/[0.08] dark:text-fog">
                       {renderMarkdown(m.content)}
                     </div>
+                    {m.charts && m.charts.length > 0 && (
+                      <div className="space-y-2">
+                        {m.charts.map((chart) => (
+                          <ChatChartView key={chart.id} chart={chart} />
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -583,7 +635,7 @@ export default function SayvorsChat() {
             {/* In-flight: process trail, then the answer typed out */}
             {live && (
               <div className="flex justify-start">
-                <div className="max-w-[88%] space-y-1.5">
+                <div className={`${live.charts.length > 0 ? "w-full" : "max-w-[88%]"} space-y-1.5`}>
                   {live.steps.length > 0 && <StepTrail steps={live.steps} done={false} />}
                   {live.text ? (
                     <div className="space-y-1 rounded-[2px] bg-ink/[0.05] px-3.5 py-2 text-[12.5px] text-ink dark:bg-fog/[0.08] dark:text-fog">
@@ -596,6 +648,13 @@ export default function SayvorsChat() {
                       <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink/40 [animation-delay:120ms] dark:bg-fog/40" />
                       <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink/40 [animation-delay:240ms] dark:bg-fog/40" />
                     </p>
+                  )}
+                  {live.charts.length > 0 && (
+                    <div className="space-y-2">
+                      {live.charts.map((chart) => (
+                        <ChatChartView key={chart.id} chart={chart} />
+                      ))}
+                    </div>
                   )}
                 </div>
               </div>
@@ -618,7 +677,7 @@ export default function SayvorsChat() {
                   void send();
                 }
               }}
-              placeholder="Ask about your reviews…"
+              placeholder="Ask about your business…"
               maxLength={2000}
               disabled={busy}
               aria-label="Message"

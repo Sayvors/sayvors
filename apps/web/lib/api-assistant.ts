@@ -2,17 +2,20 @@
 
 import { API_BASE } from "./api-base";
 import { getCsrfToken } from "./csrf";
+import type { ChatChart } from "./chat-charts";
 
 const API = API_BASE;
 
 export interface AssistantStreamEvent {
-  type: "step" | "delta" | "done" | "error";
+  type: "step" | "delta" | "chart" | "done" | "error";
   /** Stable id so a repeated step updates its row instead of appending. */
   id?: string;
   label?: string;
   detail?: string | null;
   text?: string;
   message?: string;
+  chart?: ChatChart;
+  charts?: ChatChart[];
   grounded_in_rag?: boolean;
   citations?: Array<{ source?: string; kind?: string; detail?: string }>;
   model?: string;
@@ -25,6 +28,7 @@ export interface AssistantStreamEvent {
 export async function* streamAssistantChat(
   message: string,
   history: { role: string; content: string }[],
+  sessionId?: string,
   signal?: AbortSignal
 ): AsyncGenerator<AssistantStreamEvent, void, void> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -34,7 +38,11 @@ export async function* streamAssistantChat(
   const res = await fetch(`${API}/api/v1/assistant/chat/stream`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ message, history: history.slice(-8) }),
+    body: JSON.stringify({
+      message,
+      history: history.slice(-8),
+      ...(sessionId ? { session_id: sessionId } : {}),
+    }),
     credentials: "include",
     signal,
   });
