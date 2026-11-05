@@ -161,12 +161,12 @@ export default function Sidebar() {
       <aside
         id="dashboard-sidebar"
         aria-hidden={isMobile && !drawerOpen ? true : undefined}
-        className={`relative flex shrink-0 flex-col bg-white text-ink ring-1 ring-ink/[0.06] transition-all duration-200 dark:bg-[#1d1636] dark:text-fog dark:ring-white/[0.08] ${
+        className={`flex shrink-0 flex-col bg-white text-ink ring-1 ring-ink/[0.06] transition-all duration-200 dark:bg-[#1d1636] dark:text-fog dark:ring-white/[0.08] ${
           isMobile
             ? `fixed inset-y-2 start-2 z-50 w-[264px] rounded-[20px] shadow-2xl ${
                 drawerOpen ? "translate-x-0" : dir === "rtl" ? "translate-x-[calc(100%+8px)]" : "-translate-x-[calc(100%+8px)]"
               }`
-            : `my-2 ms-2 h-[calc(100vh-1rem)] rounded-[20px] shadow-[0_18px_44px_-34px_rgba(26,18,48,0.45)] dark:shadow-none ${collapsed ? "w-[64px]" : "w-[236px]"}`
+            : `relative my-2 ms-2 h-[calc(100vh-1rem)] rounded-[20px] shadow-[0_18px_44px_-34px_rgba(26,18,48,0.45)] dark:shadow-none ${collapsed ? "w-[64px]" : "w-[236px]"}`
         }`}
       >
         {/* Brand. The rail is always dark, so the light-on-dark wordmark is

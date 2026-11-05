@@ -333,6 +333,7 @@ export default function InboxView() {
   const [threadQuery, setThreadQuery] = useState("");
   const [showInfo, setShowInfo] = useState(false);
   const [photoOpen, setPhotoOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const [threadState, setThreadState] = useState<ThreadState | null>(null);
   const [modeBusy, setModeBusy] = useState(false);
   const [modeError, setModeError] = useState<string | null>(null);
@@ -904,11 +905,24 @@ export default function InboxView() {
     setActiveThread(selectedKey);
   }, [selectedKey]);
 
+  // The two-pane layout only exists from lg up. Below that the list is the
+  // first screen and the chat opens on selection; auto-selecting the first
+  // thread here would make the back button look dead because it immediately
+  // reselects that thread.
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 1023px)");
+    const apply = () => setIsMobile(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
+
   const effectiveSelected = useMemo(() => {
     if (selected) return selected;
+    if (isMobile) return null;
     if (threads.length === 0) return null;
     return threads.find((t) => !t.is_unknown) ?? threads[0];
-  }, [selected, threads]);
+  }, [selected, threads, isMobile]);
 
   const requestedKey = useRef<string | null>(null);
   const target = effectiveSelected;
@@ -1566,7 +1580,11 @@ export default function InboxView() {
                     <div key={composite} data-index={vi.index} ref={threadVirtualizer.measureElement} style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${vi.start}px)` }}>
                       <div className={`flex items-start border-b border-ink/[0.04] dark:border-fog/[0.04] ${active ? "bg-deep-violet/[0.06]" : "hover:bg-ink/[0.02] dark:hover:bg-fog/[0.03]"}`}>
                         <button
-                          onClick={() => { setSelectedKey(composite); setSendError(null); }}
+                          onClick={() => {
+                            setSelectedKey(composite);
+                            setShowInfo(false);
+                            setSendError(null);
+                          }}
                           aria-current={active}
                           className="flex min-w-0 flex-1 items-start gap-3 px-3.5 py-4 text-left"
                         >
@@ -1702,7 +1720,10 @@ export default function InboxView() {
             <>
               <div className="flex flex-wrap items-center gap-3 border-b border-ink/[0.06] bg-white/95 px-4 py-3.5 dark:border-fog/[0.06] dark:bg-ink/95">
                 <button
-                  onClick={() => setSelectedKey(null)}
+                  onClick={() => {
+                    setSelectedKey(null);
+                    setShowInfo(false);
+                  }}
                   aria-label="Back to conversations"
                   className="rounded-lg px-2 py-1 text-[13px] font-semibold text-deep-violet lg:hidden"
                 >
@@ -1746,7 +1767,7 @@ export default function InboxView() {
                   </span>
                 </button>
                 {!target.is_unknown && (
-                  <label className="flex shrink-0 items-center gap-1.5">
+                  <label className="hidden shrink-0 items-center gap-1.5 md:flex">
                     <span className="text-[9px] font-bold uppercase tracking-wide text-ink/35 dark:text-fog/35">
                       Owner
                     </span>
@@ -2513,7 +2534,7 @@ export default function InboxView() {
               aria-label="Back to conversation"
               className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[13px] font-semibold text-deep-violet"
             >
-              ← Back
+              ← Back to chat
             </button>
             <p className="text-[13px] font-bold text-ink dark:text-fog">Contact profile</p>
             <span className="w-12" aria-hidden />
@@ -2563,6 +2584,34 @@ export default function InboxView() {
                       : formatPhone(target.contact_phone)}
                 </p>
               </div>
+              {!target.is_unknown && (
+                <label className="block md:hidden">
+                  <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-ink/45 dark:text-fog/45">
+                    Owner
+                  </span>
+                  <select
+                    value={currentAssignee ?? ""}
+                    onChange={(e) =>
+                      void handleAssignee(target, e.target.value || null)
+                    }
+                    disabled={assigneeBusy}
+                    aria-label="Conversation owner"
+                    className="h-9 w-full rounded-lg border border-ink/[0.08] bg-white px-2 text-[12px] font-semibold text-ink disabled:opacity-50 dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                  >
+                    <option value="">Unassigned</option>
+                    {assigneeNotInList && currentAssignee && (
+                      <option value={currentAssignee}>
+                        {currentAssigneeName ?? "Assigned"}
+                      </option>
+                    )}
+                    {assignees.map((a) => (
+                      <option key={a.user_id} value={a.user_id}>
+                        {a.user_id === user?.id ? `${a.name} (you)` : a.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <dl className="space-y-2 text-[12px]">
                 <div className="flex justify-between">
                   <dt className="text-ink/45 dark:text-fog/45">Platform</dt>
