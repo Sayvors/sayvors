@@ -1785,6 +1785,13 @@ def _thread_payloads(
         name = t.contact_name
         if profile is not None and profile.name:
             name = profile.name
+        # A Google reviewer has no phone number; never show the synthetic
+        # `google:<digest>` thread key as their name.
+        fallback_name = (
+            "Google reviewer"
+            if ch.platform == "google_reviews"
+            else decrypted_phone
+        )
         decrypted_last = (
             decrypt_message_content(t.last_message_preview)
             if t.last_message_preview
@@ -1796,7 +1803,7 @@ def _thread_payloads(
             {
                 "key": thread_key(decrypted_phone),
                 "contact_phone": decrypted_phone,
-                "display_name": name or decrypted_phone,
+                "display_name": name or fallback_name,
                 "username": profile.username if profile else None,
                 "avatar_url": profile.avatar_url if profile else None,
                 "channel_id": t.channel_id,

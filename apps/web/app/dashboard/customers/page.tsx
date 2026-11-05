@@ -14,26 +14,33 @@ import Link from "next/link";
  */
 export default function CustomersPage() {
   return (
-    <div className="team-ui h-full overflow-y-auto p-4 sm:p-6">
-      <div className="mb-1 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-[20px] font-bold text-[var(--ui-ink)] sm:text-[22px]">
+    <div className="team-ui flex h-full flex-col gap-3 p-3 sm:gap-4 sm:p-6">
+      <div className="flex shrink-0 items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-[18px] font-bold text-[var(--ui-ink)] sm:text-[22px]">
             Customers
           </h1>
-          <p className="mt-0.5 text-[12px] text-[var(--ui-ink-2)] sm:text-[13px]">
-            Every person you have ever had contact with — WhatsApp, Instagram,
-            Facebook, Google reviews — in one table. Click a row for the
-            complete profile, conversation, and (for Google) the reviews.
+          <p className="mt-0.5 text-[11px] leading-relaxed text-[var(--ui-ink-2)] sm:text-[13px]">
+            <span className="sm:hidden">
+              Everyone you have talked to, across every channel.
+            </span>
+            <span className="hidden sm:inline">
+              Every person you have ever had contact with — WhatsApp, Instagram,
+              Facebook, Google reviews — in one table. Click a row for the
+              complete profile, conversation, and (for Google) the reviews.
+            </span>
           </p>
         </div>
         <Link
           href="/dashboard/inbox"
-          className="rounded-[3px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] focus-visible:outline focus-visible:outline-[2px] focus-visible:outline-offset-[-1px] focus-visible:outline-[var(--ui-ink)]"
+          className="shrink-0 rounded-lg border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-1.5 text-[11px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] focus-visible:outline focus-visible:outline-[2px] focus-visible:outline-offset-[-1px] focus-visible:outline-[var(--ui-ink)] sm:text-[12px]"
         >
           Open inbox
         </Link>
       </div>
-      <CustomersTable />
+      <div className="min-h-0 flex-1">
+        <CustomersTable />
+      </div>
     </div>
   );
 }

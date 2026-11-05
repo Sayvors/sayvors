@@ -13,6 +13,8 @@ const LOGOS: Record<string, string> = {
   x: "/channels/x.png",
   telegram: "/channels/telegram.png",
   linkedin: "/channels/linkedin.png",
+  google_reviews: "/google-business.png",
+  google: "/google-business.png",
 };
 
 const LABELS: Record<string, string> = {
@@ -23,6 +25,7 @@ const LABELS: Record<string, string> = {
   telegram: "Telegram",
   linkedin: "LinkedIn",
   google_reviews: "Google Business",
+  google: "Google Business",
 };
 
 export function platformLabel(platform: string): string {

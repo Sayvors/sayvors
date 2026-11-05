@@ -296,14 +296,22 @@ async def get_customer_profile(
     def _iso(dt):
         return dt.isoformat() if dt else None
 
+    # Google reviewers are keyed by an internal digest; it must never be
+    # presented as their name when the profile photo/name lookup misses.
+    display_name = (
+        (contact_profile.name if contact_profile else None)
+        or google_name
+        or (newest.contact_name if newest else None)
+        or (
+            "Google reviewer"
+            if channel.platform == "google_reviews"
+            else contact_phone
+        )
+    )
+
     return {
         "identity": {
-            "name": (
-                (contact_profile.name if contact_profile else None)
-                or google_name
-                or (newest.contact_name if newest else None)
-                or contact_phone
-            ),
+            "name": display_name,
             "username": contact_profile.username if contact_profile else None,
             "avatar_url": (
                 (contact_profile.avatar_url if contact_profile else None)
