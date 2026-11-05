@@ -331,6 +331,7 @@ export default function InboxView() {
   const [sendError, setSendError] = useState<string | null>(null);
   const [threadQuery, setThreadQuery] = useState("");
   const [showInfo, setShowInfo] = useState(false);
+  const [photoOpen, setPhotoOpen] = useState(false);
   const [threadState, setThreadState] = useState<ThreadState | null>(null);
   const [modeBusy, setModeBusy] = useState(false);
   const [modeError, setModeError] = useState<string | null>(null);
@@ -1185,6 +1186,19 @@ export default function InboxView() {
     // typingSource is in the deps because the indicator renders below the
     // message list and would otherwise be left below the fold.
   }, [messages.length, targetKey, typingSource]);
+
+  useEffect(() => {
+    setPhotoOpen(false);
+  }, [selectedKey]);
+
+  useEffect(() => {
+    if (!photoOpen) return;
+    const close = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPhotoOpen(false);
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [photoOpen]);
 
   const platformsPresent = useMemo(() => {
     const set = new Set<string>();
@@ -2431,14 +2445,32 @@ export default function InboxView() {
           ) : (
             <div className="space-y-4">
               <div className="flex flex-col items-center text-center">
-                <Avatar
-                  name={target.display_name}
-                  phone={target.contact_phone}
-                  url={target.avatar_url}
-                  boxCls="h-14 w-14 rounded-2xl bg-deep-violet/10 text-[16px] text-deep-violet ring-1 ring-deep-violet/10"
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (target.avatar_url) setPhotoOpen(true);
+                  }}
+                  disabled={!target.avatar_url}
+                  aria-label={
+                    target.avatar_url
+                      ? `View ${target.display_name || "contact"} profile picture`
+                      : undefined
+                  }
+                  className={`rounded-2xl outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
+                    target.avatar_url
+                      ? "cursor-zoom-in hover:opacity-90"
+                      : "cursor-default"
+                  }`}
                 >
-                  <PlatformBadge platform={target.platform} />
-                </Avatar>
+                  <Avatar
+                    name={target.display_name}
+                    phone={target.contact_phone}
+                    url={target.avatar_url}
+                    boxCls="h-14 w-14 rounded-2xl bg-deep-violet/10 text-[16px] text-deep-violet ring-1 ring-deep-violet/10"
+                  >
+                    <PlatformBadge platform={target.platform} />
+                  </Avatar>
+                </button>
                 <p className="mt-2 text-[14px] font-semibold text-ink dark:text-fog">
                   {target.display_name || "Unknown sender"}
                 </p>
@@ -2446,9 +2478,11 @@ export default function InboxView() {
                   <p className="text-[12px] font-medium text-deep-violet">@{target.username}</p>
                 )}
                 <p className="text-[12px] text-ink/45 dark:text-fog/45">
-                  {target.platform === "instagram"
-                    ? target.contact_phone
-                    : formatPhone(target.contact_phone)}
+                  {target.platform === "google_reviews" || target.platform === "google"
+                    ? target.channel_name ?? "Google review"
+                    : target.platform === "instagram"
+                      ? target.contact_phone
+                      : formatPhone(target.contact_phone)}
                 </p>
               </div>
               <dl className="space-y-2 text-[12px]">
@@ -2512,6 +2546,32 @@ export default function InboxView() {
           )}
         </aside>
       </div>
+
+      {photoOpen && target?.avatar_url && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Profile picture"
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-ink/70 p-6"
+          onClick={() => setPhotoOpen(false)}
+        >
+          <button
+            type="button"
+            onClick={() => setPhotoOpen(false)}
+            aria-label="Close profile picture"
+            className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/95 text-[20px] font-medium text-ink shadow-lg transition hover:bg-white focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-white"
+          >
+            ×
+          </button>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={resolveMediaUrl(target.avatar_url) || target.avatar_url}
+            alt={target.display_name || "Contact profile picture"}
+            className="max-h-[82vh] max-w-[82vw] rounded-2xl object-contain shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
 
       {error && (
         <p role="status" className="mt-3 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-[12px] text-red-700">
