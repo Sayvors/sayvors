@@ -104,7 +104,7 @@ export default function CreditLedgerPage() {
   const st = billing ? statusStyle(billing.status) : null;
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 p-4 sm:p-6">
+    <div className="mx-auto h-full max-w-5xl space-y-6 overflow-y-auto p-4 pb-24 sm:p-6 sm:pb-8">
       {/* Header */}
       <div>
         <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-ink/40 dark:text-fog/40">Billing · AI credit</p>

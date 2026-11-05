@@ -1429,20 +1429,22 @@ export default function InboxView() {
 
   return (
     <div className="flex h-full flex-col p-4 sm:p-6">
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-[20px] font-bold text-ink dark:text-fog">Inbox</h1>
-          <p className="mt-0.5 text-[13px] text-ink/45 dark:text-fog/45">
-            Every conversation across your connected numbers.
-          </p>
+      {(!isMobile || !openThread) && (
+        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h1 className="text-[18px] font-bold text-ink dark:text-fog sm:text-[20px]">Inbox</h1>
+            <p className="mt-0.5 text-[12px] text-ink/45 dark:text-fog/45 sm:text-[13px]">
+              Every conversation across your connected numbers.
+            </p>
+          </div>
+          <button
+            onClick={() => void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] })}
+            className="rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12px] font-semibold text-ink transition hover:border-deep-violet/30 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+          >
+            Refresh
+          </button>
         </div>
-        <button
-          onClick={() => void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] })}
-          className="rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12px] font-semibold text-ink transition hover:border-deep-violet/30 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
-        >
-          Refresh
-        </button>
-      </div>
+      )}
       {listActionError && (
         <div
           role="alert"
