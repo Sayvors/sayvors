@@ -85,9 +85,14 @@ export interface ReviewMeaning {
 
 export interface IssueEvidence {
   review_id: string;
-  /** Verbatim span from the review — the meaning layer checked it is there. */
+  /** Verbatim span from the review - the meaning layer checked it is there. */
   quote: string;
   rating: number;
+  /** Google reviewer identity, so the issue can be traced back to the review. */
+  reviewer?: string | null;
+  reviewer_photo_url?: string | null;
+  review_url?: string | null;
+  reviewed_at?: string | null;
 }
 
 /**
