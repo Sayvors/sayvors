@@ -612,254 +612,254 @@ export default function PublishComposer({
       </header>
 
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto grid max-w-6xl gap-5 px-4 pb-28 pt-5 sm:px-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-          {/* ── left / main ── */}
-          <div className="space-y-5">
-            {/* 1 · Media */}
-            <section aria-labelledby="publish-media-h" className="ui-panel bg-[var(--ui-surface)] p-5">
-              <h2 id="publish-media-h" className={`text-[14px] font-bold ${INK}`}>
-                1 · Media
-              </h2>
-              <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
-                An image or video is required — the frame mirrors the format you&apos;re configuring.
-              </p>
-              <MediaSink media={media} onPick={pickMedia} onClear={clearMedia} thumb={thumb} thumbLabel={thumbLabel} />
-            </section>
+        <div className="mx-auto grid max-w-6xl gap-5 px-4 pb-28 pt-5 sm:px-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
+          {/* Below lg the wrappers are display:contents, so the sections
+              become one ordered column: 1 → 2 → 3 → formats → 4 → preview. */}
+          <div className="contents lg:col-start-1 lg:block lg:space-y-5">
+          <section aria-labelledby="publish-media-h" className="ui-panel order-1 bg-[var(--ui-surface)] p-4 sm:p-5">
+            <h2 id="publish-media-h" className={`text-[14px] font-bold ${INK}`}>
+              1 · Media
+            </h2>
+            <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
+              An image or video is required — the frame mirrors the format you&apos;re configuring.
+            </p>
+            <MediaSink media={media} onPick={pickMedia} onClear={clearMedia} thumb={thumb} thumbLabel={thumbLabel} />
+          </section>
 
-            {/* 2 · Message */}
-            <section aria-labelledby="publish-message-h" className="ui-panel bg-[var(--ui-surface)] p-5">
-              <h2 id="publish-message-h" className={`text-[14px] font-bold ${INK}`}>
-                2 · Message
-              </h2>
-              <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
-                Caption is the hook every network shows; description is the longer body.
-              </p>
-              <div className="space-y-3">
-                <div>
-                  <div className="flex items-baseline justify-between">
-                    <label htmlFor="pub-caption" className={`text-[12px] font-semibold ${INK2}`}>
-                      Caption
-                    </label>
-                    <span
-                      className={`text-[11px] ${
-                        caption.length > captionLimit ? "font-semibold text-amber-600 dark:text-amber-400" : INK2
-                      }`}
-                    >
-                      {caption.length} / {captionLimit.toLocaleString("en-US")}
-                    </span>
-                  </div>
-                  <textarea
-                    id="pub-caption"
-                    value={caption}
-                    onChange={(e) => setCaption(e.target.value)}
-                    rows={2}
-                    maxLength={PLATFORM_META.facebook.captionMax}
-                    placeholder="Say it in one line…"
-                    className={`${FIELD} mt-1 w-full resize-y`}
-                  />
-                  {showCaptionWarn && (
-                    <p
-                      role="status"
-                      className="mt-1.5 rounded-[10px] border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-[12px] font-medium text-amber-700 dark:text-amber-400"
-                    >
-                      ⚠ Truncates on:{" "}
-                      {captionOver
-                        .map((t) => `${PLATFORM_META[t.platform].label} (${PLATFORM_META[t.platform].captionMax.toLocaleString("en-US")})`)
-                        .join(" · ")}
-                    </p>
-                  )}
+          <section aria-labelledby="publish-message-h" className="ui-panel order-2 bg-[var(--ui-surface)] p-4 sm:p-5">
+            <h2 id="publish-message-h" className={`text-[14px] font-bold ${INK}`}>
+              2 · Message
+            </h2>
+            <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
+              Caption is the hook every network shows; description is the longer body.
+            </p>
+            <div className="space-y-3">
+              <div>
+                <div className="flex items-baseline justify-between">
+                  <label htmlFor="pub-caption" className={`text-[12px] font-semibold ${INK2}`}>
+                    Caption
+                  </label>
+                  <span
+                    className={`text-[11px] ${
+                      caption.length > captionLimit ? "font-semibold text-amber-600 dark:text-amber-400" : INK2
+                    }`}
+                  >
+                    {caption.length} / {captionLimit.toLocaleString("en-US")}
+                  </span>
                 </div>
-                <div>
-                  <div className="flex items-baseline justify-between">
-                    <label htmlFor="pub-description" className={`text-[12px] font-semibold ${INK2}`}>
-                      Description
-                    </label>
-                    <span className={`text-[11px] ${INK2}`}>{description.length}</span>
-                  </div>
-                  <textarea
-                    id="pub-description"
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    rows={4}
-                    maxLength={PLATFORM_META.facebook.captionMax}
-                    placeholder="The full story — offer details, event info, the works."
-                    className={`${FIELD} mt-1 w-full resize-y`}
-                  />
-                </div>
-              </div>
-            </section>
-
-            {/* 4 · When */}
-            <section aria-labelledby="publish-schedule-h" className="ui-panel bg-[var(--ui-surface)] p-5">
-              <h2 id="publish-schedule-h" className={`text-[14px] font-bold ${INK}`}>
-                4 · When
-              </h2>
-              <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>Optional — leave it off to publish immediately.</p>
-              <div className="flex flex-wrap items-center gap-3">
-                <ScheduleToggle scheduleOn={scheduleOn} setScheduleOn={setScheduleOn} label="Schedule for later" />
-                {scheduleOn && (
-                  <input
-                    type="datetime-local"
-                    value={scheduleAt}
-                    onChange={(e) => setScheduleAt(e.target.value)}
-                    aria-label="Publish at"
-                    className={`${FIELD} w-full sm:w-64`}
-                  />
-                )}
-              </div>
-              <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-[var(--ui-line)] pt-3">
-                <ScheduleToggle scheduleOn={removeOn} setScheduleOn={setRemoveOn} label="Remove it later" />
-                {removeOn && (
-                  <input
-                    type="datetime-local"
-                    value={removeAt}
-                    onChange={(e) => setRemoveAt(e.target.value)}
-                    aria-label="Remove the post at"
-                    className={`${FIELD} w-full sm:w-64`}
-                  />
-                )}
-              </div>
-              {removeOn && (
-                <p className={`mt-2 text-[11px] ${INK2}`}>
-                  The post is taken back down from every destination on that
-                  date. Nothing is removed before it is published.
-                </p>
-              )}
-            </section>
-
-            {/* Live preview */}
-            <section aria-labelledby="publish-preview-h" className="ui-panel bg-[var(--ui-surface)] p-5">
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <h2 id="publish-preview-h" className={`text-[14px] font-bold ${INK}`}>
-                  Live preview
-                </h2>
-                <p className={`text-[12px] ${INK2}`} role="status">
-                  {mirrorTarget && mirrorMethod
-                    ? `Mirroring ${mirrorTarget.name} · ${METHOD_META[mirrorMethod].label}`
-                    : "Pick a format on the right to configure it"}
-                </p>
-              </div>
-              <div className="mt-3">
-                <DestinationPreview
-                  target={mirrorTarget}
-                  method={mirrorMethod ?? "post"}
-                  media={media ?? { type: null, url: "" }}
-                  caption={caption}
-                  description={description}
-                  crop={mirrorCrop}
+                <textarea
+                  id="pub-caption"
+                  value={caption}
+                  onChange={(e) => setCaption(e.target.value)}
+                  rows={2}
+                  maxLength={PLATFORM_META.facebook.captionMax}
+                  placeholder="Say it in one line…"
+                  className={`${FIELD} mt-1 w-full resize-y`}
                 />
-              </div>
-            </section>
-          </div>
-
-          {/* ── right / aside ── */}
-          <aside className="space-y-5 lg:sticky lg:top-4 lg:h-fit">
-            {/* 3 · Where it goes */}
-            <section aria-labelledby="publish-dest-h" className="ui-panel bg-[var(--ui-surface)] p-5">
-              <h2 id="publish-dest-h" className={`text-[14px] font-bold ${INK}`}>
-                3 · Where it goes
-              </h2>
-              <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
-                Flip the master switch for every network, or hand-pick below.
-              </p>
-              <DestinationSelector
-                targets={targets}
-                status={targetsStatus}
-                allConnected={allConnected}
-                googleTargets={usableGoogleTargets}
-                allGoogleConnected={allGoogleConnected}
-                selected={selected}
-                onSelectAll={applyAll}
-                onApplyAllGoogle={applyAllGoogle}
-                onToggleTarget={toggleTarget}
-                onToggleGoogleTarget={toggleTarget}
-              />
-            </section>
-
-            {/* ── AI video — one click, prop looks ── */}
-            <section aria-labelledby="ai-video-h" className="ui-panel bg-[var(--ui-surface)] p-5">
-              <h2 id="ai-video-h" className={`text-[14px] font-bold ${INK}`}>
-                ✨ Create a video for your business
-              </h2>
-              <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
-                One click. Sayvors drafts a launch video from your business — no editing needed.
-              </p>
-              <AiVideoCreator googleTargets={googleTargets} />
-            </section>
-
-            {/* Configure formats — method pills per selected destination */}
-            {selectedTargets.length > 0 && (
-              <section aria-labelledby="publish-formats-h" className="ui-panel bg-[var(--ui-surface)] p-5">
-                <h2 id="publish-formats-h" className={`text-[14px] font-bold ${INK}`}>
-                  Configure formats
-                </h2>
-                <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
-                  Click a format to set its crop and thumbnail.
-                </p>
-                {selectedTargets.some((t) =>
-                  availableFor(t).some((m) => m === "profile" || m === "banner"),
-                ) && (
-                  <p className={`mb-3 text-[11px] ${INK2}`}>
-                    A profile picture or banner replaces that image on the
-                    account — it carries no caption, and it can only be
-                    changed by publishing a new one.
+                {showCaptionWarn && (
+                  <p
+                    role="status"
+                    className="mt-1.5 rounded-[10px] border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-[12px] font-medium text-amber-700 dark:text-amber-400"
+                  >
+                    ⚠ Truncates on:{" "}
+                    {captionOver
+                      .map((t) => `${PLATFORM_META[t.platform].label} (${PLATFORM_META[t.platform].captionMax.toLocaleString("en-US")})`)
+                      .join(" · ")}
                   </p>
                 )}
-                <div className="space-y-3">
-                  {selectedTargets.map((t) => {
-                    const avail = availableFor(t);
-                    const chosen = chosenFor(t);
-                    return (
-                      <div key={t.id} id={`dest-row-${t.id}`} className="rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3">
-                        <div className="flex items-center gap-2">
-                          <PlatformMark platform={t.platform} size={14} />
-                          <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-[var(--ui-ink)]">{t.name}</span>
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          {avail.map((m) => {
-                            const isOn = chosen.includes(m);
-                            const key = cropKeyFor(t.id, m);
-                            const isConfigured = configured.has(key);
-                            const crop = crops[key] ?? defaultCropFor(t.platform, m);
-                            return (
-                              <button
-                                key={m}
-                                type="button"
-                                onClick={() => {
-                                  if (!isOn) {
-                                    toggleFormat(t, m);
-                                  }
-                                  openConfig(t, m);
-                                }}
-                                className={`inline-flex items-center gap-1.5 rounded-full border py-1 pl-1 pr-2.5 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
-                                  isConfigured
-                                    ? "border-[var(--ui-ink)] bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
-                                    : isOn
-                                    ? "border-[var(--ui-line-strong)] bg-[var(--ui-surface)] text-[var(--ui-ink)] hover:bg-[var(--ui-line)]"
-                                    : "border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink-2)] hover:bg-[var(--ui-line)]"
-                                }`}
-                              >
-                                <FormatThumb media={media} crop={crop} />
-                                {isConfigured && <span aria-hidden>✓</span>}
-                                {METHOD_META[m].label}
-                              </button>
-                            );
-                          })}
-                          <button
-                            type="button"
-                            onClick={() => toggleAllFormats(t)}
-                            className="inline-flex items-center gap-1 rounded-full border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2.5 py-1 text-[11px] font-semibold text-[var(--ui-ink-2)] transition hover:bg-[var(--ui-line)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
-                            title="Select every feed format for this destination"
-                          >
-                            All
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
+              </div>
+              <div>
+                <div className="flex items-baseline justify-between">
+                  <label htmlFor="pub-description" className={`text-[12px] font-semibold ${INK2}`}>
+                    Description
+                  </label>
+                  <span className={`text-[11px] ${INK2}`}>{description.length}</span>
                 </div>
-              </section>
+                <textarea
+                  id="pub-description"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  rows={4}
+                  maxLength={PLATFORM_META.facebook.captionMax}
+                  placeholder="The full story — offer details, event info, the works."
+                  className={`${FIELD} mt-1 w-full resize-y`}
+                />
+              </div>
+            </div>
+          </section>
+
+          <section aria-labelledby="publish-schedule-h" className="ui-panel order-5 bg-[var(--ui-surface)] p-4 sm:p-5">
+            <h2 id="publish-schedule-h" className={`text-[14px] font-bold ${INK}`}>
+              4 · When
+            </h2>
+            <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>Optional — leave it off to publish immediately.</p>
+            <div className="flex flex-wrap items-center gap-3">
+              <ScheduleToggle scheduleOn={scheduleOn} setScheduleOn={setScheduleOn} label="Schedule for later" />
+              {scheduleOn && (
+                <input
+                  type="datetime-local"
+                  value={scheduleAt}
+                  onChange={(e) => setScheduleAt(e.target.value)}
+                  aria-label="Publish at"
+                  className={`${FIELD} w-full sm:w-64`}
+                />
+              )}
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-[var(--ui-line)] pt-3">
+              <ScheduleToggle scheduleOn={removeOn} setScheduleOn={setRemoveOn} label="Remove it later" />
+              {removeOn && (
+                <input
+                  type="datetime-local"
+                  value={removeAt}
+                  onChange={(e) => setRemoveAt(e.target.value)}
+                  aria-label="Remove the post at"
+                  className={`${FIELD} w-full sm:w-64`}
+                />
+              )}
+            </div>
+            {removeOn && (
+              <p className={`mt-2 text-[11px] ${INK2}`}>
+                The post is taken back down from every destination on that
+                date. Nothing is removed before it is published.
+              </p>
             )}
+          </section>
+
+          <section aria-labelledby="publish-preview-h" className="ui-panel order-6 bg-[var(--ui-surface)] p-4 sm:p-5">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 id="publish-preview-h" className={`text-[14px] font-bold ${INK}`}>
+                Live preview
+              </h2>
+              <p className={`text-[12px] ${INK2}`} role="status">
+                {mirrorTarget && mirrorMethod
+                  ? `Mirroring ${mirrorTarget.name} · ${METHOD_META[mirrorMethod].label}`
+                  : (
+                    <>
+                      <span className="lg:hidden">Pick a format above to configure it</span>
+                      <span className="hidden lg:inline">Pick a format on the right to configure it</span>
+                    </>
+                  )}
+              </p>
+            </div>
+            <div className="mt-3">
+              <DestinationPreview
+                target={mirrorTarget}
+                method={mirrorMethod ?? "post"}
+                media={media ?? { type: null, url: "" }}
+                caption={caption}
+                description={description}
+                crop={mirrorCrop}
+              />
+            </div>
+          </section>
+
+          </div>
+
+          <aside className="contents lg:col-start-2 lg:block lg:space-y-5 lg:sticky lg:top-4 lg:h-fit">
+          <section aria-labelledby="publish-dest-h" className="ui-panel order-3 bg-[var(--ui-surface)] p-4 sm:p-5">
+            <h2 id="publish-dest-h" className={`text-[14px] font-bold ${INK}`}>
+              3 · Where it goes
+            </h2>
+            <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
+              Flip the master switch for every network, or hand-pick below.
+            </p>
+            <DestinationSelector
+              targets={targets}
+              status={targetsStatus}
+              allConnected={allConnected}
+              googleTargets={usableGoogleTargets}
+              allGoogleConnected={allGoogleConnected}
+              selected={selected}
+              onSelectAll={applyAll}
+              onApplyAllGoogle={applyAllGoogle}
+              onToggleTarget={toggleTarget}
+              onToggleGoogleTarget={toggleTarget}
+            />
+          </section>
+
+          {/* Configure formats — method pills per selected destination */}
+          {selectedTargets.length > 0 && (
+            <section aria-labelledby="publish-formats-h" className="ui-panel order-4 bg-[var(--ui-surface)] p-4 sm:p-5">
+              <h2 id="publish-formats-h" className={`text-[14px] font-bold ${INK}`}>
+                Configure formats
+              </h2>
+              <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
+                Click a format to set its crop and thumbnail.
+              </p>
+              {selectedTargets.some((t) =>
+                availableFor(t).some((m) => m === "profile" || m === "banner"),
+              ) && (
+                <p className={`mb-3 text-[11px] ${INK2}`}>
+                  A profile picture or banner replaces that image on the
+                  account — it carries no caption, and it can only be
+                  changed by publishing a new one.
+                </p>
+              )}
+              <div className="space-y-3">
+                {selectedTargets.map((t) => {
+                  const avail = availableFor(t);
+                  const chosen = chosenFor(t);
+                  return (
+                    <div key={t.id} id={`dest-row-${t.id}`} className="rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3">
+                      <div className="flex items-center gap-2">
+                        <PlatformMark platform={t.platform} size={14} />
+                        <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-[var(--ui-ink)]">{t.name}</span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {avail.map((m) => {
+                          const isOn = chosen.includes(m);
+                          const key = cropKeyFor(t.id, m);
+                          const isConfigured = configured.has(key);
+                          const crop = crops[key] ?? defaultCropFor(t.platform, m);
+                          return (
+                            <button
+                              key={m}
+                              type="button"
+                              onClick={() => {
+                                if (!isOn) {
+                                  toggleFormat(t, m);
+                                }
+                                openConfig(t, m);
+                              }}
+                              className={`inline-flex items-center gap-1.5 rounded-full border py-1 pl-1 pr-2.5 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+                                isConfigured
+                                  ? "border-[var(--ui-ink)] bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
+                                  : isOn
+                                  ? "border-[var(--ui-line-strong)] bg-[var(--ui-surface)] text-[var(--ui-ink)] hover:bg-[var(--ui-line)]"
+                                  : "border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink-2)] hover:bg-[var(--ui-line)]"
+                              }`}
+                            >
+                              <FormatThumb media={media} crop={crop} />
+                              {isConfigured && <span aria-hidden>✓</span>}
+                              {METHOD_META[m].label}
+                            </button>
+                          );
+                        })}
+                        <button
+                          type="button"
+                          onClick={() => toggleAllFormats(t)}
+                          className="inline-flex items-center gap-1 rounded-full border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2.5 py-1 text-[11px] font-semibold text-[var(--ui-ink-2)] transition hover:bg-[var(--ui-line)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+                          title="Select every feed format for this destination"
+                        >
+                          All
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          <section aria-labelledby="ai-video-h" className="ui-panel order-7 bg-[var(--ui-surface)] p-4 sm:p-5">
+            <h2 id="ai-video-h" className={`text-[14px] font-bold ${INK}`}>
+              ✨ Create a video for your business
+            </h2>
+            <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
+              One click. Sayvors drafts a launch video from your business — no editing needed.
+            </p>
+            <AiVideoCreator googleTargets={googleTargets} />
+          </section>
           </aside>
         </div>
       </div>
@@ -921,12 +921,12 @@ export default function PublishComposer({
           onClick={(e) => {
             if (e.target === e.currentTarget) cancelConfig();
           }}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(0,0,0,0.45)] p-4"
+          className="fixed inset-0 z-50 bg-[rgba(0,0,0,0.45)] sm:flex sm:items-center sm:justify-center sm:p-4"
         >
-          <div className="w-full max-w-5xl rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-5 shadow-2xl">
-            <div className="flex items-start justify-between gap-3">
+          <div className="flex h-[100dvh] w-full flex-col overflow-hidden bg-[var(--ui-surface)] sm:h-auto sm:max-h-[90dvh] sm:max-w-5xl sm:rounded-[16px] sm:border sm:border-[var(--ui-line)] sm:shadow-2xl">
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--ui-line)] p-4 sm:border-0 sm:p-5 sm:pb-0">
               <div>
-                <h2 className="text-[16px] font-bold text-[var(--ui-ink)]">
+                <h2 className="text-[15px] font-bold text-[var(--ui-ink)] sm:text-[16px]">
                   Configure {modalTarget.name} · {METHOD_META[modalCtx.method].label}
                 </h2>
                 <p className="mt-0.5 text-[12px] text-[var(--ui-ink-2)]">
@@ -943,44 +943,46 @@ export default function PublishComposer({
               </button>
             </div>
 
-            <div className="mt-4 flex flex-col items-center gap-5 sm:flex-row sm:items-start sm:justify-center sm:gap-8">
-              <div className="shrink-0">
-                <DestinationPreview
-                  target={modalTarget}
-                  method={modalCtx.method}
-                  media={media ?? { type: null, url: "" }}
-                  caption={caption}
-                  description={description}
-                  crop={draftCrop}
-                />
-              </div>
-              <div className="w-full max-w-[320px] shrink-0">
-                <CropFrame
-                  key={`${modalCtx.targetId}-${modalCtx.method}`}
-                  url={media?.url ?? null}
-                  type={media?.type ?? null}
-                  cropKey={draftCrop.key}
-                  zoom={draftCrop.zoom}
-                  offset={{ x: draftCrop.x, y: draftCrop.y }}
-                  onCropKey={(k) => setDraftCrop((prev) => ({ ...prev, key: k, zoom: 1, x: 0, y: 0 }))}
-                  onZoom={(z) => setDraftCrop((prev) => ({ ...prev, zoom: z }))}
-                  onOffset={(o) => setDraftCrop((prev) => ({ ...prev, x: o.x, y: o.y }))}
-                />
+            <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5 sm:pt-4">
+              <div className="flex flex-col items-center gap-5 sm:flex-row sm:items-start sm:justify-center sm:gap-8">
+                <div className="shrink-0">
+                  <DestinationPreview
+                    target={modalTarget}
+                    method={modalCtx.method}
+                    media={media ?? { type: null, url: "" }}
+                    caption={caption}
+                    description={description}
+                    crop={draftCrop}
+                  />
+                </div>
+                <div className="w-full max-w-[320px] shrink-0">
+                  <CropFrame
+                    key={`${modalCtx.targetId}-${modalCtx.method}`}
+                    url={media?.url ?? null}
+                    type={media?.type ?? null}
+                    cropKey={draftCrop.key}
+                    zoom={draftCrop.zoom}
+                    offset={{ x: draftCrop.x, y: draftCrop.y }}
+                    onCropKey={(k) => setDraftCrop((prev) => ({ ...prev, key: k, zoom: 1, x: 0, y: 0 }))}
+                    onZoom={(z) => setDraftCrop((prev) => ({ ...prev, zoom: z }))}
+                    onOffset={(o) => setDraftCrop((prev) => ({ ...prev, x: o.x, y: o.y }))}
+                  />
+                </div>
               </div>
             </div>
 
-            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <div className="flex shrink-0 flex-col-reverse gap-2 border-t border-[var(--ui-line)] p-4 sm:flex-row sm:justify-end sm:border-0 sm:p-5 sm:pt-0">
               <button
                 type="button"
                 onClick={cancelConfig}
-                className="rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-2 text-[13px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+                className="rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-2.5 text-[13px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:py-2"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={saveConfig}
-                className="rounded-[10px] bg-[var(--ui-ink)] px-5 py-2.5 text-[13px] font-semibold text-[var(--ui-on-ink)] transition hover:opacity-90 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+                className="rounded-[10px] bg-[var(--ui-ink)] px-5 py-2.5 text-[13px] font-semibold text-[var(--ui-on-ink)] transition hover:opacity-90 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:py-2"
               >
                 Save {METHOD_META[modalCtx.method].label}
               </button>
