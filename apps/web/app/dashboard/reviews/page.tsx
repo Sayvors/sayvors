@@ -65,6 +65,9 @@ interface ReviewItem {
   abuseReported: boolean;
   reply_text?: string;
   repliedAt?: string;
+  publishedReplyId?: string;
+  publishedReplyText?: string;
+  publishedReplyAt?: string;
   status?: string;
   replyId?: string;
 }
@@ -695,7 +698,16 @@ function ReviewsInner() {
       await dismissReviewEdit(active!.id);
       setReviews((rs) => rs.map((r) =>
         r.id === active!.id
-          ? { ...r, edited: false, editedAt: null, previousRating: null, previousText: null }
+          ? {
+              ...r,
+              edited: false,
+              editedAt: null,
+              previousRating: null,
+              previousText: null,
+              reply_text: r.publishedReplyText,
+              status: r.publishedReplyText ? "posted" : undefined,
+              replyId: r.publishedReplyId,
+            }
           : r
       ));
     } catch {
@@ -1224,8 +1236,8 @@ function ReviewsInner() {
                                 createdAt: r.createdAt,
                                 locationName: r.locationName,
                                 replied: r.replied,
-                                replyText: r.reply_text,
-                                replyAt: r.repliedAt,
+                                replyText: r.publishedReplyText ?? r.reply_text,
+                                replyAt: r.publishedReplyAt ?? r.repliedAt,
                                  skipped: r.skipped,
                                  edited: r.edited,
                                  previousText: r.previousText,
@@ -1419,9 +1431,13 @@ function ReviewsInner() {
                         disabled={dismissingEdit}
                         className="shrink-0 rounded-full border border-[#FDE293] px-3 py-1 text-[12px] font-medium text-[#B45309] transition hover:bg-[#FEF7E0]/60 disabled:opacity-40"
                       >
-                        {dismissingEdit ? "Dismissing…" : "Dismiss"}
+                        {dismissingEdit ? "Leaving it…" : "Leave it as is"}
                       </button>
                     </div>
+                    <p className="mt-1.5 text-[11px] leading-4 text-[#8A6A3B]">
+                      No new reply needed? Leave the existing response as is. Any draft
+                      created for this edit is rejected and nothing is published.
+                    </p>
                     <div className="mt-2.5 grid gap-2.5 sm:grid-cols-2">
                       {/* Before */}
                       <div className="rounded-lg border border-[#F0DCA8] bg-white/70 px-3 py-2.5">
@@ -1625,10 +1641,40 @@ function ReviewsInner() {
                 {/* Reply composer — Material, not violet */}
                 <div className="mx-4 mb-4 rounded-lg border border-[#E8EAED] bg-[#F8F9FA] p-4">
                   <h3 className="text-[13px] font-medium text-[#202124]">Your reply</h3>
+                  {active.publishedReplyText &&
+                    active.publishedReplyText !== active.reply_text && (
+                      <div className="mt-3 rounded-md border border-[#CEEAD6] bg-[#E6F4EA] px-3 py-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-[12px] font-medium text-[#137333]">
+                            Published reply
+                          </p>
+                          {active.publishedReplyAt && (
+                            <span className="text-[11px] text-[#137333]/70">
+                              {new Date(active.publishedReplyAt).toLocaleDateString("en", {
+                                month: "short",
+                                day: "numeric",
+                                year: "numeric",
+                              })}
+                            </span>
+                          )}
+                        </div>
+                        <p
+                          dir="auto"
+                          className="mt-1.5 whitespace-pre-wrap break-words text-[13px] leading-5 text-[#202124]"
+                        >
+                          {active.publishedReplyText}
+                        </p>
+                      </div>
+                    )}
                   {active.reply_text && (
                     <div className="mt-3 rounded-md border border-[#DADCE0] bg-white px-3 py-3">
                       <div className="flex items-center gap-2">
-                        <p className="text-[12px] font-medium text-[#202124]">Your response</p>
+                        <p className="text-[12px] font-medium text-[#202124]">
+                          {active.publishedReplyText &&
+                          active.reply_text !== active.publishedReplyText
+                            ? "New draft"
+                            : "Your response"}
+                        </p>
                         {responseBadge(active.status)}
                         <span className="flex-1" />
                         {editingResponse === active.id ? null : active.replyId ? (
@@ -2077,6 +2123,9 @@ function mapInsights(raw: unknown, channelNames: Record<string, string>, fallbac
       abuseReported: typeof r.abuse_reported_at === "string",
       reply_text: typeof r.reply_text === "string" ? r.reply_text : undefined,
       repliedAt: typeof r.replied_at === "string" ? r.replied_at : undefined,
+      publishedReplyId: typeof r.published_reply_id === "string" ? r.published_reply_id : undefined,
+      publishedReplyText: typeof r.published_reply_text === "string" ? r.published_reply_text : undefined,
+      publishedReplyAt: typeof r.published_reply_at === "string" ? r.published_reply_at : undefined,
       // The API sends the response row's state as `reply_status`; reading
       // `status` always yielded undefined, so the badge and the
       // "sends this back for approval" hint never rendered.

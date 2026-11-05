@@ -170,6 +170,12 @@ export interface ReviewInsight {
   previous_review_text: string | null;
   review_updated_at: string | null;
   created_at: string;
+  reply_id?: string | null;
+  reply_text?: string | null;
+  reply_status?: string | null;
+  published_reply_id?: string | null;
+  published_reply_text?: string | null;
+  published_reply_at?: string | null;
 }
 
 export interface InsightList {
@@ -555,6 +561,7 @@ export async function fetchInsights(opts: {
   rating?: number | null;
   status?: string | null;
   search?: string | null;
+  edited?: boolean;
   limit?: number;
   offset?: number;
 }): Promise<InsightList> {
@@ -564,6 +571,7 @@ export async function fetchInsights(opts: {
   if (opts.rating) params.set("rating", String(opts.rating));
   if (opts.status) params.set("status", opts.status);
   if (opts.search) params.set("search", opts.search);
+  if (opts.edited) params.set("edited", "true");
   params.set("limit", String(opts.limit ?? 50));
   params.set("offset", String(opts.offset ?? 0));
   return apiFetch(`/api/v1/analytics/reviews/insights?${params.toString()}`);

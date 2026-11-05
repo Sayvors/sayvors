@@ -120,6 +120,12 @@ class ReviewInsightItem(BaseModel):
     reply_id: str | None = None
     reply_text: str | None = None
     reply_status: str | None = None
+    # The live reply currently published on Google, kept separately from the
+    # latest row so an edit-created draft cannot hide the wording that is
+    # already public.
+    published_reply_id: str | None = None
+    published_reply_text: str | None = None
+    published_reply_at: datetime | None = None
 
     @field_validator(
         "topics", "products", "problems", "media", "abuse_labels", mode="before"
