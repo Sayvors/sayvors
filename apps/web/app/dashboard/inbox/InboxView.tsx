@@ -1404,7 +1404,7 @@ export default function InboxView() {
         </div>
       )}
 
-      <div className={`relative grid min-h-0 flex-1 gap-4 ${showInfo ? "lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)_minmax(0,260px)]" : "lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)]"}`}>
+      <div className={`relative grid min-h-0 flex-1 gap-4 ${showInfo ? "lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)_minmax(0,280px)]" : "lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)]"}`}>
         {/* Thread list */}
         <div className={`${openThread ? "hidden lg:flex" : "flex"} min-h-0 flex-col overflow-hidden rounded-2xl border border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink`}>
           <div className="border-b border-ink/[0.06] p-3 dark:border-fog/[0.06]">
@@ -1482,20 +1482,20 @@ export default function InboxView() {
                         <button
                           onClick={() => { setSelectedKey(composite); setSendError(null); }}
                           aria-current={active}
-                          className="flex min-w-0 flex-1 items-start gap-3 px-3 py-3 text-left"
+                          className="flex min-w-0 flex-1 items-start gap-3 px-3.5 py-4 text-left"
                         >
                           <Avatar
                             name={t.display_name}
                             phone={t.contact_phone}
                             url={t.avatar_url}
-                            boxCls="h-9 w-9 rounded-xl bg-deep-violet/10 text-[11px] text-deep-violet"
+                            boxCls="h-10 w-10 rounded-full bg-deep-violet/10 text-[12px] text-deep-violet"
                           >
                             <PlatformBadge platform={t.platform} />
                           </Avatar>
                           <span className="min-w-0 flex-1">
                             <span className="flex items-baseline justify-between gap-2">
                               <span className="flex min-w-0 items-center gap-1.5">
-                                <span className="truncate text-[13px] font-semibold text-ink dark:text-fog">
+                                <span className="truncate text-[13.5px] font-semibold text-ink dark:text-fog">
                                   {t.display_name || "Unknown sender"}
                                 </span>
                                 {t.lead_category && (
@@ -1530,8 +1530,22 @@ export default function InboxView() {
                                 {relative(t.last_message_at)}
                               </span>
                             </span>
-                            <span className="mt-0.5 flex items-center gap-1.5">
-                              <span className="truncate text-[12px] text-ink/50 dark:text-fog/50">
+                            {(t.platform === "google_reviews" || t.platform === "google") && (
+                              <span
+                                className="mt-0.5 flex min-w-0 items-center gap-1 text-[10.5px] font-medium text-ink/40 dark:text-fog/40"
+                                title={t.channel_name ?? "Google review"}
+                              >
+                                <svg viewBox="0 0 24 24" fill="none" aria-hidden className="h-3 w-3 shrink-0">
+                                  <path d="M12 21s7-5.4 7-11a7 7 0 1 0-14 0c0 5.6 7 11 7 11Z" stroke="currentColor" strokeWidth={1.5} />
+                                  <circle cx="12" cy="10" r="2.2" stroke="currentColor" strokeWidth={1.5} />
+                                </svg>
+                                <span className="truncate">
+                                  {t.channel_name ?? "Google review"}
+                                </span>
+                              </span>
+                            )}
+                            <span className="mt-1 flex items-center gap-1.5">
+                              <span className="truncate text-[12.5px] text-ink/50 dark:text-fog/50">
                                 {t.last_direction === "outbound" ? "You: " : ""}
                                 {t.last_message}
                               </span>
@@ -1546,14 +1560,14 @@ export default function InboxView() {
                         <button
                           onClick={() => togglePin(t)}
                           aria-label={isPinned ? "Unpin thread" : "Pin thread"}
-                          className={`px-2 py-3 text-[13px] ${isPinned ? "text-deep-violet" : "text-ink/20 hover:text-ink/50"}`}
+                          className={`px-2 py-4 text-[13px] ${isPinned ? "text-deep-violet" : "text-ink/20 hover:text-ink/50"}`}
                         >
                           📌
                         </button>
                         <button
                           onClick={() => void handleArchive(t, !t.archived)}
                           aria-label={t.archived ? "Unarchive thread" : "Archive thread"}
-                          className={`px-2 py-3 text-[13px] ${t.archived ? "text-amber-600" : "text-ink/20 hover:text-ink/50"}`}
+                          className={`px-2 py-4 text-[13px] ${t.archived ? "text-amber-600" : "text-ink/20 hover:text-ink/50"}`}
                           title={t.archived ? "Unarchive" : "Archive"}
                         >
                           {t.archived ? "📥" : "📦"}
@@ -1564,7 +1578,7 @@ export default function InboxView() {
                             setDeleteTarget(t);
                           }}
                           aria-label="Delete thread"
-                          className="px-2 py-3 text-[13px] text-ink/20 hover:text-red-600"
+                          className="px-2 py-4 text-[13px] text-ink/20 hover:text-red-600"
                           title="Delete conversation permanently"
                         >
                           🗑
@@ -1600,7 +1614,7 @@ export default function InboxView() {
             </div>
           ) : (
             <>
-              <div className="flex flex-wrap items-center gap-3 border-b border-ink/[0.06] px-3 py-3 dark:border-fog/[0.06]">
+              <div className="flex flex-wrap items-center gap-3 border-b border-ink/[0.06] bg-white/95 px-4 py-3.5 dark:border-fog/[0.06] dark:bg-ink/95">
                 <button
                   onClick={() => setSelectedKey(null)}
                   aria-label="Back to conversations"
@@ -1617,12 +1631,12 @@ export default function InboxView() {
                     name={target.display_name}
                     phone={target.contact_phone}
                     url={target.avatar_url}
-                    boxCls="h-10 w-10 rounded-xl bg-deep-violet/10 text-[11px] text-deep-violet ring-1 ring-deep-violet/10"
+                    boxCls="h-11 w-11 rounded-full bg-deep-violet/10 text-[12px] text-deep-violet ring-1 ring-deep-violet/10"
                   >
                     <PlatformBadge platform={target.platform} />
                   </Avatar>
                   <span className="min-w-0 flex-1">
-                    <p className="flex min-w-0 items-center gap-1.5 text-[14px] font-semibold text-ink dark:text-fog">
+                    <p className="flex min-w-0 items-center gap-1.5 text-[15px] font-semibold text-ink dark:text-fog">
                       <span className="truncate">
                         {target.display_name || "Unknown sender"}
                       </span>
@@ -1634,7 +1648,7 @@ export default function InboxView() {
                         </span>
                       )}
                     </p>
-                    <p className="truncate text-[11px] text-ink/45 dark:text-fog/45">
+                    <p className="truncate text-[12px] text-ink/45 dark:text-fog/45">
                       {/* A Google reviewer has no phone number - show the location. */}
                       {target.platform === "google_reviews" || target.platform === "google"
                         ? target.channel_name ?? "Google review"
@@ -1846,7 +1860,7 @@ export default function InboxView() {
                 />
               </div>
 
-              <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+              <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto bg-[#f7f6fa] px-4 py-5 dark:bg-[#0f0c18] sm:px-6">
                 {loadedKey !== targetKey ? (
                   <div className="flex justify-center py-16"><LogoLoader size={24} /></div>
                 ) : threadView.length === 0 ? (
@@ -1885,6 +1899,13 @@ export default function InboxView() {
                       i === 0 ||
                       new Date(threadView[i - 1].created_at).toDateString() !== new Date(m.created_at).toDateString();
                     const mine = m.direction === "outbound";
+                    const previous = threadView[i - 1];
+                    const firstInRun =
+                      !previous ||
+                      previous.direction !== m.direction ||
+                      new Date(m.created_at).getTime() -
+                        new Date(previous.created_at).getTime() >
+                        5 * 60 * 1000;
                     const quotedMessage = m.reply_to_message_id
                       ? messages.find(
                           (x) => x.platform_message_id === m.reply_to_message_id,
@@ -1945,14 +1966,25 @@ export default function InboxView() {
                             {dayLabel(m.created_at)}
                           </p>
                         )}
-                        <div className={`mb-1 flex ${mine ? "justify-end" : "justify-start"}`}>
+                        <div className={`mb-1.5 flex items-end gap-2 ${mine ? "justify-end" : "justify-start"}`}>
+                          {!mine &&
+                            (firstInRun ? (
+                              <Avatar
+                                name={target?.display_name ?? ""}
+                                phone={target?.contact_phone ?? null}
+                                url={target?.avatar_url}
+                                boxCls="h-7 w-7 shrink-0 rounded-full bg-deep-violet/10 text-[9px] text-deep-violet ring-1 ring-deep-violet/10"
+                              />
+                            ) : (
+                              <span className="h-7 w-7 shrink-0" aria-hidden />
+                            ))}
                           <div
-                            className={`max-w-[78%] rounded-2xl px-3 py-2 ${
+                            className={`max-w-[72%] rounded-2xl px-4 py-2.5 shadow-sm ${
                               mine
                                 ? m.status === "failed"
                                   ? "bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-200"
                                   : "bg-deep-violet text-white"
-                                : "bg-ink/[0.05] text-ink dark:bg-fog/[0.08] dark:text-fog"
+                                : "border border-ink/[0.06] bg-white text-ink dark:border-fog/[0.08] dark:bg-fog/[0.06] dark:text-fog"
                             }`}
                           >
                             {m.deleted ? (
@@ -2065,14 +2097,14 @@ export default function InboxView() {
                                   </a>
                                 ) : null}
                                 {attachmentText ? (
-                                  <p className="whitespace-pre-wrap break-words text-[13px]">
+                                  <p className="whitespace-pre-wrap break-words text-[13.5px] leading-5">
                                     {attachmentText}
                                   </p>
                                 ) : null}
                               </>
                             )}
                             <p
-                              className={`mt-1 flex items-center justify-end gap-1 text-[10px] ${
+                              className={`mt-1 flex items-center justify-end gap-1 text-[10.5px] ${
                                 mine ? (m.status === "failed" ? "text-red-500" : "text-white/70") : "text-ink/35 dark:text-fog/35"
                               }`}
                             >
