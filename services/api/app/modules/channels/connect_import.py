@@ -357,6 +357,13 @@ async def _ensure_insight(
     poll to create the row would leave the modal's freshly imported review
     invisible outside the modal.
     """
+    from .reviews_worker import _store_inbound_review
+
+    # Also seed the inbox thread now. The import can finish before the next
+    # 5-minute review poll; without this, the review exists in Analytics but
+    # not in the conversation list.
+    await _store_inbound_review(db, channel.id, review)
+
     existing = (
         await db.execute(
             select(ReviewInsight.id).where(
@@ -770,6 +777,17 @@ async def _publish_one(session_id: str, item_id: str, semaphore: asyncio.Semapho
                 reply.error = None
                 item.status = "published"
                 item.error = None
+                from .reviews_worker import _store_reply_message
+
+                await _store_reply_message(
+                    db,
+                    channel,
+                    item.review_id,
+                    item.reviewer_name,
+                    reply,
+                    status="sent",
+                    handled_by="ai",
+                )
                 await _log(
                     db,
                     session_id,

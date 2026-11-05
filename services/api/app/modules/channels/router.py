@@ -3338,6 +3338,12 @@ async def approve_review_reply(
             raise HTTPException(status_code=502, detail=reply.error)
         reply.status = "posted"
         reply.error = None
+        from .reviews_worker import _store_reply_message
+
+        await _store_reply_message(
+            db, channel, reply.review_id, reply.reviewer_name, reply,
+            status="sent", handled_by="ai",
+        )
         await db.commit()
         await _clear_edited_flag(db, channel.id, reply.review_id)
         await db.commit()

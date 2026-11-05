@@ -1635,11 +1635,13 @@ export default function InboxView() {
                       )}
                     </p>
                     <p className="truncate text-[11px] text-ink/45 dark:text-fog/45">
-                      {/* An IGSID is not a phone number — no formatting. */}
-                      {target.platform === "instagram"
-                        ? target.contact_phone
-                        : formatPhone(target.contact_phone)}
-                      {target.channel_name ? ` · ${target.channel_name}` : ""}
+                      {/* A Google reviewer has no phone number - show the location. */}
+                      {target.platform === "google_reviews" || target.platform === "google"
+                        ? target.channel_name ?? "Google review"
+                        : target.platform === "instagram"
+                          ? target.contact_phone
+                          : formatPhone(target.contact_phone)}
+                      {target.channel_name && target.platform !== "google_reviews" && target.platform !== "google" ? ` · ${target.channel_name}` : ""}
                     </p>
                   </span>
                 </button>

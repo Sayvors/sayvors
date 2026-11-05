@@ -2,6 +2,8 @@ export const PLATFORM_META: Record<string, { label: string; icon: string }> = {
   whatsapp: { label: "WhatsApp", icon: "/channels/whatsapp.png" },
   instagram: { label: "Instagram", icon: "/channels/instagram.png" },
   facebook: { label: "Facebook Messenger", icon: "/channels/facebook.png" },
+  google_reviews: { label: "Google review", icon: "/google.svg" },
+  google: { label: "Google review", icon: "/google.svg" },
   x: { label: "X", icon: "/channels/x.png" },
   telegram: { label: "Telegram", icon: "/channels/telegram.png" },
   linkedin: { label: "LinkedIn", icon: "/channels/linkedin.png" },

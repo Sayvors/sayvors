@@ -1616,6 +1616,91 @@ async def _thread_profiles(
     return {(r.platform, r.contact_id): r for r in rows}
 
 
+async def _google_thread_profiles(
+    db: AsyncSession,
+    threads: list[ChannelThread],
+    by_id: dict[str, Channel],
+) -> dict:
+    """Resolve Google reviewer names/avatars for a page of threads.
+
+    Google reviewers have no ContactProfile row. Their identity lives on the
+    ReviewInsight created from the review payload, so the inbox resolves the
+    latest review per thread in two bulk queries rather than showing the
+    synthetic ``google:<digest>`` key.
+    """
+    from types import SimpleNamespace
+
+    from ..analytics.models import ReviewInsight
+
+    google_threads = [
+        t for t in threads
+        if t.contact_phone_hash
+        and t.channel_id in by_id
+        and by_id[t.channel_id].platform == "google_reviews"
+    ]
+    if not google_threads:
+        return {}
+    hashes = {t.contact_phone_hash for t in google_threads if t.contact_phone_hash}
+    channel_ids = {t.channel_id for t in google_threads}
+    rows = (
+        await db.execute(
+            select(
+                ChannelMessage.channel_id,
+                ChannelMessage.contact_phone_hash,
+                ChannelMessage.platform_message_id,
+            )
+            .where(
+                ChannelMessage.channel_id.in_(channel_ids),
+                ChannelMessage.contact_phone_hash.in_(hashes),
+                ChannelMessage.direction == "inbound",
+            )
+            .order_by(ChannelMessage.created_at.desc())
+            .limit(2000)
+        )
+    ).all()
+    latest_review: dict[tuple[str, str], str] = {}
+    for channel_id, phone_hash, review_id in rows:
+        if review_id:
+            latest_review.setdefault((channel_id, phone_hash), review_id)
+    if not latest_review:
+        return {}
+    review_ids = set(latest_review.values())
+    insights = (
+        await db.execute(
+            select(
+                ReviewInsight.channel_id,
+                ReviewInsight.review_id,
+                ReviewInsight.reviewer_name,
+                ReviewInsight.reviewer_photo_url,
+            ).where(
+                ReviewInsight.channel_id.in_(channel_ids),
+                ReviewInsight.review_id.in_(review_ids),
+            )
+        )
+    ).all()
+    by_review = {
+        (channel_id, review_id): (name, photo)
+        for channel_id, review_id, name, photo in insights
+    }
+    out: dict = {}
+    for thread in google_threads:
+        review_id = latest_review.get(
+            (thread.channel_id, thread.contact_phone_hash)
+        )
+        name, photo = by_review.get(
+            (thread.channel_id, review_id), (None, None)
+        )
+        phone = decrypt_contact_phone(thread.contact_phone)
+        if phone and (name or photo):
+            out[(by_id[thread.channel_id].platform, phone)] = SimpleNamespace(
+                name=name,
+                username=None,
+                avatar_url=photo,
+                profile_fetched_at=None,
+            )
+    return out
+
+
 async def _thread_lead_categories(
     db: AsyncSession,
     tenant_id: str,
@@ -2176,6 +2261,7 @@ async def list_inbox_threads(
         if not threads:
             return []
         profiles = await _thread_profiles(db, tenant_id_of(user), threads, by_id)
+        profiles.update(await _google_thread_profiles(db, threads, by_id))
         lead_categories = await _thread_lead_categories(
             db, tenant_id_of(user), _thread_lead_pairs(threads)
         )
@@ -2207,6 +2293,7 @@ async def list_inbox_threads(
         return []
 
     profiles = await _thread_profiles(db, tenant_id_of(user), threads, by_id)
+    profiles.update(await _google_thread_profiles(db, threads, by_id))
     lead_categories = await _thread_lead_categories(
         db, tenant_id_of(user), _thread_lead_pairs(threads)
     )
@@ -2402,6 +2489,7 @@ async def list_inbox_threads_page(
         return [], total, None
 
     profiles = await _thread_profiles(db, tenant_id_of(user), threads, by_id)
+    profiles.update(await _google_thread_profiles(db, threads, by_id))
     lead_categories = await _thread_lead_categories(
         db, tenant_id_of(user), _thread_lead_pairs(threads)
     )
