@@ -148,8 +148,17 @@ class OpenAICompatibleProvider(LLMProvider):
     @staticmethod
     def _map_error(e: Exception) -> int:
         msg = str(e).lower()
-        if "authentication" in msg or "api key" in msg or "invalid_api_key" in msg:
-            return 502
+        if (
+            "401" in msg
+            or "missing authentication" in msg
+            or "unauthorized" in msg
+            or "authentication" in msg
+            or "api key" in msg
+            or "invalid_api_key" in msg
+        ):
+            return 401
+        if "403" in msg or "forbidden" in msg or "permission" in msg:
+            return 403
         if "rate" in msg and "limit" in msg:
             return 429
         if "timeout" in msg:

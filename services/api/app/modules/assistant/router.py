@@ -862,6 +862,30 @@ _GREETING_PROMPT = (
 )
 
 
+def _assistant_error_message(error: Exception) -> str:
+    """Owner-facing failure text — never the provider's raw error.
+
+    Provider errors can carry URLs, model names and key fragments; the owner
+    only needs to know what to do next.
+    """
+    from ..llm.providers.base import ProviderError
+
+    if isinstance(error, ProviderError):
+        if error.status_code in (401, 403):
+            return (
+                "The AI provider rejected its key. Add or replace it in "
+                "Admin → LLMs, then try again."
+            )
+        if error.status_code == 429:
+            return "The AI provider is rate-limiting right now. Try again in a minute."
+        if error.status_code == 504:
+            return "The AI provider timed out. Try again."
+    text = str(error)
+    if "No AI model" in text:
+        return "No AI model is enabled yet. Turn one on in Admin → LLMs."
+    return "Assistant is unavailable right now. Try again shortly."
+
+
 @router.post("/chat/stream")
 async def chat_stream(
     body: AssistantChatRequest,
@@ -893,7 +917,6 @@ async def chat_stream(
         # own row instead of appending a new one.
         try:
             tid = tenant_id_of(user)
-            model = await _resolve_model(db, tid)
             profile = await chat_memory.load_profile(tid)
 
             # A greeting answers conversationally — no snapshot, databank or
@@ -911,23 +934,30 @@ async def chat_stream(
                 msgs.append(LLMMessage(role="user", content=body.message))
                 yield sse({"type": "step", "id": "think", "label": "Writing your answer"})
                 empty = True
+                model = ""
                 greeting_prompt = _GREETING_PROMPT + chat_memory.profile_prompt_block(
                     profile, exclude_session=body.session_id
                 )
-                async for chunk in llm_stream(
-                    model=model,
-                    messages=msgs,
-                    system_prompt=greeting_prompt,
-                    temperature=0.5,
-                    max_tokens=120,
-                    tenant_id=tid,
-                    purpose="assistant.chat",
-                ):
-                    if not chunk:
-                        continue
-                    empty = False
-                    answer_parts.append(chunk)
-                    yield sse({"type": "delta", "text": chunk})
+                try:
+                    model = await _resolve_model(db, tid)
+                    async for chunk in llm_stream(
+                        model=model,
+                        messages=msgs,
+                        system_prompt=greeting_prompt,
+                        temperature=0.5,
+                        max_tokens=200,
+                        tenant_id=tid,
+                        purpose="assistant.chat",
+                    ):
+                        if not chunk:
+                            continue
+                        empty = False
+                        answer_parts.append(chunk)
+                        yield sse({"type": "delta", "text": chunk})
+                except Exception as e:
+                    # A greeting must never surface a provider/configuration
+                    # error — the owner just said hello.
+                    logger.warning("Greeting generation failed: %s", e)
                 if empty:
                     fallback = "Hi! What would you like to check — reviews, replies, visibility or a chart?"
                     answer_parts.append(fallback)
@@ -944,6 +974,8 @@ async def chat_stream(
                     "model": model,
                 })
                 return
+
+            model = await _resolve_model(db, tid)
 
             # 1. Live business data, stage by stage.
             yield sse({"type": "step", "id": "data-locations", "label": "Checking your locations"})
@@ -1244,7 +1276,7 @@ async def chat_stream(
             })
         except Exception as e:  # surface as an event so the UI can render it
             logger.warning("Assistant stream failed: %s", e)
-            yield sse({"type": "error", "message": f"Assistant is unavailable right now: {e}"[:300]})
+            yield sse({"type": "error", "message": _assistant_error_message(e)})
         finally:
             if not saved and body.session_id:
                 try:
