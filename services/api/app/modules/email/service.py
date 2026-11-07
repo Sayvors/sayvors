@@ -21,6 +21,7 @@ import httpx
 
 from ...config import settings
 from ..redis.client import get_redis
+from . import templates as email_templates
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,19 @@ OTP_TTL_SECONDS = 10 * 60
 OTP_MAX_ATTEMPTS = 5
 
 LOGO_FILENAME = "Sayvors_Wordmark_Dark.png"
+SUPPORT_EMAIL = "it@sayvors.com"
+
+
+def _base_url() -> str:
+    return (settings.FRONTEND_URL or "").rstrip("/")
+
+
+def _help_url() -> str:
+    return f"{_base_url()}/dashboard" if _base_url() else "https://sayvors.com"
+
+
+def _privacy_url() -> str:
+    return f"{_base_url()}/privacy" if _base_url() else "https://sayvors.com/privacy"
 
 
 def _logo_url() -> str:
@@ -38,65 +52,22 @@ def _logo_url() -> str:
     return f"{base}/{LOGO_FILENAME}" if base else f"/{LOGO_FILENAME}"
 
 
-FOOTER_HTML = """<tr>
-    <td style="padding:28px 40px;background-color:#FAFAFA;border-top:1px solid #EEEEF0;text-align:center;">
-      <p style="margin:0 0 16px;font-size:13px;font-weight:600;color:#52525B;">Follow Sayvors</p>
-      <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:0 auto;"><tr>
-        <td style="padding:0 8px;">
-          <a href="https://www.linkedin.com/company/Sayvors"><img src="https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/linkedin.svg" width="40" height="40" alt="LinkedIn" style="display:block;border:0;border-radius:8px;"></a>
-        </td>
-        <td style="padding:0 8px;">
-          <a href="https://twitter.com/Sayvors"><img src="https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/x.svg" width="40" height="40" alt="X" style="display:block;border:0;border-radius:8px;"></a>
-        </td>
-        <td style="padding:0 8px;">
-          <a href="https://www.facebook.com/Sayvors"><img src="https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/facebook.svg" width="40" height="40" alt="Facebook" style="display:block;border:0;border-radius:8px;"></a>
-        </td>
-        <td style="padding:0 8px;">
-          <a href="https://www.instagram.com/Sayvors"><img src="https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/instagram.svg" width="40" height="40" alt="Instagram" style="display:block;border:0;border-radius:8px;"></a>
-        </td>
-      </tr></table>
-      <p style="margin:16px 0 6px;font-size:12px;color:#A1A1AA;">
-        <a href="https://Sayvors.com" style="color:#71717A;text-decoration:none;font-weight:600;">Sayvors.com</a>
-      </p>
-      <p style="margin:0;font-size:12px;color:#A1A1AA;">EVERY LINE, ONE VOICE</p>
-      <p style="margin:6px 0 0;font-size:12px;color:#A1A1AA;">© Sayvors — Automated message, please do not reply.</p>
-    </td>
-  </tr>"""
-
-
-def _shell(title: str, body_inner: str, logo_url: str) -> str:
-    """Shared branded layout (same header/body/footer as the OTP email)."""
-    return f"""<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#F4F4F5;padding:32px 16px;">
-<tr><td align="center">
-<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:12px;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-
-  <!-- Header -->
-  <tr><td style="padding:28px 40px;border-bottom:1px solid #EEEEF0;">
-    <img src="{logo_url}" alt="Sayvors" width="160" style="display:block;border:0;max-width:160px;height:auto;">
-    <div style="margin-top:8px;font-size:11px;font-weight:600;letter-spacing:3px;color:#A1A1AA;">EVERY LINE, ONE VOICE</div>
-  </td></tr>
-
-  <!-- Body -->
-  <tr><td style="padding:40px;color:#1F2937;">
-    <h1 style="margin:0 0 12px;font-size:22px;font-weight:700;color:#1F2937;">{title}</h1>
-    {body_inner}
-  </td></tr>
-
-  <!-- Footer with social icons -->
-  {FOOTER_HTML}
-
-</table>
-</td></tr>
-</table>"""
+def _shell(title: str, body_inner: str, logo_url: str | None = None) -> str:
+    """Shared Sayvors layout (brand header, gradient hero, text footer)."""
+    return email_templates.shell(
+        title_ar="",
+        title_en=title,
+        preheader=title,
+        body_html=body_inner,
+        frontend_url=_base_url(),
+        support_email=SUPPORT_EMAIL,
+        help_url=_help_url(),
+        privacy_url=_privacy_url(),
+    )
 
 
 def _cta_button(label: str, url: str) -> str:
-    return (
-        f"<div style=\"margin:28px 0;text-align:center;\">"
-        f"<a href=\"{url}\" style=\"display:inline-block;background-color:#5B2D8E;color:#ffffff;"
-        f"font-size:15px;font-weight:700;text-decoration:none;padding:14px 32px;border-radius:10px;\">{label}</a>"
-        f"</div>"
-    )
+    return email_templates._cta(label, url)
 
 
 def _configured() -> bool:
@@ -154,57 +125,6 @@ def _otp_key(email: str) -> str:
     return f"otp:{email.strip().lower()}"
 
 
-OTP_HTML = """<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#F4F4F5;padding:32px 16px;">
-<tr><td align="center">
-<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:12px;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-
-  <!-- Header -->
-  <tr><td style="padding:28px 40px;border-bottom:1px solid #EEEEF0;">
-    <img src="{logo_url}" alt="Sayvors" width="160" style="display:block;border:0;max-width:160px;height:auto;">
-    <div style="margin-top:8px;font-size:11px;font-weight:600;letter-spacing:3px;color:#A1A1AA;">EVERY LINE, ONE VOICE</div>
-  </td></tr>
-
-  <!-- Body -->
-  <tr><td style="padding:40px;color:#1F2937;">
-    <h1 style="margin:0 0 12px;font-size:22px;font-weight:700;color:#1F2937;">Your verification code</h1>
-    <p style="margin:0 0 28px;font-size:15px;line-height:24px;color:#52525B;">Your Sayvors {purpose} code is:</p>
-    <div style="background-color:#FFF7ED;border:1px solid #FED7AA;border-radius:10px;padding:20px;text-align:center;">
-      <span style="font-size:32px;font-weight:700;letter-spacing:8px;color:#1F2937;font-family:'Courier New',Courier,monospace;">{code}</span>
-    </div>
-    <p style="margin:28px 0 0;font-size:14px;line-height:22px;color:#71717A;">This code expires in <strong style="color:#52525B;">10 minutes</strong>. If you didn't request it, you can safely ignore this email.</p>
-  </td></tr>
-
-  <!-- Footer with social icons -->
-  <tr>
-    <td style="padding:28px 40px;background-color:#FAFAFA;border-top:1px solid #EEEEF0;text-align:center;">
-      <p style="margin:0 0 16px;font-size:13px;font-weight:600;color:#52525B;">Follow Sayvors</p>
-      <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:0 auto;"><tr>
-        <td style="padding:0 8px;">
-          <a href="https://www.linkedin.com/company/Sayvors"><img src="https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/linkedin.svg" width="40" height="40" alt="LinkedIn" style="display:block;border:0;border-radius:8px;"></a>
-        </td>
-        <td style="padding:0 8px;">
-          <a href="https://twitter.com/Sayvors"><img src="https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/x.svg" width="40" height="40" alt="X" style="display:block;border:0;border-radius:8px;"></a>
-        </td>
-        <td style="padding:0 8px;">
-          <a href="https://www.facebook.com/Sayvors"><img src="https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/facebook.svg" width="40" height="40" alt="Facebook" style="display:block;border:0;border-radius:8px;"></a>
-        </td>
-        <td style="padding:0 8px;">
-          <a href="https://www.instagram.com/Sayvors"><img src="https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/instagram.svg" width="40" height="40" alt="Instagram" style="display:block;border:0;border-radius:8px;"></a>
-        </td>
-      </tr></table>
-      <p style="margin:16px 0 6px;font-size:12px;color:#A1A1AA;">
-        <a href="https://Sayvors.com" style="color:#71717A;text-decoration:none;font-weight:600;">Sayvors.com</a>
-      </p>
-      <p style="margin:0;font-size:12px;color:#A1A1AA;">EVERY LINE, ONE VOICE</p>
-      <p style="margin:6px 0 0;font-size:12px;color:#A1A1AA;">© Sayvors — Automated message, please do not reply.</p>
-    </td>
-  </tr>
-
-</table>
-</td></tr>
-</table>"""
-
-
 async def send_otp_email(email: str, purpose: str = "verification") -> None:
     """Create and send a one-time passcode for email verification.
 
@@ -220,14 +140,17 @@ async def send_otp_email(email: str, purpose: str = "verification") -> None:
     redis = await get_redis()
     await redis.setex(_otp_key(email), OTP_TTL_SECONDS, code)
     await redis.delete(_otp_attempts_key(email))
-    html = (
-        OTP_HTML.replace("{logo_url}", _logo_url())
-        .replace("{purpose}", purpose)
-        .replace("{code}", code)
+    html = email_templates.otp_email(
+        code=code,
+        purpose=purpose,
+        frontend_url=_base_url(),
+        support_email=SUPPORT_EMAIL,
+        help_url=_help_url(),
+        privacy_url=_privacy_url(),
     )
     await send_email(
         email,
-        f"Your Sayvors {purpose} code",
+        f"Your Sayvors {purpose} code · رمز التحقق",
         html,
         text=f"Your Sayvors {purpose} code is: {code} (expires in 10 minutes)",
     )
@@ -319,18 +242,21 @@ async def send_team_invite_email(
 
 async def send_password_reset_email(email: str, name: str, reset_url: str) -> str:
     """Send a password reset email containing a secure recovery URL."""
-    display = name or "there"
-    body = (
-        f"<p style=\"margin:0 0 16px;font-size:15px;line-height:24px;color:#52525B;\">Hi {display},</p>"
-        f"<p style=\"margin:0 0 16px;font-size:15px;line-height:24px;color:#52525B;\">We received a request to reset your Sayvors password. Click below to choose a new one (link expires in <strong style=\"color:#52525B;\">1 hour</strong>):</p>"
-        f"{_cta_button('Reset my password', reset_url)}"
-        f"<p style=\"margin:16px 0 0;font-size:14px;line-height:22px;color:#71717A;word-break:break-all;\">If the button doesn't work, paste this link: {reset_url}</p>"
-        f"<p style=\"margin:16px 0 0;font-size:14px;line-height:22px;color:#71717A;\">If you didn't request this, you can safely ignore this email.</p>"
+    import html as _html
+
+    display = _html.escape(name or "there")
+    html = email_templates.reset_email(
+        name=display,
+        reset_url=reset_url,
+        frontend_url=_base_url(),
+        support_email=SUPPORT_EMAIL,
+        help_url=_help_url(),
+        privacy_url=_privacy_url(),
     )
     return await send_email(
         email,
-        "Reset your Sayvors password",
-        _shell("Reset your password", body, _logo_url()),
+        "Reset your Sayvors password · إعادة تعيين كلمة المرور",
+        html,
         text=f"Hi {display}, reset your Sayvors password (expires in 1 hour): {reset_url}",
     )
 
@@ -419,20 +345,28 @@ async def send_account_exists_email(email: str, name: str) -> str:
 
 
 async def send_welcome_email(email: str, name: str) -> str:
-    """Send a branded onboarding email after account creation."""
-    display = name or "there"
-    channels_url = f"{(settings.FRONTEND_URL or '').rstrip('/')}/dashboard/channels"
-    body = (
-        f"<p style=\"margin:0 0 16px;font-size:15px;line-height:24px;color:#52525B;\">Hi {display},</p>"
-        f"<p style=\"margin:0 0 16px;font-size:15px;line-height:24px;color:#52525B;\">Congrats — your Sayvors account is ready!</p>"
-        f"<p style=\"margin:0 0 16px;font-size:15px;line-height:24px;color:#52525B;\">Connect your Google Business Profile and let our AI handle your reviews.</p>"
-        f"{_cta_button('Connect your first channel', channels_url)}"
+    """Send the bilingual welcome email after account creation."""
+    import html as _html
+
+    display = _html.escape(name or "there")
+    dashboard_url = f"{_base_url()}/dashboard" if _base_url() else "https://app.sayvors.com/dashboard"
+    html = email_templates.welcome_email(
+        name=display,
+        dashboard_url=dashboard_url,
+        frontend_url=_base_url(),
+        support_email=SUPPORT_EMAIL,
+        help_url=_help_url(),
+        privacy_url=_privacy_url(),
     )
     return await send_email(
         email,
-        f"Welcome to Sayvors, {display}! 🎉",
-        _shell("Welcome to Sayvors", body, _logo_url()),
-        text=f"Hi {display}, your Sayvors account is ready! Connect a channel: {channels_url}",
+        f"Welcome to Sayvors · أهلًا بك في Sayvors",
+        html,
+        text=(
+            f"Hi {display}, your Sayvors account is ready.\n"
+            f"Open your dashboard: {dashboard_url}\n"
+            f"Need help? {SUPPORT_EMAIL}"
+        ),
     )
 
 
@@ -458,9 +392,13 @@ async def send_notification_email(email: str, subject: str, message: str, cta_ur
             raise ValueError("cta_url must be an absolute http(s) URL.")
         safe_cta = _html.escape(cta_url, quote=True)
         cta = f"<p><a href='{safe_cta}'>View in Sayvors</a></p>"
+    body = (
+        f"<p dir=\"ltr\" style=\"margin:0 0 16px;font-size:15px;line-height:24px;color:#4A4266;\">{safe_message}</p>"
+        f"{cta}"
+    )
     return await send_email(
         email,
         full_subject,
-        f"<p>{safe_message}</p>{cta}",
+        _shell(subject, body),
         text=f"{full_subject}\n{message}" + (f"\n{cta_url}" if cta_url else ""),
     )
