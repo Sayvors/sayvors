@@ -18,11 +18,14 @@ import type { NextRequest } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const TARGET = (
-  process.env.API_PROXY_TARGET ||
-  process.env.NEXT_PUBLIC_API_URL ||
-  "http://127.0.0.1:8000"
-).replace(/\/$/, "");
+// Where the local FastAPI process listens. Deliberately NOT
+// NEXT_PUBLIC_API_URL: in dev that points at the public tunnel hostname, so
+// proxying there from inside this server would loop back into Next (or hang
+// when the tunnel is unreachable). Override only with a local target.
+const TARGET = (process.env.API_PROXY_TARGET || "http://127.0.0.1:8000").replace(
+  /\/$/,
+  "",
+);
 
 const SSE_HEADERS: Record<string, string> = {
   "content-type": "text/event-stream; charset=utf-8",
@@ -43,18 +46,25 @@ export async function POST(request: NextRequest) {
   if (csrf) headers["x-csrf-token"] = csrf;
 
   let upstream: Response;
+  const controller = new AbortController();
+  // Bound only the wait for response headers. Once FastAPI answers, the
+  // timer is cleared so the event stream itself is never aborted.
+  const headerTimeout = setTimeout(() => controller.abort(), 20_000);
   try {
     upstream = await fetch(`${TARGET}${request.nextUrl.pathname}`, {
       method: "POST",
       headers,
       body,
       cache: "no-store",
+      signal: controller.signal,
     });
   } catch {
     return new Response(
       JSON.stringify({ detail: "Assistant is unavailable right now. Try again shortly." }),
       { status: 502, headers: { "content-type": "application/json" } },
     );
+  } finally {
+    clearTimeout(headerTimeout);
   }
 
   if (!upstream.ok || !upstream.body) {
