@@ -2102,6 +2102,15 @@ export default function InboxView() {
                               </p>
                             ) : (
                               <>
+                                {m.content_type === "review_reply" && (
+                                  <p
+                                    className={`mb-1 text-[9.5px] font-bold uppercase tracking-[0.08em] ${
+                                      mine ? "text-white/70" : "text-ink/45 dark:text-fog/45"
+                                    }`}
+                                  >
+                                    Public reply on Google
+                                  </p>
+                                )}
                                 {quotedMessage && (
                                   <div
                                     className={`mb-1.5 rounded-lg border-l-2 px-2 py-1 ${

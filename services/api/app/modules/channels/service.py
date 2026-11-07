@@ -2562,4 +2562,76 @@ async def list_thread_messages(
         .limit(limit)
     )
     rows = list(result.scalars().all())
+    rows = await _attach_missing_review_replies(db, channel, rows)
     return list(reversed(rows))
+
+
+async def _attach_missing_review_replies(
+    db: AsyncSession, channel: Channel, rows: list[ChannelMessage]
+) -> list[ChannelMessage]:
+    """Show existing Google replies even when no mirror row was written.
+
+    Replies posted before the inbox mirroring landed (or on a database where
+    the backfill never ran) exist only in ``review_replies``. Synthesizing the
+    outbound bubble here — never writing on a read path — makes the thread
+    complete on every environment without a data migration.
+    """
+    if channel.platform != "google_reviews":
+        return rows
+    review_ids = [
+        m.platform_message_id
+        for m in rows
+        if m.direction == "inbound"
+        and m.content_type == "review"
+        and m.platform_message_id
+    ]
+    if not review_ids:
+        return rows
+
+    from .models import ReviewReply
+
+    replies = (
+        await db.execute(
+            select(ReviewReply).where(
+                ReviewReply.channel_id == channel.id,
+                ReviewReply.review_id.in_(review_ids),
+                ReviewReply.status == "posted",
+                ReviewReply.reply_text.isnot(None),
+            )
+        )
+    ).scalars().all()
+    if not replies:
+        return rows
+
+    mirrored = {m.platform_message_id for m in rows}
+    inbound_by_review = {
+        m.platform_message_id: m
+        for m in rows
+        if m.direction == "inbound" and m.content_type == "review"
+    }
+    extra: list[ChannelMessage] = []
+    for reply in replies:
+        platform_id = f"google-reply:{reply.id}"[:200]
+        if platform_id in mirrored:
+            continue
+        parent = inbound_by_review.get(reply.review_id)
+        if parent is None:
+            continue
+        extra.append(
+            ChannelMessage(
+                id=platform_id,
+                channel_id=channel.id,
+                platform_message_id=platform_id,
+                direction="outbound",
+                content=encrypt_message_content(reply.reply_text),
+                content_type="review_reply",
+                status="read",
+                contact_phone=parent.contact_phone,
+                contact_phone_hash=parent.contact_phone_hash,
+                contact_name=parent.contact_name,
+                created_at=reply.created_at,
+            )
+        )
+    if not extra:
+        return rows
+    return sorted([*rows, *extra], key=lambda m: (m.created_at, m.id))
