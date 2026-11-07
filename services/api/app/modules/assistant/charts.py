@@ -444,6 +444,7 @@ async def _get_data(
     context: dict,
     memory: dict,
     steps: list[dict],
+    on_step=None,
 ) -> dict:
     dataset_key = str(args.get("dataset") or "")
     if dataset_key not in DATASETS:
@@ -458,11 +459,17 @@ async def _get_data(
     cached = chat_memory.recall_dataset(memory, query_key)
     if cached:
         context[query_key] = cached
-        steps.append({
+        step = {
             "id": f"chart-data:{dataset_key}",
             "label": f"Reusing your {DATASETS[dataset_key].label.lower()} data",
             "detail": "already loaded in this chat",
-        })
+        }
+        steps.append(step)
+        if on_step is not None:
+            try:
+                on_step(step)
+            except Exception:
+                pass
         return _dataset_observation(cached, reused=True)
 
     result = await query_dataset(
@@ -473,11 +480,17 @@ async def _get_data(
     if result["rows"]:
         chat_memory.remember_dataset(memory, result)
     context[query_key] = result
-    steps.append({
+    step = {
         "id": f"chart-data:{dataset_key}",
         "label": f"Reading your {DATASETS[dataset_key].label.lower()}",
         "detail": f"{len(result['rows'])} rows",
-    })
+    }
+    steps.append(step)
+    if on_step is not None:
+        try:
+            on_step(step)
+        except Exception:
+            pass
     return _dataset_observation(result, reused=False)
 
 
@@ -606,6 +619,7 @@ async def _json_chart_fallback(
     plan: ChartPlan,
     context: dict[str, dict],
     signatures: set[str],
+    on_step=None,
 ) -> None:
     """Tool-free plan for providers that mangle function calls.
 
@@ -651,7 +665,7 @@ async def _json_chart_fallback(
             db, tenant_id,
             {"dataset": dataset_key, "days": days,
              "platform": platform, "location": location},
-            context, memory, plan.steps,
+            context, memory, plan.steps, on_step,
         )
         if not obs.get("row_count"):
             continue
@@ -666,11 +680,17 @@ async def _json_chart_fallback(
         }
         created = _create_chart(args, context, memory, plan.charts, signatures)
         if created.get("created"):
-            plan.steps.append({
+            step = {
                 "id": f"chart:{created['chart_id']}",
                 "label": f"Chart ready: {created['title']}",
                 "detail": created["type"].replace("_", " "),
-            })
+            }
+            plan.steps.append(step)
+            if on_step is not None:
+                try:
+                    on_step(step)
+                except Exception:
+                    pass
 
 
 async def plan_charts(
@@ -683,6 +703,7 @@ async def plan_charts(
     history: list[LLMMessage],
     memory: dict,
     business_context: str = "",
+    on_step=None,
 ) -> ChartPlan:
     """Run the tool-using planner. Never raises; chart work is optional."""
     plan = ChartPlan()
@@ -696,7 +717,7 @@ async def plan_charts(
         await _json_chart_fallback(
             db=db, tenant_id=tenant_id, model=model, message=message,
             history=history, memory=memory, business_context=business_context,
-            plan=plan, context=context, signatures=signatures,
+            plan=plan, context=context, signatures=signatures, on_step=on_step,
         )
         plan.datasets = context
         return plan
@@ -761,7 +782,7 @@ async def plan_charts(
             if name == "get_business_data":
                 obs = await _get_data(
                     db, tenant_id, _normalize_args(call.arguments or {}),
-                    context, memory, plan.steps,
+                    context, memory, plan.steps, on_step,
                 )
             elif name == "create_chart":
                 obs = _create_chart(
@@ -769,11 +790,17 @@ async def plan_charts(
                     plan.charts, signatures,
                 )
                 if obs.get("created"):
-                    plan.steps.append({
+                    step = {
                         "id": f"chart:{obs['chart_id']}",
                         "label": f"Chart ready: {obs['title']}",
                         "detail": obs["type"].replace("_", " "),
-                    })
+                    }
+                    plan.steps.append(step)
+                    if on_step is not None:
+                        try:
+                            on_step(step)
+                        except Exception:
+                            pass
             else:
                 obs = {"error": f"unknown tool: {call.name}"}
             observations.append(f"Tool {call.name} returned:\n{json.dumps(obs, default=str)[:6000]}")
@@ -790,7 +817,7 @@ async def plan_charts(
             await _json_chart_fallback(
                 db=db, tenant_id=tenant_id, model=model, message=message,
                 history=history, memory=memory, business_context=business_context,
-                plan=plan, context=context, signatures=signatures,
+                plan=plan, context=context, signatures=signatures, on_step=on_step,
             )
         elif called_tools and not has_rows:
             plan.notes = "The business data has no rows for that chart yet."

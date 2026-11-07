@@ -272,37 +272,59 @@ function renderMarkdown(text: string): React.ReactNode {
 
 /**
  * The process trail: what the assistant is doing right now (or did).
- * Deliberately quiet — small, dimmed, arrow-led — so the answer stays the
- * focus. The last row breathes while the answer is still being written.
+ * Each backend stage gets its own row — locations, reviews, replies,
+ * databank, charts, writing, finalizing — so a long answer never looks
+ * like a frozen spinner. The last row shows ~ while it works and → ✓
+ * as it completes; earlier rows keep their detail (counts, sources).
  */
 function StepTrail({ steps, done }: { steps: Step[]; done: boolean }) {
+  const running = !done;
   return (
-    <ul className="space-y-0.5 pl-0.5" aria-label="Assistant progress">
-      {steps.map((s, i) => {
-        const last = i === steps.length - 1;
-        const active = !done && last;
-        return (
-          <li
-            key={s.id}
-            className={`flex items-baseline gap-1 text-[10.5px] leading-relaxed transition-colors ${
-              active
-                ? "text-ink/50 dark:text-fog/50"
-                : done
-                  ? "text-ink/25 dark:text-fog/25"
-                  : "text-ink/35 dark:text-fog/35"
-            }`}
-          >
-            <span aria-hidden className="shrink-0 translate-y-[1px] text-ink/25 dark:text-fog/25">
-              ›
-            </span>
-            <span className={active ? "animate-pulse" : ""}>{s.label}</span>
-            {s.detail && (
-              <span className="truncate text-ink/25 dark:text-fog/25">· {s.detail}</span>
-            )}
-          </li>
-        );
-      })}
-    </ul>
+    <div
+      className="rounded-[20px] border border-ink/[0.06] bg-white px-3 py-2 dark:border-fog/[0.08] dark:bg-[#241a45]"
+      aria-label="Assistant progress"
+    >
+      <p className="px-0.5 pb-1 text-[10px] font-bold uppercase tracking-wide text-ink/35 dark:text-fog/35">
+        {running ? "Working" : "Steps completed"}
+      </p>
+      <ul className="space-y-1">
+        {steps.map((s, i) => {
+          const last = i === steps.length - 1;
+          const active = running && last;
+          return (
+            <li key={s.id} className="flex items-center gap-2 text-[11.5px] leading-relaxed">
+              <span
+                aria-hidden
+                className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
+                  active
+                    ? "bg-deep-violet text-white"
+                    : done
+                      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+                      : "bg-ink/[0.06] text-ink/40 dark:bg-fog/[0.08] dark:text-fog/40"
+                }`}
+              >
+                {active ? "→" : done ? "✓" : "·"}
+              </span>
+              <span
+                className={
+                  active
+                    ? "font-semibold text-ink dark:text-fog"
+                    : "text-ink/55 dark:text-fog/55"
+                }
+              >
+                {s.label}
+                {active && <span aria-hidden className="ml-1 animate-pulse">~</span>}
+              </span>
+              {s.detail && (
+                <span className="ml-auto shrink-0 truncate pl-2 text-[10.5px] text-ink/40 dark:text-fog/40">
+                  {s.detail}
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 
@@ -415,11 +437,23 @@ export default function SayvorsChat() {
     setInput("");
     setBusy(true);
     setError(null);
-    setLive({ steps: [], text: "", charts: [] });
+    // Show the real pipeline outline immediately, before the first SSE byte
+    // lands — otherwise a slow first token looks like a frozen spinner. The
+    // backend updates these same ids in place as each stage completes.
+    const initialSteps: Step[] = [
+      { id: "data-locations", label: "Checking your locations", detail: null },
+      { id: "data-reviews", label: "Checking reviews", detail: null },
+      { id: "data-replies", label: "Checking replies", detail: null },
+      { id: "memory", label: "Loading chat history", detail: null },
+      { id: "rag", label: "Checking your databank", detail: null },
+      { id: "charts", label: "Planning your charts", detail: null },
+      { id: "think", label: "Writing your answer", detail: null },
+    ];
+    setLive({ steps: initialSteps, text: "", charts: [] });
 
     const controller = new AbortController();
     abortRef.current = controller;
-    const steps: Step[] = [];
+    const steps: Step[] = initialSteps.map((s) => ({ ...s }));
     const charts: ChatChart[] = [];
     let answer = "";
 
@@ -625,9 +659,9 @@ export default function SayvorsChat() {
                     {m.content}
                   </p>
                 ) : (
-                  <div className={`${m.charts && m.charts.length > 0 ? "w-full" : "max-w-[88%]"} space-y-1.5`}>
+                  <div className="w-full space-y-1.5">
                     {m.steps && m.steps.length > 0 && <StepTrail steps={m.steps} done />}
-                    <div className="space-y-1 rounded-[2px] bg-ink/[0.05] px-3.5 py-2 text-[12.5px] text-ink dark:bg-fog/[0.08] dark:text-fog">
+                    <div className="max-w-[88%] space-y-1 rounded-[2px] bg-ink/[0.05] px-3.5 py-2 text-[12.5px] text-ink dark:bg-fog/[0.08] dark:text-fog">
                       {renderMarkdown(m.content)}
                     </div>
                     {m.charts && m.charts.length > 0 && (
@@ -645,20 +679,20 @@ export default function SayvorsChat() {
             {/* In-flight: process trail, then the answer typed out */}
             {live && (
               <div className="flex justify-start">
-                <div className={`${live.charts.length > 0 ? "w-full" : "max-w-[88%]"} space-y-1.5`}>
+                <div className="w-full space-y-1.5">
                   {live.steps.length > 0 && <StepTrail steps={live.steps} done={false} />}
                   {live.text ? (
-                    <div className="space-y-1 rounded-[2px] bg-ink/[0.05] px-3.5 py-2 text-[12.5px] text-ink dark:bg-fog/[0.08] dark:text-fog">
+                    <div className="max-w-[88%] space-y-1 rounded-[2px] bg-ink/[0.05] px-3.5 py-2 text-[12.5px] text-ink dark:bg-fog/[0.08] dark:text-fog">
                       {renderMarkdown(live.text)}
                       <span className="ml-0.5 inline-block h-3 w-[2px] translate-y-[2px] animate-pulse rounded-full bg-deep-violet align-middle" aria-hidden />
                     </div>
-                  ) : (
+                  ) : live.steps.length === 0 ? (
                     <p className="flex items-center gap-1.5 rounded-[2px] bg-ink/[0.05] px-3.5 py-2.5 dark:bg-fog/[0.08]">
                       <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink/40 [animation-delay:0ms] dark:bg-fog/40" />
                       <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink/40 [animation-delay:120ms] dark:bg-fog/40" />
                       <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink/40 [animation-delay:240ms] dark:bg-fog/40" />
                     </p>
-                  )}
+                  ) : null}
                   {live.charts.length > 0 && (
                     <div className="space-y-2">
                       {live.charts.map((chart) => (

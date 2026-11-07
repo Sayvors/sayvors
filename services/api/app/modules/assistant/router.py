@@ -31,7 +31,7 @@ from ..analytics.models import ReviewInsight
 from ..channels.models import AutoReplyConfig, Channel, ReviewReply
 from ..users.models import User
 from ..team.context import tenant_id_of, require_perm, TenantContext, require_perm
-from .charts import ChartPlan, chart_summary_for_prompt, plan_charts
+from .charts import ChartPlan, chart_summary_for_prompt, plan_charts, wants_chart
 from . import memory as chat_memory
 
 logger = logging.getLogger(__name__)
@@ -728,7 +728,7 @@ async def chat(
 # Short, human labels for the retrieval tools. The UI shows these verbatim,
 # so they stay short — details live in the answer, not the trail.
 TOOL_LABELS = {
-    "vector_search": "Searching your documents",
+    "vector_search": "Checking your documents",
     "keyword_search": "Looking up exact terms",
     "read_around": "Reading surrounding text",
     "db_schema": "Inspecting your database",
@@ -768,22 +768,52 @@ async def chat_stream(
 
         answer_parts: list[str] = []
         saved = False
+        # Live step ids shared with the client, so a repeated step updates its
+        # own row instead of appending a new one.
         try:
-            # 1. Live business data
-            yield sse({"type": "step", "id": "data", "label": "Reading your business data"})
+            # 1. Live business data, stage by stage.
+            yield sse({"type": "step", "id": "data-locations", "label": "Checking your locations"})
+            yield sse({"type": "step", "id": "data-reviews", "label": "Checking reviews"})
+            yield sse({"type": "step", "id": "data-replies", "label": "Checking replies"})
             snapshot = await _snapshot_for_user(db, user)
             reviews_meta = snapshot.get("reviews", {}) or {}
-            locations = (snapshot.get("business", {}) or {}).get("locations", []) or []
+            business_meta = snapshot.get("business", {}) or {}
+            locations = (business_meta.get("locations", []) or [])
             n_reviews = int(reviews_meta.get("reviews_indexed") or 0)
+            avg_rating = reviews_meta.get("average_rating")
+            n_posted = int(reviews_meta.get("replies_posted_total") or 0)
+            n_pending = int(reviews_meta.get("replies_pending_approval") or 0)
             yield sse({
                 "type": "step",
-                "id": "data",
-                "label": "Reading your business data",
-                "detail": f"{_plural(len(locations), 'location')} · {_plural(n_reviews, 'review')}",
+                "id": "data-locations",
+                "label": "Checked your locations",
+                "detail": f"{_plural(len(locations), 'location')}",
+            })
+            reviews_detail = f"{_plural(n_reviews, 'review')}"
+            if avg_rating is not None:
+                reviews_detail += f" · avg {avg_rating}"
+            yield sse({
+                "type": "step",
+                "id": "data-reviews",
+                "label": "Checked reviews",
+                "detail": reviews_detail,
+            })
+            yield sse({
+                "type": "step",
+                "id": "data-replies",
+                "label": "Checked replies",
+                "detail": f"{_plural(n_posted, 'posted reply')}" + (f" · {n_pending} pending" if n_pending else ""),
             })
 
             tid = tenant_id_of(user)
+            yield sse({"type": "step", "id": "memory", "label": "Loading chat history"})
             memory, history = await _memory_and_history(body, tid)
+            yield sse({
+                "type": "step",
+                "id": "memory",
+                "label": "Loaded chat history",
+                "detail": f"{_plural(len(history), 'message')}",
+            })
 
             # 2. Databank / RAG retrieval (tool calls stream as they happen).
             #    Retrieval reasons with the tenant's own model — the same one
@@ -819,7 +849,7 @@ async def chat_stream(
             if bank_id:
                 from ..rag.agent import ask_question
 
-                yield sse({"type": "step", "id": "rag", "label": "Searching your databank"})
+                yield sse({"type": "step", "id": "rag", "label": "Checking your databank"})
 
                 # ask_question is a single await, so tool progress is collected
                 # into `pending` by a sync callback and drained here while the
@@ -873,13 +903,13 @@ async def chat_stream(
                     else:
                         grounded = True
                     if citations:
-                        rag_label = f"Read {_plural(len(citations), 'source')}"
+                        rag_label = f"Checked databank — {_plural(len(citations), 'source')}"
                     elif grounded:
                         # Retrieval ran but cited nothing — don't claim it
                         # "matched" nothing while still answering from it.
-                        rag_label = "Databank search cited no sources"
+                        rag_label = "Checked databank — no sources cited"
                     else:
-                        rag_label = "No databank documents matched"
+                        rag_label = "Checked databank — no matches"
                     yield sse({
                         "type": "step",
                         "id": "rag",
@@ -895,30 +925,74 @@ async def chat_stream(
             else:
                 yield sse({"type": "step", "id": "rag", "label": skip_reason or "Databank unavailable"})
 
-            # 3. Think + stream the answer token by token
-            # 3. Chart planning: optional, tool-using, and skipped entirely when
-            #    the question is a plain fact or no dataset can answer it.
-            yield sse({"type": "step", "id": "charts", "label": "Checking the best way to show this"})
-            chart_plan = await _plan_chart_reply(
-                db=db, user=user, tenant_id=tid, model=model,
-                body=body, history=history, memory=memory, snapshot=snapshot,
-            )
-            for step in chart_plan.steps:
-                yield sse({"type": "step", **step})
-            for chart in chart_plan.charts:
-                yield sse({"type": "chart", "chart": chart})
+            # 3. Optional chart planning, streamed step by step while it runs.
+            yield sse({"type": "step", "id": "charts", "label": "Planning your charts"})
+            chart_plan = ChartPlan()
+            if wants_chart(body.message, bool(memory.get("charts"))):
+                chart_pending: list[dict] = []
+                chart_sent: set[str] = set()
+
+                def _on_chart_step(step: dict) -> None:
+                    chart_pending.append(step)
+
+                try:
+                    chart_task = asyncio.create_task(
+                        plan_charts(
+                            db=db, user=user, tenant_id=tid, model=model,
+                            message=body.message,
+                            history=[
+                                LLMMessage(role=m.role, content=m.content)
+                                for m in history
+                            ],
+                            memory=memory,
+                            business_context=_chart_business_context(snapshot),
+                            on_step=_on_chart_step,
+                        )
+                    )
+                    chart_deadline = asyncio.get_event_loop().time() + CHART_PLAN_TIMEOUT_SECONDS
+                    while not chart_task.done():
+                        if asyncio.get_event_loop().time() > chart_deadline:
+                            chart_task.cancel()
+                            break
+                        await asyncio.sleep(0.12)
+                        for step in list(chart_pending):
+                            sid = str(step.get("id") or "")
+                            yield sse({"type": "step", **step})
+                            if sid:
+                                chart_sent.add(sid)
+                        chart_pending.clear()
+                    for step in list(chart_pending):
+                        sid = str(step.get("id") or "")
+                        yield sse({"type": "step", **step})
+                        if sid:
+                            chart_sent.add(sid)
+                    chart_pending.clear()
+                    if not chart_task.cancelled():
+                        chart_plan = chart_task.result()
+                except Exception as e:
+                    logger.warning("Assistant chart planning skipped: %s", e)
+                    chart_plan = ChartPlan()
+                for step in chart_plan.steps:
+                    if str(step.get("id") or "") in chart_sent:
+                        continue
+                    yield sse({"type": "step", **step})
+                for chart in chart_plan.charts:
+                    yield sse({"type": "chart", "chart": chart})
+                charts_label = (
+                    f"Charts ready — {_plural(len(chart_plan.charts), 'chart')}"
+                    if chart_plan.charts
+                    else "Charts checked — none needed"
+                )
+            else:
+                charts_label = "Charts not needed for this question"
             yield sse({
                 "type": "step",
                 "id": "charts",
-                "label": (
-                    f"{_plural(len(chart_plan.charts), 'chart')} ready"
-                    if chart_plan.charts
-                    else "No chart needed — answering in text"
-                ),
+                "label": charts_label,
             })
 
             prompt_snapshot, detail_omitted = _prune_snapshot(snapshot, body.message)
-            yield sse({"type": "step", "id": "think", "label": "Thinking"})
+            yield sse({"type": "step", "id": "think", "label": "Writing your answer"})
             system_prompt = _system_prompt(
                 prompt_snapshot, rag_answer, citations, detail_omitted, rag_status,
                 charts=chart_plan.charts,
@@ -943,15 +1017,21 @@ async def chat_stream(
                     continue
                 if empty:
                     empty = False
-                    yield sse({"type": "step", "id": "think", "label": "Answering"})
+                    yield sse({"type": "step", "id": "think", "label": "Writing your answer", "detail": "streaming"})
                 answer_parts.append(chunk)
                 yield sse({"type": "delta", "text": chunk})
 
             if empty:
                 raise RuntimeError("Assistant returned an empty reply")
+            yield sse({"type": "step", "id": "finalize", "label": "Finalizing your answer"})
             answer_text = "".join(answer_parts)
             await _save_chat_turn(tid, body.session_id, memory, body.message, answer_text)
             saved = True
+            yield sse({
+                "type": "step",
+                "id": "finalize",
+                "label": "Done — saved to this chat",
+            })
             yield sse({
                 "type": "done",
                 "grounded_in_rag": grounded,
