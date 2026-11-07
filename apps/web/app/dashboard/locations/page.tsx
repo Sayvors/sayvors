@@ -966,6 +966,7 @@ const bulk: BulkScope | null = isBulk
                 initial={isBulk ? undefined : fullProfile?.hours?.regular}
                 bulk={bulk}
                 copy={copy}
+                synced={!isBulk && !!fullProfile?.google_synced?.includes("hours.regular")}
                 onSave={(regular) =>
                   isBulk
                     ? bulkSaveProfile(copy.tabHours, { hours: { regular } }, describeHours(regular, copy))
@@ -978,6 +979,7 @@ const bulk: BulkScope | null = isBulk
                 initial={isBulk ? undefined : fullProfile?.hours?.special}
                 bulk={bulk}
                 copy={copy}
+                synced={!isBulk && !!fullProfile?.google_synced?.includes("hours.special")}
                 onSave={(special) =>
                   isBulk
                     ? bulkSaveProfile(copy.specialHoursTitle, { hours: { special } }, [
@@ -995,6 +997,7 @@ const bulk: BulkScope | null = isBulk
                 initial={isBulk ? undefined : fullProfile?.hours?.more}
                 bulk={bulk}
                 copy={copy}
+                synced={!isBulk && !!fullProfile?.google_synced?.includes("hours.more")}
                 onSave={(more) =>
                   isBulk
                     ? bulkSaveProfile(copy.tabMoreHours, { hours: { more } }, [
@@ -1341,11 +1344,12 @@ function CategoriesTab({ initial, onSave, bulk, copy, synced }: {
   );
 }
 
-function HoursTab({ initial, onSave, bulk, copy }: {
+function HoursTab({ initial, onSave, bulk, copy, synced }: {
   initial?: Record<string, { open: string; close: string; closed: boolean; all_day?: boolean }>;
   onSave: (regular: Record<string, { open: string; close: string; closed: boolean; all_day?: boolean }>) => Promise<void>;
   bulk?: BulkScope | null;
   copy: LocationsCopy;
+  synced?: boolean;
 }) {
   const blank = () => Object.fromEntries(HOURS_DAYS.map((d) => [d, { open: "", close: "", closed: false }]));
   const [hours, setHours] = useState<Record<string, { open: string; close: string; closed: boolean; all_day?: boolean }>>(
@@ -1385,7 +1389,7 @@ function HoursTab({ initial, onSave, bulk, copy }: {
         <SectionTitle title={copy.regularHours} subtitle={copy.regularHoursSubtitle} />
         <div className="flex items-center gap-2">
           {bulk?.varies.has("hours") ? <VariesBadge /> : null}
-          <SourceBadge google={false} copy={copy} />
+          <SourceBadge google={!!synced} copy={copy} />
         </div>
       </div>
       <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.hoursHint}</p>
@@ -1441,11 +1445,12 @@ function HoursTab({ initial, onSave, bulk, copy }: {
   );
 }
 
-function SpecialHoursTab({ initial, onSave, bulk, copy }: {
+function SpecialHoursTab({ initial, onSave, bulk, copy, synced }: {
   initial?: { date: string; hours: string; reason: string }[];
   onSave: (special: { date: string; hours: string; reason: string }[]) => Promise<void>;
   bulk?: BulkScope | null;
   copy: LocationsCopy;
+  synced?: boolean;
 }) {
   const [entries, setEntries] = useState<{ date: string; hours: string; reason: string }[]>(initial ?? []);
   const [saving, setSaving] = useState(false);
@@ -1478,7 +1483,7 @@ function SpecialHoursTab({ initial, onSave, bulk, copy }: {
         <SectionTitle title={copy.specialHoursTitle} subtitle={copy.specialHoursSubtitle} />
         <div className="flex items-center gap-2">
           {bulk?.varies.has("special") ? <VariesBadge /> : null}
-          <SourceBadge google={false} copy={copy} />
+          <SourceBadge google={!!synced} copy={copy} />
         </div>
       </div>
       <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.specialHoursHint}</p>
@@ -1527,11 +1532,12 @@ const serviceTypeLabel = (type: string, copy: LocationsCopy): string => {
   return key ? copy[key] : type;
 };
 
-function MoreHoursTab({ initial, onSave, bulk, copy }: {
+function MoreHoursTab({ initial, onSave, bulk, copy, synced }: {
   initial?: { type: string; open: string; close: string }[];
   onSave: (more: { type: string; open: string; close: string }[]) => Promise<void>;
   bulk?: BulkScope | null;
   copy: LocationsCopy;
+  synced?: boolean;
 }) {
   const [entries, setEntries] = useState<{ type: string; open: string; close: string }[]>(initial ?? []);
   const [saving, setSaving] = useState(false);
@@ -1564,7 +1570,7 @@ function MoreHoursTab({ initial, onSave, bulk, copy }: {
         <SectionTitle title={copy.tabMoreHours} subtitle={copy.moreHoursSubtitle} />
         <div className="flex items-center gap-2">
           {bulk?.varies.has("more") ? <VariesBadge /> : null}
-          <SourceBadge google={false} copy={copy} />
+          <SourceBadge google={!!synced} copy={copy} />
         </div>
       </div>
       <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.moreHoursHint}</p>

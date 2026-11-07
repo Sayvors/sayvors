@@ -20,7 +20,16 @@ from .models import LocationGroup, LocationProfile
 
 logger = logging.getLogger(__name__)
 
-GOOGLE_SYNCED_FIELDS = ["name", "phone", "website", "description", "categories"]
+GOOGLE_SYNCED_FIELDS = [
+    "name",
+    "phone",
+    "website",
+    "description",
+    "categories",
+    "hours.regular",
+    "hours.special",
+    "hours.more",
+]
 
 
 def channel_meta(channel: Channel) -> dict:

@@ -178,3 +178,15 @@ async def test_billing_endpoints_roundtrip(client, db, user_id):
     assert r.json() == {"ok": True}
     r = client.post("/api/v1/billing/methods/nope/default", headers=host)
     assert r.status_code == 404
+
+def test_billing_entitlements_endpoint_imports_tenant_context(client):
+    """Regression: a stale ``core.deps.tenant_id_of`` import returned 500."""
+    r = client.get("/api/v1/billing/entitlements", headers={"host": "localhost"})
+    assert r.status_code == 200, r.text[:300]
+    assert r.json()["plan_slug"]
+
+
+def test_billing_plan_endpoint_imports_tenant_context(client):
+    """Regression: the same stale import broke /billing/plan."""
+    r = client.get("/api/v1/billing/plan", headers={"host": "localhost"})
+    assert r.status_code in (200, 404), r.text[:300]

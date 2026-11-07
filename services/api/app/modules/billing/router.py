@@ -170,9 +170,7 @@ async def read_ledger(
 @router.get("/plan", response_model=SubscriptionOut)
 async def read_plan(user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """The tenant's current plan + status. Employees read the owner's."""
-    from ...billing.models import TenantSubscription, Plan
-    from ...billing.schemas import SubscriptionOut
-    from ...core.deps import tenant_id_of
+    from .models import TenantSubscription, Plan
 
     tid = tenant_id_of(user)
     sub = (
@@ -263,7 +261,6 @@ async def list_purchase_requests(
 @router.get("/entitlements")
 async def read_entitlements(user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """The tenant's effective plan + entitlements (base plan + promo overrides)."""
-    from ...core.deps import tenant_id_of
     from .entitlements import count_messages_this_month, get_entitlements
 
     tid = tenant_id_of(user)
