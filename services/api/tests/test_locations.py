@@ -156,7 +156,8 @@ async def test_description_pushes_to_google(monkeypatch, db, user_id):
     assert seen["location_id"] == "loc-1"
     assert seen["kw"]["description"] == "We build AI support software."
     assert out["description"] == "We build AI support software."
-    assert out["google_synced"] == ["description"]
+    assert out["google_pushed"] == ["description"]
+    assert "description" in out["google_synced"]
 
 
 @pytest.mark.asyncio
@@ -215,7 +216,8 @@ async def test_identity_fields_save_locally_and_push(monkeypatch, db, user_id):
     assert out["name"] == "New Name"
     assert out["phone"] == "+966 11 222 3333"
     assert out["website"] == "https://new.test"
-    assert out["google_synced"] == ["name", "phone", "website"]
+    assert out["google_pushed"] == ["name", "phone", "website"]
+    assert {"name", "phone", "website"} <= set(out["google_synced"])
 
 
 @pytest.mark.asyncio
@@ -241,7 +243,7 @@ async def test_unchanged_save_does_not_call_google(monkeypatch, db, user_id):
         service_area=None, attributes=None,
         name="Test Place", phone="+966 55 000 0000", website="http://x.test",
     )
-    assert out["google_synced"] == []
+    assert out["google_pushed"] == []
 
 
 @pytest.mark.asyncio

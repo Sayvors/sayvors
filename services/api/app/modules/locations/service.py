@@ -20,7 +20,7 @@ from .models import LocationGroup, LocationProfile
 
 logger = logging.getLogger(__name__)
 
-GOOGLE_SYNCED_FIELDS = ["name", "phone", "website", "description"]
+GOOGLE_SYNCED_FIELDS = ["name", "phone", "website", "description", "categories"]
 
 
 def channel_meta(channel: Channel) -> dict:
@@ -151,6 +151,8 @@ async def get_profile(
         db, user_id, listing_id, statuses=("active", "expired")
     )
     meta = channel_meta(channel) if channel is not None else {}
+    stored_synced = meta.get("google_synced")
+    stored_skipped = meta.get("google_skipped")
 
     # Local edits win section-by-section; anything never edited locally falls
     # back to the Google snapshot fetched at connect/worker time.
@@ -185,6 +187,7 @@ async def get_profile(
         "attributes": attributes,
         "opening_date": profile.opening_date.isoformat() if profile.opening_date else None,
         "google_synced": [],
+        "google_skipped": {},
         "updated_at": profile.updated_at.isoformat() if profile.updated_at else None,
     }
     if channel is not None:
@@ -201,7 +204,14 @@ async def get_profile(
             "description": profile.description
             if profile.description is not None
             else meta.get("description"),
-            "google_synced": list(GOOGLE_SYNCED_FIELDS),
+            "google_synced": (
+                list(stored_synced)
+                if isinstance(stored_synced, list)
+                else list(GOOGLE_SYNCED_FIELDS)
+            ),
+            "google_skipped": (
+                dict(stored_skipped) if isinstance(stored_skipped, dict) else {}
+            ),
         })
     return merged
 
@@ -218,7 +228,7 @@ async def _push_profile_native(
     opening_date: str | None = None,
     attributes: dict | None = None,
     service_area: list | None = None,
-) -> list[str]:
+) -> tuple[list[str], dict[str, str]]:
     """Best-effort native push of the sections that changed in this save.
 
     Local storage stays the source of truth regardless — a rejected section
@@ -233,7 +243,7 @@ async def _push_profile_native(
         logger.warning(
             "Native locations push skipped for %s: channel has no tokens",
             listing_id_of(channel))
-        return []
+        return [], {"channel": "channel has no tokens"}
     google_id = channel_meta(channel).get("location_id") or listing_id_of(channel)
     client = GoogleBusinessClient(access or "", refresh)
     try:
@@ -251,13 +261,14 @@ async def _push_profile_native(
         )
     except Exception as e:
         logger.warning("Native locations push failed for %s: %s", google_id, e)
-        return []
+        return [], {"channel": str(e)[:200]}
     finally:
         await client.close()
-    for section, reason in (report.get("skipped") or {}).items():
+    skipped = report.get("skipped") or {}
+    for section, reason in skipped.items():
         logger.warning("Native locations push skipped %s for %s: %s",
                        section, google_id, reason)
-    return report.get("pushed", [])
+    return report.get("pushed", []), skipped
 
 
 async def update_profile(
@@ -329,6 +340,11 @@ async def update_profile(
     push_categories = None
     if categories is not None:
         old_categories = dict(profile.categories or {})
+        if not old_categories and channel is not None:
+            # The OAuth import stores Google's current categories on the
+            # channel, not in location_profiles. Seed from it so a primary-only
+            # save cannot silently clear Google's additional categories.
+            old_categories = dict(channel_meta(channel).get("categories") or {})
         merged_cats = dict(old_categories)
         if categories.get("primary") is not None:
             merged_cats["primary"] = str(categories.get("primary", ""))[:255]
@@ -384,8 +400,10 @@ async def update_profile(
     await rebuild_facts_safe(db, user_id)
 
     pushed: list[str] = []
+    skipped: dict[str, str] = {}
+    merged_synced: set[str] = set()
     if channel is not None:
-        pushed = await _push_profile_native(
+        pushed, skipped = await _push_profile_native(
             channel,
             name=push_name,
             phone=push_phone,
@@ -397,8 +415,26 @@ async def update_profile(
             attributes=push_attributes,
             service_area=push_service_area,
         )
+        meta = channel_meta(channel)
+        merged_synced = set(meta.get("google_synced") or GOOGLE_SYNCED_FIELDS)
+        merged_synced.update(pushed)
+        for section in skipped:
+            merged_synced.discard(section)
+            if section.startswith("categories"):
+                merged_synced.discard("categories")
+            if section.startswith("hours"):
+                merged_synced.discard("hours.regular")
+                merged_synced.discard("hours.special")
+                merged_synced.discard("hours.more")
+        meta["google_synced"] = sorted(merged_synced)
+        meta["google_skipped"] = skipped
+        channel.metadata_json = json.dumps(meta)
+        await db.commit()
+
     out = await get_profile(db, user_id, listing_id)
-    out["google_synced"] = pushed
+    out["google_synced"] = sorted(merged_synced) if channel is not None else []
+    out["google_pushed"] = pushed
+    out["google_skipped"] = skipped
     return out
 
 

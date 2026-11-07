@@ -547,31 +547,53 @@ class GoogleBusinessClient(GoogleReviewsClient):
 
         if categories is not None:
             try:
-                body: dict = {}
-                mask: list[str] = []
                 primary = (categories.get("primary") or "").strip()
+                resolved_primary: str | None = None
                 if primary:
-                    resolved = await self.resolve_category_id(primary)
-                    if resolved:
-                        body["primaryCategory"] = {"name": resolved}
-                        mask.append("categories.primaryCategory")
-                    else:
+                    resolved_primary = await self.resolve_category_id(primary)
+                    if not resolved_primary:
                         skipped["categories.primary"] = f"no Google id for {primary!r}"
-                additional = []
-                for name in (categories.get("additional") or [])[:10]:
-                    resolved = await self.resolve_category_id(str(name))
+
+                requested_additional = [
+                    str(name).strip()
+                    for name in (categories.get("additional") or [])[:10]
+                    if str(name).strip()
+                ]
+                resolved_additional: list[dict] = []
+                unresolved_additional: list[str] = []
+                for name in requested_additional:
+                    resolved = await self.resolve_category_id(name)
                     if resolved:
-                        additional.append({"name": resolved})
+                        resolved_additional.append({"name": resolved})
                     else:
-                        skipped.setdefault("categories.additional",
-                                           f"no Google id for {name!r}")
-                if additional:
-                    body["additionalCategories"] = additional
-                    mask.append("categories.additionalCategories")
-                if body:
-                    await self.patch_location(location_id, {"categories": body},
-                                              ",".join(mask))
+                        unresolved_additional.append(name)
+                if unresolved_additional:
+                    skipped["categories.additional"] = (
+                        "no Google id for " + ", ".join(unresolved_additional[:5])
+                    )
+
+                # Google requires BOTH fields on every categories update and
+                # explicitly rejects categories.primaryCategory /
+                # categories.additionalCategories as update masks:
+                # "Clients are prohibited from individually updating the
+                # primary or additional categories using the update mask."
+                # Send the complete Categories object under mask "categories".
+                if resolved_primary:
+                    await self.patch_location(
+                        location_id,
+                        {
+                            "categories": {
+                                "primaryCategory": {"name": resolved_primary},
+                                "additionalCategories": resolved_additional,
+                            }
+                        },
+                        "categories",
+                    )
                     pushed.append("categories")
+                elif requested_additional:
+                    skipped["categories"] = (
+                        "cannot update additional categories without a resolvable primary category"
+                    )
             except GoogleReviewsError as e:
                 skipped["categories"] = str(e)[:200]
 

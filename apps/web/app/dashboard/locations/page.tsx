@@ -101,6 +101,8 @@ interface FullProfile {
   attributes: Record<string, string>;
   opening_date?: string | null;
   google_synced: string[];
+  google_pushed?: string[];
+  google_skipped?: Record<string, string> | null;
   updated_at?: string | null;
 }
 
@@ -258,8 +260,24 @@ export default function LocationsPage() {
         body: JSON.stringify(patch),
       });
       setFullProfile(updated as FullProfile);
-      const synced = (updated as FullProfile)?.google_synced ?? [];
-      showBanner("ok", synced.length > 0 ? `${okText} · Synced to Google (${synced.join(", ")}).` : okText);
+      const pushed = (updated as FullProfile)?.google_pushed ?? [];
+      const skipped = (updated as FullProfile)?.google_skipped ?? {};
+      const failed = Object.entries(skipped);
+      if (failed.length > 0) {
+        showBanner(
+          "err",
+          `${okText} Saved in Sayvors, but Google rejected: ${failed
+            .map(([section, reason]) => `${section} (${reason})`)
+            .join("; ")}.`,
+        );
+        return;
+      }
+      showBanner(
+        "ok",
+        pushed.length > 0
+          ? `${okText} · Synced to Google (${pushed.join(", ")}).`
+          : okText,
+      );
     } catch (e) {
       showBanner("err", e instanceof Error ? e.message.slice(0, 160) : "Could not save.");
     }
@@ -930,6 +948,7 @@ const bulk: BulkScope | null = isBulk
             {activeTab === "categories" && (
               <CategoriesTab
                 initial={isBulk ? undefined : fullProfile?.categories}
+                synced={!isBulk && !!fullProfile?.google_synced?.includes("categories")}
                 bulk={bulk}
                 copy={copy}
                 onSave={(patch) =>
@@ -1123,12 +1142,18 @@ function DetailsTab({
           website: website.trim() || undefined,
         }),
       });
-      const synced = (updated as FullProfile)?.google_synced ?? [];
+      const pushed = (updated as FullProfile)?.google_pushed ?? [];
+      const skipped = (updated as FullProfile)?.google_skipped ?? {};
+      const failed = Object.entries(skipped);
       onSave(
-        synced.length > 0
-          ? `Details saved · Synced to Google (${synced.join(", ")}).`
-          : "Details saved.",
-        "ok"
+        failed.length > 0
+          ? `Details saved locally, but Google rejected: ${failed
+              .map(([section, reason]) => `${section} (${reason})`)
+              .join("; ")}.`
+          : pushed.length > 0
+            ? `Details saved · Synced to Google (${pushed.join(", ")}).`
+            : "Details saved.",
+        failed.length > 0 ? "err" : "ok",
       );
       onSaved();
     } catch (e) {
@@ -1231,11 +1256,12 @@ function DetailsTab({
   );
 }
 
-function CategoriesTab({ initial, onSave, bulk, copy }: {
+function CategoriesTab({ initial, onSave, bulk, copy, synced }: {
   initial?: { primary?: string; additional?: string[] };
   onSave: (patch: { primary: string; additional: string[] }) => Promise<void>;
   bulk?: BulkScope | null;
   copy: LocationsCopy;
+  synced?: boolean;
 }) {
   const [primary, setPrimary] = useState(initial?.primary ?? "");
   const [additional, setAdditional] = useState<string[]>(initial?.additional ?? []);
@@ -1270,7 +1296,7 @@ function CategoriesTab({ initial, onSave, bulk, copy }: {
     <div className="space-y-5">
       <div className="flex flex-col items-start gap-1.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
         <SectionTitle title={copy.tabCategories} subtitle={copy.categoriesSubtitle} />
-        <SourceBadge google={false} copy={copy} />
+        <SourceBadge google={!!synced} copy={copy} />
       </div>
       <Field label={copy.primaryCategory} varies={bulk?.varies.has("primary") ?? false}>
         <input value={primary} onChange={(e) => setPrimary(e.target.value)} placeholder={copy.primaryCategoryPlaceholder} className="input-field" />

@@ -144,5 +144,9 @@ class LocationProfileOut(BaseModel):
     service_area: list[str] = []
     attributes: dict[str, str] = {}
     opening_date: str | None = None
+    # google_synced is cumulative (what Google currently has); google_pushed
+    # is just this save, for the "Synced to Google" banner.
     google_synced: list[str] = []
+    google_pushed: list[str] = []
+    google_skipped: dict[str, str] = {}
     updated_at: str | None = None
