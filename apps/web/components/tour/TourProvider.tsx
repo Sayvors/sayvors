@@ -204,7 +204,8 @@ export default function TourProvider({ children }: { children: React.ReactNode }
     later(() => showStepRef.current(0), 60);
   }, [clearTimers, later]);
 
-  /* First visit: offer the tour once. */
+  /* First visit: offer the tour once. Defer the state change to a tracked
+     timer so the effect does not synchronously cascade a render. */
   useEffect(() => {
     let seen: string | null = null;
     try {
@@ -212,9 +213,8 @@ export default function TourProvider({ children }: { children: React.ReactNode }
     } catch {
       /* private mode */
     }
-    if (!seen) setPhase("welcome");
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- offer once per full page load
-  }, []);
+    if (!seen) later(() => setPhase("welcome"), 0);
+  }, [later]);
 
   useEffect(
     () => () => {
