@@ -217,6 +217,15 @@ async def get_profile(
         "updated_at": profile.updated_at.isoformat() if profile.updated_at else None,
     }
     if channel is not None:
+        # A local edit that differs from the Google snapshot has not reached
+        # Google, even if an older sync report claimed otherwise. This is the
+        # difference that matters: the stored report is a history, the values
+        # are the truth.
+        synced_fields = _known_synced(meta)
+        local_categories = dict(profile.categories or {})
+        google_categories = dict(meta.get("categories") or {})
+        if local_categories and local_categories != google_categories:
+            synced_fields.discard("categories")
         merged.update({
             "name": channel.display_name or "",
             "address": meta.get("address"),
@@ -230,7 +239,7 @@ async def get_profile(
             "description": profile.description
             if profile.description is not None
             else meta.get("description"),
-            "google_synced": sorted(_known_synced(meta)),
+            "google_synced": sorted(synced_fields),
             "google_skipped": (
                 dict(stored_skipped) if isinstance(stored_skipped, dict) else {}
             ),
@@ -448,13 +457,28 @@ async def update_profile(
                 merged_synced.discard("hours.regular")
                 merged_synced.discard("hours.special")
                 merged_synced.discard("hours.more")
+        # A successful push makes the local value the new Google snapshot.
+        # A failed or skipped section leaves the old snapshot untouched, so
+        # get_profile's local-vs-snapshot comparison stays honest.
+        if "categories" in pushed and profile.categories:
+            meta["categories"] = dict(profile.categories)
+        if profile.hours:
+            meta_hours = meta.setdefault("hours", {})
+            for section in ("regular", "special", "more"):
+                if f"hours.{section}" not in pushed:
+                    continue
+                value = (profile.hours or {}).get(section)
+                meta_hours[section] = (
+                    dict(value or {}) if section == "regular" else list(value or [])
+                )
+        if "description" in pushed:
+            meta["description"] = profile.description
         meta["google_synced"] = sorted(merged_synced)
         meta["google_skipped"] = skipped
         channel.metadata_json = json.dumps(meta)
         await db.commit()
 
     out = await get_profile(db, user_id, listing_id)
-    out["google_synced"] = sorted(merged_synced) if channel is not None else []
     out["google_pushed"] = pushed
     out["google_skipped"] = skipped
     return out
