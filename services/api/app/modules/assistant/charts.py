@@ -102,7 +102,9 @@ def wants_chart(message: str, has_chart_memory: bool = False) -> bool:
 # auto-plan when the model planner returns nothing — a vague "how is my
 # performance?" must stay a text answer rather than getting a forced chart.
 _EXPLICIT_CHART_RE = re.compile(
-    r"\b(charts?|graphs?|plots?|visuali[sz]e|visuali[sz]ation|dashboards?)\b",
+    r"\b(charts?|graphs?|plots?|visuali[sz]e|visuali[sz]ation|dashboards?|"
+    r"heatmaps?|radars?|funnels?|gauges?|treemaps?|bubbles?|histograms?|"
+    r"scatter|donuts?|pies?)\b",
     re.I,
 )
 

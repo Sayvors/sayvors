@@ -31,7 +31,13 @@ from ..analytics.models import ReviewInsight
 from ..channels.models import AutoReplyConfig, Channel, ReviewReply
 from ..users.models import User
 from ..team.context import tenant_id_of, require_perm, TenantContext, require_perm
-from .charts import ChartPlan, chart_summary_for_prompt, plan_charts, wants_chart
+from .charts import (
+    ChartPlan,
+    chart_summary_for_prompt,
+    explicit_chart_request,
+    plan_charts,
+    wants_chart,
+)
 from . import memory as chat_memory
 
 logger = logging.getLogger(__name__)
@@ -806,6 +812,33 @@ def _plural(n: int, word: str) -> str:
     return f"{n} {irregular.get(word, word + 's')}"
 
 
+# A greeting is not a data question. Running the snapshot, Databank search and
+# chart planner for "hi" cost seconds of tool calls and answered nothing, so
+# these are recognized before any of that work starts.
+_GREETING_RE = re.compile(
+    r"\s*((?:hi|hey|hello|yo|sup|hiya)(?: there)?|"
+    r"good (?:morning|afternoon|evening)|"
+    r"how are you(?: doing)?|مرحبا|أهلا|اهلا|هلا|هاي|السلام عليكم)"
+    r"[\s!.,?؟…]*",
+    re.I,
+)
+_GREETING_MAX_CHARS = 40
+
+
+def _is_greeting(message: str) -> bool:
+    text = (message or "").strip()
+    return bool(text) and len(text) <= _GREETING_MAX_CHARS and bool(_GREETING_RE.fullmatch(text))
+
+
+_GREETING_PROMPT = (
+    "You are Sayvors' business assistant inside the owner's dashboard. "
+    "The owner just greeted you. Reply in one short, warm sentence and ask "
+    "what they want to check (reviews, replies, Google visibility, customers, "
+    "or a chart). Do not claim to have looked at data, do not invent numbers, "
+    "and do not mention tools, databases or models. Reply in the owner's language."
+)
+
+
 @router.post("/chat/stream")
 async def chat_stream(
     body: AssistantChatRequest,
@@ -836,6 +869,55 @@ async def chat_stream(
         # Live step ids shared with the client, so a repeated step updates its
         # own row instead of appending a new one.
         try:
+            tid = tenant_id_of(user)
+            model = await _resolve_model(db, tid)
+
+            # A greeting answers conversationally — no snapshot, databank or
+            # chart work. The steps trail stays honest by showing only what
+            # this turn actually does.
+            if _is_greeting(body.message):
+                from ..llm.gateway import LLMMessage, stream as llm_stream
+
+                yield sse({"type": "step", "id": "greet", "label": "Saying hello"})
+                memory, history = await _memory_and_history(body, tid)
+                msgs = [
+                    LLMMessage(role=m.role, content=m.content)
+                    for m in history[-MAX_HISTORY:]
+                ]
+                msgs.append(LLMMessage(role="user", content=body.message))
+                yield sse({"type": "step", "id": "think", "label": "Writing your answer"})
+                empty = True
+                async for chunk in llm_stream(
+                    model=model,
+                    messages=msgs,
+                    system_prompt=_GREETING_PROMPT,
+                    temperature=0.5,
+                    max_tokens=120,
+                    tenant_id=tid,
+                    purpose="assistant.chat",
+                ):
+                    if not chunk:
+                        continue
+                    empty = False
+                    answer_parts.append(chunk)
+                    yield sse({"type": "delta", "text": chunk})
+                if empty:
+                    fallback = "Hi! What would you like to check — reviews, replies, visibility or a chart?"
+                    answer_parts.append(fallback)
+                    yield sse({"type": "delta", "text": fallback})
+                await _save_chat_turn(
+                    tid, body.session_id, memory, body.message, "".join(answer_parts)
+                )
+                saved = True
+                yield sse({
+                    "type": "done",
+                    "grounded_in_rag": False,
+                    "citations": [],
+                    "charts": [],
+                    "model": model,
+                })
+                return
+
             # 1. Live business data, stage by stage.
             yield sse({"type": "step", "id": "data-locations", "label": "Checking your locations"})
             yield sse({"type": "step", "id": "data-reviews", "label": "Checking reviews"})
@@ -886,7 +968,6 @@ async def chat_stream(
             #    provider the tenant actually has.
             from ..rag.models import Databank
 
-            model = await _resolve_model(db, tid)
             bank_id = (
                 await db.execute(
                     select(Databank.id).where(Databank.user_id == tid).limit(1)
@@ -1046,7 +1127,11 @@ async def chat_stream(
                 charts_label = (
                     f"Charts ready — {_plural(len(chart_plan.charts), 'chart')}"
                     if chart_plan.charts
-                    else "Charts checked — none needed"
+                    else (
+                        "No chart data available"
+                        if explicit_chart_request(body.message)
+                        else "No chart needed"
+                    )
                 )
                 yield sse({
                     "type": "step",
@@ -1128,7 +1213,7 @@ async def chat_stream(
         event_stream(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },

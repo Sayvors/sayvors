@@ -169,6 +169,21 @@ def test_plural_handles_reply():
     assert _plural(2, "chart") == "2 charts"
 
 
+def test_greeting_detection():
+    """'hi' must not trigger the snapshot / databank / chart pipeline."""
+    from app.modules.assistant.router import _is_greeting
+
+    for text in ("hi", "Hi!", "hello", "hey there", "good morning", "مرحبا", "السلام عليكم"):
+        assert _is_greeting(text), text
+    for text in (
+        "hi, show me the latest reviews",
+        "hello can you make me a chart",
+        "how are my reviews doing?",
+        "hey, what is my average rating",
+    ):
+        assert not _is_greeting(text), text
+
+
 def test_fallback_answer_never_draws_ascii_charts():
     from app.modules.assistant.router import _fallback_answer
 

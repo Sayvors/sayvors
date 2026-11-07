@@ -421,6 +421,34 @@ async def test_explicit_chart_request_builds_charts_when_planner_declines(
 
 
 @pytest.mark.asyncio
+async def test_explicit_heatmap_request_builds_heatmap_without_planner(
+    db, user_id, channel_id, monkeypatch
+):
+    """A named chart type is an explicit visual request. Even if the model
+    planner returns NO_CHART, the owner still gets that chart from real rows."""
+    await _seed(db, user_id, channel_id)
+
+    async def fake_complete(**kwargs):
+        return LLMResponse(content="NO_CHART", provider="test", model="test")
+
+    monkeypatch.setattr(charts, "complete", fake_complete)
+    plan = await charts.plan_charts(
+        db=db,
+        user=user_id,
+        tenant_id=user_id,
+        model="test:model",
+        message="make me a heatmap of when reviews arrive",
+        history=[],
+        memory=memory.empty_memory(),
+        business_context="Test Burgers",
+    )
+    heatmaps = [c for c in plan.charts if c["type"] == "heatmap"]
+    assert heatmaps, [c["type"] for c in plan.charts]
+    assert heatmaps[0]["rows"]
+    assert heatmaps[0]["y_values"]
+
+
+@pytest.mark.asyncio
 async def test_vague_question_does_not_get_a_forced_chart(
     db, user_id, channel_id, monkeypatch
 ):
