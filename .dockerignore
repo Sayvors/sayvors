@@ -31,3 +31,10 @@ services/api/*
 # Python caches are never image inputs.
 **/__pycache__
 **/*.pyc
+
+# Ops/backfill scripts are copied into the runtime image (Dockerfile line 47).
+# These re-includes must come last: the `services/api/*` block above excludes
+# the whole subtree, and the last matching pattern wins.
+!services/api/scripts
+!services/api/scripts/**
+services/api/scripts/**/__pycache__
