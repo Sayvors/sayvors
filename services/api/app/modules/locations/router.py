@@ -8,7 +8,7 @@ DELETE /api/v1/locations/groups/{id}     delete a group
 GET    /api/v1/locations/{listing_id}    merged profile (Google snapshot + local store)
 PUT    /api/v1/locations/{listing_id}    update (description pushes to Google)
 """
-from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, File
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,12 +19,14 @@ from . import service
 from . import bulk as bulk_service
 from .schemas import (
     GoogleLocationMatchOut,
+    LocationCategoryOut,
     LocationCreateIn,
     LocationCreateOut,
     LocationGroupIn,
     LocationGroupOut,
     LocationGroupUpdate,
     LocationProfileOut,
+    LocationSearchIn,
     LocationSummary,
     LocationUpdate,
 )
@@ -187,9 +189,33 @@ async def upload_bulk_csv(
         raise HTTPException(status_code=400, detail=str(e))
     return report
 
+@router.get("/categories", response_model=list[LocationCategoryOut])
+async def list_location_categories(
+    q: str = Query("", max_length=120),
+    region: str = Query("SA", min_length=2, max_length=2),
+    exact: bool = Query(False),
+    ctx: TenantContext = Depends(require_perm("locations.view")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Search Google's category catalog for the create-location wizard.
+
+    The picker never invents a category: Google returns the display name and
+    stable ID, and create resolves the selected name again server-side.
+    ``exact`` is only set when the user picks a name, so search-as-you-type
+    never pays for a full-catalog resolve.
+    """
+    try:
+        return await service.list_google_categories(
+            db, tenant_id_of(user), q, region.upper(), exact=exact
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.post("/search", response_model=list[GoogleLocationMatchOut])
 async def search_location_candidates(
-    body: LocationCreateIn,
+    body: LocationSearchIn,
     ctx: TenantContext = Depends(require_perm("locations.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
@@ -92,6 +93,10 @@ export default function VerificationPage() {
   const queryClient = useQueryClient();
   const searchParams = useSearchParams();
   const requestedChannel = searchParams.get("channel") ?? "";
+  const nextParam = searchParams.get("next") ?? "";
+  // Only same-app dashboard routes: a verification link must never become an
+  // open redirect.
+  const nextHref = nextParam.startsWith("/dashboard/") ? nextParam : "";
   const [selectedId, setSelectedId] = useState("");
   const [activeMethod, setActiveMethod] = useState<string | null>(null);
   const [phoneNumber, setPhoneNumber] = useState("");
@@ -384,8 +389,24 @@ export default function VerificationPage() {
 
               {verified && (
                 <div className="mt-4 rounded-xl bg-emerald-50 px-4 py-3 text-[12.5px] text-emerald-800">
-                  Google already considers this location verified. No further action is needed.
+                  <p>Google already considers this location verified. No further action is needed.</p>
+                  {nextHref && (
+                    <Link
+                      href={nextHref}
+                      className="mt-3 flex w-full items-center justify-center rounded-xl bg-deep-violet px-3 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 active:translate-y-px"
+                    >
+                      Continue to profile setup
+                    </Link>
+                  )}
                 </div>
+              )}
+              {!verified && nextHref && (
+                <Link
+                  href={nextHref}
+                  className="mt-4 inline-flex text-[12px] font-bold text-deep-violet underline underline-offset-2"
+                >
+                  Set up hours, description and photos while Google reviews →
+                </Link>
               )}
             </section>
 

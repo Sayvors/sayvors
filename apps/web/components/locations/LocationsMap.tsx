@@ -2,10 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { loadGoogleMaps } from "@/lib/google-maps";
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 const RIYADH = { lat: 24.7136, lng: 46.6753 };
-const MAPS_SCRIPT_ID = "sayvors-google-maps";
 const GEO_CACHE_PREFIX = "sayvors.geo.";
 
 export interface MapLocation {
@@ -19,30 +20,6 @@ export interface MapLocation {
 interface Geocoded extends MapLocation {
   position: { lat: number; lng: number };
   approximate: boolean;
-}
-
-let scriptPromise: Promise<void> | null = null;
-
-function loadMaps(apiKey: string): Promise<void> {
-  const w = window as unknown as { google?: any };
-  if (w.google?.maps) return Promise.resolve();
-  if (scriptPromise) return scriptPromise;
-  scriptPromise = new Promise((resolve, reject) => {
-    const existing = document.getElementById(MAPS_SCRIPT_ID) as HTMLScriptElement | null;
-    if (existing) {
-      existing.addEventListener("load", () => resolve());
-      existing.addEventListener("error", () => reject(new Error("Maps script failed")));
-      return;
-    }
-    const script = document.createElement("script");
-    script.id = MAPS_SCRIPT_ID;
-    script.async = true;
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&v=weekly&libraries=marker,geometry`;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Maps script failed"));
-    document.head.appendChild(script);
-  });
-  return scriptPromise;
 }
 
 function initials(name: string): string {
@@ -110,7 +87,7 @@ export default function LocationsMap({
 
     (async () => {
       try {
-        await loadMaps(apiKey);
+        await loadGoogleMaps(apiKey);
         if (cancelled || !mountRef.current) return;
         const g = (window as unknown as { google: any }).google;
 

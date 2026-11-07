@@ -529,36 +529,78 @@ def _storefront_address(
     street: str,
     city: str,
     country: str,
-    postal_code: str | None,
+    state: str | None = None,
+    postal_code: str | None = None,
+    language_code: str = "en",
 ) -> dict:
     address: dict = {
         "regionCode": (country or "").strip().upper()[:2],
-        "languageCode": "en",
+        "languageCode": language_code or "en",
         "locality": city.strip(),
         "addressLines": [street.strip()],
     }
+    if state and state.strip():
+        address["administrativeArea"] = state.strip()
     if postal_code and postal_code.strip():
         address["postalCode"] = postal_code.strip()
     return address
 
 
 def _create_payload(body: dict) -> dict:
-    return {
-        "languageCode": "en",
+    """The create body. Optional fields are omitted, never sent empty."""
+    language = (body.get("language_code") or "en").strip() or "en"
+    has_storefront = bool(body.get("has_storefront", True))
+    payload: dict = {
+        "languageCode": language,
         "title": body["name"].strip(),
         "phoneNumbers": {"primaryPhone": body["phone"].strip()},
-        "storefrontAddress": _storefront_address(
+    }
+    if body.get("website"):
+        payload["websiteUri"] = body["website"].strip()
+    if body.get("description"):
+        payload["profile"] = {"description": body["description"].strip()[:750]}
+    if has_storefront:
+        payload["storefrontAddress"] = _storefront_address(
             street=body["street"],
             city=body["city"],
             country=body["country"],
+            state=body.get("state"),
             postal_code=body.get("postal_code"),
-        ),
-        **(
-            {"websiteUri": body["website"].strip()}
-            if body.get("website")
-            else {}
-        ),
+            language_code=language,
+        )
+    latitude, longitude = body.get("latitude"), body.get("longitude")
+    if latitude is not None and longitude is not None:
+        payload["latlng"] = {
+            "latitude": float(latitude),
+            "longitude": float(longitude),
+        }
+    return payload
+
+
+def _search_payload(body: dict) -> dict:
+    """Minimal Location for googleLocations.search (title is required)."""
+    language = (body.get("language_code") or "en").strip() or "en"
+    payload: dict = {
+        "languageCode": language,
+        "title": body["name"].strip(),
     }
+    if body.get("phone"):
+        payload["phoneNumbers"] = {"primaryPhone": str(body["phone"]).strip()}
+    if (
+        body.get("has_storefront", True)
+        and body.get("street")
+        and body.get("city")
+        and body.get("country")
+    ):
+        payload["storefrontAddress"] = _storefront_address(
+            street=body["street"],
+            city=body["city"],
+            country=body["country"],
+            state=body.get("state"),
+            postal_code=body.get("postal_code"),
+            language_code=language,
+        )
+    return payload
 
 
 async def _google_client(
@@ -608,11 +650,10 @@ async def search_google_locations(
     if source is None:
         raise ValueError("Connect Google Business Profile first.")
     client = await _google_client(db, source)
-    payload = _create_payload(body)
+    payload = _search_payload(body)
     try:
         rows = await client.search_google_locations(
             location=payload,
-            query=f"{body['name']} {body['street']} {body['city']}",
             page_size=5,
         )
     except GoogleReviewsError as e:
@@ -640,6 +681,83 @@ async def search_google_locations(
     return out
 
 
+async def list_google_categories(
+    db: AsyncSession,
+    user_id: str,
+    query: str,
+    region_code: str,
+    *,
+    exact: bool = False,
+) -> list[dict]:
+    """Search Google's category catalog for the create-location picker.
+
+    The catalog is the authority; the browser never invents category IDs.
+    ``query`` is matched by Google against the front of the display name.
+    """
+    from ..channels.google_reviews import GoogleReviewsError
+
+    channels = list(
+        (
+            await db.execute(
+                select(Channel).where(
+                    Channel.user_id == user_id,
+                    Channel.platform == "google_reviews",
+                )
+            )
+        ).scalars().all()
+    )
+    source = _source_channel_for_google(channels)
+    if source is None:
+        raise ValueError("Connect Google Business Profile first.")
+    client = await _google_client(db, source)
+    wanted = (query or "").strip()
+    exact_id: str | None = None
+    try:
+        rows = await client.search_categories(
+            query,
+            region_code=region_code,
+        )
+        # The filter returns every category containing the text, not only an
+        # exact match. A picker click sends the exact display name, so resolve
+        # that name explicitly when it fell outside the first page. Without
+        # this a valid category can look "not listed" in the UI.
+        if exact and wanted and not any(
+            isinstance(row, dict)
+            and str(row.get("displayName") or "").strip().lower() == wanted.lower()
+            for row in rows
+        ):
+            exact_id = await client.resolve_category_id(
+                wanted, region_code=region_code
+            )
+    except GoogleReviewsError as e:
+        detail = getattr(e, "message", str(e))
+        raise ValueError(f"Google could not load categories: {detail}") from e
+    finally:
+        await client.close()
+
+    out: list[dict] = []
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("name") or "").strip()
+        display = str(row.get("displayName") or "").strip()
+        if not name or not display or name in seen:
+            continue
+        seen.add(name)
+        out.append({"name": name, "display_name": display})
+    if exact_id and exact_id not in seen:
+        out.append({"name": exact_id, "display_name": wanted})
+    wanted_key = wanted.lower()
+    out.sort(
+        key=lambda item: (
+            item["display_name"].lower() != wanted_key,
+            item["display_name"].lower(),
+        )
+    )
+    return out
+
+
 async def create_google_location(
     db: AsyncSession, user_id: str, body: dict
 ) -> dict:
@@ -653,6 +771,7 @@ async def create_google_location(
         GoogleReviewsError,
         location_address,
         location_category,
+        location_description,
         location_phone,
         location_website,
     )
@@ -675,6 +794,15 @@ async def create_google_location(
     if not account_id:
         raise ValueError("The connected Google account has no account id.")
 
+    has_storefront = bool(body.get("has_storefront", True))
+    country = str(body.get("country") or "").strip().upper()[:2]
+    language = (body.get("language_code") or "en").strip() or "en"
+    service_area_names: list[str] = [
+        str(value).strip()
+        for value in (body.get("service_area") or [])
+        if str(value).strip()
+    ]
+
     client = await _google_client(db, source)
     try:
         # Search excludes locations the account already manages, so also check
@@ -693,18 +821,20 @@ async def create_google_location(
             return "".join(ch for ch in str(value or "") if ch.isdigit())
 
         wanted_name = _norm(body["name"])
-        wanted_phone = _phone(body["phone"])
-        wanted_city = _norm(body["city"])
+        wanted_phone = _phone(body.get("phone"))
+        wanted_city = _norm(body.get("city"))
+        wanted_street = _norm(body.get("street"))
         for loc in existing_locations:
             if not isinstance(loc, dict):
                 continue
             loc_title = _norm(loc.get("title"))
             loc_address = _norm(location_address(loc))
             same_city = bool(wanted_city and wanted_city in loc_address)
+            same_street = bool(wanted_street and wanted_street in loc_address)
             same_phone = bool(
                 wanted_phone and _phone(location_phone(loc)) == wanted_phone
             )
-            if same_city and (
+            if (same_city or same_street) and (
                 same_phone
                 or (wanted_name and loc_title == wanted_name)
                 or (wanted_name and loc_title.startswith(wanted_name))
@@ -715,7 +845,7 @@ async def create_google_location(
                 )
 
         category_id = await client.resolve_category_id(
-            body["category"], region_code=body["country"].upper()[:2]
+            body["category"], region_code=country
         )
         if not category_id:
             raise ValueError(
@@ -725,6 +855,36 @@ async def create_google_location(
             )
         payload = _create_payload(body)
         payload["categories"] = {"primaryCategory": {"name": category_id}}
+
+        # Service areas are free text locally; Google only accepts place IDs.
+        # A service-area-only business still gets the region, even when the
+        # Places key is missing or no name resolves, so create is not blocked
+        # by an optional section.
+        if service_area_names or not has_storefront:
+            service_area: dict = {
+                "businessType": (
+                    "CUSTOMER_AND_BUSINESS_LOCATION"
+                    if has_storefront
+                    else "CUSTOMER_LOCATION_ONLY"
+                ),
+                "regionCode": country,
+            }
+            if service_area_names:
+                from .places import PlacesError, resolve_service_area
+
+                try:
+                    place_infos = await resolve_service_area(
+                        service_area_names,
+                        language_code=language,
+                        region_code=country or "SA",
+                    )
+                except PlacesError as e:
+                    logger.warning("Service areas skipped for create: %s", e)
+                    place_infos = []
+                if place_infos:
+                    service_area["places"] = {"placeInfos": place_infos}
+            payload["serviceArea"] = service_area
+
         request_id = (body.get("request_id") or str(uuid.uuid4()))[:50]
         # Validate first so obvious category/address problems do not create a
         # half-finished local flow. Google still makes the real decision on
@@ -777,7 +937,7 @@ async def create_google_location(
     category = location_category(created) or body.get("category")
     address = location_address(created) or ", ".join(
         part for part in [
-            body.get("street"), body.get("city"),
+            body.get("street"), body.get("city"), body.get("state"),
             body.get("postal_code"), body.get("country"),
         ] if part
     )
@@ -792,7 +952,9 @@ async def create_google_location(
         "category": category,
         "phone": phone,
         "website": website,
-        "description": None,
+        "description": location_description(created) or body.get("description"),
+        "service_area": service_area_names,
+        "language_code": language,
         "profile_fields_checked": False,
         "created_via": "sayvors",
     }
