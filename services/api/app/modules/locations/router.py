@@ -18,6 +18,9 @@ from ..users.models import User
 from . import service
 from . import bulk as bulk_service
 from .schemas import (
+    GoogleLocationMatchOut,
+    LocationCreateIn,
+    LocationCreateOut,
     LocationGroupIn,
     LocationGroupOut,
     LocationGroupUpdate,
@@ -183,6 +186,42 @@ async def upload_bulk_csv(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return report
+
+@router.post("/search", response_model=list[GoogleLocationMatchOut])
+async def search_location_candidates(
+    body: LocationCreateIn,
+    ctx: TenantContext = Depends(require_perm("locations.view")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Check GoogleLocations before creating a new listing."""
+    try:
+        return await service.search_google_locations(
+            db, tenant_id_of(user), body.model_dump()
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise upstream_http_error(e, context="Google location search failed") from None
+
+
+@router.post("", response_model=LocationCreateOut, status_code=201)
+async def create_location(
+    body: LocationCreateIn,
+    ctx: TenantContext = Depends(require_perm("locations.view")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a location on Google and persist it as a native channel."""
+    try:
+        return await service.create_google_location(
+            db, tenant_id_of(user), body.model_dump()
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise upstream_http_error(e, context="Google location create failed") from None
+
 
 @router.get("/{listing_id}", response_model=LocationProfileOut)
 async def get_location(

@@ -58,6 +58,37 @@ class LocationGroupUpdate(BaseModel):
     listing_ids: list[str] | None = None
 
 
+class LocationCreateIn(BaseModel):
+    """The minimum Google needs to create a storefront location."""
+
+    name: str = Field(..., min_length=1, max_length=255)
+    category: str = Field(..., min_length=1, max_length=255)
+    street: str = Field(..., min_length=1, max_length=255)
+    city: str = Field(..., min_length=1, max_length=120)
+    postal_code: str | None = Field(None, max_length=20)
+    country: str = Field(..., min_length=2, max_length=2)
+    phone: str = Field(..., min_length=1, max_length=40)
+    website: str | None = Field(None, max_length=255)
+    request_id: str | None = Field(None, max_length=50)
+
+
+class GoogleLocationMatchOut(BaseModel):
+    name: str
+    location_name: str | None = None
+    address: str | None = None
+    place_id: str | None = None
+    request_admin_rights_url: str | None = None
+
+
+class LocationCreateOut(BaseModel):
+    listing_id: str
+    channel_id: str
+    name: str
+    address: str | None = None
+    status: str = "active"
+    created: bool = True
+
+
 class LocationProfileOut(BaseModel):
     listing_id: str
     name: str

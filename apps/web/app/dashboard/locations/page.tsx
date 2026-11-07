@@ -1,6 +1,7 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
@@ -840,7 +841,7 @@ const bulk: BulkScope | null = isBulk
         />
       )}
 
-      {/* Add-location wizard (Google create workflow, draft-only until Google connects) */}
+      {/* Add-location wizard: Google duplicate check → create → verification */}
       {bulkEditOpen && (
     <BulkEditSheet onClose={() => setBulkEditOpen(false)} />
   )}
@@ -848,6 +849,7 @@ const bulk: BulkScope | null = isBulk
   {createOpen && (
         <AddLocationModal
           onClose={() => setCreateOpen(false)}
+          onCreated={() => void locationsQuery.refetch()}
           onSaved={(text) => {
             setCreateOpen(false);
             showBanner("ok", text);
@@ -1835,10 +1837,10 @@ function DescriptionTab({ initial, initialOpeningDate, onSave, bulk, copy }: {
 
 /* ── Shared pieces ───────────────────────────────── */
 
-/* Add Location Modal (Google create-location workflow, frontend-first).
-   Steps mirror Google's recommended flow: details → duplicate check →
-   create → verification. Server calls are stubbed (TODO) until the direct
-   Google connection lands. "Save draft" persists to localStorage only. */
+/* Add Location Modal — Google's recommended create-location workflow:
+   details → duplicate search → create → verify. The duplicate search and
+   creation call the Business Information API; Google's create response is the
+   authority, and only then does Sayvors persist a native channel. */
 
 const CREATE_DRAFT_KEY = "sayvors.locationDraft.v1";
 
@@ -1874,16 +1876,6 @@ function loadCreateDraft(): LocationDraft {
     return { ...EMPTY_DRAFT };
   }
 }
-
-type VerifyMethod = "auto" | "email" | "sms" | "call" | "postcard";
-
-const VERIFY_METHODS: { key: VerifyMethod; label: string; hint: string }[] = [
-  { key: "auto", label: "Automatic", hint: "Google verifies instantly when eligible — nothing to do." },
-  { key: "email", label: "Email", hint: "A PIN goes to the business email address." },
-  { key: "sms", label: "SMS", hint: "A PIN goes to the business phone by text." },
-  { key: "call", label: "Phone call", hint: "Google calls the business phone with a PIN." },
-  { key: "postcard", label: "Postcard", hint: "A PIN arrives by mail in several days." },
-];
 
 function GroupsModal({
   groups,
@@ -2070,69 +2062,153 @@ function GroupsModal({
   );
 }
 
-function AddLocationModal({ onClose, onSaved }: { onClose: () => void; onSaved: (text: string) => void }) {
+interface GoogleLocationMatch {
+  name: string;
+  location_name?: string | null;
+  address?: string | null;
+  place_id?: string | null;
+  request_admin_rights_url?: string | null;
+}
+
+interface CreatedLocation {
+  listing_id: string;
+  channel_id: string;
+  name: string;
+  address: string | null;
+  status: string;
+  created: boolean;
+}
+
+function AddLocationModal({
+  onClose,
+  onSaved,
+  onCreated,
+}: {
+  onClose: () => void;
+  onSaved: (text: string) => void;
+  onCreated?: () => void;
+}) {
   const [step, setStep] = useState(1);
   const [draft, setDraft] = useState<LocationDraft>(() => loadCreateDraft());
   const [errors, setErrors] = useState<string[]>([]);
-  const [checked, setChecked] = useState(false);
-  const [method, setMethod] = useState<VerifyMethod>("auto");
-  const [pin, setPin] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [draftMessage, setDraftMessage] = useState<string | null>(null);
+  const [matches, setMatches] = useState<GoogleLocationMatch[] | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [checkError, setCheckError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [created, setCreated] = useState<CreatedLocation | null>(null);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const requestIdRef = useRef("");
 
-  const steps = ["Details", "Matches", "Review", "Verification"];
+  const steps = ["Details", "Duplicates", "Create", "Verify"];
+
+  const createBody = () => ({
+    name: draft.name.trim(),
+    category: draft.category.trim(),
+    street: draft.street.trim(),
+    city: draft.city.trim(),
+    postal_code: draft.postalCode.trim() || null,
+    country: draft.country.trim().toUpperCase(),
+    phone: draft.phone.trim(),
+    website: draft.website.trim() || null,
+  });
 
   const nextFromDetails = () => {
     const missing: string[] = [];
     if (!draft.name.trim()) missing.push("Business name");
     if (!draft.category.trim()) missing.push("Primary category");
-    if (!draft.country.trim()) missing.push("Country");
+    if (!draft.street.trim()) missing.push("Street address");
+    if (!draft.city.trim()) missing.push("City");
+    if (!draft.phone.trim()) missing.push("Phone");
+    if (draft.country.trim().length !== 2) missing.push("2-letter country code (e.g. SA)");
     if (missing.length) {
       setErrors(missing);
       return;
     }
     setErrors([]);
+    setMatches(null);
+    setCheckError(null);
     setStep(2);
   };
 
-  // TODO: POST /api/v1/locations/check — GoogleLocations duplicate matches.
-  // Runs for real once Google is connected; until then it only marks the
-  // step reviewed so the draft can be completed.
-  const runDuplicateCheck = () => {
-    setChecked(true);
+  const runDuplicateCheck = async () => {
+    setChecking(true);
+    setCheckError(null);
+    setMatches(null);
+    try {
+      const rows = (await apiFetch("/api/v1/locations/search", {
+        method: "POST",
+        body: JSON.stringify(createBody()),
+      })) as GoogleLocationMatch[];
+      setMatches(Array.isArray(rows) ? rows : []);
+    } catch (e) {
+      setCheckError(e instanceof Error ? e.message : "Google could not check for existing listings.");
+    } finally {
+      setChecking(false);
+    }
   };
 
   const saveDraft = () => {
-    setSaving(true);
+    setSavingDraft(true);
     try {
       localStorage.setItem(CREATE_DRAFT_KEY, JSON.stringify(draft));
+      setDraftMessage("Draft saved on this device.");
     } catch {
-      /* private mode — draft stays in memory for this session */
+      setDraftMessage("Could not save the draft in this browser.");
     } finally {
-      setSaving(false);
+      setSavingDraft(false);
     }
-    onSaved("Draft saved — it'll pre-fill Create when Google is connected.");
   };
 
-  // TODO: POST /api/v1/locations — accounts.locations.create (validateOnly first).
-  // TODO: POST /api/v1/locations/{id}/verification-options → verify → complete.
+  const createOnGoogle = async () => {
+    setCreating(true);
+    setCreateError(null);
+    if (!requestIdRef.current) {
+      requestIdRef.current =
+        typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `loc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
+    try {
+      const result = (await apiFetch("/api/v1/locations", {
+        method: "POST",
+        body: JSON.stringify({ ...createBody(), request_id: requestIdRef.current }),
+      })) as CreatedLocation;
+      requestIdRef.current = "";
+      setCreated(result);
+      try {
+        localStorage.removeItem(CREATE_DRAFT_KEY);
+      } catch {
+        /* private mode */
+      }
+      setStep(4);
+      onCreated?.();
+    } catch (e) {
+      setCreateError(e instanceof Error ? e.message : "Google could not create this location.");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const blockedByClaim = (matches ?? []).some((m) => !!m.request_admin_rights_url);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-[2px]" role="presentation" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-3 backdrop-blur-[2px] sm:p-4" role="presentation" onClick={onClose}>
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Add location"
         onClick={(e) => e.stopPropagation()}
-        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.06] dark:bg-ink"
+        className="max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink sm:p-5"
       >
         <div className="flex items-start justify-between gap-3">
-          <SectionTitle title="Add location" subtitle="Create a new Google business location. Saved as a draft until Google is connected." />
+          <SectionTitle title="Add location" subtitle="Create a new Google Business Profile location, then verify it with Google." />
           <button onClick={onClose} aria-label="Close" className="rounded-lg px-2 py-1 text-[16px] font-bold text-ink/40 transition hover:bg-ink/[0.04] dark:text-fog/40">
             ×
           </button>
         </div>
 
-        {/* Step indicator */}
         <ol className="mb-4 flex items-center gap-1.5">
           {steps.map((label, i) => {
             const n = i + 1;
@@ -2143,7 +2219,7 @@ function AddLocationModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
                 <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${done ? "bg-emerald-500 text-white" : active ? "bg-deep-violet text-white" : "bg-ink/[0.08] text-ink/40 dark:bg-fog/[0.08] dark:text-fog/40"}`}>
                   {done ? "✓" : n}
                 </span>
-                <span className={`text-[11px] font-semibold ${active ? "text-deep-violet" : "text-ink/40 dark:text-fog/40"}`}>{label}</span>
+                <span className={`hidden text-[11px] font-semibold sm:block ${active ? "text-deep-violet" : "text-ink/40 dark:text-fog/40"}`}>{label}</span>
                 {n < steps.length && <span className="h-px flex-1 bg-ink/[0.08] dark:bg-fog/[0.08]" aria-hidden />}
               </li>
             );
@@ -2161,24 +2237,27 @@ function AddLocationModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
               <input value={draft.name} onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} placeholder="Sayvors Company" className="input-field" />
             </Field>
             <Field label="Primary category *">
-              <input value={draft.category} onChange={(e) => setDraft((d) => ({ ...d, category: e.target.value }))} placeholder="e.g. Software company" className="input-field" />
+              <input value={draft.category} onChange={(e) => setDraft((d) => ({ ...d, category: e.target.value }))} placeholder="e.g. Computer software store" className="input-field" />
+              <p className="mt-1 text-[10.5px] text-ink/40 dark:text-fog/40">
+                Use Google’s exact category name. Sayvors will not guess a wrong category.
+              </p>
             </Field>
-            <Field label="Street address">
+            <Field label="Street address *">
               <input value={draft.street} onChange={(e) => setDraft((d) => ({ ...d, street: e.target.value }))} placeholder="Street and number" className="input-field" />
             </Field>
             <div className="grid gap-4 sm:grid-cols-3">
-              <Field label="City">
+              <Field label="City *">
                 <input value={draft.city} onChange={(e) => setDraft((d) => ({ ...d, city: e.target.value }))} placeholder="Riyadh" className="input-field" />
               </Field>
               <Field label="Postal code">
                 <input value={draft.postalCode} onChange={(e) => setDraft((d) => ({ ...d, postalCode: e.target.value }))} placeholder="12213" className="input-field" />
               </Field>
-              <Field label="Country *">
-                <input value={draft.country} onChange={(e) => setDraft((d) => ({ ...d, country: e.target.value }))} placeholder="SA" className="input-field" />
+              <Field label="Country code *">
+                <input value={draft.country} onChange={(e) => setDraft((d) => ({ ...d, country: e.target.value.toUpperCase().slice(0, 2) }))} placeholder="SA" maxLength={2} className="input-field" />
               </Field>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Phone">
+              <Field label="Phone *">
                 <input value={draft.phone} onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))} placeholder="+966 55 000 0000" className="input-field" />
               </Field>
               <Field label="Website">
@@ -2195,20 +2274,71 @@ function AddLocationModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
         {step === 2 && (
           <div className="space-y-4">
             <p className="text-[12px] leading-relaxed text-ink/60 dark:text-fog/60">
-              Before creating, Google must be checked for an existing or claimed listing at this address — creating a duplicate can get the listing suspended.
+              Google must be checked for an existing or claimed listing at this address before creating one. Creating a duplicate can get the listing suspended.
             </p>
-            {!checked ? (
-              <button onClick={runDuplicateCheck} className="btn-secondary w-full">
-                Check Google for existing matches
+
+            {matches === null && !checkError && (
+              <button onClick={() => void runDuplicateCheck()} disabled={checking} className="btn-secondary w-full disabled:opacity-50">
+                {checking ? "Checking Google…" : "Check Google for existing matches"}
               </button>
-            ) : (
+            )}
+
+            {checkError && (
               <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[12px] text-amber-800">
-                Live duplicate check runs against Google once connected — no live check yet. Your details are kept; you can continue and save the draft.
+                <p className="font-semibold">Google could not check for duplicates.</p>
+                <p className="mt-1">{checkError}</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button onClick={() => void runDuplicateCheck()} className="rounded-lg bg-amber-600 px-2.5 py-1 text-[11px] font-bold text-white">Try again</button>
+                  <button onClick={() => { setMatches([]); setCheckError(null); }} className="rounded-lg border border-amber-300 px-2.5 py-1 text-[11px] font-bold text-amber-800">Continue without check</button>
+                </div>
               </div>
             )}
+
+            {matches && matches.length === 0 && (
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-[12px] text-emerald-800">
+                No existing Google listing matched this name and address. You can create a new listing.
+              </div>
+            )}
+
+            {matches && matches.length > 0 && (
+              <div className="space-y-2">
+                <div className={`rounded-xl border p-3 text-[12px] ${blockedByClaim ? "border-amber-200 bg-amber-50 text-amber-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+                  Google found {matches.length} possible match{matches.length === 1 ? "" : "es"}. If one is already yours, request access instead of creating a duplicate.
+                </div>
+                {blockedByClaim && (
+                  <p className="text-[11px] font-semibold text-amber-800">
+                    This listing is already claimed. Use “Request access” above; creating another listing would duplicate it.
+                  </p>
+                )}
+                <ul className="space-y-2">
+                  {matches.map((match, index) => (
+                    <li key={`${match.name}-${index}`} className="rounded-xl border border-ink/[0.08] p-3 dark:border-fog/[0.08]">
+                      <p className="text-[12.5px] font-semibold text-ink dark:text-fog">{match.name}</p>
+                      {match.address && <p className="mt-0.5 text-[11px] leading-relaxed text-ink/50 dark:text-fog/50">{match.address}</p>}
+                      {match.request_admin_rights_url && (
+                        <a href={match.request_admin_rights_url} target="_blank" rel="noopener noreferrer" className="mt-1.5 inline-flex text-[11px] font-bold text-[#1a73e8] hover:underline">
+                          Request access to this listing ↗
+                        </a>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             <div className="flex justify-between gap-2 pt-1">
               <button onClick={() => setStep(1)} className="btn-secondary">← Back</button>
-              <button onClick={() => setStep(3)} className="btn-primary">Continue →</button>
+              <button
+                onClick={() => setStep(3)}
+                disabled={checking || blockedByClaim || (matches === null && !checkError)}
+                className="btn-primary disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {blockedByClaim
+                  ? "Claim the existing listing first"
+                  : matches && matches.length > 0
+                    ? "Create a new listing"
+                    : "Continue →"}
+              </button>
             </div>
           </div>
         )}
@@ -2225,60 +2355,55 @@ function AddLocationModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
               ].map(([k, v]) => (
                 <div key={k} className="flex gap-3">
                   <dt className="w-28 shrink-0 font-medium text-ink/50 dark:text-fog/50">{k}</dt>
-                  <dd className="font-semibold text-ink dark:text-fog">{v}</dd>
+                  <dd className="min-w-0 break-words font-semibold text-ink dark:text-fog">{v}</dd>
                 </div>
               ))}
             </dl>
-            <button onClick={saveDraft} disabled={saving} className="btn-primary w-full disabled:opacity-50">
-              {saving ? "Saving..." : "Save draft"}
+
+            {createError && (
+              <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-[12px] text-red-700">{createError}</p>
+            )}
+            {draftMessage && (
+              <p role="status" className="rounded-xl bg-ink/[0.04] p-2.5 text-[11px] text-ink/60 dark:bg-fog/[0.06] dark:text-fog/60">{draftMessage}</p>
+            )}
+
+            <button onClick={() => void createOnGoogle()} disabled={creating} className="btn-primary w-full disabled:opacity-50">
+              {creating ? "Creating on Google…" : "Create on Google"}
             </button>
-            <button disabled title="Available once Google is connected" className="btn-secondary w-full cursor-not-allowed opacity-50">
-              Create on Google (needs connection)
+            <button onClick={saveDraft} disabled={savingDraft || creating} className="btn-secondary w-full disabled:opacity-50">
+              {savingDraft ? "Saving…" : "Save draft"}
             </button>
             <div className="flex justify-start pt-1">
-              <button onClick={() => setStep(2)} className="btn-secondary">← Back</button>
+              <button onClick={() => setStep(2)} disabled={creating} className="btn-secondary">← Back</button>
             </div>
           </div>
         )}
 
-        {step === 4 && (
+        {step === 4 && created && (
           <div className="space-y-4">
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-900">
+              <p className="text-[13px] font-bold">
+                {created.created ? "Location created on Google" : "Location linked to Sayvors"}
+              </p>
+              <p className="mt-1 text-[12px] font-semibold">{created.name}</p>
+              {created.address && <p className="mt-0.5 text-[11px] leading-relaxed text-emerald-800/80">{created.address}</p>}
+            </div>
             <p className="text-[12px] leading-relaxed text-ink/60 dark:text-fog/60">
-              New locations stay invisible on Maps and Search until the owner verifies them. Pick how verification will run once the listing is created.
+              New locations stay invisible on Maps and Search until Google verifies them. Continue to Verification, choose the method Google offers, and complete it.
             </p>
-            <div className="space-y-2">
-              {VERIFY_METHODS.map((m) => (
-                <label key={m.key} className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition ${method === m.key ? "border-deep-violet/40 bg-deep-violet/[0.04]" : "border-ink/[0.08] dark:border-fog/[0.08]"}`}>
-                  <input
-                    type="radio"
-                    name="verify-method"
-                    checked={method === m.key}
-                    onChange={() => setMethod(m.key)}
-                    className="mt-0.5 accent-deep-violet"
-                  />
-                  <span>
-                    <span className="block text-[13px] font-semibold text-ink dark:text-fog">{m.label}</span>
-                    <span className="block text-[11px] text-ink/45 dark:text-fog/45">{m.hint}</span>
-                  </span>
-                </label>
-              ))}
-            </div>
-            <Field label="Verification PIN (preview — enter the code Google sends)">
-              <input value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" placeholder="6-digit code" className="input-field" />
-            </Field>
-            <button disabled title="Available once Google is connected" className="btn-secondary w-full cursor-not-allowed opacity-50">
-              Complete verification (needs connection)
+            <Link href={`/dashboard/verification?channel=${encodeURIComponent(created.channel_id)}`} className="btn-primary flex w-full items-center justify-center">
+              Open verification →
+            </Link>
+            <button onClick={() => onSaved(`${created.name} is connected to Sayvors. Finish Google verification next.`)} className="btn-secondary w-full">
+              Done
             </button>
-            <div className="flex justify-between gap-2 pt-1">
-              <button onClick={() => setStep(3)} className="btn-secondary">← Back</button>
-              <button onClick={onClose} className="btn-primary">Done</button>
-            </div>
           </div>
         )}
       </div>
     </div>
   );
 }
+
 
 function SectionTitle({ title, subtitle }: { title: string; subtitle: string }) {
   return (

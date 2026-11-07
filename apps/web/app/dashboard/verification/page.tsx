@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
 import { apiFetch } from "@/lib/api-rag";
@@ -89,6 +90,8 @@ function statusTone(status: string): string {
 
 export default function VerificationPage() {
   const queryClient = useQueryClient();
+  const searchParams = useSearchParams();
+  const requestedChannel = searchParams.get("channel") ?? "";
   const [selectedId, setSelectedId] = useState("");
   const [activeMethod, setActiveMethod] = useState<string | null>(null);
   const [phoneNumber, setPhoneNumber] = useState("");
@@ -109,8 +112,12 @@ export default function VerificationPage() {
   const channels = channelsQuery.data ?? [];
 
   useEffect(() => {
-    if (!selectedId && channels.length > 0) setSelectedId(channels[0].id);
-  }, [channels, selectedId]);
+    if (selectedId || channels.length === 0) return;
+    const requested = channels.some((channel) => channel.id === requestedChannel)
+      ? requestedChannel
+      : channels[0].id;
+    setSelectedId(requested);
+  }, [channels, requestedChannel, selectedId]);
 
   const verificationQuery = useQuery({
     queryKey: queryKeys.verification.detail(selectedId),
