@@ -751,7 +751,10 @@ export default function NewLocationPage() {
                           ))}
                         </select>
                       </Field>
-                      <Field label="State / province" hint="Needed for accurate geocoding in the US, Canada and Australia.">
+                      <Field
+                        label="State / province"
+                        hint="Optional. Some countries, including Pakistan, treat this as read-only; Sayvors drops it automatically if Google rejects it."
+                      >
                         <input
                           value={draft.state}
                           onChange={(event) => update({ state: event.target.value })}
@@ -1064,9 +1067,18 @@ export default function NewLocationPage() {
                 </div>
 
                 {createError && (
-                  <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-[12px] text-red-700 dark:border-red-500/25 dark:bg-red-500/10 dark:text-red-200">
-                    {createError}
-                  </p>
+                  <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-[12px] text-red-700 dark:border-red-500/25 dark:bg-red-500/10 dark:text-red-200">
+                    <p>{createError}</p>
+                    {/address|state|province|street|city|postal/i.test(createError) && (
+                      <button
+                        type="button"
+                        onClick={() => setStep(2)}
+                        className="mt-2 rounded-lg bg-red-600 px-2.5 py-1 text-[11px] font-bold text-white"
+                      >
+                        Edit address
+                      </button>
+                    )}
+                  </div>
                 )}
 
                 <div className="flex flex-wrap items-center gap-2">

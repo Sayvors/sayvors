@@ -9,6 +9,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from app.modules.channels.google_reviews import GoogleReviewsError
 from app.modules.channels.models import Channel
 from app.modules.channels.service import encrypt_token
 from app.modules.locations import service as locations
@@ -563,6 +564,123 @@ async def test_create_google_location_blocks_a_managed_duplicate(monkeypatch, db
                 "request_id": "req-dup",
             },
         )
+
+
+@pytest.mark.asyncio
+async def test_create_retries_without_readonly_state(monkeypatch, db, user_id):
+    """Pakistan rejects a client-provided administrativeArea with 400.
+
+    The create must drop it and retry instead of showing the raw Google JSON
+    to the merchant.
+    """
+    await _google_account_connection(db, user_id)
+    captured: list[dict] = []
+
+    async def fake_resolve(self, name, region_code="US"):
+        return "categories/gcid:software_company"
+
+    async def fake_create(self, account_id, location, *, request_id, validate_only=False):
+        captured.append(json.loads(json.dumps(location)))
+        if validate_only and (location.get("storefrontAddress") or {}).get("administrativeArea"):
+            raise GoogleReviewsError(
+                'accounts.locations.create failed (400): {"error":{"code":400,'
+                '"message":"Request contains an invalid argument.","status":"INVALID_ARGUMENT",'
+                '"details":[{"reason":"READ_ONLY_ADDRESS_COMPONENTS","metadata":'
+                '{"field_mask":"storefront_address.administrative_area"}}]}}',
+                400,
+            )
+        return {"name": "locations/loc-pk", "title": location["title"]}
+
+    async def fake_list(self, account_id):
+        return []
+
+    async def fake_close(self):
+        return None
+
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.list_locations",
+        fake_list,
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.resolve_category_id",
+        fake_resolve,
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.create_location",
+        fake_create,
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.close",
+        fake_close,
+    )
+
+    out = await locations.create_google_location(
+        db, user_id, {
+            "name": "Peshawar Branch", "category": "Software company",
+            "street": "2F6G+J36 Peshawar, Pakistan, abad", "city": "Peshawar",
+            "state": "Peshawar", "postal_code": "24550", "country": "PK",
+            "phone": "+92 346 0561173", "request_id": "req-pk",
+        },
+    )
+
+    assert out["listing_id"] == "loc-pk"
+    assert captured[0]["storefrontAddress"]["administrativeArea"] == "Peshawar"
+    assert captured[-1]["storefrontAddress"].get("administrativeArea") is None
+
+
+@pytest.mark.asyncio
+async def test_create_error_is_friendly_and_hides_raw_google_json(monkeypatch, db, user_id):
+    await _google_account_connection(db, user_id)
+
+    async def fake_resolve(self, name, region_code="US"):
+        return "categories/gcid:software_company"
+
+    async def fake_create(self, *args, **kwargs):
+        raise GoogleReviewsError(
+            'accounts.locations.create failed (400): {"error":{"code":400,'
+            '"message":"Request contains an invalid argument.","status":"INVALID_ARGUMENT",'
+            '"details":[{"reason":"INVALID_ARGUMENT","metadata":'
+            '{"field_mask":"storefront_address"}}]}}',
+            400,
+        )
+
+    async def fake_list(self, account_id):
+        return []
+
+    async def fake_close(self):
+        return None
+
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.list_locations",
+        fake_list,
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.resolve_category_id",
+        fake_resolve,
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.create_location",
+        fake_create,
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.close",
+        fake_close,
+    )
+
+    with pytest.raises(ValueError) as exc:
+        await locations.create_google_location(
+            db, user_id, {
+                "name": "Peshawar Branch", "category": "Software company",
+                "street": "1 Test Road", "city": "Peshawar",
+                "country": "PK", "phone": "+92 346 0561173",
+                "request_id": "req-friendly",
+            },
+        )
+
+    message = str(exc.value)
+    assert "Google could not accept this address" in message
+    assert "{" not in message
+    assert "INVALID_ARGUMENT" not in message
 
 
 @pytest.mark.asyncio

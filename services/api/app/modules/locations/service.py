@@ -6,6 +6,7 @@ metadata written by the OAuth callback and review worker; editable sections
 (description, categories, hours, service area, attributes, opening date) are
 stored in `location_profiles` and pushed with the Business Information API.
 """
+import copy
 import json
 import logging
 import uuid
@@ -728,6 +729,75 @@ def _create_payload(body: dict) -> dict:
     return payload
 
 
+def _is_readonly_address_component(error: Exception, field: str) -> bool:
+    """True when Google says the named address component is read-only.
+
+    Pakistan and several other countries reject a client-provided
+    administrativeArea with READ_ONLY_ADDRESS_COMPONENTS.
+    """
+    detail = str(getattr(error, "message", error))
+    return (
+        getattr(error, "status_code", None) == 400
+        and "READ_ONLY_ADDRESS_COMPONENTS" in detail
+        and f"storefront_address.{field}" in detail
+    )
+
+
+def _friendly_location_error(status: int, detail: str) -> str:
+    """Turn Google's ErrorInfo JSON into a message a merchant can act on."""
+    if "READ_ONLY_ADDRESS_COMPONENTS" in detail:
+        if "administrative_area" in detail:
+            return (
+                "Google treats the state/province as read-only for this country. "
+                "Go back to Address, clear State / province, and try again."
+            )
+        return (
+            "Google treats part of this address as read-only for this country. "
+            "Go back to Address, remove the state/province, and try again. If it "
+            "still fails, create the location in Google Business Profile."
+        )
+    if "MISSING_ADDRESS_COMPONENTS" in detail:
+        return (
+            "Google needs a city and a complete street address for this country. "
+            "Go back to Address, fill in the city and street, and try again."
+        )
+    if "PIN_DROP_REQUIRED" in detail:
+        return (
+            "Google cannot locate this address precisely enough to create the "
+            "location. Create it in Google Business Profile with a map pin, then "
+            "connect the listing here."
+        )
+    if "INVALID_ARGUMENT" in detail and "storefront_address" in detail:
+        return (
+            "Google could not accept this address. Check the country, city, postal "
+            "code, and street. Use a real street address, not a Google Maps link or "
+            "a Plus Code by itself."
+        )
+    if "INVALID_ARGUMENT" in detail and "categories" in detail:
+        return (
+            "Google does not recognize the selected category. Choose a category "
+            "from Google's list and try again."
+        )
+    if "INVALID_ARGUMENT" in detail and "phone" in detail:
+        return (
+            "Google rejected the phone number. Use the international format, for "
+            "example +92 346 0561173."
+        )
+    if "INVALID_ARGUMENT" in detail and ("website" in detail or "uri" in detail):
+        return "Google rejected the website. Use a valid https:// address."
+    if "INVALID_ARGUMENT" in detail and "profile" in detail:
+        return (
+            "Google requires a business description for this category. Add one "
+            "and try again."
+        )
+    if status == 400:
+        return (
+            "Google rejected the location details. Check the address, phone, "
+            "website, and category, then try again."
+        )
+    return "Google could not create the location right now. Try again in a moment."
+
+
 def _search_payload(body: dict) -> dict:
     """Minimal Location for googleLocations.search (title is required)."""
     language = (body.get("language_code") or "en").strip() or "en"
@@ -1045,15 +1115,31 @@ async def create_google_location(
         # duplicate-request key, so reusing one id for both calls can make
         # Google replay the validation response instead of creating a
         # location on the second call.
-        await client.create_location(
-            account_id,
-            payload,
-            request_id=str(uuid.uuid4())[:50],
-            validate_only=True,
-        )
-        created = await client.create_location(
-            account_id, payload, request_id=request_id
-        )
+        async def _validate_and_create(candidate: dict) -> dict:
+            await client.create_location(
+                account_id,
+                candidate,
+                request_id=str(uuid.uuid4())[:50],
+                validate_only=True,
+            )
+            return await client.create_location(
+                account_id, candidate, request_id=request_id
+            )
+
+        try:
+            created = await _validate_and_create(payload)
+        except GoogleReviewsError as e:
+            if not _is_readonly_address_component(e, "administrative_area"):
+                raise
+            # Pakistan and several other countries reject a client-provided
+            # state/province. Drop it and let Google derive it; city, postal
+            # code and address lines are still sent.
+            retry_payload = copy.deepcopy(payload)
+            (retry_payload.get("storefrontAddress") or {}).pop(
+                "administrativeArea", None
+            )
+            logger.info("Retrying Google create without administrativeArea")
+            created = await _validate_and_create(retry_payload)
     except GoogleReviewsError as e:
         status = getattr(e, "status_code", 502)
         detail = getattr(e, "message", str(e))
@@ -1074,7 +1160,8 @@ async def create_google_location(
                 "the location. Create it in Google Business Profile with a map "
                 "pin, then connect the listing here."
             ) from e
-        raise ValueError(f"Google rejected the location: {detail}") from e
+        logger.warning("Google location create rejected (%s): %s", status, detail)
+        raise ValueError(_friendly_location_error(status, detail)) from e
     finally:
         await client.close()
 
