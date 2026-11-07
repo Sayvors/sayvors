@@ -291,11 +291,17 @@ class GoogleBusinessClient(GoogleReviewsClient):
         return data if isinstance(data, dict) else {}
 
     async def list_categories(self, page_token: str | None = None,
-                              page_size: int = 100) -> dict:
+                              page_size: int = 100,
+                              region_code: str = "US") -> dict:
         """One page of the Google category catalog (displayName matching)."""
         from urllib.parse import urlencode
 
-        params = {"pageSize": page_size, "view": "FULL"}
+        params = {
+            "pageSize": page_size,
+            "view": "FULL",
+            "languageCode": "en",
+            "regionCode": (region_code or "US").upper()[:2],
+        }
         if page_token:
             params["pageToken"] = page_token
         resp = await self._authed_request(
@@ -309,7 +315,8 @@ class GoogleBusinessClient(GoogleReviewsClient):
         return data if isinstance(data, dict) else {}
 
     async def resolve_category_id(self, display_name: str,
-                                  max_pages: int = 10) -> str | None:
+                                  max_pages: int = 10,
+                                  region_code: str = "US") -> str | None:
         """Display name ("Software company") → Google category id.
 
         Paginates the catalog and matches case-insensitively. Returns None
@@ -322,7 +329,9 @@ class GoogleBusinessClient(GoogleReviewsClient):
         token: str | None = None
         for _ in range(max_pages):
             try:
-                page = await self.list_categories(page_token=token)
+                page = await self.list_categories(
+                    page_token=token, region_code=region_code
+                )
             except GoogleReviewsError as e:
                 logger.warning("Category catalog unreachable: %s", e)
                 return None
@@ -336,6 +345,69 @@ class GoogleBusinessClient(GoogleReviewsClient):
         logger.warning("No Google category id for %r — skipping categories push",
                        display_name)
         return None
+
+    async def search_google_locations(
+        self,
+        *,
+        location: dict | None = None,
+        query: str | None = None,
+        page_size: int = 5,
+    ) -> list[dict]:
+        """Check Google for an existing/claimed listing before creation.
+
+        ``location`` must include at least ``title`` for Google to match on
+        structured details; a free-text query is the fallback. Returns the
+        raw ``googleLocations`` entries (name, address, requestAdminRightsUrl).
+        """
+        if location is None and not (query or "").strip():
+            raise ValueError("A location or query is required.")
+        body: dict = {"pageSize": max(1, min(int(page_size), 10))}
+        if location is not None:
+            body["location"] = location
+        else:
+            body["query"] = str(query).strip()
+        resp = await self._authed_request(
+            "POST", f"{GBP_BIZINFO_API}/googleLocations:search", json=body)
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"googleLocations.search failed ({resp.status_code}): "
+                f"{resp.text[:300]}",
+                resp.status_code)
+        data = resp.json()
+        rows = data.get("googleLocations") if isinstance(data, dict) else None
+        return list(rows or [])
+
+    async def create_location(
+        self,
+        account_id: str,
+        location: dict,
+        *,
+        request_id: str,
+        validate_only: bool = False,
+    ) -> dict:
+        """Create a Business Profile location in ``account_id``.
+
+        We validate with Google first when the caller asks for it; a 200 on a
+        real call means Google accepted the location and it now exists.
+        """
+        from urllib.parse import urlencode
+
+        params = urlencode({
+            "requestId": (request_id or "")[:50],
+            "validateOnly": "true" if validate_only else "false",
+        })
+        resp = await self._authed_request(
+            "POST",
+            f"{GBP_BIZINFO_API}/accounts/{account_id}/locations?{params}",
+            json=location,
+        )
+        if resp.status_code not in (200, 201):
+            raise GoogleReviewsError(
+                f"accounts.locations.create failed ({resp.status_code}): "
+                f"{resp.text[:500]}",
+                resp.status_code)
+        data = resp.json()
+        return data if isinstance(data, dict) else {}
 
     async def push_profile(
         self,

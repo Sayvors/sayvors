@@ -402,6 +402,209 @@ async def test_trial_grant_is_idempotent(db):
 
 
 @pytest.mark.asyncio
+async def test_tenant_billing_surfaces_what_used_the_credit(db):
+    from app.modules.admin.service import get_tenant_billing
+    from app.modules.billing.models import BillingEvent
+    from app.modules.llm.models import LLMUsageEvent
+    from app.modules.users.models import User
+
+    uid = "billing-purpose-user-0001"
+    db.add(User(id=uid, email="purpose@sayvors.com", first_name="P",
+                last_name="U", password_hash="x", plan="free-trial",
+                ai_credit_cents=999))
+    event = BillingEvent(
+        id="billing-purpose-event-0001",
+        tenant_id=uid,
+        kind="ai_usage",
+        status="settled",
+        amount_cents=-1,
+        reserved_cents=5,
+        balance_after_cents=999,
+        model_id="groq:qwen",
+    )
+    db.add(event)
+    db.add(LLMUsageEvent(
+        id="billing-purpose-usage-0001",
+        tenant_id=uid,
+        provider="groq",
+        model_id="groq:qwen",
+        api_model="qwen",
+        purpose="analytics.enrichment",
+        ledger_id=event.id,
+        cost_cents=1,
+        status="ok",
+    ))
+    await db.commit()
+
+    billing = await get_tenant_billing(db, uid)
+    row = next(e for e in billing["ledger"] if e["id"] == event.id)
+    assert row["purpose"] == "analytics.enrichment"
+    assert row["model_id"] == "groq:qwen"
+
+    tenant_billing = await get_tenant_billing(db, uid, include_model=False)
+    tenant_row = next(
+        e for e in tenant_billing["ledger"] if e["id"] == event.id
+    )
+    assert tenant_row["purpose"] == "analytics.enrichment"
+    assert "model_id" not in tenant_row
+
+
+@pytest.mark.asyncio
+async def test_tenant_billing_paginates_and_sorts_the_ledger(db):
+    from datetime import datetime, timedelta, timezone
+
+    from app.modules.admin.service import get_tenant_billing
+    from app.modules.billing.models import BillingEvent
+    from app.modules.users.models import User
+
+    uid = "billing-page-user-0001"
+    db.add(User(id=uid, email="paging@sayvors.com", first_name="P",
+                last_name="U", password_hash="x", plan="free-trial",
+                ai_credit_cents=985))
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    amounts = [-5, -1, -9, 1000]
+    for i, cents in enumerate(amounts):
+        db.add(BillingEvent(
+            id=f"billing-page-event-{i:04d}",
+            tenant_id=uid,
+            kind="ai_usage" if cents < 0 else "plan_grant",
+            status="settled",
+            amount_cents=cents,
+            created_at=base + timedelta(days=i),
+        ))
+    await db.commit()
+
+    def amounts_of(page: dict) -> list[int]:
+        return [row["amount_cents"] for row in page["ledger"]]
+
+    newest = await get_tenant_billing(db, uid, limit=2, offset=0, sort="newest")
+    assert newest["total"] == 4
+    assert amounts_of(newest) == [1000, -9]
+
+    newest_page_2 = await get_tenant_billing(db, uid, limit=2, offset=2, sort="newest")
+    assert newest_page_2["total"] == 4
+    assert amounts_of(newest_page_2) == [-1, -5]
+
+    oldest = await get_tenant_billing(db, uid, limit=2, offset=0, sort="oldest")
+    assert amounts_of(oldest) == [-5, -1]
+
+    high = await get_tenant_billing(db, uid, limit=2, offset=0, sort="cost_high")
+    assert amounts_of(high) == [-9, -5]
+
+    # Grants are not spend, so they stay after every debit in both cost views.
+    low = await get_tenant_billing(db, uid, limit=2, offset=0, sort="cost_low")
+    assert amounts_of(low) == [-1, -5]
+    low_page_2 = await get_tenant_billing(db, uid, limit=2, offset=2, sort="cost_low")
+    assert amounts_of(low_page_2) == [-9, 1000]
+
+    with pytest.raises(ValueError):
+        await get_tenant_billing(db, uid, sort="random")
+
+
+@pytest.mark.asyncio
+async def test_ledger_endpoint_forwards_pagination_and_sort(client, db, user_id):
+    from app.modules.billing.models import BillingEvent
+    from app.modules.users.models import User
+
+    db.add(User(id=user_id, email="ledger-api@sayvors.com", first_name="L",
+                last_name="A", password_hash="x", plan="free-trial",
+                ai_credit_cents=994))
+    for i, cents in enumerate([-1, -6, -3]):
+        db.add(BillingEvent(
+            id=f"ledger-api-event-{i:04d}",
+            tenant_id=user_id,
+            kind="ai_usage",
+            status="settled",
+            amount_cents=cents,
+            model_id="groq:qwen",
+        ))
+    await db.commit()
+
+    r = client.get("/api/v1/billing/ledger?limit=2&offset=0&sort=cost_high")
+    assert r.status_code == 200, r.text[:200]
+    body = r.json()
+    assert body["total"] == 3
+    assert [row["amount_cents"] for row in body["ledger"]] == [-6, -3]
+    # The tenant call must never expose the provider/model.
+    assert "model_id" not in body["ledger"][0]
+
+    page2 = client.get("/api/v1/billing/ledger?limit=2&offset=2&sort=cost_high")
+    assert page2.status_code == 200
+    assert [row["amount_cents"] for row in page2.json()["ledger"]] == [-1]
+    assert page2.json()["total"] == 3
+
+    assert client.get("/api/v1/billing/ledger?sort=bogus").status_code == 422
+    assert client.get("/api/v1/billing/ledger?limit=500").status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_admin_credit_topup_works_for_free_trial_and_enterprise(client, db, user_id, _allow_admin_auth):
+    """Admins can add credit without changing the tenant's plan."""
+    from app.modules.billing.models import BillingEvent
+    from app.modules.users.models import User
+    from app.security import create_admin_token
+
+    db.add(User(id=user_id, email="topup@sayvors.com", first_name="T",
+                last_name="U", password_hash="x", plan="free-trial",
+                ai_credit_cents=1000))
+    db.add(BillingEvent(
+        id="topup-trial-grant",
+        tenant_id=user_id,
+        kind="plan_grant",
+        status="posted",
+        amount_cents=1000,
+        balance_after_cents=1000,
+        idempotency_key="trial:topup-test",
+    ))
+    await db.commit()
+    headers = {"Authorization": f"Bearer {create_admin_token()}"}
+
+    r = client.post(
+        f"/api/v1/admin/tenants/{user_id}/credit",
+        json={"amount_cents": 5000, "note": "goodwill", "idempotency_key": "topup-1"},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text[:200]
+    body = r.json()
+    assert body["balance_cents"] == 6000
+    assert body["granted_cents"] == 5000
+    assert body["duplicate"] is False
+    assert body["plan"] == "free-trial"
+
+    # Same key: no second grant, same balance.
+    repeat = client.post(
+        f"/api/v1/admin/tenants/{user_id}/credit",
+        json={"amount_cents": 5000, "idempotency_key": "topup-1"},
+        headers=headers,
+    )
+    assert repeat.status_code == 200
+    assert repeat.json()["balance_cents"] == 6000
+    assert repeat.json()["granted_cents"] == 0
+    assert repeat.json()["duplicate"] is True
+
+    # Enterprise is still a tenant; a top-up must not be blocked by the
+    # legacy free/pro-only plan grant.
+    user = await db.get(User, user_id)
+    user.plan = "enterprise"
+    await db.commit()
+    ent = client.post(
+        f"/api/v1/admin/tenants/{user_id}/credit",
+        json={"amount_cents": 2500, "idempotency_key": "topup-2"},
+        headers=headers,
+    )
+    assert ent.status_code == 200
+    assert ent.json()["balance_cents"] == 8500
+    assert ent.json()["plan"] == "enterprise"
+
+    bad = client.post(
+        f"/api/v1/admin/tenants/{user_id}/credit",
+        json={"amount_cents": 0},
+        headers=headers,
+    )
+    assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_grant_plan_bundles_pro_credits(db):
     """First Pro grant → plan=pro + $20 bundled; ledger row; Redis synced."""
     from app.modules.billing import service as billing_service

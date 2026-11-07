@@ -625,3 +625,59 @@ async def test_poll_one_channel_reports_the_channel_it_polled(
     # that return early (not claimed / in backoff).
     for key in ("channels", "reviews", "replied", "queued", "skipped", "errors"):
         assert key in stats, key
+
+
+@pytest.mark.asyncio
+async def test_google_review_name_and_reply_are_mirrored_into_the_inbox(db, channel_id):
+    from app.modules.channels.models import ChannelMessage
+
+    review = SimpleNamespace(
+        review_id="accounts/a/locations/l/reviews/chat",
+        rating=5,
+        text="What service do you offer?",
+        reviewer_name="Abdulrahman Manea",
+        reviewer_photo_url="https://lh3.googleusercontent.com/avatar",
+    )
+    await reviews_worker._store_inbound_review(db, channel_id, review)
+
+    inbound = (
+        await db.execute(
+            select(ChannelMessage).where(
+                ChannelMessage.channel_id == channel_id,
+                ChannelMessage.platform_message_id == review.review_id,
+            )
+        )
+    ).scalar_one()
+    assert inbound.contact_name == "Abdulrahman Manea"
+    assert inbound.contact_phone_hash is not None
+
+    channel = await db.get(Channel, channel_id)
+    reply = ReviewReply(
+        id="rr-chat-mirror",
+        channel_id=channel_id,
+        review_id=review.review_id,
+        rating=5,
+        reviewer_name=review.reviewer_name,
+        reply_text="Thanks for asking! We offer AI software solutions.",
+        status="posted",
+    )
+    db.add(reply)
+    await db.commit()
+    await reviews_worker._store_reply_message(
+        db, channel, review.review_id, review.reviewer_name, reply,
+        status="sent", handled_by="ai",
+    )
+    await db.commit()
+
+    outbound = (
+        await db.execute(
+            select(ChannelMessage).where(
+                ChannelMessage.channel_id == channel_id,
+                ChannelMessage.platform_message_id == "google-reply:rr-chat-mirror",
+            )
+        )
+    ).scalar_one()
+    assert outbound.direction == "outbound"
+    assert outbound.content_type == "review_reply"
+    assert outbound.contact_phone_hash == inbound.contact_phone_hash
+    assert outbound.contact_name == "Abdulrahman Manea"

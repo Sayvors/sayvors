@@ -9,6 +9,7 @@ import { dedupeBusinesses } from "@/lib/channel-identity";
 import { GBP_DASHBOARD_URL } from "@/lib/google-links";
 import {
   fetchOverview,
+  fetchInsights,
   fetchTimeseries,
 } from "@/lib/api-analytics";
 import MessagingSection from "@/components/analytics/MessagingSection";
@@ -88,6 +89,13 @@ export default function OverviewPanel() {
   });
   const overview = overviewQuery.data?.overview ?? null;
   const points = overviewQuery.data?.points ?? [];
+  const editsQuery = useQuery({
+    queryKey: ["analytics", "review-edits", days, channelId ?? "all"],
+    queryFn: () =>
+      fetchInsights({ edited: true, channelId, limit: 4 }),
+    staleTime: 30 * 1000,
+  });
+  const edits = editsQuery.data?.items ?? [];
   const loading = channelsQuery.isPending || overviewQuery.isPending;
   const error = overviewQuery.isError && !overviewQuery.data;
 
@@ -209,6 +217,60 @@ export default function OverviewPanel() {
         <div className="space-y-6">
           {/* Reputation pulse + who is waiting: the two decision cards. */}
           <PulseCards days={days} channelId={channelId} />
+
+          {edits.length > 0 && (
+            <div className="ui-card p-4 sm:p-5">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">Review edits</h3>
+                  <p className="mt-0.5 text-[11px] text-[var(--ui-ink-2)]">
+                    {edits.length} customer edit{edits.length === 1 ? "" : "s"} changed the rating or text after the first sync.
+                  </p>
+                </div>
+                <Link
+                  href="/dashboard/reviews?tab=edited"
+                  className="text-[12px] font-semibold text-[var(--ui-ink)] underline underline-offset-2"
+                >
+                  Open edits
+                </Link>
+              </div>
+              <ul className="mt-3 divide-y divide-[var(--ui-line)]">
+                {edits.map((edit) => {
+                  const delta =
+                    edit.previous_rating != null
+                      ? edit.rating - edit.previous_rating
+                      : null;
+                  return (
+                    <li key={edit.id} className="py-2.5 first:pt-0 last:pb-0">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-[12px] font-semibold text-[var(--ui-ink)]">
+                          {edit.reviewer_name ?? "Google reviewer"}
+                        </span>
+                        <span
+                          className={`text-[12px] font-bold tabular-nums ${
+                            delta == null
+                              ? "text-[var(--ui-ink-2)]"
+                              : delta < 0
+                                ? "text-[#B42318]"
+                                : delta > 0
+                                  ? "text-[#137333]"
+                                  : "text-[var(--ui-ink-2)]"
+                          }`}
+                        >
+                          {edit.previous_rating != null
+                            ? `${edit.previous_rating.toFixed(1)} → ${edit.rating.toFixed(1)}`
+                            : `Rated ${edit.rating.toFixed(1)}`}
+                        </span>
+                      </div>
+                      <p className="mt-0.5 line-clamp-1 text-[11.5px] text-[var(--ui-ink-2)]">
+                        {edit.review_text || "No written comment"}
+                      </p>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
 
           {/* Google presence — daily trends charted, window totals as tiles */}
           {presence && (

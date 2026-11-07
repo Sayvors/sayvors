@@ -4,7 +4,8 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
-import PlatformMark from "@/components/channels/PlatformMark";
+import PlatformMark, { platformLabel } from "@/components/channels/PlatformMark";
+import CustomerAvatar from "@/components/customers/CustomerAvatar";
 import {
   fetchCustomers,
   type Customer,
@@ -27,6 +28,29 @@ const PRIORITY_CHIP: Record<string, string> = {
   normal: "bg-[var(--ui-sunken)] text-[var(--ui-ink)]",
   low: "bg-[var(--ui-sunken)] text-[var(--ui-ink-2)]",
 };
+
+function isGoogle(platform: string | null): boolean {
+  return platform === "google_reviews" || platform === "google";
+}
+
+/**
+ * The second line under a customer's name. Google reviewers are keyed by an
+ * internal digest, which must never be shown as contact information; their
+ * location is the meaningful identifier instead.
+ */
+function contactLine(c: Customer): string {
+  if (isGoogle(c.platform)) return c.channel_name ?? "Google review";
+  if (c.username) return `@${c.username}`;
+  if (!c.contact_phone) return "No contact details";
+  return c.contact_phone.startsWith("+") ? c.contact_phone : `+${c.contact_phone}`;
+}
+
+function shortDate(iso: string | null): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
 
 export default function CustomersTable() {
   const queryClient = useQueryClient();
@@ -166,9 +190,16 @@ export default function CustomersTable() {
     }
   };
 
+  const filterSelect =
+    "h-9 w-full rounded-lg border border-ink/[0.08] bg-white px-2 text-[11px] font-semibold text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog sm:w-auto";
+
   return (
-    <div className="flex h-full min-h-0 gap-4">
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink">
+    <div className="flex h-full min-h-0 gap-0 xl:gap-4">
+      <div
+        className={`${
+          selected ? "hidden xl:flex" : "flex"
+        } min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink`}
+      >
         {/* Filters */}
         <div className="border-b border-ink/[0.06] p-3 dark:border-fog/[0.06]">
           <input
@@ -176,28 +207,20 @@ export default function CustomersTable() {
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search customers"
             aria-label="Search customers"
-            className="input-field w-full"
+            enterKeyHint="search"
+            className="input-field h-9 w-full text-[12px] sm:text-[13px]"
           />
-          <div className="mt-2 flex flex-wrap items-center gap-1">
-            <button
-              onClick={() => setImportantOnly((v) => !v)}
-              aria-pressed={importantOnly}
-              className={`rounded-lg px-2 py-1 text-[11px] font-semibold transition ${
-                importantOnly ? "bg-[#FF4F6E]/10 text-[#C4304B]" : "text-ink/45 hover:text-ink/70 dark:text-fog/45"
-              }`}
-            >
-              Important{importantTotal ? ` (${importantTotal})` : ""}
-            </button>
+          <div className="mt-2 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
             <select
               value={platform}
               onChange={(e) => setPlatform(e.target.value)}
               aria-label="Filter by platform"
-              className="rounded-lg border border-ink/[0.08] bg-white px-2 py-1 text-[11px] font-semibold text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+              className={filterSelect}
             >
               <option value="all">All platforms</option>
               {platforms.map((p) => (
                 <option key={p} value={p}>
-                  {p}
+                  {platformLabel(p)}
                 </option>
               ))}
             </select>
@@ -205,7 +228,7 @@ export default function CustomersTable() {
               value={category}
               onChange={(e) => setCategory(e.target.value)}
               aria-label="Filter by category"
-              className="rounded-lg border border-ink/[0.08] bg-white px-2 py-1 text-[11px] font-semibold text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+              className={filterSelect}
             >
               <option value="all">All categories</option>
               {categories.map((c) => (
@@ -218,7 +241,7 @@ export default function CustomersTable() {
               value={priority}
               onChange={(e) => setPriority(e.target.value)}
               aria-label="Filter by priority"
-              className="rounded-lg border border-ink/[0.08] bg-white px-2 py-1 text-[11px] font-semibold text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+              className={filterSelect}
             >
               <option value="all">All priority</option>
               <option value="urgent">Urgent</option>
@@ -230,16 +253,30 @@ export default function CustomersTable() {
               value={sort}
               onChange={(e) => setSort(e.target.value as "recent" | "important" | "messages")}
               aria-label="Sort"
-              className="ml-auto rounded-lg border border-ink/[0.08] bg-white px-2 py-1 text-[11px] font-semibold text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+              className={`${filterSelect} sm:ml-auto`}
             >
               <option value="important">Important first</option>
               <option value="recent">Newest first</option>
               <option value="messages">Most messages</option>
             </select>
+            <button
+              onClick={() => setImportantOnly((v) => !v)}
+              aria-pressed={importantOnly}
+              className={`col-span-2 flex h-9 items-center justify-center gap-1.5 rounded-lg border text-[11px] font-semibold transition sm:col-span-1 sm:w-auto sm:px-2.5 ${
+                importantOnly
+                  ? "border-[#FF4F6E]/30 bg-[#FF4F6E]/10 text-[#C4304B]"
+                  : "border-ink/[0.08] text-ink/55 hover:text-ink/80 dark:border-fog/[0.1] dark:text-fog/55 dark:hover:text-fog/80"
+              }`}
+            >
+              {importantOnly && (
+                <span className="h-1.5 w-1.5 rounded-full bg-[#C4304B]" aria-hidden />
+              )}
+              Important{importantTotal ? ` (${importantTotal})` : ""}
+            </button>
           </div>
         </div>
 
-        {/* Table */}
+        {/* Customers */}
         <div className="min-h-0 flex-1 overflow-auto">
           {loading && customers.length === 0 ? (
             <div className="flex justify-center py-16">
@@ -250,88 +287,147 @@ export default function CustomersTable() {
               {search ? "No customers match that search." : "No contacts yet. Once someone messages you they appear here."}
             </p>
           ) : (
-            <table className="w-full text-left text-[12px]">
-              <thead className="sticky top-0 bg-[var(--ui-sunken)] text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
-                <tr>
-                  <th className="px-3 py-2">Name</th>
-                  <th className="px-3 py-2">Platform</th>
-                  <th className="px-3 py-2">Channel</th>
-                  <th className="px-3 py-2">Category</th>
-                  <th className="px-3 py-2">Priority</th>
-                  <th className="px-3 py-2">Last contact</th>
-                  <th className="px-3 py-2 text-right">Msgs</th>
-                  <th className="px-3 py-2 text-center">Inbox</th>
-                  <th className="px-3 py-2 text-right">Unread</th>
-                </tr>
-              </thead>
-              <tbody>
+            <>
+              {/* Phones: identity, platform and state on one card; the table
+                  below is too wide to read without horizontal scrolling. */}
+              <div className="divide-y divide-ink/[0.05] dark:divide-fog/[0.05] sm:hidden">
                 {visible.map((c) => (
-                  <tr
+                  <button
                     key={`${c.channel_id}:${c.key}`}
+                    type="button"
                     onClick={() => setSelected(c)}
-                    className={`cursor-pointer border-b border-ink/[0.04] transition hover:bg-ink/[0.02] dark:border-fog/[0.04] dark:hover:bg-fog/[0.03] ${
-                      selected?.channel_id === c.channel_id && selected?.key === c.key ? "bg-deep-violet/[0.06]" : ""
-                    }`}
+                    className="flex w-full items-start gap-3 px-3 py-3 text-left transition hover:bg-ink/[0.02] active:bg-ink/[0.04] dark:hover:bg-fog/[0.03] dark:active:bg-fog/[0.05]"
                   >
-                    <td className="px-3 py-2">
-                      <div className="flex items-center gap-2">
-                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-deep-violet/10 text-[10px] font-bold text-deep-violet">
-                          {(c.display_name || "?").slice(0, 2).toUpperCase()}
+                    <CustomerAvatar name={c.display_name} url={c.avatar_url} />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-2">
+                        <span className="truncate text-[14px] font-semibold text-ink dark:text-fog">
+                          {c.display_name || "Unknown sender"}
                         </span>
-                        <span className="min-w-0">
-                          <span className="block truncate font-semibold text-ink dark:text-fog">
-                            {c.display_name || "Unknown sender"}
-                            {c.important && (
-                              <span className="ml-1.5 inline-block rounded-full bg-[#FF4F6E]/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[#C4304B]">
-                                Important
-                              </span>
-                            )}
+                        {c.unread > 0 && (
+                          <span className="ml-auto rounded-full bg-deep-violet px-1.5 py-0.5 text-[10px] font-bold text-white">
+                            {c.unread}
                           </span>
-                          <span className="block truncate text-[10px] text-ink/40 dark:text-fog/40">
-                            {c.contact_phone || "—"}
+                        )}
+                      </span>
+                      <span className="mt-0.5 flex min-w-0 items-center gap-1 text-[11px] text-ink/45 dark:text-fog/45">
+                        <PlatformMark platform={c.platform as never} size={14} />
+                        <span className="shrink-0">{platformLabel(c.platform ?? "")}</span>
+                        <span className="truncate">· {contactLine(c)}</span>
+                      </span>
+                      <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                        {c.category && c.category !== "normal" && (
+                          <span className="rounded-full bg-[var(--ui-sunken)] px-2 py-0.5 text-[10px] font-semibold text-[var(--ui-ink)]">
+                            {c.category}
                           </span>
+                        )}
+                        {c.priority && c.priority !== "normal" && (
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${PRIORITY_CHIP[c.priority] ?? "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"}`}>
+                            {c.priority}
+                          </span>
+                        )}
+                        {c.important && (
+                          <span className="rounded-full bg-[#FF4F6E]/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#C4304B]">
+                            Important
+                          </span>
+                        )}
+                        <span className="ml-auto text-[10px] tabular-nums text-ink/35 dark:text-fog/35">
+                          {shortDate(c.last_message_at)}
                         </span>
-                      </div>
-                    </td>
-                    <td className="px-3 py-2">
-                      <PlatformMark platform={c.platform as never} size={12} />
-                    </td>
-                    <td className="px-3 py-2 text-ink/60 dark:text-fog/60">{c.channel_name || "—"}</td>
-                    <td className="px-3 py-2 text-ink/60 dark:text-fog/60">{c.category || "—"}</td>
-                    <td className="px-3 py-2">
-                      {c.priority ? (
-                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${PRIORITY_CHIP[c.priority] ?? "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"}`}>
-                          {c.priority}
-                        </span>
-                      ) : "—"}
-                    </td>
-                    <td className="px-3 py-2 text-ink/50 dark:text-fog/50">
-                      {c.last_message_at ? new Date(c.last_message_at).toLocaleString() : "—"}
-                    </td>
-                    <td className="px-3 py-2 text-right text-ink/60 dark:text-fog/60">{c.message_count}</td>
-                    <td className="px-3 py-2 text-center">
-                      <Link
-                        href={`/dashboard/channels/inbox?channel=${encodeURIComponent(c.channel_id)}&key=${encodeURIComponent(c.key)}`}
-                        onClick={(e) => e.stopPropagation()}
-                        className="inline-flex items-center gap-1 rounded-md border border-ink/[0.08] bg-white px-2 py-1 text-[10px] font-semibold text-deep-violet transition hover:bg-deep-violet/5 dark:border-fog/[0.1] dark:bg-ink dark:hover:bg-deep-violet/10"
-                      >
-                        Open
-                        <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M4 2h6v6M10 2L4 8" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                      </Link>
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      {c.unread > 0 && (
-                        <span className="rounded-full bg-deep-violet px-1.5 text-[10px] font-bold text-white">
-                          {c.unread}
-                        </span>
-                      )}
-                    </td>
-                  </tr>
+                      </span>
+                    </span>
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="mt-1 h-4 w-4 shrink-0 text-ink/25 dark:text-fog/25"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      aria-hidden
+                    >
+                      <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
                 ))}
-              </tbody>
-            </table>
+              </div>
+
+              <table className="hidden w-full table-fixed text-left text-[12px] sm:table">
+                <thead className="sticky top-0 bg-[var(--ui-sunken)] text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
+                  <tr>
+                    <th className="w-[40%] px-3 py-2 2xl:w-[30%]">Name</th>
+                    <th className="w-[18%] px-3 py-2 2xl:w-[12%]">Platform</th>
+                    <th className="hidden w-[18%] px-3 py-2 2xl:table-cell">Channel</th>
+                    <th className="w-[14%] px-3 py-2 2xl:w-[10%]">Category</th>
+                    <th className="w-[14%] px-3 py-2 2xl:w-[10%]">Priority</th>
+                    <th className="hidden w-[8%] px-3 py-2 text-right 2xl:table-cell">Msgs</th>
+                    <th className="w-[14%] px-3 py-2 text-center 2xl:w-[12%]">Inbox</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visible.map((c) => (
+                    <tr
+                      key={`${c.channel_id}:${c.key}`}
+                      onClick={() => setSelected(c)}
+                      className={`cursor-pointer border-b border-ink/[0.04] transition hover:bg-ink/[0.02] dark:border-fog/[0.04] dark:hover:bg-fog/[0.03] ${
+                        selected?.channel_id === c.channel_id && selected?.key === c.key ? "bg-deep-violet/[0.06]" : ""
+                      }`}
+                    >
+                      <td className="px-3 py-2">
+                        <div className="flex items-center gap-2">
+                          <CustomerAvatar name={c.display_name} url={c.avatar_url} size="sm" />
+                          <span className="min-w-0">
+                            <span className="block truncate font-semibold text-ink dark:text-fog">
+                              {c.display_name || "Unknown sender"}
+                              {c.unread > 0 && (
+                                <span className="ml-1.5 inline-block rounded-full bg-deep-violet px-1.5 text-[9px] font-bold leading-4 text-white">
+                                  {c.unread}
+                                </span>
+                              )}
+                              {c.important && (
+                                <span className="ml-1.5 inline-block rounded-full bg-[#FF4F6E]/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[#C4304B]">
+                                  Important
+                                </span>
+                              )}
+                            </span>
+                            <span className="block truncate text-[10px] text-ink/40 dark:text-fog/40">
+                              {contactLine(c)}
+                              {c.last_message_at ? ` · ${shortDate(c.last_message_at)}` : ""}
+                            </span>
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className="inline-flex items-center gap-1.5 text-ink/60 dark:text-fog/60">
+                          <PlatformMark platform={c.platform as never} size={14} />
+                          <span>{platformLabel(c.platform ?? "")}</span>
+                        </span>
+                      </td>
+                      <td className="hidden px-3 py-2 text-ink/60 dark:text-fog/60 2xl:table-cell">{c.channel_name || "—"}</td>
+                      <td className="px-3 py-2 text-ink/60 dark:text-fog/60">{c.category || "—"}</td>
+                      <td className="px-3 py-2">
+                        {c.priority ? (
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${PRIORITY_CHIP[c.priority] ?? "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"}`}>
+                            {c.priority}
+                          </span>
+                        ) : "—"}
+                      </td>
+                      <td className="hidden px-3 py-2 text-right text-ink/60 dark:text-fog/60 2xl:table-cell">{c.message_count}</td>
+                      <td className="px-3 py-2 text-center">
+                        <Link
+                          href={`/dashboard/channels/inbox?channel=${encodeURIComponent(c.channel_id)}&key=${encodeURIComponent(c.key)}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="inline-flex items-center gap-1 rounded-md border border-ink/[0.08] bg-white px-2 py-1 text-[10px] font-semibold text-deep-violet transition hover:bg-deep-violet/5 dark:border-fog/[0.1] dark:bg-ink dark:hover:bg-deep-violet/10"
+                        >
+                          Open
+                          <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M4 2h6v6M10 2L4 8" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
           )}
         </div>
         {loadMoreError && (
@@ -364,34 +460,74 @@ export default function CustomersTable() {
         </div>
       </div>
 
-      {/* Side panel */}
+      {/* Profile — full screen on phones, side panel from lg up. */}
       {selected && (
-        <aside className="flex w-full max-w-md shrink-0 flex-col overflow-hidden rounded-2xl border border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink">
-          <div className="flex items-center justify-between border-b border-ink/[0.06] px-4 py-3 dark:border-fog/[0.06]">
-            <h2 className="truncate text-[14px] font-bold text-ink dark:text-fog">
-              {selected.display_name || "Unknown sender"}
-            </h2>
-            <Link
-              href={`/dashboard/channels/inbox?channel=${encodeURIComponent(selected.channel_id)}&key=${encodeURIComponent(selected.key)}`}
-              className="ml-2 inline-flex shrink-0 items-center gap-1 rounded-md bg-deep-violet px-2.5 py-1 text-[10px] font-bold text-white transition hover:bg-deep-violet/90"
+        <aside className="flex w-full min-w-0 flex-col overflow-hidden rounded-2xl border border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink xl:w-[400px] xl:shrink-0">
+          <div className="flex items-center gap-2 border-b border-ink/[0.06] px-2.5 py-2 dark:border-fog/[0.06] sm:px-3">
+            <button
+              type="button"
+              onClick={() => setSelected(null)}
+              aria-label="Back to customers"
+              className="flex h-8 items-center gap-1 rounded-lg px-2 text-[12px] font-semibold text-deep-violet transition hover:bg-deep-violet/5 xl:hidden"
             >
-              Open in inbox
+              ← Back
+            </button>
+            <p className="hidden flex-1 truncate text-[11px] font-bold uppercase tracking-[0.12em] text-ink/40 dark:text-fog/40 xl:block">
+              Customer profile
+            </p>
+            <div className="flex-1 xl:hidden" />
+            <Link
+              href={
+                isGoogle(selected.platform)
+                  ? "/dashboard/reviews"
+                  : `/dashboard/channels/inbox?channel=${encodeURIComponent(selected.channel_id)}&key=${encodeURIComponent(selected.key)}`
+              }
+              className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-deep-violet px-2.5 py-1.5 text-[11px] font-bold text-white transition hover:bg-deep-violet/90"
+            >
+              <span className="xl:hidden">{isGoogle(selected.platform) ? "Reviews" : "Inbox"}</span>
+              <span className="hidden xl:inline">{isGoogle(selected.platform) ? "Open in reviews" : "Open in inbox"}</span>
+              <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                <path d="M4 2h6v6M10 2L4 8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
             </Link>
             <button
+              type="button"
               onClick={() => setSelected(null)}
               aria-label="Close profile"
-              className="flex h-7 w-7 items-center justify-center rounded-full text-[14px] font-bold text-ink/45 hover:bg-ink/[0.04]"
+              className="hidden h-8 w-8 items-center justify-center rounded-full text-[16px] font-bold text-ink/45 hover:bg-ink/[0.04] dark:text-fog/45 dark:hover:bg-fog/[0.06] xl:flex"
             >
               ×
             </button>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
             {profileLoading && !profile ? (
-              <p className="text-[12px] text-ink/40">Loading…</p>
+              <div className="space-y-3" aria-label="Loading profile">
+                <div className="h-16 w-16 animate-pulse rounded-full bg-[var(--ui-sunken)]" />
+                <div className="h-5 w-40 animate-pulse rounded bg-[var(--ui-sunken)]" />
+                <div className="h-20 animate-pulse rounded-xl bg-[var(--ui-sunken)]" />
+              </div>
             ) : profile ? (
-              <CustomerProfileComponent profile={profile} selected={selected} onCategoryChanged={() => void queryClient.invalidateQueries({ queryKey: ["customers"] })} />
+              <CustomerProfileComponent
+                key={`${selected.channel_id}:${selected.key}`}
+                profile={profile}
+                selected={selected}
+                onCategoryChanged={() => void queryClient.invalidateQueries({ queryKey: ["customers"] })}
+              />
             ) : (
-              <p className="text-[12px] text-ink/40">Could not load profile.</p>
+              <div className="px-1 py-6 text-center">
+                <p className="text-[12px] text-ink/45 dark:text-fog/45">
+                  {profileQuery.isError ? "Could not load this customer." : "Profile unavailable."}
+                </p>
+                {profileQuery.isError && (
+                  <button
+                    type="button"
+                    onClick={() => void profileQuery.refetch()}
+                    className="mt-3 rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-semibold text-white"
+                  >
+                    Try again
+                  </button>
+                )}
+              </div>
             )}
           </div>
         </aside>

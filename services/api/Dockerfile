@@ -42,6 +42,9 @@ COPY services/api/alembic/ ./alembic/
 COPY services/api/alembic.ini ./
 COPY --chown=appuser:appuser integrations/ ./integrations/
 COPY --chown=appuser:appuser services/api/app/ ./app/
+# Ops/backfill scripts are part of the runtime image so a deploy can run them
+# without copying files into a live container (e.g. the trial-credit backfill).
+COPY --chown=appuser:appuser services/api/scripts/ ./scripts/
 
 # Named volumes inherit this ownership on first creation. An existing volume
 # may need a one-time `chown -R 10001:10001 /app/data/uploads` on the host.

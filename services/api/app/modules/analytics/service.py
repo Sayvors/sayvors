@@ -471,13 +471,24 @@ async def _attach_latest_replies(db: AsyncSession, rows: list[ReviewInsight]) ->
         )
     ).scalars().all()
     latest: dict[tuple[str, str], ReviewReply] = {}
+    published: dict[tuple[str, str], ReviewReply] = {}
     for rep in replies:
-        latest.setdefault((rep.channel_id, rep.review_id), rep)
+        key = (rep.channel_id, rep.review_id)
+        latest.setdefault(key, rep)
+        if rep.status == "posted":
+            published.setdefault(key, rep)
     for insight in rows:
-        rep = latest.get((insight.channel_id, insight.review_id))
+        key = (insight.channel_id, insight.review_id)
+        rep = latest.get(key)
+        live = published.get(key)
         insight.reply_id = rep.id if rep else None  # type: ignore[attr-defined]
         insight.reply_text = rep.reply_text if rep else None  # type: ignore[attr-defined]
         insight.reply_status = rep.status if rep else None  # type: ignore[attr-defined]
+        insight.published_reply_id = live.id if live else None  # type: ignore[attr-defined]
+        insight.published_reply_text = live.reply_text if live else None  # type: ignore[attr-defined]
+        insight.published_reply_at = (  # type: ignore[attr-defined]
+            (live.replied_at or live.created_at) if live else None
+        )
 
 
 # ── Messaging overview (read path over channel_daily_metrics) ─────────

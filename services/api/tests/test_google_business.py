@@ -108,7 +108,7 @@ async def test_resolve_category_id_matches_and_misses(monkeypatch):
     ]
     calls = {"n": 0}
 
-    async def _list(self, page_token=None, page_size=100):
+    async def _list(self, page_token=None, page_size=100, region_code="US"):
         calls["n"] += 1
         idx = 0 if page_token is None else 1
         out = dict(pages[idx])

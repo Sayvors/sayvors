@@ -1,9 +1,19 @@
+import json
 from typing import AsyncIterator
 
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionChunk
 
-from .base import LLMProvider, LLMMessage, LLMRequest, LLMResponse, LLMUsage, ProviderError
+from .base import (
+    LLMProvider,
+    LLMMessage,
+    LLMRequest,
+    LLMResponse,
+    LLMUsage,
+    ProviderError,
+    ToolCall,
+    ToolDefinition,
+)
 
 PROVIDER_BASE_URLS: dict[str, str] = {
     "openai": "https://api.openai.com/v1",
@@ -12,6 +22,8 @@ PROVIDER_BASE_URLS: dict[str, str] = {
     "deepseek": "https://api.deepseek.com/v1",
     "groq": "https://api.groq.com/openai/v1",
     "openrouter": "https://openrouter.ai/api/v1",
+    "zhipu": "https://api.z.ai/api/paas/v4",
+    "zhipu-coding": "https://api.z.ai/api/coding/paas/v4",
     "ollama": "http://localhost:11434/v1",
 }
 
@@ -20,10 +32,14 @@ class OpenAICompatibleProvider(LLMProvider):
     def __init__(self, provider: str, api_key: str, base_url: str | None = None):
         self._provider = provider
         resolved_url = base_url or PROVIDER_BASE_URLS.get(provider, "https://api.openai.com/v1")
+        # Fail fast instead of holding the HTTP request open during SDK retry
+        # backoff (6s/12s per retry stalls chat for minutes). Callers degrade
+        # gracefully (no chart / no databank) rather than timing out in the browser.
         self._client = AsyncOpenAI(
             api_key=api_key,
             base_url=resolved_url,
-            timeout=120.0,
+            timeout=45.0,
+            max_retries=0,
         )
 
     def name(self) -> str:
@@ -37,14 +53,45 @@ class OpenAICompatibleProvider(LLMProvider):
             messages.append({"role": m.role, "content": m.content})
         return messages
 
+    @staticmethod
+    def _to_tool(tool: ToolDefinition) -> dict:
+        properties: dict[str, dict] = {}
+        for name, param in tool.parameters.items():
+            schema: dict = {"type": param.type}
+            if param.description:
+                schema["description"] = param.description
+            if param.enum:
+                schema["enum"] = param.enum
+            if param.type == "array":
+                schema["items"] = {"type": param.items_type or "string"}
+            properties[name] = schema
+        return {
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": tool.required,
+                    "additionalProperties": False,
+                },
+            },
+        }
+
     async def _complete(self, req: LLMRequest) -> LLMResponse:
         try:
+            kwargs: dict = {}
+            if req.tools:
+                kwargs["tools"] = [self._to_tool(t) for t in req.tools]
+                kwargs["tool_choice"] = "auto"
             response = await self._client.chat.completions.create(
                 model=req.model,
                 messages=self._build_messages(req),
                 temperature=req.temperature,
                 max_tokens=req.max_tokens,
                 stream=False,
+                **kwargs,
             )
             choice = response.choices[0]
             usage = LLMUsage(
@@ -52,12 +99,24 @@ class OpenAICompatibleProvider(LLMProvider):
                 completion_tokens=response.usage.completion_tokens if response.usage else 0,
                 total_tokens=response.usage.total_tokens if response.usage else 0,
             )
+            calls: list[ToolCall] = []
+            for call in (choice.message.tool_calls or []):
+                try:
+                    arguments = json.loads(call.function.arguments or "{}")
+                except (TypeError, ValueError):
+                    arguments = {}
+                calls.append(ToolCall(
+                    name=call.function.name,
+                    arguments=arguments if isinstance(arguments, dict) else {},
+                    call_id=call.id or "",
+                ))
             return LLMResponse(
                 content=choice.message.content or "",
                 provider=self._provider,
                 model=response.model,
                 usage=usage,
-                finish_reason=choice.finish_reason or "stop",
+                finish_reason=choice.finish_reason or ("tool_calls" if calls else "stop"),
+                tool_calls=calls,
             )
         except Exception as e:
             status = self._map_error(e)

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 
+from app.modules.analytics.models import ReviewInsight
 from app.modules.channels import customers_service
 from app.modules.channels.models import (
     Channel,
@@ -127,6 +128,18 @@ async def _seed(db, user_id):
             status="posted",
         )
     )
+    db.add(
+        ReviewInsight(
+            id="insight-1",
+            user_id=user_id,
+            channel_id="chan-google",
+            review_id="review-1",
+            rating=5,
+            review_text="great place",
+            reviewer_name="Hamza Shah",
+            reviewer_photo_url="https://lh3.googleusercontent.com/avatar",
+        )
+    )
     await db.commit()
 
 
@@ -178,7 +191,22 @@ async def test_customers_page_important_sort_and_filters(client, db, user_id):
     assert google["total"] == 1
     row = google["customers"][0]
     assert row["contact_phone"] == "google:reviewer1"
+    assert row["display_name"] == "Hamza Shah"
+    assert row["avatar_url"] == "https://lh3.googleusercontent.com/avatar"
     assert row["has_review"] is True
+
+
+@pytest.mark.asyncio
+async def test_google_customer_profile_resolves_reviewer_identity(client, db, user_id):
+    await _seed(db, user_id)
+
+    r = client.get(f"{URL}/chan-google/google:reviewer1")
+    assert r.status_code == 200, r.text
+    identity = r.json()["identity"]
+    assert identity["name"] == "Hamza Shah"
+    assert identity["avatar_url"] == "https://lh3.googleusercontent.com/avatar"
+    assert identity["platform"] == "google_reviews"
+    assert r.json()["reviews"][0]["reply_text"] == "Thank you!"
 
 
 @pytest.mark.asyncio

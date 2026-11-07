@@ -91,6 +91,10 @@ def _evidence_for(rows: list[dict], limit: int = 12) -> list[dict]:
                 "review_id": r["review_id"],
                 "quote": quote[:200],
                 "rating": r["rating"],
+                "reviewer": r.get("reviewer") or "Customer",
+                "reviewer_photo_url": r.get("reviewer_photo_url"),
+                "review_url": r.get("review_url"),
+                "reviewed_at": r.get("reviewed_at") or r.get("date"),
             })
             if len(out) >= limit:
                 return out

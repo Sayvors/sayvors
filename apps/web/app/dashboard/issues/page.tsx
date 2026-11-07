@@ -9,22 +9,17 @@ import {
   updateIssue,
 } from "@/lib/api-analytics";
 import { apiFetch } from "@/lib/api-rag";
+import { safeHref } from "@/lib/safe-url";
+import CustomerAvatar from "@/components/customers/CustomerAvatar";
+import GoogleBusinessLogo from "@/components/channels/GoogleBusinessLogo";
 
 /**
- * Issues: the list of things to actually fix, per location.
+ * Google review issues: the problems named in negative reviews, per location.
  *
- * This replaces the dashboard's "Fix this →" link, which pointed at the review
- * list. It named the dimension costing the most stars and handed back reading
- * material, so the promise and the destination did not match.
- *
- * Every row is checkable. The subject comes from a closed vocabulary, and the
- * quotes in the dropdown are spans the meaning layer verified appear in the
- * source review, so "Cleanliness — 3 reviews" can be opened and read rather
- * than taken on faith.
- *
- * Status is the merchant's. A refresh moves the evidence and counts forward but
- * never reopens or closes anything, which is what keeps avg_rating before and
- * after a resolution a fair comparison.
+ * The page speaks Google's language on purpose — reviewer identity, stars,
+ * review dates and "View on Google" links — so a merchant can verify every
+ * quote instead of trusting a summary. Status remains the merchant's: a
+ * refresh moves the evidence forward but never reopens or closes an issue.
  */
 
 const STATUS_ORDER: LocationIssue["status"][] = [
@@ -42,23 +37,51 @@ const STATUS_LABEL: Record<LocationIssue["status"], string> = {
 };
 
 const STATUS_STYLE: Record<LocationIssue["status"], string> = {
-  open: "bg-coral/10 text-coral border-coral/25",
-  in_progress: "bg-amber-50 text-amber-700 border-amber-200",
-  done: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  dismissed: "bg-ink/[0.04] text-ink/45 border-ink/10",
+  open: "bg-coral/10 text-coral ring-1 ring-coral/25",
+  in_progress: "bg-amber-50 text-amber-700 ring-1 ring-amber-200",
+  done: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200",
+  dismissed: "bg-[var(--ui-sunken)] text-[var(--ui-ink-2)] ring-1 ring-[var(--ui-line)]",
 };
+
+function Stars({ rating, size = 12 }: { rating: number; size?: number }) {
+  const value = Math.max(0, Math.min(5, Math.round(rating)));
+  return (
+    <span
+      className="inline-flex items-center gap-0.5 text-[#FBBC05]"
+      style={{ fontSize: size }}
+      aria-label={`${value} out of 5 stars`}
+    >
+      {Array.from({ length: 5 }).map((_, index) => (
+        <span key={index} aria-hidden className={index < value ? "" : "opacity-25"}>
+          ★
+        </span>
+      ))}
+    </span>
+  );
+}
 
 function StatusPill({ status }: { status: LocationIssue["status"] }) {
   return (
     <span
-      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${STATUS_STYLE[status]}`}
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide ${STATUS_STYLE[status]}`}
     >
       {STATUS_LABEL[status]}
     </span>
   );
 }
 
-/** One issue, expandable to the reviews and quotes behind it. */
+function evidenceDate(value: string | null | undefined): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+/** One issue, expandable to the Google reviews behind it. */
 function IssueRow({
   issue,
   onUpdate,
@@ -83,145 +106,230 @@ function IssueRow({
     }
   };
 
+  const closed = issue.status === "done" || issue.status === "dismissed";
+
   return (
-    <div
-      className={`rounded-xl border bg-white transition ${
-        issue.status === "open" || issue.status === "in_progress"
-          ? "border-ink/[0.08]"
-          : "border-ink/[0.05] opacity-75"
+    <article
+      className={`overflow-hidden rounded-2xl border bg-[var(--ui-surface)] transition ${
+        closed
+          ? "border-[var(--ui-line)] opacity-80"
+          : "border-[var(--ui-line)] hover:border-deep-violet/25"
       }`}
     >
-      <div className="flex flex-wrap items-start gap-3 p-4">
-        <button
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          className="flex min-w-0 flex-1 items-start gap-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-deep-violet/40"
-        >
-          <span
-            aria-hidden
-            className={`mt-0.5 shrink-0 text-ink/30 transition ${open ? "rotate-90" : ""}`}
+      <div className="p-3.5 sm:p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <button
+            type="button"
+            onClick={() => setOpen((value) => !value)}
+            aria-expanded={open}
+            className="min-w-0 flex-1 rounded-xl text-left outline-none focus-visible:ring-2 focus-visible:ring-deep-violet/40"
           >
-            ▸
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="flex flex-wrap items-center gap-2">
-              <span className="text-[14px] font-semibold text-ink">
-                {issue.subject_label}
-              </span>
-              <StatusPill status={issue.status} />
+            <div className="flex flex-wrap items-center gap-2">
               {showLocation && issue.channel_name && (
-                <span className="rounded-full bg-ink/[0.05] px-2 py-0.5 text-[10px] font-medium text-ink/60">
-                  {issue.channel_name}
+                <span className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-[var(--ui-sunken)] px-2 py-0.5 text-[9.5px] font-semibold text-[var(--ui-ink)]">
+                  <GoogleBusinessLogo size={11} />
+                  <span className="truncate">{issue.channel_name}</span>
                 </span>
               )}
-            </span>
-            <span className="mt-1 block text-[12px] text-ink/55">
-              {issue.negative_count} of {issue.review_count} review
-              {issue.review_count === 1 ? "" : "s"} negative · avg{" "}
-              {issue.avg_rating.toFixed(1)}★
-            </span>
-            {issue.title && (
-              <span className="mt-1.5 block text-[12.5px] leading-5 text-ink">
-                <span className="font-medium">Fix:</span> {issue.title}
-              </span>
-            )}
-          </span>
-        </button>
+              <h3 className="text-[14px] font-bold text-[var(--ui-ink)]">
+                {issue.subject_label}
+              </h3>
+              <StatusPill status={issue.status} />
+            </div>
 
-        <div className="flex shrink-0 items-center gap-1.5">
-          {issue.status !== "done" && (
-            <button
-              onClick={() => onUpdate({ status: "done" })}
-              disabled={updating}
-              className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-40"
-            >
-              Mark fixed
-            </button>
-          )}
-          {issue.status === "done" && (
-            <button
-              onClick={() => onUpdate({ status: "open" })}
-              disabled={updating}
-              className="rounded-lg border border-ink/10 px-2.5 py-1.5 text-[11px] font-medium text-ink/55 transition hover:bg-ink/[0.04] disabled:opacity-40"
-            >
-              Reopen
-            </button>
-          )}
-          {issue.status === "open" && (
-            <button
-              onClick={() => onUpdate({ status: "dismissed" })}
-              disabled={updating}
-              title="Not a real problem — record that decision separately from fixing it"
-              className="rounded-lg px-2.5 py-1.5 text-[11px] text-ink/35 transition hover:text-ink/60 hover:bg-ink/[0.03] disabled:opacity-40"
-            >
-              Not a problem
-            </button>
-          )}
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-[var(--ui-ink-2)]">
+              <Stars rating={issue.avg_rating} />
+              <span className="font-semibold text-[var(--ui-ink)]">
+                {issue.negative_count} of {issue.review_count} review
+                {issue.review_count === 1 ? "" : "s"} negative
+              </span>
+              <span>average {issue.avg_rating.toFixed(1)}</span>
+            </div>
+
+            {issue.title && (
+              <p className="mt-2 text-[12.5px] leading-5 text-[var(--ui-ink)]">
+                <span className="font-semibold">Fix:</span> {issue.title}
+              </p>
+            )}
+
+            <p className="mt-2 inline-flex items-center gap-1 text-[10.5px] font-semibold text-[var(--ui-ink-2)]">
+              {open
+                ? "Hide reviews"
+                : issue.evidence.length > 0
+                  ? `Read the ${issue.evidence.length} review${issue.evidence.length === 1 ? "" : "s"}`
+                  : "Open details"}
+              <span aria-hidden className={`transition ${open ? "rotate-180" : ""}`}>⌄</span>
+            </p>
+          </button>
+
+          <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+            {issue.status === "open" && (
+              <button
+                type="button"
+                onClick={() => onUpdate({ status: "in_progress" })}
+                disabled={updating}
+                className="rounded-lg border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2.5 py-1.5 text-[10.5px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] disabled:opacity-40"
+              >
+                Start
+              </button>
+            )}
+            {issue.status !== "done" && (
+              <button
+                type="button"
+                onClick={() => onUpdate({ status: "done" })}
+                disabled={updating}
+                className="rounded-lg bg-deep-violet px-2.5 py-1.5 text-[10.5px] font-semibold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
+              >
+                Mark fixed
+              </button>
+            )}
+            {issue.status === "done" && (
+              <button
+                type="button"
+                onClick={() => onUpdate({ status: "open" })}
+                disabled={updating}
+                className="rounded-lg border border-[var(--ui-line)] px-2.5 py-1.5 text-[10.5px] font-medium text-[var(--ui-ink-2)] transition hover:bg-[var(--ui-sunken)] disabled:opacity-40"
+              >
+                Reopen
+              </button>
+            )}
+            {(issue.status === "open" || issue.status === "in_progress") && (
+              <button
+                type="button"
+                onClick={() => onUpdate({ status: "dismissed" })}
+                disabled={updating}
+                title="Not a real problem — record that decision separately from fixing it"
+                className="rounded-lg px-2 py-1.5 text-[10.5px] text-[var(--ui-ink-2)] transition hover:bg-[var(--ui-sunken)] disabled:opacity-40"
+              >
+                Not a problem
+              </button>
+            )}
+            {issue.status === "dismissed" && (
+              <button
+                type="button"
+                onClick={() => onUpdate({ status: "open" })}
+                disabled={updating}
+                className="rounded-lg border border-[var(--ui-line)] px-2.5 py-1.5 text-[10.5px] font-medium text-[var(--ui-ink-2)] transition hover:bg-[var(--ui-sunken)] disabled:opacity-40"
+              >
+                Reopen
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
       {open && (
-        <div className="border-t border-ink/[0.06] px-4 py-3.5">
+        <div className="border-t border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-3.5 sm:px-4">
           {issue.detail && (
-            <p className="text-[12px] leading-5 text-ink/65">{issue.detail}</p>
+            <div className="rounded-xl border-l-2 border-deep-violet/50 bg-[var(--ui-sunken)] px-3 py-2.5">
+              <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">
+                What to do
+              </p>
+              <p className="mt-1 text-[12px] leading-5 text-[var(--ui-ink)]">
+                {issue.detail}
+              </p>
+            </div>
           )}
 
-          <p className="mt-3 text-[10px] font-bold uppercase tracking-wide text-ink/40">
-            What customers actually said
-          </p>
+          <div className="mt-3 flex items-center justify-between gap-2">
+            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">
+              What customers actually said
+            </p>
+            <Link
+              href="/dashboard/reviews"
+              className="text-[10.5px] font-semibold text-[#1a73e8] hover:underline"
+            >
+              Open Google reviews
+            </Link>
+          </div>
+
           {issue.evidence.length === 0 ? (
-            <p className="mt-1 text-[12px] text-ink/45">
+            <p className="mt-1.5 rounded-xl bg-[var(--ui-sunken)] px-3 py-2 text-[12px] text-[var(--ui-ink-2)]">
               No verbatim quotes were captured for this one.
             </p>
           ) : (
-            <ul className="mt-1.5 space-y-1.5">
-              {issue.evidence.map((e, i) => (
-                <li
-                  key={`${e.review_id}-${i}`}
-                  className="flex flex-wrap items-baseline gap-2 rounded-lg bg-ink/[0.02] px-2.5 py-1.5"
-                >
-                  <span className="text-[12px] leading-5 text-ink" dir="auto">
-                    “{e.quote}”
-                  </span>
-                  <span className="text-[10px] font-semibold text-ink/35">
-                    {e.rating}★
-                  </span>
-                </li>
-              ))}
+            <ul className="mt-2 space-y-2">
+              {issue.evidence.map((e, index) => {
+                const href = e.review_url ? safeHref(e.review_url) : null;
+                return (
+                  <li
+                    key={`${e.review_id}-${index}`}
+                    className="rounded-xl border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-2.5"
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <CustomerAvatar
+                        name={e.reviewer ?? null}
+                        url={e.reviewer_photo_url ?? null}
+                        size="sm"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <span className="text-[11.5px] font-semibold text-[var(--ui-ink)]">
+                            {e.reviewer || "Google reviewer"}
+                          </span>
+                          <Stars rating={e.rating} size={11} />
+                          {e.reviewed_at && (
+                            <span className="text-[9.5px] text-[var(--ui-ink-2)]">
+                              {evidenceDate(e.reviewed_at)}
+                            </span>
+                          )}
+                        </div>
+                        <p
+                          className="mt-1 text-[12px] leading-5 text-[var(--ui-ink)]"
+                          dir="auto"
+                        >
+                          “{e.quote}”
+                        </p>
+                        {href && (
+                          <a
+                            href={href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="mt-1 inline-flex items-center gap-1 text-[10.5px] font-semibold text-[#1a73e8] hover:underline"
+                          >
+                            View on Google
+                            <span aria-hidden>↗</span>
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
 
           <label className="mt-3 block">
-            <span className="text-[11px] font-semibold text-ink/60">
+            <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">
               What you did about it
             </span>
             <textarea
               value={note}
-              onChange={(e) => setNote(e.target.value)}
+              onChange={(event) => setNote(event.target.value)}
               rows={2}
               maxLength={2000}
               placeholder="Deep clean booked for Monday, contractor confirmed…"
-              className="mt-1 w-full resize-y rounded-lg border border-ink/10 bg-white px-2.5 py-2 text-[12.5px] leading-5 text-ink outline-none focus:border-deep-violet/50"
+              className="mt-1 w-full resize-y rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[12.5px] leading-5 text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]"
             />
           </label>
-          <div className="mt-1.5 flex items-center gap-2">
+          <div className="mt-2 flex flex-wrap items-center gap-2">
             <button
+              type="button"
               onClick={saveNote}
               disabled={savingNote}
-              className="rounded-lg bg-ink px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-ink/90 disabled:opacity-40"
+              className="rounded-lg bg-[var(--ui-ink)] px-3 py-1.5 text-[11px] font-semibold text-[var(--ui-on-ink)] transition hover:opacity-90 disabled:opacity-40"
             >
               {savingNote ? "Saving…" : "Save note"}
             </button>
             {issue.resolved_at && (
-              <span className="text-[11px] text-ink/40">
-                Resolved{" "}
-                {new Date(issue.resolved_at).toLocaleDateString()}
+              <span className="text-[10.5px] text-[var(--ui-ink-2)]">
+                Resolved {new Date(issue.resolved_at).toLocaleDateString()}
               </span>
             )}
           </div>
         </div>
       )}
-    </div>
+    </article>
   );
 }
 
@@ -230,9 +338,6 @@ function IssuesContent() {
   const [heldOut, setHeldOut] = useState({ total: 0, reviewable: 0, reviews: 0 });
   const [channels, setChannels] = useState<{ id: string; name: string }[]>([]);
   const [channel, setChannel] = useState<string>("");
-  // Which scope has finished loading, rather than a boolean flipped inside the
-  // effect. Keeps the skeleton up on a scope change without a render cascade,
-  // and avoids hiding rows that are still valid for the previous scope.
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
@@ -240,8 +345,6 @@ function IssuesContent() {
   const [note, setNote] = useState<string | null>(null);
 
   useEffect(() => {
-    // Same source the reviews page uses, so the two filters agree on which
-    // locations exist and what they are called.
     apiFetch("/api/v1/channels?limit=100")
       .then((data: { channels?: { id: string; platform: string; display_name: string | null }[] }) => {
         setChannels(
@@ -260,9 +363,7 @@ function IssuesContent() {
       setIssues(data.items);
       setHeldOut(data.held_out ?? { total: 0, reviewable: 0, reviews: 0 });
     } catch (e) {
-      setError(
-        e instanceof Error ? e.message : "Could not load issues."
-      );
+      setError(e instanceof Error ? e.message : "Could not load issues.");
     } finally {
       setLoadedFor(channel);
     }
@@ -299,8 +400,6 @@ function IssuesContent() {
     setUpdatingId(issue.id);
     try {
       const updated = await updateIssue(issue.id, patch);
-      // Reorder locally so a status change is reflected immediately; the
-      // grouped sections below are derived from this list.
       setIssues((prev) =>
         [...prev.filter((i) => i.id !== issue.id), updated].sort(
           (a, b) => b.negative_count - a.negative_count
@@ -320,97 +419,177 @@ function IssuesContent() {
     return byStatus;
   }, [issues]);
 
+  const summary = useMemo(() => {
+    const totalReviews = issues.reduce((sum, issue) => sum + issue.review_count, 0);
+    const weighted = issues.reduce(
+      (sum, issue) => sum + issue.avg_rating * issue.review_count,
+      0
+    );
+    return {
+      open: grouped.open?.length ?? 0,
+      inProgress: grouped.in_progress?.length ?? 0,
+      fixed: grouped.done?.length ?? 0,
+      avgRating: totalReviews > 0 ? weighted / totalReviews : 0,
+    };
+  }, [grouped, issues]);
+
   return (
-    <div className="mx-auto w-full max-w-4xl px-4 py-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-[20px] font-bold text-ink">Issues</h1>
-          <p className="mt-0.5 text-[13px] text-ink/55">
-            What customers complained about, and what to do about it.
-          </p>
+    <div className="team-ui h-full overflow-y-auto">
+      <div className="mx-auto w-full max-w-4xl space-y-4 p-3 sm:p-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-[var(--ui-ink-2)]">
+              <GoogleBusinessLogo size={20} />
+              <span className="text-[10px] font-bold uppercase tracking-[0.16em]">
+                Google Business Profile
+              </span>
+            </div>
+            <h1 className="mt-1 text-[20px] font-bold tracking-tight text-[var(--ui-ink)] sm:text-[24px]">
+              Review issues
+            </h1>
+            <p className="mt-1 max-w-2xl text-[12px] leading-relaxed text-[var(--ui-ink-2)] sm:text-[13px]">
+              What customers complained about in your Google reviews, and what
+              to do about it. Every quote opens back to the original review.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={channel}
+              onChange={(event) => setChannel(event.target.value)}
+              aria-label="Location"
+              className="h-9 min-w-0 flex-1 rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2.5 text-[11px] font-semibold text-[var(--ui-ink)] outline-none sm:flex-none"
+            >
+              <option value="">All locations</option>
+              {channels.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={doRefresh}
+              disabled={refreshing}
+              className="h-9 rounded-xl bg-deep-violet px-3.5 text-[11.5px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90 active:translate-y-px disabled:opacity-50"
+            >
+              {refreshing ? "Checking…" : "Re-check reviews"}
+            </button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <select
-            value={channel}
-            onChange={(e) => setChannel(e.target.value)}
-            aria-label="Location"
-            className="rounded-lg border border-ink/10 bg-white px-2.5 py-1.5 text-[12px] text-ink outline-none focus:border-deep-violet/50"
-          >
-            <option value="">All locations</option>
-            {channels.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={doRefresh}
-            disabled={refreshing}
-            className="rounded-lg bg-deep-violet px-3 py-1.5 text-[12px] font-semibold text-white transition hover:bg-deep-violet/90 disabled:opacity-50"
-          >
-            {refreshing ? "Checking…" : "Re-check reviews"}
-          </button>
-        </div>
-      </div>
 
-      {note && (
-        <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-[12px] text-emerald-800">
-          {note}
-        </p>
-      )}
-      {error && (
-        <p className="mt-3 rounded-lg bg-coral/10 px-3 py-2 text-[12px] text-coral">
-          {error}
-        </p>
-      )}
-
-      {heldOut.total > 0 && (
-        <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
-          {heldOut.total} of {heldOut.reviews} review
-          {heldOut.reviews === 1 ? "" : "s"} could not be read confidently, so
-          they are not counted here.{" "}
-          <Link
-            href="/dashboard/reviews?tab=needs_human"
-            className="font-semibold underline underline-offset-2"
-          >
-            Check them
-          </Link>
-        </p>
-      )}
-
-      {loading ? (
-        <div className="mt-4 space-y-2">
-          {[0, 1, 2].map((i) => (
-            <div
-              key={i}
-              className="h-20 animate-pulse rounded-xl bg-ink/[0.04]"
-              aria-hidden
-            />
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {[
+            { label: "To fix", value: summary.open, tone: "text-coral" },
+            { label: "In progress", value: summary.inProgress, tone: "text-amber-700" },
+            { label: "Fixed", value: summary.fixed, tone: "text-emerald-700" },
+            { label: "Issue avg", value: summary.avgRating ? `${summary.avgRating.toFixed(1)}★` : "—", tone: "text-[var(--ui-ink)]" },
+          ].map((stat) => (
+            <div key={stat.label} className="rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2.5">
+              <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-[var(--ui-ink-2)]">
+                {stat.label}
+              </p>
+              <p className={`mt-1 text-[18px] font-bold tabular-nums ${stat.tone}`}>
+                {stat.value}
+              </p>
+            </div>
           ))}
         </div>
-      ) : issues.length === 0 ? (
-        <div className="mt-4 rounded-xl border border-dashed border-ink/10 bg-white/60 p-8 text-center">
-          <p className="text-[14px] font-semibold text-ink">No issues found</p>
-          <p className="mx-auto mt-1 max-w-sm text-[12.5px] leading-5 text-ink/50">
-            Issues appear when negative reviews name something specific. If you
-            just connected a location, re-check after the first sync.
+
+        {note && (
+          <p className="rounded-xl bg-emerald-50 px-3 py-2 text-[12px] text-emerald-800 ring-1 ring-emerald-200">
+            {note}
           </p>
-        </div>
-      ) : (
-        <>
-          {STATUS_ORDER.filter((s) => s !== "dismissed").map((status) => {
-            const group = grouped[status] ?? [];
-            if (group.length === 0) return null;
-            return (
-              <section key={status} className="mt-5">
-                <h2 className="mb-2 text-[11px] font-bold uppercase tracking-wide text-ink/40">
-                  {STATUS_LABEL[status]}
-                  <span className="ml-1.5 font-semibold text-ink/30">
-                    {group.length}
+        )}
+        {error && (
+          <p className="rounded-xl bg-coral/10 px-3 py-2 text-[12px] text-coral ring-1 ring-coral/20">
+            {error}
+          </p>
+        )}
+
+        {heldOut.total > 0 && (
+          <p className="rounded-xl bg-amber-50 px-3 py-2 text-[12px] text-amber-800 ring-1 ring-amber-200">
+            {heldOut.total} of {heldOut.reviews} review
+            {heldOut.reviews === 1 ? "" : "s"} could not be read confidently, so
+            they are not counted here.{" "}
+            <Link
+              href="/dashboard/reviews?tab=needs_human"
+              className="font-semibold underline underline-offset-2"
+            >
+              Check them
+            </Link>
+          </p>
+        )}
+
+        {loading ? (
+          <div className="space-y-2">
+            {[0, 1, 2].map((i) => (
+              <div
+                key={i}
+                className="h-24 animate-pulse rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)]"
+                aria-hidden
+              />
+            ))}
+          </div>
+        ) : issues.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-[var(--ui-line-strong)] bg-[var(--ui-surface)] p-8 text-center">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[var(--ui-sunken)]">
+              <GoogleBusinessLogo size={28} />
+            </div>
+            <p className="mt-3 text-[14px] font-semibold text-[var(--ui-ink)]">
+              No issues found
+            </p>
+            <p className="mx-auto mt-1 max-w-sm text-[12px] leading-5 text-[var(--ui-ink-2)]">
+              Issues appear when negative Google reviews name something
+              specific. If you just connected a location, re-check after the
+              first sync.
+            </p>
+            <button
+              type="button"
+              onClick={doRefresh}
+              disabled={refreshing}
+              className="mt-4 rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-semibold text-white transition hover:bg-deep-violet/90 disabled:opacity-50"
+            >
+              {refreshing ? "Checking…" : "Re-check reviews"}
+            </button>
+          </div>
+        ) : (
+          <>
+            {STATUS_ORDER.filter((s) => s !== "dismissed").map((status) => {
+              const group = grouped[status] ?? [];
+              if (group.length === 0) return null;
+              return (
+                <section key={status}>
+                  <h2 className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">
+                    {STATUS_LABEL[status]}
+                    <span className="rounded-full bg-[var(--ui-sunken)] px-1.5 py-0.5 text-[9px]">
+                      {group.length}
+                    </span>
+                  </h2>
+                  <div className="space-y-2">
+                    {group.map((i) => (
+                      <IssueRow
+                        key={i.id}
+                        issue={i}
+                        updating={updatingId === i.id}
+                        showLocation={!channel}
+                        onUpdate={(p) => applyUpdate(i, p)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              );
+            })}
+
+            {(grouped.dismissed ?? []).length > 0 && (
+              <details className="rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)] p-3">
+                <summary className="cursor-pointer text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">
+                  Not a problem
+                  <span className="ml-1.5 font-semibold">
+                    {grouped.dismissed.length}
                   </span>
-                </h2>
-                <div className="space-y-2">
-                  {group.map((i) => (
+                </summary>
+                <div className="mt-2 space-y-2">
+                  {grouped.dismissed.map((i) => (
                     <IssueRow
                       key={i.id}
                       issue={i}
@@ -420,39 +599,15 @@ function IssuesContent() {
                     />
                   ))}
                 </div>
-              </section>
-            );
-          })}
-
-          {(grouped.dismissed ?? []).length > 0 && (
-            <details className="mt-5">
-              <summary className="cursor-pointer text-[11px] font-bold uppercase tracking-wide text-ink/40">
-                Not a problem{" "}
-                <span className="font-semibold text-ink/30">
-                  {grouped.dismissed.length}
-                </span>
-              </summary>
-              <div className="mt-2 space-y-2">
-                {grouped.dismissed.map((i) => (
-                  <IssueRow
-                    key={i.id}
-                    issue={i}
-                    updating={updatingId === i.id}
-                    showLocation={!channel}
-                    onUpdate={(p) => applyUpdate(i, p)}
-                  />
-                ))}
-              </div>
-            </details>
-          )}
-        </>
-      )}
+              </details>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
 
 export default function IssuesPage() {
-  return (
-    <IssuesContent />
-  );
+  return <IssuesContent />;
 }

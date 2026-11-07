@@ -38,6 +38,8 @@ PROVIDER_CONFIGS: dict[str, dict] = {
     "deepseek": {},
     "groq": {},
     "openrouter": {},
+    "zhipu": {},
+    "zhipu-coding": {},
     "ollama": {"optional": True},
     "gemini": {},
 }

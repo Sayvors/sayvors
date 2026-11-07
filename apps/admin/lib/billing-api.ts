@@ -62,6 +62,35 @@ export async function fetchTenantBilling(id: string): Promise<TenantBilling> {
   return adminFetch<TenantBilling>(`/api/v1/admin/tenants/${encodeURIComponent(id)}/billing`);
 }
 
+export interface CreditGrantResult {
+  plan: string;
+  balance_cents: number;
+  balance_dollars: number;
+  currency: string;
+  granted_cents: number;
+  duplicate: boolean;
+}
+
+/** Add AI credit without changing the tenant's plan. */
+export async function grantTenantCredit(
+  id: string,
+  amountCents: number,
+  note: string | null,
+  idempotencyKey: string,
+): Promise<CreditGrantResult> {
+  return adminFetch<CreditGrantResult>(
+    `/api/v1/admin/tenants/${encodeURIComponent(id)}/credit`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        amount_cents: amountCents,
+        note: note || null,
+        idempotency_key: idempotencyKey,
+      }),
+    },
+  );
+}
+
 export async function reconcileWallet(
   id: string,
   dryRun: boolean,

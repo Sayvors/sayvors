@@ -425,6 +425,10 @@ async def _adopt_existing_reply(db: AsyncSession, channel: Channel, review) -> b
     latest.error = None
     latest.reply_external_id = external_id
     latest.replied_at = reply_updated_at
+    await _store_reply_message(
+        db, channel, review.review_id, review.reviewer_name, latest,
+        status="read", handled_by="human",
+    )
     await db.commit()
 
     try:
@@ -577,7 +581,7 @@ async def _store_inbound_review(db: AsyncSession, channel_id: str, review) -> No
             ),
             content_type="review",
             status="read",
-            contact_name=getattr(review, "author_name", None) or None,
+            contact_name=getattr(review, "reviewer_name", None) or None,
             contact_phone=encrypt_contact_phone(reviewer_key),
             contact_phone_hash=hash_contact_phone(reviewer_key),
             category=category,
@@ -585,6 +589,80 @@ async def _store_inbound_review(db: AsyncSession, channel_id: str, review) -> No
         )
     )
     await db.commit()
+
+
+async def _store_reply_message(
+    db: AsyncSession,
+    channel: Channel,
+    review_id: str,
+    reviewer_name: str | None,
+    reply,
+    *,
+    status: str = "read",
+    handled_by: str = "human",
+) -> None:
+    """Mirror a Google review reply as an outbound chat message.
+
+    The inbox is message-based; without this row the customer's review appears
+    in the chat but the merchant's public response is invisible. The inbound
+    row owns the synthetic Google contact key, so the reply joins the same
+    thread instead of creating a second one.
+    """
+    if not getattr(reply, "reply_text", None):
+        return
+    inbound = (
+        await db.execute(
+            select(ChannelMessage)
+            .where(
+                ChannelMessage.channel_id == channel.id,
+                ChannelMessage.platform_message_id == review_id[:200],
+            )
+            .order_by(ChannelMessage.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if inbound is None:
+        logger.debug("No inbound review message for %s; reply not mirrored", review_id)
+        return
+
+    platform_id = f"google-reply:{reply.id}"[:200]
+    existing = (
+        await db.execute(
+            select(ChannelMessage)
+            .where(
+                ChannelMessage.channel_id == channel.id,
+                ChannelMessage.platform_message_id == platform_id,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    content = encrypt_message_content(reply.reply_text)
+    name = inbound.contact_name or reviewer_name
+    if existing is not None:
+        existing.content = content
+        existing.status = status
+        existing.contact_name = name
+        db.add(existing)
+    else:
+        import uuid
+
+        db.add(
+            ChannelMessage(
+                id=str(uuid.uuid4()),
+                channel_id=channel.id,
+                platform_message_id=platform_id,
+                direction="outbound",
+                content=content,
+                content_type="review_reply",
+                status=status,
+                contact_phone=inbound.contact_phone,
+                contact_phone_hash=inbound.contact_phone_hash,
+                contact_name=name,
+                handled_by=handled_by,
+                is_ai=handled_by == "ai",
+            )
+        )
+    await db.flush()
 
 
 def _google_reviewer_key(review) -> str:
@@ -614,7 +692,9 @@ def _google_reviewer_key(review) -> str:
 
     identity = (
         getattr(review, "author_profile_url", None)
+        or getattr(review, "reviewer_photo_url", None)
         or getattr(review, "author_name", None)
+        or getattr(review, "reviewer_name", None)
         or ""
     ).strip().lower()
     if not identity:
@@ -945,6 +1025,23 @@ async def _refresh_edited_review_reply(
         review.rating, review.text, review.reviewer_name,
         reply_text, status,
     )
+    if status == "posted":
+        posted_row = (
+            await db.execute(
+                select(ReviewReply)
+                .where(
+                    ReviewReply.channel_id == channel.id,
+                    ReviewReply.review_id == review.review_id,
+                )
+                .order_by(ReviewReply.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if posted_row is not None:
+            await _store_reply_message(
+                db, channel, review.review_id, review.reviewer_name,
+                posted_row, status="sent", handled_by="ai",
+            )
     if status == "posted":
         await notify(
             db, channel.user_id, "reply_posted",

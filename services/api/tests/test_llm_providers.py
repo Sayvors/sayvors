@@ -12,7 +12,14 @@ if str(_REPO_ROOT) not in sys.path:
 
 from app.modules.channels.service import encrypt_token
 from app.modules.llm.providers import registry
-from app.modules.llm.providers.base import ProviderError
+from app.modules.llm.providers.base import (
+    LLMMessage,
+    LLMRequest,
+    ProviderError,
+    ToolDefinition,
+    ToolParameter,
+)
+from app.modules.llm.providers.openai_compatible import OpenAICompatibleProvider
 
 
 @pytest.fixture(autouse=True)
@@ -217,3 +224,59 @@ def test_custom_model_drives_provider_resolution(monkeypatch):
         assert inst.name() == "kimi"
     finally:
         reg._custom_models = None
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_provider_sends_and_parses_tools(monkeypatch):
+    """Tool definitions must reach OpenAI-compatible providers (Groq, etc.)
+    and tool calls must come back as ToolCall objects — the feature modules
+    rely on both for agentic retrieval and charts."""
+    from types import SimpleNamespace
+
+    provider = OpenAICompatibleProvider("groq", "test-key")
+    seen: dict = {}
+
+    async def fake_create(**kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(
+                message=SimpleNamespace(
+                    content=None,
+                    tool_calls=[SimpleNamespace(
+                        id="call-1",
+                        function=SimpleNamespace(
+                            name="get_business_data",
+                            arguments='{"dataset": "review_volume", "days": 30}',
+                        ),
+                    )],
+                ),
+                finish_reason="tool_calls",
+            )],
+            usage=SimpleNamespace(prompt_tokens=4, completion_tokens=2, total_tokens=6),
+            model="qwen",
+        )
+
+    monkeypatch.setattr(
+        provider._client.chat.completions, "create", fake_create, raising=False
+    )
+    tool = ToolDefinition(
+        name="get_business_data",
+        description="Query a dataset",
+        parameters={
+            "dataset": ToolParameter(type="string", enum=["review_volume"]),
+            "days": ToolParameter(type="integer"),
+        },
+        required=["dataset"],
+    )
+    resp = await provider._complete(LLMRequest(
+        model="qwen",
+        messages=[LLMMessage(role="user", content="chart reviews")],
+        tools=[tool],
+    ))
+    assert seen["tools"][0]["function"]["name"] == "get_business_data"
+    assert seen["tools"][0]["function"]["parameters"]["required"] == ["dataset"]
+    assert seen["tool_choice"] == "auto"
+    assert resp.tool_calls[0].name == "get_business_data"
+    assert resp.tool_calls[0].arguments["dataset"] == "review_volume"
+    assert resp.tool_calls[0].call_id == "call-1"
+    assert resp.finish_reason == "tool_calls"

@@ -514,21 +514,38 @@ async def dismiss_review_edit(
     ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Clear the 'review edited' flag once the merchant has seen the change.
+    """Leave an edited review as it is.
 
-    Sync-time content comparison flags edited reviews; this endpoint is the
-    manual acknowledge path (posting an updated reply clears it too).
+    The merchant has seen the before/after and does not want a new response.
+    Clear the edit flag, reject every unposted draft created for this review,
+    and set ``draft_dismissed`` so the next sync does not auto-draft again.
+    The live posted reply is never touched.
     """
+    from ..channels.models import ReviewReply
+
     row = await db.execute(select(ReviewInsight).where(ReviewInsight.id == insight_id))
     insight = row.scalar_one_or_none()
     if insight is None:
         raise HTTPException(status_code=404, detail="Review insight not found")
     if insight.user_id != tenant_id_of(user):
         raise HTTPException(status_code=403, detail="Not your review")
+    drafts = (
+        await db.execute(
+            select(ReviewReply).where(
+                ReviewReply.channel_id == insight.channel_id,
+                ReviewReply.review_id == insight.review_id,
+                ReviewReply.status.in_(("pending_approval", "failed", "approved")),
+            )
+        )
+    ).scalars().all()
+    for draft in drafts:
+        draft.status = "rejected"
+        draft.error = None
     insight.edited = False
     insight.edited_at = None
     insight.previous_rating = None
     insight.previous_review_text = None
+    insight.draft_dismissed = True
     db.add(insight)
     await db.commit()
     await db.refresh(insight)

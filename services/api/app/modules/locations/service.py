@@ -8,9 +8,11 @@ stored in `location_profiles` and pushed with the Business Information API.
 """
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..channels.models import Channel
@@ -509,3 +511,352 @@ def _dedupe(listing_ids: list[str]) -> list[str]:
             seen.add(lid)
             out.append(lid)
     return out
+
+
+# ── Create a Google location ─────────────────────────────────────────
+
+def _source_channel_for_google(channels: list[Channel]) -> Channel | None:
+    """A connected Google channel supplies the account id and OAuth tokens."""
+    with_tokens = [c for c in channels if c.access_token or c.refresh_token]
+    if not with_tokens:
+        return None
+    active = [c for c in with_tokens if c.status == "active"]
+    return (active or with_tokens)[0]
+
+
+def _storefront_address(
+    *,
+    street: str,
+    city: str,
+    country: str,
+    postal_code: str | None,
+) -> dict:
+    address: dict = {
+        "regionCode": (country or "").strip().upper()[:2],
+        "languageCode": "en",
+        "locality": city.strip(),
+        "addressLines": [street.strip()],
+    }
+    if postal_code and postal_code.strip():
+        address["postalCode"] = postal_code.strip()
+    return address
+
+
+def _create_payload(body: dict) -> dict:
+    return {
+        "languageCode": "en",
+        "title": body["name"].strip(),
+        "phoneNumbers": {"primaryPhone": body["phone"].strip()},
+        "storefrontAddress": _storefront_address(
+            street=body["street"],
+            city=body["city"],
+            country=body["country"],
+            postal_code=body.get("postal_code"),
+        ),
+        **(
+            {"websiteUri": body["website"].strip()}
+            if body.get("website")
+            else {}
+        ),
+    }
+
+
+async def _google_client(
+    db: AsyncSession, channel: Channel
+):
+    from ..channels.google_business import GoogleBusinessClient
+    from ..channels.service import decrypt_token, encrypt_token
+
+    access = decrypt_token(channel.access_token) if channel.access_token else None
+    refresh = decrypt_token(channel.refresh_token) if channel.refresh_token else None
+    if not access and not refresh:
+        raise ValueError("Connect Google Business Profile first.")
+    client = GoogleBusinessClient(access or "", refresh)
+    client.set_known_expiry(channel.token_expires_at)
+
+    async def _persist(token: str, expires_at) -> None:
+        channel.access_token = encrypt_token(token)
+        channel.token_expires_at = expires_at
+        db.add(channel)
+        await db.commit()
+
+    client.set_token_persister(_persist)
+    return client
+
+
+async def search_google_locations(
+    db: AsyncSession, user_id: str, body: dict
+) -> list[dict]:
+    """GoogleLocations.search before creation, so duplicates are visible."""
+    from ..channels.google_reviews import (
+        GoogleReviewsError,
+        location_address,
+        location_phone,
+    )
+
+    channels = list(
+        (
+            await db.execute(
+                select(Channel).where(
+                    Channel.user_id == user_id,
+                    Channel.platform == "google_reviews",
+                )
+            )
+        ).scalars().all()
+    )
+    source = _source_channel_for_google(channels)
+    if source is None:
+        raise ValueError("Connect Google Business Profile first.")
+    client = await _google_client(db, source)
+    payload = _create_payload(body)
+    try:
+        rows = await client.search_google_locations(
+            location=payload,
+            query=f"{body['name']} {body['street']} {body['city']}",
+            page_size=5,
+        )
+    except GoogleReviewsError as e:
+        raise ValueError(
+            "Google could not check for existing locations: "
+            f"{e.message if hasattr(e, 'message') else str(e)}"
+        ) from e
+    finally:
+        await client.close()
+
+    out: list[dict] = []
+    for row in rows:
+        loc = row.get("location") if isinstance(row, dict) else None
+        if not isinstance(loc, dict):
+            loc = {}
+        title = loc.get("title") or row.get("name") or "Existing Google listing"
+        out.append({
+            "name": str(title),
+            "location_name": loc.get("name"),
+            "address": location_address(loc) or None,
+            "place_id": (loc.get("metadata") or {}).get("placeId")
+            or row.get("placeId"),
+            "request_admin_rights_url": row.get("requestAdminRightsUrl"),
+        })
+    return out
+
+
+async def create_google_location(
+    db: AsyncSession, user_id: str, body: dict
+) -> dict:
+    """Create a location in Google, then persist it as a native channel.
+
+    Google's create call is the authority: the local row is written only
+    after Google returns the new resource. A duplicate local key is reused
+    instead of creating a second channel.
+    """
+    from ..channels.google_reviews import (
+        GoogleReviewsError,
+        location_address,
+        location_category,
+        location_phone,
+        location_website,
+    )
+    from ..channels.service import encrypt_token
+
+    channels = list(
+        (
+            await db.execute(
+                select(Channel).where(
+                    Channel.user_id == user_id,
+                    Channel.platform == "google_reviews",
+                )
+            )
+        ).scalars().all()
+    )
+    source = _source_channel_for_google(channels)
+    if source is None:
+        raise ValueError("Connect Google Business Profile first.")
+    account_id = str(source.platform_user_id or "").split("/")[-1]
+    if not account_id:
+        raise ValueError("The connected Google account has no account id.")
+
+    client = await _google_client(db, source)
+    try:
+        # Search excludes locations the account already manages, so also check
+        # the managed list. Without this a second branch with the same phone or
+        # name/address would silently create a duplicate on Google.
+        existing_locations: list[dict] = []
+        try:
+            existing_locations = await client.list_locations(account_id)
+        except GoogleReviewsError:
+            logger.warning("Could not list existing Google locations before create", exc_info=True)
+
+        def _norm(value: object) -> str:
+            return " ".join(str(value or "").lower().split())
+
+        def _phone(value: object) -> str:
+            return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+        wanted_name = _norm(body["name"])
+        wanted_phone = _phone(body["phone"])
+        wanted_city = _norm(body["city"])
+        for loc in existing_locations:
+            if not isinstance(loc, dict):
+                continue
+            loc_title = _norm(loc.get("title"))
+            loc_address = _norm(location_address(loc))
+            same_city = bool(wanted_city and wanted_city in loc_address)
+            same_phone = bool(
+                wanted_phone and _phone(location_phone(loc)) == wanted_phone
+            )
+            if same_city and (
+                same_phone
+                or (wanted_name and loc_title == wanted_name)
+                or (wanted_name and loc_title.startswith(wanted_name))
+            ):
+                raise ValueError(
+                    f"A matching location already exists in your Google account: "
+                    f"{loc.get('title') or 'Unnamed location'}. Open it from Locations instead of creating a duplicate."
+                )
+
+        category_id = await client.resolve_category_id(
+            body["category"], region_code=body["country"].upper()[:2]
+        )
+        if not category_id:
+            raise ValueError(
+                f"Google does not recognize the category “{body['category']}”. "
+                "Use a category name from Google Business Profile, for example "
+                "“Computer software store” or “Restaurant”."
+            )
+        payload = _create_payload(body)
+        payload["categories"] = {"primaryCategory": {"name": category_id}}
+        request_id = (body.get("request_id") or str(uuid.uuid4()))[:50]
+        # Validate first so obvious category/address problems do not create a
+        # half-finished local flow. Google still makes the real decision on
+        # the second call; validateOnly never creates a listing.
+        await client.create_location(
+            account_id,
+            payload,
+            request_id=request_id,
+            validate_only=True,
+        )
+        created = await client.create_location(
+            account_id, payload, request_id=request_id
+        )
+    except GoogleReviewsError as e:
+        status = getattr(e, "status_code", 502)
+        detail = getattr(e, "message", str(e))
+        if status == 403:
+            raise ValueError(
+                "Google did not grant permission to create a location for this "
+                "account. The connected Google user must be an owner or manager "
+                "with Business Profile create access."
+            ) from e
+        if status == 409:
+            raise ValueError(
+                "Google says this location already exists. Run the duplicate "
+                "check and request access instead of creating a duplicate."
+            ) from e
+        if "PIN_DROP_REQUIRED" in str(detail):
+            raise ValueError(
+                "Google cannot locate this address precisely enough to create "
+                "the location. Create it in Google Business Profile with a map "
+                "pin, then connect the listing here."
+            ) from e
+        raise ValueError(f"Google rejected the location: {detail}") from e
+    finally:
+        await client.close()
+
+    resource = created.get("name") if isinstance(created, dict) else None
+    if not resource:
+        raise ValueError("Google created no location resource; try again.")
+    location_id = str(resource).split("/")[-1]
+    title = str(created.get("title") or body["name"]).strip()
+    phone = location_phone(created) or body.get("phone")
+    website = location_website(created) or body.get("website")
+    category = location_category(created) or body.get("category")
+    address = location_address(created) or ", ".join(
+        part for part in [
+            body.get("street"), body.get("city"),
+            body.get("postal_code"), body.get("country"),
+        ] if part
+    )
+    metadata = {
+        "location_id": location_id,
+        "account_name": channel_meta(source).get("account_name"),
+        "place_id": (created.get("metadata") or {}).get("placeId"),
+        "maps_url": (created.get("metadata") or {}).get("mapsUrl"),
+        "address": address,
+        "category": category,
+        "phone": phone,
+        "website": website,
+        "description": None,
+        "profile_fields_checked": False,
+        "created_via": "sayvors",
+    }
+
+    existing = (
+        await db.execute(
+            select(Channel).where(
+                Channel.user_id == user_id,
+                Channel.platform == "google_reviews",
+                Channel.listing_key == location_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        existing.access_token = source.access_token
+        existing.refresh_token = source.refresh_token
+        existing.token_expires_at = source.token_expires_at
+        existing.display_name = title
+        existing.metadata_json = json.dumps(metadata)
+        await db.commit()
+        return {
+            "listing_id": location_id,
+            "channel_id": existing.id,
+            "name": title,
+            "address": address,
+            "status": existing.status,
+            "created": False,
+        }
+
+    channel = Channel(
+        id=str(uuid.uuid4()),
+        user_id=user_id,
+        platform="google_reviews",
+        platform_user_id=account_id,
+        display_name=title,
+        access_token=source.access_token,
+        refresh_token=source.refresh_token,
+        token_expires_at=source.token_expires_at,
+        status="active",
+        metadata_json=json.dumps(metadata),
+        listing_key=location_id,
+    )
+    db.add(channel)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        existing = (
+            await db.execute(
+                select(Channel).where(
+                    Channel.user_id == user_id,
+                    Channel.platform == "google_reviews",
+                    Channel.listing_key == location_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            raise
+        return {
+            "listing_id": location_id,
+            "channel_id": existing.id,
+            "name": existing.display_name or title,
+            "address": address,
+            "status": existing.status,
+            "created": False,
+        }
+    return {
+        "listing_id": location_id,
+        "channel_id": channel.id,
+        "name": title,
+        "address": address,
+        "status": channel.status,
+        "created": True,
+    }

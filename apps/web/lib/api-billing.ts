@@ -134,7 +134,7 @@ export interface BillingLedgerEntry {
   amount_cents: number;
   reserved_cents: number;
   balance_after_cents: number | null;
-  model_id: string | null;
+  purpose: string | null;
   prompt_tokens: number;
   completion_tokens: number;
   idempotency_key: string | null;
@@ -152,12 +152,27 @@ export interface TenantBilling {
   held_cents: number;
   total_cents: number;
   status: "ok" | "low" | "empty" | "debt";
+  /** Full ledger row count, independent of the returned page. */
+  total: number;
   holds: BillingLedgerEntry[];
   ledger: BillingLedgerEntry[];
 }
 
-export async function getLedger(): Promise<TenantBilling> {
-  return apiFetch("/api/v1/billing/ledger");
+export type LedgerSort = "newest" | "oldest" | "cost_high" | "cost_low";
+
+export interface LedgerQuery {
+  limit?: number;
+  offset?: number;
+  sort?: LedgerSort;
+}
+
+export async function getLedger(params: LedgerQuery = {}): Promise<TenantBilling> {
+  const query = new URLSearchParams();
+  if (params.limit != null) query.set("limit", String(params.limit));
+  if (params.offset != null) query.set("offset", String(params.offset));
+  if (params.sort != null) query.set("sort", params.sort);
+  const suffix = query.toString();
+  return apiFetch(`/api/v1/billing/ledger${suffix ? `?${suffix}` : ""}`);
 }
 
 export interface PlanFeatureSpec {

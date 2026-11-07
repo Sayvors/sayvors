@@ -10,7 +10,7 @@ import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import GoogleReviewCard, { GoogleStars, ReviewAvatar } from "@/components/reviews/GoogleReviewCard";
 import { streamReviewReply, type StreamEvent } from "@/lib/api-review-engine";
-import { approveReply, dismissReviewEdit, editReply, generateReply, regenerateReply, type ReviewInsight, type ReviewReplyDTO } from "@/lib/api-analytics";
+import { approveReply, dismissReviewEdit, editReply, generateReply, regenerateReply, rejectReply, type ReviewInsight, type ReviewReplyDTO } from "@/lib/api-analytics";
 import { clearAbuseFlag, flagReviewAbusive, markAbuseReported, setAbuseVerdict } from "@/lib/api-abuse";
 import MeaningInspector from "@/components/reviews/MeaningInspector";
 import AskForReview from "@/components/dashboard/AskForReview";
@@ -64,6 +64,10 @@ interface ReviewItem {
   abuseVerdict: string | null;
   abuseReported: boolean;
   reply_text?: string;
+  repliedAt?: string;
+  publishedReplyId?: string;
+  publishedReplyText?: string;
+  publishedReplyAt?: string;
   status?: string;
   replyId?: string;
 }
@@ -137,6 +141,7 @@ function ReviewsInner() {
    const [approvingId, setApprovingId] = useState<string | null>(null);
    const [pendingReplies, setPendingReplies] = useState<ReviewReplyDTO[]>([]);
    const [skippingId, setSkippingId] = useState<string | null>(null);
+  const [discardingId, setDiscardingId] = useState<string | null>(null);
   const [draftTexts, setDraftTexts] = useState<Record<string, string>>({});
   // Inline editing of the shown response (any status) in review detail.
   const [editingResponse, setEditingResponse] = useState<string | null>(null);
@@ -606,6 +611,22 @@ function ReviewsInner() {
     }
   }
 
+  async function discardDraft(d: ReviewReplyDTO) {
+    setDiscardingId(d.id);
+    try {
+      await rejectReply(d.channel_id, d.id);
+      setPendingReplies((prev) => prev.filter((x) => x.id !== d.id));
+      setBanner({ kind: "ok", text: "Draft discarded - nothing was published to Google." });
+      setTimeout(() => setBanner(null), 3000);
+      void fetchReviews(false);
+    } catch (e) {
+      setBanner({ kind: "err", text: detailMsg(e, "Could not discard that draft.") });
+      setTimeout(() => setBanner(null), 5000);
+    } finally {
+      setDiscardingId(null);
+    }
+  }
+
   async function approveAllDrafts() {
     if (approvingAllPending || approvingId !== null) return;
     setApprovingAllPending(true);
@@ -694,7 +715,16 @@ function ReviewsInner() {
       await dismissReviewEdit(active!.id);
       setReviews((rs) => rs.map((r) =>
         r.id === active!.id
-          ? { ...r, edited: false, editedAt: null, previousRating: null, previousText: null }
+          ? {
+              ...r,
+              edited: false,
+              editedAt: null,
+              previousRating: null,
+              previousText: null,
+              reply_text: r.publishedReplyText,
+              status: r.publishedReplyText ? "posted" : undefined,
+              replyId: r.publishedReplyId,
+            }
           : r
       ));
     } catch {
@@ -841,18 +871,18 @@ function ReviewsInner() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="shrink-0 border-b border-ink/[0.06] bg-white/80 px-6 py-4 backdrop-blur dark:border-fog/[0.06] dark:bg-ink/80" data-tour="reviews-header">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="shrink-0 border-b border-ink/[0.06] bg-white/80 px-4 py-3 backdrop-blur sm:px-6 sm:py-4 dark:border-fog/[0.06] dark:bg-ink/80" data-tour="reviews-header">
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
           <div>
             <h1 className="text-[18px] font-bold text-ink dark:text-fog">Reviews</h1>
             <p className="text-[12px] text-ink/40 dark:text-fog/40">
               {counts.all} total · {counts.unanswered} unanswered · {counts.replied} replied
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="relative">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+            <div className="relative w-full sm:w-auto">
               <select value={selectedId ?? ""} onChange={(e) => { setSelectedId(e.target.value); setPage(1); setView({ kind: "list" }); }}
-                className="w-52 appearance-none rounded-xl border border-ink/[0.08] bg-white py-2 pl-3 pr-9 text-[13px] font-medium text-ink outline-none dark:border-fog/[0.1] dark:bg-ink dark:text-fog">
+                className="w-full appearance-none rounded-xl border border-ink/[0.08] bg-white py-2 pl-3 pr-9 text-[13px] font-medium text-ink outline-none dark:border-fog/[0.1] dark:bg-ink dark:text-fog sm:w-52">
                 <option value={ALL_BRANCHES}>All branches{locations.length > 0 ? ` (${locations.length})` : ""}</option>
                 {groups
                   .map((g) => ({
@@ -866,10 +896,10 @@ function ReviewsInner() {
               </select>
               <svg className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink/40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
             </div>
-            <button onClick={() => fetchReviews(true)} disabled={refreshing} className="btn-secondary disabled:opacity-50">
+            <button onClick={() => fetchReviews(true)} disabled={refreshing} className="btn-secondary flex-1 justify-center disabled:opacity-50 sm:flex-none">
               {refreshing ? <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> Syncing...</span> : "Reconcile"}
             </button>
-            <a href="/dashboard/reviews/issues" className="btn-secondary">Tickets</a>
+            <a href="/dashboard/reviews/issues" className="btn-secondary flex-1 justify-center text-center sm:flex-none">Tickets</a>
           </div>
         </div>
         {banner && (
@@ -877,10 +907,10 @@ function ReviewsInner() {
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto px-6 py-5">
+      <div className="flex-1 overflow-y-auto px-3 py-4 sm:px-6 sm:py-5">
         <div className="mx-auto max-w-6xl">
           {view.kind === "detail" && (
-            <nav className="flex items-center gap-1.5 text-[12px] text-ink/40 dark:text-fog/40">
+            <nav className="mb-3 flex items-center gap-1.5 text-[11px] text-ink/40 dark:text-fog/40 sm:text-[12px]">
               <button onClick={() => setView({ kind: "list" })} className="font-medium hover:text-deep-violet">Reviews</button>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3"><path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
               <span className="font-semibold text-ink dark:text-fog">Review details</span>
@@ -910,18 +940,18 @@ function ReviewsInner() {
           )}
 
 {view.kind === "list" && (
-              <div className="mx-auto max-w-6xl px-4">
+              <div className="mx-auto max-w-6xl px-0 sm:px-4">
                 <div className="grid grid-cols-12 gap-4">
                   {/* Left column: 3/4 - Reviews list */}
                   <div className="col-span-12 lg:col-span-8 space-y-4">
-<div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label="Review filters">
+<div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-1 sm:flex-wrap" role="tablist" aria-label="Review filters">
                         {PRIMARY_TABS.map((t) => (
                           <button
                             key={t}
                             role="tab"
                             aria-selected={tab === t}
                             onClick={() => pickTab(t)}
-                            className={`relative inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-[12px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
+                            className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-xl border px-3 py-2 text-[12px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
                               tab === t
                                 ? t === "need_approval" && counts.need_approval > 0
                                   ? "border-coral/40 bg-coral/[0.06] text-coral"
@@ -938,7 +968,7 @@ function ReviewsInner() {
                             )}
                           </button>
                         ))}
-                        <div className="relative">
+                        <div className="relative shrink-0">
                           <button
                             aria-haspopup="menu"
                             aria-expanded={moreOpen}
@@ -1179,6 +1209,13 @@ function ReviewsInner() {
                                         Save edits
                                       </button>
                                     )}
+                                    <button
+                                      onClick={() => void discardDraft(d)}
+                                      disabled={busy || discardingId === d.id || approvingAllPending}
+                                      className="rounded-xl px-3.5 py-2 text-[12px] font-semibold text-rose-600 outline-none transition hover:bg-rose-500/[0.08] focus-visible:ring-2 focus-visible:ring-rose-500/40 disabled:opacity-50"
+                                    >
+                                      {discardingId === d.id ? "Discarding…" : "Discard"}
+                                    </button>
                                   </div>
                                 </article>
                               );
@@ -1223,6 +1260,8 @@ function ReviewsInner() {
                                 createdAt: r.createdAt,
                                 locationName: r.locationName,
                                 replied: r.replied,
+                                replyText: r.publishedReplyText ?? r.reply_text,
+                                replyAt: r.publishedReplyAt ?? r.repliedAt,
                                  skipped: r.skipped,
                                  edited: r.edited,
                                  previousText: r.previousText,
@@ -1416,9 +1455,13 @@ function ReviewsInner() {
                         disabled={dismissingEdit}
                         className="shrink-0 rounded-full border border-[#FDE293] px-3 py-1 text-[12px] font-medium text-[#B45309] transition hover:bg-[#FEF7E0]/60 disabled:opacity-40"
                       >
-                        {dismissingEdit ? "Dismissing…" : "Dismiss"}
+                        {dismissingEdit ? "Leaving it…" : "Leave it as is"}
                       </button>
                     </div>
+                    <p className="mt-1.5 text-[11px] leading-4 text-[#8A6A3B]">
+                      No new reply needed? Leave the existing response as is. Any draft
+                      created for this edit is rejected and nothing is published.
+                    </p>
                     <div className="mt-2.5 grid gap-2.5 sm:grid-cols-2">
                       {/* Before */}
                       <div className="rounded-lg border border-[#F0DCA8] bg-white/70 px-3 py-2.5">
@@ -1622,10 +1665,40 @@ function ReviewsInner() {
                 {/* Reply composer — Material, not violet */}
                 <div className="mx-4 mb-4 rounded-lg border border-[#E8EAED] bg-[#F8F9FA] p-4">
                   <h3 className="text-[13px] font-medium text-[#202124]">Your reply</h3>
+                  {active.publishedReplyText &&
+                    active.publishedReplyText !== active.reply_text && (
+                      <div className="mt-3 rounded-md border border-[#CEEAD6] bg-[#E6F4EA] px-3 py-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-[12px] font-medium text-[#137333]">
+                            Published reply
+                          </p>
+                          {active.publishedReplyAt && (
+                            <span className="text-[11px] text-[#137333]/70">
+                              {new Date(active.publishedReplyAt).toLocaleDateString("en", {
+                                month: "short",
+                                day: "numeric",
+                                year: "numeric",
+                              })}
+                            </span>
+                          )}
+                        </div>
+                        <p
+                          dir="auto"
+                          className="mt-1.5 whitespace-pre-wrap break-words text-[13px] leading-5 text-[#202124]"
+                        >
+                          {active.publishedReplyText}
+                        </p>
+                      </div>
+                    )}
                   {active.reply_text && (
                     <div className="mt-3 rounded-md border border-[#DADCE0] bg-white px-3 py-3">
                       <div className="flex items-center gap-2">
-                        <p className="text-[12px] font-medium text-[#202124]">Your response</p>
+                        <p className="text-[12px] font-medium text-[#202124]">
+                          {active.publishedReplyText &&
+                          active.reply_text !== active.publishedReplyText
+                            ? "New draft"
+                            : "Your response"}
+                        </p>
                         {responseBadge(active.status)}
                         <span className="flex-1" />
                         {editingResponse === active.id ? null : active.replyId ? (
@@ -2073,6 +2146,10 @@ function mapInsights(raw: unknown, channelNames: Record<string, string>, fallbac
       abuseVerdict: typeof r.abuse_verdict === "string" ? r.abuse_verdict : null,
       abuseReported: typeof r.abuse_reported_at === "string",
       reply_text: typeof r.reply_text === "string" ? r.reply_text : undefined,
+      repliedAt: typeof r.replied_at === "string" ? r.replied_at : undefined,
+      publishedReplyId: typeof r.published_reply_id === "string" ? r.published_reply_id : undefined,
+      publishedReplyText: typeof r.published_reply_text === "string" ? r.published_reply_text : undefined,
+      publishedReplyAt: typeof r.published_reply_at === "string" ? r.published_reply_at : undefined,
       // The API sends the response row's state as `reply_status`; reading
       // `status` always yielded undefined, so the badge and the
       // "sends this back for approval" hint never rendered.

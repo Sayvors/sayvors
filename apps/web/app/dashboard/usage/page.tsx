@@ -10,8 +10,10 @@ const DAY_OPTIONS = [
   { days: 7, label: "7d" },
   { days: 30, label: "30d" },
   { days: 90, label: "90d" },
-  { days: 365, label: "All" },
+  { days: 365, label: "1y" },
 ];
+
+const DAYS_PER_PAGE = 10;
 
 function AreaChart({ points }: { points: { x: string; y: number }[] }) {
   const W = 560;
@@ -90,6 +92,7 @@ function SplitDonut({ a, b, labelA, labelB }: { a: number; b: number; labelA: st
 
 export default function UsagePage() {
   const [days, setDays] = useState(30);
+  const [page, setPage] = useState(1);
 
   const summaryQuery = useQuery({
     queryKey: queryKeys.usage.summary(days),
@@ -109,6 +112,13 @@ export default function UsagePage() {
   const totals = data?.totals ?? { calls: 0, prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, avg_latency_ms: 0 };
   const byPurpose = data?.by_purpose ?? [];
   const daily = data?.daily ?? [];
+  const dailyDesc = [...daily].reverse();
+  const pageCount = Math.max(1, Math.ceil(dailyDesc.length / DAYS_PER_PAGE));
+  const safePage = Math.min(page, pageCount);
+  const pageRows = dailyDesc.slice(
+    (safePage - 1) * DAYS_PER_PAGE,
+    safePage * DAYS_PER_PAGE,
+  );
 
   return (
     <div className="h-full overflow-y-auto bg-[#f3f0ff] dark:bg-[#14101f]">
@@ -125,7 +135,10 @@ export default function UsagePage() {
               <button
                 key={o.days}
                 type="button"
-                onClick={() => setDays(o.days)}
+                onClick={() => {
+                  setDays(o.days);
+                  setPage(1);
+                }}
                 className={[
                   "rounded-lg px-3 py-1.5 text-[12px] font-semibold transition",
                   days === o.days ? "bg-deep-violet text-white" : "bg-white dark:bg-[#1d1636] text-ink/60 dark:text-fog/60 hover:bg-ink/[0.04] dark:hover:bg-fog/[0.04]",
@@ -232,7 +245,8 @@ export default function UsagePage() {
               {daily.length === 0 ? (
                 <p className="mt-3 text-[12px] text-ink/40 dark:text-fog/40">No data.</p>
               ) : (
-                <div className="mt-3 overflow-x-auto">
+                <>
+                <div className="mt-3 hidden overflow-x-auto sm:block">
                   <table className="w-full text-left text-[12px]">
                     <thead>
                       <tr className="border-b border-ink/[0.08] dark:border-fog/[0.08] text-[10px] uppercase tracking-[0.12em] text-ink/45 dark:text-fog/45">
@@ -245,7 +259,7 @@ export default function UsagePage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {[...daily].reverse().map((d) => (
+                      {pageRows.map((d) => (
                         <tr key={d.day} className="border-b border-ink/[0.04] dark:border-fog/[0.04] last:border-0">
                           <td className="py-2 pr-3 font-semibold text-ink dark:text-fog">{d.day.slice(5)}</td>
                           <td className="py-2 pr-3 text-right tabular-nums text-ink/55 dark:text-fog/55">{d.calls}</td>
@@ -258,6 +272,50 @@ export default function UsagePage() {
                     </tbody>
                   </table>
                 </div>
+                <div className="mt-3 space-y-2 sm:hidden">
+                  {pageRows.map((d) => (
+                    <div key={d.day} className="rounded-xl border border-ink/[0.06] bg-white px-3 py-2.5 dark:border-fog/[0.08] dark:bg-[#1d1636]">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[12px] font-semibold tabular-nums text-ink dark:text-fog">{d.day}</p>
+                        <p className="text-[12px] font-bold tabular-nums text-ink dark:text-fog">{formatTokens(d.total_tokens)}</p>
+                      </div>
+                      <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-ink/50 dark:text-fog/50">
+                        <span>{d.calls} calls</span>
+                        <span>Prompt {formatTokens(d.prompt_tokens ?? 0)}</span>
+                        <span>Completion {formatTokens(d.completion_tokens ?? 0)}</span>
+                        <span>Latency {formatMs(d.avg_latency_ms ?? 0)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-ink/[0.06] pt-3 dark:border-fog/[0.08]">
+                  <p className="text-[11px] tabular-nums text-ink/45 dark:text-fog/45">
+                    Showing {(safePage - 1) * DAYS_PER_PAGE + 1}–
+                    {Math.min(safePage * DAYS_PER_PAGE, dailyDesc.length)} of {dailyDesc.length} days
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPage(Math.max(1, safePage - 1))}
+                      disabled={safePage <= 1}
+                      className="rounded-lg border border-ink/[0.08] bg-white px-3 py-1.5 text-[11px] font-semibold text-ink transition hover:border-deep-violet/30 disabled:cursor-not-allowed disabled:opacity-40 dark:border-fog/[0.1] dark:bg-[#1d1636] dark:text-fog"
+                    >
+                      Previous
+                    </button>
+                    <span className="text-[11px] font-semibold tabular-nums text-ink/45 dark:text-fog/45">
+                      Page {safePage} of {pageCount}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setPage(Math.min(pageCount, safePage + 1))}
+                      disabled={safePage >= pageCount}
+                      className="rounded-lg border border-ink/[0.08] bg-white px-3 py-1.5 text-[11px] font-semibold text-ink transition hover:border-deep-violet/30 disabled:cursor-not-allowed disabled:opacity-40 dark:border-fog/[0.1] dark:bg-[#1d1636] dark:text-fog"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+                </>
               )}
             </div>
           </>

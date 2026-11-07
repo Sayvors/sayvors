@@ -326,6 +326,8 @@ _PROBE_URLS = {
     "kimi": "https://api.moonshot.cn/v1/models",
     "deepseek": "https://api.deepseek.com/v1/models",
     "openrouter": "https://openrouter.ai/api/v1/models",
+    "zhipu": "https://api.z.ai/api/paas/v4/models",
+    "zhipu-coding": "https://api.z.ai/api/coding/paas/v4/models",
     "gemini": "gemini",
     "ollama": "http://localhost:11434/api/tags",
 }
@@ -539,10 +541,31 @@ async def get_billing_overview(db: AsyncSession) -> list[dict]:
     return out
 
 
-async def get_tenant_billing(db: AsyncSession, user_id: str) -> dict | None:
-    from sqlalchemy import select as _select
+LEDGER_SORTS = ("newest", "oldest", "cost_high", "cost_low")
+DEFAULT_LEDGER_LIMIT = 75
+MAX_LEDGER_LIMIT = 200
+
+
+async def get_tenant_billing(
+    db: AsyncSession,
+    user_id: str,
+    *,
+    include_model: bool = True,
+    limit: int = DEFAULT_LEDGER_LIMIT,
+    offset: int = 0,
+    sort: str = "newest",
+) -> dict | None:
+    """Tenant billing view. Admin callers keep the model id; tenant callers
+    must not see which provider/model the platform uses.
+
+    ``limit``/``offset`` page the ledger rows only; the wallet and pending
+    holds are always complete. ``total`` is the full ledger row count so the
+    caller can render page controls without a second request.
+    """
+    from sqlalchemy import case, select as _select
 
     from ..billing.models import BillingEvent
+    from ..llm.models import LLMUsageEvent
     from ..users.models import User
 
     user = await db.get(User, user_id)
@@ -562,24 +585,80 @@ async def get_tenant_billing(db: AsyncSession, user_id: str) -> dict | None:
     ).scalars().all()
     held_cents = int(sum(h.reserved_cents or 0 for h in held_rows))
 
+    limit = max(1, min(int(limit), MAX_LEDGER_LIMIT))
+    offset = max(0, int(offset))
+    if sort not in LEDGER_SORTS:
+        raise ValueError(f"Unsupported ledger sort: {sort}")
+
+    total = int(
+        (
+            await db.execute(
+                _select(func.count())
+                .select_from(BillingEvent)
+                .where(BillingEvent.tenant_id == user_id)
+            )
+        ).scalar_one()
+    )
+
+    # Cost sorting ranks money leaving the wallet. Grants and adjustments are
+    # positive, so they are parked at the end instead of topping "lowest cost"
+    # or "highest cost" every time — those views exist to inspect AI spend.
+    spend_case = case(
+        (BillingEvent.amount_cents < 0, BillingEvent.amount_cents),
+        else_=None,
+    )
+    if sort == "oldest":
+        order_by = (BillingEvent.created_at.asc(), BillingEvent.id.asc())
+    elif sort == "cost_high":
+        order_by = (
+            spend_case.asc().nulls_last(),
+            BillingEvent.created_at.desc(),
+            BillingEvent.id.desc(),
+        )
+    elif sort == "cost_low":
+        order_by = (
+            spend_case.desc().nulls_last(),
+            BillingEvent.created_at.desc(),
+            BillingEvent.id.desc(),
+        )
+    else:
+        order_by = (BillingEvent.created_at.desc(), BillingEvent.id.desc())
+
     ledger_rows = (
         await db.execute(
             _select(BillingEvent)
             .where(BillingEvent.tenant_id == user_id)
-            .order_by(BillingEvent.created_at.desc(), BillingEvent.id.desc())
-            .limit(75)
+            .order_by(*order_by)
+            .limit(limit)
+            .offset(offset)
         )
     ).scalars().all()
 
+    # A ledger row carries the model and money, but not why the call happened.
+    # The purpose lives on the metered usage row (review analysis, reply,
+    # assistant, etc.), linked by ledger_id. Surface it so the tenant can see
+    # what consumed their credit instead of a wall of identical model rows.
+    usage_purposes: dict[str, str | None] = {}
+    usage_ids = [e.id for e in ledger_rows if e.kind == "ai_usage"]
+    if usage_ids:
+        purpose_rows = (
+            await db.execute(
+                _select(LLMUsageEvent.ledger_id, LLMUsageEvent.purpose).where(
+                    LLMUsageEvent.ledger_id.in_(usage_ids)
+                )
+            )
+        ).all()
+        usage_purposes = {ledger_id: purpose for ledger_id, purpose in purpose_rows if ledger_id}
+
     def _row(e: BillingEvent) -> dict:
-        return {
+        row = {
             "id": e.id,
             "kind": e.kind,
             "status": e.status,
             "amount_cents": int(e.amount_cents or 0),
             "reserved_cents": int(e.reserved_cents or 0),
             "balance_after_cents": e.balance_after_cents,
-            "model_id": e.model_id,
+            "purpose": usage_purposes.get(e.id),
             "prompt_tokens": int(e.prompt_tokens or 0),
             "completion_tokens": int(e.completion_tokens or 0),
             "idempotency_key": e.idempotency_key,
@@ -588,6 +667,9 @@ async def get_tenant_billing(db: AsyncSession, user_id: str) -> dict | None:
             "note": e.note,
             "created_at": e.created_at.isoformat() if e.created_at else None,
         }
+        if include_model:
+            row["model_id"] = e.model_id
+        return row
 
     balance = int(user.ai_credit_cents or 0)
     status = "debt" if balance < 0 else "empty" if balance == 0 else "low" if balance < 100 else "ok"
@@ -599,6 +681,7 @@ async def get_tenant_billing(db: AsyncSession, user_id: str) -> dict | None:
         "held_cents": held_cents,
         "total_cents": balance + held_cents,
         "status": status,
+        "total": total,
         "holds": [_row(h) for h in held_rows],
         "ledger": [_row(e) for e in ledger_rows],
     }

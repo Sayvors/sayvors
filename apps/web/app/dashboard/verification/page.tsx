@@ -1,11 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
 import { apiFetch } from "@/lib/api-rag";
 import { GBP_DASHBOARD_URL } from "@/lib/google-links";
 import LogoLoader from "@/components/LogoLoader";
+import GoogleBusinessLogo from "@/components/channels/GoogleBusinessLogo";
 
 type Channel = { id: string; display_name: string | null; platform: string; status: string };
 
@@ -88,6 +90,8 @@ function statusTone(status: string): string {
 
 export default function VerificationPage() {
   const queryClient = useQueryClient();
+  const searchParams = useSearchParams();
+  const requestedChannel = searchParams.get("channel") ?? "";
   const [selectedId, setSelectedId] = useState("");
   const [activeMethod, setActiveMethod] = useState<string | null>(null);
   const [phoneNumber, setPhoneNumber] = useState("");
@@ -108,8 +112,12 @@ export default function VerificationPage() {
   const channels = channelsQuery.data ?? [];
 
   useEffect(() => {
-    if (!selectedId && channels.length > 0) setSelectedId(channels[0].id);
-  }, [channels, selectedId]);
+    if (selectedId || channels.length === 0) return;
+    const requested = channels.some((channel) => channel.id === requestedChannel)
+      ? requestedChannel
+      : channels[0].id;
+    setSelectedId(requested);
+  }, [channels, requestedChannel, selectedId]);
 
   const verificationQuery = useQuery({
     queryKey: queryKeys.verification.detail(selectedId),
@@ -203,26 +211,38 @@ export default function VerificationPage() {
   const selected = channels.find((channel) => channel.id === selectedId);
   const loading = channelsQuery.isPending;
   const busy = requestVerification.isPending || completeVerification.isPending;
+  const brandStep = verified ? 3 : pending ? 2 : activeMethod ? 1 : 0;
+  const brandSteps = ["Location", "Method", "Google review", "Verified"];
 
   return (
-    <div className="h-full overflow-y-auto bg-[#f1f2f5] p-4 sm:p-6">
-      <div className="mx-auto max-w-5xl space-y-5">
-        <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
-          <div>
-            <h1 className="text-[22px] font-bold text-ink dark:text-fog">Verification</h1>
-            <p className="mt-1 text-[13px] text-ink/55 dark:text-fog/55">
-              Google Business Profile verification, live from the My Business Verifications API.
+    <div className="team-ui h-full overflow-y-auto">
+      <div className="mx-auto w-full max-w-5xl space-y-4 p-3 sm:p-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-[var(--ui-ink-2)]">
+              <GoogleBusinessLogo size={20} />
+              <span className="text-[10px] font-bold uppercase tracking-[0.16em]">
+                Google Business Profile
+              </span>
+            </div>
+            <h1 className="mt-1 text-[20px] font-bold tracking-tight text-[var(--ui-ink)] sm:text-[24px]">
+              Verification
+            </h1>
+            <p className="mt-1 max-w-2xl text-[12px] leading-relaxed text-[var(--ui-ink-2)] sm:text-[13px]">
+              Confirm ownership of each connected location. Sayvors shows the
+              methods Google currently allows and submits the request on your
+              behalf.
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <span className={`rounded-full px-3 py-1.5 text-[11px] font-bold ${channels.length ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-wide ${channels.length ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200" : "bg-amber-50 text-amber-700 ring-1 ring-amber-200"}`}>
               {channels.length ? "Google connected" : "Google not connected"}
             </span>
             <button
               type="button"
               onClick={() => void refresh()}
               disabled={!selectedId || verificationQuery.isFetching}
-              className="rounded-[24px] border border-ink/10 bg-white px-3.5 py-2 text-[12px] font-bold text-ink/70 shadow-[0_1px_0_rgba(255,255,255,0.9)_inset,0_4px_12px_rgba(20,16,31,0.06)] transition active:translate-y-[2px] active:scale-[0.98] disabled:opacity-40"
+              className="rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-2 text-[12px] font-bold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] active:translate-y-px disabled:opacity-40"
             >
               {verificationQuery.isFetching ? "Refreshing..." : "Refresh"}
             </button>
@@ -230,31 +250,55 @@ export default function VerificationPage() {
         </div>
 
         {message && (
-          <div className="rounded-[20px] border border-deep-violet/15 bg-white px-4 py-3 text-[12px] text-ink/70">
+          <div className="rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-3 text-[12px] text-[var(--ui-ink-2)]">
             {message}
           </div>
         )}
 
         {loading ? (
-          <div className="flex justify-center rounded-[32px] bg-white py-24"><LogoLoader size={34} /></div>
+          <div className="flex justify-center rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)] py-24"><LogoLoader size={34} /></div>
         ) : channels.length === 0 ? (
-          <section className="rounded-[32px] bg-white p-6 shadow-[0_12px_30px_rgba(20,16,31,0.07)]">
-            <h2 className="text-[16px] font-bold text-ink">Connect Google first</h2>
-            <p className="mt-2 max-w-2xl text-[12.5px] leading-relaxed text-ink/55">
-              Verification is available only for a location connected through Google Business Profile OAuth.
+          <section className="rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)] p-5 sm:p-6">
+            <div className="flex items-center gap-3">
+              <GoogleBusinessLogo size={32} />
+              <div>
+                <h2 className="text-[16px] font-bold text-[var(--ui-ink)]">Connect Google first</h2>
+                <p className="mt-1 text-[12px] text-[var(--ui-ink-2)]">Verification is available after a Google Business Profile location is connected.</p>
+              </div>
+            </div>
+            <p className="mt-3 max-w-2xl text-[12.5px] leading-relaxed text-[var(--ui-ink-2)]">
+              Once connected, this page reads the live verification state and
+              the methods Google offers for each location.
             </p>
           </section>
         ) : (
           <>
-            <section className="rounded-[32px] bg-white p-5 shadow-[0_12px_30px_rgba(20,16,31,0.07)]">
-              <label className="block text-[11px] font-bold text-ink/55" htmlFor="verification-location">
-                Business location
-              </label>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {[
+                { label: "Locations", value: String(channels.length) },
+                { label: "Selected", value: selected?.display_name || "â€”" },
+                { label: "Status", value: (verification?.status ?? "unstarted").replaceAll("_", " ") },
+                { label: "Methods", value: String(options.length) },
+              ].map((item) => (
+                <div key={item.label} className="rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2.5">
+                  <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-[var(--ui-ink-2)]">{item.label}</p>
+                  <p className="mt-1 truncate text-[13px] font-bold capitalize text-[var(--ui-ink)]">{item.value}</p>
+                </div>
+              ))}
+            </div>
+
+            <section className="rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 sm:p-5">
+              <div className="flex items-center gap-2">
+                <GoogleBusinessLogo size={16} />
+                <label className="block text-[11px] font-bold uppercase tracking-[0.1em] text-[var(--ui-ink-2)]" htmlFor="verification-location">
+                  Business location
+                </label>
+              </div>
               <select
                 id="verification-location"
                 value={selectedId}
                 onChange={(event) => setSelectedId(event.target.value)}
-                className="input-field mt-2"
+                className="mt-2 h-10 w-full rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 text-[12px] font-semibold text-[var(--ui-ink)] outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]"
               >
                 <option value="">No location selected</option>
                 {channels.map((channel) => (
@@ -265,7 +309,7 @@ export default function VerificationPage() {
               </select>
             </section>
 
-            <section className="rounded-[32px] bg-white p-5 shadow-[0_12px_30px_rgba(20,16,31,0.07)]">
+            <section className="rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 sm:p-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="text-[16px] font-bold text-ink">Verification status</h2>
@@ -278,15 +322,37 @@ export default function VerificationPage() {
                 </span>
               </div>
 
+              <div className="mt-4 flex items-center gap-1.5">
+                {brandSteps.map((label, index) => (
+                  <div key={label} className={`flex items-center gap-1.5 ${index < brandSteps.length - 1 ? "flex-1" : ""}`}>
+                    <span
+                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-bold ${
+                        index <= brandStep
+                          ? "bg-deep-violet text-white"
+                          : "bg-ink/[0.06] text-ink/35 dark:bg-fog/[0.08] dark:text-fog/35"
+                      }`}
+                    >
+                      {index < brandStep ? "✓" : index + 1}
+                    </span>
+                    <span className={`hidden text-[9px] font-bold uppercase tracking-wide sm:block ${index <= brandStep ? "text-[var(--ui-ink)] dark:text-fog/70" : "text-ink/35 dark:text-fog/35"}`}>
+                      {label}
+                    </span>
+                    {index < brandSteps.length - 1 && (
+                      <span className={`h-px flex-1 ${index < brandStep ? "bg-deep-violet/30" : "bg-ink/10 dark:bg-fog/10"}`} />
+                    )}
+                  </div>
+                ))}
+              </div>
+
               {verificationQuery.isError && (
-                <p className="mt-4 rounded-[20px] bg-rose-50 px-3 py-2 text-[12px] text-rose-700">
+                <p className="mt-4 rounded-xl bg-rose-50 px-3 py-2 text-[12px] text-rose-700">
                   {verificationQuery.error instanceof Error
                     ? verificationQuery.error.message
                     : "Could not read verification status from Google."}
                 </p>
               )}
               {verification?.provider_error && (
-                <p className="mt-4 rounded-[20px] bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+                <p className="mt-4 rounded-xl bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
                   {verification.provider_error}
                 </p>
               )}
@@ -317,7 +383,7 @@ export default function VerificationPage() {
               </div>
 
               {verified && (
-                <div className="mt-4 rounded-[24px] bg-emerald-50 px-4 py-3 text-[12.5px] text-emerald-800">
+                <div className="mt-4 rounded-xl bg-emerald-50 px-4 py-3 text-[12.5px] text-emerald-800">
                   Google already considers this location verified. No further action is needed.
                 </div>
               )}
@@ -350,20 +416,21 @@ export default function VerificationPage() {
             )}
 
             {!verified && options.length === 0 && (
-              <section className="rounded-[32px] bg-white p-6 shadow-[0_12px_30px_rgba(20,16,31,0.07)]">
-                <h2 className="text-[16px] font-bold text-ink">No eligible methods returned</h2>
+              <section className="rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)] p-5 sm:p-6">
+                <h2 className="text-[16px] font-bold text-ink">Verification needs Google Business Profile</h2>
                 <p className="mt-2 max-w-2xl text-[12.5px] leading-relaxed text-ink/55">
-                  Google requires verification for this location, but no API method is
-                  eligible. Some locations require video verification, which is only
-                  available in Google Business Profile. Complete it there, then refresh.
-                  If Google says you do not have access, ask the profile owner to add
-                  this Google account as an owner or manager.
+                  Google reports this account does not have business authority for this
+                  location yet, so Sayvors can&apos;t offer a verification method. Some
+                  locations require video verification, which Google only exposes in
+                  Google Business Profile. Complete verification there, then refresh. If
+                  Google says you do not have access, ask the profile owner to grant owner
+                  or manager access.
                 </p>
                 <a
                   href={GBP_DASHBOARD_URL}
                   target="_blank"
                   rel="noreferrer"
-                  className="mt-4 inline-flex rounded-[24px] border border-ink/10 bg-white px-3.5 py-2 text-[12px] font-bold text-deep-violet shadow-[0_1px_0_rgba(255,255,255,0.9)_inset,0_4px_12px_rgba(20,16,31,0.06)] transition active:translate-y-[2px] active:scale-[0.98]"
+                  className="mt-4 inline-flex rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-2 text-[12px] font-bold text-deep-violet shadow-sm transition active:translate-y-[2px] active:scale-[0.98]"
                 >
                   Open Google Business Profile
                 </a>
@@ -371,7 +438,7 @@ export default function VerificationPage() {
             )}
 
             {!verified && options.length > 0 && (
-              <section className="rounded-[32px] bg-white p-5 shadow-[0_12px_30px_rgba(20,16,31,0.07)]">
+              <section className="rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 sm:p-5">
                 <h2 className="text-[16px] font-bold text-ink">Request details</h2>
                 <p className="mt-1 text-[12px] text-ink/45">
                   {activeMethod ? labelFor(activeMethod).description : "Select a method above."}
@@ -412,7 +479,7 @@ export default function VerificationPage() {
                   type="button"
                   onClick={() => requestVerification.mutate()}
                   disabled={!selectedId || !activeMethod || !contactReady || busy}
-                  className="mt-5 rounded-[24px] bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white shadow-[0_1px_0_rgba(255,255,255,0.18)_inset,0_6px_16px_rgba(61,29,110,0.22)] transition active:translate-y-[2px] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+                  className="mt-5 rounded-xl bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white shadow-sm transition active:translate-y-[2px] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {requestVerification.isPending ? "Starting..." : "Start verification"}
                 </button>
@@ -420,7 +487,7 @@ export default function VerificationPage() {
             )}
 
             {pending && (
-              <section className="rounded-[32px] bg-white p-5 shadow-[0_12px_30px_rgba(20,16,31,0.07)]">
+              <section className="rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 sm:p-5">
                 <h2 className="text-[16px] font-bold text-ink">Enter the PIN</h2>
                 <p className="mt-1 text-[12px] text-ink/45">
                   Google is waiting for the code it sent through {labelFor(verification?.method ?? undefined).title.toLowerCase()}.
@@ -431,7 +498,7 @@ export default function VerificationPage() {
                     type="button"
                     onClick={() => completeVerification.mutate()}
                     disabled={!pin.trim() || busy}
-                    className="rounded-[24px] bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white shadow-[0_1px_0_rgba(255,255,255,0.18)_inset,0_6px_16px_rgba(61,29,110,0.22)] transition active:translate-y-[2px] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+                    className="rounded-xl bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white shadow-sm transition active:translate-y-[2px] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     {completeVerification.isPending ? "Submitting..." : "Complete verification"}
                   </button>
@@ -440,7 +507,7 @@ export default function VerificationPage() {
             )}
 
             {verification?.verifications && verification.verifications.length > 0 && (
-              <section className="rounded-[32px] bg-white p-5 shadow-[0_12px_30px_rgba(20,16,31,0.07)]">
+              <section className="rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 sm:p-5">
                 <h2 className="text-[16px] font-bold text-ink">Google verification history</h2>
                 <ul className="mt-3 divide-y divide-ink/[0.06]">
                   {verification.verifications.map((item) => (
@@ -485,10 +552,10 @@ function MethodCard({
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className={`rounded-[24px] border p-4 text-left transition ${
+      className={`rounded-xl border p-4 text-left transition ${
         selected
           ? "border-deep-violet bg-deep-violet/[0.05]"
-          : "border-black/[0.06] bg-white hover:border-deep-violet/25"
+          : "border-[var(--ui-line)] bg-white hover:border-deep-violet/25"
       } ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
     >
       <div className="flex items-start justify-between gap-3">
@@ -534,9 +601,9 @@ function Field({
 
 function Info({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[20px] bg-ink/[0.03] p-3">
-      <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">{label}</div>
-      <div className="mt-2 min-h-4 text-[12px] text-ink/70">{value || " "}</div>
+    <div className="rounded-xl border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3">
+      <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">{label}</div>
+      <div className="mt-2 min-h-4 text-[12px] font-medium text-[var(--ui-ink)]">{value || " "}</div>
     </div>
   );
 }

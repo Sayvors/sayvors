@@ -200,6 +200,7 @@ export default function ConnectImportModal({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [scope, setScope] = useState(180);
   const [message, setMessage] = useState<string | null>(null);
+  const [showSummary, setShowSummary] = useState(false);
 
   const query = useQuery({
     queryKey: ["connect-import", sessionId],
@@ -216,6 +217,10 @@ export default function ConnectImportModal({
     if (!session) return;
     setScope(session.scope_days || 180);
   }, [session?.id, session?.scope_days]);
+
+  useEffect(() => {
+    setShowSummary(false);
+  }, [session?.id]);
 
   useEffect(() => {
     if (!session) return;
@@ -417,7 +422,15 @@ export default function ConnectImportModal({
           ) : null}
 
           {session?.status === "completed" && session.summary ? (
-            <SummaryStage session={session} onClose={finish} />
+            showSummary ? (
+              <SummaryStage session={session} onClose={finish} />
+            ) : (
+              <CompletionStage
+                session={session}
+                onViewSummary={() => setShowSummary(true)}
+                onClose={finish}
+              />
+            )
           ) : null}
 
           {session?.status === "completed" && !session.summary ? (
@@ -824,6 +837,64 @@ function ReviewRow({
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+function CompletionStage({
+  session,
+  onViewSummary,
+  onClose,
+}: {
+  session: ImportSession;
+  onViewSummary: () => void;
+  onClose: () => void;
+}) {
+  const summary = session.summary!;
+  const nothingToReply = summary.unanswered_before === 0;
+  return (
+    <div className="space-y-4">
+      <div className="rounded-md border border-ink/[0.08] bg-white p-5">
+        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-deep-violet/60">
+          Import complete
+        </p>
+        <h3 className="mt-1 text-[18px] font-bold text-ink">
+          {nothingToReply ? "Nothing needed a reply" : "Your replies are in"}
+        </h3>
+        <p className="mt-2 max-w-2xl text-[12.5px] leading-relaxed text-ink/60">
+          {nothingToReply
+            ? `We found ${summary.reviews_total} reviews across ${session.progress.fetched_locations} locations. Every one already has a reply on Google, so no AI reply was generated.`
+            : `We found ${summary.reviews_total} reviews. ${summary.already_answered} already had replies and ${summary.published_now} new replies were published.`}
+        </p>
+        <div className="mt-4 grid gap-2 sm:grid-cols-3">
+          <Metric label="Reviews found" value={String(summary.reviews_total)} />
+          <Metric label="Already answered" value={String(summary.already_answered)} />
+          <Metric
+            label={nothingToReply ? "Drafts created" : "Published now"}
+            value={String(nothingToReply ? 0 : summary.published_now)}
+          />
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={onViewSummary}
+          className="rounded-md bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white transition active:translate-y-[2px] active:scale-[0.98]"
+        >
+          View summary &amp; analytics
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-md border border-ink/10 bg-white px-4 py-2.5 text-[12px] font-bold text-ink/65 transition active:translate-y-[2px] active:scale-[0.98]"
+        >
+          Close
+        </button>
+      </div>
+      <p className="text-[11px] leading-relaxed text-ink/40">
+        The import also analyzes reviews to build your insights. That analysis is metered even when no
+        reply is needed; the exact calls are listed under Billing → Credit ledger.
+      </p>
     </div>
   );
 }

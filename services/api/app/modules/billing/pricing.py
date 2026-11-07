@@ -62,7 +62,7 @@ KIND_META: dict[str, dict[str, str]] = {
 # Provider families the LLM meter knows. Keep in sync with budget._family.
 LLM_FAMILIES: tuple[str, ...] = (
     "groq", "openai", "openrouter", "anthropic", "google", "gemini",
-    "mistral", "ollama", "local", "mock", "unknown",
+    "mistral", "zhipu", "zhipu-coding", "ollama", "local", "mock", "unknown",
 )
 
 # Defaults: the pre-existing pass-through LLM table (USD cents per 1M tokens)
@@ -84,6 +84,10 @@ DEFAULTS: dict[tuple[str, str], float] = {
     (LLM_OUTPUT, "gemini"): 120.0,
     (LLM_INPUT, "mistral"): 50.0,
     (LLM_OUTPUT, "mistral"): 150.0,
+    (LLM_INPUT, "zhipu"): 60.0,
+    (LLM_OUTPUT, "zhipu"): 220.0,
+    (LLM_INPUT, "zhipu-coding"): 60.0,
+    (LLM_OUTPUT, "zhipu-coding"): 220.0,
     (LLM_INPUT, "ollama"): 0.0,
     (LLM_OUTPUT, "ollama"): 0.0,
     (LLM_INPUT, "local"): 0.0,

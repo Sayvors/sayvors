@@ -43,9 +43,15 @@ MODELS: list[ModelInfo] = [
     ModelInfo("ollama:llama3.1", "Llama 3.1 (local)", "ollama", "llama3.1", 128_000, 4_096),
     ModelInfo("ollama:mistral", "Mistral (local)", "ollama", "mistral", 32_000, 4_096),
     ModelInfo("ollama:qwen3", "Qwen3 (local)", "ollama", "qwen3", 32_000, 4_096),
+    # ── Z.AI (Zhipu GLM, OpenAI-compatible) ─────────────
+    ModelInfo("zhipu:glm-5.3", "GLM-5.3 (Z.AI)", "zhipu", "glm-5.3", 1_000_000, 16_384),
+    ModelInfo("zhipu:glm-4.6", "GLM-4.6 (Z.AI)", "zhipu", "glm-4.6", 204_800, 16_384),
+    # ── Z.AI Coding Plan (separate key + endpoint) ──────
+    ModelInfo("zhipu-coding:glm-5.3", "GLM-5.3 (Coding Plan)", "zhipu-coding", "glm-5.3", 1_000_000, 16_384),
+    ModelInfo("zhipu-coding:glm-4.6", "GLM-4.6 (Coding Plan)", "zhipu-coding", "glm-4.6", 204_800, 16_384),
 ]
 
-PROVIDERS = ["openai", "grok", "gemini", "kimi", "deepseek", "groq", "openrouter", "ollama"]
+PROVIDERS = ["openai", "grok", "gemini", "kimi", "deepseek", "groq", "openrouter", "zhipu", "zhipu-coding", "ollama"]
 
 
 def get_model_by_id(model_id: str) -> ModelInfo | None:

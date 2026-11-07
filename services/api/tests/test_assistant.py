@@ -34,6 +34,20 @@ from app.modules.users.models import User
 
 
 @pytest.fixture(autouse=True)
+def _isolated_chat_memory(monkeypatch):
+    """Tests must not read or write the shared Redis chat memory."""
+
+    async def _empty(*args, **kwargs):
+        return assistant_router.chat_memory.empty_memory()
+
+    async def _save(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(assistant_router.chat_memory, "load_memory", _empty)
+    monkeypatch.setattr(assistant_router.chat_memory, "save_memory", _save)
+
+
+@pytest.fixture(autouse=True)
 def _tenant_model(monkeypatch):
     """Model resolution is DB-driven in prod; tests pin a fake id so chat
     tests exercise generation, not model administration."""
@@ -145,6 +159,58 @@ async def test_assistant_chat_llm_failure_is_502(db, user_id, monkeypatch):
     assert "unavailable" in exc.value.detail
 
 
+def test_plural_handles_reply():
+    """The steps trail printed '6 posted replys' in production."""
+    from app.modules.assistant.router import _plural
+
+    assert _plural(1, "posted reply") == "1 posted reply"
+    assert _plural(6, "posted reply") == "6 posted replies"
+    assert _plural(3, "location") == "3 locations"
+    assert _plural(2, "chart") == "2 charts"
+
+
+def test_greeting_detection():
+    """'hi' must not trigger the snapshot / databank / chart pipeline."""
+    from app.modules.assistant.router import _is_greeting
+
+    for text in ("hi", "Hi!", "hello", "hey there", "good morning", "مرحبا", "السلام عليكم"):
+        assert _is_greeting(text), text
+    for text in (
+        "hi, show me the latest reviews",
+        "hello can you make me a chart",
+        "how are my reviews doing?",
+        "hey, what is my average rating",
+    ):
+        assert not _is_greeting(text), text
+
+
+def test_fallback_answer_never_draws_ascii_charts():
+    from app.modules.assistant.router import _fallback_answer
+
+    answer = _fallback_answer(
+        {
+            "business": {"locations": [{"name": "Al Malqa"}]},
+            "reviews": {
+                "reviews_indexed": 2,
+                "average_rating": 4.5,
+                "all_reviews": [
+                    {
+                        "reviewer": "Majed",
+                        "rating": 5,
+                        "location": "Al Malqa",
+                        "text": "Great service",
+                        "replied": True,
+                    }
+                ],
+            },
+        },
+        "make me charts",
+    )
+    assert "Al Malqa" in answer
+    assert "█" not in answer
+    assert "▇" not in answer
+
+
 @pytest.mark.asyncio
 async def test_assistant_chat_history_is_included(db, user_id, monkeypatch):
     """Recent conversation turns reach the model so follow-ups work."""
@@ -181,6 +247,52 @@ async def test_assistant_chat_history_is_included(db, user_id, monkeypatch):
     ]
     assert "complaining" in seen["message"]
     assert "late delivery" in resp.reply
+
+
+@pytest.mark.asyncio
+async def test_assistant_chat_returns_charts_and_mentions_them_to_the_model(
+    db, user_id, monkeypatch
+):
+    from app.modules.assistant import router as assistant_router
+    from app.modules.assistant.charts import ChartPlan
+
+    chart = {
+        "id": "chart_test",
+        "type": "line",
+        "title": "Reviews over time",
+        "dataset": "review_volume",
+        "domain": "reviews",
+        "series": [{"key": "reviews", "label": "Reviews", "format": "number"}],
+        "rows": [{"label": "2026-11-01", "reviews": 2}],
+        "kpis": [],
+    }
+
+    async def fake_rag(db, user, message, model=None):
+        return "", [], False, "no_databank"
+
+    async def fake_plan(**kwargs):
+        return ChartPlan(charts=[chart], steps=[])
+
+    async def fake_llm(model, system_prompt, history, message, user):
+        assert "CHARTS ALREADY RENDERED IN THIS REPLY" in system_prompt
+        assert "Reviews over time" in system_prompt
+        return "The chart shows your review trend."
+
+    monkeypatch.setattr(assistant_router, "_rag_answer", fake_rag)
+    monkeypatch.setattr(assistant_router, "_plan_chart_reply", fake_plan)
+    monkeypatch.setattr(assistant_router, "_llm_reply", fake_llm)
+
+    resp = await chat(
+        body=AssistantChatRequest(
+            message="Show me a chart of reviews over time",
+            history=[],
+            session_id="chart-session-1",
+        ),
+        user=_user(user_id),
+        db=db,
+    )
+    assert resp.charts == [chart]
+    assert "review trend" in resp.reply
 
 
 @pytest.mark.asyncio

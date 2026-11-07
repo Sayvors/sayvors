@@ -251,10 +251,25 @@ async def get_customer_profile(
         None if contact_key == "unknown" else contact_key
     )
     contact_profile = None
+    google_name = None
+    google_avatar = None
     if contact_phone and contact_phone.startswith("google:"):
-        # Google reviewers have no ContactProfile row — their identity
-        # lives on the ChannelMessage.
-        contact_profile = None
+        # Google reviewers have no ContactProfile row. Resolve the reviewer
+        # from the review insight attached to the newest message.
+        from ..analytics.models import ReviewInsight
+
+        if newest is not None and newest.platform_message_id:
+            insight = (
+                await db.execute(
+                    select(ReviewInsight).where(
+                        ReviewInsight.channel_id == channel_id,
+                        ReviewInsight.review_id == newest.platform_message_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if insight is not None:
+                google_name = insight.reviewer_name
+                google_avatar = insight.reviewer_photo_url
     else:
         from .models import ContactProfile
 
@@ -281,15 +296,27 @@ async def get_customer_profile(
     def _iso(dt):
         return dt.isoformat() if dt else None
 
+    # Google reviewers are keyed by an internal digest; it must never be
+    # presented as their name when the profile photo/name lookup misses.
+    display_name = (
+        (contact_profile.name if contact_profile else None)
+        or google_name
+        or (newest.contact_name if newest else None)
+        or (
+            "Google reviewer"
+            if channel.platform == "google_reviews"
+            else contact_phone
+        )
+    )
+
     return {
         "identity": {
-            "name": (
-                (contact_profile.name if contact_profile else None)
-                or (newest.contact_name if newest else None)
-                or contact_phone
-            ),
+            "name": display_name,
             "username": contact_profile.username if contact_profile else None,
-            "avatar_url": contact_profile.avatar_url if contact_profile else None,
+            "avatar_url": (
+                (contact_profile.avatar_url if contact_profile else None)
+                or google_avatar
+            ),
             "contact_phone": contact_phone,
             "platform": channel.platform,
             "channel_id": channel_id,
