@@ -543,7 +543,6 @@ def _system_prompt(
             "for a visual. Do not repeat every plotted value, do not describe a "
             "chart that is not in this list, and do not invent a new chart."
         )
-
     return (
         "You are Sayvors' business assistant, chatting with the business owner "
         "inside their dashboard.\n\n"
@@ -591,7 +590,13 @@ def _system_prompt(
         "access to banking, payments, orders, or other systems that were never "
         "part of this product. The DATABANK GROUNDING block states exactly what "
         "the databank search did — follow it.\n"
-        "- You may give brief, actionable advice about handling reviews."
+        "- You may give brief, actionable advice about handling reviews.\n"
+        "- NEVER draw a chart in text: no ASCII bars (▇█), no emoji bars, no "
+        "text tables used as a chart, no hand-drawn axes. Charts are rendered "
+        "by the UI as interactive components. If a chart is already in this "
+        "reply, refer to it in one short line. If the owner asked for a visual "
+        "and none is listed above, say the chart could not be built from the "
+        "synced data and point them to Analytics — do not draw one."
     )
 
 
@@ -785,7 +790,20 @@ TOOL_LABELS = {
 
 
 def _plural(n: int, word: str) -> str:
-    return f"{n} {word}{'' if n == 1 else 's'}"
+    """Count + noun, with the English irregulars this UI actually prints.
+
+    The naive `word + "s"` shipped "6 posted replys" to production.
+    """
+    if n == 1:
+        return f"1 {word}"
+    irregular = {
+        "reply": "replies",
+        "posted reply": "posted replies",
+        "entry": "entries",
+        "query": "queries",
+        "summary": "summaries",
+    }
+    return f"{n} {irregular.get(word, word + 's')}"
 
 
 @router.post("/chat/stream")
@@ -1062,7 +1080,7 @@ async def chat_stream(
                     continue
                 if empty:
                     empty = False
-                    yield sse({"type": "step", "id": "think", "label": "Writing your answer", "detail": "streaming"})
+                    yield sse({"type": "step", "id": "think", "label": "Writing your answer"})
                 answer_parts.append(chunk)
                 yield sse({"type": "delta", "text": chunk})
 

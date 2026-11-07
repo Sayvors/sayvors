@@ -159,6 +159,43 @@ async def test_assistant_chat_llm_failure_is_502(db, user_id, monkeypatch):
     assert "unavailable" in exc.value.detail
 
 
+def test_plural_handles_reply():
+    """The steps trail printed '6 posted replys' in production."""
+    from app.modules.assistant.router import _plural
+
+    assert _plural(1, "posted reply") == "1 posted reply"
+    assert _plural(6, "posted reply") == "6 posted replies"
+    assert _plural(3, "location") == "3 locations"
+    assert _plural(2, "chart") == "2 charts"
+
+
+def test_fallback_answer_never_draws_ascii_charts():
+    from app.modules.assistant.router import _fallback_answer
+
+    answer = _fallback_answer(
+        {
+            "business": {"locations": [{"name": "Al Malqa"}]},
+            "reviews": {
+                "reviews_indexed": 2,
+                "average_rating": 4.5,
+                "all_reviews": [
+                    {
+                        "reviewer": "Majed",
+                        "rating": 5,
+                        "location": "Al Malqa",
+                        "text": "Great service",
+                        "replied": True,
+                    }
+                ],
+            },
+        },
+        "make me charts",
+    )
+    assert "Al Malqa" in answer
+    assert "█" not in answer
+    assert "▇" not in answer
+
+
 @pytest.mark.asyncio
 async def test_assistant_chat_history_is_included(db, user_id, monkeypatch):
     """Recent conversation turns reach the model so follow-ups work."""

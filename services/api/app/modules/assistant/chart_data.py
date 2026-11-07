@@ -34,6 +34,12 @@ from ..llm.models import LLMUsageEvent
 
 logger = logging.getLogger(__name__)
 
+WEEKDAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+# A heatmap needs bounded rows; 20k timestamps is far beyond any real review
+# volume for one tenant and keeps the in-Python bucketing cheap.
+HEATMAP_SCAN_LIMIT = 20_000
+CATEGORY_MAX_CHART_ROWS = 12
+
 
 @dataclass(frozen=True)
 class DatasetSpec:
@@ -197,6 +203,22 @@ DATASETS: dict[str, DatasetSpec] = {
         "Google impressions, calls, direction requests and website clicks over time.",
         suggested_type="line",
     ),
+    "review_heatmap": DatasetSpec(
+        "review_heatmap",
+        "When reviews arrive",
+        "reviews",
+        "Review counts by weekday and hour (UTC). Heatmap only.",
+        supports_platform=True,
+        suggested_type="heatmap",
+    ),
+    "sentiment_by_location": DatasetSpec(
+        "sentiment_by_location",
+        "Sentiment by location",
+        "reviews",
+        "Positive, neutral and negative review counts per location. Radar or stacked bar.",
+        supports_platform=True,
+        suggested_type="radar",
+    ),
     "ai_spend_by_purpose": DatasetSpec(
         "ai_spend_by_purpose",
         "AI credit by purpose",
@@ -223,6 +245,8 @@ ALL_TIME_FALLBACK = {
     "reviews_by_location",
     "review_topics",
     "reply_status",
+    "review_heatmap",
+    "sentiment_by_location",
     "customers_by_platform",
     "customer_categories",
     "lead_pipeline",
@@ -1062,6 +1086,115 @@ async def _google_visibility(db, tenant_id, channels, start, days) -> dict:
 
 # ── AI usage ─────────────────────────────────────────────────────────
 
+async def _review_heatmap(db, tenant_id, channels, start, days) -> dict:
+    """Reviews by weekday × hour — the one dataset that is genuinely 2-D."""
+    if not channels:
+        return _empty(DATASETS["review_heatmap"], "No connected channels.")
+    ids = [c.id for c in channels]
+    stamp = func.coalesce(ReviewInsight.review_updated_at, ReviewInsight.created_at)
+    stmt = (
+        select(stamp)
+        .where(ReviewInsight.user_id == tenant_id, ReviewInsight.channel_id.in_(ids))
+        .order_by(stamp.desc())
+        .limit(HEATMAP_SCAN_LIMIT)
+    )
+    if start is not None:
+        stmt = stmt.where(stamp >= start)
+    buckets: dict[tuple[int, int], int] = {}
+    total = 0
+    busiest: tuple[int, int, int] | None = None
+    for (value,) in (await db.execute(stmt)).all():
+        if value is None:
+            continue
+        moment = value
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        moment = moment.astimezone(timezone.utc)
+        key = (moment.weekday(), moment.hour)
+        buckets[key] = buckets.get(key, 0) + 1
+        total += 1
+        if busiest is None or buckets[key] > busiest[2]:
+            busiest = (key[0], key[1], buckets[key])
+    if not buckets:
+        return _empty(DATASETS["review_heatmap"], "No reviews in this window.")
+    rows = [
+        {
+            "label": f"{WEEKDAY_NAMES[weekday]} {hour:02d}:00",
+            "x": f"{hour:02d}",
+            "y": WEEKDAY_NAMES[weekday],
+            "value": count,
+        }
+        for (weekday, hour), count in sorted(buckets.items())
+    ]
+    result = _result(
+        rows=rows,
+        columns=[_col("label", "Day and hour", "string"), _col("value", "Reviews")],
+        kpis=[
+            _kpi("Reviews", total),
+            _kpi(
+                "Busiest slot",
+                f"{WEEKDAY_NAMES[busiest[0]]} {busiest[1]:02d}:00" if busiest else None,
+                "text",
+            ),
+        ],
+        suggested_type="heatmap",
+        suggested_series=["value"],
+        note="Times are UTC.",
+    )
+    result["heatmap"] = True
+    return result
+
+
+async def _sentiment_by_location(db, tenant_id, channels, start, days) -> dict:
+    """Positive/neutral/negative counts per location — a radar comparison."""
+    if not channels:
+        return _empty(DATASETS["sentiment_by_location"], "No connected channels.")
+    ids = [c.id for c in channels]
+    names = {c.id: (c.display_name or c.id) for c in channels}
+    stmt = (
+        select(
+            ReviewInsight.channel_id,
+            ReviewInsight.sentiment,
+            func.count(ReviewInsight.id),
+        )
+        .where(ReviewInsight.user_id == tenant_id, ReviewInsight.channel_id.in_(ids))
+        .group_by(ReviewInsight.channel_id, ReviewInsight.sentiment)
+    )
+    if start is not None:
+        stmt = stmt.where(ReviewInsight.created_at >= start)
+    buckets: dict[str, dict[str, int]] = {}
+    for channel_id, sentiment, count in (await db.execute(stmt)).all():
+        slot = buckets.setdefault(
+            names.get(channel_id, channel_id),
+            {"positive": 0, "neutral": 0, "negative": 0},
+        )
+        key = (sentiment or "neutral").lower()
+        if key not in slot:
+            key = "neutral"
+        slot[key] += int(count or 0)
+    if not buckets:
+        return _empty(DATASETS["sentiment_by_location"], "No reviews in this window.")
+    rows = [
+        {"label": name, **counts}
+        for name, counts in sorted(buckets.items(), key=lambda item: -sum(item[1].values()))
+    ][:CATEGORY_MAX_CHART_ROWS]
+    totals = {k: sum(row[k] for row in rows) for k in ("positive", "neutral", "negative")}
+    return _result(
+        rows=rows,
+        columns=[
+            _col("label", "Location", "string"),
+            _col("positive", "Positive"),
+            _col("neutral", "Neutral"),
+            _col("negative", "Negative"),
+        ],
+        kpis=[
+            _kpi("Positive", totals["positive"]),
+            _kpi("Neutral", totals["neutral"]),
+            _kpi("Negative", totals["negative"]),
+        ],
+        suggested_type="radar",
+        suggested_series=["positive", "neutral", "negative"],
+    )
 async def _ai_spend_by_purpose(db, tenant_id, channels, start, days) -> dict:
     stmt = (
         select(
@@ -1167,6 +1300,7 @@ async def query_dataset(
     channel_scoped = {
         "review_volume", "rating_distribution", "sentiment_distribution",
         "reviews_by_location", "review_topics", "reply_status",
+        "review_heatmap", "sentiment_by_location",
         "customer_growth", "customers_by_platform", "customer_categories",
         "top_customers", "message_volume", "response_time",
         "lead_pipeline", "lead_categories", "lead_growth",
@@ -1189,6 +1323,8 @@ async def query_dataset(
         "reviews_by_location": _reviews_by_location,
         "review_topics": _review_topics,
         "reply_status": _reply_status,
+        "review_heatmap": _review_heatmap,
+        "sentiment_by_location": _sentiment_by_location,
         "customer_growth": _customer_growth,
         "customers_by_platform": _customers_by_platform,
         "customer_categories": _customer_categories,

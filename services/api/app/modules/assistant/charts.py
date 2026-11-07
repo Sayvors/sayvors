@@ -44,17 +44,35 @@ _tool_failures: dict[str, float] = {}
 
 CHART_TYPES = (
     "bar", "line", "area", "stacked_bar", "donut", "pie",
-    "ranking", "scatter", "kpi",
+    "ranking", "scatter", "bubble", "heatmap", "radar", "funnel",
+    "gauge", "treemap", "histogram", "kpi",
 )
 NUMERIC_TYPES = {"number", "currency", "percent", "seconds", "rating", "ratio"}
 CHART_MAX_ROWS = 60
 CATEGORY_MAX_ROWS = 12
+HEATMAP_MAX_CELLS = 24 * 7
+WEEKDAY_LABELS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def _weekday_sort_key(value: str) -> int:
+    try:
+        return WEEKDAY_LABELS.index(value)
+    except ValueError:
+        return len(WEEKDAY_LABELS)
+
+
+def _hour_sort_key(value: str) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 99
 
 # A chart should be considered when the owner asks for a shape, comparison or
 # follow-up to a chart they just saw. Plain factual questions skip the planner,
 # which keeps ordinary chat fast and avoids forcing a visual onto every answer.
 _CHART_HINT_RE = re.compile(
-    r"\b(chart|charts|graph|graphs|plot|visuali[sz]e|visuali[sz]ation|"
+    r"\b(chart|charts|graph|graphs|plot|heatmap|radar|funnel|gauge|"
+    r"treemap|bubble|histogram|scatter|visuali[sz]e|visuali[sz]ation|"
     r"trend|trends|over time|by (day|week|month|quarter|year|location|branch|"
     r"platform|channel|category|stage|purpose|source)|breakdown|distribution|"
     r"share|split|compare|comparison|versus|vs|top \d*|highest|lowest|"
@@ -78,6 +96,19 @@ def wants_chart(message: str, has_chart_memory: bool = False) -> bool:
     # A short follow-up in a chat that already produced a chart ("and by
     # location?", "make it a pie") is chart work even without a keyword.
     return bool(has_chart_memory and len(text) <= 140 and _FOLLOW_UP_RE.search(text))
+
+
+# A direct instruction to draw something. Only these earn the deterministic
+# auto-plan when the model planner returns nothing — a vague "how is my
+# performance?" must stay a text answer rather than getting a forced chart.
+_EXPLICIT_CHART_RE = re.compile(
+    r"\b(charts?|graphs?|plots?|visuali[sz]e|visuali[sz]ation|dashboards?)\b",
+    re.I,
+)
+
+
+def explicit_chart_request(message: str) -> bool:
+    return bool(_EXPLICIT_CHART_RE.search(message or ""))
 
 
 def _tools_available(model: str) -> bool:
@@ -179,9 +210,15 @@ def _tool_definitions() -> list[ToolDefinition]:
                     enum=list(CHART_TYPES),
                     description=(
                         "bar, line, area, stacked_bar, donut/pie, ranking, "
-                        "scatter or kpi. Use line/area for time, bar for "
-                        "comparison, donut for parts of a whole, ranking for "
-                        "top lists, stacked_bar for composition over categories."
+                        "scatter, bubble, heatmap, radar, funnel, gauge, "
+                        "treemap, histogram or kpi. Match the data shape: line/"
+                        "area for time, bar for comparison, donut for parts of "
+                        "a whole, ranking for top lists, stacked_bar for "
+                        "composition, scatter/bubble for two metrics, heatmap "
+                        "for two dimensions (day × hour), radar for multi-metric "
+                        "profiles per location, funnel for ordered stages, "
+                        "gauge for one bounded value, treemap for share of a "
+                        "total, histogram for a distribution."
                     ),
                 ),
                 "title": ToolParameter(
@@ -247,9 +284,12 @@ def _planner_prompt(
         "summary is one chart with chart_type='kpi'.\n"
         "5. If the data is empty or the question is not visual, do not call "
         "create_chart. Reply with exactly NO_CHART.\n"
-        "6. Never create a chart whose title or meaning is not supported by the "
+        "6. Pick the chart type that fits the data shape, not a default: heatmap "
+        "only for the review_heatmap dataset, radar for sentiment_by_location, "
+        "scatter/bubble only when the dataset has two numeric columns.\n"
+        "7. Never create a chart whose title or meaning is not supported by the "
         "dataset. Dates are ISO YYYY-MM-DD in the data; do not reformat them.\n"
-        "7. Reply in the user's language when writing the final text."
+        "8. Reply in the user's language when writing the final text."
     )
 
 
@@ -291,6 +331,36 @@ def _resolve_type(requested: str, dataset: dict, x: str, series: list[str]) -> s
         return "kpi" if dataset.get("kpis") else "bar"
     if not rows or not series:
         return "kpi" if dataset.get("kpis") else "bar"
+    # Heatmap rows are pre-shaped by the dataset (x/y/value), so it does not
+    # depend on numeric columns the way the axis charts do.
+    if requested == "heatmap":
+        if dataset.get("heatmap") and any(row.get("value") is not None for row in rows):
+            return "heatmap"
+        return "bar"
+    if requested == "bubble":
+        nums = [row.get("size") for row in rows]
+        if (
+            x and x != "label"
+            and len(series) == 1
+            and any(isinstance(v, (int, float)) and v > 0 for v in nums)
+        ):
+            return "bubble"
+        return "scatter" if x and x != "label" and len(series) == 1 else "bar"
+    if requested == "radar":
+        # Radar axes are the metrics (series), one polygon per row/entity.
+        # Fewer than three metrics degenerates into a line, so fall back.
+        return "radar" if len(series) >= 3 and len(rows) >= 1 else "bar"
+    if requested == "funnel":
+        return "funnel" if len(series) == 1 and len(rows) >= 2 else "bar"
+    if requested == "gauge":
+        return "gauge" if dataset.get("gauge_max") or len(rows) == 1 else "bar"
+    if requested == "treemap":
+        if len(series) == 1 and all(
+            isinstance(row.get(series[0]), (int, float)) and float(row.get(series[0]) or 0) > 0
+            for row in rows
+        ):
+            return "treemap"
+        return "bar"
     if requested in ("donut", "pie"):
         if len(series) != 1:
             return "bar"
@@ -308,8 +378,10 @@ def _resolve_type(requested: str, dataset: dict, x: str, series: list[str]) -> s
         return "stacked_bar" if len(series) >= 2 else "bar"
     if requested == "scatter":
         return "scatter" if x and x != "label" and len(series) == 1 else "line"
-    if requested == "ranking":
-        return "ranking" if len(series) == 1 else "bar"
+    if requested in ("ranking", "histogram"):
+        # A histogram is a bar over a numeric distribution; the renderer can
+        # treat it as bars with no gaps between categories.
+        return requested if len(series) == 1 else "bar"
     return "bar"
 
 
@@ -352,11 +424,39 @@ def _build_chart(
         raise ValueError("That dataset has no numeric column to plot.")
 
     final_type = _resolve_type(chart_type, dataset, x, requested_series)
-    if final_type != "kpi" and x not in {"label", *numeric}:
+    if final_type not in ("kpi", "heatmap") and x not in {"label", *numeric}:
         x = dataset.get("suggested_x") or "label"
 
     chart_rows: list[dict]
-    if final_type == "scatter":
+    if final_type == "heatmap":
+        chart_rows = [
+            {
+                "label": str(row.get("label") or ""),
+                "x": str(row.get("x") or ""),
+                "y": str(row.get("y") or ""),
+                "value": float(row.get("value") or 0),
+            }
+            for row in rows
+            if row.get("x") not in (None, "") and row.get("y") not in (None, "")
+        ][:HEATMAP_MAX_CELLS]
+    elif final_type == "bubble":
+        x_key = x if x != "label" else requested_series[0]
+        y_key = requested_series[0]
+        chart_rows = [
+            {
+                "label": str(row.get("label") or ""),
+                "x": row.get(x_key),
+                "y": row.get(y_key),
+                "size": row.get("size"),
+            }
+            for row in rows
+            if isinstance(row.get(x_key), (int, float))
+            and isinstance(row.get(y_key), (int, float))
+            and isinstance(row.get("size"), (int, float))
+        ][:CHART_MAX_ROWS]
+        if len(chart_rows) < 2:
+            raise ValueError("Bubble needs at least two points with x, y and size.")
+    elif final_type == "scatter":
         x_key = x if x != "label" else requested_series[0]
         y_key = requested_series[0]
         if x_key == y_key:
@@ -372,12 +472,33 @@ def _build_chart(
                 {"label": str(row.get("label") or ""), **{s: row.get(s) for s in requested_series}}
                 for row in rows
             ]
+    elif final_type == "radar":
+        chart_rows = [
+            {"label": str(row.get("label") or ""), **{s: row.get(s) for s in requested_series}}
+            for row in rows
+        ][:CATEGORY_MAX_ROWS]
     elif final_type in ("line", "area"):
         chart_rows = [
             {"label": str(row.get("label") or ""), **{s: row.get(s) for s in requested_series}}
             for row in rows
         ][:CHART_MAX_ROWS]
     elif final_type in ("donut", "pie"):
+        chart_rows = [
+            {"label": str(row.get("label") or ""), requested_series[0]: row.get(requested_series[0])}
+            for row in rows
+        ]
+        chart_rows = _limit_categories(chart_rows, requested_series)
+    elif final_type == "funnel":
+        chart_rows = [
+            {"label": str(row.get("label") or ""), requested_series[0]: row.get(requested_series[0])}
+            for row in rows
+        ][:8]
+    elif final_type == "gauge":
+        chart_rows = [
+            {"label": str(row.get("label") or "Value"), requested_series[0]: row.get(requested_series[0])}
+            for row in rows[:1]
+        ]
+    elif final_type == "treemap":
         chart_rows = [
             {"label": str(row.get("label") or ""), requested_series[0]: row.get(requested_series[0])}
             for row in rows
@@ -390,6 +511,12 @@ def _build_chart(
         ]
         chart_rows.sort(key=lambda r: float(r.get(requested_series[0]) or 0), reverse=True)
         chart_rows = chart_rows[:10]
+    elif final_type == "histogram":
+        chart_rows = [
+            {"label": str(row.get("label") or ""), **{s: row.get(s) for s in requested_series}}
+            for row in rows
+        ]
+        chart_rows = _limit_categories(chart_rows, requested_series)
     else:  # bar / stacked_bar
         chart_rows = [
             {"label": str(row.get("label") or ""), **{s: row.get(s) for s in requested_series}}
@@ -417,7 +544,8 @@ def _build_chart(
         "subtitle": _clean_text(subtitle, 160) if subtitle else None,
         "dataset": dataset.get("dataset"),
         "domain": domain,
-        "x_label": _column_label(dataset, x),
+        "x_label": _column_label(dataset, x) if final_type != "heatmap" else "Hour",
+        "y_label": "Day" if final_type == "heatmap" else None,
         "series": [
             {
                 "key": s,
@@ -425,12 +553,20 @@ def _build_chart(
                 "format": _column_format(dataset, s),
             }
             for s in requested_series
-        ] if final_type != "kpi" else [],
+        ] if final_type not in ("kpi", "heatmap") else (
+            [{"key": "value", "label": "Reviews", "format": "number"}]
+            if final_type == "heatmap" else []
+        ),
         "rows": chart_rows,
         "kpis": kpis,
         "window_days": dataset.get("window_days"),
         "signature": signature,
     }
+    if final_type == "heatmap":
+        chart["x_values"] = sorted({row["x"] for row in chart_rows}, key=_hour_sort_key)
+        chart["y_values"] = sorted({row["y"] for row in chart_rows}, key=_weekday_sort_key)
+    if final_type == "gauge":
+        chart["max_value"] = dataset.get("gauge_max") or None
     if final_type == "kpi":
         chart["rows"] = []
         chart["series"] = []
@@ -451,7 +587,12 @@ async def _get_data(
         return {"error": "Unknown dataset. Use a key from the catalog."}
     platform = str(args.get("platform") or "") or None
     location = str(args.get("location") or "") or None
-    days = int(args.get("days") or 30)
+    raw_days = args.get("days")
+    try:
+        # 0 means all time and must survive — `0 or 30` silently rewrote it.
+        days = 30 if raw_days in (None, "") else int(raw_days)
+    except (TypeError, ValueError):
+        days = 30
     query_key = f"{dataset_key}|{days}|{platform or ''}|{location or ''}"
     existing = context.get(query_key)
     if existing:
@@ -582,7 +723,8 @@ def _json_planner_prompt(memory: dict, business_context: str) -> str:
         '"subtitle":"Last 30 days","series":["reviews"],"include_kpis":true}]}\n\n'
         "Rules:\n"
         "- Use one of the dataset keys exactly as listed.\n"
-        "- Use type one of: bar, line, area, stacked_bar, donut, pie, ranking, scatter, kpi.\n"
+        "- Use type one of: bar, line, area, stacked_bar, donut, pie, ranking, "
+        "scatter, bubble, heatmap, radar, funnel, gauge, treemap, histogram, kpi.\n"
         "- Omit series when you do not know the columns; the server uses the "
         "dataset's recommended numeric series.\n"
         "- days: 7, 30, 90, 180 or 365; use 0 for all time.\n"
@@ -691,6 +833,120 @@ async def _json_chart_fallback(
                     on_step(step)
                 except Exception:
                     pass
+
+
+_AUTO_INTENTS: list[tuple[re.Pattern[str], tuple[str, ...]]] = [
+    (re.compile(r"\brating|\bstars?\b", re.I), ("rating_distribution",)),
+    (re.compile(r"\bsentiment|positive|negative\b", re.I), ("sentiment_distribution",)),
+    (re.compile(r"\blocations?|branches?\b", re.I), ("reviews_by_location",)),
+    (re.compile(r"\brepl(?:y|ies|ied|ying)|responses?\b", re.I), ("reply_status",)),
+    (
+        re.compile(r"\bvisib|impressions?|search|maps|discover", re.I),
+        ("google_visibility",),
+    ),
+    (re.compile(r"\btopics?|mentions?|complain", re.I), ("review_topics",)),
+    (
+        re.compile(r"\bvolume|trend|over time|growth|monthly|weekly|daily", re.I),
+        ("review_volume",),
+    ),
+    (
+        re.compile(r"\bwhen|busiest|time of day|hours?|heatmap", re.I),
+        ("review_heatmap",),
+    ),
+]
+
+# What "make me charts" means with no more specific intent: the three datasets
+# that describe this product's core data (ratings, branches, review flow).
+_AUTO_DEFAULT_DATASETS: tuple[str, ...] = (
+    "rating_distribution",
+    "reviews_by_location",
+    "review_volume",
+)
+
+
+def _auto_dataset_keys(message: str) -> list[str]:
+    """Deterministic dataset choice for an explicit chart request.
+
+    Only used after the model planner produced nothing, so the owner still
+    gets a real chart from real rows instead of a text-drawn bar chart.
+    """
+    text = message or ""
+    keys: list[str] = []
+    for pattern, datasets in _AUTO_INTENTS:
+        if pattern.search(text):
+            keys.extend(datasets)
+    for key in _AUTO_DEFAULT_DATASETS:
+        if key not in keys:
+            keys.append(key)
+    return keys
+
+
+async def _auto_chart_plan(
+    *,
+    db: AsyncSession,
+    tenant_id: str,
+    message: str,
+    memory: dict,
+    plan: ChartPlan,
+    context: dict[str, dict],
+    signatures: set[str],
+    on_step=None,
+) -> None:
+    """Build charts straight from the catalog when the planner returned none.
+
+    The owner asked for a visual; every value here comes from the same fixed,
+    tenant-scoped datasets the planner uses, so this is a deterministic plan,
+    not a fabricated one.
+    """
+    for dataset_key in _auto_dataset_keys(message):
+        if len(plan.charts) >= MAX_CHARTS:
+            break
+        spec = DATASETS.get(dataset_key)
+        if spec is None:
+            continue
+        try:
+            obs = await _get_data(
+                db,
+                tenant_id,
+                {"dataset": dataset_key, "days": 0},
+                context,
+                memory,
+                plan.steps,
+                on_step,
+            )
+        except Exception as e:
+            logger.warning("Auto chart dataset %s failed: %s", dataset_key, e)
+            continue
+        if not obs.get("row_count"):
+            continue
+        created = _create_chart(
+            {
+                "dataset_id": obs.get("dataset_id"),
+                "chart_type": obs.get("suggested_type") or spec.suggested_type,
+                "title": obs.get("title") or spec.label,
+                "subtitle": "All synced data",
+                "series": obs.get("suggested_series"),
+                "include_kpis": True,
+            },
+            context,
+            memory,
+            plan.charts,
+            signatures,
+        )
+        if created.get("created"):
+            step = {
+                "id": f"chart:{created['chart_id']}",
+                "label": f"Chart ready: {created['title']}",
+                "detail": created["type"].replace("_", " "),
+            }
+            plan.steps.append(step)
+            if on_step is not None:
+                try:
+                    on_step(step)
+                except Exception:
+                    pass
+    if not plan.charts:
+        plan.notes = "No chartable rows yet."
 
 
 async def plan_charts(
@@ -821,6 +1077,21 @@ async def plan_charts(
             )
         elif called_tools and not has_rows:
             plan.notes = "The business data has no rows for that chart yet."
+
+    # The owner explicitly asked for a chart, so an empty plan is a failure —
+    # not a "nothing to show". Build from the fixed catalog with real rows
+    # instead of letting the answer model draw ASCII bars.
+    if not plan.charts and explicit_chart_request(message):
+        await _auto_chart_plan(
+            db=db,
+            tenant_id=tenant_id,
+            message=message,
+            memory=memory,
+            plan=plan,
+            context=context,
+            signatures=signatures,
+            on_step=on_step,
+        )
 
     plan.datasets = context
     return plan

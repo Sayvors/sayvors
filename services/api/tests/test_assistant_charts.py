@@ -384,3 +384,141 @@ async def test_planner_falls_back_to_json_when_tool_calls_are_rejected(
     assert sum(row["reviews"] for row in chart["rows"]) == 3
     assert chart["kpis"]
     assert plan.steps
+
+
+@pytest.mark.asyncio
+async def test_explicit_chart_request_builds_charts_when_planner_declines(
+    db, user_id, channel_id, monkeypatch
+):
+    """The model sometimes answers "NO_CHART" to "make me charts".
+
+    The owner still gets real interactive charts instead of the model drawing
+    ASCII bars into the answer.
+    """
+    await _seed(db, user_id, channel_id)
+
+    async def fake_complete(**kwargs):
+        return LLMResponse(content="NO_CHART", provider="test", model="test")
+
+    monkeypatch.setattr(charts, "complete", fake_complete)
+    plan = await charts.plan_charts(
+        db=db,
+        user=user_id,
+        tenant_id=user_id,
+        model="test:model",
+        message="please make me charts",
+        history=[],
+        memory=memory.empty_memory(),
+        business_context="Test Burgers",
+    )
+    assert plan.charts, "an explicit chart request must not return zero charts"
+    datasets = {c["dataset"] for c in plan.charts}
+    assert "rating_distribution" in datasets
+    assert "reviews_by_location" in datasets
+    for chart in plan.charts:
+        assert chart["rows"], f"{chart['dataset']} chart has no rows"
+        assert chart["title"]
+
+
+@pytest.mark.asyncio
+async def test_vague_question_does_not_get_a_forced_chart(
+    db, user_id, channel_id, monkeypatch
+):
+    """'How is my performance?' may use the planner, but a 'no chart' verdict
+    must be respected — the auto plan is only for explicit visual requests."""
+    await _seed(db, user_id, channel_id)
+
+    async def fake_complete(**kwargs):
+        return LLMResponse(content="NO_CHART", provider="test", model="test")
+
+    monkeypatch.setattr(charts, "complete", fake_complete)
+    plan = await charts.plan_charts(
+        db=db,
+        user=user_id,
+        tenant_id=user_id,
+        model="test:model",
+        message="how is my performance?",
+        history=[],
+        memory=memory.empty_memory(),
+        business_context="Test Burgers",
+    )
+    assert plan.charts == []
+
+
+@pytest.mark.asyncio
+async def test_review_heatmap_dataset_has_day_hour_cells(db, user_id, channel_id):
+    await _seed(db, user_id, channel_id)
+    result = await query_dataset(db, user_id, "review_heatmap", days=0)
+    assert result["rows"], "heatmap should have cells for seeded reviews"
+    assert result.get("heatmap") is True
+    row = result["rows"][0]
+    assert set(row) >= {"label", "x", "y", "value"}
+    assert int(row["value"]) >= 1
+    assert row["y"] in {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
+
+
+@pytest.mark.asyncio
+async def test_heatmap_chart_builds_ordered_grid(db, user_id, channel_id, monkeypatch):
+    await _seed(db, user_id, channel_id)
+
+    async def fake_complete(**kwargs):
+        return LLMResponse(
+            content=(
+                '{"charts":[{"dataset":"review_heatmap","days":0,"type":"heatmap",'
+                '"title":"When reviews arrive"}]}'
+            ),
+            provider="test",
+            model="test",
+        )
+
+    monkeypatch.setattr(charts, "complete", fake_complete)
+    plan = await charts.plan_charts(
+        db=db,
+        user=user_id,
+        tenant_id=user_id,
+        model="test:model",
+        message="make me a heatmap of when reviews arrive",
+        history=[],
+        memory=memory.empty_memory(),
+        business_context="Test Burgers",
+    )
+    heatmaps = [c for c in plan.charts if c["type"] == "heatmap"]
+    assert heatmaps, [c["type"] for c in plan.charts]
+    chart = heatmaps[0]
+    assert chart["x_values"] == sorted(chart["x_values"], key=int)
+    assert chart["y_values"]
+    assert all("value" in row for row in chart["rows"])
+
+
+@pytest.mark.asyncio
+async def test_radar_chart_builds_from_sentiment_by_location(
+    db, user_id, channel_id, monkeypatch
+):
+    await _seed(db, user_id, channel_id)
+
+    async def fake_complete(**kwargs):
+        return LLMResponse(
+            content=(
+                '{"charts":[{"dataset":"sentiment_by_location","days":0,"type":"radar",'
+                '"title":"Sentiment by location"}]}'
+            ),
+            provider="test",
+            model="test",
+        )
+
+    monkeypatch.setattr(charts, "complete", fake_complete)
+    plan = await charts.plan_charts(
+        db=db,
+        user=user_id,
+        tenant_id=user_id,
+        model="test:model",
+        message="make me a radar chart of sentiment by location",
+        history=[],
+        memory=memory.empty_memory(),
+        business_context="Test Burgers",
+    )
+    assert plan.charts
+    chart = plan.charts[0]
+    assert chart["type"] == "radar"
+    assert {s["key"] for s in chart["series"]} == {"positive", "neutral", "negative"}
+    assert chart["rows"]

@@ -7,6 +7,13 @@ export type ChatChartType =
   | "pie"
   | "ranking"
   | "scatter"
+  | "bubble"
+  | "heatmap"
+  | "radar"
+  | "funnel"
+  | "gauge"
+  | "treemap"
+  | "histogram"
   | "kpi";
 
 export interface ChatChartSeries {
@@ -44,10 +51,16 @@ export interface ChatChart {
   dataset?: string | null;
   domain?: string | null;
   x_label?: string | null;
+  y_label?: string | null;
   series: ChatChartSeries[];
   rows: ChatChartRow[];
   kpis?: ChatChartKpi[];
   window_days?: number | null;
+  /** Heatmap axis order, supplied by the backend (hours / weekdays). */
+  x_values?: string[] | null;
+  y_values?: string[] | null;
+  /** Gauge ceiling; when absent the renderer derives one from the value. */
+  max_value?: number | null;
 }
 
 export function isChatChart(value: unknown): value is ChatChart {
