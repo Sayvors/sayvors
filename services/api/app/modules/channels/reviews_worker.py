@@ -483,7 +483,8 @@ async def _ensure_location_metadata(
 
     loc_meta = loc.get("metadata") or {}
     meta["place_id"] = loc_meta.get("placeId")
-    meta["maps_url"] = loc_meta.get("mapsUrl")
+    # v1 Location.Metadata uses mapsUri (v4 used mapsUrl).
+    meta["maps_url"] = loc_meta.get("mapsUri")
     meta["address"] = location_address(loc)
     meta["category"] = location_category(loc)
     meta["phone"] = location_phone(loc)

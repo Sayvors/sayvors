@@ -441,7 +441,7 @@ async def test_create_google_location_persists_a_native_channel(monkeypatch, db,
     async def fake_create(self, account_id, location, *, request_id, validate_only=False):
         captured["account_id"] = account_id
         captured["body"] = location
-        captured["request_id"] = request_id
+        captured.setdefault("request_ids", []).append(request_id)
         captured.setdefault("validate_only", []).append(validate_only)
         return {
             "name": "locations/loc-new",
@@ -450,6 +450,10 @@ async def test_create_google_location_persists_a_native_channel(monkeypatch, db,
             "websiteUri": location.get("websiteUri"),
             "storefrontAddress": location["storefrontAddress"],
             "categories": {"primaryCategory": {"displayName": "Software company"}},
+            "metadata": {
+                "placeId": "ChIJtest",
+                "mapsUri": "https://maps.google.com/?cid=123",
+            },
         }
 
     async def fake_list(self, account_id):
@@ -487,7 +491,11 @@ async def test_create_google_location_persists_a_native_channel(monkeypatch, db,
     assert out["listing_id"] == "loc-new"
     assert captured["validate_only"] == [True, False]
     assert captured["account_id"] == "acc-1"
-    assert captured["request_id"] == "req-123"
+    # validateOnly and the real create are separate requests: a shared
+    # requestId can make Google replay the validation response.
+    assert len(captured["request_ids"]) == 2
+    assert captured["request_ids"][0] != captured["request_ids"][1]
+    assert captured["request_ids"][1] == "req-123"
     assert captured["body"]["categories"]["primaryCategory"]["name"] == "gcid:software_company"
     assert captured["body"]["storefrontAddress"]["regionCode"] == "SA"
 
@@ -495,7 +503,11 @@ async def test_create_google_location_persists_a_native_channel(monkeypatch, db,
     assert channel is not None
     assert channel.display_name == "New Place"
     assert channel.platform_user_id == "acc-1"
-    assert locations.channel_meta(channel)["location_id"] == "loc-new"
+    meta = locations.channel_meta(channel)
+    assert meta["location_id"] == "loc-new"
+    # v1 returns mapsUri, not mapsUrl.
+    assert meta["maps_url"] == "https://maps.google.com/?cid=123"
+    assert meta["place_id"] == "ChIJtest"
 
 
 @pytest.mark.asyncio

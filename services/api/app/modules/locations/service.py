@@ -729,10 +729,15 @@ async def create_google_location(
         # Validate first so obvious category/address problems do not create a
         # half-finished local flow. Google still makes the real decision on
         # the second call; validateOnly never creates a listing.
+        #
+        # The validate call gets its own request id. requestId is Google's
+        # duplicate-request key, so reusing one id for both calls can make
+        # Google replay the validation response instead of creating a
+        # location on the second call.
         await client.create_location(
             account_id,
             payload,
-            request_id=request_id,
+            request_id=str(uuid.uuid4())[:50],
             validate_only=True,
         )
         created = await client.create_location(
@@ -780,7 +785,9 @@ async def create_google_location(
         "location_id": location_id,
         "account_name": channel_meta(source).get("account_name"),
         "place_id": (created.get("metadata") or {}).get("placeId"),
-        "maps_url": (created.get("metadata") or {}).get("mapsUrl"),
+        # Business Information API v1 spells it mapsUri. The older v4 API
+        # used mapsUrl, which this code used to read and always got None.
+        "maps_url": (created.get("metadata") or {}).get("mapsUri"),
         "address": address,
         "category": category,
         "phone": phone,
