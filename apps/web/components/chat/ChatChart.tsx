@@ -1011,7 +1011,7 @@ function TreemapChart({ chart }: { chart: ChatChartData }) {
     h: number;
   }
   const boxes: Box[] = [];
-  let remaining = [...rows];
+  const remaining = [...rows];
   let x = left;
   let y = top;
   let w = width;
