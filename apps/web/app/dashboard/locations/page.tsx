@@ -7,6 +7,7 @@ import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import BulkEditSheet from "@/components/locations/BulkEditSheet";
+import CategoryPicker from "@/components/locations/CategoryPicker";
 import LocationsMap from "@/components/locations/LocationsMap";
 import ServicesPanel from "@/app/dashboard/services/page";
 
@@ -1268,7 +1269,6 @@ function CategoriesTab({ initial, onSave, bulk, copy, synced }: {
 }) {
   const [primary, setPrimary] = useState(initial?.primary ?? "");
   const [additional, setAdditional] = useState<string[]>(initial?.additional ?? []);
-  const [newCat, setNewCat] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -1276,13 +1276,6 @@ function CategoriesTab({ initial, onSave, bulk, copy, synced }: {
     setAdditional(initial?.additional ?? []);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(initial)]);
-
-  const addCategory = () => {
-    if (newCat.trim() && !additional.includes(newCat.trim())) {
-      setAdditional([...additional, newCat.trim()]);
-      setNewCat("");
-    }
-  };
 
   const removeCategory = (cat: string) => setAdditional(additional.filter((c) => c !== cat));
 
@@ -1302,34 +1295,37 @@ function CategoriesTab({ initial, onSave, bulk, copy, synced }: {
         <SourceBadge google={!!synced} copy={copy} />
       </div>
       <Field label={copy.primaryCategory} varies={bulk?.varies.has("primary") ?? false}>
-        <input value={primary} onChange={(e) => setPrimary(e.target.value)} placeholder={copy.primaryCategoryPlaceholder} className="input-field" />
+        <CategoryPicker value={primary} region="SA" onChange={setPrimary} />
         <p className="mt-1 text-[11px] text-ink/40 dark:text-fog/40">{copy.primaryCategoryHint}</p>
       </Field>
       <Field label={copy.additionalCategories} varies={bulk?.varies.has("additional") ?? false}>
         <p className="mb-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.additionalCategoriesHint}</p>
-        {/* Google's own taxonomy — the values sent to Google must stay in the
-            exact wording Google recognises, so these chips are not translated. */}
-        <div className="mb-2 flex flex-wrap gap-1.5">
-          {["Restaurant", "Cafe", "Dental clinic", "Pharmacy", "Beauty salon", "Car wash"].filter((c) => !additional.includes(c)).map((c) => (
-            <button key={c} onClick={() => setAdditional([...additional, c])} className="rounded-full bg-ink/[0.04] px-2.5 py-1 text-[11px] font-medium text-ink/60 transition hover:bg-deep-violet/10 hover:text-deep-violet dark:bg-fog/[0.06] dark:text-fog/60">
-              + {c}
-            </button>
-          ))}
-        </div>
-        <div className="flex flex-wrap gap-2 mb-2">
-          {additional.map((cat) => (
-            <span key={cat} className="inline-flex items-center gap-1 rounded-full bg-deep-violet/10 px-2.5 py-1 text-[12px] font-medium text-deep-violet">
-              {cat}
-              <button onClick={() => removeCategory(cat)} className="ml-0.5 text-deep-violet/50 hover:text-deep-violet">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" /></svg>
-              </button>
-            </span>
-          ))}
-        </div>
-        <div className="grid grid-cols-[1fr_auto] items-center gap-2">
-          <input value={newCat} onChange={(e) => setNewCat(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addCategory()} placeholder={copy.addCategoryPlaceholder} className="input-field" />
-          <button onClick={addCategory} className="btn-secondary">{copy.add}</button>
-        </div>
+        {additional.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-2">
+            {additional.map((cat) => (
+              <span key={cat} className="inline-flex items-center gap-1 rounded-full bg-deep-violet/10 px-2.5 py-1 text-[12px] font-medium text-deep-violet">
+                {cat}
+                <button onClick={() => removeCategory(cat)} className="ml-0.5 text-deep-violet/50 hover:text-deep-violet" aria-label={`Remove ${cat}`}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" /></svg>
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <CategoryPicker
+          value=""
+          region="SA"
+          showSelected={false}
+          showPopular={false}
+          placeholder="Search Google categories to add..."
+          onChange={(name) => {
+            const category = name.trim();
+            if (!category) return;
+            setAdditional((current) =>
+              current.includes(category) ? current : [...current, category],
+            );
+          }}
+        />
       </Field>
       <div className="pt-2 sm:flex sm:justify-end">
         <button onClick={handleSave} disabled={saving} className="btn-primary disabled:opacity-50">

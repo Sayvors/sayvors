@@ -64,10 +64,16 @@ export default function CategoryPicker({
   value,
   region,
   onChange,
+  showSelected = true,
+  showPopular = true,
+  placeholder = "Search Google categories...",
 }: {
   value: string;
   region: string;
   onChange: (displayName: string) => void;
+  showSelected?: boolean;
+  showPopular?: boolean;
+  placeholder?: string;
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Category[]>([]);
@@ -143,7 +149,7 @@ export default function CategoryPicker({
 
   return (
     <div className="space-y-3">
-      {value && (
+      {showSelected && value && (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 dark:border-emerald-500/25 dark:bg-emerald-500/10">
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-emerald-700 dark:text-emerald-300">
@@ -167,7 +173,7 @@ export default function CategoryPicker({
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search Google categories..."
+          placeholder={placeholder}
           className="input-field"
           aria-label="Search business categories"
         />
@@ -209,7 +215,7 @@ export default function CategoryPicker({
         </div>
       )}
 
-      {!query.trim() && (
+      {showPopular && !query.trim() && (
         <div className="overflow-hidden rounded-xl border border-ink/[0.08] dark:border-fog/[0.08]">
           <p className="border-b border-ink/[0.06] bg-ink/[0.02] px-3.5 py-2 text-[10px] font-bold uppercase tracking-[0.1em] text-ink/45 dark:border-fog/[0.06] dark:bg-fog/[0.03] dark:text-fog/45">
             Browse popular categories
