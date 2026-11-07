@@ -7,6 +7,7 @@ backfill on every environment.
 from datetime import datetime, timezone
 
 import pytest
+from sqlalchemy import select
 
 from app.modules.channels.models import (
     Channel,
@@ -92,3 +93,37 @@ async def test_pending_reply_is_not_shown_as_sent(db, user_id):
     messages = await list_thread_messages(user, db, CHANNEL_ID, CONTACT)
 
     assert [m.content_type for m in messages] == ["review"]
+
+
+async def test_mark_thread_read_clears_the_server_counter(db, user_id):
+    """Opening a conversation must clear the badge, not wait for a reply."""
+    from app.modules.channels.models import ChannelThread
+    from app.modules.channels.router import mark_thread_read
+
+    await _seed(db, user_id)
+    existing = (
+        await db.execute(
+            select(ChannelThread).where(
+                ChannelThread.channel_id == CHANNEL_ID,
+                ChannelThread.contact_phone_hash == hash_contact_phone(CONTACT),
+            )
+        )
+    ).scalar_one()
+    existing.unread_count = 3
+    await db.commit()
+
+    class _Ctx:
+        def channel_level(self, _channel_id: str) -> str:
+            return "view"
+
+    result = await mark_thread_read(
+        channel_id=CHANNEL_ID,
+        contact_phone=CONTACT,
+        ctx=_Ctx(),
+        db=db,
+    )
+
+    assert result == {"unread": 0}
+    row = await db.get(ChannelThread, existing.id)
+    await db.refresh(row)
+    assert row.unread_count == 0

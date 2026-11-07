@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_db, get_current_user
@@ -1408,6 +1408,38 @@ async def inbox_thread_messages(
         next_cursor=next_cursor,
         thread=thread_state,
     )
+
+
+@_inbox_router.post("/threads/{channel_id}/{contact_phone}/read")
+async def mark_thread_read(
+    channel_id: str,
+    contact_phone: str,
+    ctx: TenantContext = Depends(require_perm("inbox.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Clear the unread badge for one thread.
+
+    Opening a conversation is the read event; before this endpoint the badge
+    only went away when a new outbound message was written, so a thread the
+    agent had read kept its counter forever. Idempotent and tenant-scoped via
+    ``channel_level``.
+    """
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    phone = None if contact_phone == UNKNOWN_THREAD_KEY else contact_phone
+    contact_hash = hash_contact_phone(phone) if phone is not None else None
+    await db.execute(
+        update(ChannelThread)
+        .where(
+            ChannelThread.channel_id == channel_id,
+            ChannelThread.contact_phone_hash.is_(None)
+            if contact_hash is None
+            else ChannelThread.contact_phone_hash == contact_hash,
+        )
+        .values(unread_count=0)
+    )
+    await db.commit()
+    return {"unread": 0}
 
 
 def _as_utc(value):

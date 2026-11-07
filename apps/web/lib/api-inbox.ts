@@ -181,6 +181,18 @@ export async function deleteInboxThread(channelId: string, contactPhone: string 
     method: "DELETE",
   });
 }
+
+/** Clear the server-side unread badge for a conversation. */
+export async function markInboxThreadRead(
+  channelId: string,
+  contactPhone: string | null,
+): Promise<void> {
+  const key = contactPhone ?? UNKNOWN_THREAD_KEY;
+  await apiFetch(
+    `/api/v1/inbox/threads/${encodeURIComponent(channelId)}/${encodeURIComponent(key)}/read`,
+    { method: "POST" },
+  );
+}
 /** Initial window for a thread; older pages load on demand. */
 export const INBOX_THREAD_PAGE_SIZE = 100;
 
