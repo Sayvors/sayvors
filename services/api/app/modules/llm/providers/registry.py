@@ -39,6 +39,7 @@ PROVIDER_CONFIGS: dict[str, dict] = {
     "groq": {},
     "openrouter": {},
     "zhipu": {},
+    "zhipu-coding": {},
     "ollama": {"optional": True},
     "gemini": {},
 }

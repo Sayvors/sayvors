@@ -327,6 +327,7 @@ _PROBE_URLS = {
     "deepseek": "https://api.deepseek.com/v1/models",
     "openrouter": "https://openrouter.ai/api/v1/models",
     "zhipu": "https://api.z.ai/api/paas/v4/models",
+    "zhipu-coding": "https://api.z.ai/api/coding/paas/v4/models",
     "gemini": "gemini",
     "ollama": "http://localhost:11434/api/tags",
 }

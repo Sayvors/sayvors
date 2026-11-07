@@ -23,6 +23,7 @@ PROVIDER_BASE_URLS: dict[str, str] = {
     "groq": "https://api.groq.com/openai/v1",
     "openrouter": "https://openrouter.ai/api/v1",
     "zhipu": "https://api.z.ai/api/paas/v4",
+    "zhipu-coding": "https://api.z.ai/api/coding/paas/v4",
     "ollama": "http://localhost:11434/v1",
 }
 

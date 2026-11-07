@@ -53,6 +53,7 @@ const BRAND: Record<string, { gradient: string; initial: string; icon?: string }
   deepseek: { gradient: "from-[#4D6BFE] to-[#1e40af]", initial: "D", icon: "deepseek" },
   openrouter: { gradient: "from-[#6467F2] to-[#3b3f9e]", initial: "O" },
   zhipu: { gradient: "from-zinc-800 to-black", initial: "Z" },
+  "zhipu-coding": { gradient: "from-zinc-700 to-black", initial: "C" },
   ollama: { gradient: "from-pink-500 to-violet-600", initial: "O", icon: "ollama" },
   qwen: { gradient: "from-[#6D28D9] to-[#1e3a8a]", initial: "Q" },
 };
@@ -63,6 +64,7 @@ const ADD_PROVIDERS = [
   { id: "groq", label: "Groq" },
   { id: "openrouter", label: "OpenRouter" },
   { id: "zhipu", label: "Z.AI (Zhipu)" },
+  { id: "zhipu-coding", label: "Z.AI Coding Plan" },
   { id: "qwen", label: "Qwen" },
   { id: "kimi", label: "Kimi" },
 ];
@@ -73,6 +75,7 @@ const PROVIDER_API_URL: Record<string, string> = {
   groq: "https://api.groq.com/openai/v1",
   openrouter: "https://openrouter.ai/api/v1",
   zhipu: "https://api.z.ai/api/paas/v4",
+  "zhipu-coding": "https://api.z.ai/api/coding/paas/v4",
   qwen: "https://dashscope.aliyuncs.com/compatible-mode/v1",
   kimi: "https://api.moonshot.cn/v1",
 };
