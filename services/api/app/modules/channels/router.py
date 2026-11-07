@@ -1,10 +1,11 @@
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_db, get_current_user
@@ -687,9 +688,40 @@ async def _verification_snapshot(
         await db.commit()
         await db.refresh(record)
 
+    from ..locations.service import channel_meta
+
+    meta = channel_meta(channel)
+    if not meta.get("country"):
+        # Show the country Google actually has; a wrong country is one of the
+        # most common reasons verification has no eligible method.
+        try:
+            from .google_business import GBP_BIZINFO_API
+
+            loc = await client._authed_request(
+                "GET",
+                f"{GBP_BIZINFO_API}/locations/{location_id}",
+                params={"readMask": "storefrontAddress"},
+            )
+            if loc.status_code == 200:
+                code = (
+                    ((loc.json().get("storefrontAddress") or {}).get("regionCode") or "")
+                    .strip()
+                    .upper()[:2]
+                )
+                if code:
+                    meta["country"] = code
+                    channel.metadata_json = json.dumps(meta)
+                    await db.commit()
+        except Exception:  # noqa: BLE001 - diagnostics are best effort
+            pass
     return VerificationResponse(
         channel_id=channel.id,
         status=status,
+        location_address=meta.get("address"),
+        location_country=meta.get("country"),
+        location_phone=meta.get("phone"),
+        location_website=meta.get("website"),
+        account_name=meta.get("account_name"),
         method=method or (record.method if record else None),
         contact_target=contact or (record.contact_target if record else None),
         attempts=record.attempts if record else len(verifications),
@@ -1410,6 +1442,38 @@ async def inbox_thread_messages(
     )
 
 
+@_inbox_router.post("/threads/{channel_id}/{contact_phone}/read")
+async def mark_thread_read(
+    channel_id: str,
+    contact_phone: str,
+    ctx: TenantContext = Depends(require_perm("inbox.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Clear the unread badge for one thread.
+
+    Opening a conversation is the read event; before this endpoint the badge
+    only went away when a new outbound message was written, so a thread the
+    agent had read kept its counter forever. Idempotent and tenant-scoped via
+    ``channel_level``.
+    """
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    phone = None if contact_phone == UNKNOWN_THREAD_KEY else contact_phone
+    contact_hash = hash_contact_phone(phone) if phone is not None else None
+    await db.execute(
+        update(ChannelThread)
+        .where(
+            ChannelThread.channel_id == channel_id,
+            ChannelThread.contact_phone_hash.is_(None)
+            if contact_hash is None
+            else ChannelThread.contact_phone_hash == contact_hash,
+        )
+        .values(unread_count=0)
+    )
+    await db.commit()
+    return {"unread": 0}
+
+
 def _as_utc(value):
     """Naive timestamps are UTC (SQLite drops tzinfo); make that explicit.
 
@@ -2100,6 +2164,14 @@ async def _ensure_messaging_quota(ctx: TenantContext, db: AsyncSession) -> None:
             detail=f"Monthly message limit reached for plan '{ent.plan_slug}'. Upgrade to send more.",
             headers={ENTITLEMENT_DENIED_HEADER: "quota"},
         )
+    # The send is about to add a row; drop the cached count so the next
+    # inbound check (AI reply gate) sees it immediately.
+    try:
+        from ..billing.quotas import invalidate_message_usage
+
+        await invalidate_message_usage(tid)
+    except Exception:
+        pass
 
 
 async def _publish_outbound_message(tenant_id: str, msg: ChannelMessage) -> None:
@@ -2797,7 +2869,13 @@ async def google_callback(
                     "location_id": location_id,
                     "account_name": account_name,
                     "place_id": loc.get("metadata", {}).get("placeId"),
-                    "maps_url": loc.get("metadata", {}).get("mapsUrl"),
+                    # v1 Location.Metadata uses mapsUri (v4 used mapsUrl).
+                    "maps_url": loc.get("metadata", {}).get("mapsUri"),
+                    "country": (
+                        ((loc.get("storefrontAddress") or {}).get("regionCode") or "")
+                        .strip()
+                        .upper()[:2]
+                    ) or None,
                     "address": location_address(loc),
                     "category": location_category(loc),
                     "phone": location_phone(loc),

@@ -34,6 +34,8 @@ class AdminTenant(BaseModel):
     databanks: int = 0
     plan: str = "free"
     ai_credit_cents: int = 0
+    suspended_at: str | None = None
+    suspension_reason: str | None = None
 
 
 class AdminTenantList(BaseModel):

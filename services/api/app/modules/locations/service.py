@@ -6,6 +6,7 @@ metadata written by the OAuth callback and review worker; editable sections
 (description, categories, hours, service area, attributes, opening date) are
 stored in `location_profiles` and pushed with the Business Information API.
 """
+import copy
 import json
 import logging
 import uuid
@@ -20,7 +21,34 @@ from .models import LocationGroup, LocationProfile
 
 logger = logging.getLogger(__name__)
 
-GOOGLE_SYNCED_FIELDS = ["name", "phone", "website", "description"]
+GOOGLE_SYNCED_FIELDS = [
+    "name",
+    "phone",
+    "website",
+    "description",
+    "categories",
+    "hours.regular",
+    "hours.special",
+    "hours.more",
+]
+
+
+def _known_synced(meta: dict) -> set[str]:
+    """Fields the channel's stored report considers present on Google.
+
+    Older rows were written before hours/categories were tracked. Backfill the
+    defaults on read, minus any section the last push explicitly rejected, so
+    a refresh does not show a false "Stored in Sayvors" badge.
+    """
+    stored = meta.get("google_synced")
+    if not isinstance(stored, list):
+        return set(GOOGLE_SYNCED_FIELDS)
+    failed: set[str] = set()
+    skipped = meta.get("google_failed") or meta.get("google_skipped")
+    if isinstance(skipped, dict):
+        for section in skipped:
+            failed.add("categories" if section.startswith("categories") else section)
+    return set(stored) | (set(GOOGLE_SYNCED_FIELDS) - failed)
 
 
 def channel_meta(channel: Channel) -> dict:
@@ -124,6 +152,44 @@ def _status_of(channel: Channel | None) -> str:
     return channel.status if channel is not None else "unknown"
 
 
+async def _google_country(channel: Channel, meta: dict) -> str | None:
+    """Read a location's storefront region from Google (best effort).
+
+    Used only when the channel metadata predates the country field. Once
+    resolved it is stored on the channel, so this is one call per old row.
+    """
+    from ...config import settings
+
+    if settings.TESTING or not (channel.access_token or channel.refresh_token):
+        return None
+    from ..channels.google_business import GBP_BIZINFO_API, GoogleBusinessClient
+    from ..channels.service import decrypt_token
+
+    access = decrypt_token(channel.access_token) if channel.access_token else None
+    refresh = decrypt_token(channel.refresh_token) if channel.refresh_token else None
+    client = GoogleBusinessClient(access or "", refresh)
+    try:
+        google_id = meta.get("location_id") or listing_id_of(channel)
+        resp = await client._authed_request(
+            "GET",
+            f"{GBP_BIZINFO_API}/locations/{google_id}",
+            params={"readMask": "storefrontAddress"},
+        )
+        if resp.status_code != 200:
+            return None
+        code = (
+            ((resp.json().get("storefrontAddress") or {}).get("regionCode") or "")
+            .strip()
+            .upper()[:2]
+        )
+        return code or None
+    except Exception as e:  # noqa: BLE001 - fallback is the account country
+        logger.debug("Country backfill failed for %s: %s", listing_id_of(channel), e)
+        return None
+    finally:
+        await client.close()
+
+
 async def get_profile(
     db: AsyncSession, user_id: str, listing_id: str
 ) -> dict:
@@ -151,6 +217,27 @@ async def get_profile(
         db, user_id, listing_id, statuses=("active", "expired")
     )
     meta = channel_meta(channel) if channel is not None else {}
+    stored_skipped = meta.get("google_failed") or meta.get("google_skipped")
+
+    # The category catalog is region-specific. Prefer the region Google
+    # returns for this location's storefront; fall back to the account country
+    # instead of assuming Saudi Arabia for every tenant.
+    profile_country = meta.get("country") or meta.get("region_code")
+    if not profile_country and channel is not None:
+        profile_country = await _google_country(channel, meta)
+        if profile_country:
+            meta["country"] = profile_country
+            channel.metadata_json = json.dumps(meta)
+            await db.commit()
+    if not profile_country:
+        from ..users.models import User
+
+        profile_country = (
+            await db.execute(select(User.country).where(User.id == user_id))
+        ).scalar_one_or_none()
+    profile_country = (
+        str(profile_country).strip().upper()[:2] if profile_country else None
+    )
 
     # Local edits win section-by-section; anything never edited locally falls
     # back to the Google snapshot fetched at connect/worker time.
@@ -173,6 +260,7 @@ async def get_profile(
         "listing_id": listing_id,
         "name": "",
         "address": None,
+        "country": profile_country,
         "phone": None,
         "website": None,
         "maps_url": None,
@@ -185,9 +273,19 @@ async def get_profile(
         "attributes": attributes,
         "opening_date": profile.opening_date.isoformat() if profile.opening_date else None,
         "google_synced": [],
+        "google_skipped": {},
         "updated_at": profile.updated_at.isoformat() if profile.updated_at else None,
     }
     if channel is not None:
+        # A local edit that differs from the Google snapshot has not reached
+        # Google, even if an older sync report claimed otherwise. This is the
+        # difference that matters: the stored report is a history, the values
+        # are the truth.
+        synced_fields = _known_synced(meta)
+        local_categories = dict(profile.categories or {})
+        google_categories = dict(meta.get("categories") or {})
+        if local_categories and local_categories != google_categories:
+            synced_fields.discard("categories")
         merged.update({
             "name": channel.display_name or "",
             "address": meta.get("address"),
@@ -201,7 +299,10 @@ async def get_profile(
             "description": profile.description
             if profile.description is not None
             else meta.get("description"),
-            "google_synced": list(GOOGLE_SYNCED_FIELDS),
+            "google_synced": sorted(synced_fields),
+            "google_skipped": (
+                dict(stored_skipped) if isinstance(stored_skipped, dict) else {}
+            ),
         })
     return merged
 
@@ -218,7 +319,7 @@ async def _push_profile_native(
     opening_date: str | None = None,
     attributes: dict | None = None,
     service_area: list | None = None,
-) -> list[str]:
+) -> tuple[list[str], dict[str, str]]:
     """Best-effort native push of the sections that changed in this save.
 
     Local storage stays the source of truth regardless — a rejected section
@@ -233,7 +334,7 @@ async def _push_profile_native(
         logger.warning(
             "Native locations push skipped for %s: channel has no tokens",
             listing_id_of(channel))
-        return []
+        return [], {"channel": "channel has no tokens"}
     google_id = channel_meta(channel).get("location_id") or listing_id_of(channel)
     client = GoogleBusinessClient(access or "", refresh)
     try:
@@ -251,13 +352,14 @@ async def _push_profile_native(
         )
     except Exception as e:
         logger.warning("Native locations push failed for %s: %s", google_id, e)
-        return []
+        return [], {"channel": str(e)[:200]}
     finally:
         await client.close()
-    for section, reason in (report.get("skipped") or {}).items():
+    skipped = report.get("skipped") or {}
+    for section, reason in skipped.items():
         logger.warning("Native locations push skipped %s for %s: %s",
                        section, google_id, reason)
-    return report.get("pushed", [])
+    return report.get("pushed", []), skipped
 
 
 async def update_profile(
@@ -329,6 +431,11 @@ async def update_profile(
     push_categories = None
     if categories is not None:
         old_categories = dict(profile.categories or {})
+        if not old_categories and channel is not None:
+            # The OAuth import stores Google's current categories on the
+            # channel, not in location_profiles. Seed from it so a primary-only
+            # save cannot silently clear Google's additional categories.
+            old_categories = dict(channel_meta(channel).get("categories") or {})
         merged_cats = dict(old_categories)
         if categories.get("primary") is not None:
             merged_cats["primary"] = str(categories.get("primary", ""))[:255]
@@ -384,8 +491,10 @@ async def update_profile(
     await rebuild_facts_safe(db, user_id)
 
     pushed: list[str] = []
+    skipped: dict[str, str] = {}
+    merged_synced: set[str] = set()
     if channel is not None:
-        pushed = await _push_profile_native(
+        pushed, skipped = await _push_profile_native(
             channel,
             name=push_name,
             phone=push_phone,
@@ -397,8 +506,51 @@ async def update_profile(
             attributes=push_attributes,
             service_area=push_service_area,
         )
+        meta = channel_meta(channel)
+        failed_map = dict(meta.get("google_failed") or {})
+        for section, reason in skipped.items():
+            failed_map[section] = reason
+        for section in pushed:
+            failed_map.pop(section, None)
+            base = "categories" if section.startswith("categories") else section
+            for key in list(failed_map):
+                if key == base or key.startswith(base + "."):
+                    failed_map.pop(key, None)
+        meta["google_failed"] = failed_map
+        merged_synced = _known_synced(meta)
+        merged_synced.update(pushed)
+        for section in skipped:
+            merged_synced.discard(section)
+            if section.startswith("categories"):
+                merged_synced.discard("categories")
+            if section.startswith("hours"):
+                merged_synced.discard("hours.regular")
+                merged_synced.discard("hours.special")
+                merged_synced.discard("hours.more")
+        # A successful push makes the local value the new Google snapshot.
+        # A failed or skipped section leaves the old snapshot untouched, so
+        # get_profile's local-vs-snapshot comparison stays honest.
+        if "categories" in pushed and profile.categories:
+            meta["categories"] = dict(profile.categories)
+        if profile.hours:
+            meta_hours = meta.setdefault("hours", {})
+            for section in ("regular", "special", "more"):
+                if f"hours.{section}" not in pushed:
+                    continue
+                value = (profile.hours or {}).get(section)
+                meta_hours[section] = (
+                    dict(value or {}) if section == "regular" else list(value or [])
+                )
+        if "description" in pushed:
+            meta["description"] = profile.description
+        meta["google_synced"] = sorted(merged_synced)
+        meta["google_skipped"] = skipped
+        channel.metadata_json = json.dumps(meta)
+        await db.commit()
+
     out = await get_profile(db, user_id, listing_id)
-    out["google_synced"] = pushed
+    out["google_pushed"] = pushed
+    out["google_skipped"] = skipped
     return out
 
 
@@ -529,36 +681,147 @@ def _storefront_address(
     street: str,
     city: str,
     country: str,
-    postal_code: str | None,
+    state: str | None = None,
+    postal_code: str | None = None,
+    language_code: str = "en",
 ) -> dict:
     address: dict = {
         "regionCode": (country or "").strip().upper()[:2],
-        "languageCode": "en",
+        "languageCode": language_code or "en",
         "locality": city.strip(),
         "addressLines": [street.strip()],
     }
+    if state and state.strip():
+        address["administrativeArea"] = state.strip()
     if postal_code and postal_code.strip():
         address["postalCode"] = postal_code.strip()
     return address
 
 
 def _create_payload(body: dict) -> dict:
-    return {
-        "languageCode": "en",
+    """The create body. Optional fields are omitted, never sent empty."""
+    language = (body.get("language_code") or "en").strip() or "en"
+    has_storefront = bool(body.get("has_storefront", True))
+    payload: dict = {
+        "languageCode": language,
         "title": body["name"].strip(),
         "phoneNumbers": {"primaryPhone": body["phone"].strip()},
-        "storefrontAddress": _storefront_address(
+    }
+    if body.get("website"):
+        payload["websiteUri"] = body["website"].strip()
+    if body.get("description"):
+        payload["profile"] = {"description": body["description"].strip()[:750]}
+    if has_storefront:
+        payload["storefrontAddress"] = _storefront_address(
             street=body["street"],
             city=body["city"],
             country=body["country"],
+            state=body.get("state"),
             postal_code=body.get("postal_code"),
-        ),
-        **(
-            {"websiteUri": body["website"].strip()}
-            if body.get("website")
-            else {}
-        ),
+            language_code=language,
+        )
+    latitude, longitude = body.get("latitude"), body.get("longitude")
+    if latitude is not None and longitude is not None:
+        payload["latlng"] = {
+            "latitude": float(latitude),
+            "longitude": float(longitude),
+        }
+    return payload
+
+
+def _is_readonly_address_component(error: Exception, field: str) -> bool:
+    """True when Google says the named address component is read-only.
+
+    Pakistan and several other countries reject a client-provided
+    administrativeArea with READ_ONLY_ADDRESS_COMPONENTS.
+    """
+    detail = str(getattr(error, "message", error))
+    return (
+        getattr(error, "status_code", None) == 400
+        and "READ_ONLY_ADDRESS_COMPONENTS" in detail
+        and f"storefront_address.{field}" in detail
+    )
+
+
+def _friendly_location_error(status: int, detail: str) -> str:
+    """Turn Google's ErrorInfo JSON into a message a merchant can act on."""
+    if "READ_ONLY_ADDRESS_COMPONENTS" in detail:
+        if "administrative_area" in detail:
+            return (
+                "Google treats the state/province as read-only for this country. "
+                "Go back to Address, clear State / province, and try again."
+            )
+        return (
+            "Google treats part of this address as read-only for this country. "
+            "Go back to Address, remove the state/province, and try again. If it "
+            "still fails, create the location in Google Business Profile."
+        )
+    if "MISSING_ADDRESS_COMPONENTS" in detail:
+        return (
+            "Google needs a city and a complete street address for this country. "
+            "Go back to Address, fill in the city and street, and try again."
+        )
+    if "PIN_DROP_REQUIRED" in detail:
+        return (
+            "Google cannot locate this address precisely enough to create the "
+            "location. Create it in Google Business Profile with a map pin, then "
+            "connect the listing here."
+        )
+    if "INVALID_ARGUMENT" in detail and "storefront_address" in detail:
+        return (
+            "Google could not accept this address. Check the country, city, postal "
+            "code, and street. Use a real street address, not a Google Maps link or "
+            "a Plus Code by itself."
+        )
+    if "INVALID_ARGUMENT" in detail and "categories" in detail:
+        return (
+            "Google does not recognize the selected category. Choose a category "
+            "from Google's list and try again."
+        )
+    if "INVALID_ARGUMENT" in detail and "phone" in detail:
+        return (
+            "Google rejected the phone number. Use the international format, for "
+            "example +92 346 0561173."
+        )
+    if "INVALID_ARGUMENT" in detail and ("website" in detail or "uri" in detail):
+        return "Google rejected the website. Use a valid https:// address."
+    if "INVALID_ARGUMENT" in detail and "profile" in detail:
+        return (
+            "Google requires a business description for this category. Add one "
+            "and try again."
+        )
+    if status == 400:
+        return (
+            "Google rejected the location details. Check the address, phone, "
+            "website, and category, then try again."
+        )
+    return "Google could not create the location right now. Try again in a moment."
+
+
+def _search_payload(body: dict) -> dict:
+    """Minimal Location for googleLocations.search (title is required)."""
+    language = (body.get("language_code") or "en").strip() or "en"
+    payload: dict = {
+        "languageCode": language,
+        "title": body["name"].strip(),
     }
+    if body.get("phone"):
+        payload["phoneNumbers"] = {"primaryPhone": str(body["phone"]).strip()}
+    if (
+        body.get("has_storefront", True)
+        and body.get("street")
+        and body.get("city")
+        and body.get("country")
+    ):
+        payload["storefrontAddress"] = _storefront_address(
+            street=body["street"],
+            city=body["city"],
+            country=body["country"],
+            state=body.get("state"),
+            postal_code=body.get("postal_code"),
+            language_code=language,
+        )
+    return payload
 
 
 async def _google_client(
@@ -608,11 +871,10 @@ async def search_google_locations(
     if source is None:
         raise ValueError("Connect Google Business Profile first.")
     client = await _google_client(db, source)
-    payload = _create_payload(body)
+    payload = _search_payload(body)
     try:
         rows = await client.search_google_locations(
             location=payload,
-            query=f"{body['name']} {body['street']} {body['city']}",
             page_size=5,
         )
     except GoogleReviewsError as e:
@@ -640,6 +902,83 @@ async def search_google_locations(
     return out
 
 
+async def list_google_categories(
+    db: AsyncSession,
+    user_id: str,
+    query: str,
+    region_code: str,
+    *,
+    exact: bool = False,
+) -> list[dict]:
+    """Search Google's category catalog for the create-location picker.
+
+    The catalog is the authority; the browser never invents category IDs.
+    ``query`` is matched by Google against the front of the display name.
+    """
+    from ..channels.google_reviews import GoogleReviewsError
+
+    channels = list(
+        (
+            await db.execute(
+                select(Channel).where(
+                    Channel.user_id == user_id,
+                    Channel.platform == "google_reviews",
+                )
+            )
+        ).scalars().all()
+    )
+    source = _source_channel_for_google(channels)
+    if source is None:
+        raise ValueError("Connect Google Business Profile first.")
+    client = await _google_client(db, source)
+    wanted = (query or "").strip()
+    exact_id: str | None = None
+    try:
+        rows = await client.search_categories(
+            query,
+            region_code=region_code,
+        )
+        # The filter returns every category containing the text, not only an
+        # exact match. A picker click sends the exact display name, so resolve
+        # that name explicitly when it fell outside the first page. Without
+        # this a valid category can look "not listed" in the UI.
+        if exact and wanted and not any(
+            isinstance(row, dict)
+            and str(row.get("displayName") or "").strip().lower() == wanted.lower()
+            for row in rows
+        ):
+            exact_id = await client.resolve_category_id(
+                wanted, region_code=region_code
+            )
+    except GoogleReviewsError as e:
+        detail = getattr(e, "message", str(e))
+        raise ValueError(f"Google could not load categories: {detail}") from e
+    finally:
+        await client.close()
+
+    out: list[dict] = []
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("name") or "").strip()
+        display = str(row.get("displayName") or "").strip()
+        if not name or not display or name in seen:
+            continue
+        seen.add(name)
+        out.append({"name": name, "display_name": display})
+    if exact_id and exact_id not in seen:
+        out.append({"name": exact_id, "display_name": wanted})
+    wanted_key = wanted.lower()
+    out.sort(
+        key=lambda item: (
+            item["display_name"].lower() != wanted_key,
+            item["display_name"].lower(),
+        )
+    )
+    return out
+
+
 async def create_google_location(
     db: AsyncSession, user_id: str, body: dict
 ) -> dict:
@@ -653,6 +992,7 @@ async def create_google_location(
         GoogleReviewsError,
         location_address,
         location_category,
+        location_description,
         location_phone,
         location_website,
     )
@@ -675,6 +1015,15 @@ async def create_google_location(
     if not account_id:
         raise ValueError("The connected Google account has no account id.")
 
+    has_storefront = bool(body.get("has_storefront", True))
+    country = str(body.get("country") or "").strip().upper()[:2]
+    language = (body.get("language_code") or "en").strip() or "en"
+    service_area_names: list[str] = [
+        str(value).strip()
+        for value in (body.get("service_area") or [])
+        if str(value).strip()
+    ]
+
     client = await _google_client(db, source)
     try:
         # Search excludes locations the account already manages, so also check
@@ -693,18 +1042,20 @@ async def create_google_location(
             return "".join(ch for ch in str(value or "") if ch.isdigit())
 
         wanted_name = _norm(body["name"])
-        wanted_phone = _phone(body["phone"])
-        wanted_city = _norm(body["city"])
+        wanted_phone = _phone(body.get("phone"))
+        wanted_city = _norm(body.get("city"))
+        wanted_street = _norm(body.get("street"))
         for loc in existing_locations:
             if not isinstance(loc, dict):
                 continue
             loc_title = _norm(loc.get("title"))
             loc_address = _norm(location_address(loc))
             same_city = bool(wanted_city and wanted_city in loc_address)
+            same_street = bool(wanted_street and wanted_street in loc_address)
             same_phone = bool(
                 wanted_phone and _phone(location_phone(loc)) == wanted_phone
             )
-            if same_city and (
+            if (same_city or same_street) and (
                 same_phone
                 or (wanted_name and loc_title == wanted_name)
                 or (wanted_name and loc_title.startswith(wanted_name))
@@ -715,7 +1066,7 @@ async def create_google_location(
                 )
 
         category_id = await client.resolve_category_id(
-            body["category"], region_code=body["country"].upper()[:2]
+            body["category"], region_code=country
         )
         if not category_id:
             raise ValueError(
@@ -725,19 +1076,70 @@ async def create_google_location(
             )
         payload = _create_payload(body)
         payload["categories"] = {"primaryCategory": {"name": category_id}}
+
+        # Service areas are free text locally; Google only accepts place IDs.
+        # A service-area-only business still gets the region, even when the
+        # Places key is missing or no name resolves, so create is not blocked
+        # by an optional section.
+        if service_area_names or not has_storefront:
+            service_area: dict = {
+                "businessType": (
+                    "CUSTOMER_AND_BUSINESS_LOCATION"
+                    if has_storefront
+                    else "CUSTOMER_LOCATION_ONLY"
+                ),
+                "regionCode": country,
+            }
+            if service_area_names:
+                from .places import PlacesError, resolve_service_area
+
+                try:
+                    place_infos = await resolve_service_area(
+                        service_area_names,
+                        language_code=language,
+                        region_code=country or "SA",
+                    )
+                except PlacesError as e:
+                    logger.warning("Service areas skipped for create: %s", e)
+                    place_infos = []
+                if place_infos:
+                    service_area["places"] = {"placeInfos": place_infos}
+            payload["serviceArea"] = service_area
+
         request_id = (body.get("request_id") or str(uuid.uuid4()))[:50]
         # Validate first so obvious category/address problems do not create a
         # half-finished local flow. Google still makes the real decision on
         # the second call; validateOnly never creates a listing.
-        await client.create_location(
-            account_id,
-            payload,
-            request_id=request_id,
-            validate_only=True,
-        )
-        created = await client.create_location(
-            account_id, payload, request_id=request_id
-        )
+        #
+        # The validate call gets its own request id. requestId is Google's
+        # duplicate-request key, so reusing one id for both calls can make
+        # Google replay the validation response instead of creating a
+        # location on the second call.
+        async def _validate_and_create(candidate: dict) -> dict:
+            await client.create_location(
+                account_id,
+                candidate,
+                request_id=str(uuid.uuid4())[:50],
+                validate_only=True,
+            )
+            return await client.create_location(
+                account_id, candidate, request_id=request_id
+            )
+
+        try:
+            created = await _validate_and_create(payload)
+        except GoogleReviewsError as e:
+            if not _is_readonly_address_component(e, "administrative_area"):
+                raise
+            # Pakistan and several other countries reject a client-provided
+            # state/province. Drop it and let Google derive it; city, postal
+            # code and address lines are still sent.
+            retry_payload = copy.deepcopy(payload)
+            (retry_payload.get("storefrontAddress") or {}).pop(
+                "administrativeArea", None
+            )
+            logger.info("Retrying Google create without administrativeArea")
+            created = await _validate_and_create(retry_payload)
     except GoogleReviewsError as e:
         status = getattr(e, "status_code", 502)
         detail = getattr(e, "message", str(e))
@@ -758,7 +1160,8 @@ async def create_google_location(
                 "the location. Create it in Google Business Profile with a map "
                 "pin, then connect the listing here."
             ) from e
-        raise ValueError(f"Google rejected the location: {detail}") from e
+        logger.warning("Google location create rejected (%s): %s", status, detail)
+        raise ValueError(_friendly_location_error(status, detail)) from e
     finally:
         await client.close()
 
@@ -772,7 +1175,7 @@ async def create_google_location(
     category = location_category(created) or body.get("category")
     address = location_address(created) or ", ".join(
         part for part in [
-            body.get("street"), body.get("city"),
+            body.get("street"), body.get("city"), body.get("state"),
             body.get("postal_code"), body.get("country"),
         ] if part
     )
@@ -780,12 +1183,17 @@ async def create_google_location(
         "location_id": location_id,
         "account_name": channel_meta(source).get("account_name"),
         "place_id": (created.get("metadata") or {}).get("placeId"),
-        "maps_url": (created.get("metadata") or {}).get("mapsUrl"),
+        # Business Information API v1 spells it mapsUri. The older v4 API
+        # used mapsUrl, which this code used to read and always got None.
+        "maps_url": (created.get("metadata") or {}).get("mapsUri"),
         "address": address,
         "category": category,
         "phone": phone,
         "website": website,
-        "description": None,
+        "description": location_description(created) or body.get("description"),
+        "service_area": service_area_names,
+        "country": country,
+        "language_code": language,
         "profile_fields_checked": False,
         "created_via": "sayvors",
     }

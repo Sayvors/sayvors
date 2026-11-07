@@ -14,6 +14,7 @@ import {
   deleteInboxThread,
   fetchAssignees,
   pinInboxThread,
+  markInboxThreadRead,
   resolveInboxThread,
   sendInboxMessage,
   sendInboxLocation,
@@ -927,6 +928,23 @@ export default function InboxView() {
   const requestedKey = useRef<string | null>(null);
   const target = effectiveSelected;
   const targetKey = target ? `${target.channel_id}:${target.key}` : null;
+  // Opening a conversation is the read event. The badge lives on the server
+  // (channel_threads.unread_count), so clearing only local state would bring
+  // it back on the next list refresh.
+  useEffect(() => {
+    if (!target || !targetKey || target.unread <= 0) return;
+    const channelId = target.channel_id;
+    const phone = target.contact_phone ?? null;
+    setThreads((prev) =>
+      prev.map((t) =>
+        `${t.channel_id}:${t.key}` === targetKey ? { ...t, unread: 0 } : t,
+      ),
+    );
+    void markInboxThreadRead(channelId, phone).catch(() => {
+      // A failed mark-read must never block reading. The badge returns on the
+      // next list refresh and is cleared the next time the thread opens.
+    });
+  }, [target, targetKey]);
   // The thread state is authoritative while the open thread is the loaded
   // one; the list row is the fallback before the messages call returns.
   const activeMode: "ai" | "human" =
@@ -2102,6 +2120,15 @@ export default function InboxView() {
                               </p>
                             ) : (
                               <>
+                                {m.content_type === "review_reply" && (
+                                  <p
+                                    className={`mb-1 text-[9.5px] font-bold uppercase tracking-[0.08em] ${
+                                      mine ? "text-white/70" : "text-ink/45 dark:text-fog/45"
+                                    }`}
+                                  >
+                                    Public reply on Google
+                                  </p>
+                                )}
                                 {quotedMessage && (
                                   <div
                                     className={`mb-1.5 rounded-lg border-l-2 px-2 py-1 ${

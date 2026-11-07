@@ -13,10 +13,13 @@ This module exposes the email-related endpoints used by the application:
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy import func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import settings
-from ...core.deps import require_admin
+from ...core.deps import get_db, require_admin
 from ..auth.rate_limit import rate_limit
 from ..users.models import User
 from . import service
@@ -136,3 +139,94 @@ async def check_otp(body: OtpVerify, request: Request):
     if not ok:
         raise HTTPException(status_code=400, detail="Invalid or expired code.")
     return {"ok": True, "verified": True}
+
+
+# ── Resend webhook ──────────────────────────────────────────────────────
+# Delivery/bounce/complaint events. Svix-signed; an unsigned request is
+# rejected rather than trusted, because a forged "unsubscribed" event would
+# suppress arbitrary addresses.
+
+def _verify_svix(headers, body: bytes) -> bool:
+    import base64
+    import hashlib
+    import hmac
+    import time
+
+    secret = (settings.RESEND_WEBHOOK_SECRET or "").strip()
+    if not secret:
+        return False
+    msg_id = headers.get("svix-id") or ""
+    timestamp = headers.get("svix-timestamp") or ""
+    signatures = headers.get("svix-signature") or ""
+    if not msg_id or not timestamp or not signatures:
+        return False
+    try:
+        ts = int(timestamp)
+    except ValueError:
+        return False
+    if abs(int(time.time()) - ts) > 300:
+        return False
+    raw_secret = secret.split("_", 1)[1] if secret.startswith("whsec_") else secret
+    try:
+        key = base64.b64decode(raw_secret)
+    except Exception:
+        return False
+    signed = f"{msg_id}.{timestamp}.".encode() + body
+    expected = base64.b64encode(hmac.new(key, signed, hashlib.sha256).digest()).decode()
+    for part in signatures.split():
+        value = part.split(",", 1)[1] if "," in part else part
+        if hmac.compare_digest(value, expected):
+            return True
+    return False
+
+
+@router.post("/webhook/resend")
+async def resend_webhook(request: Request, db: AsyncSession = Depends(get_db)):
+    """Resend delivery events → outbox status, events and suppressions."""
+    import json
+
+    from .outbox import apply_provider_event
+
+    body = await request.body()
+    if not _verify_svix(request.headers, body):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature.")
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid JSON.") from None
+    event_type = str(payload.get("type") or "")
+    data = payload.get("data") or {}
+    recipients = data.get("to") or []
+    email = recipients[0] if isinstance(recipients, list) and recipients else None
+    if isinstance(recipients, str):
+        email = recipients
+    await apply_provider_event(
+        db,
+        event_type=event_type,
+        provider_id=str(data.get("email_id") or "") or None,
+        email=email,
+        detail=json.dumps(data, default=str)[:1000],
+        provider_event_id=request.headers.get("svix-id"),
+    )
+    return {"ok": True}
+
+
+@router.get("/unsubscribe", response_class=HTMLResponse)
+@router.post("/unsubscribe", response_class=HTMLResponse)
+async def unsubscribe(email: str, token: str, db: AsyncSession = Depends(get_db)):
+    """One-click unsubscribe (also target of List-Unsubscribe-Post)."""
+    from .outbox import suppress, verify_unsubscribe_token
+
+    if not verify_unsubscribe_token(email, token):
+        raise HTTPException(status_code=400, detail="Invalid unsubscribe link.")
+    normalized = email.strip().lower()
+    await suppress(db, normalized, "unsubscribe", "one-click link")
+    await db.execute(
+        update(User).where(func.lower(User.email) == normalized).values(newsletter=False)
+    )
+    await db.commit()
+    return HTMLResponse(
+        "<html><body style=\"font-family:Arial,sans-serif;padding:40px;text-align:center\">"
+        "<h1>Unsubscribed</h1><p>You will not receive further email from Sayvors.</p>"
+        "</body></html>"
+    )

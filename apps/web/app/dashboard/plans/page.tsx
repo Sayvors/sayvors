@@ -1,6 +1,8 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { queryKeys } from "@/lib/query-keys";
 import LogoLoader from "@/components/LogoLoader";
 import {
@@ -47,10 +49,12 @@ function PlanCard({
   plan,
   current,
   onSelect,
+  scPerUsd,
 }: {
   plan: WebPlan;
   current: boolean;
   onSelect: () => void;
+  scPerUsd: number;
 }) {
   const features = FEATURE_ORDER.filter((k) => (plan.features || {})[k]);
   const isEnterprise = plan.slug === "enterprise";
@@ -87,7 +91,9 @@ function PlanCard({
         <div className="rounded-xl bg-ink/[0.03] px-3 py-2 dark:bg-fog/[0.04]">
           <div className="text-ink/45 dark:text-fog/45">AI credit</div>
           <div className="font-semibold text-ink dark:text-fog">
-            {isEnterprise ? "Custom" : fmtCents(creditCents)}
+            {isEnterprise
+              ? "Custom"
+              : `${Math.round((creditCents / 100) * scPerUsd).toLocaleString()} SC`}
           </div>
         </div>
         <div className="rounded-xl bg-ink/[0.03] px-3 py-2 dark:bg-fog/[0.04]">
@@ -135,7 +141,7 @@ function PlanCard({
         {current
           ? "Your current plan"
           : isEnterprise
-            ? "Contact us"
+            ? "Request"
             : enabled
               ? "Included"
               : "Coming soon"}
@@ -145,6 +151,7 @@ function PlanCard({
 }
 
 export default function PlansPage() {
+  const router = useRouter();
   const { data: plans, isLoading: plansLoading } = useQuery({
     queryKey: queryKeys.billing.plans(),
     queryFn: getPlans,
@@ -168,9 +175,8 @@ export default function PlansPage() {
 
   const handleSelect = (plan: WebPlan) => {
     if (plan.slug === "enterprise") {
-      window.location.href =
-        "mailto:it@sayvors.com?subject=" +
-        encodeURIComponent("Sayvors Enterprise plan inquiry");
+      // Sales-assisted: submit a request from the top-up page; no fake checkout.
+      router.push("/dashboard/billing/topup");
       return;
     }
   };
@@ -229,26 +235,39 @@ export default function PlansPage() {
               barClass="bg-sky-500"
             />
             <UsageMeter
-              label="AI credit balance"
-              used={budget ? (budget.balance_cents / 100) : 0}
+              label="Sayvors Credits"
+              used={budget ? (budget.balance_cents / 100) * (budget.credits_per_usd ?? 1000) : 0}
               max={null}
-              suffix="$"
               barClass="bg-emerald-500"
-              display={budget ? `$${(budget.balance_cents / 100).toFixed(2)}` : "—"}
+              display={
+                budget
+                  ? `${Math.round((budget.balance_cents / 100) * (budget.credits_per_usd ?? 1000)).toLocaleString()} SC`
+                  : "—"
+              }
             />
             <UsageMeter
               label="Messages / month"
-              used={0}
+              used={entitlements.messages_used_this_month}
               max={entitlements.max_messages_per_month ?? null}
               barClass="bg-amber-500"
               display={
                 entitlements.max_messages_per_month == null
-                  ? "Unlimited"
-                  : `0 / ${entitlements.max_messages_per_month.toLocaleString()}`
+                  ? `${entitlements.messages_used_this_month.toLocaleString()} / unlimited`
+                  : `${entitlements.messages_used_this_month.toLocaleString()} / ${entitlements.max_messages_per_month.toLocaleString()}`
               }
             />
           </div>
         )}
+
+        <div className="-mt-4 mb-8 flex justify-end">
+          <Link
+            href="/dashboard/billing/topup"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-ink/[0.08] bg-white px-3.5 py-2 text-[12px] font-semibold text-ink/60 transition hover:border-deep-violet/30 hover:text-deep-violet dark:border-fog/[0.1] dark:bg-ink dark:text-fog/60"
+          >
+            Top up messages, AI credit or channels
+            <span aria-hidden>→</span>
+          </Link>
+        </div>
 
         {/* plan grid */}
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
@@ -257,6 +276,7 @@ export default function PlansPage() {
               key={p.id}
               plan={p}
               current={p.slug === currentSlug}
+              scPerUsd={budget?.credits_per_usd ?? 1000}
               onSelect={() => handleSelect(p)}
             />
           ))}

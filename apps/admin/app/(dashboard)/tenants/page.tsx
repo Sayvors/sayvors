@@ -472,6 +472,11 @@ export default function AdminTenantsPage() {
                                 >
                                   {meta.label}
                                 </span>
+                                {t.suspended_at && (
+                                  <span className="ml-1.5 mt-1.5 inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-700">
+                                    Suspended
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </td>
@@ -587,6 +592,11 @@ export default function AdminTenantsPage() {
                           <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${meta.pill}`}>
                             {meta.label}
                           </span>
+                          {t.suspended_at && (
+                            <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-700">
+                              Suspended
+                            </span>
+                          )}
                           <span className="rounded-full bg-[var(--ui-surface)] px-2 py-1 text-[11px] font-bold tabular-nums text-ink/60 ring-1 ring-[var(--ui-line)]">
                             {t.reviews} rev · {t.posts} posts · {t.databanks} banks
                           </span>

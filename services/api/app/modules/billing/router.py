@@ -1,6 +1,7 @@
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -169,9 +170,7 @@ async def read_ledger(
 @router.get("/plan", response_model=SubscriptionOut)
 async def read_plan(user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """The tenant's current plan + status. Employees read the owner's."""
-    from ...billing.models import TenantSubscription, Plan
-    from ...billing.schemas import SubscriptionOut
-    from ...core.deps import tenant_id_of
+    from .models import TenantSubscription, Plan
 
     tid = tenant_id_of(user)
     sub = (
@@ -215,10 +214,53 @@ async def list_public_plans(db: AsyncSession = Depends(get_db)):
     ]
 
 
+class BillingRequestIn(BaseModel):
+    kind: Literal["messages", "channels", "ai_credit", "plan"]
+    amount: int | None = Field(default=None, ge=0, le=1_000_000)
+    plan_slug: str | None = Field(default=None, max_length=40)
+    note: str | None = Field(default=None, max_length=500)
+
+
+@router.post("/requests")
+async def create_purchase_request(
+    body: BillingRequestIn,
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ask an operator to top up messages, channels or AI credit, or to grant
+    a sales-assisted plan. No payment is taken here."""
+    from .requests import RequestError, create_request, serialize
+
+    try:
+        request, duplicate = await create_request(
+            db,
+            tenant_id=tenant_id_of(user),
+            created_by=user.id,
+            kind=body.kind,
+            amount=body.amount,
+            plan_slug=body.plan_slug,
+            note=body.note,
+        )
+    except RequestError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    return {**serialize(request), "duplicate": duplicate}
+
+
+@router.get("/requests")
+async def list_purchase_requests(
+    limit: int = Query(50, ge=1, le=200),
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from .requests import list_for_tenant, serialize
+
+    rows = await list_for_tenant(db, tenant_id_of(user), limit=limit)
+    return {"items": [serialize(row) for row in rows]}
+
+
 @router.get("/entitlements")
 async def read_entitlements(user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """The tenant's effective plan + entitlements (base plan + promo overrides)."""
-    from ...core.deps import tenant_id_of
     from .entitlements import count_messages_this_month, get_entitlements
 
     tid = tenant_id_of(user)

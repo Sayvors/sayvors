@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
@@ -41,6 +42,11 @@ type Verification = {
   provider_managed: boolean;
   has_voice_of_merchant: boolean | null;
   has_business_authority: boolean | null;
+  location_address?: string | null;
+  location_country?: string | null;
+  location_phone?: string | null;
+  location_website?: string | null;
+  account_name?: string | null;
   options: VerificationOption[];
   verifications: VerificationItem[];
   provider_name: string | null;
@@ -92,6 +98,10 @@ export default function VerificationPage() {
   const queryClient = useQueryClient();
   const searchParams = useSearchParams();
   const requestedChannel = searchParams.get("channel") ?? "";
+  const nextParam = searchParams.get("next") ?? "";
+  // Only same-app dashboard routes: a verification link must never become an
+  // open redirect.
+  const nextHref = nextParam.startsWith("/dashboard/") ? nextParam : "";
   const [selectedId, setSelectedId] = useState("");
   const [activeMethod, setActiveMethod] = useState<string | null>(null);
   const [phoneNumber, setPhoneNumber] = useState("");
@@ -357,6 +367,27 @@ export default function VerificationPage() {
                 </p>
               )}
 
+              <div className="mt-4 rounded-xl border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3">
+                <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[var(--ui-ink-2)]">
+                  Google location data
+                </p>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  <Info label="Address" value={verification?.location_address ?? ""} />
+                  <Info label="Country" value={verification?.location_country ?? ""} />
+                  <Info label="Phone" value={verification?.location_phone ?? ""} />
+                  <Info label="Website" value={verification?.location_website ?? ""} />
+                  <Info label="Connected account" value={verification?.account_name ?? ""} />
+                </div>
+                {verification &&
+                  !verification.location_phone &&
+                  !verification.location_website && (
+                    <p className="mt-2 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
+                      Google has no phone or website for this location. Add them in Google
+                      Business Profile; incomplete locations often fail verification.
+                    </p>
+                  )}
+              </div>
+
               <div className="mt-4 grid gap-3 sm:grid-cols-3">
                 <Info
                   label="Voice of Merchant"
@@ -369,7 +400,7 @@ export default function VerificationPage() {
                   }
                 />
                 <Info
-                  label="Method"
+                  label="Last method"
                   value={verification?.method ? labelFor(verification.method).title : ""}
                 />
                 <Info
@@ -384,8 +415,24 @@ export default function VerificationPage() {
 
               {verified && (
                 <div className="mt-4 rounded-xl bg-emerald-50 px-4 py-3 text-[12.5px] text-emerald-800">
-                  Google already considers this location verified. No further action is needed.
+                  <p>Google already considers this location verified. No further action is needed.</p>
+                  {nextHref && (
+                    <Link
+                      href={nextHref}
+                      className="mt-3 flex w-full items-center justify-center rounded-xl bg-deep-violet px-3 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 active:translate-y-px"
+                    >
+                      Continue to profile setup
+                    </Link>
+                  )}
                 </div>
+              )}
+              {!verified && nextHref && (
+                <Link
+                  href={nextHref}
+                  className="mt-4 inline-flex text-[12px] font-bold text-deep-violet underline underline-offset-2"
+                >
+                  Set up hours, description and photos while Google reviews →
+                </Link>
               )}
             </section>
 

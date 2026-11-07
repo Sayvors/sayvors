@@ -108,7 +108,8 @@ async def test_resolve_category_id_matches_and_misses(monkeypatch):
     ]
     calls = {"n": 0}
 
-    async def _list(self, page_token=None, page_size=100, region_code="US"):
+    async def _list(self, page_token=None, page_size=100, region_code="US",
+                    language_code="en", filter_text=None):
         calls["n"] += 1
         idx = 0 if page_token is None else 1
         out = dict(pages[idx])
@@ -170,6 +171,88 @@ async def test_push_profile_per_section_containment(monkeypatch):
     assert "hours.regular" in report["skipped"]
 
 
+@pytest.mark.asyncio
+async def test_push_phone_sends_complete_phone_numbers(monkeypatch):
+    """Google rejects phoneNumbers.primaryPhone as an update mask.
+
+    Both fields must be sent under mask ``phoneNumbers``; the existing
+    additional numbers must be preserved.
+    """
+    from app.modules.channels.google_business import GoogleBusinessClient
+
+    captured: dict = {}
+
+    async def _phones(self, location_id):
+        return {"primaryPhone": "050 000 0000", "additionalPhones": ["+966 11 000 0000"]}
+
+    async def _patch(self, location_id, body, mask):
+        captured["body"] = body
+        captured["mask"] = mask
+        return {}
+
+    monkeypatch.setattr(GoogleBusinessClient, "get_phone_numbers", _phones)
+    monkeypatch.setattr(GoogleBusinessClient, "patch_location", _patch)
+    client = GoogleBusinessClient("tok", None)
+    try:
+        report = await client.push_profile("loc-1", phone="+92 346 0561173")
+    finally:
+        await client.close()
+
+    assert report["pushed"] == ["phone"]
+    assert captured["mask"] == "phoneNumbers"
+    assert captured["body"]["phoneNumbers"]["primaryPhone"] == "+92 346 0561173"
+    assert captured["body"]["phoneNumbers"]["additionalPhones"] == ["+966 11 000 0000"]
+
+
+@pytest.mark.asyncio
+async def test_push_categories_sends_both_fields_under_categories_mask(monkeypatch):
+    """Google rejects categories.primaryCategory as an update mask.
+
+    The Categories object must be sent complete: primary + additional under
+    mask ``categories``. A primary-only patch returns 400 INVALID_ARGUMENT and
+    leaves the change local-only.
+    """
+    from app.modules.channels.google_business import GoogleBusinessClient
+
+    captured: dict = {}
+    ids = {
+        "Software company": "categories/gcid:software_company",
+        "Cafe": "categories/gcid:cafe",
+    }
+
+    async def _patch(self, location_id, body, mask):
+        captured["body"] = body
+        captured["mask"] = mask
+        return {}
+
+    async def _resolve(self, name, max_pages=10):
+        return ids.get(name)
+
+    monkeypatch.setattr(GoogleBusinessClient, "patch_location", _patch)
+    monkeypatch.setattr(GoogleBusinessClient, "resolve_category_id", _resolve)
+    client = GoogleBusinessClient("tok", None)
+    try:
+        report = await client.push_profile(
+            "loc-1",
+            categories={
+                "primary": "Software company",
+                "additional": ["Cafe", "Not a category"],
+            },
+        )
+    finally:
+        await client.close()
+
+    assert report["pushed"] == ["categories"]
+    assert captured["mask"] == "categories"
+    assert captured["body"]["categories"]["primaryCategory"]["name"] == (
+        "categories/gcid:software_company"
+    )
+    assert captured["body"]["categories"]["additionalCategories"] == [
+        {"name": "categories/gcid:cafe"}
+    ]
+    assert "Not a category" in report["skipped"]["categories.additional"]
+
+
 def _native_channel(db, user_id, listing_id="loc-google-1"):
     import json as _json
 
@@ -220,7 +303,8 @@ async def test_native_locations_pushes_via_google_client(monkeypatch, db, user_i
     )
     assert seen["location_id"] == "loc-google-1"
     assert seen["kw"]["description"] == "Hello"
-    assert out["google_synced"] == ["description", "categories"]
+    assert out["google_pushed"] == ["description", "categories"]
+    assert {"description", "categories"} <= set(out["google_synced"])
 
 
 @pytest.mark.asyncio

@@ -5,6 +5,7 @@ import TourProvider from "@/components/tour/TourProvider";
 import ToastProvider from "@/components/feedback/ToastStack";
 import MessageToasts from "@/components/feedback/MessageToasts";
 import UpgradePrompt from "@/components/billing/UpgradePrompt";
+import UsageBanner from "@/components/billing/UsageBanner";
 import ConnectImportLauncher from "@/components/channels/ConnectImportLauncher";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthGuard } from "@/components/AuthGuard";
@@ -21,6 +22,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Sidebar />
               <div className="flex flex-1 flex-col overflow-hidden">
                 <Header />
+                <UsageBanner />
                 <main className="flex-1 overflow-hidden">
                   {children}
                 </main>

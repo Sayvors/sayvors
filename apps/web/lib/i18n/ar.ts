@@ -255,7 +255,7 @@ const ar: Dict = {
       primaryCategoryPlaceholder: "مثال: شركة برمجيات",
       primaryCategoryHint: "تصنيف رئيسي واحد — هذا ما يعتمد عليه Google لتصنيف نشاطك وعرضه.",
       additionalCategories: "تصنيفات إضافية",
-      additionalCategoriesHint: "تصنيفات أخرى تنطبق عليك. اضغط على أحد الأمثلة لإضافته:",
+      additionalCategoriesHint: "ابحث في تصنيفات Google وأضف ما يناسب نشاطك. لا تُرسل إلى Google إلا التصنيفات المعتمدة.",
       addCategoryPlaceholder: "أضف تصنيفاً...",
       add: "إضافة",
       saveCategories: "حفظ التصنيفات",

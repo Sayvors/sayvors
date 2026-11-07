@@ -121,6 +121,8 @@ export interface Budget {
   balance_cents: number;
   balance_dollars: number;
   currency: string;
+  credits_per_usd?: number;
+  balance_credits?: number;
 }
 
 export async function getBudget(): Promise<Budget> {
@@ -216,4 +218,41 @@ export async function getPlans(): Promise<WebPlan[]> {
 
 export async function getEntitlements(): Promise<Entitlements> {
   return apiFetch("/api/v1/billing/entitlements");
+}
+
+// ── Purchase requests (no payment gateway yet) ──────────────────────────
+
+export type BillingRequestKind = "messages" | "channels" | "ai_credit" | "plan";
+
+export interface BillingRequest {
+  id: string;
+  tenant_id: string;
+  kind: BillingRequestKind;
+  amount: number | null;
+  plan_slug: string | null;
+  note: string | null;
+  status: "pending" | "approved" | "rejected";
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  decision_note: string | null;
+  created_at: string;
+}
+
+export async function createBillingRequest(input: {
+  kind: BillingRequestKind;
+  amount?: number | null;
+  plan_slug?: string | null;
+  note?: string | null;
+}): Promise<BillingRequest & { duplicate?: boolean }> {
+  return apiFetch("/api/v1/billing/requests", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function listBillingRequests(): Promise<BillingRequest[]> {
+  const data = (await apiFetch("/api/v1/billing/requests")) as {
+    items?: BillingRequest[];
+  };
+  return data?.items ?? [];
 }

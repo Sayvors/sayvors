@@ -90,6 +90,9 @@ class BudgetOut(BaseModel):
     balance_cents: int
     balance_dollars: float
     currency: str = "usd"
+    # Sayvors Credits display: 1 SC = 1/credits_per_usd dollar.
+    credits_per_usd: int = 1000
+    balance_credits: float = 0
 
 
 class PlanGrantIn(BaseModel):

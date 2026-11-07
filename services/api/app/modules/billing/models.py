@@ -175,6 +175,43 @@ class PricingRate(Base):
     )
 
 
+class BillingRequest(Base):
+    """A tenant's request to buy something that has no self-serve checkout.
+
+    Payments are not connected yet, so message/channel packs, AI credit and
+    sales-assisted plans are requested here. Approval applies the change using
+    the same grant paths as the admin console, so the ledger stays consistent.
+    """
+
+    __tablename__ = "billing_requests"
+    __table_args__ = (
+        Index("ix_billing_requests_tenant_created", "tenant_id", "created_at"),
+        Index("ix_billing_requests_status_created", "status", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    # messages | channels | ai_credit | plan
+    kind: Mapped[str] = mapped_column(String(16), index=True)
+    # Plan requests only.
+    plan_slug: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # Message/channel count for allowance requests, cents for AI credit.
+    amount: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(16), default="pending", server_default="pending", index=True
+    )
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decision_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
 class Plan(Base):
     """A sellable plan. Admin-managed; tenants pick one.
 
@@ -235,6 +272,11 @@ class TenantSubscription(Base):
     # absent keys inherit the plan. Empty dict = no overrides (this is what
     # the admin "Special list" keys off).
     features_override: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
+    # Per-tenant allowance top-ups bought from the billing page. NULL = inherit
+    # the plan. Approval adds to the effective limit, so a 500-message pack on
+    # a 500-message plan yields 1000.
+    message_limit_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    channels_limit_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

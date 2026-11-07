@@ -89,7 +89,7 @@ def test_cost_cents_math():
     assert cost_cents(None, 100, 100) == 0
     assert cost_cents("weirdmodel", 2_000_000, 0) == 0  # unknown family → free
     # OpenRouter resells other families; it must not fall through to "free".
-    assert cost_cents("openrouter:openai/gpt-4o-mini", 1_000_000, 0) == 150
+    assert cost_cents("openrouter:openai/gpt-4o-mini", 1_000_000, 0) == 375
 
 
 @pytest.mark.asyncio

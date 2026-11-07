@@ -89,6 +89,62 @@ function extractDetail(text: string, status: number): string {
   return `Request failed (${status}).`;
 }
 
+// ── Tenant lifecycle (suspend / export / purge) ─────────────────────────
+
+export async function suspendTenant(
+  id: string,
+  reason?: string,
+): Promise<AdminTenantDetail> {
+  return adminFetch<AdminTenantDetail>(
+    `/api/v1/admin/tenants/${encodeURIComponent(id)}/suspend`,
+    { method: "POST", body: JSON.stringify({ reason: reason?.trim() || null }) },
+  );
+}
+
+export async function reactivateTenant(id: string): Promise<AdminTenantDetail> {
+  return adminFetch<AdminTenantDetail>(
+    `/api/v1/admin/tenants/${encodeURIComponent(id)}/reactivate`,
+    { method: "POST" },
+  );
+}
+
+export async function purgeTenant(
+  id: string,
+  confirm: string,
+): Promise<{ tenant_id: string; total_rows: number; deleted: Record<string, number> }> {
+  return adminFetch(`/api/v1/admin/tenants/${encodeURIComponent(id)}/purge`, {
+    method: "POST",
+    body: JSON.stringify({ confirm }),
+  });
+}
+
+/** Download the tenant export as a file. Kept out of adminFetch because the
+ *  response is a JSON attachment, not an object we render. */
+export async function downloadTenantExport(id: string): Promise<void> {
+  const res = await fetch(
+    `${API}/api/v1/admin/tenants/${encodeURIComponent(id)}/export`,
+    { headers: { ...ADMIN_HEADERS }, credentials: "include" },
+  );
+  if (res.status === 401 || res.status === 403) {
+    throw new Error("Admin session expired. Please log in again.");
+  }
+  if (!res.ok) {
+    throw new Error(extractDetail(await res.text().catch(() => ""), res.status));
+  }
+  const disposition = res.headers.get("content-disposition") || "";
+  const match = /filename="?([^";]+)"?/i.exec(disposition);
+  const filename = match?.[1] || `sayvors-tenant-${id}.json`;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
 export async function fetchOverviewStats(window: string): Promise<OverviewStats> {
   return adminFetch<OverviewStats>(`/api/v1/admin/overview/stats?window=${encodeURIComponent(window)}`);
 }
@@ -130,6 +186,8 @@ export interface AdminTenant {
   reviews: number;
   posts: number;
   databanks: number;
+  suspended_at?: string | null;
+  suspension_reason?: string | null;
 }
 
 export interface AdminTenantDetail extends AdminTenant {
@@ -148,6 +206,89 @@ export interface AdminTenantDetail extends AdminTenant {
     status: string;
     created_at: string | null;
   }[];
+}
+
+// ── Meta delivery reconciliation ────────────────────────────────────────
+
+export interface DeliveryBucket {
+  inbound: number;
+  outbound: number;
+  outbound_with_id: number;
+  outbound_without_id: number;
+  sent: number;
+  delivered: number;
+  read: number;
+  failed: number;
+  delivery_rate_pct: number | null;
+}
+
+export interface DeliveryChannel extends DeliveryBucket {
+  channel_id: string;
+  name: string;
+  platform: string;
+  status: string;
+}
+
+export interface DeliveryDay extends DeliveryBucket {
+  day: string;
+}
+
+export interface DeliveryReconciliation {
+  days: number;
+  window_start: string;
+  generated_at: string;
+  platforms: string[];
+  totals: DeliveryBucket;
+  by_channel: DeliveryChannel[];
+  daily: DeliveryDay[];
+  notes: string[];
+}
+
+export async function fetchTenantDelivery(
+  id: string,
+  days = 30,
+): Promise<DeliveryReconciliation> {
+  return adminFetch<DeliveryReconciliation>(
+    `/api/v1/admin/tenants/${encodeURIComponent(id)}/delivery?days=${days}`,
+  );
+}
+
+// ── Tenant purchase requests ────────────────────────────────────────────
+
+export interface AdminBillingRequest {
+  id: string;
+  tenant_id: string;
+  email: string | null;
+  kind: "messages" | "channels" | "ai_credit" | "plan";
+  amount: number | null;
+  plan_slug: string | null;
+  note: string | null;
+  status: "pending" | "approved" | "rejected";
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  decision_note: string | null;
+  created_at: string;
+}
+
+export async function fetchBillingRequests(
+  status: "pending" | "approved" | "rejected" | "all" = "pending",
+): Promise<AdminBillingRequest[]> {
+  const qs = status === "all" ? "" : `?status=${status}`;
+  const data = await adminFetch<{ items?: AdminBillingRequest[] }>(
+    `/api/v1/admin/requests${qs}`,
+  );
+  return data?.items ?? [];
+}
+
+export async function decideBillingRequest(
+  id: string,
+  approve: boolean,
+  note?: string,
+): Promise<AdminBillingRequest> {
+  return adminFetch<AdminBillingRequest>(
+    `/api/v1/admin/requests/${encodeURIComponent(id)}/${approve ? "approve" : "reject"}`,
+    { method: "POST", body: JSON.stringify({ note: note?.trim() || null }) },
+  );
 }
 
 export interface PlatformStats {

@@ -18,6 +18,8 @@ interface User {
   avatar_url?: string | null;
   theme?: string;
   language?: string;
+  /** ISO 3166-1 alpha-2 account country, used as a regional default. */
+  country?: string | null;
 }
 
 interface AuthContextType {

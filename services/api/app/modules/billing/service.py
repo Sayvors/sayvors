@@ -271,11 +271,19 @@ async def get_budget(tenant_id: str, db: AsyncSession) -> dict:
         )
         await db.rollback()
         balance = fallback
+    from . import pricing
+
+    await pricing.ensure_fresh(db)
+    per_usd = pricing.sc_per_usd()
     return {
         "plan": plan,
         "balance_cents": balance,
         "balance_dollars": round(balance / 100, 2),
         "currency": "usd",
+        # Credits are the customer-facing unit; cents remain the ledger's
+        # storage unit for compatibility with existing holds and grants.
+        "credits_per_usd": per_usd,
+        "balance_credits": round((balance / 100) * per_usd, 2),
     }
 
 

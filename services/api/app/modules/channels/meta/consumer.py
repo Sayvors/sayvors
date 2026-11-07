@@ -145,6 +145,24 @@ async def _typing_indicator_enabled(tenant_id: str) -> bool:
         return True
 
 
+async def _message_quota_available(db, tenant_id: str) -> bool:
+    """Whether the workspace can still send this month.
+
+    Fails open: a billing lookup must never silence a customer's message. The
+    LLM gateway still enforces the plan's AI feature separately, and outbound
+    sends re-check the quota at the HTTP layer.
+    """
+    try:
+        from ...billing.quotas import message_quota_available
+
+        return await message_quota_available(tenant_id, db)
+    except Exception as e:
+        logger.warning(
+            "Message quota check failed tenant=%s: %s", tenant_id[:8], e
+        )
+        return True
+
+
 async def _auto_reply_enabled(db, channel_id: str) -> bool:
     """Is the AI allowed to answer on this channel?
 
@@ -1784,6 +1802,22 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
         if msg_type not in ("audio", "voice"):
             await _publish_inbound_row(db, tenant_id, channel.id, row)
 
+        # Plan quota, checked BEFORE any model work. The customer's message is
+        # already stored and published; only the AI answer is withheld until
+        # the workspace raises its monthly message limit.
+        if not await _message_quota_available(db, tenant_id):
+            if msg_type in ("audio", "voice"):
+                await _publish_inbound_row(db, tenant_id, channel.id, row)
+            inbound_row.ai_reply_status = "skipped"
+            inbound_row.ai_reply_error = "Monthly message limit reached"
+            db.add(inbound_row)
+            await db.commit()
+            logger.warning(
+                "WhatsApp AI reply skipped (message quota exhausted) tenant=%s wamid=%s",
+                tenant_id[:8], wamid[:32],
+            )
+            return
+
         if not token:
             if msg_type in ("audio", "voice"):
                 await _publish_inbound_row(db, tenant_id, channel.id, row)
@@ -2996,12 +3030,15 @@ async def _handle_connection_disconnect(event: dict, data: dict) -> None:
 
 async def _handle_message_status(event: dict, data: dict) -> None:
     """Mirror Cloud API delivery/read/failure states onto outbound rows."""
+    from datetime import datetime, timezone
+
     from ..models import ChannelMessage
 
     provider_msg_id = event.get("external_event_id") or ""
     status = data.get("status") or ""
     if not provider_msg_id or status not in ("delivered", "read", "failed"):
         return
+    now = datetime.now(timezone.utc)
     async with async_session() as db:
         row = (
             await db.execute(
@@ -3011,8 +3048,23 @@ async def _handle_message_status(event: dict, data: dict) -> None:
                 )
             )
         ).scalar_one_or_none()
-        if row is None or row.status in ("read", "failed"):
+        if row is None:
             return
+        if row.status == "read" and status != "read":
+            # Read is terminal; a redelivered/out-of-order "delivered" is not
+            # news and must not move the recorded time.
+            return
+        if row.status == "failed" and status != "failed":
+            return
+        # Keep the first time each transition was observed: webhooks can be
+        # redelivered out of order, and a later duplicate must not move the
+        # timestamp forward.
+        if status in ("delivered", "read") and row.delivered_at is None:
+            row.delivered_at = now
+        if status == "read" and row.read_at is None:
+            row.read_at = now
+        if status == "failed":
+            row.failed_at = now
         row.status = status
         errors = data.get("errors")
         if status == "failed" and errors:
@@ -3484,6 +3536,13 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
         if not await _auto_reply_enabled(db, channel.id):
             logger.info(
                 "Instagram AI reply skipped (auto-reply off) mid=%s", mid[:32]
+            )
+            return
+
+        if not await _message_quota_available(db, tenant_id):
+            logger.warning(
+                "Instagram AI reply skipped (message quota exhausted) tenant=%s mid=%s",
+                tenant_id[:8], mid[:32],
             )
             return
 

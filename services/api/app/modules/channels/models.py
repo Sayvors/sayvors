@@ -115,6 +115,17 @@ class ChannelMessage(Base):
         Enum("sent", "delivered", "read", "failed", name="message_status"),
         default="sent",
     )
+    # Webhook receipt times (Meta status events). `sent` is our own send
+    # response; these prove what the provider actually confirmed and when.
+    delivered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    read_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    failed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     # The wamid this message quotes, for contextual replies. Stored because
     # the inbox renders the quoted bubble from the thread, and because the API

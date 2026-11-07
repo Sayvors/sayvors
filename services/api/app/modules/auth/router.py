@@ -425,6 +425,7 @@ async def me(user=Depends(get_current_user)):
         "avatar_url": user.avatar_url,
         "theme": user.theme or "light",
         "language": user.language or "en",
+        "country": user.country,
         "created_at": user.created_at.isoformat(),
     }
 

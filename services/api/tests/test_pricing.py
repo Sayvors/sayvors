@@ -41,10 +41,11 @@ def admin_headers(client, monkeypatch):
 
 
 def test_llm_defaults_match_the_old_pass_through_table():
-    """An empty rate card must price exactly as before the migration."""
+    """Defaults price provider cost at the 2.5x Sayvors Credits margin."""
     assert pricing.llm_cost_cents("groq:oss-120b", 3000, 500) == 1
     assert pricing.llm_cost_cents("mock:anything", 1_000_000, 1_000_000) == 0
-    assert pricing.llm_cost_cents("openrouter:openai/gpt-4o-mini", 1_000_000, 0) == 150
+    # $1.50 provider cost -> $3.75 retail -> 375 cents.
+    assert pricing.llm_cost_cents("openrouter:openai/gpt-4o-mini", 1_000_000, 0) == 375
 
 
 def test_voice_is_free_until_a_rate_is_set():
@@ -55,12 +56,12 @@ def test_voice_is_free_until_a_rate_is_set():
 @pytest.mark.asyncio
 async def test_admin_can_change_a_llm_rate_and_it_applies_immediately(db):
     before = pricing.llm_cost_cents("groq:oss-120b", 1_000_000, 0)
-    assert before == 15
+    assert before == 38  # $0.15 cost -> $0.375 retail
 
     await pricing.save_rate(db, pricing.LLM_INPUT, "groq", 100.0)
 
     assert pricing.rate(pricing.LLM_INPUT, "groq") == 100.0
-    assert pricing.llm_cost_cents("groq:oss-120b", 1_000_000, 0) == 100
+    assert pricing.llm_cost_cents("groq:oss-120b", 1_000_000, 0) == 250
 
 
 @pytest.mark.asyncio
@@ -97,7 +98,15 @@ def test_admin_pricing_list_shape(client, admin_headers):
     assert r.status_code == 200, r.text
     rows = r.json()
     kinds = {row["kind"] for row in rows}
-    assert kinds == {"llm_input", "llm_output", "asr_minute", "tts_kchar"}
+    assert kinds == {
+        "llm_input", "llm_output", "asr_minute", "tts_kchar",
+        "sc_per_usd", "margin_bp", "infra_cost_micro_usd",
+    }
+    credits_rate = next(r for r in rows if r["kind"] == "sc_per_usd")
+    assert credits_rate["key"] == "rate"
+    assert credits_rate["unit_price_cents"] == 1000
+    margin = next(r for r in rows if r["kind"] == "margin_bp")
+    assert margin["unit_price_cents"] == 6000
 
     voice = next(r for r in rows if r["kind"] == "asr_minute")
     assert voice["key"] == "default"

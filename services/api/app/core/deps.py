@@ -58,6 +58,11 @@ async def get_current_user(
     # suspended member is blocked on EVERY authenticated endpoint (messages,
     # reviews, meta, billing…), including routes that never resolve a tenant
     # context. Owners (no tenant) and detached accounts are unaffected.
+    from ..modules.users.status import suspension_message
+
+    suspended = await suspension_message(db, user)
+    if suspended:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=suspended)
     if user.tenant_id and user.tenant_id != user.id:
         from ..modules.team.models import TeamMember
 

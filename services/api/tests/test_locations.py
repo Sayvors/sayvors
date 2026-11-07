@@ -9,6 +9,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from app.modules.channels.google_reviews import GoogleReviewsError
 from app.modules.channels.models import Channel
 from app.modules.channels.service import encrypt_token
 from app.modules.locations import service as locations
@@ -156,7 +157,8 @@ async def test_description_pushes_to_google(monkeypatch, db, user_id):
     assert seen["location_id"] == "loc-1"
     assert seen["kw"]["description"] == "We build AI support software."
     assert out["description"] == "We build AI support software."
-    assert out["google_synced"] == ["description"]
+    assert out["google_pushed"] == ["description"]
+    assert "description" in out["google_synced"]
 
 
 @pytest.mark.asyncio
@@ -215,7 +217,8 @@ async def test_identity_fields_save_locally_and_push(monkeypatch, db, user_id):
     assert out["name"] == "New Name"
     assert out["phone"] == "+966 11 222 3333"
     assert out["website"] == "https://new.test"
-    assert out["google_synced"] == ["name", "phone", "website"]
+    assert out["google_pushed"] == ["name", "phone", "website"]
+    assert {"name", "phone", "website"} <= set(out["google_synced"])
 
 
 @pytest.mark.asyncio
@@ -241,7 +244,7 @@ async def test_unchanged_save_does_not_call_google(monkeypatch, db, user_id):
         service_area=None, attributes=None,
         name="Test Place", phone="+966 55 000 0000", website="http://x.test",
     )
-    assert out["google_synced"] == []
+    assert out["google_pushed"] == []
 
 
 @pytest.mark.asyncio
@@ -441,7 +444,7 @@ async def test_create_google_location_persists_a_native_channel(monkeypatch, db,
     async def fake_create(self, account_id, location, *, request_id, validate_only=False):
         captured["account_id"] = account_id
         captured["body"] = location
-        captured["request_id"] = request_id
+        captured.setdefault("request_ids", []).append(request_id)
         captured.setdefault("validate_only", []).append(validate_only)
         return {
             "name": "locations/loc-new",
@@ -450,6 +453,10 @@ async def test_create_google_location_persists_a_native_channel(monkeypatch, db,
             "websiteUri": location.get("websiteUri"),
             "storefrontAddress": location["storefrontAddress"],
             "categories": {"primaryCategory": {"displayName": "Software company"}},
+            "metadata": {
+                "placeId": "ChIJtest",
+                "mapsUri": "https://maps.google.com/?cid=123",
+            },
         }
 
     async def fake_list(self, account_id):
@@ -487,7 +494,11 @@ async def test_create_google_location_persists_a_native_channel(monkeypatch, db,
     assert out["listing_id"] == "loc-new"
     assert captured["validate_only"] == [True, False]
     assert captured["account_id"] == "acc-1"
-    assert captured["request_id"] == "req-123"
+    # validateOnly and the real create are separate requests: a shared
+    # requestId can make Google replay the validation response.
+    assert len(captured["request_ids"]) == 2
+    assert captured["request_ids"][0] != captured["request_ids"][1]
+    assert captured["request_ids"][1] == "req-123"
     assert captured["body"]["categories"]["primaryCategory"]["name"] == "gcid:software_company"
     assert captured["body"]["storefrontAddress"]["regionCode"] == "SA"
 
@@ -495,7 +506,11 @@ async def test_create_google_location_persists_a_native_channel(monkeypatch, db,
     assert channel is not None
     assert channel.display_name == "New Place"
     assert channel.platform_user_id == "acc-1"
-    assert locations.channel_meta(channel)["location_id"] == "loc-new"
+    meta = locations.channel_meta(channel)
+    assert meta["location_id"] == "loc-new"
+    # v1 returns mapsUri, not mapsUrl.
+    assert meta["maps_url"] == "https://maps.google.com/?cid=123"
+    assert meta["place_id"] == "ChIJtest"
 
 
 @pytest.mark.asyncio
@@ -549,3 +564,304 @@ async def test_create_google_location_blocks_a_managed_duplicate(monkeypatch, db
                 "request_id": "req-dup",
             },
         )
+
+
+@pytest.mark.asyncio
+async def test_create_retries_without_readonly_state(monkeypatch, db, user_id):
+    """Pakistan rejects a client-provided administrativeArea with 400.
+
+    The create must drop it and retry instead of showing the raw Google JSON
+    to the merchant.
+    """
+    await _google_account_connection(db, user_id)
+    captured: list[dict] = []
+
+    async def fake_resolve(self, name, region_code="US"):
+        return "categories/gcid:software_company"
+
+    async def fake_create(self, account_id, location, *, request_id, validate_only=False):
+        captured.append(json.loads(json.dumps(location)))
+        if validate_only and (location.get("storefrontAddress") or {}).get("administrativeArea"):
+            raise GoogleReviewsError(
+                'accounts.locations.create failed (400): {"error":{"code":400,'
+                '"message":"Request contains an invalid argument.","status":"INVALID_ARGUMENT",'
+                '"details":[{"reason":"READ_ONLY_ADDRESS_COMPONENTS","metadata":'
+                '{"field_mask":"storefront_address.administrative_area"}}]}}',
+                400,
+            )
+        return {"name": "locations/loc-pk", "title": location["title"]}
+
+    async def fake_list(self, account_id):
+        return []
+
+    async def fake_close(self):
+        return None
+
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.list_locations",
+        fake_list,
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.resolve_category_id",
+        fake_resolve,
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.create_location",
+        fake_create,
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.close",
+        fake_close,
+    )
+
+    out = await locations.create_google_location(
+        db, user_id, {
+            "name": "Peshawar Branch", "category": "Software company",
+            "street": "2F6G+J36 Peshawar, Pakistan, abad", "city": "Peshawar",
+            "state": "Peshawar", "postal_code": "24550", "country": "PK",
+            "phone": "+92 346 0561173", "request_id": "req-pk",
+        },
+    )
+
+    assert out["listing_id"] == "loc-pk"
+    assert captured[0]["storefrontAddress"]["administrativeArea"] == "Peshawar"
+    assert captured[-1]["storefrontAddress"].get("administrativeArea") is None
+
+
+@pytest.mark.asyncio
+async def test_create_error_is_friendly_and_hides_raw_google_json(monkeypatch, db, user_id):
+    await _google_account_connection(db, user_id)
+
+    async def fake_resolve(self, name, region_code="US"):
+        return "categories/gcid:software_company"
+
+    async def fake_create(self, *args, **kwargs):
+        raise GoogleReviewsError(
+            'accounts.locations.create failed (400): {"error":{"code":400,'
+            '"message":"Request contains an invalid argument.","status":"INVALID_ARGUMENT",'
+            '"details":[{"reason":"INVALID_ARGUMENT","metadata":'
+            '{"field_mask":"storefront_address"}}]}}',
+            400,
+        )
+
+    async def fake_list(self, account_id):
+        return []
+
+    async def fake_close(self):
+        return None
+
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.list_locations",
+        fake_list,
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.resolve_category_id",
+        fake_resolve,
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.create_location",
+        fake_create,
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.close",
+        fake_close,
+    )
+
+    with pytest.raises(ValueError) as exc:
+        await locations.create_google_location(
+            db, user_id, {
+                "name": "Peshawar Branch", "category": "Software company",
+                "street": "1 Test Road", "city": "Peshawar",
+                "country": "PK", "phone": "+92 346 0561173",
+                "request_id": "req-friendly",
+            },
+        )
+
+    message = str(exc.value)
+    assert "Google could not accept this address" in message
+    assert "{" not in message
+    assert "INVALID_ARGUMENT" not in message
+
+
+@pytest.mark.asyncio
+async def test_create_service_area_location_uses_place_ids(monkeypatch, db, user_id):
+    await _google_account_connection(db, user_id)
+    captured: dict = {}
+
+    async def fake_resolve_places(names, *, language_code="en", region_code="SA"):
+        assert names == ["Riyadh", "Jeddah"]
+        return [{"placeId": "place-riyadh", "placeName": "Riyadh"}]
+
+    async def fake_resolve_category(self, name, region_code="US"):
+        return "gcid:software_company"
+
+    async def fake_create(self, account_id, location, *, request_id, validate_only=False):
+        captured.setdefault("payloads", []).append(location)
+        return {"name": "locations/loc-service", "title": location["title"]}
+
+    async def fake_list(self, account_id):
+        return []
+
+    async def fake_close(self):
+        return None
+
+    monkeypatch.setattr(
+        "app.modules.locations.places.resolve_service_area", fake_resolve_places
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.list_locations",
+        fake_list,
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.resolve_category_id",
+        fake_resolve_category,
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.create_location",
+        fake_create,
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.close",
+        fake_close,
+    )
+
+    out = await locations.create_google_location(
+        db, user_id, {
+            "name": "Service Co", "category": "Software company",
+            "has_storefront": False, "street": None, "city": None,
+            "country": "sa", "phone": "+966500000000", "website": None,
+            "service_area": ["Riyadh", "Jeddah"], "request_id": "req-sa",
+        },
+    )
+
+    assert out["listing_id"] == "loc-service"
+    payload = captured["payloads"][-1]
+    assert "storefrontAddress" not in payload
+    assert payload["serviceArea"]["businessType"] == "CUSTOMER_LOCATION_ONLY"
+    assert payload["serviceArea"]["regionCode"] == "SA"
+    assert payload["serviceArea"]["places"]["placeInfos"] == [
+        {"placeId": "place-riyadh", "placeName": "Riyadh"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_create_sends_description_state_language_and_pin(monkeypatch, db, user_id):
+    await _google_account_connection(db, user_id)
+    captured: dict = {}
+
+    async def fake_resolve_category(self, name, region_code="US"):
+        return "gcid:software_company"
+
+    async def fake_create(self, account_id, location, *, request_id, validate_only=False):
+        captured.setdefault("payloads", []).append(location)
+        return {"name": "locations/loc-rich", "title": location["title"]}
+
+    async def fake_list(self, account_id):
+        return []
+
+    async def fake_close(self):
+        return None
+
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.list_locations",
+        fake_list,
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.resolve_category_id",
+        fake_resolve_category,
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.create_location",
+        fake_create,
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.close",
+        fake_close,
+    )
+
+    await locations.create_google_location(
+        db, user_id, {
+            "name": "Rich Place", "category": "Software company",
+            "has_storefront": True, "street": "1 Test Road", "city": "Riyadh",
+            "state": "Riyadh Province", "postal_code": "12213", "country": "SA",
+            "phone": "+966500000000", "website": "https://rich.test",
+            "description": "We build support software.",
+            "language_code": "ar", "latitude": 24.7136, "longitude": 46.6753,
+            "request_id": "req-rich",
+        },
+    )
+
+    payload = captured["payloads"][-1]
+    assert payload["languageCode"] == "ar"
+    assert payload["profile"]["description"] == "We build support software."
+    assert payload["storefrontAddress"]["administrativeArea"] == "Riyadh Province"
+    assert payload["latlng"] == {"latitude": 24.7136, "longitude": 46.6753}
+
+
+@pytest.mark.asyncio
+async def test_category_search_puts_exact_match_first(monkeypatch, db, user_id):
+    await _google_account_connection(db, user_id)
+
+    async def fake_search(self, query, *, region_code="US", language_code="en", page_size=50):
+        return [
+            {"name": "categories/gcid:computer_software_store", "displayName": "Computer software store"},
+            {"name": "categories/gcid:software_company", "displayName": "Software company"},
+        ]
+
+    async def fake_close(self):
+        return None
+
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.search_categories",
+        fake_search,
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.close",
+        fake_close,
+    )
+
+    rows = await locations.list_google_categories(
+        db, user_id, "Software company", "SA", exact=True
+    )
+
+    assert rows[0] == {
+        "name": "categories/gcid:software_company",
+        "display_name": "Software company",
+    }
+
+
+@pytest.mark.asyncio
+async def test_category_exact_resolve_when_search_page_misses_it(monkeypatch, db, user_id):
+    await _google_account_connection(db, user_id)
+
+    async def fake_search(self, query, *, region_code="US", language_code="en", page_size=50):
+        return [{"name": "categories/gcid:computer_software_store", "displayName": "Computer software store"}]
+
+    async def fake_resolve(self, name, region_code="US", language_code="en"):
+        assert name == "Software company"
+        return "categories/gcid:software_company"
+
+    async def fake_close(self):
+        return None
+
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.search_categories",
+        fake_search,
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.resolve_category_id",
+        fake_resolve,
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.close",
+        fake_close,
+    )
+
+    rows = await locations.list_google_categories(
+        db, user_id, "Software company", "SA", exact=True
+    )
+
+    assert rows[0] == {
+        "name": "categories/gcid:software_company",
+        "display_name": "Software company",
+    }

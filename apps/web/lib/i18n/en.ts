@@ -253,7 +253,7 @@ const en = {
       primaryCategoryPlaceholder: "e.g. Software company",
       primaryCategoryHint: "One main category — this is how Google classifies and shows your business.",
       additionalCategories: "Additional Categories",
-      additionalCategoriesHint: "Other categories you also fit. Tap an example to add it:",
+      additionalCategoriesHint: "Search Google's categories and add the ones that fit. Only exact Google categories can be pushed.",
       addCategoryPlaceholder: "Add category...",
       add: "Add",
       saveCategories: "Save Categories",

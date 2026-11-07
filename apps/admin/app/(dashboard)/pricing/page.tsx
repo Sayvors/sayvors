@@ -19,6 +19,9 @@ const KIND_HELP: Record<PricingKind, string> = {
   llm_output: "What the tenant pays for completion tokens.",
   asr_minute: "Charged per started minute of audio. 0 = voice transcription is free.",
   tts_kchar: "Charged per 1,000 characters spoken. 0 = voice replies are free.",
+  sc_per_usd: "Sayvors Credits per US dollar. 1,000 means 1 SC = $0.001.",
+  margin_bp: "Target gross margin in basis points. 6,000 = 60% (2.5x cost).",
+  infra_cost_micro_usd: "Attributable infrastructure cost added to every billable call, in micro-USD.",
 };
 const LLM_HELP =
   "Prompt and completion rates in one row. Defaults are provider pass-through; 0 turns a meter off.";
@@ -106,6 +109,25 @@ export default function AdminPricingPage() {
       })),
     [rows],
   );
+
+  const creditRows = useMemo(
+    () =>
+      rows.filter((r) =>
+        ["sc_per_usd", "margin_bp", "infra_cost_micro_usd"].includes(r.kind),
+      ),
+    [rows],
+  );
+  const scRate = Number(
+    draft["sc_per_usd:rate"] ??
+      rows.find((r) => r.kind === "sc_per_usd")?.unit_price_cents ??
+      1000,
+  );
+  const marginBp = Number(
+    draft["margin_bp:default"] ??
+      rows.find((r) => r.kind === "margin_bp")?.unit_price_cents ??
+      6000,
+  );
+  const multiplier = marginBp >= 10_000 ? 2.5 : 10_000 / (10_000 - marginBp);
 
   const save = useCallback(async (row: PricingRateRow) => {
     const raw = draft[`${row.kind}:${row.key}`];
@@ -242,6 +264,61 @@ export default function AdminPricingPage() {
         </div>
       ) : (
         <div className="grid gap-3">
+          {/* Sayvors Credits formula: rate, margin, infrastructure cost. */}
+          <section className="panel p-4 sm:p-5" aria-labelledby="kind-credits">
+            <div className="flex flex-wrap items-end justify-between gap-2">
+              <div>
+                <h2 id="kind-credits" className="text-[13px] font-bold text-ink">
+                  Sayvors Credits &amp; margin
+                </h2>
+                <p className="mt-1 text-[11px] leading-relaxed text-ink/50">
+                  1 SC = $1 ÷ rate. Price = delivery cost ÷ (1 − margin). Credits charged =
+                  price × rate. Every metered call stores the exact integers.
+                </p>
+              </div>
+              <p className="text-[10px] font-medium text-ink/35">
+                {scRate.toLocaleString()} SC / $1 · {(multiplier).toFixed(2)}× ·{" "}
+                {(scRate * multiplier).toLocaleString(undefined, { maximumFractionDigits: 0 })} SC per $1 cost
+              </p>
+            </div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-3">
+              {creditRows.map((row) => {
+                const id = `${row.kind}:${row.key}`;
+                const value = draft[id] ?? String(row.unit_price_cents);
+                return (
+                  <div key={id} className="rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-3">
+                    <label htmlFor={`credit-${id}`} className="block text-[10px] font-bold uppercase tracking-[0.1em] text-ink/45">
+                      {row.label}
+                    </label>
+                    <p className="mt-0.5 text-[10px] text-ink/35">{row.unit}</p>
+                    <div className="mt-2 flex items-center gap-1.5">
+                      <input
+                        id={`credit-${id}`}
+                        type="number"
+                        min="0"
+                        step={row.kind === "sc_per_usd" ? "1" : "0.01"}
+                        value={value}
+                        onChange={(e) => setDraft((prev) => ({ ...prev, [id]: e.target.value }))}
+                        className="h-9 w-full rounded-[2px] border border-[var(--ui-line)] bg-white px-2.5 text-[12px] tabular-nums text-ink outline-none focus:border-deep-violet"
+                      />
+                      <button
+                        onClick={() => void save(row)}
+                        disabled={busy !== null}
+                        className={`shrink-0 rounded-[2px] bg-deep-violet px-2.5 py-2 text-[11px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-50 ${FOCUS_RING}`}
+                      >
+                        {busy === id ? "…" : "Save"}
+                      </button>
+                    </div>
+                    <p className="mt-1 text-[10px] text-ink/30">
+                      default {row.default_cents}
+                      {row.overridden ? " · overridden" : ""}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
           {/* LLM: one row per provider, both meters side by side. */}
           <section className="panel p-4 sm:p-5" aria-labelledby="kind-llm">
             <div className="flex flex-wrap items-end justify-between gap-2">

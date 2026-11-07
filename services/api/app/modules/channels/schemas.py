@@ -74,6 +74,14 @@ class VerificationResponse(BaseModel):
     # Live Google state, refreshed on every read.
     has_voice_of_merchant: bool | None = None
     has_business_authority: bool | None = None
+    # What Google currently has for this location. Verification is blocked by
+    # bad data more often than by a missing API method; show the data instead
+    # of a generic error.
+    location_address: str | None = None
+    location_country: str | None = None
+    location_phone: str | None = None
+    location_website: str | None = None
+    account_name: str | None = None
     options: list[dict] = Field(default_factory=list)
     verifications: list[dict] = Field(default_factory=list)
     provider_name: str | None = None

@@ -253,6 +253,21 @@ class GoogleBusinessClient(GoogleReviewsClient):
         data = resp.json()
         return data if isinstance(data, dict) else {}
 
+    async def get_phone_numbers(self, location_id: str) -> dict:
+        """Current primary/additional phones, needed for a complete patch."""
+        resp = await self._authed_request(
+            "GET",
+            f"{GBP_BIZINFO_API}/{self._location_name(location_id)}",
+            params={"readMask": "phoneNumbers"},
+        )
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"get_phone_numbers failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        data = resp.json()
+        return (data.get("phoneNumbers") or {}) if isinstance(data, dict) else {}
+
     async def patch_location(self, location_id: str, body: dict,
                              update_mask: str) -> dict:
         """PATCH one section group. Raises GoogleReviewsError on rejection."""
@@ -292,18 +307,33 @@ class GoogleBusinessClient(GoogleReviewsClient):
 
     async def list_categories(self, page_token: str | None = None,
                               page_size: int = 100,
-                              region_code: str = "US") -> dict:
-        """One page of the Google category catalog (displayName matching)."""
+                              region_code: str = "US",
+                              language_code: str = "en",
+                              filter_text: str | None = None) -> dict:
+        """One page of the Google category catalog.
+
+        ``filter_text`` uses the documented ``filter=displayName=...`` prefix
+        search. Without it the catalog must be paginated, which is both slow
+        and capped (the catalog has more than ten pages of 100).
+        """
         from urllib.parse import urlencode
 
         params = {
-            "pageSize": page_size,
+            "pageSize": max(1, min(int(page_size), 100)),
             "view": "FULL",
-            "languageCode": "en",
+            "languageCode": language_code or "en",
             "regionCode": (region_code or "US").upper()[:2],
         }
         if page_token:
             params["pageToken"] = page_token
+        if filter_text and filter_text.strip():
+            value = filter_text.strip()
+            # Google's filter grammar rejects unquoted multi-word values
+            # (displayName=Software company -> 400). Single words are accepted
+            # either way; quote only when needed.
+            if any(character.isspace() for character in value):
+                value = f'"{value}"'
+            params["filter"] = f"displayName={value}"
         resp = await self._authed_request(
             "GET", f"{GBP_BIZINFO_API}/categories?{urlencode(params)}")
         if resp.status_code != 200:
@@ -314,14 +344,33 @@ class GoogleBusinessClient(GoogleReviewsClient):
         data = resp.json()
         return data if isinstance(data, dict) else {}
 
+    async def search_categories(
+        self,
+        query: str,
+        *,
+        region_code: str = "US",
+        language_code: str = "en",
+        page_size: int = 50,
+    ) -> list[dict]:
+        """Category catalog search for the create-location picker."""
+        page = await self.list_categories(
+            page_size=page_size,
+            region_code=region_code,
+            language_code=language_code,
+            filter_text=query,
+        )
+        return list(page.get("categories") or [])
+
     async def resolve_category_id(self, display_name: str,
                                   max_pages: int = 10,
-                                  region_code: str = "US") -> str | None:
+                                  region_code: str = "US",
+                                  language_code: str = "en") -> str | None:
         """Display name ("Software company") → Google category id.
 
-        Paginates the catalog and matches case-insensitively. Returns None
-        when unmatched — callers MUST skip categories rather than guess,
-        a wrong category is worse than an unpushed one.
+        Uses the documented displayName filter first, then matches
+        case-insensitively. Returns None when unmatched — callers MUST skip
+        categories rather than guess, a wrong category is worse than an
+        unpushed one.
         """
         wanted = (display_name or "").strip().lower()
         if not wanted:
@@ -330,7 +379,10 @@ class GoogleBusinessClient(GoogleReviewsClient):
         for _ in range(max_pages):
             try:
                 page = await self.list_categories(
-                    page_token=token, region_code=region_code
+                    page_token=token,
+                    region_code=region_code,
+                    language_code=language_code,
+                    filter_text=display_name,
                 )
             except GoogleReviewsError as e:
                 logger.warning("Category catalog unreachable: %s", e)
@@ -491,12 +543,6 @@ class GoogleBusinessClient(GoogleReviewsClient):
         identity_sections: list[tuple[str, dict, str]] = []
         if name is not None:
             identity_sections.append(("name", {"title": name[:255]}, "title"))
-        if phone is not None:
-            identity_sections.append((
-                "phone",
-                {"phoneNumbers": {"primaryPhone": phone[:40]}},
-                "phoneNumbers.primaryPhone",
-            ))
         if website is not None:
             identity_sections.append((
                 "website", {"websiteUri": website[:255]}, "websiteUri"
@@ -508,33 +554,82 @@ class GoogleBusinessClient(GoogleReviewsClient):
             except GoogleReviewsError as e:
                 skipped[section] = str(e)[:200]
 
+        # PhoneNumbers has the same complete-object rule as Categories:
+        # "During updates, both fields must be set. Clients may not update just
+        # the primary or additional phone numbers using the update mask."
+        # updateMask=phoneNumbers.primaryPhone returns 400. Preserve any
+        # additional numbers Google already has.
+        if phone is not None:
+            try:
+                existing_phones = await self.get_phone_numbers(location_id)
+                additional = [
+                    str(value)[:40]
+                    for value in (existing_phones.get("additionalPhones") or [])
+                    if str(value).strip()
+                ][:2]
+                await self.patch_location(
+                    location_id,
+                    {
+                        "phoneNumbers": {
+                            "primaryPhone": phone[:40],
+                            "additionalPhones": additional,
+                        }
+                    },
+                    "phoneNumbers",
+                )
+                pushed.append("phone")
+            except GoogleReviewsError as e:
+                skipped["phone"] = str(e)[:200]
+
         if categories is not None:
             try:
-                body: dict = {}
-                mask: list[str] = []
                 primary = (categories.get("primary") or "").strip()
+                resolved_primary: str | None = None
                 if primary:
-                    resolved = await self.resolve_category_id(primary)
-                    if resolved:
-                        body["primaryCategory"] = {"name": resolved}
-                        mask.append("categories.primaryCategory")
-                    else:
+                    resolved_primary = await self.resolve_category_id(primary)
+                    if not resolved_primary:
                         skipped["categories.primary"] = f"no Google id for {primary!r}"
-                additional = []
-                for name in (categories.get("additional") or [])[:10]:
-                    resolved = await self.resolve_category_id(str(name))
+
+                requested_additional = [
+                    str(name).strip()
+                    for name in (categories.get("additional") or [])[:10]
+                    if str(name).strip()
+                ]
+                resolved_additional: list[dict] = []
+                unresolved_additional: list[str] = []
+                for name in requested_additional:
+                    resolved = await self.resolve_category_id(name)
                     if resolved:
-                        additional.append({"name": resolved})
+                        resolved_additional.append({"name": resolved})
                     else:
-                        skipped.setdefault("categories.additional",
-                                           f"no Google id for {name!r}")
-                if additional:
-                    body["additionalCategories"] = additional
-                    mask.append("categories.additionalCategories")
-                if body:
-                    await self.patch_location(location_id, {"categories": body},
-                                              ",".join(mask))
+                        unresolved_additional.append(name)
+                if unresolved_additional:
+                    skipped["categories.additional"] = (
+                        "no Google id for " + ", ".join(unresolved_additional[:5])
+                    )
+
+                # Google requires BOTH fields on every categories update and
+                # explicitly rejects categories.primaryCategory /
+                # categories.additionalCategories as update masks:
+                # "Clients are prohibited from individually updating the
+                # primary or additional categories using the update mask."
+                # Send the complete Categories object under mask "categories".
+                if resolved_primary:
+                    await self.patch_location(
+                        location_id,
+                        {
+                            "categories": {
+                                "primaryCategory": {"name": resolved_primary},
+                                "additionalCategories": resolved_additional,
+                            }
+                        },
+                        "categories",
+                    )
                     pushed.append("categories")
+                elif requested_additional:
+                    skipped["categories"] = (
+                        "cannot update additional categories without a resolvable primary category"
+                    )
             except GoogleReviewsError as e:
                 skipped["categories"] = str(e)[:200]
 

@@ -1,8 +1,18 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { adminFetch, type AdminTenantDetail } from "@/lib/admin-api";
+import {
+  adminFetch,
+  downloadTenantExport,
+  fetchTenantDelivery,
+  purgeTenant,
+  reactivateTenant,
+  suspendTenant,
+  type AdminTenantDetail,
+  type DeliveryReconciliation,
+} from "@/lib/admin-api";
 import {
   fetchPlanFeatures,
   fetchTenantBilling,
@@ -124,9 +134,12 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
   const [usageDays, setUsageDays] = useState(30);
   const [usageLoading, setUsageLoading] = useState(true);
   const [usageError, setUsageError] = useState<string | null>(null);
+  const [delivery, setDelivery] = useState<DeliveryReconciliation | null>(null);
+  const [deliveryDays, setDeliveryDays] = useState(30);
+  const [deliveryLoading, setDeliveryLoading] = useState(true);
+  const [deliveryError, setDeliveryError] = useState<string | null>(null);
 
-  const [billing, setBilling] = useState<TenantBilling | null>(null);
-  const [billingLoading, setBillingLoading] = useState(true);
+  const [billing, setBilling] = useState<TenantBilling | null>(null);  const [billingLoading, setBillingLoading] = useState(true);
   const [billingError, setBillingError] = useState<string | null>(null);
   const [reconcileDry, setReconcileDry] = useState(true);
   const [reconciling, setReconciling] = useState(false);
@@ -140,6 +153,15 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
   const [creditMessage, setCreditMessage] = useState<string | null>(null);
   const [creditError, setCreditError] = useState<string | null>(null);
   const creditKeyRef = useRef<string>("");
+
+  // Workspace lifecycle: suspend, export-before-delete, permanent purge.
+  const router = useRouter();
+  const [lifecycleBusy, setLifecycleBusy] = useState<null | "suspend" | "reactivate" | "export" | "purge">(null);
+  const [lifecycleError, setLifecycleError] = useState<string | null>(null);
+  const [lifecycleNotice, setLifecycleNotice] = useState<string | null>(null);
+  const [suspendReason, setSuspendReason] = useState("");
+  const [purgeOpen, setPurgeOpen] = useState(false);
+  const [purgeConfirm, setPurgeConfirm] = useState("");
 
   // Plan + per-tenant feature overrides
   const [ent, setEnt] = useState<TenantEntitlements | null>(null);
@@ -208,9 +230,19 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
     return () => { cancelled = true; };
   }, [id, usageDays]);
 
-  // billing ledger for this tenant
+  // Meta delivery reconciliation: provider-confirmed vs our rows.
   useEffect(() => {
     let cancelled = false;
+    setDeliveryLoading(true);
+    setDeliveryError(null);
+    fetchTenantDelivery(id, deliveryDays)
+      .then((d) => { if (!cancelled) { setDelivery(d); setDeliveryLoading(false); } })
+      .catch((e) => { if (!cancelled) { setDeliveryError(e instanceof Error ? e.message : "Delivery stats failed."); setDeliveryLoading(false); } });
+    return () => { cancelled = true; };
+  }, [id, deliveryDays]);
+
+  // billing ledger for this tenant
+  useEffect(() => {    let cancelled = false;
     setBillingLoading(true);
     setBillingError(null);
     fetchTenantBilling(id)
@@ -358,6 +390,70 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
       setCreditBusy(false);
     }
   }, [creditAmount, creditNote, id, loadEntitlements, reloadBilling]);
+
+  const runLifecycle = useCallback(
+    async (
+      action: "suspend" | "reactivate" | "export" | "purge",
+      fn: () => Promise<unknown>,
+      successMessage: string,
+    ) => {
+      setLifecycleBusy(action);
+      setLifecycleError(null);
+      setLifecycleNotice(null);
+      try {
+        await fn();
+        setLifecycleNotice(successMessage);
+      } catch (e) {
+        setLifecycleError(e instanceof Error ? e.message : "Action failed.");
+      } finally {
+        setLifecycleBusy(null);
+      }
+    },
+    [],
+  );
+
+  const handleSuspend = useCallback(() => {
+    void runLifecycle(
+      "suspend",
+      async () => {
+        const updated = await suspendTenant(id, suspendReason);
+        setTenant(updated);
+        setSuspendReason("");
+      },
+      "Workspace suspended. Every member is signed out and blocked.",
+    );
+  }, [id, runLifecycle, suspendReason]);
+
+  const handleReactivate = useCallback(() => {
+    void runLifecycle(
+      "reactivate",
+      async () => {
+        const updated = await reactivateTenant(id);
+        setTenant(updated);
+      },
+      "Workspace reactivated. Members can sign in again.",
+    );
+  }, [id, runLifecycle]);
+
+  const handleExport = useCallback(() => {
+    void runLifecycle(
+      "export",
+      () => downloadTenantExport(id),
+      "Export downloaded.",
+    );
+  }, [id, runLifecycle]);
+
+  const handlePurge = useCallback(() => {
+    void runLifecycle(
+      "purge",
+      async () => {
+        await purgeTenant(id, purgeConfirm);
+        setPurgeOpen(false);
+        router.push("/tenants");
+      },
+      "Workspace deleted.",
+    );
+  }, [id, purgeConfirm, router, runLifecycle]);
 
   const retryUsage = useCallback(() => {
     setUsageLoading(true);
@@ -1082,7 +1178,342 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
             ))}
           </dl>
         </section>
+
+        {/* ── Meta delivery reconciliation ─────────────────── */}
+        <section
+          aria-labelledby="delivery-heading"
+          className="admin-rise panel p-4 sm:p-5"
+          style={{ animationDelay: "320ms" }}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 id="delivery-heading" className="text-[11px] font-bold uppercase tracking-[0.16em] text-ink/40">
+                Meta delivery · WhatsApp / Instagram / Facebook
+              </h2>
+              <p className="mt-1.5 text-[13px] font-medium leading-relaxed text-ink/60">
+                What Meta actually confirmed through webhooks, next to the rows we hold.
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              {[7, 30, 90].map((d) => (
+                <button
+                  key={d}
+                  onClick={() => setDeliveryDays(d)}
+                  className={`rounded-[2px] px-2.5 py-1.5 text-[11px] font-semibold transition ${
+                    deliveryDays === d
+                      ? "bg-deep-violet text-white"
+                      : "border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] text-ink/60 hover:border-deep-violet hover:text-deep-violet"
+                  } ${FOCUS_RING}`}
+                >
+                  {d}d
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {deliveryLoading ? (
+            <div className="mt-4 grid gap-2.5 sm:grid-cols-5" aria-hidden>
+              {[1, 2, 3, 4, 5].map((i) => <div key={i} className="h-16 animate-pulse rounded-[2px] bg-ink/[0.04]" />)}
+            </div>
+          ) : deliveryError ? (
+            <div className="mt-4 rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-2.5 text-[12px] leading-relaxed text-amber-800">
+              {deliveryError}
+            </div>
+          ) : delivery ? (
+            <>
+              <div className="mt-4 grid gap-2.5 sm:grid-cols-3 lg:grid-cols-5">
+                {[
+                  { label: "Outbound", value: delivery.totals.outbound, note: `${delivery.totals.outbound_with_id} reached Meta` },
+                  { label: "Delivered / read", value: delivery.totals.delivered + delivery.totals.read, note: delivery.totals.delivery_rate_pct == null ? "no send confirmed" : `${delivery.totals.delivery_rate_pct}% of sent` },
+                  { label: "Read", value: delivery.totals.read, note: "provider read receipt" },
+                  { label: "Failed", value: delivery.totals.failed, note: "Meta rejected or failed" },
+                  { label: "No wamid", value: delivery.totals.outbound_without_id, note: "never reached Meta" },
+                ].map((card) => (
+                  <div key={card.label} className="rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2.5">
+                    <p className="text-[9.5px] font-bold uppercase tracking-[0.12em] text-ink/40">{card.label}</p>
+                    <p className="mt-1 text-[17px] font-bold leading-none tabular-nums text-ink">{fmt(card.value)}</p>
+                    <p className="mt-1 text-[10.5px] leading-snug text-ink/45">{card.note}</p>
+                  </div>
+                ))}
+              </div>
+
+              {delivery.by_channel.length > 0 ? (
+                <div className="mt-4 overflow-x-auto rounded-[2px] border border-[var(--ui-line)]">
+                  <table className="w-full min-w-[620px] border-collapse text-[11.5px]">
+                    <thead>
+                      <tr className="bg-[var(--ui-surface)] text-left text-[9.5px] font-bold uppercase tracking-[0.1em] text-ink/40">
+                        <th className="px-3 py-2">Channel</th>
+                        <th className="px-3 py-2 text-right">Inbound</th>
+                        <th className="px-3 py-2 text-right">Outbound</th>
+                        <th className="px-3 py-2 text-right">Delivered</th>
+                        <th className="px-3 py-2 text-right">Read</th>
+                        <th className="px-3 py-2 text-right">Failed</th>
+                        <th className="px-3 py-2 text-right">No wamid</th>
+                        <th className="px-3 py-2 text-right">Rate</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {delivery.by_channel.map((row) => (
+                        <tr key={row.channel_id} className="border-t border-[var(--ui-line)]">
+                          <td className="px-3 py-2">
+                            <span className="font-semibold text-ink">{row.name}</span>
+                            <span className="ml-1.5 text-[10px] uppercase tracking-wide text-ink/40">{row.platform}</span>
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums text-ink/70">{fmt(row.inbound)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums text-ink/70">{fmt(row.outbound)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums text-ink/70">{fmt(row.delivered + row.read)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums text-ink/70">{fmt(row.read)}</td>
+                          <td className={`px-3 py-2 text-right tabular-nums ${row.failed ? "font-semibold text-red-600" : "text-ink/70"}`}>{fmt(row.failed)}</td>
+                          <td className={`px-3 py-2 text-right tabular-nums ${row.outbound_without_id ? "font-semibold text-amber-700" : "text-ink/70"}`}>{fmt(row.outbound_without_id)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums text-ink/70">
+                            {row.delivery_rate_pct == null ? "—" : `${row.delivery_rate_pct}%`}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="mt-4 rounded-[2px] border border-dashed border-[var(--ui-line-strong)] p-6 text-center text-[12px] text-ink/45">
+                  No Meta channels are connected for this tenant.
+                </p>
+              )}
+
+              {delivery.daily.length > 0 && (
+                <details className="mt-3 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2">
+                  <summary className="cursor-pointer text-[11.5px] font-semibold text-ink/60">
+                    Daily breakdown · last {Math.min(14, delivery.daily.length)} days
+                  </summary>
+                  <div className="mt-2 overflow-x-auto">
+                    <table className="w-full min-w-[520px] border-collapse text-[11px]">
+                      <thead>
+                        <tr className="text-left text-[9.5px] font-bold uppercase tracking-[0.1em] text-ink/40">
+                          <th className="py-1.5 pr-3">Day</th>
+                          <th className="px-2 py-1.5 text-right">Inbound</th>
+                          <th className="px-2 py-1.5 text-right">Outbound</th>
+                          <th className="px-2 py-1.5 text-right">Delivered</th>
+                          <th className="px-2 py-1.5 text-right">Read</th>
+                          <th className="px-2 py-1.5 text-right">Failed</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {delivery.daily.slice(-14).map((row) => (
+                          <tr key={row.day} className="border-t border-[var(--ui-line)]">
+                            <td className="py-1.5 pr-3 tabular-nums text-ink/70">{row.day}</td>
+                            <td className="px-2 py-1.5 text-right tabular-nums text-ink/70">{fmt(row.inbound)}</td>
+                            <td className="px-2 py-1.5 text-right tabular-nums text-ink/70">{fmt(row.outbound)}</td>
+                            <td className="px-2 py-1.5 text-right tabular-nums text-ink/70">{fmt(row.delivered + row.read)}</td>
+                            <td className="px-2 py-1.5 text-right tabular-nums text-ink/70">{fmt(row.read)}</td>
+                            <td className={`px-2 py-1.5 text-right tabular-nums ${row.failed ? "font-semibold text-red-600" : "text-ink/70"}`}>{fmt(row.failed)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+              )}
+
+              <ul className="mt-3 space-y-1 text-[10.5px] leading-relaxed text-ink/40">
+                {delivery.notes.map((note) => <li key={note}>· {note}</li>)}
+              </ul>
+            </>
+          ) : null}
+        </section>
+
+        {/* ── workspace lifecycle: suspend / export / purge ─── */}
+        <section
+          aria-labelledby="controls-heading"
+          className="admin-rise panel p-4 sm:p-5"
+          style={{ animationDelay: "380ms" }}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h2 id="controls-heading" className="text-[11px] font-bold uppercase tracking-[0.16em] text-ink/40">
+                Workspace controls
+              </h2>
+              <p className="mt-1.5 text-[13px] font-medium leading-relaxed text-ink/60">
+                Suspend blocks every member without deleting anything. Export first; deletion is permanent.
+              </p>
+            </div>
+            <span
+              className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${
+                tenant.suspended_at
+                  ? "bg-red-100 text-red-700"
+                  : "bg-emerald-100 text-emerald-700"
+              }`}
+            >
+              {tenant.suspended_at ? "Suspended" : "Active"}
+            </span>
+          </div>
+
+          {tenant.suspended_at && (
+            <p className="mt-3 rounded-[2px] border border-red-200 bg-red-50 px-3 py-2.5 text-[12px] leading-relaxed text-red-800">
+              Suspended {fmtDateTime(tenant.suspended_at)}
+              {tenant.suspension_reason ? ` — ${tenant.suspension_reason}` : ""}
+            </p>
+          )}
+
+          {(lifecycleError || lifecycleNotice) && (
+            <p
+              role="status"
+              className={`mt-3 rounded-[2px] px-3 py-2.5 text-[12px] leading-relaxed ${
+                lifecycleError
+                  ? "border border-amber-200 bg-amber-50 text-amber-800"
+                  : "border border-emerald-200 bg-emerald-50 text-emerald-800"
+              }`}
+            >
+              {lifecycleError ?? lifecycleNotice}
+            </p>
+          )}
+
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            {/* suspend / reactivate */}
+            <div className="rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-3.5">
+              <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink/50">
+                {tenant.suspended_at ? "Reactivate access" : "Suspend workspace"}
+              </p>
+              <p className="mt-0.5 text-[11px] leading-relaxed text-ink/45">
+                {tenant.suspended_at
+                  ? "Clears the block. Members sign in again with their existing accounts."
+                  : "Signs out every session and rejects new logins until reactivated."}
+              </p>
+              {tenant.suspended_at ? (
+                <button
+                  type="button"
+                  onClick={handleReactivate}
+                  disabled={lifecycleBusy !== null}
+                  className={`mt-3 rounded-[2px] bg-emerald-600 px-3 py-2 text-[11.5px] font-bold text-white transition hover:bg-emerald-700 disabled:opacity-50 ${FOCUS_RING}`}
+                >
+                  {lifecycleBusy === "reactivate" ? "Reactivating…" : "Reactivate workspace"}
+                </button>
+              ) : (
+                <div className="mt-3 space-y-2">
+                  <input
+                    value={suspendReason}
+                    onChange={(event) => setSuspendReason(event.target.value)}
+                    maxLength={300}
+                    placeholder="Reason shown to the tenant (optional)"
+                    aria-label="Suspension reason"
+                    className="h-9 w-full rounded-[2px] border border-[var(--ui-line)] bg-white px-2.5 text-[12px] text-ink outline-none focus:border-deep-violet"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSuspend}
+                    disabled={lifecycleBusy !== null}
+                    className={`rounded-[2px] bg-red-600 px-3 py-2 text-[11.5px] font-bold text-white transition hover:bg-red-700 disabled:opacity-50 ${FOCUS_RING}`}
+                  >
+                    {lifecycleBusy === "suspend" ? "Suspending…" : "Suspend workspace"}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* export */}
+            <div className="rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-3.5">
+              <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink/50">
+                Export tenant data
+              </p>
+              <p className="mt-0.5 text-[11px] leading-relaxed text-ink/45">
+                One JSON file with every tenant-scoped row. Run this before any deletion.
+              </p>
+              <button
+                type="button"
+                onClick={handleExport}
+                disabled={lifecycleBusy !== null}
+                className={`mt-3 rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-3 py-2 text-[11.5px] font-semibold text-ink/70 transition hover:border-deep-violet hover:text-deep-violet disabled:opacity-50 ${FOCUS_RING}`}
+              >
+                {lifecycleBusy === "export" ? "Preparing export…" : "Download JSON export"}
+              </button>
+            </div>
+          </div>
+
+          {/* danger zone */}
+          <div className="mt-3 rounded-[2px] border border-red-200 bg-red-50/60 p-3.5">
+            <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-red-700">
+              Danger zone
+            </p>
+            <p className="mt-0.5 text-[11px] leading-relaxed text-red-800/80">
+              Permanently deletes this workspace and all of its data. There is no undo and no backup
+              inside the app — export first.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setPurgeConfirm("");
+                setLifecycleError(null);
+                setPurgeOpen(true);
+              }}
+              className={`mt-3 rounded-[2px] border border-red-300 bg-white px-3 py-2 text-[11.5px] font-bold text-red-700 transition hover:bg-red-600 hover:text-white ${FOCUS_RING}`}
+            >
+              Delete workspace permanently
+            </button>
+          </div>
+        </section>
       </div>
+
+      {/* ── purge confirmation modal ─────────────────────── */}
+      {purgeOpen && tenant && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            type="button"
+            aria-label="Cancel deletion"
+            onClick={() => setPurgeOpen(false)}
+            className={`absolute inset-0 bg-[var(--ui-scrim)] ${FOCUS_RING}`}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="purge-modal-title"
+            className="panel relative w-full max-w-[460px] bg-[var(--ui-surface-solid)] p-5"
+          >
+            <h2 id="purge-modal-title" className="text-[15px] font-bold text-red-700">
+              Delete this workspace permanently
+            </h2>
+            <p className="mt-2 text-[12px] leading-relaxed text-ink/60">
+              Every channel, message, review, reply, post, media file, ledger row and team member
+              for <span className="font-semibold text-ink">{tenant.email}</span> will be removed.
+              This cannot be undone.
+            </p>
+            <p className="mt-3 rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-2 text-[11.5px] leading-relaxed text-amber-800">
+              Type the tenant email to confirm: <span className="font-bold">{tenant.email}</span>
+            </p>
+            <input
+              value={purgeConfirm}
+              onChange={(event) => setPurgeConfirm(event.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+              aria-label="Type the tenant email to confirm deletion"
+              placeholder={tenant.email}
+              className="mt-3 h-10 w-full rounded-[2px] border border-[var(--ui-line-strong)] bg-white px-3 text-[12.5px] text-ink outline-none focus:border-red-500"
+            />
+            {lifecycleError && (
+              <p role="alert" className="mt-2 text-[11.5px] font-semibold text-red-700">
+                {lifecycleError}
+              </p>
+            )}
+            <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPurgeOpen(false)}
+                className={`rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-3 py-2 text-[11.5px] font-semibold text-ink/60 transition hover:border-deep-violet hover:text-deep-violet ${FOCUS_RING}`}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handlePurge}
+                disabled={
+                  lifecycleBusy !== null ||
+                  purgeConfirm.trim().toLowerCase() !== tenant.email.trim().toLowerCase()
+                }
+                className={`rounded-[2px] bg-red-600 px-3 py-2 text-[11.5px] font-bold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40 ${FOCUS_RING}`}
+              >
+                {lifecycleBusy === "purge" ? "Deleting…" : "Delete permanently"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── plan features modal ──────────────────────────── */}
       {planOpen && ent && (

@@ -46,6 +46,7 @@ from .modules.admin.router import router as admin_router
 from .modules.admin import models as _admin_models  # noqa: F401 (registers tables)
 from .modules.user_feedback.router import router as feedback_router
 from .modules.email.router import router as email_router
+from .modules.email import models as _email_models  # noqa: F401 (registers tables)
 from .modules.review_engine.router import router as review_engine_router
 from .modules.review_engine.csv_router import router as csv_router
 from .modules.assistant.router import router as assistant_router
@@ -175,6 +176,8 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             "/api/v1/auth/facebook/verify",
             "/api/v1/admin/",
             "/api/v1/email/otp/",
+            "/api/v1/email/webhook/",
+            "/api/v1/email/unsubscribe",
             "/api/v1/channels/webhook/",
             "/api/v1/meta/webhooks",
             "/api/v1/team/invites/accept",  # token-in-body is the proof; works pre-auth
@@ -465,8 +468,10 @@ async def lifespan(app: FastAPI):
         from .modules.channels.meta.lead_action_worker import run_lead_action_worker
         from .modules.billing.ledger import run_hold_reaper
         from .modules.outbox.worker import OutboxWorker
+        from .modules.email.outbox import run_email_worker
 
         bg_tasks.append(asyncio.create_task(run_hold_reaper()))
+        bg_tasks.append(asyncio.create_task(run_email_worker()))
         bg_tasks.append(asyncio.create_task(run_google_reviews_worker()))
         bg_tasks.append(asyncio.create_task(run_connect_import_worker()))
         bg_tasks.append(asyncio.create_task(run_post_publish_worker()))
