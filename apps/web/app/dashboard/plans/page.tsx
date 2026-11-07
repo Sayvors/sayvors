@@ -238,13 +238,13 @@ export default function PlansPage() {
             />
             <UsageMeter
               label="Messages / month"
-              used={0}
+              used={entitlements.messages_used_this_month}
               max={entitlements.max_messages_per_month ?? null}
               barClass="bg-amber-500"
               display={
                 entitlements.max_messages_per_month == null
-                  ? "Unlimited"
-                  : `0 / ${entitlements.max_messages_per_month.toLocaleString()}`
+                  ? `${entitlements.messages_used_this_month.toLocaleString()} / unlimited`
+                  : `${entitlements.messages_used_this_month.toLocaleString()} / ${entitlements.max_messages_per_month.toLocaleString()}`
               }
             />
           </div>

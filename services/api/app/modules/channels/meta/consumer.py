@@ -145,6 +145,24 @@ async def _typing_indicator_enabled(tenant_id: str) -> bool:
         return True
 
 
+async def _message_quota_available(db, tenant_id: str) -> bool:
+    """Whether the workspace can still send this month.
+
+    Fails open: a billing lookup must never silence a customer's message. The
+    LLM gateway still enforces the plan's AI feature separately, and outbound
+    sends re-check the quota at the HTTP layer.
+    """
+    try:
+        from ...billing.quotas import message_quota_available
+
+        return await message_quota_available(tenant_id, db)
+    except Exception as e:
+        logger.warning(
+            "Message quota check failed tenant=%s: %s", tenant_id[:8], e
+        )
+        return True
+
+
 async def _auto_reply_enabled(db, channel_id: str) -> bool:
     """Is the AI allowed to answer on this channel?
 
@@ -1783,6 +1801,22 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
         # shows what the customer actually said rather than "[audio message]".
         if msg_type not in ("audio", "voice"):
             await _publish_inbound_row(db, tenant_id, channel.id, row)
+
+        # Plan quota, checked BEFORE any model work. The customer's message is
+        # already stored and published; only the AI answer is withheld until
+        # the workspace raises its monthly message limit.
+        if not await _message_quota_available(db, tenant_id):
+            if msg_type in ("audio", "voice"):
+                await _publish_inbound_row(db, tenant_id, channel.id, row)
+            inbound_row.ai_reply_status = "skipped"
+            inbound_row.ai_reply_error = "Monthly message limit reached"
+            db.add(inbound_row)
+            await db.commit()
+            logger.warning(
+                "WhatsApp AI reply skipped (message quota exhausted) tenant=%s wamid=%s",
+                tenant_id[:8], wamid[:32],
+            )
+            return
 
         if not token:
             if msg_type in ("audio", "voice"):
@@ -3502,6 +3536,13 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
         if not await _auto_reply_enabled(db, channel.id):
             logger.info(
                 "Instagram AI reply skipped (auto-reply off) mid=%s", mid[:32]
+            )
+            return
+
+        if not await _message_quota_available(db, tenant_id):
+            logger.warning(
+                "Instagram AI reply skipped (message quota exhausted) tenant=%s mid=%s",
+                tenant_id[:8], mid[:32],
             )
             return
 

@@ -2132,6 +2132,14 @@ async def _ensure_messaging_quota(ctx: TenantContext, db: AsyncSession) -> None:
             detail=f"Monthly message limit reached for plan '{ent.plan_slug}'. Upgrade to send more.",
             headers={ENTITLEMENT_DENIED_HEADER: "quota"},
         )
+    # The send is about to add a row; drop the cached count so the next
+    # inbound check (AI reply gate) sees it immediately.
+    try:
+        from ..billing.quotas import invalidate_message_usage
+
+        await invalidate_message_usage(tid)
+    except Exception:
+        pass
 
 
 async def _publish_outbound_message(tenant_id: str, msg: ChannelMessage) -> None:
