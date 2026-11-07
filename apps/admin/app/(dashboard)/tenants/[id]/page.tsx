@@ -1,8 +1,16 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { adminFetch, type AdminTenantDetail } from "@/lib/admin-api";
+import {
+  adminFetch,
+  downloadTenantExport,
+  purgeTenant,
+  reactivateTenant,
+  suspendTenant,
+  type AdminTenantDetail,
+} from "@/lib/admin-api";
 import {
   fetchPlanFeatures,
   fetchTenantBilling,
@@ -125,8 +133,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
   const [usageLoading, setUsageLoading] = useState(true);
   const [usageError, setUsageError] = useState<string | null>(null);
 
-  const [billing, setBilling] = useState<TenantBilling | null>(null);
-  const [billingLoading, setBillingLoading] = useState(true);
+  const [billing, setBilling] = useState<TenantBilling | null>(null);  const [billingLoading, setBillingLoading] = useState(true);
   const [billingError, setBillingError] = useState<string | null>(null);
   const [reconcileDry, setReconcileDry] = useState(true);
   const [reconciling, setReconciling] = useState(false);
@@ -140,6 +147,15 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
   const [creditMessage, setCreditMessage] = useState<string | null>(null);
   const [creditError, setCreditError] = useState<string | null>(null);
   const creditKeyRef = useRef<string>("");
+
+  // Workspace lifecycle: suspend, export-before-delete, permanent purge.
+  const router = useRouter();
+  const [lifecycleBusy, setLifecycleBusy] = useState<null | "suspend" | "reactivate" | "export" | "purge">(null);
+  const [lifecycleError, setLifecycleError] = useState<string | null>(null);
+  const [lifecycleNotice, setLifecycleNotice] = useState<string | null>(null);
+  const [suspendReason, setSuspendReason] = useState("");
+  const [purgeOpen, setPurgeOpen] = useState(false);
+  const [purgeConfirm, setPurgeConfirm] = useState("");
 
   // Plan + per-tenant feature overrides
   const [ent, setEnt] = useState<TenantEntitlements | null>(null);
@@ -358,6 +374,70 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
       setCreditBusy(false);
     }
   }, [creditAmount, creditNote, id, loadEntitlements, reloadBilling]);
+
+  const runLifecycle = useCallback(
+    async (
+      action: "suspend" | "reactivate" | "export" | "purge",
+      fn: () => Promise<unknown>,
+      successMessage: string,
+    ) => {
+      setLifecycleBusy(action);
+      setLifecycleError(null);
+      setLifecycleNotice(null);
+      try {
+        await fn();
+        setLifecycleNotice(successMessage);
+      } catch (e) {
+        setLifecycleError(e instanceof Error ? e.message : "Action failed.");
+      } finally {
+        setLifecycleBusy(null);
+      }
+    },
+    [],
+  );
+
+  const handleSuspend = useCallback(() => {
+    void runLifecycle(
+      "suspend",
+      async () => {
+        const updated = await suspendTenant(id, suspendReason);
+        setTenant(updated);
+        setSuspendReason("");
+      },
+      "Workspace suspended. Every member is signed out and blocked.",
+    );
+  }, [id, runLifecycle, suspendReason]);
+
+  const handleReactivate = useCallback(() => {
+    void runLifecycle(
+      "reactivate",
+      async () => {
+        const updated = await reactivateTenant(id);
+        setTenant(updated);
+      },
+      "Workspace reactivated. Members can sign in again.",
+    );
+  }, [id, runLifecycle]);
+
+  const handleExport = useCallback(() => {
+    void runLifecycle(
+      "export",
+      () => downloadTenantExport(id),
+      "Export downloaded.",
+    );
+  }, [id, runLifecycle]);
+
+  const handlePurge = useCallback(() => {
+    void runLifecycle(
+      "purge",
+      async () => {
+        await purgeTenant(id, purgeConfirm);
+        setPurgeOpen(false);
+        router.push("/tenants");
+      },
+      "Workspace deleted.",
+    );
+  }, [id, purgeConfirm, router, runLifecycle]);
 
   const retryUsage = useCallback(() => {
     setUsageLoading(true);
@@ -1082,7 +1162,201 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
             ))}
           </dl>
         </section>
+
+        {/* ── workspace lifecycle: suspend / export / purge ─── */}
+        <section
+          aria-labelledby="controls-heading"
+          className="admin-rise panel p-4 sm:p-5"
+          style={{ animationDelay: "380ms" }}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h2 id="controls-heading" className="text-[11px] font-bold uppercase tracking-[0.16em] text-ink/40">
+                Workspace controls
+              </h2>
+              <p className="mt-1.5 text-[13px] font-medium leading-relaxed text-ink/60">
+                Suspend blocks every member without deleting anything. Export first; deletion is permanent.
+              </p>
+            </div>
+            <span
+              className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${
+                tenant.suspended_at
+                  ? "bg-red-100 text-red-700"
+                  : "bg-emerald-100 text-emerald-700"
+              }`}
+            >
+              {tenant.suspended_at ? "Suspended" : "Active"}
+            </span>
+          </div>
+
+          {tenant.suspended_at && (
+            <p className="mt-3 rounded-[2px] border border-red-200 bg-red-50 px-3 py-2.5 text-[12px] leading-relaxed text-red-800">
+              Suspended {fmtDateTime(tenant.suspended_at)}
+              {tenant.suspension_reason ? ` — ${tenant.suspension_reason}` : ""}
+            </p>
+          )}
+
+          {(lifecycleError || lifecycleNotice) && (
+            <p
+              role="status"
+              className={`mt-3 rounded-[2px] px-3 py-2.5 text-[12px] leading-relaxed ${
+                lifecycleError
+                  ? "border border-amber-200 bg-amber-50 text-amber-800"
+                  : "border border-emerald-200 bg-emerald-50 text-emerald-800"
+              }`}
+            >
+              {lifecycleError ?? lifecycleNotice}
+            </p>
+          )}
+
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            {/* suspend / reactivate */}
+            <div className="rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-3.5">
+              <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink/50">
+                {tenant.suspended_at ? "Reactivate access" : "Suspend workspace"}
+              </p>
+              <p className="mt-0.5 text-[11px] leading-relaxed text-ink/45">
+                {tenant.suspended_at
+                  ? "Clears the block. Members sign in again with their existing accounts."
+                  : "Signs out every session and rejects new logins until reactivated."}
+              </p>
+              {tenant.suspended_at ? (
+                <button
+                  type="button"
+                  onClick={handleReactivate}
+                  disabled={lifecycleBusy !== null}
+                  className={`mt-3 rounded-[2px] bg-emerald-600 px-3 py-2 text-[11.5px] font-bold text-white transition hover:bg-emerald-700 disabled:opacity-50 ${FOCUS_RING}`}
+                >
+                  {lifecycleBusy === "reactivate" ? "Reactivating…" : "Reactivate workspace"}
+                </button>
+              ) : (
+                <div className="mt-3 space-y-2">
+                  <input
+                    value={suspendReason}
+                    onChange={(event) => setSuspendReason(event.target.value)}
+                    maxLength={300}
+                    placeholder="Reason shown to the tenant (optional)"
+                    aria-label="Suspension reason"
+                    className="h-9 w-full rounded-[2px] border border-[var(--ui-line)] bg-white px-2.5 text-[12px] text-ink outline-none focus:border-deep-violet"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSuspend}
+                    disabled={lifecycleBusy !== null}
+                    className={`rounded-[2px] bg-red-600 px-3 py-2 text-[11.5px] font-bold text-white transition hover:bg-red-700 disabled:opacity-50 ${FOCUS_RING}`}
+                  >
+                    {lifecycleBusy === "suspend" ? "Suspending…" : "Suspend workspace"}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* export */}
+            <div className="rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-3.5">
+              <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink/50">
+                Export tenant data
+              </p>
+              <p className="mt-0.5 text-[11px] leading-relaxed text-ink/45">
+                One JSON file with every tenant-scoped row. Run this before any deletion.
+              </p>
+              <button
+                type="button"
+                onClick={handleExport}
+                disabled={lifecycleBusy !== null}
+                className={`mt-3 rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-3 py-2 text-[11.5px] font-semibold text-ink/70 transition hover:border-deep-violet hover:text-deep-violet disabled:opacity-50 ${FOCUS_RING}`}
+              >
+                {lifecycleBusy === "export" ? "Preparing export…" : "Download JSON export"}
+              </button>
+            </div>
+          </div>
+
+          {/* danger zone */}
+          <div className="mt-3 rounded-[2px] border border-red-200 bg-red-50/60 p-3.5">
+            <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-red-700">
+              Danger zone
+            </p>
+            <p className="mt-0.5 text-[11px] leading-relaxed text-red-800/80">
+              Permanently deletes this workspace and all of its data. There is no undo and no backup
+              inside the app — export first.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setPurgeConfirm("");
+                setLifecycleError(null);
+                setPurgeOpen(true);
+              }}
+              className={`mt-3 rounded-[2px] border border-red-300 bg-white px-3 py-2 text-[11.5px] font-bold text-red-700 transition hover:bg-red-600 hover:text-white ${FOCUS_RING}`}
+            >
+              Delete workspace permanently
+            </button>
+          </div>
+        </section>
       </div>
+
+      {/* ── purge confirmation modal ─────────────────────── */}
+      {purgeOpen && tenant && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            type="button"
+            aria-label="Cancel deletion"
+            onClick={() => setPurgeOpen(false)}
+            className={`absolute inset-0 bg-[var(--ui-scrim)] ${FOCUS_RING}`}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="purge-modal-title"
+            className="panel relative w-full max-w-[460px] bg-[var(--ui-surface-solid)] p-5"
+          >
+            <h2 id="purge-modal-title" className="text-[15px] font-bold text-red-700">
+              Delete this workspace permanently
+            </h2>
+            <p className="mt-2 text-[12px] leading-relaxed text-ink/60">
+              Every channel, message, review, reply, post, media file, ledger row and team member
+              for <span className="font-semibold text-ink">{tenant.email}</span> will be removed.
+              This cannot be undone.
+            </p>
+            <p className="mt-3 rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-2 text-[11.5px] leading-relaxed text-amber-800">
+              Type the tenant email to confirm: <span className="font-bold">{tenant.email}</span>
+            </p>
+            <input
+              value={purgeConfirm}
+              onChange={(event) => setPurgeConfirm(event.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+              aria-label="Type the tenant email to confirm deletion"
+              placeholder={tenant.email}
+              className="mt-3 h-10 w-full rounded-[2px] border border-[var(--ui-line-strong)] bg-white px-3 text-[12.5px] text-ink outline-none focus:border-red-500"
+            />
+            {lifecycleError && (
+              <p role="alert" className="mt-2 text-[11.5px] font-semibold text-red-700">
+                {lifecycleError}
+              </p>
+            )}
+            <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPurgeOpen(false)}
+                className={`rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-3 py-2 text-[11.5px] font-semibold text-ink/60 transition hover:border-deep-violet hover:text-deep-violet ${FOCUS_RING}`}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handlePurge}
+                disabled={
+                  lifecycleBusy !== null ||
+                  purgeConfirm.trim().toLowerCase() !== tenant.email.trim().toLowerCase()
+                }
+                className={`rounded-[2px] bg-red-600 px-3 py-2 text-[11.5px] font-bold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40 ${FOCUS_RING}`}
+              >
+                {lifecycleBusy === "purge" ? "Deleting…" : "Delete permanently"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── plan features modal ──────────────────────────── */}
       {planOpen && ent && (

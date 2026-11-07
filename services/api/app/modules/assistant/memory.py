@@ -288,6 +288,18 @@ async def save_profile(tenant_id: str, profile: dict) -> None:
     _profile_fallback[key] = (time.time(), data)
 
 
+async def forget_profile(tenant_id: str) -> None:
+    """Delete the long-term memory for a tenant (admin purge)."""
+    key = _profile_key(tenant_id)
+    _profile_fallback.pop(key, None)
+    try:
+        from ..redis.client import get_redis
+
+        await (await get_redis()).delete(key)
+    except Exception as e:
+        logger.debug("assistant profile delete failed: %s", e)
+
+
 def _prune_profile(profile: dict) -> dict:
     sessions = dict(profile.get("sessions") or {})
     if len(sessions) > PROFILE_MAX_SESSIONS:

@@ -194,6 +194,15 @@ async def login(body: LoginRequest, db: AsyncSession, user_agent: str, ip: str) 
         await log_login_failed(body.email, ip, user_agent[:200], "invalid_credentials")
         raise ValueError("Invalid email or password")
 
+    # Suspension is checked only after the password proves ownership, so an
+    # attacker cannot probe which accounts exist from the message.
+    from ..users.status import suspension_message
+
+    suspended = await suspension_message(db, user)
+    if suspended:
+        await log_login_failed(body.email, ip, user_agent[:200], "suspended")
+        raise ValueError(suspended)
+
     if not user.email_verified:
         # Resend the OTP so the user is never stuck, then refuse sign-in.
         try:
@@ -498,6 +507,22 @@ async def refresh_tokens(
 
     if db_token.expires_at < datetime.now(timezone.utc):
         raise ValueError("Refresh token expired")
+
+    # A suspended workspace must not be able to mint new access tokens. The
+    # token is revoked so a retry cannot slip through after reactivation
+    # without a fresh login.
+    from ..users.status import suspension_message
+
+    user_row = (
+        await db.execute(select(User).where(User.id == payload["sub"]))
+    ).scalar_one_or_none()
+    if user_row is None:
+        raise ValueError("Invalid refresh token")
+    suspended = await suspension_message(db, user_row)
+    if suspended:
+        db_token.revoked = True
+        await db.commit()
+        raise ValueError(suspended)
 
     # ── Device (user-agent) check ───────────────────────
     # The token is bound to the device that received it. We compare the

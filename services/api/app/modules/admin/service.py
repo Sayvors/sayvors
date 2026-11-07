@@ -180,6 +180,8 @@ async def list_tenants(
             "databanks": bank_counts.get(u.id, 0),
             "plan": u.plan or "free",
             "ai_credit_cents": u.ai_credit_cents or 0,
+            "suspended_at": u.suspended_at.isoformat() if u.suspended_at else None,
+            "suspension_reason": u.suspension_reason,
         })
     return items, total
 
@@ -218,6 +220,8 @@ async def get_tenant(db: AsyncSession, user_id: str) -> dict | None:
         "databanks": bank_counts.get(user.id, 0),
         "plan": user.plan or "free",
         "ai_credit_cents": user.ai_credit_cents or 0,
+        "suspended_at": user.suspended_at.isoformat() if user.suspended_at else None,
+        "suspension_reason": user.suspension_reason,
     }
     recent_reviews = (
         await db.execute(

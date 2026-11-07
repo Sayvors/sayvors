@@ -4,10 +4,11 @@ POST   /api/v1/admin/login   exchange the admin password for a short token
 GET    /api/v1/admin/me      session check (also proves the gate works)
 """
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -395,6 +396,150 @@ async def admin_tenant_detail(
     if detail is None:
         raise HTTPException(status_code=404, detail="Tenant not found.")
     return AdminTenantDetail(**detail)
+
+
+class SuspendTenantRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=300)
+
+
+@router.post("/tenants/{user_id}/suspend", response_model=AdminTenantDetail)
+async def admin_suspend_tenant(
+    user_id: str,
+    body: SuspendTenantRequest,
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Block every member of the workspace without deleting anything.
+
+    Suspension bumps the owner's token_version and revokes refresh tokens for
+    the owner and every employee, so already-issued sessions die immediately.
+    Per-request auth also checks the owner row, which covers tokens that were
+    not revocable (Redis down).
+    """
+    from sqlalchemy import update as _update
+
+    from ..auth.models import RefreshToken
+    from ..users.models import User
+    from ..users.status import DEFAULT_SUSPENSION_MESSAGE
+
+    user = await db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Tenant not found.")
+    if user.suspended_at is None:
+        user.suspended_at = datetime.now(timezone.utc)
+        user.suspension_reason = (body.reason or DEFAULT_SUSPENSION_MESSAGE)[:300]
+        user.token_version = (user.token_version or 0) + 1
+        member_ids = (
+            await db.execute(select(User.id).where(User.tenant_id == user_id))
+        ).scalars().all()
+        await db.execute(
+            _update(RefreshToken)
+            .where(RefreshToken.user_id.in_([user_id, *member_ids]))
+            .values(revoked=True)
+        )
+        await db.commit()
+        try:
+            from ..auth.rate_limit import delete_all_sessions
+
+            await delete_all_sessions(user_id)
+        except Exception as e:  # pragma: no cover - Redis is best effort here
+            logger.warning("Suspend could not clear sessions for %s: %s", user_id[:8], e)
+        logger.warning("Admin suspended tenant %s reason=%s", user_id, user.suspension_reason)
+
+    detail = await admin_service.get_tenant(db, user_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Tenant not found.")
+    return AdminTenantDetail(**detail)
+
+
+@router.post("/tenants/{user_id}/reactivate", response_model=AdminTenantDetail)
+async def admin_reactivate_tenant(
+    user_id: str,
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    from ..users.models import User
+
+    user = await db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Tenant not found.")
+    if user.suspended_at is not None:
+        user.suspended_at = None
+        user.suspension_reason = None
+        await db.commit()
+        logger.warning("Admin reactivated tenant %s", user_id)
+    detail = await admin_service.get_tenant(db, user_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Tenant not found.")
+    return AdminTenantDetail(**detail)
+
+
+@router.get("/tenants/{user_id}/export")
+async def admin_export_tenant(
+    user_id: str,
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Download every tenant-scoped row as JSON, before a suspend/purge.
+
+    Reads are not written to the audit log by the middleware, so the operator
+    action is logged here explicitly: who exported which tenant and how many
+    rows left the building.
+    """
+    from .tenant_ops import export_tenant
+
+    try:
+        bundle = await export_tenant(db, user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Tenant not found.") from None
+    logger.warning(
+        "Admin exported tenant %s rows=%s",
+        user_id,
+        sum(bundle.get("counts", {}).values()),
+    )
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    return JSONResponse(
+        content=bundle,
+        headers={
+            "Content-Disposition": f'attachment; filename="sayvors-tenant-{user_id}-{stamp}.json"'
+        },
+    )
+
+
+class PurgeTenantRequest(BaseModel):
+    # Typing the tenant's email makes an accidental click impossible.
+    confirm: str = Field(..., min_length=1, max_length=255)
+
+
+@router.post("/tenants/{user_id}/purge")
+async def admin_purge_tenant(
+    user_id: str,
+    body: PurgeTenantRequest,
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Permanently delete a workspace and all of its data.
+
+    Requires the tenant email as confirmation. Export first — this has no
+    undo.
+    """
+    from ..users.models import User
+    from .tenant_ops import purge_tenant
+
+    user = await db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Tenant not found.")
+    if body.confirm.strip().lower() != (user.email or "").strip().lower():
+        raise HTTPException(
+            status_code=400,
+            detail="Confirmation does not match the tenant email.",
+        )
+    try:
+        result = await purge_tenant(db, user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Tenant not found.") from None
+    logger.warning("Admin purged tenant %s rows=%s", user_id, result.get("total_rows"))
+    return {"tenant_id": user_id, **result}
 
 
 class PlanGrantRequest(BaseModel):

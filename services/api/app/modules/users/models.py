@@ -102,6 +102,11 @@ class User(Base):
     # Access-token generation: bumped on password change / logout-all so
     # previously issued access tokens are rejected (G1 revocation).
     token_version: Mapped[int] = mapped_column(Integer, default=0)
+    # Platform-level suspension (admin console). NULL = active. Suspending a
+    # tenant blocks every member at authentication, revokes sessions, and
+    # keeps the data intact until an operator reactivates or purges it.
+    suspended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    suspension_reason: Mapped[str | None] = mapped_column(String(300), nullable=True)
     # Workspace attachment (team phase 1): NULL or own id = the owner of
     # their own workspace; someone else's user id = an employee working in
     # that workspace. Tenant-scoped queries must use this, not `id` —
