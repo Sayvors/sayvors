@@ -172,6 +172,39 @@ async def test_push_profile_per_section_containment(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_push_phone_sends_complete_phone_numbers(monkeypatch):
+    """Google rejects phoneNumbers.primaryPhone as an update mask.
+
+    Both fields must be sent under mask ``phoneNumbers``; the existing
+    additional numbers must be preserved.
+    """
+    from app.modules.channels.google_business import GoogleBusinessClient
+
+    captured: dict = {}
+
+    async def _phones(self, location_id):
+        return {"primaryPhone": "050 000 0000", "additionalPhones": ["+966 11 000 0000"]}
+
+    async def _patch(self, location_id, body, mask):
+        captured["body"] = body
+        captured["mask"] = mask
+        return {}
+
+    monkeypatch.setattr(GoogleBusinessClient, "get_phone_numbers", _phones)
+    monkeypatch.setattr(GoogleBusinessClient, "patch_location", _patch)
+    client = GoogleBusinessClient("tok", None)
+    try:
+        report = await client.push_profile("loc-1", phone="+92 346 0561173")
+    finally:
+        await client.close()
+
+    assert report["pushed"] == ["phone"]
+    assert captured["mask"] == "phoneNumbers"
+    assert captured["body"]["phoneNumbers"]["primaryPhone"] == "+92 346 0561173"
+    assert captured["body"]["phoneNumbers"]["additionalPhones"] == ["+966 11 000 0000"]
+
+
+@pytest.mark.asyncio
 async def test_push_categories_sends_both_fields_under_categories_mask(monkeypatch):
     """Google rejects categories.primaryCategory as an update mask.
 

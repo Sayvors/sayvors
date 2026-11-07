@@ -1116,6 +1116,12 @@ function DetailsTab({
   // Details is a long form; collapsed by default so the map and the other
   // tabs stay reachable without scrolling past every field.
   const [open, setOpen] = useState(false);
+  const detailFailures = fullProfile?.google_skipped ?? {};
+  const detailsSynced =
+    !!profile &&
+    !detailFailures.name &&
+    !detailFailures.phone &&
+    !detailFailures.website;
 
   useEffect(() => {
     setName(fullProfile?.name ?? location?.name ?? "");
@@ -1185,7 +1191,7 @@ function DetailsTab({
           </span>
           <SectionTitle title={copy.tabDetails} subtitle={copy.detailsSubtitle} />
         </button>
-        <SourceBadge google={!!profile} copy={copy} />
+        <SourceBadge google={detailsSynced} copy={copy} />
       </div>
       {open && (
       <>
@@ -1211,6 +1217,21 @@ function DetailsTab({
               className={`input-field ${profile ? "opacity-60" : ""}`}
             />
           </Field>
+          {profile && (
+            <p className="-mt-2 text-[11px] leading-relaxed text-ink/40 dark:text-fog/40">
+              Address and country are managed by Google. Open{" "}
+              <a
+                href="https://business.google.com/"
+                target="_blank"
+                rel="noreferrer"
+                className="font-semibold text-deep-violet underline underline-offset-2"
+              >
+                Google Business Profile
+              </a>{" "}
+              to change them. If Google will not let you change the country,
+              delete the location and recreate it with the correct country.
+            </p>
+          )}
         </>
       )}
       <div className="grid gap-4 sm:grid-cols-2">

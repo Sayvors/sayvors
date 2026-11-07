@@ -253,6 +253,21 @@ class GoogleBusinessClient(GoogleReviewsClient):
         data = resp.json()
         return data if isinstance(data, dict) else {}
 
+    async def get_phone_numbers(self, location_id: str) -> dict:
+        """Current primary/additional phones, needed for a complete patch."""
+        resp = await self._authed_request(
+            "GET",
+            f"{GBP_BIZINFO_API}/{self._location_name(location_id)}",
+            params={"readMask": "phoneNumbers"},
+        )
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"get_phone_numbers failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        data = resp.json()
+        return (data.get("phoneNumbers") or {}) if isinstance(data, dict) else {}
+
     async def patch_location(self, location_id: str, body: dict,
                              update_mask: str) -> dict:
         """PATCH one section group. Raises GoogleReviewsError on rejection."""
@@ -528,12 +543,6 @@ class GoogleBusinessClient(GoogleReviewsClient):
         identity_sections: list[tuple[str, dict, str]] = []
         if name is not None:
             identity_sections.append(("name", {"title": name[:255]}, "title"))
-        if phone is not None:
-            identity_sections.append((
-                "phone",
-                {"phoneNumbers": {"primaryPhone": phone[:40]}},
-                "phoneNumbers.primaryPhone",
-            ))
         if website is not None:
             identity_sections.append((
                 "website", {"websiteUri": website[:255]}, "websiteUri"
@@ -544,6 +553,33 @@ class GoogleBusinessClient(GoogleReviewsClient):
                 pushed.append(section)
             except GoogleReviewsError as e:
                 skipped[section] = str(e)[:200]
+
+        # PhoneNumbers has the same complete-object rule as Categories:
+        # "During updates, both fields must be set. Clients may not update just
+        # the primary or additional phone numbers using the update mask."
+        # updateMask=phoneNumbers.primaryPhone returns 400. Preserve any
+        # additional numbers Google already has.
+        if phone is not None:
+            try:
+                existing_phones = await self.get_phone_numbers(location_id)
+                additional = [
+                    str(value)[:40]
+                    for value in (existing_phones.get("additionalPhones") or [])
+                    if str(value).strip()
+                ][:2]
+                await self.patch_location(
+                    location_id,
+                    {
+                        "phoneNumbers": {
+                            "primaryPhone": phone[:40],
+                            "additionalPhones": additional,
+                        }
+                    },
+                    "phoneNumbers",
+                )
+                pushed.append("phone")
+            except GoogleReviewsError as e:
+                skipped["phone"] = str(e)[:200]
 
         if categories is not None:
             try:

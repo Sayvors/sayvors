@@ -42,6 +42,11 @@ type Verification = {
   provider_managed: boolean;
   has_voice_of_merchant: boolean | null;
   has_business_authority: boolean | null;
+  location_address?: string | null;
+  location_country?: string | null;
+  location_phone?: string | null;
+  location_website?: string | null;
+  account_name?: string | null;
   options: VerificationOption[];
   verifications: VerificationItem[];
   provider_name: string | null;
@@ -362,6 +367,27 @@ export default function VerificationPage() {
                 </p>
               )}
 
+              <div className="mt-4 rounded-xl border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3">
+                <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[var(--ui-ink-2)]">
+                  Google location data
+                </p>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  <Info label="Address" value={verification?.location_address ?? ""} />
+                  <Info label="Country" value={verification?.location_country ?? ""} />
+                  <Info label="Phone" value={verification?.location_phone ?? ""} />
+                  <Info label="Website" value={verification?.location_website ?? ""} />
+                  <Info label="Connected account" value={verification?.account_name ?? ""} />
+                </div>
+                {verification &&
+                  !verification.location_phone &&
+                  !verification.location_website && (
+                    <p className="mt-2 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
+                      Google has no phone or website for this location. Add them in Google
+                      Business Profile; incomplete locations often fail verification.
+                    </p>
+                  )}
+              </div>
+
               <div className="mt-4 grid gap-3 sm:grid-cols-3">
                 <Info
                   label="Voice of Merchant"
@@ -374,7 +400,7 @@ export default function VerificationPage() {
                   }
                 />
                 <Info
-                  label="Method"
+                  label="Last method"
                   value={verification?.method ? labelFor(verification.method).title : ""}
                 />
                 <Info

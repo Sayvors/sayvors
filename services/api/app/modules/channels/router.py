@@ -1,3 +1,4 @@
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -687,9 +688,40 @@ async def _verification_snapshot(
         await db.commit()
         await db.refresh(record)
 
+    from ..locations.service import channel_meta
+
+    meta = channel_meta(channel)
+    if not meta.get("country"):
+        # Show the country Google actually has; a wrong country is one of the
+        # most common reasons verification has no eligible method.
+        try:
+            from .google_business import GBP_BIZINFO_API
+
+            loc = await client._authed_request(
+                "GET",
+                f"{GBP_BIZINFO_API}/locations/{location_id}",
+                params={"readMask": "storefrontAddress"},
+            )
+            if loc.status_code == 200:
+                code = (
+                    ((loc.json().get("storefrontAddress") or {}).get("regionCode") or "")
+                    .strip()
+                    .upper()[:2]
+                )
+                if code:
+                    meta["country"] = code
+                    channel.metadata_json = json.dumps(meta)
+                    await db.commit()
+        except Exception:  # noqa: BLE001 - diagnostics are best effort
+            pass
     return VerificationResponse(
         channel_id=channel.id,
         status=status,
+        location_address=meta.get("address"),
+        location_country=meta.get("country"),
+        location_phone=meta.get("phone"),
+        location_website=meta.get("website"),
+        account_name=meta.get("account_name"),
         method=method or (record.method if record else None),
         contact_target=contact or (record.contact_target if record else None),
         attempts=record.attempts if record else len(verifications),

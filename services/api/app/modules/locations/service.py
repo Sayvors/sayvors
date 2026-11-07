@@ -43,7 +43,7 @@ def _known_synced(meta: dict) -> set[str]:
     if not isinstance(stored, list):
         return set(GOOGLE_SYNCED_FIELDS)
     failed: set[str] = set()
-    skipped = meta.get("google_skipped")
+    skipped = meta.get("google_failed") or meta.get("google_skipped")
     if isinstance(skipped, dict):
         for section in skipped:
             failed.add("categories" if section.startswith("categories") else section)
@@ -216,7 +216,7 @@ async def get_profile(
         db, user_id, listing_id, statuses=("active", "expired")
     )
     meta = channel_meta(channel) if channel is not None else {}
-    stored_skipped = meta.get("google_skipped")
+    stored_skipped = meta.get("google_failed") or meta.get("google_skipped")
 
     # The category catalog is region-specific. Prefer the region Google
     # returns for this location's storefront; fall back to the account country
@@ -506,6 +506,16 @@ async def update_profile(
             service_area=push_service_area,
         )
         meta = channel_meta(channel)
+        failed_map = dict(meta.get("google_failed") or {})
+        for section, reason in skipped.items():
+            failed_map[section] = reason
+        for section in pushed:
+            failed_map.pop(section, None)
+            base = "categories" if section.startswith("categories") else section
+            for key in list(failed_map):
+                if key == base or key.startswith(base + "."):
+                    failed_map.pop(key, None)
+        meta["google_failed"] = failed_map
         merged_synced = _known_synced(meta)
         merged_synced.update(pushed)
         for section in skipped:
