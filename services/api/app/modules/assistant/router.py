@@ -382,6 +382,53 @@ def _prune_snapshot(snapshot: dict, message: str) -> tuple[dict, bool]:
     return {**snapshot, "reviews": pruned_reviews}, True
 
 
+def _fallback_answer(snapshot: dict, user_message: str) -> str:
+    """Answer from the live snapshot when the LLM writer comes back empty.
+
+    Some providers return a 1-token empty completion for certain histories.
+    Failing the whole chat for that is worse than answering from the data we
+    already checked — counts plus the latest reviews, worded as a summary.
+    """
+    reviews = snapshot.get("reviews") or {}
+    business = snapshot.get("business") or {}
+    total = reviews.get("reviews_indexed")
+    avg = reviews.get("average_rating")
+    all_reviews = reviews.get("all_reviews") or []
+    locations = (business.get("locations") or [])
+    bits = ["I checked your live data."]
+    if total is not None:
+        bit = f"You have {_plural(int(total), 'review')}"
+        if avg is not None:
+            bit += f" with an average rating of {avg}"
+        bits.append(bit + ".")
+    if locations:
+        names = [loc.get("name") for loc in locations if loc.get("name")]
+        if names:
+            bits.append(f"Connected locations: {', '.join(names[:6])}.")
+    if all_reviews:
+        latest = all_reviews[:4]
+        lines = ["Here are your latest reviews:"]
+        for r in latest:
+            who = r.get("reviewer") or "Guest"
+            stars = r.get("rating")
+            loc = r.get("location")
+            text = (r.get("text") or "").strip()[:160]
+            replied = " (replied)" if r.get("replied") else " (not replied yet)"
+            head = f"- **{who}**"
+            if stars is not None:
+                head += f" ({stars} stars)"
+            if loc:
+                head += f" — {loc}"
+            head += replied
+            lines.append(head)
+            if text:
+                lines.append(f"  > {text}")
+        bits.append("\n".join(lines))
+    else:
+        bits.append("No reviews are synced yet. Connect Google Business Profile to pull them in.")
+    return "\n\n".join(bits)
+
+
 async def _rag_answer(
     db: AsyncSession,
     user: User,
@@ -712,7 +759,7 @@ async def chat(
         ) from None
 
     if not reply:
-        raise HTTPException(status_code=502, detail="Assistant returned an empty reply")
+        reply = _fallback_answer(prompt_snapshot, body.message)
     await _save_chat_turn(tid, body.session_id, memory, body.message, reply)
     return AssistantChatResponse(
         reply=reply,
@@ -925,10 +972,10 @@ async def chat_stream(
             else:
                 yield sse({"type": "step", "id": "rag", "label": skip_reason or "Databank unavailable"})
 
-            # 3. Optional chart planning, streamed step by step while it runs.
-            yield sse({"type": "step", "id": "charts", "label": "Planning your charts"})
+            # 3. Optional chart planning — steps only exist while this runs.
             chart_plan = ChartPlan()
             if wants_chart(body.message, bool(memory.get("charts"))):
+                yield sse({"type": "step", "id": "charts", "label": "Planning your charts"})
                 chart_pending: list[dict] = []
                 chart_sent: set[str] = set()
 
@@ -983,13 +1030,11 @@ async def chat_stream(
                     if chart_plan.charts
                     else "Charts checked — none needed"
                 )
-            else:
-                charts_label = "Charts not needed for this question"
-            yield sse({
-                "type": "step",
-                "id": "charts",
-                "label": charts_label,
-            })
+                yield sse({
+                    "type": "step",
+                    "id": "charts",
+                    "label": charts_label,
+                })
 
             prompt_snapshot, detail_omitted = _prune_snapshot(snapshot, body.message)
             yield sse({"type": "step", "id": "think", "label": "Writing your answer"})
@@ -1022,7 +1067,13 @@ async def chat_stream(
                 yield sse({"type": "delta", "text": chunk})
 
             if empty:
-                raise RuntimeError("Assistant returned an empty reply")
+                logger.warning("Assistant stream empty; answering from snapshot")
+                yield sse({"type": "step", "id": "think", "label": "Writing your answer", "detail": "summary from live data"})
+                fallback = _fallback_answer(prompt_snapshot, body.message)
+                if chart_plan.charts:
+                    fallback += f"\n\nI prepared {_plural(len(chart_plan.charts), 'chart')} — see above."
+                answer_parts.append(fallback)
+                yield sse({"type": "delta", "text": fallback})
             yield sse({"type": "step", "id": "finalize", "label": "Finalizing your answer"})
             answer_text = "".join(answer_parts)
             await _save_chat_turn(tid, body.session_id, memory, body.message, answer_text)

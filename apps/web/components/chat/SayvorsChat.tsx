@@ -437,23 +437,13 @@ export default function SayvorsChat() {
     setInput("");
     setBusy(true);
     setError(null);
-    // Show the real pipeline outline immediately, before the first SSE byte
-    // lands — otherwise a slow first token looks like a frozen spinner. The
-    // backend updates these same ids in place as each stage completes.
-    const initialSteps: Step[] = [
-      { id: "data-locations", label: "Checking your locations", detail: null },
-      { id: "data-reviews", label: "Checking reviews", detail: null },
-      { id: "data-replies", label: "Checking replies", detail: null },
-      { id: "memory", label: "Loading chat history", detail: null },
-      { id: "rag", label: "Checking your databank", detail: null },
-      { id: "charts", label: "Planning your charts", detail: null },
-      { id: "think", label: "Writing your answer", detail: null },
-    ];
-    setLive({ steps: initialSteps, text: "", charts: [] });
+    // Empty — steps render only as the backend reports each real stage.
+    // No hard-coded outline: the trail fills in live via SSE.
+    setLive({ steps: [], text: "", charts: [] });
 
     const controller = new AbortController();
     abortRef.current = controller;
-    const steps: Step[] = initialSteps.map((s) => ({ ...s }));
+    const steps: Step[] = [];
     const charts: ChatChart[] = [];
     let answer = "";
 
