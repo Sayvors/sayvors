@@ -66,11 +66,12 @@ def test_generic_shell_renders_an_english_hero_without_arabic_title():
 def test_service_welcome_and_reset_use_the_new_templates(monkeypatch):
     sent = {}
 
-    async def fake_send(to, subject, html, text=None):
+    async def fake_send(to, subject, html, text=None, **kwargs):
         sent["to"] = to
         sent["subject"] = subject
         sent["html"] = html
         sent["text"] = text
+        sent["kind"] = kwargs.get("kind")
         return "id"
 
     monkeypatch.setattr(service, "send_email", fake_send)

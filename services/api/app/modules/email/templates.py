@@ -295,6 +295,44 @@ def welcome_email(
     )
 
 
+def review_request_email(
+    *,
+    message: str,
+    cta_url: str,
+    frontend_url: str,
+    support_email: str,
+    help_url: str,
+    privacy_url: str,
+    email: str,
+) -> str:
+    from html import escape
+
+    safe = escape(message or "")
+    body = f"""
+    <p dir="rtl" style="font-family:{ARABIC};margin:0 0 14px;font-size:15.5px;line-height:28px;color:{BODY};text-align:right;">
+      رأيك يهمّنا، ويساعد عملاء آخرين على اختيارنا بثقة.
+    </p>
+    <p dir="ltr" style="font-family:{SANS};margin:0 0 22px;font-size:15px;line-height:24px;color:{BODY};">
+      {safe}
+    </p>
+    {_cta("اترك تقييمك", cta_url, arabic=True)}
+    <p dir="ltr" style="font-family:{SANS};margin:8px 0 0;font-size:12px;line-height:18px;color:{MUTED};text-align:center;">
+      Leave your review
+    </p>"""
+    return shell(
+        title_ar="شاركنا رأيك",
+        title_en="How was your experience?",
+        preheader="رأيك يساعدنا على التحسّن | Share your experience",
+        hero_label_ar="تقييم سريع",
+        hero_label_en="A quick review helps other customers",
+        body_html=body,
+        frontend_url=frontend_url,
+        support_email=support_email,
+        help_url=help_url,
+        privacy_url=privacy_url,
+    )
+
+
 def reset_email(
     *,
     name: str,

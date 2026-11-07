@@ -784,6 +784,18 @@ async def admin_tenant_billing(
     return result
 
 
+@router.get("/email/stats")
+async def admin_email_stats(
+    days: int = Query(7, ge=1, le=90),
+    _admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Email outbox health: queued/sent/dead, provider events, suppressions."""
+    from ..email.outbox import email_stats
+
+    return await email_stats(db, days)
+
+
 @router.get("/health", response_model=AdminHealth)
 async def admin_health(
     probe: bool = Query(False),

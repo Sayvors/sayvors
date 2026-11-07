@@ -165,11 +165,30 @@ async def deliver_request(db: AsyncSession, row: ReviewRequest) -> ReviewRequest
         try:
             if not row.contact:
                 raise RuntimeError("Missing email address.")
+            from ...config import settings as _settings
+            from ..email import outbox as email_outbox
+            from ..email import templates as email_templates
+            from ..email.service import SUPPORT_EMAIL
+
+            base = (_settings.FRONTEND_URL or "https://sayvors.com").rstrip("/")
+            html = email_templates.review_request_email(
+                message=message,
+                cta_url=tracked,
+                frontend_url=base,
+                support_email=SUPPORT_EMAIL,
+                help_url=f"{base}/dashboard",
+                privacy_url=f"{base}/privacy",
+                email=row.contact,
+            )
             await send_email(
                 to=row.contact,
                 subject=subject,
-                html=f"<p>{message}</p>",
+                html=html,
                 text=message,
+                kind="review_request",
+                tenant_id=row.user_id,
+                idempotency_key=f"review-request:{row.id}",
+                headers=email_outbox.marketing_headers(row.contact),
             )
             row.status = "sent"
             row.sent_via = "email"

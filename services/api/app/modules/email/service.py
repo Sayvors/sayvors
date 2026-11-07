@@ -12,7 +12,8 @@ infrastructure simple.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
+import hashlib
 import hmac
 import logging
 import secrets
@@ -76,45 +77,68 @@ def _configured() -> bool:
     return bool(settings.RESEND_API_KEY.strip())
 
 
-async def send_email(to: str | list[str], subject: str, html: str, text: str | None = None) -> str:
-    """Send a single email using the Resend API.
+async def send_email(
+    to: str | list[str],
+    subject: str,
+    html: str,
+    text: str | None = None,
+    *,
+    kind: str = "notification",
+    tenant_id: str | None = None,
+    idempotency_key: str | None = None,
+    headers: dict | None = None,
+) -> str:
+    """Queue one email; delivery is handled by the outbox worker.
 
-    Args:
-        to: One recipient or a list of recipients.
-        subject: Email subject line.
-        html: HTML content to send to Resend.
-        text: Optional plain-text content used as a fallback.
-
-    Returns:
-        The Resend message identifier for the sent email.
-
-    Raises:
-        RuntimeError: If the API key is missing or Resend rejects the request.
+    Kept as the single entry point for callers: no request ever waits on the
+    provider. A database failure still raises, because losing the row silently
+    would lose the email.
     """
+    if isinstance(to, list):
+        # Legacy bulk API: one row per recipient, never a shared To header.
+        last = ""
+        for recipient in to:
+            queued = await _enqueue(
+                recipient, subject, html, text,
+                kind=kind, tenant_id=tenant_id,
+                idempotency_key=f"{idempotency_key}:{recipient}" if idempotency_key else None,
+                headers=headers,
+            )
+            last = queued or last
+        return last
+    return await _enqueue(
+        to, subject, html, text,
+        kind=kind, tenant_id=tenant_id,
+        idempotency_key=idempotency_key, headers=headers,
+    ) or ""
 
-    if not _configured():
-        raise RuntimeError("Server is missing RESEND_API_KEY in .env.")
-    payload: dict = {
-        "from": settings.RESEND_FROM,
-        "to": [to] if isinstance(to, str) else to,
-        "subject": subject,
-        "html": html,
-    }
-    if text:
-        payload["text"] = text
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.post(
-            settings.RESEND_URL,
-            headers={
-                "Authorization": f"Bearer {settings.RESEND_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
+
+async def _enqueue(
+    to: str,
+    subject: str,
+    html: str,
+    text: str | None,
+    *,
+    kind: str,
+    tenant_id: str | None = None,
+    idempotency_key: str | None = None,
+    headers: dict | None = None,
+) -> str | None:
+    from ...database import async_session
+    from .outbox import enqueue_email
+
+    async with async_session() as db:
+        return await enqueue_email(
+            db,
+            to=to,
+            subject=subject,
+            html=html,
+            text=text,
+            kind=kind,
+            tenant_id=tenant_id,
+            idempotency_key=idempotency_key,
+            headers=headers,
         )
-    if resp.status_code >= 400:
-        logger.warning("Resend rejected email: %s %s", resp.status_code, resp.text[:300])
-        raise RuntimeError(f"Resend error {resp.status_code}: {resp.text[:200]}")
-    return resp.json().get("id", "")
 
 
 # ── OTP ────────────────────────────────────────────────
@@ -140,6 +164,8 @@ async def send_otp_email(email: str, purpose: str = "verification") -> None:
     redis = await get_redis()
     await redis.setex(_otp_key(email), OTP_TTL_SECONDS, code)
     await redis.delete(_otp_attempts_key(email))
+    if not _configured():
+        raise RuntimeError("Server is missing RESEND_API_KEY in .env.")
     html = email_templates.otp_email(
         code=code,
         purpose=purpose,
@@ -153,6 +179,8 @@ async def send_otp_email(email: str, purpose: str = "verification") -> None:
         f"Your Sayvors {purpose} code · رمز التحقق",
         html,
         text=f"Your Sayvors {purpose} code is: {code} (expires in 10 minutes)",
+        kind="auth.otp",
+        idempotency_key=f"otp:{email.strip().lower()}:{code}",
     )
 
 
@@ -210,6 +238,8 @@ async def send_activation_email(email: str, name: str, activation_url: str) -> s
         "Activate your Sayvors account",
         _shell("Activate your account", body, _logo_url()),
         text=f"Hi {display}, activate your Sayvors account: {activation_url}",
+        kind="activation",
+        idempotency_key=f"activation:{email}:{hashlib.sha1(activation_url.encode()).hexdigest()[:20]}",
     )
 
 
@@ -237,6 +267,8 @@ async def send_team_invite_email(
         f"{display} invited you to {brand} on Sayvors",
         _shell("Team invitation", body, _logo_url()),
         text=f"{display} invited you to {brand} on Sayvors as {role_name}: {invite_url}",
+        kind="team_invite",
+        idempotency_key=f"team:{email}:{hashlib.sha1(invite_url.encode()).hexdigest()[:20]}",
     )
 
 
@@ -258,6 +290,8 @@ async def send_password_reset_email(email: str, name: str, reset_url: str) -> st
         "Reset your Sayvors password · إعادة تعيين كلمة المرور",
         html,
         text=f"Hi {display}, reset your Sayvors password (expires in 1 hour): {reset_url}",
+        kind="password_reset",
+        idempotency_key=f"reset:{email}:{hashlib.sha1(reset_url.encode()).hexdigest()[:20]}",
     )
 
 
@@ -313,6 +347,8 @@ async def send_password_reset_success_email(
             f"Time: {when_str}\nIP: {safe_ip}\nLocation: {safe_location}\nDevice: {safe_device}\n"
             f"If this wasn't you, secure your account: {forgot_url}"
         ),
+        kind="security",
+        idempotency_key=f"pwd-changed:{email}:{when_str}",
     )
 
 
@@ -341,6 +377,8 @@ async def send_account_exists_email(email: str, name: str) -> str:
             f"Hi {display}, an account already exists for this email. "
             f"Sign in: {login_url}"
         ),
+        kind="account_exists",
+        idempotency_key=f"exists:{email}:{datetime.now(timezone.utc):%Y-%m-%d}",
     )
 
 
@@ -367,6 +405,8 @@ async def send_welcome_email(email: str, name: str) -> str:
             f"Open your dashboard: {dashboard_url}\n"
             f"Need help? {SUPPORT_EMAIL}"
         ),
+        kind="welcome",
+        idempotency_key=f"welcome:{email}",
     )
 
 
@@ -401,4 +441,5 @@ async def send_notification_email(email: str, subject: str, message: str, cta_ur
         full_subject,
         _shell(subject, body),
         text=f"{full_subject}\n{message}" + (f"\n{cta_url}" if cta_url else ""),
+        kind="notification",
     )

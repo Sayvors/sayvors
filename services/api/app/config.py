@@ -193,6 +193,11 @@ class Settings(BaseSettings):
     # Server-side only. Never expose this to the frontend.
     RESEND_API_KEY: str = ""
     RESEND_URL: str = "https://api.resend.com/emails"
+    # Svix signing secret from the Resend webhook (whsec_...). Empty disables
+    # the webhook (503) rather than accepting unsigned delivery events.
+    RESEND_WEBHOOK_SECRET: str = ""
+    EMAIL_WORKER_BATCH: int = 20
+    EMAIL_WORKER_CONCURRENCY: int = 4
     RESEND_FROM: str = "Sayvors <noreply@sayvors.com>"
     EMAIL_FROM: str = "noreply@sayvors.com"
     # Generic /email/send is restricted to the platform sending domain unless

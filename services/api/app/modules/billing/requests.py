@@ -304,6 +304,24 @@ async def decide_request(
     except Exception as e:  # pragma: no cover - notification is best effort
         logger.warning("Billing request notification failed: %s", e)
 
+    # Email the decision to the owner. Enqueued, never sent inline.
+    try:
+        from ..email.service import send_notification_email
+        from ..users.models import User
+
+        owner = await db.get(User, request.tenant_id)
+        if owner is not None and owner.email:
+            await send_notification_email(
+                owner.email,
+                "Your top-up request was approved" if approve else "Your top-up request was rejected",
+                f"{summary}\n\nRequest: {request.kind}"
+                + (f" · {request.amount}" if request.amount else "")
+                + (f"\nNote: {request.decision_note}" if request.decision_note else ""),
+                "/dashboard/billing/topup",
+            )
+    except Exception as e:  # pragma: no cover - email is best effort
+        logger.warning("Billing request email failed: %s", e)
+
     await db.commit()
     await db.refresh(request)
 
