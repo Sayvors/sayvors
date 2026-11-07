@@ -32,6 +32,24 @@ GOOGLE_SYNCED_FIELDS = [
 ]
 
 
+def _known_synced(meta: dict) -> set[str]:
+    """Fields the channel's stored report considers present on Google.
+
+    Older rows were written before hours/categories were tracked. Backfill the
+    defaults on read, minus any section the last push explicitly rejected, so
+    a refresh does not show a false "Stored in Sayvors" badge.
+    """
+    stored = meta.get("google_synced")
+    if not isinstance(stored, list):
+        return set(GOOGLE_SYNCED_FIELDS)
+    failed: set[str] = set()
+    skipped = meta.get("google_skipped")
+    if isinstance(skipped, dict):
+        for section in skipped:
+            failed.add("categories" if section.startswith("categories") else section)
+    return set(stored) | (set(GOOGLE_SYNCED_FIELDS) - failed)
+
+
 def channel_meta(channel: Channel) -> dict:
     """The channel's stored Google listing metadata."""
     try:
@@ -160,7 +178,6 @@ async def get_profile(
         db, user_id, listing_id, statuses=("active", "expired")
     )
     meta = channel_meta(channel) if channel is not None else {}
-    stored_synced = meta.get("google_synced")
     stored_skipped = meta.get("google_skipped")
 
     # Local edits win section-by-section; anything never edited locally falls
@@ -213,11 +230,7 @@ async def get_profile(
             "description": profile.description
             if profile.description is not None
             else meta.get("description"),
-            "google_synced": (
-                list(stored_synced)
-                if isinstance(stored_synced, list)
-                else list(GOOGLE_SYNCED_FIELDS)
-            ),
+            "google_synced": sorted(_known_synced(meta)),
             "google_skipped": (
                 dict(stored_skipped) if isinstance(stored_skipped, dict) else {}
             ),
@@ -425,7 +438,7 @@ async def update_profile(
             service_area=push_service_area,
         )
         meta = channel_meta(channel)
-        merged_synced = set(meta.get("google_synced") or GOOGLE_SYNCED_FIELDS)
+        merged_synced = _known_synced(meta)
         merged_synced.update(pushed)
         for section in skipped:
             merged_synced.discard(section)
