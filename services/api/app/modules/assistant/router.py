@@ -40,6 +40,8 @@ router = APIRouter(prefix="/api/v1/assistant", tags=["assistant"])
 
 MAX_HISTORY = 12
 MAX_TURNS_MEMORY = 20
+CHART_PLAN_TIMEOUT_SECONDS = 25
+RAG_TIMEOUT_SECONDS = 20
 
 
 class ChatMessage(BaseModel):
@@ -404,8 +406,11 @@ async def _rag_answer(
         ).scalar_one_or_none()
         if not bank_id:
             return "", [], False, "no_databank"
-        result = await ask_question(
-            bank_id, message, user, db, top_k=5, max_steps=4, model=model
+        result = await asyncio.wait_for(
+            ask_question(
+                bank_id, message, user, db, top_k=5, max_steps=4, model=model
+            ),
+            timeout=RAG_TIMEOUT_SECONDS,
         )
         answer = (result.get("answer") or "").strip()
         citations = result.get("citations", []) or []
@@ -623,16 +628,22 @@ async def _plan_chart_reply(
     from ..llm.gateway import LLMMessage
 
     try:
-        return await plan_charts(
-            db=db,
-            user=user,
-            tenant_id=tenant_id,
-            model=model,
-            message=body.message,
-            history=[LLMMessage(role=m.role, content=m.content) for m in history],
-            memory=memory,
-            business_context=_chart_business_context(snapshot),
+        return await asyncio.wait_for(
+            plan_charts(
+                db=db,
+                user=user,
+                tenant_id=tenant_id,
+                model=model,
+                message=body.message,
+                history=[LLMMessage(role=m.role, content=m.content) for m in history],
+                memory=memory,
+                business_context=_chart_business_context(snapshot),
+            ),
+            timeout=CHART_PLAN_TIMEOUT_SECONDS,
         )
+    except (asyncio.TimeoutError, TimeoutError):
+        logger.warning("Assistant chart planning timed out")
+        return ChartPlan()
     except Exception as e:
         logger.warning("Assistant chart planning skipped: %s", e)
         return ChartPlan()
@@ -835,11 +846,17 @@ async def chat_stream(
                             model=model,
                         )
                     )
+                    rag_deadline = asyncio.get_event_loop().time() + RAG_TIMEOUT_SECONDS
                     while not task.done():
+                        if asyncio.get_event_loop().time() > rag_deadline:
+                            task.cancel()
+                            raise TimeoutError("databank search timed out")
                         await asyncio.sleep(0.12)
                         for step_id, label, detail in list(pending):
                             yield sse({"type": "step", "id": step_id, "label": label, "detail": detail})
                         pending.clear()
+                    if task.cancelled():
+                        raise TimeoutError("databank search timed out")
                     result = task.result()
                     for step_id, label, detail in pending:
                         yield sse({"type": "step", "id": step_id, "label": label, "detail": detail})

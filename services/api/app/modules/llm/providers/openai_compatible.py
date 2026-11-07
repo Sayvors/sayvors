@@ -30,10 +30,14 @@ class OpenAICompatibleProvider(LLMProvider):
     def __init__(self, provider: str, api_key: str, base_url: str | None = None):
         self._provider = provider
         resolved_url = base_url or PROVIDER_BASE_URLS.get(provider, "https://api.openai.com/v1")
+        # Fail fast instead of holding the HTTP request open during SDK retry
+        # backoff (6s/12s per retry stalls chat for minutes). Callers degrade
+        # gracefully (no chart / no databank) rather than timing out in the browser.
         self._client = AsyncOpenAI(
             api_key=api_key,
             base_url=resolved_url,
-            timeout=120.0,
+            timeout=45.0,
+            max_retries=0,
         )
 
     def name(self) -> str:

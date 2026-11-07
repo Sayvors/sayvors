@@ -707,9 +707,15 @@ async def plan_charts(
     tools = _tool_definitions()
     system = _planner_prompt(memory, business_context, shown)
     provider_error = False
+    tool_schema_error = False
     called_tools = False
+    started = time.monotonic()
 
     for _ in range(MAX_PLAN_STEPS):
+        if time.monotonic() - started > 20:
+            provider_error = True
+            plan.notes = "planner timed out"
+            break
         try:
             resp = await complete(
                 model=model,
@@ -723,11 +729,21 @@ async def plan_charts(
             )
         except Exception as e:
             # Some OpenAI-compatible models emit a malformed function name and
-            # Groq rejects the whole request before we see a ToolCall. Fall
-            # through to the tools-disabled JSON plan instead of losing charts.
+            # Groq rejects the whole request before we see a ToolCall. Only a
+            # tool-schema reject earns the tools-disabled JSON plan — a slow or
+            # rate-limited provider would just fail the second call too and
+            # double the wait, so it answers in text instead.
             logger.warning("Assistant chart planner unavailable: %s", e)
             provider_error = True
-            _mark_tools_unavailable(model)
+            msg = str(e).lower()
+            if (
+                "tool" in msg
+                or "function" in msg
+                or "validation" in msg
+                or "400" in msg
+            ):
+                tool_schema_error = True
+                _mark_tools_unavailable(model)
             plan.notes = "planner unavailable"
             break
         if not resp.tool_calls:
@@ -770,7 +786,7 @@ async def plan_charts(
     has_rows = any(bool(ds.get("rows")) for ds in context.values())
     notes = (plan.notes or "").strip().upper()
     if not plan.charts:
-        if provider_error or has_rows or (not context and notes != "NO_CHART"):
+        if tool_schema_error or (not provider_error and (has_rows or (not context and notes != "NO_CHART"))):
             await _json_chart_fallback(
                 db=db, tenant_id=tenant_id, model=model, message=message,
                 history=history, memory=memory, business_context=business_context,

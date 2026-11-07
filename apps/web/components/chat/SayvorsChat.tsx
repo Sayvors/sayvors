@@ -489,7 +489,15 @@ export default function SayvorsChat() {
         setLive(null);
       } else {
         let msg = "I couldn't reach the assistant. Try again.";
-        if (e instanceof Error) {
+        const rawMsg = e instanceof Error ? e.message : "";
+        const isNetwork =
+          (e instanceof TypeError && /fetch|network/i.test(rawMsg)) ||
+          /failed to fetch|network error|load failed/i.test(rawMsg);
+        if (isNetwork) {
+          msg =
+            "The connection dropped before the answer finished. " +
+            "Try again in a moment.";
+        } else if (e instanceof Error) {
           try {
             const parsed = JSON.parse(e.message) as { detail?: unknown; message?: unknown };
             if (typeof parsed.detail === "string") msg = parsed.detail;
@@ -500,14 +508,16 @@ export default function SayvorsChat() {
           }
         }
         setError(msg);
-        if (answer.trim()) {
+        if (answer.trim() || charts.length > 0) {
           patchActive((s) => ({
             ...s,
             messages: [
               ...s.messages,
               {
                 role: "assistant",
-                content: answer,
+                content:
+                  answer.trim() ||
+                  "Here are your charts. I couldn't finish the written summary — ask again and I'll add it.",
                 steps,
                 charts: charts.length > 0 ? charts : undefined,
               },

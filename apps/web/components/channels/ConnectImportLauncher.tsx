@@ -63,7 +63,9 @@ export default function ConnectImportLauncher() {
         session: ImportSession | null;
       },
     enabled: !sessionId,
-    refetchInterval: 5000,
+    // Idle tabs were polling every 5s forever (12 req/min/tab); 20s still
+    // auto-opens a fresh import from another tab without flooding the logs.
+    refetchInterval: 20000,
   });
 
   useEffect(() => {
