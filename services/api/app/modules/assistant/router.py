@@ -33,6 +33,7 @@ from ..users.models import User
 from ..team.context import tenant_id_of, require_perm, TenantContext, require_perm
 from .charts import (
     ChartPlan,
+    auto_chart_plan,
     chart_summary_for_prompt,
     explicit_chart_request,
     plan_charts,
@@ -487,6 +488,7 @@ def _system_prompt(
     detail_omitted: bool = False,
     rag_status: str = "answered",
     charts: list[dict] | None = None,
+    profile_block: str = "",
 ) -> str:
     import json
 
@@ -549,12 +551,17 @@ def _system_prompt(
             "for a visual. Do not repeat every plotted value, do not describe a "
             "chart that is not in this list, and do not invent a new chart."
         )
+
+    from .navigation import navigation_prompt_block
+
     return (
         "You are Sayvors' business assistant, chatting with the business owner "
         "inside their dashboard.\n\n"
         f"LIVE BUSINESS DATA:\n{context}"
         f"{rag_block}\n\n"
-        f"{chart_block}\n\n"
+        f"{chart_block}\n"
+        f"{navigation_prompt_block()}"
+        f"{profile_block}\n\n"
         "Rules:\n"
         + (
             "- This question is about totals, so individual review and reply "
@@ -597,6 +604,11 @@ def _system_prompt(
         "part of this product. The DATABANK GROUNDING block states exactly what "
         "the databank search did — follow it.\n"
         "- You may give brief, actionable advice about handling reviews.\n"
+        "- When the owner asks where something is or how to do something in the "
+        "product, point them to the exact page as a markdown link, e.g. "
+        "[Team management](/dashboard/team). Use only paths from DASHBOARD PAGES, "
+        "never an absolute URL, and keep it to one short line. The link opens in "
+        "the same tab.\n"
         "- NEVER draw a chart in text: no ASCII bars (▇█), no emoji bars, no "
         "text tables used as a chart, no hand-drawn axes. Charts are rendered "
         "by the UI as interactive components. If a chart is already in this "
@@ -642,6 +654,13 @@ async def _save_chat_turn(
     if assistant_text:
         chat_memory.append_turn(memory, "assistant", assistant_text)
     await chat_memory.save_memory(tenant_id, session_id, memory)
+    # Cross-session memory: a new chat can still reference what was discussed.
+    try:
+        await chat_memory.remember_session(
+            tenant_id, session_id, user_text, assistant_text
+        )
+    except Exception:
+        logger.debug("Could not update assistant profile", exc_info=True)
 
 
 def _chart_business_context(snapshot: dict) -> str:
@@ -745,6 +764,7 @@ async def chat(
 
     tid = tenant_id_of(user)
     memory, history = await _memory_and_history(body, tid)
+    profile = await chat_memory.load_profile(tid)
     snapshot = await _snapshot_for_user(db, user)
     model = await _resolve_model(db, tid)
     chart_plan = await _plan_chart_reply(
@@ -756,6 +776,9 @@ async def chat(
     system_prompt = _system_prompt(
         prompt_snapshot, rag_answer, citations, detail_omitted, rag_status,
         charts=chart_plan.charts,
+        profile_block=chat_memory.profile_prompt_block(
+            profile, exclude_session=body.session_id
+        ),
     )
     model = await _resolve_model(db, tid)
 
@@ -871,6 +894,7 @@ async def chat_stream(
         try:
             tid = tenant_id_of(user)
             model = await _resolve_model(db, tid)
+            profile = await chat_memory.load_profile(tid)
 
             # A greeting answers conversationally — no snapshot, databank or
             # chart work. The steps trail stays honest by showing only what
@@ -887,10 +911,13 @@ async def chat_stream(
                 msgs.append(LLMMessage(role="user", content=body.message))
                 yield sse({"type": "step", "id": "think", "label": "Writing your answer"})
                 empty = True
+                greeting_prompt = _GREETING_PROMPT + chat_memory.profile_prompt_block(
+                    profile, exclude_session=body.session_id
+                )
                 async for chunk in llm_stream(
                     model=model,
                     messages=msgs,
-                    system_prompt=_GREETING_PROMPT,
+                    system_prompt=greeting_prompt,
                     temperature=0.5,
                     max_tokens=120,
                     tenant_id=tid,
@@ -1118,6 +1145,25 @@ async def chat_stream(
                 except Exception as e:
                     logger.warning("Assistant chart planning skipped: %s", e)
                     chart_plan = ChartPlan()
+                # A cancelled or failed planner must not erase an explicit
+                # chart request: build it deterministically from the same
+                # fixed datasets instead of answering "no chart data".
+                if not chart_plan.charts and explicit_chart_request(body.message):
+                    try:
+                        fallback_plan = await auto_chart_plan(
+                            db=db,
+                            tenant_id=tid,
+                            message=body.message,
+                            memory=memory,
+                            on_step=_on_chart_step,
+                        )
+                        for step in fallback_plan.steps:
+                            if str(step.get("id") or "") in chart_sent:
+                                continue
+                            yield sse({"type": "step", **step})
+                        chart_plan = fallback_plan
+                    except Exception as e:
+                        logger.warning("Assistant deterministic chart plan failed: %s", e)
                 for step in chart_plan.steps:
                     if str(step.get("id") or "") in chart_sent:
                         continue
@@ -1144,6 +1190,9 @@ async def chat_stream(
             system_prompt = _system_prompt(
                 prompt_snapshot, rag_answer, citations, detail_omitted, rag_status,
                 charts=chart_plan.charts,
+                profile_block=chat_memory.profile_prompt_block(
+                    profile, exclude_session=body.session_id
+                ),
             )
 
             from ..llm.gateway import LLMMessage, stream as llm_stream

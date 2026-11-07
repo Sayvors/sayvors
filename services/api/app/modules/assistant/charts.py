@@ -951,6 +951,35 @@ async def _auto_chart_plan(
         plan.notes = "No chartable rows yet."
 
 
+async def auto_chart_plan(
+    *,
+    db: AsyncSession,
+    tenant_id: str,
+    message: str,
+    memory: dict,
+    on_step=None,
+) -> ChartPlan:
+    """Deterministic plan used when the model planner fails or times out.
+
+    Every value still comes from the fixed tenant-scoped datasets, so this is
+    a real chart built from real rows — never a fabricated one.
+    """
+    plan = ChartPlan()
+    context: dict[str, dict] = {}
+    await _auto_chart_plan(
+        db=db,
+        tenant_id=tenant_id,
+        message=message,
+        memory=memory,
+        plan=plan,
+        context=context,
+        signatures=chat_memory.chart_signatures(memory),
+        on_step=on_step,
+    )
+    plan.datasets = context
+    return plan
+
+
 async def plan_charts(
     *,
     db: AsyncSession,

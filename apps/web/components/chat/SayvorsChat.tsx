@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { setChatOpen, useChatOpen } from "@/lib/chat-store";
 import { safeHref } from "@/lib/safe-url";
@@ -15,6 +16,8 @@ interface ChatMsg {
   /** Short process trail (databank lookups, thinking) kept with the answer. */
   steps?: Step[];
   charts?: ChatChart[];
+  /** How long the answer took, so completed steps can say "in 6s". */
+  elapsedMs?: number;
 }
 
 /** One line in the process trail: a short label plus an optional detail. */
@@ -98,6 +101,8 @@ function loadSessions(): { sessions: ChatSession[]; activeId: string } {
                 charts: Array.isArray(m.charts)
                   ? m.charts.filter(isChatChart)
                   : undefined,
+                elapsedMs:
+                  typeof m.elapsedMs === "number" ? m.elapsedMs : undefined,
               })),
             updatedAt: typeof s.updatedAt === "number" ? s.updatedAt : 0,
           }));
@@ -120,6 +125,24 @@ function loadSessions(): { sessions: ChatSession[]; activeId: string } {
 
 const INLINE_RE = /(\[[^\]]+\]\([^)\s]+\))|(\*\*[^*]+\*\*)|(__[^_]+__)|(\*[^*\n]+\*)|(`[^`]+`)/g;
 
+/** Same-tab navigation for the dashboard pages the assistant recommends. */
+function DashboardLink({ href, label }: { href: string; label: string }) {
+  const router = useRouter();
+  return (
+    <a
+      href={href}
+      onClick={(event) => {
+        event.preventDefault();
+        router.push(href);
+      }}
+      className="mx-0.5 inline-flex items-baseline gap-1 rounded-full bg-deep-violet/10 px-2 py-0.5 text-[11px] font-semibold text-deep-violet no-underline transition hover:bg-deep-violet/15 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:bg-fog/10 dark:text-fog dark:hover:bg-fog/15"
+    >
+      {label}
+      <span aria-hidden className="text-[10px] leading-none">↗</span>
+    </a>
+  );
+}
+
 function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
   const out: React.ReactNode[] = [];
   let last = 0;
@@ -134,7 +157,11 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
       const link = /\[([^\]]+)\]\(([^)\s]+)\)/.exec(tok);
       if (link) {
         const href = safeHref(link[2]);
-        if (href) {
+        if (href && href.startsWith("/")) {
+          // In-app page: navigate in the same tab, styled as a chip so it
+          // reads as an action rather than a reference.
+          out.push(<DashboardLink key={key} href={href} label={link[1]} />);
+        } else if (href) {
           out.push(
             <a key={key} href={href} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
               {link[1]}
@@ -272,58 +299,118 @@ function renderMarkdown(text: string): React.ReactNode {
 
 /**
  * The process trail: what the assistant is doing right now (or did).
- * Each backend stage gets its own row — locations, reviews, replies,
- * databank, charts, writing, finalizing — so a long answer never looks
- * like a frozen spinner. The last row shows ~ while it works and → ✓
- * as it completes; earlier rows keep their detail (counts, sources).
+ *
+ * While a reply is streaming it stays open and shows the real stages as they
+ * arrive. Once the answer lands it collapses to one line ("Completed in 6s ·
+ * 11 steps") so the conversation stays readable; the owner can reopen it.
  */
-function StepTrail({ steps, done }: { steps: Step[]; done: boolean }) {
+function StepTrail({
+  steps,
+  done,
+  elapsedMs,
+}: {
+  steps: Step[];
+  done: boolean;
+  elapsedMs?: number | null;
+}) {
+  const [open, setOpen] = useState(!done);
   const running = !done;
+  const active = steps[steps.length - 1];
+  const seconds = elapsedMs ? Math.max(1, Math.round(elapsedMs / 1000)) : null;
+  const headline = running
+    ? active?.label ?? "Working"
+    : seconds
+      ? `Completed in ${seconds}s`
+      : "Completed";
+
   return (
-    <div
-      className="rounded-[20px] border border-ink/[0.06] bg-white px-3 py-2 dark:border-fog/[0.08] dark:bg-[#241a45]"
-      aria-label="Assistant progress"
-    >
-      <p className="px-0.5 pb-1 text-[10px] font-bold uppercase tracking-wide text-ink/35 dark:text-fog/35">
-        {running ? "Working" : "Steps completed"}
-      </p>
-      <ul className="space-y-1">
-        {steps.map((s, i) => {
-          const last = i === steps.length - 1;
-          const active = running && last;
-          return (
-            <li key={s.id} className="flex items-center gap-2 text-[11.5px] leading-relaxed">
-              <span
-                aria-hidden
-                className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
-                  active
-                    ? "bg-deep-violet text-white"
-                    : done
-                      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
-                      : "bg-ink/[0.06] text-ink/40 dark:bg-fog/[0.08] dark:text-fog/40"
-                }`}
-              >
-                {active ? "→" : done ? "✓" : "·"}
-              </span>
-              <span
-                className={
-                  active
-                    ? "font-semibold text-ink dark:text-fog"
-                    : "text-ink/55 dark:text-fog/55"
-                }
-              >
-                {s.label}
-                {active && <span aria-hidden className="ml-1 animate-pulse">~</span>}
-              </span>
-              {s.detail && (
-                <span className="ml-auto shrink-0 truncate pl-2 text-[10.5px] text-ink/40 dark:text-fog/40">
-                  {s.detail}
+    <div className="overflow-hidden rounded-[14px] border border-ink/[0.07] bg-white shadow-[0_1px_0_rgba(255,255,255,0.9)_inset,0_1px_2px_rgba(20,16,31,0.04)] dark:border-fog/[0.08] dark:bg-[#241a45]">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 px-2.5 py-2 text-left outline-none transition hover:bg-ink/[0.02] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:hover:bg-fog/[0.04]"
+      >
+        <span
+          aria-hidden
+          className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full ${
+            running
+              ? "bg-deep-violet/10 text-deep-violet"
+              : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+          }`}
+        >
+          {running ? (
+            <span className="h-2 w-2 animate-pulse rounded-full bg-deep-violet" />
+          ) : (
+            <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d="M2 6.2 4.6 9 10 3.4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          )}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-[11.5px] font-semibold text-ink/75 dark:text-fog/75">
+          {headline}
+        </span>
+        <span className="shrink-0 text-[10px] tabular-nums text-ink/35 dark:text-fog/35">
+          {running
+            ? seconds
+              ? `${seconds}s`
+              : ""
+            : `${steps.length} step${steps.length === 1 ? "" : "s"}`}
+        </span>
+        <svg
+          aria-hidden
+          viewBox="0 0 12 12"
+          className={`h-3 w-3 shrink-0 text-ink/30 transition-transform dark:text-fog/30 ${open ? "rotate-180" : ""}`}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+        >
+          <path d="M2.5 4.5 6 8l3.5-3.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+
+      {open && (
+        <ol className="space-y-0 border-t border-ink/[0.05] px-2.5 py-2 dark:border-fog/[0.06]">
+          {steps.map((s, i) => {
+            const isActive = running && i === steps.length - 1;
+            const isLast = i === steps.length - 1;
+            return (
+              <li key={s.id} className="flex items-start gap-2 py-[3px]">
+                <span className="relative flex w-3 shrink-0 justify-center">
+                  <span
+                    aria-hidden
+                    className={`mt-[3px] h-1.5 w-1.5 rounded-full ${
+                      isActive
+                        ? "bg-deep-violet ring-2 ring-deep-violet/20"
+                        : "bg-ink/20 dark:bg-fog/25"
+                    }`}
+                  />
+                  {!isLast && (
+                    <span
+                      aria-hidden
+                      className="absolute left-1/2 top-[9px] h-[calc(100%-3px)] w-px -translate-x-1/2 bg-ink/[0.08] dark:bg-fog/[0.1]"
+                    />
+                  )}
                 </span>
-              )}
-            </li>
-          );
-        })}
-      </ul>
+                <span
+                  className={`min-w-0 flex-1 text-[11px] leading-[1.45] ${
+                    isActive
+                      ? "font-semibold text-ink dark:text-fog"
+                      : "text-ink/55 dark:text-fog/55"
+                  }`}
+                >
+                  {s.label}
+                </span>
+                {s.detail && (
+                  <span className="max-w-[45%] shrink-0 truncate text-right text-[10px] text-ink/35 dark:text-fog/35">
+                    {s.detail}
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ol>
+      )}
     </div>
   );
 }
@@ -346,6 +433,8 @@ export default function SayvorsChat() {
   const [error, setError] = useState<string | null>(null);
   /** In-flight answer: the process trail plus the text typed so far. */
   const [live, setLive] = useState<{ steps: Step[]; text: string; charts: ChatChart[] } | null>(null);
+  const [liveStartedAt, setLiveStartedAt] = useState<number | null>(null);
+  const [liveElapsedMs, setLiveElapsedMs] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -382,6 +471,15 @@ export default function SayvorsChat() {
     }
   }, [open, messages, busy, live]);
 
+  // Refresh the elapsed-time label while an answer is streaming.
+  useEffect(() => {
+    if (!busy || liveStartedAt === null) return;
+    const tick = () => setLiveElapsedMs(Date.now() - liveStartedAt);
+    tick();
+    const id = window.setInterval(tick, 500);
+    return () => window.clearInterval(id);
+  }, [busy, liveStartedAt]);
+
   function patchActive(fn: (s: ChatSession) => ChatSession) {
     setSessions((prev) => prev.map((s) => (s.id === activeId ? fn(s) : s)));
   }
@@ -394,6 +492,7 @@ export default function SayvorsChat() {
     setError(null);
     setInput("");
     setLive(null);
+    setLiveStartedAt(null);
     setHistoryOpen(false);
     setTimeout(() => inputRef.current?.focus(), 100);
   }
@@ -402,6 +501,7 @@ export default function SayvorsChat() {
     if (id !== activeId) {
       abortRef.current?.abort();
       setLive(null);
+      setLiveStartedAt(null);
     }
     setActiveId(id);
     setError(null);
@@ -437,6 +537,9 @@ export default function SayvorsChat() {
     setInput("");
     setBusy(true);
     setError(null);
+    const startedAt = Date.now();
+    setLiveStartedAt(startedAt);
+    setLiveElapsedMs(0);
     // Empty — steps render only as the backend reports each real stage.
     // No hard-coded outline: the trail fills in live via SSE.
     setLive({ steps: [], text: "", charts: [] });
@@ -493,6 +596,7 @@ export default function SayvorsChat() {
         }
       }
       if (!answer.trim()) throw new Error("The assistant returned an empty reply.");
+      const elapsedMs = Date.now() - startedAt;
       patchActive((s) => ({
         ...s,
         messages: [
@@ -502,6 +606,7 @@ export default function SayvorsChat() {
             content: answer,
             steps,
             charts: charts.length > 0 ? charts : undefined,
+            elapsedMs,
           },
         ],
         updatedAt: Date.now(),
@@ -544,6 +649,7 @@ export default function SayvorsChat() {
                   "Here are your charts. I couldn't finish the written summary — ask again and I'll add it.",
                 steps,
                 charts: charts.length > 0 ? charts : undefined,
+                elapsedMs: Date.now() - startedAt,
               },
             ],
             updatedAt: Date.now(),
@@ -593,7 +699,6 @@ export default function SayvorsChat() {
         <div className="flex h-full w-full min-w-0 flex-col md:w-[400px]">
           {/* Header */}
           <div className="flex items-center gap-2.5 border-b border-ink/[0.06] bg-deep-violet px-4 py-3 dark:border-fog/[0.06]">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
             <Image src="/Sayvors_Icon.png" alt="" width={28} height={28} className="h-7 w-7 rounded-[2px]" />
             <div className="min-w-0 flex-1">
               <p className="text-[13px] font-bold text-white">Ask Sayvors</p>
@@ -650,7 +755,9 @@ export default function SayvorsChat() {
                   </p>
                 ) : (
                   <div className="w-full space-y-1.5">
-                    {m.steps && m.steps.length > 0 && <StepTrail steps={m.steps} done />}
+                    {m.steps && m.steps.length > 0 && (
+                      <StepTrail steps={m.steps} done elapsedMs={m.elapsedMs} />
+                    )}
                     <div className="max-w-[88%] space-y-1 rounded-[2px] bg-ink/[0.05] px-3.5 py-2 text-[12.5px] text-ink dark:bg-fog/[0.08] dark:text-fog">
                       {renderMarkdown(m.content)}
                     </div>
@@ -670,7 +777,9 @@ export default function SayvorsChat() {
             {live && (
               <div className="flex justify-start">
                 <div className="w-full space-y-1.5">
-                  {live.steps.length > 0 && <StepTrail steps={live.steps} done={false} />}
+                  {live.steps.length > 0 && (
+                    <StepTrail steps={live.steps} done={false} elapsedMs={liveElapsedMs} />
+                  )}
                   {live.text ? (
                     <div className="max-w-[88%] space-y-1 rounded-[2px] bg-ink/[0.05] px-3.5 py-2 text-[12.5px] text-ink dark:bg-fog/[0.08] dark:text-fog">
                       {renderMarkdown(live.text)}

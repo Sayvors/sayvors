@@ -449,6 +449,49 @@ async def test_explicit_heatmap_request_builds_heatmap_without_planner(
 
 
 @pytest.mark.asyncio
+async def test_auto_chart_plan_builds_real_charts_without_llm(db, user_id, channel_id):
+    """The deterministic path must never depend on a provider being reachable."""
+    await _seed(db, user_id, channel_id)
+    plan = await charts.auto_chart_plan(
+        db=db,
+        tenant_id=user_id,
+        message="make me graph please",
+        memory=memory.empty_memory(),
+    )
+    assert plan.charts, "auto plan produced no charts for an explicit graph request"
+    assert all(chart["rows"] for chart in plan.charts)
+
+
+@pytest.mark.asyncio
+async def test_remember_session_keeps_notes_without_redis(monkeypatch):
+    """Cross-chat memory must survive a Redis outage via the local fallback."""
+    from app.modules.assistant import memory as chat_memory
+    from app.modules.redis import client as redis_client
+
+    async def _boom():
+        raise RuntimeError("redis down")
+
+    monkeypatch.setattr(redis_client, "get_redis", _boom)
+    chat_memory._profile_fallback.clear()
+
+    await chat_memory.remember_session(
+        "tenant-1",
+        "session-a",
+        "remember that my busiest branch is Al Malqa",
+        "Noted.",
+    )
+    profile = await chat_memory.load_profile("tenant-1")
+    assert "session-a" in profile["sessions"]
+    assert profile["sessions"]["session-a"]["title"].startswith("remember that")
+    assert any("Al Malqa" in note for note in profile["notes"])
+
+    block = chat_memory.profile_prompt_block(profile, exclude_session="session-b")
+    assert "Al Malqa" in block
+    assert chat_memory.profile_prompt_block(profile, exclude_session="session-a")
+    chat_memory._profile_fallback.clear()
+
+
+@pytest.mark.asyncio
 async def test_vague_question_does_not_get_a_forced_chart(
     db, user_id, channel_id, monkeypatch
 ):

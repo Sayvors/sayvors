@@ -211,6 +211,65 @@ def test_fallback_answer_never_draws_ascii_charts():
     assert "▇" not in answer
 
 
+def test_dashboard_navigation_block_lists_real_pages():
+    from app.modules.assistant.navigation import (
+        DASHBOARD_PAGES,
+        is_dashboard_path,
+        navigation_prompt_block,
+    )
+
+    block = navigation_prompt_block()
+    for label, path, _purpose in DASHBOARD_PAGES:
+        assert path in block
+        assert label in block
+        assert is_dashboard_path(path)
+    assert not is_dashboard_path("/admin")
+    assert not is_dashboard_path("/dashboard/does-not-exist")
+    # A deep tab under a known page still counts as in-app.
+    assert is_dashboard_path("/dashboard/channels/whatsapp/settings")
+
+
+def test_owner_notes_are_detected_and_bounded():
+    from app.modules.assistant.memory import _note_from_message
+
+    assert _note_from_message("remember that my busiest branch is Al Malqa") == (
+        "my busiest branch is Al Malqa"
+    )
+    assert _note_from_message("remember: invoice me monthly") == "invoice me monthly"
+    assert _note_from_message("don't forget we close on Fridays") == "we close on Fridays"
+    assert _note_from_message("احفظ أن فرع الملقة هو الأهم") == "أن فرع الملقة هو الأهم"
+    assert _note_from_message("show me the latest reviews") is None
+
+
+def test_profile_block_lists_previous_chats_and_notes():
+    from app.modules.assistant.memory import profile_prompt_block
+
+    profile = {
+        "sessions": {
+            "s1": {
+                "title": "Review replies",
+                "last_user": "show me the negative reviews",
+                "last_answer": "You have one 2-star review about delivery.",
+                "turns": 4,
+                "at": 200.0,
+            },
+            "s2": {
+                "title": "Charts",
+                "last_user": "make me a heatmap",
+                "last_answer": "Here is when reviews arrive.",
+                "turns": 2,
+                "at": 100.0,
+            },
+        },
+        "notes": ["my busiest branch is Al Malqa"],
+    }
+    block = profile_prompt_block(profile, exclude_session="s1")
+    assert "Charts" in block
+    assert "Review replies" not in block
+    assert "busiest branch" in block
+    assert profile_prompt_block({"sessions": {}, "notes": []}) == ""
+
+
 @pytest.mark.asyncio
 async def test_assistant_chat_history_is_included(db, user_id, monkeypatch):
     """Recent conversation turns reach the model so follow-ups work."""
