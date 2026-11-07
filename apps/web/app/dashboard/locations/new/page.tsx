@@ -240,9 +240,28 @@ export default function NewLocationPage() {
       if (!draft.category.trim()) missing.push("Primary category");
     }
     if (index === 2) {
+      const street = draft.street.trim();
+      const city = draft.city.trim();
+      const state = draft.state.trim();
+      const postal = draft.postalCode.trim();
       if (draft.hasStorefront) {
-        if (!draft.street.trim()) missing.push("Street address");
-        if (!draft.city.trim()) missing.push("City");
+        if (!street) {
+          missing.push("Street address");
+        } else if (/^https?:\/\//i.test(street) || /google\.[^/\s]+\/maps/i.test(street)) {
+          missing.push(
+            "Paste the street address, not a Google Maps link (use the map pin for coordinates)",
+          );
+        } else if (street.length > 255) {
+          missing.push("Street address must be 255 characters or fewer");
+        }
+        if (!city) missing.push("City");
+        else if (city.length > 120) missing.push("City must be 120 characters or fewer");
+        if (state.length > 120) {
+          missing.push("State/province must be 120 characters or fewer");
+        }
+        if (postal.length > 20) {
+          missing.push("Postal code must be 20 characters or fewer");
+        }
         if (draft.country.trim().length !== 2) missing.push("Country");
       } else if (draft.serviceAreas.length === 0) {
         missing.push("At least one service area");
@@ -250,8 +269,14 @@ export default function NewLocationPage() {
     }
     if (index === 3) {
       if (!draft.phone.trim()) missing.push("Phone");
+      if (draft.phone.trim().length > 40) {
+        missing.push("Phone must be 40 characters or fewer");
+      }
       if (draft.website.trim() && !/^https?:\/\//i.test(draft.website.trim())) {
         missing.push("Website must start with http:// or https://");
+      }
+      if (draft.website.trim().length > 255) {
+        missing.push("Website must be 255 characters or fewer");
       }
     }
     return missing;
@@ -513,7 +538,7 @@ export default function NewLocationPage() {
 
             {errors.length > 0 && (
               <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-[12px] text-red-700 dark:border-red-500/25 dark:bg-red-500/10 dark:text-red-200">
-                Required: {errors.join(", ")}.
+                Please fix: {errors.join("; ")}.
               </p>
             )}
 
@@ -531,6 +556,7 @@ export default function NewLocationPage() {
                       placeholder="Sayvors Company"
                       className="input-field"
                       autoComplete="organization"
+                      maxLength={255}
                     />
                   </Field>
 
@@ -664,7 +690,11 @@ export default function NewLocationPage() {
                 {draft.hasStorefront ? (
                   <>
                     <div className="grid gap-4 sm:grid-cols-2">
-                      <Field label="Country / region" required>
+                      <Field
+                        label="Country / region"
+                        required
+                        hint="Choose the country where this branch is located."
+                      >
                         <select
                           value={draft.country}
                           onChange={(event) => update({ country: event.target.value })}
@@ -683,16 +713,22 @@ export default function NewLocationPage() {
                           onChange={(event) => update({ state: event.target.value })}
                           placeholder="Riyadh Province"
                           className="input-field"
+                          maxLength={120}
                         />
                       </Field>
                     </div>
-                    <Field label="Street address" required>
+                    <Field
+                      label="Street address"
+                      required
+                      hint="Street and number only. Do not paste a Google Maps link — use the map pin below for coordinates."
+                    >
                       <input
                         value={draft.street}
                         onChange={(event) => update({ street: event.target.value })}
                         placeholder="Street and number"
                         className="input-field"
                         autoComplete="street-address"
+                        maxLength={255}
                       />
                     </Field>
                     <div className="grid gap-4 sm:grid-cols-2">
@@ -703,6 +739,7 @@ export default function NewLocationPage() {
                           placeholder="Riyadh"
                           className="input-field"
                           autoComplete="address-level2"
+                          maxLength={120}
                         />
                       </Field>
                       <Field label="Postal code">
@@ -712,6 +749,7 @@ export default function NewLocationPage() {
                           placeholder="12213"
                           className="input-field"
                           autoComplete="postal-code"
+                          maxLength={20}
                         />
                       </Field>
                     </div>
@@ -773,6 +811,7 @@ export default function NewLocationPage() {
                           }}
                           placeholder="Search and add an area (e.g. Al Malqa, Riyadh)"
                           className="input-field"
+                          maxLength={255}
                         />
                         <button type="button" onClick={addArea} className="btn-secondary shrink-0">
                           Add
@@ -821,6 +860,7 @@ export default function NewLocationPage() {
                     className="input-field"
                     autoComplete="tel"
                     inputMode="tel"
+                    maxLength={40}
                   />
                 </Field>
                 <Field label="Website" hint="Optional. Use the page for this location if one exists.">
@@ -831,6 +871,7 @@ export default function NewLocationPage() {
                     className="input-field"
                     autoComplete="url"
                     inputMode="url"
+                    maxLength={255}
                   />
                 </Field>
                 <Field
