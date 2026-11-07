@@ -326,6 +326,7 @@ _PROBE_URLS = {
     "kimi": "https://api.moonshot.cn/v1/models",
     "deepseek": "https://api.deepseek.com/v1/models",
     "openrouter": "https://openrouter.ai/api/v1/models",
+    "zhipu": "https://api.z.ai/api/paas/v4/models",
     "gemini": "gemini",
     "ollama": "http://localhost:11434/api/tags",
 }
