@@ -28,7 +28,7 @@ from ...core.deps import get_current_user, get_db
 from ...core.upstream_errors import upstream_http_error
 from ..auth.rate_limit import rate_limit
 from ..analytics.models import ReviewInsight
-from ..channels.models import AutoReplyConfig, Channel, ReviewReply
+from ..channels.models import AutoReplyConfig, Channel, Lead, ReviewReply
 from ..users.models import User
 from ..team.context import tenant_id_of, require_perm, TenantContext, require_perm
 from .charts import (
@@ -316,7 +316,79 @@ async def _business_snapshot(db: AsyncSession, user: User, limit: int = DETAIL_L
                 for r in all_replies
             ],
         })
-    return {"business": business, "reviews": stats}
+
+    leads = await _leads_snapshot(db, tenant_id_of(user))
+    return {"business": business, "reviews": stats, "leads": leads}
+
+
+async def _leads_snapshot(db: AsyncSession, tenant_id: str, recent_limit: int = 8) -> dict:
+    """Lead counts by stage/category plus the newest few.
+
+    Without this block the assistant answered "I don't have a synced lead
+    count" even though the Leads board was full — the snapshot only carried
+    reviews and replies.
+    """
+    total = (
+        await db.execute(
+            select(func.count(Lead.id)).where(Lead.tenant_id == tenant_id)
+        )
+    ).scalar_one()
+    if not total:
+        return {
+            "total": 0,
+            "open": 0,
+            "by_stage": {},
+            "by_category": {},
+            "recent": [],
+            "note": "No leads captured yet.",
+        }
+
+    stage_rows = (
+        await db.execute(
+            select(Lead.stage, func.count(Lead.id))
+            .where(Lead.tenant_id == tenant_id)
+            .group_by(Lead.stage)
+        )
+    ).all()
+    category_rows = (
+        await db.execute(
+            select(Lead.category, func.count(Lead.id))
+            .where(Lead.tenant_id == tenant_id)
+            .group_by(Lead.category)
+        )
+    ).all()
+    recent = (
+        await db.execute(
+            select(Lead)
+            .where(Lead.tenant_id == tenant_id)
+            .order_by(Lead.created_at.desc())
+            .limit(recent_limit)
+        )
+    ).scalars().all()
+
+    by_stage = {str(stage or "new"): int(count) for stage, count in stage_rows}
+    closed = by_stage.get("converted", 0) + by_stage.get("lost", 0)
+    return {
+        "total": int(total),
+        "open": int(total) - closed,
+        "by_stage": by_stage,
+        "by_category": {
+            str(category or "unclassified"): int(count)
+            for category, count in category_rows
+        },
+        "recent": [
+            {
+                "name": lead.contact_name or lead.contact_username or "Unnamed contact",
+                "platform": lead.platform,
+                "stage": str(lead.stage or "new"),
+                "category": str(lead.category) if lead.category else None,
+                "request": (lead.request or lead.summary or "")[:180] or None,
+                "created_at_utc": _iso(lead.created_at),
+            }
+            for lead in recent
+        ],
+        "recent_truncated": int(total) > len(recent),
+    }
 
 
 # Snapshot cache: key = user id, value = (monotonic timestamp, snapshot).
@@ -371,7 +443,7 @@ def _wants_only_aggregates(message: str) -> bool:
 
 
 def _prune_snapshot(snapshot: dict, message: str) -> tuple[dict, bool]:
-    """Drop the verbatim review/reply rows when the question can't need them.
+    """Drop verbatim rows when the question can't need them.
 
     Returns the (possibly pruned) snapshot and whether rows were omitted. The
     system prompt tells the model the rows are absent, so it says so instead
@@ -379,14 +451,26 @@ def _prune_snapshot(snapshot: dict, message: str) -> tuple[dict, bool]:
     """
     if not _wants_only_aggregates(message):
         return snapshot, False
+    pruned = dict(snapshot)
+    omitted = False
+
     reviews = snapshot.get("reviews") or {}
-    if not (reviews.get("all_reviews") or reviews.get("all_replies")):
-        return snapshot, False
-    pruned_reviews = {
-        k: v for k, v in reviews.items() if k not in ("all_reviews", "all_replies")
-    }
-    pruned_reviews["detail_rows_omitted"] = True
-    return {**snapshot, "reviews": pruned_reviews}, True
+    if reviews.get("all_reviews") or reviews.get("all_replies"):
+        pruned_reviews = {
+            k: v for k, v in reviews.items() if k not in ("all_reviews", "all_replies")
+        }
+        pruned_reviews["detail_rows_omitted"] = True
+        pruned["reviews"] = pruned_reviews
+        omitted = True
+
+    leads = snapshot.get("leads") or {}
+    if leads.get("recent"):
+        pruned_leads = {k: v for k, v in leads.items() if k != "recent"}
+        pruned_leads["recent_omitted"] = True
+        pruned["leads"] = pruned_leads
+        omitted = True
+
+    return pruned, omitted
 
 
 def _fallback_answer(snapshot: dict, user_message: str) -> str:
@@ -398,6 +482,7 @@ def _fallback_answer(snapshot: dict, user_message: str) -> str:
     """
     reviews = snapshot.get("reviews") or {}
     business = snapshot.get("business") or {}
+    leads = snapshot.get("leads") or {}
     total = reviews.get("reviews_indexed")
     avg = reviews.get("average_rating")
     all_reviews = reviews.get("all_reviews") or []
@@ -408,6 +493,17 @@ def _fallback_answer(snapshot: dict, user_message: str) -> str:
         if avg is not None:
             bit += f" with an average rating of {avg}"
         bits.append(bit + ".")
+    if "lead" in (user_message or "").lower() and leads.get("total") is not None:
+        stage = ", ".join(
+            f"{name}: {count}" for name, count in (leads.get("by_stage") or {}).items()
+        )
+        lead_bit = (
+            f"You have {_plural(int(leads.get('total') or 0), 'lead')} "
+            f"({int(leads.get('open') or 0)} open)"
+        )
+        if stage:
+            lead_bit += f" — {stage}"
+        bits.append(lead_bit + ".")
     if locations:
         names = [loc.get("name") for loc in locations if loc.get("name")]
         if names:
@@ -564,10 +660,10 @@ def _system_prompt(
         f"{profile_block}\n\n"
         "Rules:\n"
         + (
-            "- This question is about totals, so individual review and reply "
-            "text was left out of the context on purpose. Answer from the "
-            "aggregate fields. If the owner then asks about a specific review "
-            "or reply, say you can pull that detail up next.\n"
+            "- This question is about totals, so individual review, reply and "
+            "lead rows were left out of the context on purpose. Answer from "
+            "the aggregate fields. If the owner then asks about a specific "
+            "review, reply or lead, say you can pull that detail up next.\n"
             if detail_omitted
             else ""
         ) +
@@ -579,6 +675,10 @@ def _system_prompt(
         "average_rating, rating_distribution, replies_posted_total, "
         "replies_pending_approval, replies_failed, response rates) — they "
         "cover the whole business, not just the listed rows.\n"
+        "- Leads are under `leads`: total, open, by_stage (new, qualified, "
+        "follow_up, converted, lost), by_category, and the newest `recent` "
+        "rows. Answer lead counts and pipeline questions from these fields. "
+        "Never say you lack lead data while this block is present.\n"
         "- NEVER invent reviewer names, ratings, dates, review text, reply "
         "text, or numbers. If the owner asks about a review, reply, user, or "
         "date that is not in the lists above, say plainly that you cannot "
@@ -685,6 +785,9 @@ def _chart_business_context(snapshot: dict) -> str:
         bits.append(f"Indexed reviews: {reviews.get('reviews_indexed')}")
     if reviews.get("average_rating") is not None:
         bits.append(f"Average rating: {reviews.get('average_rating')}")
+    leads = snapshot.get("leads") or {}
+    if leads.get("total") is not None:
+        bits.append(f"Leads: {leads.get('total')} total, {leads.get('open')} open")
     return "; ".join(bits)[:1200]
 
 
@@ -981,14 +1084,18 @@ async def chat_stream(
             yield sse({"type": "step", "id": "data-locations", "label": "Checking your locations"})
             yield sse({"type": "step", "id": "data-reviews", "label": "Checking reviews"})
             yield sse({"type": "step", "id": "data-replies", "label": "Checking replies"})
+            yield sse({"type": "step", "id": "data-leads", "label": "Checking leads"})
             snapshot = await _snapshot_for_user(db, user)
             reviews_meta = snapshot.get("reviews", {}) or {}
             business_meta = snapshot.get("business", {}) or {}
+            leads_meta = snapshot.get("leads", {}) or {}
             locations = (business_meta.get("locations", []) or [])
             n_reviews = int(reviews_meta.get("reviews_indexed") or 0)
             avg_rating = reviews_meta.get("average_rating")
             n_posted = int(reviews_meta.get("replies_posted_total") or 0)
             n_pending = int(reviews_meta.get("replies_pending_approval") or 0)
+            n_leads = int(leads_meta.get("total") or 0)
+            n_open_leads = int(leads_meta.get("open") or 0)
             yield sse({
                 "type": "step",
                 "id": "data-locations",
@@ -1009,6 +1116,16 @@ async def chat_stream(
                 "id": "data-replies",
                 "label": "Checked replies",
                 "detail": f"{_plural(n_posted, 'posted reply')}" + (f" · {n_pending} pending" if n_pending else ""),
+            })
+            yield sse({
+                "type": "step",
+                "id": "data-leads",
+                "label": "Checked leads",
+                "detail": (
+                    f"{_plural(n_leads, 'lead')}" + (f" · {n_open_leads} open" if n_open_leads else "")
+                    if n_leads
+                    else "none captured yet"
+                ),
             })
 
             tid = tenant_id_of(user)

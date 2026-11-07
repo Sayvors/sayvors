@@ -199,6 +199,72 @@ def test_greeting_detection():
         assert not _is_greeting(text), text
 
 
+@pytest.mark.asyncio
+async def test_snapshot_includes_lead_counts(db, user_id, channel_id):
+    """'How many leads?' must be answerable from the snapshot, not a dodge."""
+    from app.modules.assistant.router import _business_snapshot
+    from app.modules.channels.models import Lead
+
+    db.add(Lead(
+        tenant_id=user_id,
+        channel_id=channel_id,
+        platform="whatsapp",
+        contact_id="lead-1",
+        contact_name="Buyer One",
+        stage="new",
+        category="quote",
+        request="10 boxes",
+    ))
+    db.add(Lead(
+        tenant_id=user_id,
+        channel_id=channel_id,
+        platform="whatsapp",
+        contact_id="lead-2",
+        contact_name="Buyer Two",
+        stage="converted",
+        category="wholesale",
+        request="monthly order",
+    ))
+    await db.commit()
+
+    snapshot = await _business_snapshot(db, _user(user_id))
+
+    assert snapshot["leads"]["total"] == 2
+    assert snapshot["leads"]["open"] == 1
+    assert snapshot["leads"]["by_stage"]["new"] == 1
+    assert snapshot["leads"]["by_stage"]["converted"] == 1
+    assert snapshot["leads"]["recent"]
+
+
+def test_prune_snapshot_drops_lead_rows_for_aggregate_questions():
+    from app.modules.assistant.router import _prune_snapshot
+
+    snapshot = {
+        "reviews": {"all_reviews": [{"reviewer": "A"}], "all_replies": [{"x": 1}]},
+        "leads": {"total": 2, "open": 1, "recent": [{"name": "Buyer One"}]},
+    }
+    pruned, omitted = _prune_snapshot(snapshot, "how many leads do we have?")
+    assert omitted is True
+    assert "all_reviews" not in pruned["reviews"]
+    assert "recent" not in pruned["leads"]
+    assert pruned["leads"]["recent_omitted"] is True
+
+
+def test_fallback_answer_mentions_leads_when_asked():
+    from app.modules.assistant.router import _fallback_answer
+
+    answer = _fallback_answer(
+        {
+            "business": {"locations": []},
+            "reviews": {"reviews_indexed": 0, "all_reviews": []},
+            "leads": {"total": 3, "open": 2, "by_stage": {"new": 2, "converted": 1}},
+        },
+        "how many leads do we have?",
+    )
+    assert "3 leads" in answer
+    assert "2 open" in answer
+
+
 def test_fallback_answer_never_draws_ascii_charts():
     from app.modules.assistant.router import _fallback_answer
 
