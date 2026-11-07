@@ -183,7 +183,7 @@ export default function TopUpPage() {
           <section className="rounded-2xl border border-ink/[0.07] bg-white p-4 dark:border-fog/[0.08] dark:bg-ink/60">
             <h2 className="text-[14px] font-bold text-ink dark:text-fog">WhatsApp messages</h2>
             <p className="mt-1 text-[12px] leading-relaxed text-ink/50 dark:text-fog/50">
-              Added on top of your plan's monthly allowance. The AI stops replying when the limit is reached.
+              Added on top of your plan&apos;s monthly allowance. The AI stops replying when the limit is reached.
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               {MESSAGE_PACKS.map((pack) => (

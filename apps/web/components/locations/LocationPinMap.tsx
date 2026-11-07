@@ -37,7 +37,10 @@ export default function LocationPinMap({
   const markerRef = useRef<any>(null);
   const geocoderRef = useRef<any>(null);
   const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
 
   const [state, setState] = useState<"loading" | "ready" | "error" | "nokey">(
     apiKey ? "loading" : "nokey",

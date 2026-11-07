@@ -172,7 +172,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    checkAuth();
+    // Defer the probe so the effect does not synchronously set state during
+    // mount; checkAuth itself resolves over the network.
+    const id = window.setTimeout(() => void checkAuth(), 0);
+    return () => window.clearTimeout(id);
   }, [checkAuth]);
 
   const signup = async (data: SignupData) => {
