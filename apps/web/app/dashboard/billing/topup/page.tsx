@@ -8,6 +8,7 @@ import {
   createBillingRequest,
   getBudget,
   getEntitlements,
+  getPlans,
   listBillingRequests,
   type BillingRequest,
   type BillingRequestKind,
@@ -49,6 +50,7 @@ export default function TopUpPage() {
     staleTime: 30_000,
   });
   const budget = useQuery({ queryKey: queryKeys.billing.budget(), queryFn: getBudget, staleTime: 30_000 });
+  const plans = useQuery({ queryKey: queryKeys.billing.plans(), queryFn: getPlans, staleTime: 300_000 });
   const requests = useQuery({ queryKey: ["billing", "requests"], queryFn: listBillingRequests });
 
   const [messagePack, setMessagePack] = useState(500);
@@ -67,8 +69,17 @@ export default function TopUpPage() {
   const messageLimit = entitlements.data?.max_messages_per_month ?? null;
   const usedMessages = entitlements.data?.messages_used_this_month ?? 0;
   const balance = budget.data?.balance_cents ?? 0;
-  const balanceCredits = budget.data?.balance_credits ?? 0;
   const scPerUsd = budget.data?.credits_per_usd ?? 1000;
+  // Fallback keeps old API builds (no balance_credits yet) correct instead of
+  // rendering "0 SC" next to a real dollar balance.
+  const balanceCredits =
+    budget.data?.balance_credits ?? (balance / 100) * scPerUsd;
+  const currentPlanData = (plans.data ?? []).find(
+    (plan) => plan.slug === (entitlements.data?.plan_slug ?? ""),
+  );
+  const includedCreditSc = currentPlanData
+    ? (currentPlanData.included_credit_cents / 100) * scPerUsd
+    : 0;
 
   async function submit(kind: BillingRequestKind, amount: number | null, plan_slug?: string | null) {
     setBusy(kind);
@@ -148,17 +159,22 @@ export default function TopUpPage() {
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src="/Sayvors_Credits.png" alt="" width={26} height={26} className="h-[26px] w-[26px] shrink-0" />
               <p className="text-[18px] font-bold tabular-nums text-ink dark:text-fog">
-                {balanceCredits.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                {Math.round(balanceCredits).toLocaleString()}
                 <span className="ml-1 text-[11px] font-semibold text-ink/40 dark:text-fog/40">SC</span>
               </p>
             </div>
-            <p className="mt-1 text-[10.5px] text-ink/40 dark:text-fog/40">
-              {fmtCents(balance)} · {scPerUsd.toLocaleString()} SC = $1
-            </p>
           </div>
           <div className="rounded-2xl border border-ink/[0.07] bg-white p-4 dark:border-fog/[0.08] dark:bg-ink/60">
             <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40 dark:text-fog/40">Plan</p>
             <p className="mt-1 text-[18px] font-bold text-ink dark:text-fog">{currentPlan || "—"}</p>
+            <p className="mt-1 text-[10.5px] leading-snug text-ink/40 dark:text-fog/40">
+              {messageLimit == null
+                ? "Unlimited WhatsApp messages"
+                : `${messageLimit.toLocaleString()} WhatsApp messages / month`}
+              {currentPlanData
+                ? ` · ${Math.round(includedCreditSc).toLocaleString()} SC included`
+                : ""}
+            </p>
           </div>
         </div>
 

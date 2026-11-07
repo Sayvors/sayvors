@@ -49,10 +49,12 @@ function PlanCard({
   plan,
   current,
   onSelect,
+  scPerUsd,
 }: {
   plan: WebPlan;
   current: boolean;
   onSelect: () => void;
+  scPerUsd: number;
 }) {
   const features = FEATURE_ORDER.filter((k) => (plan.features || {})[k]);
   const isEnterprise = plan.slug === "enterprise";
@@ -89,7 +91,9 @@ function PlanCard({
         <div className="rounded-xl bg-ink/[0.03] px-3 py-2 dark:bg-fog/[0.04]">
           <div className="text-ink/45 dark:text-fog/45">AI credit</div>
           <div className="font-semibold text-ink dark:text-fog">
-            {isEnterprise ? "Custom" : fmtCents(creditCents)}
+            {isEnterprise
+              ? "Custom"
+              : `${Math.round((creditCents / 100) * scPerUsd).toLocaleString()} SC`}
           </div>
         </div>
         <div className="rounded-xl bg-ink/[0.03] px-3 py-2 dark:bg-fog/[0.04]">
@@ -231,12 +235,15 @@ export default function PlansPage() {
               barClass="bg-sky-500"
             />
             <UsageMeter
-              label="AI credit balance"
-              used={budget ? (budget.balance_cents / 100) : 0}
+              label="Sayvors Credits"
+              used={budget ? (budget.balance_cents / 100) * (budget.credits_per_usd ?? 1000) : 0}
               max={null}
-              suffix="$"
               barClass="bg-emerald-500"
-              display={budget ? `$${(budget.balance_cents / 100).toFixed(2)}` : "—"}
+              display={
+                budget
+                  ? `${Math.round((budget.balance_cents / 100) * (budget.credits_per_usd ?? 1000)).toLocaleString()} SC`
+                  : "—"
+              }
             />
             <UsageMeter
               label="Messages / month"
@@ -269,6 +276,7 @@ export default function PlansPage() {
               key={p.id}
               plan={p}
               current={p.slug === currentSlug}
+              scPerUsd={budget?.credits_per_usd ?? 1000}
               onSelect={() => handleSelect(p)}
             />
           ))}
