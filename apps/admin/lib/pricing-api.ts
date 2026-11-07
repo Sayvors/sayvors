@@ -2,7 +2,14 @@
 
 import { adminFetch } from "@/lib/admin-api";
 
-export type PricingKind = "llm_input" | "llm_output" | "asr_minute" | "tts_kchar";
+export type PricingKind =
+  | "llm_input"
+  | "llm_output"
+  | "asr_minute"
+  | "tts_kchar"
+  | "sc_per_usd"
+  | "margin_bp"
+  | "infra_cost_micro_usd";
 
 export interface PricingRateRow {
   kind: PricingKind;

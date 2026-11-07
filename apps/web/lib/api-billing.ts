@@ -121,6 +121,8 @@ export interface Budget {
   balance_cents: number;
   balance_dollars: number;
   currency: string;
+  credits_per_usd?: number;
+  balance_credits?: number;
 }
 
 export async function getBudget(): Promise<Budget> {

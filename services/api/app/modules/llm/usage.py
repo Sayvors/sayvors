@@ -78,8 +78,18 @@ async def _insert_event(
 ) -> None:
     try:
         from .models import LLMUsageEvent
+        from ..billing import pricing
 
         usage = resp.usage if resp is not None else None
+        prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+        completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+        model_id = getattr(req, "model_id", None) or getattr(req, "model", "") or ""
+        provider_micro = pricing.llm_provider_cost_micro_usd(
+            model_id, prompt_tokens, completion_tokens
+        )
+        infra_micro = pricing.infra_cost_micro_usd()
+        delivery_micro = provider_micro + infra_micro
+        charge_micro = pricing.charge_micro_usd(delivery_micro)
         async with _get_session_factory()() as db:
             db.add(LLMUsageEvent(
                 tenant_id=getattr(req, "tenant_id", None),
@@ -89,13 +99,21 @@ async def _insert_event(
                 api_model=getattr(req, "model", "") or "",
                 purpose=getattr(req, "purpose", None),
                 channel_id=getattr(req, "channel_id", None),
-                prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
-                completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
                 total_tokens=getattr(usage, "total_tokens", 0) or 0,
                 latency_ms=latency_ms,
                 status=status,
                 error=error,
                 cost_cents=max(0, int(cost_cents or 0)),
+                provider_cost_micro_usd=provider_micro,
+                infrastructure_cost_micro_usd=infra_micro,
+                delivery_cost_micro_usd=delivery_micro,
+                charge_micro_usd=charge_micro,
+                credits_micro=charge_micro * pricing.sc_per_usd(),
+                margin_bp=pricing.margin_bp(),
+                sc_per_usd=pricing.sc_per_usd(),
+                pricing_version="v1.0",
                 ledger_id=ledger_id,
             ))
             await db.commit()

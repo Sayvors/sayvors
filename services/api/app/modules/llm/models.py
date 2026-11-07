@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 import uuid
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ...database import Base
@@ -119,6 +119,16 @@ class LLMUsageEvent(Base):
     # cost_cents is duplicated from the ledger so a lost settle can be
     # recovered from the usage row by the hold reaper.
     cost_cents: Mapped[int] = mapped_column(Integer, default=0)
+    # Sayvors Credits accounting (exact, per call). Money is stored in
+    # micro-USD integers (1e-6 dollars); credits in micro-SC (1e-6 SC).
+    provider_cost_micro_usd: Mapped[int] = mapped_column(BigInteger, default=0)
+    infrastructure_cost_micro_usd: Mapped[int] = mapped_column(BigInteger, default=0)
+    delivery_cost_micro_usd: Mapped[int] = mapped_column(BigInteger, default=0)
+    charge_micro_usd: Mapped[int] = mapped_column(BigInteger, default=0)
+    credits_micro: Mapped[int] = mapped_column(BigInteger, default=0)
+    margin_bp: Mapped[int] = mapped_column(Integer, default=0)
+    sc_per_usd: Mapped[int] = mapped_column(Integer, default=0)
+    pricing_version: Mapped[str] = mapped_column(String(16), default="v1.0")
     ledger_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True

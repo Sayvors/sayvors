@@ -35,8 +35,16 @@ LLM_INPUT = "llm_input"
 LLM_OUTPUT = "llm_output"
 ASR_MINUTE = "asr_minute"
 TTS_KCHAR = "tts_kchar"
+# Sayvors Credits accounting. Stored in the same rate card so the admin can
+# change the formula without a deploy. 1 SC = 1/sc_per_usd dollars.
+SC_PER_USD = "sc_per_usd"
+MARGIN_BP = "margin_bp"
+INFRA_MICRO_USD = "infra_cost_micro_usd"
 
-KINDS: tuple[str, ...] = (LLM_INPUT, LLM_OUTPUT, ASR_MINUTE, TTS_KCHAR)
+KINDS: tuple[str, ...] = (
+    LLM_INPUT, LLM_OUTPUT, ASR_MINUTE, TTS_KCHAR,
+    SC_PER_USD, MARGIN_BP, INFRA_MICRO_USD,
+)
 
 # Human labels for the admin page. Units are stated there too, so an operator
 # never has to guess what "15" means.
@@ -56,6 +64,18 @@ KIND_META: dict[str, dict[str, str]] = {
     TTS_KCHAR: {
         "label": "Text-to-speech",
         "unit": "cents per 1k characters",
+    },
+    SC_PER_USD: {
+        "label": "Sayvors Credits rate",
+        "unit": "credits per $1 (default 1,000)",
+    },
+    MARGIN_BP: {
+        "label": "Gross margin",
+        "unit": "basis points (6000 = 60%)",
+    },
+    INFRA_MICRO_USD: {
+        "label": "Infrastructure cost",
+        "unit": "micro-USD added to every billable call",
     },
 }
 
@@ -96,6 +116,10 @@ DEFAULTS: dict[tuple[str, str], float] = {
     (LLM_OUTPUT, "mock"): 0.0,
     (LLM_INPUT, "unknown"): 0.0,
     (LLM_OUTPUT, "unknown"): 0.0,
+    # Sayvors Credits v1.0: 1,000 SC = $1 and a 60% gross margin (2.5x).
+    (SC_PER_USD, "rate"): 1000.0,
+    (MARGIN_BP, "default"): 6000.0,
+    (INFRA_MICRO_USD, "call"): 0.0,
     (ASR_MINUTE, "default"): 0.0,
     (TTS_KCHAR, "default"): 0.0,
 }
@@ -167,10 +191,81 @@ def rate(kind: str, key: str) -> float:
 def llm_cost_cents(
     model_id: str | None, prompt_tokens: int, completion_tokens: int
 ) -> int:
+    """Retail cents for one call, including the target margin.
+
+    ``pprovider`` cost is exact micro-USD; the multiplier and the per-call
+    infrastructure cost are applied before the single cent rounding, so the
+    ledger can never charge less than the delivery cost.
+    """
+    micro = llm_cost_micro_usd(model_id, prompt_tokens, completion_tokens)
+    charged = charge_micro_usd(micro)
+    return max(0, math.ceil(charged / 10_000))
+
+
+def llm_provider_cost_micro_usd(
+    model_id: str | None, prompt_tokens: int, completion_tokens: int
+) -> int:
+    """Provider-side cost of the tokens, in micro-USD (1e-6 dollars).
+
+    Rate cards are cents per 1M tokens, so micro-USD per token is
+    ``cents / 100``.
+    """
     family = _family(model_id)
-    total = (max(0, prompt_tokens) / 1_000_000) * rate(LLM_INPUT, family)
-    total += (max(0, completion_tokens) / 1_000_000) * rate(LLM_OUTPUT, family)
-    return max(0, math.ceil(total))
+    prompt = max(0, prompt_tokens) * rate(LLM_INPUT, family) / 100
+    completion = max(0, completion_tokens) * rate(LLM_OUTPUT, family) / 100
+    return int(math.ceil(prompt + completion))
+
+
+def llm_cost_micro_usd(
+    model_id: str | None, prompt_tokens: int, completion_tokens: int
+) -> int:
+    """Delivery cost: provider tokens plus attributable infrastructure."""
+    return llm_provider_cost_micro_usd(
+        model_id, prompt_tokens, completion_tokens
+    ) + infra_cost_micro_usd()
+
+
+def infra_cost_micro_usd() -> int:
+    return max(0, int(round(rate(INFRA_MICRO_USD, "call"))))
+
+
+def sc_per_usd() -> int:
+    return max(1, int(round(rate(SC_PER_USD, "rate"))))
+
+
+def margin_bp() -> int:
+    """Target gross margin in basis points, clamped to a sane range."""
+    value = int(round(rate(MARGIN_BP, "default")))
+    return min(9_500, max(0, value))
+
+
+def cost_multiplier_bp() -> int:
+    """Cost -> price multiplier in basis points (60% margin -> 25000)."""
+    margin = margin_bp()
+    denominator = 10_000 - margin
+    if denominator <= 0:
+        return 25_000
+    return int(round(10_000 * 10_000 / denominator))
+
+
+def charge_micro_usd(delivery_cost_micro_usd: int) -> int:
+    """Retail price in micro-USD, rounded once per call (banker-free)."""
+    cost = max(0, int(delivery_cost_micro_usd))
+    return (cost * cost_multiplier_bp() + 9_999) // 10_000
+
+
+def credits_micro_for(delivery_cost_micro_usd: int) -> int:
+    """Customer-facing Sayvors Credits in micro-SC (1 SC = 1e6 micro-SC).
+
+    micro-SC = charge_micro_usd * sc_per_usd because 1 SC = $1/sc_per_usd.
+    Integer math keeps the ledger exact; display rounds only at the edge.
+    """
+    return charge_micro_usd(delivery_cost_micro_usd) * sc_per_usd()
+
+
+def credits_for_cents(cents: int) -> float:
+    """Display helper: an amount charged in cents expressed in credits."""
+    return (max(0, int(cents)) / 100) * sc_per_usd()
 
 
 def asr_cost_cents(duration_ms: int | None) -> int:
@@ -190,7 +285,14 @@ async def list_rates(db=None) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for kind in KINDS:
         meta = KIND_META[kind]
-        keys = LLM_FAMILIES if kind in (LLM_INPUT, LLM_OUTPUT) else ("default",)
+        if kind in (LLM_INPUT, LLM_OUTPUT):
+            keys = LLM_FAMILIES
+        elif kind == SC_PER_USD:
+            keys = ("rate",)
+        elif kind == INFRA_MICRO_USD:
+            keys = ("call",)
+        else:
+            keys = ("default",)
         for key in keys:
             effective = _rates.get((kind, key), DEFAULTS.get((kind, key), 0.0))
             out.append({
@@ -215,7 +317,11 @@ async def save_rate(db, kind: str, key: str, unit_price_cents: float) -> dict[st
         raise ValueError("a rate cannot be negative")
     if kind in (LLM_INPUT, LLM_OUTPUT) and key not in LLM_FAMILIES:
         raise ValueError(f"unknown model family {key!r}")
-    if kind not in (LLM_INPUT, LLM_OUTPUT):
+    if kind == SC_PER_USD:
+        key = "rate"
+    elif kind == INFRA_MICRO_USD:
+        key = "call"
+    elif kind not in (LLM_INPUT, LLM_OUTPUT):
         key = "default"
 
     row = await db.get(PricingRate, (kind, key))

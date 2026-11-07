@@ -67,6 +67,8 @@ export default function TopUpPage() {
   const messageLimit = entitlements.data?.max_messages_per_month ?? null;
   const usedMessages = entitlements.data?.messages_used_this_month ?? 0;
   const balance = budget.data?.balance_cents ?? 0;
+  const balanceCredits = budget.data?.balance_credits ?? 0;
+  const scPerUsd = budget.data?.credits_per_usd ?? 1000;
 
   async function submit(kind: BillingRequestKind, amount: number | null, plan_slug?: string | null) {
     setBusy(kind);
@@ -141,8 +143,18 @@ export default function TopUpPage() {
             </p>
           </div>
           <div className="rounded-2xl border border-ink/[0.07] bg-white p-4 dark:border-fog/[0.08] dark:bg-ink/60">
-            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40 dark:text-fog/40">AI credit</p>
-            <p className="mt-1 text-[18px] font-bold tabular-nums text-ink dark:text-fog">{fmtCents(balance)}</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40 dark:text-fog/40">AI credit balance</p>
+            <div className="mt-1 flex items-center gap-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/Sayvors_Credits.png" alt="" width={26} height={26} className="h-[26px] w-[26px] shrink-0" />
+              <p className="text-[18px] font-bold tabular-nums text-ink dark:text-fog">
+                {balanceCredits.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                <span className="ml-1 text-[11px] font-semibold text-ink/40 dark:text-fog/40">SC</span>
+              </p>
+            </div>
+            <p className="mt-1 text-[10.5px] text-ink/40 dark:text-fog/40">
+              {fmtCents(balance)} · {scPerUsd.toLocaleString()} SC = $1
+            </p>
           </div>
           <div className="rounded-2xl border border-ink/[0.07] bg-white p-4 dark:border-fog/[0.08] dark:bg-ink/60">
             <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40 dark:text-fog/40">Plan</p>
