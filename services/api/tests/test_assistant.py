@@ -169,10 +169,25 @@ def test_plural_handles_reply():
     assert _plural(2, "chart") == "2 charts"
 
 
+def test_assistant_errors_are_owner_facing_not_provider_raw():
+    from app.modules.assistant.router import _assistant_error_message
+    from app.modules.llm.providers.base import ProviderError
+
+    auth = _assistant_error_message(ProviderError("openrouter", "401 Missing Authentication header", 401))
+    assert "Admin" in auth and "key" in auth
+    assert "openrouter" not in auth
+    assert "401" not in auth
+
+    rate = _assistant_error_message(ProviderError("groq", "429 slow down", 429))
+    assert "rate-limiting" in rate
+
+    assert "No AI model" in _assistant_error_message(ValueError("No AI model is enabled by your administrator."))
+    assert "unavailable" in _assistant_error_message(RuntimeError("boom"))
+
+
 def test_greeting_detection():
     """'hi' must not trigger the snapshot / databank / chart pipeline."""
     from app.modules.assistant.router import _is_greeting
-
     for text in ("hi", "Hi!", "hello", "hey there", "good morning", "مرحبا", "السلام عليكم"):
         assert _is_greeting(text), text
     for text in (

@@ -179,7 +179,16 @@ async def complete(
         tenant_id=tenant_id,
         channel_id=channel_id,
     )
-    return await provider.complete(req)
+    try:
+        return await provider.complete(req)
+    except ProviderError as e:
+        if e.status_code in (401, 403):
+            # The cached client may hold a rotated key. Drop it and retry once
+            # against a client rebuilt from the current database key.
+            await registry.reset_provider(resolved.provider)
+            retry_provider = registry.get_provider_for_model(model)
+            return await retry_provider.complete(req)
+        raise
 
 
 async def stream(
@@ -246,6 +255,26 @@ async def stream(
             yield chunk
         completed = True
     except Exception as e:  # re-raised after the usage row and refund
+        if (
+            isinstance(e, ProviderError)
+            and e.status_code in (401, 403)
+            and not parts
+        ):
+            # Nothing has been streamed yet, so a retry cannot duplicate text.
+            # Rebuild the client from the current database key and try once.
+            await registry.reset_provider(resolved.provider)
+            try:
+                retry_provider = registry.get_provider_for_model(model)
+                async for chunk in retry_provider.stream(req):
+                    if not chunk:
+                        continue
+                    parts.append(chunk)
+                    yield chunk
+                completed = True
+                return
+            except Exception as retry_error:
+                failure = retry_error
+                raise
         failure = e
         raise
     finally:

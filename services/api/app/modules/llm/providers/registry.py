@@ -230,6 +230,18 @@ def is_model_enabled(model_id: str) -> bool:
     return _model_overlay.get(model_id, True)
 
 
+async def reset_provider(provider: str) -> None:
+    """Drop one cached provider so the next call rebuilds from the DB key.
+
+    Called when a provider rejects authentication: the in-process client may
+    hold a rotated/removed key, and rebuilding is the only way to recover
+    without a restart.
+    """
+    cached = _providers.pop(provider, None)
+    if cached is not None:
+        await _close_provider(cached)
+
+
 def reset_provider_cache() -> None:
     """Test helper: clear overlays + instances."""
     global _db_overlay, _model_overlay, _custom_models, _last_refresh, _last_attempt
