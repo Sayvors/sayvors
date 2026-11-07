@@ -208,6 +208,51 @@ export interface AdminTenantDetail extends AdminTenant {
   }[];
 }
 
+// ── Meta delivery reconciliation ────────────────────────────────────────
+
+export interface DeliveryBucket {
+  inbound: number;
+  outbound: number;
+  outbound_with_id: number;
+  outbound_without_id: number;
+  sent: number;
+  delivered: number;
+  read: number;
+  failed: number;
+  delivery_rate_pct: number | null;
+}
+
+export interface DeliveryChannel extends DeliveryBucket {
+  channel_id: string;
+  name: string;
+  platform: string;
+  status: string;
+}
+
+export interface DeliveryDay extends DeliveryBucket {
+  day: string;
+}
+
+export interface DeliveryReconciliation {
+  days: number;
+  window_start: string;
+  generated_at: string;
+  platforms: string[];
+  totals: DeliveryBucket;
+  by_channel: DeliveryChannel[];
+  daily: DeliveryDay[];
+  notes: string[];
+}
+
+export async function fetchTenantDelivery(
+  id: string,
+  days = 30,
+): Promise<DeliveryReconciliation> {
+  return adminFetch<DeliveryReconciliation>(
+    `/api/v1/admin/tenants/${encodeURIComponent(id)}/delivery?days=${days}`,
+  );
+}
+
 export interface PlatformStats {
   platform: string;
   label: string;

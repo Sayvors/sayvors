@@ -2996,12 +2996,15 @@ async def _handle_connection_disconnect(event: dict, data: dict) -> None:
 
 async def _handle_message_status(event: dict, data: dict) -> None:
     """Mirror Cloud API delivery/read/failure states onto outbound rows."""
+    from datetime import datetime, timezone
+
     from ..models import ChannelMessage
 
     provider_msg_id = event.get("external_event_id") or ""
     status = data.get("status") or ""
     if not provider_msg_id or status not in ("delivered", "read", "failed"):
         return
+    now = datetime.now(timezone.utc)
     async with async_session() as db:
         row = (
             await db.execute(
@@ -3011,8 +3014,23 @@ async def _handle_message_status(event: dict, data: dict) -> None:
                 )
             )
         ).scalar_one_or_none()
-        if row is None or row.status in ("read", "failed"):
+        if row is None:
             return
+        if row.status == "read" and status != "read":
+            # Read is terminal; a redelivered/out-of-order "delivered" is not
+            # news and must not move the recorded time.
+            return
+        if row.status == "failed" and status != "failed":
+            return
+        # Keep the first time each transition was observed: webhooks can be
+        # redelivered out of order, and a later duplicate must not move the
+        # timestamp forward.
+        if status in ("delivered", "read") and row.delivered_at is None:
+            row.delivered_at = now
+        if status == "read" and row.read_at is None:
+            row.read_at = now
+        if status == "failed":
+            row.failed_at = now
         row.status = status
         errors = data.get("errors")
         if status == "failed" and errors:

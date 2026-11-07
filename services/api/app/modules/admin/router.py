@@ -386,6 +386,27 @@ async def admin_tenant_usage(
     return await get_tenant_summary(db, user_id, days)
 
 
+@router.get("/tenants/{user_id}/delivery")
+async def admin_tenant_delivery(
+    user_id: str,
+    days: int = Query(30, ge=1, le=365),
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """What Meta confirmed vs what our database holds, per channel and day.
+
+    Meta exposes no message-count API; the only provider-side data is the
+    webhook events we ingested. This endpoint reports both sides so the admin
+    can see delivery gaps instead of assuming the counts must match.
+    """
+    from ..users.models import User
+    from .delivery import get_delivery_reconciliation
+
+    if await db.get(User, user_id) is None:
+        raise HTTPException(status_code=404, detail="Tenant not found.")
+    return await get_delivery_reconciliation(db, user_id, days)
+
+
 @router.get("/tenants/{user_id}", response_model=AdminTenantDetail)
 async def admin_tenant_detail(
     user_id: str,
