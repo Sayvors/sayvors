@@ -253,6 +253,44 @@ export async function fetchTenantDelivery(
   );
 }
 
+// ── Tenant purchase requests ────────────────────────────────────────────
+
+export interface AdminBillingRequest {
+  id: string;
+  tenant_id: string;
+  email: string | null;
+  kind: "messages" | "channels" | "ai_credit" | "plan";
+  amount: number | null;
+  plan_slug: string | null;
+  note: string | null;
+  status: "pending" | "approved" | "rejected";
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  decision_note: string | null;
+  created_at: string;
+}
+
+export async function fetchBillingRequests(
+  status: "pending" | "approved" | "rejected" | "all" = "pending",
+): Promise<AdminBillingRequest[]> {
+  const qs = status === "all" ? "" : `?status=${status}`;
+  const data = await adminFetch<{ items?: AdminBillingRequest[] }>(
+    `/api/v1/admin/requests${qs}`,
+  );
+  return data?.items ?? [];
+}
+
+export async function decideBillingRequest(
+  id: string,
+  approve: boolean,
+  note?: string,
+): Promise<AdminBillingRequest> {
+  return adminFetch<AdminBillingRequest>(
+    `/api/v1/admin/requests/${encodeURIComponent(id)}/${approve ? "approve" : "reject"}`,
+    { method: "POST", body: JSON.stringify({ note: note?.trim() || null }) },
+  );
+}
+
 export interface PlatformStats {
   platform: string;
   label: string;

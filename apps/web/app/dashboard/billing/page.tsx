@@ -523,6 +523,26 @@ export default function BillingPage() {
         </svg>
       </Link>
 
+      <Link
+        href="/dashboard/billing/topup"
+        className="group flex items-center justify-between gap-3 rounded-2xl border border-ink/[0.08] bg-white p-4 transition hover:border-deep-violet/30 dark:border-fog/[0.08] dark:bg-ink/60"
+      >
+        <div className="flex items-center gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500 text-white shadow-sm">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="h-5 w-5" aria-hidden>
+              <path d="M12 5v14M5 12h14" strokeLinecap="round" />
+            </svg>
+          </span>
+          <div>
+            <p className="text-[13px] font-bold text-ink dark:text-fog">Top up messages, AI credit or channels</p>
+            <p className="text-[11px] text-ink/45 dark:text-fog/45">Packs are approved by an operator while online payments are not live.</p>
+          </div>
+        </div>
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-4 w-4 shrink-0 text-ink/30 transition group-hover:translate-x-0.5 dark:text-fog/30" aria-hidden>
+          <path d="M6 3l5 5-5 5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </Link>
+
       {banner && (
         <div
           role="status"

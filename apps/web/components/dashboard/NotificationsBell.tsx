@@ -41,6 +41,8 @@ const TYPE_META: Record<string, { icon: string; tint: string }> = {
   media_scheduled: { icon: "🕑", tint: "bg-sky-500/10 text-sky-600 dark:text-sky-300" },
   media_published: { icon: "📸", tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300" },
   media_failed: { icon: "!", tint: "bg-red-500/10 text-red-600 dark:text-red-400" },
+  billing_request_approved: { icon: "＋", tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300" },
+  billing_request_rejected: { icon: "!", tint: "bg-red-500/10 text-red-600 dark:text-red-400" },
 };
 
 function timeAgo(iso: string): string {

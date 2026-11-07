@@ -165,15 +165,34 @@ async def get_effective_plan(tenant_id: str, db: AsyncSession) -> tuple[Plan, st
 
 
 async def get_entitlements(tenant_id: str, db: AsyncSession) -> Entitlements:
+    from sqlalchemy import select
+
+    from .models import TenantSubscription
+
     plan, status, granted_by, granted_until, override = await get_effective_plan(tenant_id, db)
     now = datetime.now(timezone.utc)
     promo_active = granted_until is not None and granted_until > now
+    limits = (
+        await db.execute(
+            select(
+                TenantSubscription.message_limit_override,
+                TenantSubscription.channels_limit_override,
+            ).where(TenantSubscription.tenant_id == tenant_id)
+        )
+    ).first()
+    message_limit = plan.max_messages_per_month
+    channel_limit = plan.max_channels
+    if limits is not None:
+        if limits[0] is not None:
+            message_limit = limits[0]
+        if limits[1] is not None:
+            channel_limit = limits[1]
     return Entitlements(
         plan_slug=plan.slug,
         plan_name=plan.name,
         status=status,
-        max_channels=plan.max_channels,
-        max_messages_per_month=plan.max_messages_per_month,
+        max_channels=channel_limit,
+        max_messages_per_month=message_limit,
         included_credit_cents=plan.included_credit_cents,
         features=merge_feature_override(plan.features, override),
         plan_features={k: bool(v) for k, v in (plan.features or {}).items()},

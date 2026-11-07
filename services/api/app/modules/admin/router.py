@@ -335,6 +335,69 @@ async def admin_tenants(
     return AdminTenantList(items=items, total=total)
 
 
+class BillingRequestDecision(BaseModel):
+    note: str | None = Field(default=None, max_length=500)
+
+
+@router.get("/requests")
+async def admin_billing_requests(
+    status: str | None = Query(None, pattern="^(pending|approved|rejected)$"),
+    limit: int = Query(100, ge=1, le=500),
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Top-up / plan requests waiting for an operator decision."""
+    from ..billing.requests import list_all, serialize
+
+    rows = await list_all(db, status, limit)
+    return {"items": [serialize(request, email) for request, email in rows]}
+
+
+@router.post("/requests/{request_id}/approve")
+async def admin_approve_billing_request(
+    request_id: str,
+    body: BillingRequestDecision,
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Apply the purchase and record the decision."""
+    from ..billing.requests import RequestError, decide_request, serialize
+
+    try:
+        request = await decide_request(
+            db,
+            request_id,
+            approve=True,
+            operator=_admin.get("username") if isinstance(_admin, dict) else None,
+            note=body.note,
+        )
+    except RequestError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    return serialize(request)
+
+
+@router.post("/requests/{request_id}/reject")
+async def admin_reject_billing_request(
+    request_id: str,
+    body: BillingRequestDecision,
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    from ..billing.requests import RequestError, decide_request, serialize
+
+    try:
+        request = await decide_request(
+            db,
+            request_id,
+            approve=False,
+            operator=_admin.get("username") if isinstance(_admin, dict) else None,
+            note=body.note,
+        )
+    except RequestError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    return serialize(request)
+
+
 @router.get("/tenants/special", response_model=list[SubscriptionOut])
 async def list_special_tenants(_admin=Depends(require_admin)):
     """Tenants with per-feature overrides — the admin "Special list".
