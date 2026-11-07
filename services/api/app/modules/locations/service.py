@@ -151,6 +151,44 @@ def _status_of(channel: Channel | None) -> str:
     return channel.status if channel is not None else "unknown"
 
 
+async def _google_country(channel: Channel, meta: dict) -> str | None:
+    """Read a location's storefront region from Google (best effort).
+
+    Used only when the channel metadata predates the country field. Once
+    resolved it is stored on the channel, so this is one call per old row.
+    """
+    from ...config import settings
+
+    if settings.TESTING or not (channel.access_token or channel.refresh_token):
+        return None
+    from ..channels.google_business import GBP_BIZINFO_API, GoogleBusinessClient
+    from ..channels.service import decrypt_token
+
+    access = decrypt_token(channel.access_token) if channel.access_token else None
+    refresh = decrypt_token(channel.refresh_token) if channel.refresh_token else None
+    client = GoogleBusinessClient(access or "", refresh)
+    try:
+        google_id = meta.get("location_id") or listing_id_of(channel)
+        resp = await client._authed_request(
+            "GET",
+            f"{GBP_BIZINFO_API}/locations/{google_id}",
+            params={"readMask": "storefrontAddress"},
+        )
+        if resp.status_code != 200:
+            return None
+        code = (
+            ((resp.json().get("storefrontAddress") or {}).get("regionCode") or "")
+            .strip()
+            .upper()[:2]
+        )
+        return code or None
+    except Exception as e:  # noqa: BLE001 - fallback is the account country
+        logger.debug("Country backfill failed for %s: %s", listing_id_of(channel), e)
+        return None
+    finally:
+        await client.close()
+
+
 async def get_profile(
     db: AsyncSession, user_id: str, listing_id: str
 ) -> dict:
@@ -180,6 +218,26 @@ async def get_profile(
     meta = channel_meta(channel) if channel is not None else {}
     stored_skipped = meta.get("google_skipped")
 
+    # The category catalog is region-specific. Prefer the region Google
+    # returns for this location's storefront; fall back to the account country
+    # instead of assuming Saudi Arabia for every tenant.
+    profile_country = meta.get("country") or meta.get("region_code")
+    if not profile_country and channel is not None:
+        profile_country = await _google_country(channel, meta)
+        if profile_country:
+            meta["country"] = profile_country
+            channel.metadata_json = json.dumps(meta)
+            await db.commit()
+    if not profile_country:
+        from ..users.models import User
+
+        profile_country = (
+            await db.execute(select(User.country).where(User.id == user_id))
+        ).scalar_one_or_none()
+    profile_country = (
+        str(profile_country).strip().upper()[:2] if profile_country else None
+    )
+
     # Local edits win section-by-section; anything never edited locally falls
     # back to the Google snapshot fetched at connect/worker time.
     local_hours = dict(profile.hours or {})
@@ -201,6 +259,7 @@ async def get_profile(
         "listing_id": listing_id,
         "name": "",
         "address": None,
+        "country": profile_country,
         "phone": None,
         "website": None,
         "maps_url": None,
@@ -1036,6 +1095,7 @@ async def create_google_location(
         "website": website,
         "description": location_description(created) or body.get("description"),
         "service_area": service_area_names,
+        "country": country,
         "language_code": language,
         "profile_fields_checked": False,
         "created_via": "sayvors",

@@ -8,6 +8,7 @@ import CategoryPicker from "@/components/locations/CategoryPicker";
 import LocationPinMap, { type LatLng } from "@/components/locations/LocationPinMap";
 import LogoLoader from "@/components/LogoLoader";
 import { apiFetch } from "@/lib/api-rag";
+import { useAuth } from "@/lib/auth-context";
 import { COUNTRIES } from "@/lib/countries";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 
@@ -50,7 +51,7 @@ const EMPTY_DRAFT: Draft = {
   city: "",
   state: "",
   postalCode: "",
-  country: "SA",
+  country: "",
   phone: "",
   website: "",
   description: "",
@@ -126,6 +127,7 @@ function Field({
 export default function NewLocationPage() {
   const router = useRouter();
   const { locale } = useI18n();
+  const { user } = useAuth();
 
   const [hydrated, setHydrated] = useState(false);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
@@ -153,6 +155,17 @@ export default function NewLocationPage() {
     setDraft(loadDraft());
     setHydrated(true);
   }, []);
+
+  // New drafts start with the account country, not a hardcoded market. The
+  // user can still change it on the address step for a branch elsewhere.
+  useEffect(() => {
+    if (!hydrated) return;
+    const fallback = (user?.country ?? "").trim().toUpperCase().slice(0, 2);
+    if (!fallback) return;
+    setDraft((current) =>
+      current.country ? current : { ...current, country: fallback },
+    );
+  }, [hydrated, user?.country]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -237,6 +250,9 @@ export default function NewLocationPage() {
     const missing: string[] = [];
     if (index === 0) {
       if (!draft.name.trim()) missing.push("Business name");
+      if (!draft.country.trim() || draft.country.trim().length !== 2) {
+        missing.push("Country");
+      }
       if (!draft.category.trim()) missing.push("Primary category");
     }
     if (index === 2) {
@@ -620,13 +636,36 @@ export default function NewLocationPage() {
                   )}
                 </div>
 
+                <Field
+                  label="Country / region"
+                  required
+                  hint="Google's category list is region-specific."
+                >
+                  <select
+                    value={draft.country}
+                    onChange={(event) => update({ country: event.target.value })}
+                    className="input-field"
+                  >
+                    <option value="">Select country</option>
+                    {!COUNTRIES.some((country) => country.code === draft.country) &&
+                      draft.country && (
+                        <option value={draft.country}>{draft.country}</option>
+                      )}
+                    {COUNTRIES.map((country) => (
+                      <option key={country.code} value={country.code}>
+                        {country.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+
                 <div>
                   <p className="mb-1.5 text-[11px] font-bold uppercase tracking-[0.08em] text-ink/55 dark:text-fog/55">
                     Business category *
                   </p>
                   <CategoryPicker
                     value={draft.category}
-                    region={draft.country || "SA"}
+                    region={draft.country}
                     onChange={(category) => update({ category })}
                   />
                 </div>
@@ -700,6 +739,11 @@ export default function NewLocationPage() {
                           onChange={(event) => update({ country: event.target.value })}
                           className="input-field"
                         >
+                          <option value="">Select country</option>
+                          {!COUNTRIES.some((country) => country.code === draft.country) &&
+                            draft.country && (
+                              <option value={draft.country}>{draft.country}</option>
+                            )}
                           {COUNTRIES.map((country) => (
                             <option key={country.code} value={country.code}>
                               {country.name}

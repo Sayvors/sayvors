@@ -147,6 +147,15 @@ export default function CategoryPicker({
     [onChange, region],
   );
 
+  if (!region || region.trim().length !== 2) {
+    return (
+      <p className="rounded-xl border border-dashed border-ink/15 bg-ink/[0.02] p-3 text-[12px] leading-relaxed text-ink/55 dark:border-fog/15 dark:bg-fog/[0.02] dark:text-fog/55">
+        Choose the business country first. Google&apos;s category list is
+        region-specific.
+      </p>
+    );
+  }
+
   return (
     <div className="space-y-3">
       {showSelected && value && (

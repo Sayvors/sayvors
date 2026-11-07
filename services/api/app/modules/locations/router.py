@@ -192,7 +192,7 @@ async def upload_bulk_csv(
 @router.get("/categories", response_model=list[LocationCategoryOut])
 async def list_location_categories(
     q: str = Query("", max_length=120),
-    region: str = Query("SA", min_length=2, max_length=2),
+    region: str = Query(..., min_length=2, max_length=2),
     exact: bool = Query(False),
     ctx: TenantContext = Depends(require_perm("locations.view")),
     user: User = Depends(get_current_user),

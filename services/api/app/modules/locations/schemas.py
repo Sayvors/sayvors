@@ -133,6 +133,7 @@ class LocationProfileOut(BaseModel):
     listing_id: str
     name: str
     address: str | None = None
+    country: str | None = None
     phone: str | None = None
     website: str | None = None
     maps_url: str | None = None

@@ -2839,6 +2839,11 @@ async def google_callback(
                     "place_id": loc.get("metadata", {}).get("placeId"),
                     # v1 Location.Metadata uses mapsUri (v4 used mapsUrl).
                     "maps_url": loc.get("metadata", {}).get("mapsUri"),
+                    "country": (
+                        ((loc.get("storefrontAddress") or {}).get("regionCode") or "")
+                        .strip()
+                        .upper()[:2]
+                    ) or None,
                     "address": location_address(loc),
                     "category": location_category(loc),
                     "phone": location_phone(loc),

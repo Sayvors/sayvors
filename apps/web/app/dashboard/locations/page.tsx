@@ -90,6 +90,7 @@ interface FullProfile {
   listing_id: string;
   name: string;
   address?: string | null;
+  country?: string | null;
   phone?: string | null;
   website?: string | null;
   maps_url?: string | null;
@@ -950,6 +951,7 @@ const bulk: BulkScope | null = isBulk
               <CategoriesTab
                 initial={isBulk ? undefined : fullProfile?.categories}
                 synced={!isBulk && !!fullProfile?.google_synced?.includes("categories")}
+                region={fullProfile?.country ?? ""}
                 bulk={bulk}
                 copy={copy}
                 onSave={(patch) =>
@@ -1260,12 +1262,13 @@ function DetailsTab({
   );
 }
 
-function CategoriesTab({ initial, onSave, bulk, copy, synced }: {
+function CategoriesTab({ initial, onSave, bulk, copy, synced, region }: {
   initial?: { primary?: string; additional?: string[] };
   onSave: (patch: { primary: string; additional: string[] }) => Promise<void>;
   bulk?: BulkScope | null;
   copy: LocationsCopy;
   synced?: boolean;
+  region: string;
 }) {
   const [primary, setPrimary] = useState(initial?.primary ?? "");
   const [additional, setAdditional] = useState<string[]>(initial?.additional ?? []);
@@ -1295,7 +1298,7 @@ function CategoriesTab({ initial, onSave, bulk, copy, synced }: {
         <SourceBadge google={!!synced} copy={copy} />
       </div>
       <Field label={copy.primaryCategory} varies={bulk?.varies.has("primary") ?? false}>
-        <CategoryPicker value={primary} region="SA" onChange={setPrimary} />
+        <CategoryPicker value={primary} region={region} onChange={setPrimary} />
         <p className="mt-1 text-[11px] text-ink/40 dark:text-fog/40">{copy.primaryCategoryHint}</p>
       </Field>
       <Field label={copy.additionalCategories} varies={bulk?.varies.has("additional") ?? false}>
@@ -1314,7 +1317,7 @@ function CategoriesTab({ initial, onSave, bulk, copy, synced }: {
         )}
         <CategoryPicker
           value=""
-          region="SA"
+          region={region}
           showSelected={false}
           showPopular={false}
           placeholder="Search Google categories to add..."
