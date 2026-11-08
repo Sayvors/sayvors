@@ -216,7 +216,7 @@ export default function EmailCampaignsPage() {
           <div className="grid grid-cols-2 gap-3">
             <label className="block">
               <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-ink/40">
-                Batch size
+                Batch size (max per pass)
               </span>
               <input
                 type="number"
@@ -229,7 +229,9 @@ export default function EmailCampaignsPage() {
                 }
                 className="mt-1 h-9 w-full rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 text-[12px] text-ink"
               />
-              <span className="mt-1 block text-[10px] text-ink/35">50–2,000 recipients per pass</span>
+              <span className="mt-1 block text-[10px] text-ink/35">
+                Up to 2,000 per pass; a smaller audience finishes in one pass
+              </span>
             </label>
             <label className="block">
               <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-ink/40">
@@ -246,7 +248,9 @@ export default function EmailCampaignsPage() {
                 }
                 className="mt-1 h-9 w-full rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 text-[12px] text-ink"
               />
-              <span className="mt-1 block text-[10px] text-ink/35">10–3,600 seconds between passes</span>
+              <span className="mt-1 block text-[10px] text-ink/35">
+                10–3,600 seconds between passes
+              </span>
             </label>
           </div>
         </div>
