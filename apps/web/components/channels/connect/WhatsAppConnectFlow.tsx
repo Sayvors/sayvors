@@ -10,6 +10,7 @@ import {
   type MetaAsset,
 } from "@/lib/api-meta";
 import LogoLoader from "@/components/LogoLoader";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 import OnboardingShell, {
   BenefitList,
   CheckRow,
@@ -44,22 +45,30 @@ const STEP_FACEBOOK = 2;
 const STEP_NUMBER = 3;
 const STEP_DONE = 4;
 
-function checksFor(mode: WhatsAppMode): string[] {
+function checksFor(mode: WhatsAppMode, c: ReturnType<typeof useI18n>["t"]["dashboard"]["connect"]["whatsapp"]): string[] {
   if (mode === "coexistence") {
-    return [
-      "The WhatsApp Business app is installed on my phone with the number I want to connect.",
-      "The country code on that number is set correctly in the app.",
-      "My WhatsApp Business app is version 2.24.17 or newer.",
-    ];
+    return [...c.checksCoexistence];
   }
-  return [
-    "The number I want to use is not currently registered on WhatsApp.",
-    "I can receive an SMS or call on that number right now.",
-    "I can log in to the Facebook account that manages my business.",
-  ];
+  return [...c.checksStandard];
+}
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [k, v]) => out.replaceAll(`{${k}}`, String(v)),
+    s,
+  );
 }
 
 export default function WhatsAppConnectFlow() {
+  const { t, locale } = useI18n();
+  const w = t.dashboard.connect.whatsapp;
+  const STEPS = [
+    { key: "start", label: w.steps.start },
+    { key: "checks", label: w.steps.checks },
+    { key: "facebook", label: w.steps.facebook },
+    { key: "number", label: w.steps.number },
+    { key: "done", label: w.steps.done },
+  ];
   const [step, setStep] = useState(STEP_OVERVIEW);
   const [mode, setMode] = useState<WhatsAppMode>("coexistence");
   const [checks, setChecks] = useState<boolean[]>([false, false, false]);
@@ -77,19 +86,8 @@ export default function WhatsAppConnectFlow() {
 
   const requirements = useMemo(
     () =>
-      mode === "coexistence"
-        ? [
-            "The WhatsApp Business app installed on your phone, with the number you want to connect.",
-            "The correct country code on that number.",
-            "WhatsApp Business app version 2.24.17 or newer.",
-            "A Facebook account that can manage your business.",
-          ]
-        : [
-            "A phone number that is not currently registered on WhatsApp.",
-            "Access to that number for the SMS or call verification.",
-            "A Facebook account that can manage your business.",
-          ],
-    [mode]
+      mode === "coexistence" ? [...w.reqCoexistence] : [...w.reqStandard],
+    [mode, w],
   );
 
   const loadNumbers = useCallback(async () => {
@@ -143,7 +141,7 @@ export default function WhatsAppConnectFlow() {
       await loadNumbers();
       setStep(STEP_NUMBER);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not start WhatsApp connect.");
+      setError(e instanceof Error ? e.message : w.errors.start);
     } finally {
       setBusy(false);
     }
@@ -152,7 +150,7 @@ export default function WhatsAppConnectFlow() {
   const finishRegistration = async () => {
     if (!pendingReg) return;
     if (!/^\d{6}$/.test(pinDraft)) {
-      setError("Enter the 6-digit PIN from WhatsApp → Settings → Account → Two-step verification.");
+      setError(w.errors.enterPin);
       return;
     }
     setBusy(true);
@@ -164,7 +162,7 @@ export default function WhatsAppConnectFlow() {
       setNeedsPin(false);
       await loadNumbers();
     } catch {
-      setError("Registration rejected. Check the PIN and try again (you have 14 days from signup).");
+      setError(w.errors.regRejected);
     } finally {
       setBusy(false);
     }
@@ -178,20 +176,20 @@ export default function WhatsAppConnectFlow() {
       setSaved(true);
       setStep(STEP_DONE);
     } catch {
-      setError("Could not activate that number. Try again, or pick it later on the WhatsApp page.");
+      setError(w.errors.saveNumber);
     } finally {
       setBusy(false);
     }
   };
 
   const allChecked = checks.every(Boolean);
-  const allRequirements = checksFor(mode);
+  const allRequirements = checksFor(mode, w);
 
   return (
     <OnboardingShell
       platform="whatsapp"
-      title="Connect WhatsApp Business"
-      subtitle="Let our AI answer your customers on WhatsApp — with your own number, your own business name, and a shared inbox for your team."
+      title={w.title}
+      subtitle={w.subtitle}
       steps={STEPS}
       current={step}
       onStepClick={(i) => {
@@ -201,33 +199,13 @@ export default function WhatsAppConnectFlow() {
         step === STEP_OVERVIEW ? (
           <>
             <BenefitList
-              title="Why connect WhatsApp"
-              items={[
-                {
-                  icon: "⚡",
-                  label: "Answers in seconds",
-                  body: "The AI replies to every customer message, day or night, in your brand voice.",
-                },
-                {
-                  icon: "🧵",
-                  label: "One thread per customer",
-                  body: "AI drafts and your team work the same conversation in the inbox.",
-                },
-                {
-                  icon: "📱",
-                  label: "Keep your number",
-                  body: "Coexistence keeps the WhatsApp Business app on your phone and adds the API on top.",
-                },
-              ]}
+              title={w.benefitsTitle}
+              items={w.benefits.map((b, i) => ({ icon: ["⚡", "🧵", "📱"][i], label: b.label, body: b.body }))}
             />
             <RequirementList items={requirements} />
             <GuidelineNote
-              title="Connect your WhatsApp Phone Number"
-              lines={[
-                "Use your official business number.",
-                "The number you register must not be linked to any existing WhatsApp (personal or business) account.",
-                "Unlink it from any other WhatsApp account first, then come back and register.",
-              ]}
+              title={w.guidelineTitle}
+              lines={[...w.guideline]}
             />
           </>
         ) : null
@@ -236,15 +214,15 @@ export default function WhatsAppConnectFlow() {
       {step === STEP_OVERVIEW && (
         <div>
           <StepHeading
-            title="How do you want to connect?"
-            body="Both options use Meta's official WhatsApp Business Platform. You can switch numbers later without losing conversations."
+            title={w.overviewTitle}
+            body={w.overviewBody}
           />
 
           {alreadyConnected && (
             <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] leading-relaxed text-emerald-800 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-300">
-              WhatsApp is already connected. You can reconnect a number below, or{" "}
+              {w.already}{" "}
               <Link href="/dashboard/channels/whatsapp" className="font-semibold underline underline-offset-2">
-                manage it on the WhatsApp page
+                {w.alreadyLink}
               </Link>
               .
             </p>
@@ -254,32 +232,24 @@ export default function WhatsAppConnectFlow() {
             <ModeCard
               selected={mode === "coexistence"}
               onSelect={() => selectMode("coexistence")}
-              title="Connect an existing number"
-              badge="Coexistence · BETA"
-              body="Keep using the WhatsApp Business app on your phone. Chats sync to Sayvors and the AI answers alongside you."
-              points={[
-                "No downtime — the app keeps working",
-                "History sync can take up to 24 hours",
-                "Best when customers already have this number",
-              ]}
+              title={w.modeExisting}
+              badge={w.modeExistingBadge}
+              body={w.modeExistingBody}
+              points={[...w.modeExistingPoints]}
             />
             <ModeCard
               selected={mode === "standard"}
               onSelect={() => selectMode("standard")}
-              title="Create a new number"
-              badge="Cloud API"
-              body="Register a fresh number for the API only. Best for a dedicated support line that does not need the phone app."
-              points={[
-                "Number must not be on WhatsApp yet",
-                "Verified by SMS or call during signup",
-                "Cleanest setup for a support team",
-              ]}
+              title={w.modeNew}
+              badge={w.modeNewBadge}
+              body={w.modeNewBody}
+              points={[...w.modeNewPoints]}
             />
           </div>
 
-          <StepActions hint="Takes about 5 minutes. Meta reviews the business details you already have.">
-            <PrimaryButton onClick={() => setStep(STEP_CHECKS)}>Continue</PrimaryButton>
-            <SecondaryButton href="/dashboard/channels">Cancel</SecondaryButton>
+          <StepActions hint={w.overviewHint}>
+            <PrimaryButton onClick={() => setStep(STEP_CHECKS)}>{t.dashboard.connect.continue}</PrimaryButton>
+            <SecondaryButton href="/dashboard/channels">{t.common.cancel}</SecondaryButton>
           </StepActions>
         </div>
       )}
@@ -287,12 +257,12 @@ export default function WhatsAppConnectFlow() {
       {step === STEP_CHECKS && (
         <div>
           <StepHeading
-            eyebrow="Step 1 of 2"
-            title="Before you begin"
+            eyebrow={w.stepOne}
+            title={w.checksTitle}
             body={
               mode === "coexistence"
-                ? "Confirm these three things. If any is missing, fix it in the WhatsApp Business app first — Meta will reject the connection otherwise."
-                : "Confirm these three things before Meta opens its signup window."
+                ? w.checksBodyCoexistence
+                : w.checksBodyStandard
             }
           />
           <div className="mt-4 space-y-2">
@@ -312,11 +282,11 @@ export default function WhatsAppConnectFlow() {
               </CheckRow>
             ))}
           </div>
-          <StepActions hint="Nothing is sent to Meta until you press Proceed.">
+          <StepActions hint={w.checksHint}>
             <PrimaryButton onClick={() => setStep(STEP_FACEBOOK)} disabled={!allChecked}>
-              Proceed
+              {t.dashboard.connect.proceed}
             </PrimaryButton>
-            <SecondaryButton onClick={() => setStep(STEP_OVERVIEW)}>Back</SecondaryButton>
+            <SecondaryButton onClick={() => setStep(STEP_OVERVIEW)}>{t.common.back}</SecondaryButton>
           </StepActions>
         </div>
       )}
@@ -324,41 +294,39 @@ export default function WhatsAppConnectFlow() {
       {step === STEP_FACEBOOK && (
         <div>
           <StepHeading
-            eyebrow="Step 2 of 2"
-            title="Continue with Facebook"
-            body="Meta opens its own secure window where you pick the business and the number. Sayvors never sees your Facebook password."
+            eyebrow={w.stepTwo}
+            title={w.fbTitle}
+            body={w.fbBody}
           />
           <ul className="mt-4 space-y-2 text-[12.5px] leading-relaxed text-ink/60 dark:text-fog/60">
             <li className="flex gap-2">
               <span aria-hidden className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-ink/25 dark:bg-fog/25" />
-              Choose the business that owns this number.
+              {w.fbBullets[0]}
             </li>
             <li className="flex gap-2">
               <span aria-hidden className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-ink/25 dark:bg-fog/25" />
-              {mode === "coexistence"
-                ? "Confirm the WhatsApp Business app number you want to keep using."
-                : "Enter the new number and verify it with the code Meta sends."}
+              {mode === "coexistence" ? w.fbBullets[1] : w.fbBulletsStandard[1]}
             </li>
             <li className="flex gap-2">
               <span aria-hidden className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-ink/25 dark:bg-fog/25" />
-              Allow the permissions Meta asks for, then come back here.
+              {w.fbBullets[2]}
             </li>
           </ul>
 
           {error && <ErrorNote>{error}</ErrorNote>}
 
-          <StepActions hint="Allow popups for this site — Meta opens the signup in a new window.">
+          <StepActions hint={w.fbHint}>
             <PrimaryButton onClick={() => void handleConnect()} disabled={busy}>
               {busy ? (
                 <span className="inline-flex items-center gap-2">
-                  <LogoLoader size={14} /> Waiting for Meta…
+                  <LogoLoader size={14} /> {w.waitingMeta}
                 </span>
               ) : (
-                "Continue with Facebook"
+                w.fbTitle
               )}
             </PrimaryButton>
             <SecondaryButton onClick={() => setStep(STEP_CHECKS)} disabled={busy}>
-              Back
+              {t.common.back}
             </SecondaryButton>
           </StepActions>
         </div>
@@ -368,11 +336,9 @@ export default function WhatsAppConnectFlow() {
         <div>
           <StepHeading
             eyebrow="Almost there"
-            title={needsPin ? "Finish number registration" : "Which number should Sayvors use?"}
+            title={needsPin ? w.pinTitle : w.numberTitle}
             body={
-              needsPin
-                ? "Meta created the number but refused to register it without two-step verification. Enter the PIN once and the number can send."
-                : "We found the numbers on this WhatsApp Business account. Pick the one the AI should answer on."
+              needsPin ? w.pinBody : w.numberBody
             }
           />
 
@@ -381,7 +347,7 @@ export default function WhatsAppConnectFlow() {
           {needsPin ? (
             <div className="mt-4 rounded-xl border border-amber-300/60 bg-amber-50 p-3 dark:border-amber-500/25 dark:bg-amber-500/10">
               <label htmlFor="wa-connect-pin" className="text-[11px] font-bold uppercase tracking-wide text-amber-800 dark:text-amber-300">
-                Two-step verification PIN
+                {w.pinLabel}
               </label>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <input
@@ -391,34 +357,33 @@ export default function WhatsAppConnectFlow() {
                   autoComplete="one-time-code"
                   value={pinDraft}
                   onChange={(e) => setPinDraft(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                  placeholder="6-digit PIN"
+                  placeholder={w.pinPh}
                   className="w-32 rounded-lg border border-ink/[0.1] bg-white px-2.5 py-2 text-[13px] tabular-nums outline-none focus:border-deep-violet/40 dark:border-fog/[0.12] dark:bg-ink"
                 />
                 <PrimaryButton
                   onClick={() => void finishRegistration()}
                   disabled={busy || pinDraft.length !== 6}
                 >
-                  {busy ? "Registering…" : "Finish registration"}
+                  {busy ? w.registering : w.finishReg}
                 </PrimaryButton>
               </div>
               <p className="mt-2 text-[11px] leading-relaxed text-amber-800/80 dark:text-amber-300/80">
-                WhatsApp → Settings → Account → Two-step verification. You have 14 days from signup
-                to register the number.
+                {w.pinHint}
               </p>
             </div>
           ) : (
             <>
               {numbers.length === 0 ? (
                 <p className="mt-4 rounded-lg bg-ink/[0.03] px-3 py-2.5 text-[12px] text-ink/50 dark:bg-fog/[0.04] dark:text-fog/50">
-                  Meta reported the connection but no numbers are visible yet. Give it a minute and{" "}
+                  {w.noNumbers}{" "}
                   <button
                     type="button"
                     onClick={() => void loadNumbers()}
                     className="font-semibold underline underline-offset-2"
                   >
-                    reload
+                    {w.reload}
                   </button>
-                  .
+                  {w.dot}
                 </p>
               ) : (
                 <div className="mt-4 space-y-2">
@@ -442,8 +407,8 @@ export default function WhatsAppConnectFlow() {
                           {n.phone || n.name || n.external_asset_id}
                         </span>
                         <span className="block truncate text-[11px] text-ink/45 dark:text-fog/45">
-                          {n.name || "WhatsApp Business number"}
-                          {n.active ? " · currently active" : ""}
+                          {n.name || w.waNumber}
+                          {n.active ? w.currentlyActive : ""}
                         </span>
                       </span>
                     </label>
@@ -454,14 +419,14 @@ export default function WhatsAppConnectFlow() {
           )}
 
           {!needsPin && (
-            <StepActions hint="Pick every number the AI may answer on. You can change this later.">
+            <StepActions hint={w.pickHint}>
               <PrimaryButton
                 onClick={() => void saveNumber()}
                 disabled={busy || picked.length === 0}
               >
-                {busy ? "Saving…" : picked.length > 1 ? `Use selected (${picked.length})` : "Use this number"}
+                {busy ? t.dashboard.connect.saving : picked.length > 1 ? fill(w.useSelected, { count: picked.length }) : w.useNumber}
               </PrimaryButton>
-              <SecondaryButton href="/dashboard/channels/whatsapp">Manage later</SecondaryButton>
+              <SecondaryButton href="/dashboard/channels/whatsapp">{w.manageLater}</SecondaryButton>
             </StepActions>
           )}
         </div>
@@ -470,27 +435,26 @@ export default function WhatsAppConnectFlow() {
       {step === STEP_DONE && (
         <div>
           <StepHeading
-            title="WhatsApp is connected"
+            title={w.doneTitle}
             body={
               mode === "coexistence"
-                ? "Your number stays on the WhatsApp Business app. Chat history syncs in the background — up to 24 hours for older conversations."
-                : "Meta registered the number and it can send messages now."
+                ? w.doneBodyCoexistence
+                : w.doneBodyStandard
             }
           />
           <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-500/25 dark:bg-emerald-500/10">
             <p className="text-[12px] font-semibold text-emerald-800 dark:text-emerald-300">
               {saved && picked.length > 0
-                ? numbers.find((n) => n.id === picked[0])?.phone ?? "Number activated"
-                : "Connection stored"}
+                ? numbers.find((n) => n.id === picked[0])?.phone ?? w.activated
+                : w.stored}
             </p>
             <p className="mt-0.5 text-[11.5px] leading-relaxed text-emerald-800/80 dark:text-emerald-300/80">
-              Incoming messages will appear in the inbox. Auto-reply settings live on the WhatsApp
-              page under Settings.
+              {w.doneDetail}
             </p>
           </div>
           <StepActions>
-            <PrimaryButton href="/dashboard/channels/whatsapp">Open WhatsApp</PrimaryButton>
-            <SecondaryButton href="/dashboard/channels">Back to channels</SecondaryButton>
+            <PrimaryButton href="/dashboard/channels/whatsapp">{w.openWhatsApp}</PrimaryButton>
+            <SecondaryButton href="/dashboard/channels">{w.backChannels}</SecondaryButton>
           </StepActions>
         </div>
       )}

@@ -10,6 +10,7 @@ import {
   type MetaAsset,
 } from "@/lib/api-meta";
 import LogoLoader from "@/components/LogoLoader";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 import AssetPicker from "./AssetPicker";
 import OnboardingShell, {
   BenefitList,
@@ -33,28 +34,31 @@ import { startMetaOAuth, warmFacebookSdk } from "./metaSignup";
  * transaction by the backend — not guessed here.
  */
 
-const STEPS = [
-  { key: "start", label: "Get started" },
-  { key: "checks", label: "Before you begin" },
-  { key: "facebook", label: "Facebook" },
-  { key: "pages", label: "Pages" },
-  { key: "done", label: "Done" },
-];
-
 const STEP_OVERVIEW = 0;
 const STEP_CHECKS = 1;
 const STEP_FACEBOOK = 2;
 const STEP_PAGES = 3;
 const STEP_DONE = 4;
 
-const CHECKS = [
-  "I am an admin of the Facebook Page I want to connect.",
-  "I can log in to the Facebook account that manages that Page right now.",
-  "I understand Sayvors will reply to comments and messages on my behalf.",
-];
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [k, v]) => out.replaceAll(`{${k}}`, String(v)),
+    s,
+  );
+}
 
 export default function FacebookConnectFlow() {
   const params = useSearchParams();
+  const { t } = useI18n();
+  const f = t.dashboard.connect.facebook;
+  const STEPS = [
+    { key: "start", label: f.steps.start },
+    { key: "checks", label: f.steps.checks },
+    { key: "facebook", label: f.steps.facebook },
+    { key: "pages", label: f.steps.pages },
+    { key: "done", label: f.steps.done },
+  ];
+  const CHECKS = [...f.checks];
   const [step, setStep] = useState(STEP_OVERVIEW);
   const [checks, setChecks] = useState<boolean[]>([false, false, false]);
   const [busy, setBusy] = useState(false);
@@ -92,12 +96,12 @@ export default function FacebookConnectFlow() {
       }
 
       if (failure) {
-        setError(`Meta rejected the connection (${failure}). Try again.`);
+        setError(fill(f.errors.rejected, { code: failure }));
         setStep(STEP_FACEBOOK);
       }
       if (discovery) {
         setError(
-          `Connected, but Page discovery failed (Graph ${discovery}). Grant the Page in the Meta dialog and reconnect.`
+          fill(f.errors.discovery, { code: discovery }),
         );
         setStep(STEP_PAGES);
       }
@@ -130,7 +134,7 @@ export default function FacebookConnectFlow() {
     try {
       await startMetaOAuth("facebook", "/dashboard/channels/facebook/connect");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not start Facebook connect.");
+      setError(e instanceof Error ? e.message : f.errors.start);
       setBusy(false);
     }
   };
@@ -142,7 +146,7 @@ export default function FacebookConnectFlow() {
       await selectMetaAssets("facebook", picked);
       setStep(STEP_DONE);
     } catch {
-      setError("Could not activate the selected Pages. Try again, or pick them later on the Facebook page.");
+      setError(f.errors.save);
     } finally {
       setBusy(false);
     }
@@ -153,8 +157,8 @@ export default function FacebookConnectFlow() {
   return (
     <OnboardingShell
       platform="facebook"
-      title="Connect your Facebook Page"
-      subtitle="Let our AI answer comments and Messenger messages on your own Page, and publish posts from the same workspace."
+      title={f.title}
+      subtitle={f.subtitle}
       steps={STEPS}
       current={step}
       onStepClick={(i) => {
@@ -164,39 +168,15 @@ export default function FacebookConnectFlow() {
         step === STEP_OVERVIEW ? (
           <>
             <BenefitList
-              title="What you get"
-              items={[
-                {
-                  icon: "💬",
-                  label: "Comments handled",
-                  body: "The AI replies to comments on your posts in your brand voice.",
-                },
-                {
-                  icon: "✉️",
-                  label: "Messenger DMs",
-                  body: "Direct messages land in the same inbox your team already watches.",
-                },
-                {
-                  icon: "🗓️",
-                  label: "Publish on schedule",
-                  body: "Write, schedule and publish Page posts without leaving Sayvors.",
-                },
-              ]}
+              title={f.benefitsTitle}
+              items={f.benefits.map((b, i) => ({ icon: ["💬", "✉️", "🗓️"][i], label: b.label, body: b.body }))}
             />
             <RequirementList
-              items={[
-                "A Facebook Page you manage.",
-                "Admin access to that Page — editor access cannot grant messaging permissions.",
-                "The Facebook login for the account that manages it.",
-              ]}
+              items={[...f.requirements]}
             />
             <GuidelineNote
-              title="Connect your Facebook Page"
-              lines={[
-                "Use your official business Page.",
-                "The Page must be published and you must be an admin of it.",
-                "Unlink any personal Pages you do not want to share with Sayvors.",
-              ]}
+              title={f.guidelineTitle}
+              lines={[...f.guideline]}
             />
           </>
         ) : null
@@ -205,38 +185,38 @@ export default function FacebookConnectFlow() {
       {step === STEP_OVERVIEW && (
         <div>
           <StepHeading
-            title="Connect your own Page"
-            body="Sayvors only acts on Pages you explicitly pick. Nothing is published or answered until you choose a Page and turn the features on."
+            title={f.overviewTitle}
+            body={f.overviewBody}
           />
 
           {alreadyConnected && (
             <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] leading-relaxed text-emerald-800 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-300">
-              A Facebook Page is already connected. You can reconnect below, or open the{" "}
+              {f.already}{" "}
               <Link href="/dashboard/channels/facebook" className="font-semibold underline underline-offset-2">
-                Facebook page
+                {f.alreadyLink}
               </Link>{" "}
-              to manage it.
+              {f.alreadyTail}
             </p>
           )}
 
           <ul className="mt-4 space-y-2 text-[12.5px] leading-relaxed text-ink/60 dark:text-fog/60">
             <li className="flex gap-2">
               <span aria-hidden className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-ink/25 dark:bg-fog/25" />
-              Meta shows its own consent screen — Sayvors never sees your Facebook password.
+              {f.bullets[0]}
             </li>
             <li className="flex gap-2">
               <span aria-hidden className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-ink/25 dark:bg-fog/25" />
-              You pick which Pages to share on the next screen.
+              {f.bullets[1]}
             </li>
             <li className="flex gap-2">
               <span aria-hidden className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-ink/25 dark:bg-fog/25" />
-              You can disconnect at any time without losing conversation history.
+              {f.bullets[2]}
             </li>
           </ul>
 
-          <StepActions hint="Takes about 2 minutes.">
-            <PrimaryButton onClick={() => setStep(STEP_CHECKS)}>Continue</PrimaryButton>
-            <SecondaryButton href="/dashboard/channels">Cancel</SecondaryButton>
+          <StepActions hint={f.overviewHint}>
+            <PrimaryButton onClick={() => setStep(STEP_CHECKS)}>{t.dashboard.connect.continue}</PrimaryButton>
+            <SecondaryButton href="/dashboard/channels">{t.common.cancel}</SecondaryButton>
           </StepActions>
         </div>
       )}
@@ -244,9 +224,9 @@ export default function FacebookConnectFlow() {
       {step === STEP_CHECKS && (
         <div>
           <StepHeading
-            eyebrow="Step 1 of 2"
-            title="Before you begin"
-            body="Confirm these three things — Meta will only grant the permissions an admin can approve."
+            eyebrow={f.stepOne}
+            title={f.checksTitle}
+            body={f.checksBody}
           />
           <div className="mt-4 space-y-2">
             {CHECKS.map((item, i) => (
@@ -265,11 +245,11 @@ export default function FacebookConnectFlow() {
               </CheckRow>
             ))}
           </div>
-          <StepActions hint="Nothing is sent to Meta until you press Proceed.">
+          <StepActions hint={f.checksHint}>
             <PrimaryButton onClick={() => setStep(STEP_FACEBOOK)} disabled={!allChecked}>
-              Proceed
+              {t.dashboard.connect.proceed}
             </PrimaryButton>
-            <SecondaryButton onClick={() => setStep(STEP_OVERVIEW)}>Back</SecondaryButton>
+            <SecondaryButton onClick={() => setStep(STEP_OVERVIEW)}>{t.common.back}</SecondaryButton>
           </StepActions>
         </div>
       )}
@@ -277,25 +257,25 @@ export default function FacebookConnectFlow() {
       {step === STEP_FACEBOOK && (
         <div>
           <StepHeading
-            eyebrow="Step 2 of 2"
-            title="Continue with Facebook"
-            body="You leave Sayvors for Meta's consent screen, then come straight back here to choose your Page."
+            eyebrow={f.stepTwo}
+            title={f.fbTitle}
+            body={f.fbBody}
           />
 
           {error && <ErrorNote>{error}</ErrorNote>}
 
-          <StepActions hint="Make sure you are logged in to the account that manages the Page.">
+          <StepActions hint={f.fbHint}>
             <PrimaryButton onClick={() => void handleConnect()} disabled={busy}>
               {busy ? (
                 <span className="inline-flex items-center gap-2">
-                  <LogoLoader size={14} /> Opening Facebook…
+                  <LogoLoader size={14} /> {f.opening}
                 </span>
               ) : (
-                "Continue with Facebook"
+                f.fbTitle
               )}
             </PrimaryButton>
             <SecondaryButton onClick={() => setStep(STEP_CHECKS)} disabled={busy}>
-              Back
+              {t.common.back}
             </SecondaryButton>
           </StepActions>
         </div>
@@ -303,9 +283,10 @@ export default function FacebookConnectFlow() {
 
       {step === STEP_PAGES && (
         <AssetPicker
-          title="Which Pages should Sayvors use?"
-          body="These are the Pages Meta shared with us. Pick the ones the AI should answer on — you can change this later."
-          emptyText="Meta did not return any Pages for this login. Make sure you granted the Page in the Meta dialog, then reconnect."
+          eyebrow={f.pagesEyebrow}
+          title={f.pagesTitle}
+          body={f.pagesBody}
+          emptyText={f.pagesEmpty}
           assets={pages}
           picked={picked}
           onToggle={(id) =>
@@ -315,27 +296,27 @@ export default function FacebookConnectFlow() {
           onBack={() => setStep(STEP_FACEBOOK)}
           busy={busy}
           error={error}
-          savedLabel="Only selected Pages are visible in Sayvors."
+          savedLabel={f.pagesSaved}
         />
       )}
 
       {step === STEP_DONE && (
         <div>
           <StepHeading
-            title="Facebook is connected"
-            body="Comments, messages and publishing now work for the Pages you selected."
+            title={f.doneTitle}
+            body={f.doneBody}
           />
           <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-500/25 dark:bg-emerald-500/10">
             <p className="text-[12px] font-semibold text-emerald-800 dark:text-emerald-300">
-              {picked.length} Page{picked.length === 1 ? "" : "s"} active
+              {fill(f.activeN, { count: picked.length })}
             </p>
             <p className="mt-0.5 text-[11.5px] leading-relaxed text-emerald-800/80 dark:text-emerald-300/80">
-              New comments and messages appear in the inbox. Publish from Posts &amp; Media.
+              {f.doneDetail}
             </p>
           </div>
           <StepActions>
-            <PrimaryButton href="/dashboard/channels/facebook">Open Facebook</PrimaryButton>
-            <SecondaryButton href="/dashboard/channels">Back to channels</SecondaryButton>
+            <PrimaryButton href="/dashboard/channels/facebook">{f.openFacebook}</PrimaryButton>
+            <SecondaryButton href="/dashboard/channels">{f.backChannels}</SecondaryButton>
           </StepActions>
         </div>
       )}

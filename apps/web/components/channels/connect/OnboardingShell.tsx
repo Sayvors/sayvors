@@ -4,6 +4,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import Breadcrumbs from "@/components/Breadcrumbs";
 import PlatformMark from "@/components/channels/PlatformMark";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 
 /**
  * Shared frame for the per-channel onboarding screens.
@@ -63,15 +64,17 @@ export default function OnboardingShell({
   aside?: ReactNode;
 }) {
   const copy = PLATFORM_COPY[platform];
+  const { t } = useI18n();
+  const c = t.dashboard.connect;
 
   return (
     <div className="h-full overflow-y-auto p-4 pb-24 sm:p-6">
       <div className="mx-auto w-full max-w-5xl">
         <Breadcrumbs
           items={[
-            { label: "Channels", href: "/dashboard/channels" },
+            { label: t.nav.channels, href: "/dashboard/channels" },
             { label: copy.name, href: copy.hub },
-            { label: "Connect" },
+            { label: t.nav.connect },
           ]}
         />
 
@@ -87,7 +90,7 @@ export default function OnboardingShell({
           </div>
         </header>
 
-        <ol className="mt-5 flex items-center gap-1.5 overflow-x-auto" aria-label="Onboarding steps">
+        <ol className="mt-5 flex items-center gap-1.5 overflow-x-auto" aria-label={c.onboardingSteps}>
           {steps.map((step, i) => {
             const done = i < current;
             const active = i === current;
@@ -193,10 +196,11 @@ export function BenefitList({
 
 /** "What you'll need" checklist rail (read-only). */
 export function RequirementList({ items }: { items: string[] }) {
+  const { t } = useI18n();
   return (
     <div className="rounded-xl border border-ink/[0.06] bg-ink/[0.02] p-4 dark:border-fog/[0.06] dark:bg-fog/[0.03]">
       <p className="text-[11px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">
-        What you&rsquo;ll need
+        {t.dashboard.connect.whatNeed}
       </p>
       <ul className="mt-2 space-y-1.5">
         {items.map((item) => (
