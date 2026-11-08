@@ -14,6 +14,7 @@ from ..team.context import TenantContext, get_context, require_perm, tenant_id_o
 from ...database import async_session as _async_session
 from ...config import settings
 from ..auth.rate_limit import rate_limit
+from ..billing.messaging_quota import ensure_messaging_quota
 from ..users.models import User
 from .models import (
     AutoReplyConfig,
@@ -2143,37 +2144,6 @@ def _message_out(m: ChannelMessage) -> ChannelMessageResponse:
     )
 
 
-async def _ensure_messaging_quota(ctx: TenantContext, db: AsyncSession) -> None:
-    """The plan gate every outbound conversation message shares."""
-    from ..billing.entitlements import (
-        ENTITLEMENT_DENIED_HEADER,
-        count_messages_this_month,
-        entitlement_403,
-        get_entitlements,
-    )
-    from ..team.context import tenant_id_of
-
-    tid = tenant_id_of(ctx.user)
-    ent = await get_entitlements(tid, db)
-    if not ent.has_feature("messaging"):
-        raise entitlement_403("Messaging is not included in your plan.", "messaging")
-    used = await count_messages_this_month(tid, db)
-    if not ent.message_quota_ok(used):
-        raise HTTPException(
-            status_code=429,
-            detail=f"Monthly message limit reached for plan '{ent.plan_slug}'. Upgrade to send more.",
-            headers={ENTITLEMENT_DENIED_HEADER: "quota"},
-        )
-    # The send is about to add a row; drop the cached count so the next
-    # inbound check (AI reply gate) sees it immediately.
-    try:
-        from ..billing.quotas import invalidate_message_usage
-
-        await invalidate_message_usage(tid)
-    except Exception:
-        pass
-
-
 async def _publish_outbound_message(tenant_id: str, msg: ChannelMessage) -> None:
     from .realtime import publish_inbox_event
 
@@ -2281,7 +2251,7 @@ async def inbox_send(
     """
     if not ctx.can_edit_channel(body.channel_id):
         raise HTTPException(status_code=403, detail="No edit access to this channel")
-    await _ensure_messaging_quota(ctx, db)
+    await ensure_messaging_quota(ctx, db, body.channel_id)
     try:
         msg = await send_message(
             body.channel_id,
@@ -2323,7 +2293,7 @@ async def inbox_send_document(
     """Send a PDF, invoice, menu or other document as a native attachment."""
     if not ctx.can_edit_channel(channel_id):
         raise HTTPException(status_code=403, detail="No edit access to this channel")
-    await _ensure_messaging_quota(ctx, db)
+    await ensure_messaging_quota(ctx, db, channel_id)
 
     # Read one byte past the ceiling so an oversized upload is rejected without
     # buffering the whole file first.
@@ -2370,7 +2340,7 @@ async def inbox_send_sticker(
     """Send a WebP sticker (WhatsApp's only sticker format)."""
     if not ctx.can_edit_channel(channel_id):
         raise HTTPException(status_code=403, detail="No edit access to this channel")
-    await _ensure_messaging_quota(ctx, db)
+    await ensure_messaging_quota(ctx, db, channel_id)
 
     data = await file.read(MAX_OUTBOUND_STICKER_BYTES + 1)
     await file.close()
@@ -2412,7 +2382,7 @@ async def inbox_send_location(
     """Send a native WhatsApp location card (lat/lng, name and address)."""
     if not ctx.can_edit_channel(body.channel_id):
         raise HTTPException(status_code=403, detail="No edit access to this channel")
-    await _ensure_messaging_quota(ctx, db)
+    await ensure_messaging_quota(ctx, db, body.channel_id)
     try:
         msg = await send_location_message(
             body.channel_id,
@@ -2443,7 +2413,7 @@ async def inbox_send_contact(
     """Send a native WhatsApp contact card."""
     if not ctx.can_edit_channel(body.channel_id):
         raise HTTPException(status_code=403, detail="No edit access to this channel")
-    await _ensure_messaging_quota(ctx, db)
+    await ensure_messaging_quota(ctx, db, body.channel_id)
     try:
         msg = await send_contact_message(
             body.channel_id,

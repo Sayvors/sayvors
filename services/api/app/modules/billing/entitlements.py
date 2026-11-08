@@ -172,21 +172,24 @@ async def get_entitlements(tenant_id: str, db: AsyncSession) -> Entitlements:
     plan, status, granted_by, granted_until, override = await get_effective_plan(tenant_id, db)
     now = datetime.now(timezone.utc)
     promo_active = granted_until is not None and granted_until > now
-    limits = (
+    bonuses = (
         await db.execute(
             select(
-                TenantSubscription.message_limit_override,
-                TenantSubscription.channels_limit_override,
+                TenantSubscription.message_bonus,
+                TenantSubscription.channels_bonus,
             ).where(TenantSubscription.tenant_id == tenant_id)
         )
     ).first()
     message_limit = plan.max_messages_per_month
     channel_limit = plan.max_channels
-    if limits is not None:
-        if limits[0] is not None:
-            message_limit = limits[0]
-        if limits[1] is not None:
-            channel_limit = limits[1]
+    # Top-ups are additive, never an absolute replacement. A plan change or a
+    # plan-catalog edit therefore applies immediately without losing the
+    # amount the tenant bought.
+    if bonuses is not None:
+        if message_limit is not None:
+            message_limit += max(0, bonuses[0] or 0)
+        if channel_limit is not None:
+            channel_limit += max(0, bonuses[1] or 0)
     return Entitlements(
         plan_slug=plan.slug,
         plan_name=plan.name,
@@ -204,7 +207,11 @@ async def get_entitlements(tenant_id: str, db: AsyncSession) -> Entitlements:
 
 
 async def count_messages_this_month(tenant_id: str, db: AsyncSession) -> int:
-    """Count outbound messages sent by this tenant in the current calendar month."""
+    """Count outbound WhatsApp messages for the current calendar month.
+
+    The plan's "messages" allowance is WhatsApp-only. Instagram, Facebook and
+    every other channel have their own limits and must not consume it.
+    """
     from datetime import datetime, timezone
 
     from sqlalchemy import func, select
@@ -214,7 +221,12 @@ async def count_messages_this_month(tenant_id: str, db: AsyncSession) -> int:
     now = datetime.now(timezone.utc)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     channel_ids = (
-        await db.execute(select(Channel.id).where(Channel.user_id == tenant_id))
+        await db.execute(
+            select(Channel.id).where(
+                Channel.user_id == tenant_id,
+                Channel.platform == "whatsapp",
+            )
+        )
     ).scalars().all()
     if not channel_ids:
         return 0

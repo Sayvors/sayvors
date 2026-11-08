@@ -39,7 +39,7 @@ const KIND_LABEL: Record<string, string> = {
 function requestSummary(request: BillingRequest): string {
   if (request.kind === "ai_credit") return fmtCents(request.amount ?? 0);
   if (request.kind === "plan") return request.plan_slug ?? "Plan";
-  return `${(request.amount ?? 0).toLocaleString()} ${request.kind === "messages" ? "messages" : "channels"}`;
+  return `${(request.amount ?? 0).toLocaleString()} ${request.kind === "messages" ? "WhatsApp messages" : "channels"}`;
 }
 
 export default function TopUpPage() {
@@ -144,7 +144,7 @@ export default function TopUpPage() {
         {/* current usage */}
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
           <div className="rounded-2xl border border-ink/[0.07] bg-white p-4 dark:border-fog/[0.08] dark:bg-ink/60">
-            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40 dark:text-fog/40">Messages this month</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40 dark:text-fog/40">WhatsApp messages this month</p>
             <p className="mt-1 text-[18px] font-bold tabular-nums text-ink dark:text-fog">
               {usedMessages.toLocaleString()}
               <span className="text-[12px] font-medium text-ink/40 dark:text-fog/40">

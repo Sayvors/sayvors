@@ -103,7 +103,7 @@ function PlanCard({
           </div>
         </div>
         <div className="col-span-2 rounded-xl bg-ink/[0.03] px-3 py-2 dark:bg-fog/[0.04]">
-          <div className="text-ink/45 dark:text-fog/45">Messages / month</div>
+          <div className="text-ink/45 dark:text-fog/45">WhatsApp messages / month</div>
           <div className="font-semibold text-ink dark:text-fog">
             {isEnterprise
               ? "Custom"
@@ -246,7 +246,7 @@ export default function PlansPage() {
               }
             />
             <UsageMeter
-              label="Messages / month"
+              label="WhatsApp messages / month"
               used={entitlements.messages_used_this_month}
               max={entitlements.max_messages_per_month ?? null}
               barClass="bg-amber-500"

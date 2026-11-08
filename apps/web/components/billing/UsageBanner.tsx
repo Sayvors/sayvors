@@ -6,13 +6,14 @@ import { getEntitlements } from "@/lib/api-billing";
 import { queryKeys } from "@/lib/query-keys";
 
 /**
- * Monthly message quota banner.
+ * Monthly WhatsApp message quota banner.
  *
- * Shown from 90% usage so the owner has time to act before the AI stops
- * answering. The exhausted state is deliberately explicit: inbound messages
- * still arrive and are stored, but no AI reply is generated until the limit is
- * raised. There is no self-serve top-up yet, so the call to action is the
- * plans page (Enterprise / contact us).
+ * The plan allowance is WhatsApp-only; Instagram and other channels are not
+ * counted. Shown from 90% usage so the owner has time to act before the AI
+ * stops answering. The exhausted state is deliberately explicit: inbound
+ * messages still arrive and are stored, but no AI reply is generated until the
+ * limit is raised. There is no self-serve top-up yet, so the call to action is
+ * the plans page (Enterprise / contact us).
  */
 export default function UsageBanner() {
   const { data } = useQuery({
@@ -54,14 +55,14 @@ export default function UsageBanner() {
       <span className="min-w-0 flex-1">
         {exhausted ? (
           <>
-            <strong className="font-bold">Message limit reached.</strong>{" "}
-            {used.toLocaleString()} of {limit.toLocaleString()} messages used this month.
-            New messages still arrive, but the AI will not reply until the limit is
-            raised.
+            <strong className="font-bold">WhatsApp message limit reached.</strong>{" "}
+            {used.toLocaleString()} of {limit.toLocaleString()} WhatsApp messages used this
+            month. New messages still arrive, but the AI will not reply until the limit
+            is raised.
           </>
         ) : (
           <>
-            <strong className="font-bold">Running low on messages.</strong>{" "}
+            <strong className="font-bold">Running low on WhatsApp messages.</strong>{" "}
             {used.toLocaleString()} of {limit.toLocaleString()} used ({percent}%) —{" "}
             {remaining.toLocaleString()} left this month.
           </>

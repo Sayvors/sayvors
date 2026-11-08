@@ -146,11 +146,11 @@ async def _typing_indicator_enabled(tenant_id: str) -> bool:
 
 
 async def _message_quota_available(db, tenant_id: str) -> bool:
-    """Whether the workspace can still send this month.
+    """Whether the workspace can still send WhatsApp messages this month.
 
-    Fails open: a billing lookup must never silence a customer's message. The
-    LLM gateway still enforces the plan's AI feature separately, and outbound
-    sends re-check the quota at the HTTP layer.
+    The allowance is WhatsApp-only; this is called from the WhatsApp inbound
+    path before AI work. Fails open: a billing lookup must never silence a
+    customer's message. Outbound sends re-check the quota at the HTTP layer.
     """
     try:
         from ...billing.quotas import message_quota_available
@@ -3539,12 +3539,8 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
             )
             return
 
-        if not await _message_quota_available(db, tenant_id):
-            logger.warning(
-                "Instagram AI reply skipped (message quota exhausted) tenant=%s mid=%s",
-                tenant_id[:8], mid[:32],
-            )
-            return
+        # The monthly message allowance is WhatsApp-only, so an exhausted
+        # WhatsApp quota must not mute the Instagram AI.
 
         if await get_mode(db, channel.id, igsid) == "human":
             logger.info(

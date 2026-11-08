@@ -161,12 +161,11 @@ async def _apply_messages(db: AsyncSession, tenant_id: str, amount: int) -> str:
     sub, plan = await _subscription(db, tenant_id)
     if sub is None:
         raise RequestError("Tenant has no subscription row.")
-    current = sub.message_limit_override
-    if current is None:
-        current = plan.max_messages_per_month
-    if current is None:
-        return "Plan already has unlimited messages; nothing to add."
-    sub.message_limit_override = current + amount
+    if plan.max_messages_per_month is None:
+        return "Plan already has unlimited WhatsApp messages; nothing to add."
+    # Additive bonus, not an absolute override: a later plan change still
+    # determines the base and this amount rides on top of it.
+    sub.message_bonus = max(0, sub.message_bonus or 0) + amount
     await db.flush()
     try:
         from .quotas import invalidate_message_usage
@@ -174,21 +173,20 @@ async def _apply_messages(db: AsyncSession, tenant_id: str, amount: int) -> str:
         await invalidate_message_usage(tenant_id)
     except Exception:
         pass
-    return f"Message allowance is now {sub.message_limit_override:,}/month."
+    effective = plan.max_messages_per_month + sub.message_bonus
+    return f"WhatsApp allowance is now {effective:,}/month."
 
 
 async def _apply_channels(db: AsyncSession, tenant_id: str, amount: int) -> str:
     sub, plan = await _subscription(db, tenant_id)
     if sub is None:
         raise RequestError("Tenant has no subscription row.")
-    current = sub.channels_limit_override
-    if current is None:
-        current = plan.max_channels
-    if current is None:
+    if plan.max_channels is None:
         return "Plan already has unlimited channels; nothing to add."
-    sub.channels_limit_override = current + amount
+    sub.channels_bonus = max(0, sub.channels_bonus or 0) + amount
     await db.flush()
-    return f"Channel allowance is now {sub.channels_limit_override:,}."
+    effective = plan.max_channels + sub.channels_bonus
+    return f"Channel allowance is now {effective:,}."
 
 
 async def _apply_plan(db: AsyncSession, tenant_id: str, plan_slug: str) -> str:
@@ -205,6 +203,8 @@ async def _apply_plan(db: AsyncSession, tenant_id: str, plan_slug: str) -> str:
         sub.plan_id = plan.id
         sub.status = "active"
         sub.granted_until = None
+    # message_bonus/channels_bonus are deliberately untouched: they are the
+    # additive top-ups the tenant bought and must stack on the new plan.
     await db.flush()
     return f"Plan switched to {plan.name}."
 
