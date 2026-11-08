@@ -366,6 +366,7 @@ export default function EmailCampaignsPage() {
   const [preview, setPreview] = useState<CampaignPreview | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
   const editorRef = useRef<HTMLDivElement | null>(null);
+  const previewSeq = useRef(0);
   const [batchSize, setBatchSize] = useState(500);
   const [intervalSeconds, setIntervalSeconds] = useState(60);
   const [loading, setLoading] = useState(true);
@@ -509,26 +510,43 @@ export default function EmailCampaignsPage() {
     setHtml(editor.innerHTML);
   };
 
-  const runPreview = async () => {
-    if (!subject.trim() || !html.trim()) {
-      setError("Subject and body are required for a preview.");
-      return;
-    }
+  const refreshPreview = useCallback(async () => {
+    if (!subject.trim() || !html.trim()) return;
+    const seq = ++previewSeq.current;
     setPreviewBusy(true);
     setError(null);
     try {
-      setPreview(
-        await previewEmailCampaign({
-          subject: subject.trim(),
-          html,
-          text: editorRef.current?.innerText?.trim() || null,
-        }),
-      );
+      const data = await previewEmailCampaign({
+        subject: subject.trim(),
+        html,
+        text: editorRef.current?.innerText?.trim() || null,
+      });
+      if (seq === previewSeq.current) setPreview(data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not render the preview.");
+      if (seq === previewSeq.current) {
+        setError(e instanceof Error ? e.message : "Could not render the preview.");
+      }
     } finally {
-      setPreviewBusy(false);
+      if (seq === previewSeq.current) setPreviewBusy(false);
     }
+  }, [subject, html]);
+
+  useEffect(() => {
+    if (!subject.trim() || !html.trim()) return;
+    const timer = window.setTimeout(() => void refreshPreview(), 700);
+    return () => window.clearTimeout(timer);
+  }, [refreshPreview, subject, html]);
+
+  const resetBody = () => {
+    if (
+      editorRef.current &&
+      !window.confirm("Replace the current body with the default content?")
+    ) {
+      return;
+    }
+    setHtml(DEFAULT_BODY_HTML);
+    if (editorRef.current) editorRef.current.innerHTML = DEFAULT_BODY_HTML;
+    setPreview(null);
   };
 
   const start = async (campaign: EmailCampaign) => {
@@ -602,8 +620,8 @@ export default function EmailCampaignsPage() {
       <section className="panel p-4">
         <h2 className="text-[14px] font-bold text-ink">Composer</h2>
         <p className="mt-0.5 text-[11px] text-ink/45">
-          Body is HTML. <code>{"{name}"}</code> and <code>{"{email}"}</code> are replaced
-          per recipient. New links carry one-click unsubscribe headers.
+          Write with the toolbar. Variables are replaced per recipient at send time;
+          the branded footer adds the unsubscribe link.
         </p>
 
         {templates.length > 0 && (
@@ -697,7 +715,8 @@ export default function EmailCampaignsPage() {
           </div>
         </div>
 
-        <div className="mt-3">
+        <div className="mt-3 grid gap-4 lg:grid-cols-2">
+          <div>
           <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-ink/40">
             Body
           </span>
@@ -719,6 +738,14 @@ export default function EmailCampaignsPage() {
                 {item.label}
               </button>
             ))}
+            <button
+              type="button"
+              title="Reset body to the default"
+              onClick={resetBody}
+              className={`ml-auto h-7 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 text-[10.5px] font-semibold text-ink/60 hover:bg-[var(--ui-sunken)] ${FOCUS}`}
+            >
+              Reset
+            </button>
           </div>
           <div
             ref={editorRef}
@@ -734,7 +761,6 @@ export default function EmailCampaignsPage() {
             Use the toolbar for bold, italic, headings, lists and links. The stored
             email body is generated from this editor.
           </span>
-        </div>
 
         {variables.length > 0 && (
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -754,6 +780,48 @@ export default function EmailCampaignsPage() {
             ))}
           </div>
         )}
+          </div>
+
+          <div className="flex min-h-[280px] flex-col rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)]">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--ui-line)] px-3 py-2">
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-ink/40">
+                  Live design preview
+                </p>
+                <p className="truncate text-[12px] font-bold text-ink">
+                  {preview?.subject || subject || "Untitled subject"}
+                </p>
+                <p className="text-[10px] text-ink/40">
+                  {preview
+                    ? `Tenant: ${preview.tenant.email || "—"}`
+                    : "The branded shell renders here as you type"}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void refreshPreview()}
+                disabled={previewBusy}
+                className={`h-7 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 text-[10.5px] font-semibold text-ink disabled:opacity-50 ${FOCUS}`}
+              >
+                {previewBusy ? "Rendering…" : "Refresh"}
+              </button>
+            </div>
+            {preview ? (
+              <iframe
+                title="Campaign preview"
+                srcDoc={preview.html}
+                sandbox=""
+                className="h-[520px] w-full flex-1 bg-white"
+              />
+            ) : (
+              <div className="flex flex-1 items-center justify-center p-6 text-center text-[11.5px] text-ink/40">
+                The full branded email — logo, header, body and footer — appears
+                here. Add a subject and body and it updates automatically.
+              </div>
+            )}
+          </div>
+        </div>
+
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button
             type="button"
@@ -765,44 +833,17 @@ export default function EmailCampaignsPage() {
           </button>
           <button
             type="button"
-            onClick={() => void runPreview()}
+            onClick={() => void refreshPreview()}
             disabled={previewBusy}
             className={`h-9 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 text-[12px] font-semibold text-ink disabled:opacity-50 ${FOCUS}`}
           >
-            {previewBusy ? "Rendering…" : "Preview"}
+            {previewBusy ? "Rendering…" : "Refresh preview"}
           </button>
           <span className="text-[10.5px] text-ink/40">
-            Preview uses a real eligible tenant. A draft does not send anything.
+            The preview uses a real eligible tenant. A draft does not send anything.
           </span>
         </div>
 
-        {preview && (
-          <div className="mt-4 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)]">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--ui-line)] px-3 py-2">
-              <div className="min-w-0">
-                <p className="truncate text-[12px] font-bold text-ink">
-                  {preview.subject}
-                </p>
-                <p className="text-[10px] text-ink/40">
-                  Preview tenant: {preview.tenant.email || "—"}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setPreview(null)}
-                className={`h-7 rounded-[2px] border border-[var(--ui-line)] px-2 text-[10.5px] font-semibold text-ink ${FOCUS}`}
-              >
-                Close
-              </button>
-            </div>
-            <iframe
-              title="Campaign preview"
-              srcDoc={preview.html}
-              sandbox=""
-              className="h-[420px] w-full bg-white"
-            />
-          </div>
-        )}
       </section>
 
       <AudienceTable audience={audience} />
