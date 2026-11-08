@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useState } from "react";
 import PlatformMark, { platformLabel } from "@/components/channels/PlatformMark";
 import CustomerAvatar from "@/components/customers/CustomerAvatar";
-import { leadCategoryLabel } from "@/lib/lead-labels";
+import { leadCategoryLabelKnown } from "@/lib/lead-labels";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 import { updateCustomerCategory } from "@/lib/api-customers";
 import { resolveMediaUrl } from "@/lib/media-url";
 import type { Customer, CustomerProfile as CustomerProfileData } from "@/lib/api-customers";
@@ -51,6 +52,35 @@ export default function CustomerProfile({
   selected: Customer;
   onCategoryChanged?: () => void;
 }) {
+  const { t, locale } = useI18n();
+  const u = t.dashboard.customers;
+  const catLabel = (value: string | null | undefined): string => {
+    if (!value) return "—";
+    const lead = leadCategoryLabelKnown(value, locale);
+    if (lead) return lead;
+    return (u.threadCats as Record<string, string>)[value] ?? value;
+  };
+  const prioLabel = (value: string | null | undefined): string => {
+    if (!value) return "—";
+    return (u.priorities as Record<string, string>)[value] ?? value;
+  };
+  const stageLabel = (value: string | null | undefined): string => {
+    if (!value) return "—";
+    const stages: Record<string, string> = {
+      new: u.stages.new,
+      qualified: u.stages.qualified,
+      follow_up: u.stages.followUp,
+      converted: u.stages.converted,
+      lost: u.stages.lost,
+    };
+    return stages[value] ?? value;
+  };
+  const fill = (s: string, vars: Record<string, string | number>): string =>
+    Object.entries(vars).reduce((out, [k, v]) => out.replaceAll(`{${k}}`, String(v)), s);
+  const fmtDate = (iso: string | null | undefined) =>
+    iso ? new Date(iso).toLocaleDateString(locale === "ar" ? "ar-SA" : "en-US") : "";
+  const fmtDateTime = (iso: string | null | undefined) =>
+    iso ? new Date(iso).toLocaleString(locale === "ar" ? "ar-SA" : "en-US") : "";
   const [editing, setEditing] = useState(false);
   const [cat, setCat] = useState(profile.category || "normal");
   const [prio, setPrio] = useState(profile.priority || "normal");
@@ -59,7 +89,7 @@ export default function CustomerProfile({
   const [photoOpen, setPhotoOpen] = useState(false);
 
   const google = isGoogle(profile.identity.platform);
-  const name = profile.identity.name || selected.display_name || "Unknown sender";
+  const name = profile.identity.name || selected.display_name || u.unknownSender;
   const phone = displayPhone(profile.identity.contact_phone);
   const status = profile.category || "normal";
   const priority = profile.priority || "normal";
@@ -72,7 +102,7 @@ export default function CustomerProfile({
       onCategoryChanged?.();
       setEditing(false);
     } catch (e) {
-      setSaveError(e instanceof Error ? e.message : "Could not save this change.");
+      setSaveError(e instanceof Error ? e.message : u.saveFailed);
     } finally {
       setSaving(false);
     }
@@ -86,7 +116,7 @@ export default function CustomerProfile({
           <button
             type="button"
             onClick={() => setPhotoOpen(true)}
-            aria-label={`View ${name} profile picture`}
+            aria-label={fill(u.viewPic, { name })}
             className="cursor-zoom-in rounded-full outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 hover:opacity-90"
           >
             <CustomerAvatar name={name} url={profile.identity.avatar_url} size="lg" />
@@ -107,26 +137,26 @@ export default function CustomerProfile({
           </div>
           <p className={`mt-1 truncate text-[11px] ${INK2}`}>
             {google
-              ? "Google reviewer"
+              ? u.googleReviewer
               : profile.identity.username
                 ? `@${profile.identity.username}`
-                : phone ?? "No contact details"}
+                : phone ?? u.noDetails}
           </p>
         </div>
       </section>
 
       {/* At a glance */}
       <section className="grid grid-cols-3 gap-2">
-        <Stat label="Messages" value={String(profile.messages.length)} />
-        <Stat label="Reviews" value={String(profile.reviews.length)} />
-        <Stat label="Lead" value={profile.lead?.stage || "—"} />
+        <Stat label={u.statMessages} value={String(profile.messages.length)} />
+        <Stat label={u.statReviews} value={String(profile.reviews.length)} />
+        <Stat label={u.statLead} value={stageLabel(profile.lead?.stage ?? null)} />
       </section>
 
       {/* Categorization */}
       <section className="rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] p-3">
         <div className="flex items-center justify-between gap-2">
           <h3 className="text-[10px] font-bold uppercase tracking-[0.1em] text-[var(--ui-ink-2)]">
-            Category &amp; priority
+            {u.catTitle}
           </h3>
           <button
             type="button"
@@ -136,24 +166,24 @@ export default function CustomerProfile({
             }}
             className="text-[11px] font-semibold text-[var(--ui-ink-2)] transition hover:text-[var(--ui-ink)]"
           >
-            {editing ? "Cancel" : "Edit"}
+            {editing ? t.common.cancel : u.edit}
           </button>
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           <span className="rounded-full bg-[var(--ui-sunken)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">
-            {status}
+            {catLabel(status)}
           </span>
           <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${PRIORITY_CHIP[priority]}`}>
-            {priority}
+            {prioLabel(priority)}
           </span>
           {profile.important && (
             <span className="rounded-full bg-[#FF4F6E]/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#C4304B]">
-              Important
+              {u.important}
             </span>
           )}
           {!profile.can_reply && (
             <span className="rounded-full bg-[var(--ui-sunken)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
-              {google ? "Read-only on Google" : "No reply from here"}
+              {google ? u.readOnlyGoogle : u.noReplyFromHere}
             </span>
           )}
         </div>
@@ -162,34 +192,34 @@ export default function CustomerProfile({
             <div className="grid grid-cols-2 gap-2">
               <label className="block">
                 <span className={`mb-1 block text-[10px] font-bold uppercase tracking-wide ${INK2}`}>
-                  Category
+                  {u.categoryLabel}
                 </span>
                 <select
                   value={cat}
                   onChange={(e) => setCat(e.target.value)}
                   className="input-field h-9 w-full text-[11px]"
                 >
-                  <option value="complaint">complaint</option>
-                  <option value="feedback">feedback</option>
-                  <option value="inquiry">inquiry</option>
-                  <option value="review">review</option>
-                  <option value="other">other</option>
-                  <option value="normal">normal</option>
+                  <option value="complaint">{u.threadCats.complaint}</option>
+                  <option value="feedback">{u.threadCats.feedback}</option>
+                  <option value="inquiry">{u.threadCats.inquiry}</option>
+                  <option value="review">{u.threadCats.review}</option>
+                  <option value="other">{u.threadCats.other}</option>
+                  <option value="normal">{u.threadCats.normal}</option>
                 </select>
               </label>
               <label className="block">
                 <span className={`mb-1 block text-[10px] font-bold uppercase tracking-wide ${INK2}`}>
-                  Priority
+                  {u.priorityLabel}
                 </span>
                 <select
                   value={prio}
                   onChange={(e) => setPrio(e.target.value)}
                   className="input-field h-9 w-full text-[11px]"
                 >
-                  <option value="urgent">urgent</option>
-                  <option value="high">high</option>
-                  <option value="normal">normal</option>
-                  <option value="low">low</option>
+                  <option value="urgent">{u.priorities.urgent}</option>
+                  <option value="high">{u.priorities.high}</option>
+                  <option value="normal">{u.priorities.normal}</option>
+                  <option value="low">{u.priorities.low}</option>
                 </select>
               </label>
             </div>
@@ -204,7 +234,7 @@ export default function CustomerProfile({
               disabled={saving}
               className="h-9 w-full rounded-lg bg-[var(--ui-ink)] text-[11px] font-semibold text-[var(--ui-on-ink)] transition active:translate-y-px disabled:opacity-50"
             >
-              {saving ? "Saving…" : "Save changes"}
+              {saving ? u.saving : u.saveChanges}
             </button>
           </div>
         )}
@@ -214,43 +244,43 @@ export default function CustomerProfile({
       {profile.lead && (
         <section className="rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] p-3">
           <h3 className="text-[10px] font-bold uppercase tracking-[0.1em] text-[var(--ui-ink-2)]">
-            Lead
+            {u.leadTitle}
           </h3>
           <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-[12px]">
-            <dt className={`font-semibold ${INK}`}>Stage</dt>
+            <dt className={`font-semibold ${INK}`}>{u.stage}</dt>
             <dd>
               <span className="rounded-full bg-[var(--ui-sunken)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">
-                {profile.lead.stage}
+                {stageLabel(profile.lead.stage)}
               </span>
             </dd>
             {profile.lead.category && (
               <>
-                <dt className={`font-semibold ${INK}`}>Type</dt>
-                <dd className={INK2}>{leadCategoryLabel(profile.lead.category)}</dd>
+                <dt className={`font-semibold ${INK}`}>{u.type}</dt>
+                <dd className={INK2}>{leadCategoryLabelKnown(profile.lead.category, locale) ?? profile.lead.category}</dd>
               </>
             )}
             {profile.lead.request && (
               <>
-                <dt className={`font-semibold ${INK}`}>Request</dt>
+                <dt className={`font-semibold ${INK}`}>{u.request}</dt>
                 <dd className={`break-words ${INK2}`}>{profile.lead.request}</dd>
               </>
             )}
             {profile.lead.summary && (
               <>
-                <dt className={`font-semibold ${INK}`}>Summary</dt>
+                <dt className={`font-semibold ${INK}`}>{u.summary}</dt>
                 <dd className={`break-words ${INK2}`}>{profile.lead.summary}</dd>
               </>
             )}
             {profile.lead.phone_number && (
               <>
-                <dt className={`font-semibold ${INK}`}>Phone</dt>
+                <dt className={`font-semibold ${INK}`}>{u.phone}</dt>
                 <dd className={`tabular-nums ${INK2}`}>{profile.lead.phone_number}</dd>
               </>
             )}
           </dl>
           {profile.lead.opt_out && (
             <p className="mt-2 rounded-lg bg-[#FF4F6E]/10 px-2 py-1 text-[10px] font-semibold text-[#C4304B]">
-              Opted out of messaging
+              {u.optedOut}
             </p>
           )}
         </section>
@@ -261,13 +291,13 @@ export default function CustomerProfile({
         <section>
           <div className="flex items-center justify-between gap-2">
             <h3 className="text-[10px] font-bold uppercase tracking-[0.1em] text-[var(--ui-ink-2)]">
-              Google reviews · {profile.reviews.length}
+              {fill(u.googleReviews, { count: profile.reviews.length })}
             </h3>
             <Link
               href="/dashboard/reviews"
               className="text-[11px] font-semibold text-[var(--ui-ink-2)] transition hover:text-[var(--ui-ink)]"
             >
-              Manage
+              {u.manage}
             </Link>
           </div>
           <div className="mt-2 space-y-2">
@@ -279,13 +309,13 @@ export default function CustomerProfile({
                 <div className="flex items-center justify-between gap-2">
                   <span
                     className="text-[12px] font-bold text-amber-600"
-                    aria-label={`${r.rating} out of 5 stars`}
+                    aria-label={fill(u.starsOutOf, { rating: r.rating })}
                   >
                     {"★".repeat(r.rating)}
                     <span className="text-[var(--ui-ink-2)] opacity-40">{"☆".repeat(5 - r.rating)}</span>
                   </span>
                   <span className="text-[10px] tabular-nums text-[var(--ui-ink-2)]">
-                    {r.created_at ? new Date(r.created_at).toLocaleDateString() : ""}
+                    {fmtDate(r.created_at)}
                   </span>
                 </div>
                 {r.review_text ? (
@@ -293,12 +323,12 @@ export default function CustomerProfile({
                     {r.review_text}
                   </p>
                 ) : (
-                  <p className={`mt-1.5 text-[11px] italic ${INK2}`}>No review text.</p>
+                  <p className={`mt-1.5 text-[11px] italic ${INK2}`}>{u.noReviewText}</p>
                 )}
                 {r.reply_text && (
                   <div className="mt-2 rounded-lg border-l-2 border-deep-violet/30 bg-[var(--ui-surface)] px-2.5 py-2">
                     <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-[var(--ui-ink-2)]">
-                      Your reply
+                      {u.yourReply}
                     </p>
                     <p className={`mt-0.5 whitespace-pre-wrap break-words text-[12px] leading-relaxed ${INK}`}>
                       {r.reply_text}
@@ -306,7 +336,7 @@ export default function CustomerProfile({
                   </div>
                 )}
                 <p className="mt-2 text-[9px] font-bold uppercase tracking-[0.1em] text-[var(--ui-ink-2)]">
-                  {r.status}
+                  {(u.reviewStatuses as Record<string, string>)[r.status] ?? r.status}
                 </p>
               </article>
             ))}
@@ -317,7 +347,7 @@ export default function CustomerProfile({
       {/* Conversation */}
       <section>
         <h3 className="text-[10px] font-bold uppercase tracking-[0.1em] text-[var(--ui-ink-2)]">
-          Conversation · {profile.messages.length}
+          {fill(u.conversation, { count: profile.messages.length })}
         </h3>
         <div className="mt-2 max-h-80 space-y-2 overflow-y-auto pr-1">
           {profile.messages.map((m) => {
@@ -333,10 +363,10 @@ export default function CustomerProfile({
               >
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="text-[9px] font-bold uppercase tracking-[0.1em] text-[var(--ui-ink-2)]">
-                    {inbound ? "Customer" : "You"}
+                    {inbound ? u.customer : u.you}
                   </span>
                   <span className="text-[9px] tabular-nums text-[var(--ui-ink-2)]">
-                    {m.created_at ? new Date(m.created_at).toLocaleString() : ""}
+                    {fmtDateTime(m.created_at)}
                   </span>
                 </div>
                 <p className="mt-1 whitespace-pre-wrap break-words leading-relaxed">
@@ -346,7 +376,7 @@ export default function CustomerProfile({
             );
           })}
           {profile.messages.length === 0 && (
-            <p className={`text-[12px] ${INK2}`}>No messages yet.</p>
+            <p className={`text-[12px] ${INK2}`}>{u.noMessages}</p>
           )}
         </div>
       </section>
@@ -355,14 +385,14 @@ export default function CustomerProfile({
         <div
           role="dialog"
           aria-modal="true"
-          aria-label={`${name} profile picture`}
+          aria-label={fill(u.viewPic, { name })}
           className="fixed inset-0 z-[100] flex items-center justify-center bg-ink/70 p-6"
           onClick={() => setPhotoOpen(false)}
         >
           <button
             type="button"
             onClick={() => setPhotoOpen(false)}
-            aria-label="Close profile picture"
+            aria-label={u.closePic}
             className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white text-[20px] font-bold text-ink shadow-lg"
           >
             ×

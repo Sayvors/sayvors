@@ -2,6 +2,7 @@
 
 import CustomersTable from "@/components/dashboard/CustomersTable";
 import Link from "next/link";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 
 /*
  * The all-contacts page — every person we have ever had contact with,
@@ -13,21 +14,21 @@ import Link from "next/link";
  * delegates to InboxView.
  */
 export default function CustomersPage() {
+  const { t } = useI18n();
+  const u = t.dashboard.customers;
   return (
     <div className="team-ui flex h-full flex-col gap-3 p-3 sm:gap-4 sm:p-6">
       <div className="flex shrink-0 items-start justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-[18px] font-bold text-[var(--ui-ink)] sm:text-[22px]">
-            Customers
+            {u.title}
           </h1>
           <p className="mt-0.5 text-[11px] leading-relaxed text-[var(--ui-ink-2)] sm:text-[13px]">
             <span className="sm:hidden">
-              Everyone you have talked to, across every channel.
+              {u.subtitleShort}
             </span>
             <span className="hidden sm:inline">
-              Every person you have ever had contact with — WhatsApp, Instagram,
-              Facebook, Google reviews — in one table. Click a row for the
-              complete profile, conversation, and (for Google) the reviews.
+              {u.subtitleFull}
             </span>
           </p>
         </div>
@@ -35,7 +36,7 @@ export default function CustomersPage() {
           href="/dashboard/inbox"
           className="shrink-0 rounded-lg border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-1.5 text-[11px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] focus-visible:outline focus-visible:outline-[2px] focus-visible:outline-offset-[-1px] focus-visible:outline-[var(--ui-ink)] sm:text-[12px]"
         >
-          Open inbox
+          {u.openInbox}
         </Link>
       </div>
       <div className="min-h-0 flex-1">
