@@ -20,6 +20,16 @@ import ReviewRequestLog from "@/components/dashboard/ReviewRequestLog";
 import QRCodeGenerator from "@/components/dashboard/QRCodeGenerator";
 import { ALL_BRANCHES, groupValue, parseGroupValue, useLocationGroups } from "@/lib/location-groups";
 import { useI18n } from "@/lib/i18n/I18nProvider";
+import type { Dict } from "@/lib/i18n/en";
+
+type IntelDict = Dict["reviews"]["intel"];
+type InsightDict = Dict["reviews"]["insight"];
+
+type HeuristicCtx = {
+  hx: IntelDict;
+  fmt: (n: number) => string;
+  fmtRating: (n: number) => string;
+};
 
 function fill(s: string, vars: Record<string, string | number>): string {
   return Object.entries(vars).reduce(
@@ -246,7 +256,7 @@ function ReviewsInner() {
       if (key) seen.add(key);
       merged.push(item as ReviewInsight);
     }
-    return mapInsights(merged, channelNames, fallback);
+    return mapInsights(merged, channelNames, fallback, rv.userFallback);
   };
 
   const loadPendingReplies = async () => {
@@ -377,7 +387,7 @@ function ReviewsInner() {
 
   const active = view.kind === "detail" ? reviews.find((r) => r.id === view.id) ?? null : null;
   const starGroup = view.kind === "star" ? live.filter((r) => r.rating === view.stars) : [];
-  const intelligence = useMemo(() => buildIntelligence(live), [live]);
+  const intelligence = useMemo(() => buildIntelligence(live, { hx: rv.intel, fmt, fmtRating }), [live, rv.intel, fmt, fmtRating]);
 
   // Stored intelligence (analyze once, serve from DB; re-run on demand).
   const [aiIntel, setAiIntel] = useState<{
@@ -401,7 +411,7 @@ function ReviewsInner() {
         days: 0,
         date_from: from.toISOString().slice(0, 10),
         date_to: to.toISOString().slice(0, 10),
-        label: from.toLocaleDateString("en", { month: "long", year: "numeric", timeZone: "UTC" }),
+        label: from.toLocaleDateString(dateLocale, { month: "long", year: "numeric", timeZone: "UTC" }),
       };
     }
     const labels: Record<number, string> = { 7: ra.last7, 30: ra.last30, 90: ra.last90, 365: ra.last12 };
@@ -2120,7 +2130,7 @@ function ReviewMedia({ media }: { media: ReviewItem["media"] }) {
   );
 }
 
-function mapInsights(raw: unknown, channelNames: Record<string, string>, fallbackName: string): ReviewItem[] {  if (!Array.isArray(raw)) return [];
+function mapInsights(raw: unknown, channelNames: Record<string, string>, fallbackName: string, fallbackUser: string): ReviewItem[] {  if (!Array.isArray(raw)) return [];
   return raw.map((it: unknown, i: number) => {
     const r = (it ?? {}) as Record<string, unknown>;
     const channelId = String(r.channel_id ?? "");
@@ -2129,7 +2139,7 @@ function mapInsights(raw: unknown, channelNames: Record<string, string>, fallbac
       review_id: String(r.review_id ?? r.id ?? ""),
       locationId: channelId,
       locationName: channelNames[channelId] ?? fallbackName,
-      reviewer: String(r.reviewer_name ?? "Google user"),
+      reviewer: String(r.reviewer_name ?? fallbackUser),
       reviewerPhoto: typeof r.reviewer_photo_url === "string" ? r.reviewer_photo_url : undefined,
       rating: Number(r.rating ?? 0),
       comment: String(r.review_text ?? "(star rating only)"),
@@ -2165,56 +2175,53 @@ function mapInsights(raw: unknown, channelNames: Record<string, string>, fallbac
 }
 
 function StarInsightPage({ stars, group, total, onBack, onOpen }: { stars: number; group: ReviewItem[]; total: number; onBack: () => void; onOpen: (id: string) => void }) {
+  const { t, locale } = useI18n();
+  const st = t.reviews.star;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
   const share = total ? Math.round((group.length / total) * 100) : 0;
   const replied = group.filter((r) => r.replied).length;
   const signals = topSignals(group.map((r) => r.comment));
-  const verdict = stars >= 4
-    ? "Strength — protect what earns these ratings."
-    : stars === 3
-      ? "Swing zone — small fixes convert these to 4–5★."
-      : "Risk zone — reply fast and fix the root cause.";
-  const action = stars >= 4
-    ? "Thank them quickly and invite them back."
-    : stars === 3
-      ? "Acknowledge the friction and state one concrete fix."
-      : "Apologize with a concrete fix, then address the root cause operationally.";
+  const band = stars >= 4 ? "high" : stars === 3 ? "mid" : "low";
+  const verdict = band === "high" ? st.verdictHigh : band === "mid" ? st.verdictMid : st.verdictLow;
+  const action = band === "high" ? st.actionHigh : band === "mid" ? st.actionMid : st.actionLow;
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
-          <h2 className="text-[17px] font-bold text-ink dark:text-fog">{stars}★ insights</h2>
-          <p className="text-[12px] text-ink/55 dark:text-fog/60">{group.length} reviews · {share}% of total · replied {replied}/{group.length}</p>
+          <h2 className="text-[17px] font-bold text-ink dark:text-fog">{fill(st.title, { stars: fmt(stars) })}</h2>
+          <p className="text-[12px] text-ink/55 dark:text-fog/60">{fill(st.subtitle, { n: fmt(group.length), pct: fmt(share), r: fmt(replied), t: fmt(group.length) })}</p>
         </div>
         <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${stars >= 4 ? "bg-emerald-100 text-emerald-700" : stars === 3 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}`}>
-          {stars >= 4 ? "High" : stars === 3 ? "Mixed" : "Low"}
+          {band === "high" ? st.high : band === "mid" ? st.mixed : st.low}
         </span>
       </div>
       <div className="grid gap-3 lg:grid-cols-3">
         <section className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-          <h3 className="mb-2 text-[14px] font-bold text-ink">Overview</h3>
+          <h3 className="mb-2 text-[14px] font-bold text-ink">{st.overview}</h3>
           <p className="text-[12px] leading-relaxed text-ink/60">{verdict}</p>
-          <p className="mt-3 text-[12px] text-ink/60">Share <span className="font-bold text-ink">{share}%</span> · response <span className="font-bold text-ink">{group.length ? Math.round((replied / group.length) * 100) : 0}%</span></p>
+          <p className="mt-3 text-[12px] text-ink/60">{fill(st.shareResponse, { share: fmt(share), resp: fmt(group.length ? Math.round((replied / group.length) * 100) : 0) })}</p>
         </section>
         <section className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-          <h3 className="mb-2 text-[14px] font-bold text-ink">Top signals</h3>
+          <h3 className="mb-2 text-[14px] font-bold text-ink">{st.topSignals}</h3>
           {signals.length ? (
             <ul className="space-y-2">
               {signals.map((s) => (
                 <li key={s} className="rounded-lg bg-ink/[0.04] px-2.5 py-1.5 text-[12px] font-semibold text-ink/70">{s}</li>
               ))}
             </ul>
-          ) : <p className="text-[12px] text-ink/40">{group.length ? "No strong word signals in these reviews." : "No reviews at this rating yet."}</p>}
+          ) : <p className="text-[12px] text-ink/40">{group.length ? st.noSignals : st.noReviews}</p>}
         </section>
         <section className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-          <h3 className="mb-2 text-[14px] font-bold text-ink">Recommended action</h3>
+          <h3 className="mb-2 text-[14px] font-bold text-ink">{st.recommended}</h3>
           <p className="text-[12px] leading-relaxed text-ink/60">{action}</p>
-          <p className="mt-3 text-[11px] text-ink/40">Sayvors-derived from retrieved reviews.</p>
+          <p className="mt-3 text-[11px] text-ink/40">{st.derived}</p>
         </section>
       </div>
       <div className="rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
-        <h3 className="mb-2 text-[13px] font-semibold text-ink dark:text-fog">Matching reviews</h3>
+        <h3 className="mb-2 text-[13px] font-semibold text-ink dark:text-fog">{st.matching}</h3>
         {group.length === 0 ? (
-          <p className="py-4 text-center text-[12px] text-ink/40">No reviews at this rating yet.</p>
+          <p className="py-4 text-center text-[12px] text-ink/40">{st.noReviews}</p>
         ) : (
           <div className="space-y-1.5">
             {group.map((r) => (
@@ -2225,7 +2232,7 @@ function StarInsightPage({ stars, group, total, onBack, onOpen }: { stars: numbe
           </div>
         )}
       </div>
-      <button onClick={onBack} className="text-[12px] font-medium text-ink/40 hover:text-ink">← Back to reviews</button>
+      <button onClick={onBack} className="text-[12px] font-medium text-ink/40 hover:text-ink">{st.back}</button>
     </div>
   );
 }
@@ -2319,14 +2326,15 @@ function matchedRows(keywords: string[], reviews: ReviewItem[]): ReviewItem[] {
   return reviews.filter((r) => keywords.some((k) => r.comment.toLowerCase().includes(k)));
 }
 
-function buildIntelligence(reviews: ReviewItem[]): Intelligence {
+function buildIntelligence(reviews: ReviewItem[], ctx: HeuristicCtx): Intelligence {
+  const { hx, fmt, fmtRating } = ctx;
   const total = reviews.length;
   const avg = total ? reviews.reduce((a, r) => a + r.rating, 0) / total : 0;
   const pos = reviews.filter((r) => r.rating >= 4).length;
   const neu = reviews.filter((r) => r.rating === 3).length;
   const neg = reviews.filter((r) => r.rating <= 2).length;
   const sentimentScore = total ? Math.round((pos / total) * 5 * 10) / 10 : 0;
-  const sentimentLabel = !total ? "No data" : pos / total >= 0.6 ? "Positive" : neg / total >= 0.4 ? "Negative" : "Mixed";
+  const sentimentLabel = !total ? hx.noData : pos / total >= 0.6 ? hx.sentimentPos : neg / total >= 0.4 ? hx.sentimentNeg : hx.sentimentMix;
 
   const themeStats = (def: { name: string; keywords: string[] }): IntelTheme => {
     const matched = reviews.filter((r) => def.keywords.some((k) => r.comment.toLowerCase().includes(k)));
@@ -2352,17 +2360,22 @@ function buildIntelligence(reviews: ReviewItem[]): Intelligence {
   const staffTheme = themes.find((t) => t.name === "Staff & Service");
 
   const summary = !total
-    ? "No reviews analyzed yet."
-    : `Overall sentiment is ${sentimentLabel.toLowerCase()}. Customers consistently praise ${(love.map((t) => t.name.toLowerCase()).slice(0, 3).join(", ") || "service")}. The biggest drag is ${(dislike.map((t) => t.name.toLowerCase()).slice(0, 2).join(" and ") || "isolated complaints")}. ${waitTheme && waitTheme.mentions > 0 ? "Reducing waiting time looks like the biggest lever for more 4–5★ reviews." : "Protect current strengths while tightening response time."}`;
+    ? hx.summaryNoData
+    : fill(hx.summaryTpl, {
+        label: sentimentLabel.toLowerCase(),
+        loves: love.map((t) => t.name.toLowerCase()).slice(0, 3).join(", ") || hx.loveFallback,
+        drags: dislike.map((t) => t.name.toLowerCase()).slice(0, 2).join(hx.andJoin) || hx.dragFallback,
+        tail: waitTheme && waitTheme.mentions > 0 ? hx.tailWait : hx.tailDefault,
+      });
 
   return {
     avg, sentimentScore, sentimentLabel,
     confidence: total ? Math.min(96, 70 + total * 3) : 0,
     summary, love, dislike, drivers,
     opportunities: [
-      ...(waitTheme && waitTheme.mentions > 0 ? [{ level: "HIGH" as const, title: "Reduce waiting time", detail: `${waitTheme.mentions} mentions · avg ${waitTheme.avgRating.toFixed(1)}★. Review peak-hour staffing and set wait expectations.`, impact: "HIGH" }] : []),
-      ...(valueTheme && valueTheme.mentions > 0 ? [{ level: "MEDIUM" as const, title: "Improve price/value communication", detail: `${valueTheme.mentions} mentions. Clarify inclusions and highlight value-added benefits.`, impact: "MEDIUM" }] : []),
-      ...(staffTheme && staffTheme.mentions > 0 ? [{ level: "MAINTAIN" as const, title: "Maintain staff friendliness", detail: `${staffTheme.mentions} positive mentions · ${staffTheme.avgRating.toFixed(1)}★ average. Keep training as-is.`, impact: "GUARD" }] : []),
+      ...(waitTheme && waitTheme.mentions > 0 ? [{ level: "HIGH" as const, title: hx.oppWaitTitle, detail: fill(hx.oppWaitDetail, { n: fmt(waitTheme.mentions), a: fmtRating(waitTheme.avgRating) }), impact: "HIGH" }] : []),
+      ...(valueTheme && valueTheme.mentions > 0 ? [{ level: "MEDIUM" as const, title: hx.oppValueTitle, detail: fill(hx.oppValueDetail, { n: fmt(valueTheme.mentions) }), impact: "MEDIUM" }] : []),
+      ...(staffTheme && staffTheme.mentions > 0 ? [{ level: "MAINTAIN" as const, title: hx.oppStaffTitle, detail: fill(hx.oppStaffDetail, { n: fmt(staffTheme.mentions), a: fmtRating(staffTheme.avgRating) }), impact: "GUARD" }] : []),
     ],
     strengths: love.slice(0, 3).map((t) => ({ title: t.name, mentions: t.mentions, avg: t.avgRating })),
     sentimentSplit: { positive: pos, neutral: neu, negative: neg },
@@ -2388,15 +2401,15 @@ function buildIntelligence(reviews: ReviewItem[]): Intelligence {
           positive_pct: pct,
           signal: (negN === 0 && posN > 0 ? "strong" : posN === 0 && negN > 0 ? "weak" : pct >= 70 ? "strong" : pct <= 30 ? "weak" : "mixed") as IntelDimension["signal"],
           confidence: (t.mentions >= 5 ? "high" : t.mentions >= 3 ? "medium" : "low") as IntelDimension["confidence"],
-          verdict: `${posN ? `${posN} review(s) praise it` : ""}${posN && negN ? " · " : ""}${negN ? `${negN} review(s) criticise it` : ""} (avg ${t.avgRating.toFixed(1)}★).`.replace(/^ · /, ""),
+          verdict: `${posN ? fill(hx.verdictPraise, { n: fmt(posN) }) : ""}${posN && negN ? " · " : ""}${negN ? fill(hx.verdictCrit, { n: fmt(negN) }) : ""} ${fill(hx.verdictAvg, { a: fmtRating(t.avgRating) })}`.replace(/^ · /, ""),
           evidence: m.slice(0, 2).map((r) => ({ quote: r.comment.slice(0, 140), rating: r.rating })),
         };
       }),
     competitive: { wins: [], gaps: [], scope: null },
     actions: [
-      ...(waitTheme && waitTheme.mentions > 0 ? [{ title: "Fix waiting time", detail: `${waitTheme.mentions} reviews affected · HIGH impact` }] : []),
-      { title: `Respond to ${reviews.filter((r) => !r.replied).length} unanswered reviews`, detail: "Immediate action" },
-      ...(staffTheme ? [{ title: "Protect staff training", detail: "Strong positive driver" }] : []),
+      ...(waitTheme && waitTheme.mentions > 0 ? [{ title: hx.actionWaitTitle, detail: fill(hx.actionWaitDetail, { n: fmt(waitTheme.mentions) }) }] : []),
+      { title: fill(hx.actionRespondTitle, { n: fmt(reviews.filter((r) => !r.replied).length) }), detail: hx.actionRespondDetail },
+      ...(staffTheme ? [{ title: hx.actionStaffTitle, detail: hx.actionStaffDetail }] : []),
     ].slice(0, 5),
   };
 }
@@ -2459,8 +2472,11 @@ function mergeAiIntel(data: {
 }
 
 function ThemeBars({ topics }: { topics: { name: string; count: number }[] }) {
+  const { t, locale } = useI18n();
+  const ih = t.reviews.intel;
+  const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
   const max = Math.max(1, ...topics.map((t) => t.count));
-  if (!topics.length) return <p className="text-[12px] text-ink/40">No themes detected yet.</p>;
+  if (!topics.length) return <p className="text-[12px] text-ink/40">{ih.noThemes}</p>;
   return (
     <div className="space-y-1.5">
       {topics.slice(0, 8).map((t) => (
@@ -2469,7 +2485,7 @@ function ThemeBars({ topics }: { topics: { name: string; count: number }[] }) {
           <span className="h-2.5 flex-1 overflow-hidden rounded-full bg-ink/[0.06]">
             <span className="block h-full rounded-full bg-gradient-to-r from-deep-violet to-magenta" style={{ width: `${Math.max(4, (t.count / max) * 100)}%` }} />
           </span>
-          <span className="w-8 text-right text-[11px] tabular-nums text-ink/50">×{t.count}</span>
+          <span className="w-8 text-right text-[11px] tabular-nums text-ink/50">×{fmt(t.count)}</span>
         </div>
       ))}
     </div>
@@ -2518,26 +2534,35 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
   setIntelDays: (d: number) => void; setIntelMonth: (m: string) => void;
 }) {
   const i = intel;
+  const { t, locale } = useI18n();
+  const ih = t.reviews.intel;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
+  const fmtRating = (n: number) =>
+    n.toLocaleString(dateLocale, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const periodName = (d: number) => d === 7 ? ih.p7 : d === 30 ? ih.p30 : d === 90 ? ih.p90 : ih.p365;
+  const heatWord = (label: string) =>
+    label === "0" ? label : ih.heat[label as keyof typeof ih.heat] ?? label;
   const isAI = aiMeta?.source === "ai";
   const isLoading = aiLoading || analyzing;
 
   const badge = isLoading
-    ? { text: analyzing ? "Analyzing with AI…" : "Loading…", icon: "◐", cls: "bg-[#1A73E8]/10 text-[#1A73E8] border border-[#1A73E8]/20" }
+    ? { text: analyzing ? ih.badgeAnalyzing : ih.badgeLoading, icon: "◐", cls: "bg-[#1A73E8]/10 text-[#1A73E8] border border-[#1A73E8]/20" }
     : isAI
-      ? { text: `AI • ${aiMeta?.model ?? "LLM"}${aiMeta?.ragUsed ? " • RAG" : ""}`, icon: "✦", cls: "bg-[#E6F4EA] text-[#137333] border border-[#CEEAD6]" }
+      ? { text: fill(ih.badgeAi, { model: aiMeta?.model ?? ih.modelFallback, rag: aiMeta?.ragUsed ? ih.badgeRag : "" }), icon: "✦", cls: "bg-[#E6F4EA] text-[#137333] border border-[#CEEAD6]" }
       : aiMeta
-        ? { text: "Heuristic • Instant", icon: "◈", cls: "bg-[#F1F3F4] text-[#5F6368] border border-[#DADCE0]" }
-        : { text: "Not analyzed", icon: "○", cls: "bg-[#FEF7E0] text-[#EA8600] border border-[#FDE293]" };
+        ? { text: ih.badgeHeuristic, icon: "◈", cls: "bg-[#F1F3F4] text-[#5F6368] border border-[#DADCE0]" }
+        : { text: ih.badgeNone, icon: "○", cls: "bg-[#FEF7E0] text-[#EA8600] border border-[#FDE293]" };
 
   const analyzedLabel = aiMeta?.analyzedAt
-    ? `${new Date(aiMeta.analyzedAt).toLocaleString()}${aiMeta.stale ? ` • ${aiMeta.newCount} new since` : " • fresh"}`
+    ? `${new Date(aiMeta.analyzedAt).toLocaleString(dateLocale)}${aiMeta.stale ? fill(ih.analyzedStale, { n: fmt(aiMeta.newCount) }) : ih.analyzedFresh}`
     : null;
 
   // Derived business impact
   const unanswered = total - Math.round((intel as unknown as { avg: number }).avg ? total * 0.6 : 0); // placeholder, will use real replied count if available
   const atRiskPct = total ? Math.round(((i.dislike.reduce((a, b) => a + b.mentions, 0) / Math.max(1, total)) * 100)) : 0;
-  const revenueRisk = i.dislike.length ? `${atRiskPct}% of reviews signal churn risk` : "Low churn risk";
-  const sentimentDelta = i.sentimentScore >= 3.5 ? "Positive momentum" : i.sentimentScore >= 2.5 ? "Mixed — fixable friction" : "Needs attention";
+  const revenueRisk = i.dislike.length ? fill(ih.churnRisk, { n: fmt(atRiskPct) }) : ih.churnLow;
+  const sentimentDelta = i.sentimentScore >= 3.5 ? ih.momentumPos : i.sentimentScore >= 2.5 ? ih.momentumMix : ih.momentumNeg;
 
   // Busiest driver cell — the denominator for the heat scale.
   const driverMax = useMemo(
@@ -2552,39 +2577,39 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-[16px] font-medium leading-6 text-[#202124]">Review Intelligence</h2>
+              <h2 className="text-[16px] font-medium leading-6 text-[#202124]">{ih.title}</h2>
               <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium leading-none ${badge.cls}`}>
                 <span aria-hidden>{badge.icon}</span> {badge.text}
               </span>
               {isAI && !isLoading && (
                 <span className="hidden sm:inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] text-[#5F6368] ring-1 ring-[#DADCE0]">
-                  <span className="h-1.5 w-1.5 rounded-full bg-[#34A853]" /> Verified numbers
+                  <span className="h-1.5 w-1.5 rounded-full bg-[#34A853]" /> {ih.verified}
                 </span>
               )}
         </div>
 
             <p className="mt-1 text-[13px] leading-5 text-[#5F6368]">
-              <span className="font-medium text-[#202124]">{locationName || "All locations"}</span>
+              <span className="font-medium text-[#202124]">{locationName || ih.allLocations}</span>
               <span className="mx-1.5 text-[#DADCE0]">•</span>
               <span className="font-medium text-[#202124]">{intelInterval.label}</span>
               <span className="mx-1.5 text-[#DADCE0]">•</span>
-              {total} reviews • {isAI ? `AI analysis${aiMeta?.model ? ` • ${aiMeta.model}` : ""}` : "Instant heuristic — AI adds deeper opportunities & citations"}
+              {fill(ih.kpiReviews, { n: fmt(total) })} • {isAI ? fill(ih.aiAnalysis, { model: aiMeta?.model ? ` • ${aiMeta.model}` : "" }) : ih.heuristicLine}
             </p>
-            {analyzedLabel && <p className="mt-1 text-[12px] text-[#5F6368]">Updated {analyzedLabel}</p>}
+            {analyzedLabel && <p className="mt-1 text-[12px] text-[#5F6368]">{fill(ih.updated, { when: analyzedLabel })}</p>}
             {aiMeta?.stale && (
               <p className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-[#FEF7E0] px-2.5 py-1 text-[12px] font-medium text-[#EA8600]">
-                <span className="h-1.5 w-1.5 rounded-full bg-[#EA8600]" /> {aiMeta.newCount} new review(s) since last AI run — re-analyze for fresh insights
+                <span className="h-1.5 w-1.5 rounded-full bg-[#EA8600]" /> {fill(ih.staleLine, { n: fmt(aiMeta.newCount) })}
               </p>
             )}
             {(aiMeta?.heldOut?.total ?? 0) > 0 && (
               <p className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-[#FEF7E0] px-2.5 py-1 text-[12px] text-[#7A4F01]">
                 <span className="h-1.5 w-1.5 rounded-full bg-[#F4B400]" />
-                {aiMeta?.heldOut?.total} review(s) are not counted in these insights
+                {fill(ih.heldOut, { n: fmt(aiMeta?.heldOut?.total ?? 0) })}
                 {aiMeta?.heldOut?.needs_human
-                  ? ` — ${aiMeta.heldOut.needs_human} the AI could not read confidently`
+                  ? fill(ih.heldOutHuman, { n: fmt(aiMeta.heldOut.needs_human) })
                   : ""}
-                {aiMeta?.heldOut?.not_analysed ? `, ${aiMeta.heldOut.not_analysed} not analysed yet` : ""}
-                . Open the Needs human tab to check them.
+                {aiMeta?.heldOut?.not_analysed ? fill(ih.heldOutPending, { n: fmt(aiMeta.heldOut.not_analysed) }) : ""}
+                {ih.heldOutCta}
               </p>
             )}
           </div>
@@ -2593,7 +2618,7 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
               onClick={onBack}
               className="hidden sm:inline-flex rounded-md border border-[#DADCE0] bg-white px-3 py-2 text-[13px] font-medium text-[#1A73E8] hover:bg-[#F8F9FA]"
             >
-              Back
+              {ih.back}
             </button>
             <button
               onClick={onAnalyze}
@@ -2602,16 +2627,16 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
             >
               {analyzing ? (
                 <>
-                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white" /> Analyzing…
+                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white" /> {ih.analyzing}
                 </>
-              ) : isAI ? "Re-analyze with AI" : "Analyze with AI"}
+              ) : isAI ? ih.reanalyze : ih.analyze}
             </button>
           </div>
         </div>
 
         {/* INTERVAL — scopes every number on this page to the selected window */}
         <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#E8EAED] pt-3">
-          <span className="text-[12px] font-medium text-[#5F6368]">Period</span>
+          <span className="text-[12px] font-medium text-[#5F6368]">{ih.period}</span>
           <div className="flex flex-wrap items-center gap-1.5">
             {PERIOD_PRESETS.map((p) => {
               const active = !intelMonth && intelDays === p.days;
@@ -2626,12 +2651,12 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
                       : "border-[#DADCE0] bg-white text-[#5F6368] hover:bg-[#F8F9FA]"
                   }`}
                 >
-                  {p.label}
+                  {periodName(p.days)}
                 </button>
               );
             })}
             <label className="ml-1 inline-flex items-center gap-1.5 text-[12px] text-[#5F6368]">
-              <span className="sr-only">Specific month</span>
+              <span className="sr-only">{ih.monthAria}</span>
               <input
                 type="month"
                 value={intelMonth}
@@ -2645,35 +2670,35 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
                 onClick={() => setIntelMonth("")}
                 className="rounded-full border border-[#DADCE0] bg-white px-2 py-1 text-[11px] font-medium text-[#5F6368] hover:bg-[#F8F9FA]"
               >
-                Clear
+                {ih.clear}
               </button>
             )}
           </div>
-          {isLoading && <span className="text-[12px] text-[#5F6368]">Loading {intelInterval.label.toLowerCase()}…</span>}
+          {isLoading && <span className="text-[12px] text-[#5F6368]">{fill(ih.loadingPeriod, { label: intelInterval.label.toLowerCase() })}…</span>}
         </div>
 
         {/* Source transparency — makes AI vs heuristic crystal clear */}
         <div className="mt-3 flex flex-wrap gap-2 border-t border-[#E8EAED] pt-3 text-[12px]">
           <span className={`inline-flex items-center gap-1.5 ${isAI ? "text-[#137333]" : "text-[#5F6368]"}`}>
             <span className={`h-2 w-2 rounded-full ${isAI ? "bg-[#34A853]" : "bg-[#5F6368]"}`} />
-            {isAI ? "Numbers are clamped to your real review stats — AI cannot invent counts" : "Counts are exact — insights are rule-based until AI runs"}
+            {isAI ? ih.srcAi : ih.srcHeuristic}
           </span>
           <span className="text-[#DADCE0]">•</span>
-          <span className="text-[#5F6368]">{isAI && aiMeta?.ragUsed ? "Grounded in your databank + reviews" : isAI ? "Based on reviews (no databank context)" : "Add a databank to enable RAG grounding"}</span>
+          <span className="text-[#5F6368]">{isAI && aiMeta?.ragUsed ? ih.ragYes : isAI ? ih.ragReviewsOnly : ih.ragNo}</span>
         </div>
       </div>
 
       {/* HERO KPIs — Material cards, neutral + one green accent */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div className="rounded-lg border border-[#DADCE0] bg-white p-4">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-[#5F6368]">Avg rating</p>
-          <p className="mt-1 text-[22px] font-normal leading-7 text-[#202124]">{i.avg.toFixed(1)} <span className="text-[#FBBC05]">★</span></p>
-          <p className="mt-1 text-[12px] text-[#5F6368]">{i.sentimentLabel} • {total} reviews</p>
+          <p className="text-[11px] font-medium uppercase tracking-wide text-[#5F6368]">{ih.kpiAvg}</p>
+          <p className="mt-1 text-[22px] font-normal leading-7 text-[#202124]">{fmtRating(i.avg)} <span className="text-[#FBBC05]">★</span></p>
+          <p className="mt-1 text-[12px] text-[#5F6368]">{i.sentimentLabel} • {fill(ih.kpiReviews, { n: fmt(total) })}</p>
         </div>
         <div className="rounded-lg border border-[#DADCE0] bg-white p-4">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-[#5F6368]">Sentiment</p>
+          <p className="text-[11px] font-medium uppercase tracking-wide text-[#5F6368]">{ih.kpiSentiment}</p>
           <div className="mt-1 flex items-baseline gap-2">
-            <p className="text-[22px] font-normal leading-7 text-[#202124]">{i.sentimentScore.toFixed(1)}</p>
+            <p className="text-[22px] font-normal leading-7 text-[#202124]">{fmtRating(i.sentimentScore)}</p>
             <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${i.sentimentScore >= 3.5 ? "bg-[#E6F4EA] text-[#137333]" : i.sentimentScore >= 2.5 ? "bg-[#FEF7E0] text-[#EA8600]" : "bg-[#FCE8E6] text-[#C5221F]"}`}>
               {sentimentDelta}
             </span>
@@ -2683,14 +2708,14 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
           </div>
         </div>
         <div className="rounded-lg border border-[#DADCE0] bg-white p-4">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-[#5F6368]">Confidence</p>
-          <p className="mt-1 text-[22px] font-normal leading-7 text-[#202124]">{i.confidence}%</p>
-          <p className="mt-1 text-[12px] text-[#5F6368]">{total >= 20 ? "High — strong sample" : total >= 8 ? "Medium — growing sample" : "Low — more reviews needed"}</p>
+          <p className="text-[11px] font-medium uppercase tracking-wide text-[#5F6368]">{ih.kpiConfidence}</p>
+          <p className="mt-1 text-[22px] font-normal leading-7 text-[#202124]">{fmt(i.confidence)}%</p>
+          <p className="mt-1 text-[12px] text-[#5F6368]">{total >= 20 ? ih.confHigh : total >= 8 ? ih.confMid : ih.confLow}</p>
         </div>
         <div className="rounded-lg border border-[#DADCE0] bg-white p-4">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-[#5F6368]">Risk signal</p>
+          <p className="text-[11px] font-medium uppercase tracking-wide text-[#5F6368]">{ih.kpiRisk}</p>
           <p className="mt-1 text-[14px] font-medium leading-5 text-[#202124]">{revenueRisk}</p>
-          <p className="mt-1 text-[12px] text-[#5F6368]">Fix top 1-sided theme first</p>
+          <p className="mt-1 text-[12px] text-[#5F6368]">{ih.riskFix}</p>
         </div>
       </div>
 
@@ -2699,25 +2724,24 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
       <div className="rounded-lg border border-[#DADCE0] bg-white p-5">
         <div className="flex flex-wrap items-center gap-2">
           <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#F1F3F4] text-[#5F6368]">▦</span>
-          <h3 className="text-[14px] font-medium text-[#202124]">Business Health Scorecard</h3>
+          <h3 className="text-[14px] font-medium text-[#202124]">{ih.scoreTitle}</h3>
           <span className="rounded-full bg-[#F1F3F4] px-2 py-0.5 text-[11px] font-medium text-[#5F6368]">
-            {i.dimensions.length} dimension{i.dimensions.length === 1 ? "" : "s"} in this period
+            {i.dimensions.length === 1 ? ih.dimOne : fill(ih.dimN, { n: fmt(i.dimensions.length) })}
           </span>
         </div>
         {i.dimensions.length === 0 ? (
           <p className="mt-3 text-[13px] text-[#5F6368]">
-            No review in this period mentions any tracked dimension yet. Collect a few more reviews
-            mentioning staff, speed, quality, value or cleanliness and the scorecard fills in.
+            {ih.scoreEmpty}
           </p>
         ) : (
           <div className="mt-4 grid gap-3 md:grid-cols-2">
             {i.dimensions.map((d) => {
               const tone =
                 d.signal === "strong"
-                  ? { chip: "bg-[#E6F4EA] text-[#137333]", bar: "#34A853", word: "Strong" }
+                  ? { chip: "bg-[#E6F4EA] text-[#137333]", bar: "#34A853", word: ih.strong }
                   : d.signal === "weak"
-                    ? { chip: "bg-[#FCE8E6] text-[#C5221F]", bar: "#EA4335", word: "Weak" }
-                    : { chip: "bg-[#FEF7E0] text-[#EA8600]", bar: "#FBBC05", word: "Mixed" };
+                    ? { chip: "bg-[#FCE8E6] text-[#C5221F]", bar: "#EA4335", word: ih.weak }
+                    : { chip: "bg-[#FEF7E0] text-[#EA8600]", bar: "#FBBC05", word: ih.mixed };
               return (
                 <div key={d.key} className="rounded-lg border border-[#E8EAED] p-3.5">
                   <div className="flex items-start justify-between gap-2">
@@ -2725,7 +2749,7 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
                       <p className="text-[13px] font-medium leading-5 text-[#202124]">{d.label}</p>
                       {!d.standard && (
                         <span className="mt-0.5 inline-block rounded bg-[#E8F0FE] px-1.5 py-0.5 text-[10px] font-medium text-[#1967D2]">
-                          Discovered in your reviews
+                          {ih.discovered}
                         </span>
                       )}
                     </div>
@@ -2738,14 +2762,14 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
 
                   <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[#5F6368]">
                     <span className="inline-flex items-center gap-1">
-                      <span aria-hidden>👍</span> {d.positive} positive
+                      <span aria-hidden>👍</span> {fill(ih.posCount, { n: fmt(d.positive) })}
                     </span>
                     <span className="inline-flex items-center gap-1">
-                      <span aria-hidden>👎</span> {d.negative} negative
+                      <span aria-hidden>👎</span> {fill(ih.negCount, { n: fmt(d.negative) })}
                     </span>
-                    <span className="tabular-nums">avg {d.avg_rating.toFixed(1)}★</span>
+                    <span className="tabular-nums">{fill(ih.avgShort, { n: fmtRating(d.avg_rating) })}</span>
                     <span className="rounded bg-[#F1F3F4] px-1.5 py-0.5 font-medium">
-                      {d.confidence} confidence
+                      {fill(ih.confLine, { c: d.confidence === "low" ? ih.confValLow : d.confidence === "medium" ? ih.confValMid : ih.confValHigh })}
                     </span>
                   </div>
 
@@ -2778,7 +2802,7 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
         <div className="rounded-lg border border-[#DADCE0] bg-white p-5">
           <div className="flex flex-wrap items-center gap-2">
             <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#F1F3F4] text-[#5F6368]">⚖</span>
-            <h3 className="text-[14px] font-medium text-[#202124]">Where you stand vs other businesses</h3>
+            <h3 className="text-[14px] font-medium text-[#202124]">{ih.compTitle}</h3>
             {i.competitive.scope && (
               <span className="rounded-full bg-[#F1F3F4] px-2 py-0.5 text-[11px] font-medium text-[#5F6368]">
                 {i.competitive.scope}
@@ -2788,7 +2812,7 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
           <div className="mt-3 grid gap-3 md:grid-cols-2">
             {i.competitive.wins.length > 0 && (
               <div className="rounded-lg border border-[#CEEAD6] bg-[#F6FEF8] p-3.5">
-                <p className="text-[12px] font-medium uppercase tracking-wide text-[#137333]">You lead on</p>
+                <p className="text-[12px] font-medium uppercase tracking-wide text-[#137333]">{ih.compLead}</p>
                 <ul className="mt-2 space-y-1.5">
                   {i.competitive.wins.map((w, idx) => (
                     <li key={idx} className="text-[12px] leading-5 text-[#202124]">• {w}</li>
@@ -2798,7 +2822,7 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
             )}
             {i.competitive.gaps.length > 0 && (
               <div className="rounded-lg border border-[#F6C7C3] bg-[#FEF7F6] p-3.5">
-                <p className="text-[12px] font-medium uppercase tracking-wide text-[#C5221F]">You trail on</p>
+                <p className="text-[12px] font-medium uppercase tracking-wide text-[#C5221F]">{ih.compTrail}</p>
                 <ul className="mt-2 space-y-1.5">
                   {i.competitive.gaps.map((g, idx) => (
                     <li key={idx} className="text-[12px] leading-5 text-[#202124]">• {g}</li>
@@ -2816,8 +2840,8 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
           <span className={`flex h-7 w-7 items-center justify-center rounded-full ${isAI ? "bg-[#E6F4EA] text-[#137333]" : "bg-[#F1F3F4] text-[#5F6368]"}`}>
             {isAI ? "✦" : "◈"}
           </span>
-          <h3 className="text-[14px] font-medium text-[#202124]">{isAI ? "AI Executive Summary" : "Executive Summary (heuristic)"}</h3>
-          {!isAI && <span className="rounded-full bg-[#F1F3F4] px-2 py-0.5 text-[11px] font-medium text-[#5F6368]">Run AI for citations & verified opportunities</span>}
+          <h3 className="text-[14px] font-medium text-[#202124]">{isAI ? ih.execAi : ih.execHeuristic}</h3>
+          {!isAI && <span className="rounded-full bg-[#F1F3F4] px-2 py-0.5 text-[11px] font-medium text-[#5F6368]">{ih.execHint}</span>}
         </div>
         {isLoading ? (
           <div className="mt-3 space-y-2">
@@ -2830,7 +2854,7 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
         <div className="mt-3 flex flex-wrap gap-1.5">
           {[5, 4, 3, 2, 1].map((s) => (
             <button key={s} onClick={() => onOpenStar(s)} className="rounded-full border border-[#DADCE0] bg-white px-3 py-1 text-[12px] font-medium text-[#1A73E8] hover:bg-[#F8F9FA]">
-              {s}★ detail →
+              {fill(ih.starDetail, { s: fmt(s) })}
             </button>
           ))}
         </div>
@@ -2840,58 +2864,58 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
       <div className="grid gap-3 lg:grid-cols-2">
         <section className="rounded-lg border border-[#DADCE0] bg-white p-5">
           <h3 className="flex items-center gap-2 text-[14px] font-medium text-[#202124]">
-            <span className="h-2 w-2 rounded-full bg-[#34A853]" /> What customers love
-            <span className="ml-auto text-[11px] font-normal text-[#5F6368]">{i.love.length ? `${i.love.length} themes` : ""}</span>
+            <span className="h-2 w-2 rounded-full bg-[#34A853]" /> {ih.loveTitle}
+            <span className="ml-auto text-[11px] font-normal text-[#5F6368]">{i.love.length ? fill(ih.loveCount, { n: fmt(i.love.length) }) : ""}</span>
           </h3>
-          {i.love.length === 0 ? <p className="mt-3 text-[13px] text-[#5F6368]">Not enough positive signals yet — keep collecting 4–5★ reviews with specific praise.</p> : (
+          {i.love.length === 0 ? <p className="mt-3 text-[13px] text-[#5F6368]">{ih.loveEmpty}</p> : (
             <div className="mt-3 space-y-3">
               {i.love.map((t) => (
                 <div key={t.name}>
                   <div className="flex justify-between text-[13px]">
                     <span className="font-medium text-[#202124]">{t.name}</span>
-                    <span className="font-medium text-[#137333]">{t.positivePct}% positive</span>
+                    <span className="font-medium text-[#137333]">{fill(ih.pctPositive, { n: fmt(t.positivePct) })}</span>
                   </div>
                   <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-[#E8EAED]"><div className="h-full rounded-full bg-[#34A853]" style={{ width: `${t.positivePct}%` }} /></div>
-                  <p className="mt-1 text-[12px] text-[#5F6368]">{t.mentions} mentions · {t.avgRating.toFixed(1)}★ avg {t.phrases[0] ? `· “${t.phrases[0].slice(0, 60)}”` : ""}</p>
+                  <p className="mt-1 text-[12px] text-[#5F6368]">{fill(ih.mentionsAvg, { n: fmt(t.mentions), a: fmtRating(t.avgRating), quote: t.phrases[0] ? fill(ih.quoteSuffix, { q: t.phrases[0].slice(0, 60) }) : "" })}</p>
                 </div>
               ))}
             </div>
           )}
-          <p className="mt-3 border-t border-[#E8EAED] pt-3 text-[12px] text-[#5F6368]"><span className="font-medium text-[#202124]">Next:</span> Double down in replies & posts — quote this praise back to future customers.</p>
+          <p className="mt-3 border-t border-[#E8EAED] pt-3 text-[12px] text-[#5F6368]"><span className="font-medium text-[#202124]">{ih.nextLabel}</span> {ih.nextLove}</p>
         </section>
         <section className="rounded-lg border border-[#DADCE0] bg-white p-5">
           <h3 className="flex items-center gap-2 text-[14px] font-medium text-[#202124]">
-            <span className="h-2 w-2 rounded-full bg-[#EA4335]" /> What hurts your rating
-            <span className="ml-auto text-[11px] font-normal text-[#5F6368]">{i.dislike.length ? `${i.dislike.length} themes` : "No major drag"}</span>
+            <span className="h-2 w-2 rounded-full bg-[#EA4335]" /> {ih.hurtTitle}
+            <span className="ml-auto text-[11px] font-normal text-[#5F6368]">{i.dislike.length ? fill(ih.loveCount, { n: fmt(i.dislike.length) }) : ih.hurtNone}</span>
           </h3>
-          {i.dislike.length === 0 ? <p className="mt-3 rounded-md bg-[#E6F4EA] px-3 py-2 text-[13px] text-[#137333]">No major complaints detected. Protect this — reply fast when one appears.</p> : (
+          {i.dislike.length === 0 ? <p className="mt-3 rounded-md bg-[#E6F4EA] px-3 py-2 text-[13px] text-[#137333]">{ih.hurtEmpty}</p> : (
             <div className="mt-3 space-y-3">
               {i.dislike.map((t) => (
                 <div key={t.name}>
-                  <div className="flex justify-between text-[13px]"><span className="font-medium text-[#202124]">{t.name}</span><span className="text-[#5F6368]">{t.mentions} mentions</span></div>
+                  <div className="flex justify-between text-[13px]"><span className="font-medium text-[#202124]">{t.name}</span><span className="text-[#5F6368]">{fill(ih.mentionsOnly, { n: fmt(t.mentions) })}</span></div>
                   <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-[#E8EAED]"><div className="h-full rounded-full bg-[#EA4335]" style={{ width: `${Math.min(100, t.mentions * 12)}%` }} /></div>
-                  <p className="mt-1 text-[12px] text-[#5F6368]">{t.avgRating.toFixed(1)}★ avg · {t.positivePct}% positive — needs playbook</p>
+                  <p className="mt-1 text-[12px] text-[#5F6368]">{fill(ih.hurtLine, { a: fmtRating(t.avgRating), p: fmt(t.positivePct) })}</p>
                 </div>
               ))}
             </div>
           )}
-          <p className="mt-3 border-t border-[#E8EAED] pt-3 text-[12px] text-[#5F6368]"><span className="font-medium text-[#202124]">Next:</span> Pick the top theme → standardize a 2-sentence recovery reply → track weekly.</p>
+          <p className="mt-3 border-t border-[#E8EAED] pt-3 text-[12px] text-[#5F6368]"><span className="font-medium text-[#202124]">{ih.nextLabel}</span> {ih.nextHurt}</p>
         </section>
       </div>
 
       {/* DRIVERS — heatmap style */}
       <div className="rounded-lg border border-[#DADCE0] bg-white p-5">
-        <h3 className="text-[14px] font-medium text-[#202124]">What drives each star rating?</h3>
-        <p className="text-[12px] text-[#5F6368]">Where praise and complaints cluster · helps you prioritize fixes that move stars.</p>
+        <h3 className="text-[14px] font-medium text-[#202124]">{ih.driversTitle}</h3>
+        <p className="text-[12px] text-[#5F6368]">{ih.driversSub}</p>
         <div className="mt-3 overflow-x-auto">
           <table className="w-full min-w-[520px] text-[12px]">
             <thead>
               <tr className="text-left text-[#5F6368]">
-                <th className="py-2 text-[11px] font-medium uppercase tracking-wide">Theme</th>
+                <th className="py-2 text-[11px] font-medium uppercase tracking-wide">{ih.themeCol}</th>
                 <th className="text-center text-[11px] font-medium">5★</th>
                 <th className="text-center text-[11px] font-medium">4★</th>
                 <th className="text-center text-[11px] font-medium">3★</th>
-                <th className="text-center text-[11px] font-medium">1–2★</th>
+                <th className="text-center text-[11px] font-medium">{ih.lowCol}</th>
               </tr>
             </thead>
             <tbody>
@@ -2914,9 +2938,9 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
                       <td key={idx} className="py-2 text-center">
                         <span
                           className={`inline-flex h-7 min-w-7 items-center justify-center rounded-full px-1.5 text-[12px] font-medium tabular-nums ${cls}`}
-                          title={v === 0 ? "No reviews" : `${v} review${v === 1 ? "" : "s"}`}
+                          title={v === 0 ? ih.noReviewsTitle : v === 1 ? ih.reviewOne : fill(ih.reviewN, { n: fmt(v) })}
                         >
-                          {v}
+                          {fmt(v)}
                         </span>
                       </td>
                     );
@@ -2928,19 +2952,19 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
         </div>
         {/* INTENSITY SCALE — the legend makes the shading readable */}
         <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-[#E8EAED] pt-3 text-[11px] text-[#5F6368]">
-          <span className="font-medium text-[#202124]">Scale</span>
-          <span className="text-[#5F6368]">More reviews = deeper colour (relative to the busiest cell)</span>
+          <span className="font-medium text-[#202124]">{ih.scale}</span>
+          <span className="text-[#5F6368]">{ih.scaleHint}</span>
           <span className="flex items-center gap-1.5">
             {HEAT_STEPS.map((s) => (
               <span key={s.label} className="flex items-center gap-1">
                 <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-medium tabular-nums ${s.cls}`}>
-                  {s.sample}
+                  {s.sample === "9+" ? s.sample : heatWord(s.label)}
                 </span>
-                <span className="text-[#5F6368]">{s.label}</span>
+                <span className="text-[#5F6368]">{heatWord(s.label)}</span>
               </span>
             ))}
           </span>
-          <span className="text-[#C5221F]">1–2★ column stays red-tinted (complaints)</span>
+          <span className="text-[#C5221F]">{ih.redNote}</span>
         </div>
       </div>
 
@@ -2948,9 +2972,9 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
       <div className="grid gap-3 lg:grid-cols-2">
         <section className="rounded-lg border border-[#DADCE0] bg-white p-5">
           <h3 className="flex items-center gap-2 text-[14px] font-medium text-[#202124]">
-            Improvement opportunities
-            {isAI && <span className="rounded-full bg-[#E6F4EA] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[#137333]">AI-verified</span>}
-            {!isAI && <span className="rounded-full bg-[#F1F3F4] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[#5F6368]">Heuristic</span>}
+            {ih.oppTitle}
+            {isAI && <span className="rounded-full bg-[#E6F4EA] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[#137333]">{ih.oppAi}</span>}
+            {!isAI && <span className="rounded-full bg-[#F1F3F4] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[#5F6368]">{ih.oppHeuristic}</span>}
           </h3>
           <div className="mt-3 space-y-2.5">
             {i.opportunities.map((o) => (
@@ -2960,34 +2984,34 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
                   {o.title}
                 </p>
                 <p className="mt-1 text-[12px] leading-5 text-[#5F6368]">{o.detail}</p>
-                <p className="mt-1 text-[11px] font-medium text-[#1A73E8]">Impact: {o.impact} → reply to these reviews first</p>
+                <p className="mt-1 text-[11px] font-medium text-[#1A73E8]">{fill(ih.impactLine, { impact: o.impact })}</p>
               </div>
             ))}
-            {i.opportunities.length === 0 && <p className="text-[13px] text-[#5F6368]">Nothing urgent — keep the current playbook.</p>}
+            {i.opportunities.length === 0 && <p className="text-[13px] text-[#5F6368]">{ih.oppEmpty}</p>}
           </div>
         </section>
         <section className="rounded-lg border border-[#DADCE0] bg-white p-5">
-          <h3 className="text-[14px] font-medium text-[#202124]">Strengths to protect</h3>
-          <p className="text-[12px] text-[#5F6368]">Your moat — mention these in posts & replies.</p>
+          <h3 className="text-[14px] font-medium text-[#202124]">{ih.strTitle}</h3>
+          <p className="text-[12px] text-[#5F6368]">{ih.strSub}</p>
           <div className="mt-3 space-y-2">
             {i.strengths.map((s, idx) => (
               <div key={s.title} className="flex items-start gap-3 rounded-lg bg-[#F8F9FA] px-3 py-2.5">
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#E6F4EA] text-[12px] font-medium text-[#137333]">{idx + 1}</span>
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#E6F4EA] text-[12px] font-medium text-[#137333]">{fmt(idx + 1)}</span>
                 <div>
                   <p className="text-[13px] font-medium text-[#202124]">{s.title}</p>
-                  <p className="text-[12px] text-[#5F6368]">{s.mentions} mentions · {s.avg.toFixed(1)}★ — keep training & staffing as-is</p>
+                  <p className="text-[12px] text-[#5F6368]">{fill(ih.strLine, { n: fmt(s.mentions), a: fmtRating(s.avg) })}</p>
                 </div>
               </div>
             ))}
-            {i.strengths.length === 0 && <p className="text-[13px] text-[#5F6368]">No clear strengths yet — collect more 4–5★ detail.</p>}
+            {i.strengths.length === 0 && <p className="text-[13px] text-[#5F6368]">{ih.strEmpty}</p>}
           </div>
           <h3 className="mt-5 flex items-center gap-2 text-[14px] font-medium text-[#202124]">
-            AI action plan {isAI ? <span className="rounded-full bg-[#E6F4EA] px-2 py-0.5 text-[10px] font-medium text-[#137333]">AI</span> : null}
+            {ih.planTitle} {isAI ? <span className="rounded-full bg-[#E6F4EA] px-2 py-0.5 text-[10px] font-medium text-[#137333]">{ih.planAi}</span> : null}
           </h3>
           <ol className="mt-2 space-y-2">
             {i.actions.map((a, idx) => (
               <li key={a.title} className="flex gap-2 rounded-lg border border-[#E8EAED] bg-white px-3 py-2.5">
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#1A73E8] text-[11px] font-medium text-white">{idx + 1}</span>
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#1A73E8] text-[11px] font-medium text-white">{fmt(idx + 1)}</span>
                 <div>
                   <p className="text-[13px] font-medium text-[#202124]">{a.title}</p>
                   <p className="text-[12px] text-[#5F6368]">{a.detail}</p>
@@ -3000,42 +3024,51 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
 
       {/* THEMES */}
       <div className="rounded-lg border border-[#DADCE0] bg-white p-5">
-        <h3 className="text-[14px] font-medium text-[#202124]">Review themes</h3>
-        <p className="text-[12px] text-[#5F6368]">Mentions per theme · numbers are exact · themes mix AI + heuristic</p>
+        <h3 className="text-[14px] font-medium text-[#202124]">{ih.themesTitle}</h3>
+        <p className="text-[12px] text-[#5F6368]">{ih.themesSub}</p>
         <div className="mt-3"><ThemeBars topics={i.topics} /></div>
         <div className="mt-3 flex flex-wrap gap-2">
           {i.topics.map((t) => (
-            <span key={t.name} className="rounded-full border border-[#E8EAED] bg-[#F8F9FA] px-3 py-1.5 text-[12px] font-medium text-[#202124]">{t.name} · {t.count}</span>
+            <span key={t.name} className="rounded-full border border-[#E8EAED] bg-[#F8F9FA] px-3 py-1.5 text-[12px] font-medium text-[#202124]">{fill(ih.themeChip, { name: t.name, n: fmt(t.count) })}</span>
           ))}
         </div>
       </div>
 
       {/* SENTIMENT SPLIT — quick visual for business health */}
       <div className="rounded-lg border border-[#DADCE0] bg-white p-5">
-        <h3 className="text-[14px] font-medium text-[#202124]">Sentiment split</h3>
+        <h3 className="text-[14px] font-medium text-[#202124]">{ih.sentTitle}</h3>
         <div className="mt-3 flex h-3 overflow-hidden rounded-full">
-          <div className="bg-[#34A853]" style={{ width: `${total ? (i.sentimentSplit.positive / total) * 100 : 0}%` }} title={`Positive ${i.sentimentSplit.positive}`} />
-          <div className="bg-[#FBBC05]" style={{ width: `${total ? (i.sentimentSplit.neutral / total) * 100 : 0}%` }} title={`Neutral ${i.sentimentSplit.neutral}`} />
-          <div className="bg-[#EA4335]" style={{ width: `${total ? (i.sentimentSplit.negative / total) * 100 : 0}%` }} title={`Negative ${i.sentimentSplit.negative}`} />
+          <div className="bg-[#34A853]" style={{ width: `${total ? (i.sentimentSplit.positive / total) * 100 : 0}%` }} title={fill(ih.sentPos, { n: fmt(i.sentimentSplit.positive) })} />
+          <div className="bg-[#FBBC05]" style={{ width: `${total ? (i.sentimentSplit.neutral / total) * 100 : 0}%` }} title={fill(ih.sentNeu, { n: fmt(i.sentimentSplit.neutral) })} />
+          <div className="bg-[#EA4335]" style={{ width: `${total ? (i.sentimentSplit.negative / total) * 100 : 0}%` }} title={fill(ih.sentNeg, { n: fmt(i.sentimentSplit.negative) })} />
         </div>
         <div className="mt-2 flex flex-wrap gap-4 text-[12px]">
-          <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#34A853]" /> Positive {i.sentimentSplit.positive}</span>
-          <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#FBBC05]" /> Neutral {i.sentimentSplit.neutral}</span>
-          <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#EA4335]" /> Negative {i.sentimentSplit.negative}</span>
+          <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#34A853]" /> {ih.sentPos} {fmt(i.sentimentSplit.positive)}</span>
+          <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#FBBC05]" /> {ih.sentNeu} {fmt(i.sentimentSplit.neutral)}</span>
+          <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#EA4335]" /> {ih.sentNeg} {fmt(i.sentimentSplit.negative)}</span>
         </div>
       </div>
 
-      <button onClick={onBack} className="text-[13px] font-medium text-[#1A73E8] hover:underline">← Back to reviews</button>
+      <button onClick={onBack} className="text-[13px] font-medium text-[#1A73E8] hover:underline">{t.reviews.detail.back}</button>
       <p className="text-[11px] leading-4 text-[#5F6368]">
-        {isAI ? `AI model ${aiMeta?.model ?? "unknown"} • ${aiMeta?.ragUsed ? "RAG-grounded in your databank" : "No databank context"} • Verified counts` : "Heuristic analysis — counts exact, insights rule-based. Run AI for cited opportunities."}
-        {" "}• Sayvors-derived analytics • <span className="underline decoration-dotted">Why this matters: reply fast to negatives = +0.2★ avg in 30 days (industry avg)</span>
+        {isAI ? fill(ih.footerAi, { m: aiMeta?.model ?? ih.modelFallback, rag: aiMeta?.ragUsed ? ih.footerRagYes : ih.footerRagNo }) : ih.footerHeuristic}
+        {" "}• Sayvors-derived analytics • <span className="underline decoration-dotted">{ih.whyMatters}</span>
       </p>
     </div>
   );
 }
 
 function InsightCard({ review }: { review: ReviewItem }) {
-  const insight = explainReview(review);
+  const { t, locale } = useI18n();
+  const ix = t.reviews.insight;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmtRating = (n: number) =>
+    n.toLocaleString(dateLocale, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const insight = explainReview(review, ix, fmtRating);
+  const created = (() => {
+    const d = new Date(review.createdAt.length === 10 ? `${review.createdAt}T00:00:00` : review.createdAt);
+    return Number.isNaN(d.getTime()) ? review.createdAt : d.toLocaleDateString(dateLocale, { month: "short", day: "numeric", year: "numeric" });
+  })();
   return (
     <div className="rounded-lg border border-[#DADCE0] bg-white p-4" style={{ fontFamily: "Roboto, Arial, sans-serif" }}>
       <div className="flex items-center justify-between gap-3">
@@ -3046,7 +3079,7 @@ function InsightCard({ review }: { review: ReviewItem }) {
               <path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 16a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z" stroke="currentColor" strokeWidth={1.2} />
             </svg>
           </span>
-          Why this rating?
+          {ix.title}
         </h3>
         <span
           className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${
@@ -3057,7 +3090,7 @@ function InsightCard({ review }: { review: ReviewItem }) {
                 : "border-[#FDE293] bg-[#FEF7E0] text-[#EA8600]"
           }`}
         >
-          {insight.tone === "high" ? "High" : insight.tone === "low" ? "Low" : "Mixed"}
+          {insight.tone === "high" ? ix.high : insight.tone === "low" ? ix.low : ix.mixed}
         </span>
       </div>
       <p className="mt-2 text-[12px] leading-5 text-[#5F6368]">{insight.summary}</p>
@@ -3065,7 +3098,7 @@ function InsightCard({ review }: { review: ReviewItem }) {
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <div className="rounded-lg border border-[#E8EAED] bg-[#F8F9FA] p-3">
           <p className="flex items-center gap-1 text-[11px] font-medium uppercase tracking-wide text-[#137333]">
-            <span className="h-1.5 w-1.5 rounded-full bg-[#34A853]" /> What lifted it
+            <span className="h-1.5 w-1.5 rounded-full bg-[#34A853]" /> {ix.lifted}
           </p>
           {insight.positives.length ? (
             <ul className="mt-2 space-y-1">
@@ -3076,12 +3109,12 @@ function InsightCard({ review }: { review: ReviewItem }) {
               ))}
             </ul>
           ) : (
-            <p className="mt-2 text-[12px] text-[#5F6368]">No clear positive signals.</p>
+            <p className="mt-2 text-[12px] text-[#5F6368]">{ix.noPositives}</p>
           )}
         </div>
         <div className="rounded-lg border border-[#E8EAED] bg-[#F8F9FA] p-3">
           <p className="flex items-center gap-1 text-[11px] font-medium uppercase tracking-wide text-[#C5221F]">
-            <span className="h-1.5 w-1.5 rounded-full bg-[#EA4335]" /> What dragged it
+            <span className="h-1.5 w-1.5 rounded-full bg-[#EA4335]" /> {ix.dragged}
           </p>
           {insight.negatives.length ? (
             <ul className="mt-2 space-y-1">
@@ -3092,16 +3125,16 @@ function InsightCard({ review }: { review: ReviewItem }) {
               ))}
             </ul>
           ) : (
-            <p className="mt-2 text-[12px] text-[#5F6368]">No clear negative signals.</p>
+            <p className="mt-2 text-[12px] text-[#5F6368]">{ix.noNegatives}</p>
           )}
         </div>
       </div>
 
       <div className="mt-3 rounded-lg border border-[#E8EAED] bg-white p-3">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-[#5F6368]">Overall result</p>
+        <p className="text-[11px] font-medium uppercase tracking-wide text-[#5F6368]">{ix.result}</p>
         <p className="mt-1 text-[13px] leading-5 text-[#202124]">{insight.result}</p>
         <p className="mt-2 flex items-center gap-1.5 text-[12px] font-medium text-[#1A73E8]">
-          <span className="text-[#1A73E8]">→</span> Next: {insight.action}
+          <span className="text-[#1A73E8]">→</span> {fill(ix.next, { action: insight.action })}
         </p>
       </div>
       <p className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-[#E8EAED] pt-3 text-[11px] text-[#5F6368]">
@@ -3111,62 +3144,53 @@ function InsightCard({ review }: { review: ReviewItem }) {
             <path d="M12 8v5l3 2" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" />
           </svg>
         </span>
-        Explainable heuristics · {review.locationName} · {review.createdAt}
+        {fill(ix.foot, { loc: review.locationName, date: created })}
         <span className="text-[#DADCE0]">•</span>
-        <span className={review.replied ? "text-[#137333]" : "text-[#5F6368]"}>{review.replied ? "Replied" : "Unanswered"}</span>
+        <span className={review.replied ? "text-[#137333]" : "text-[#5F6368]"}>{review.replied ? t.reviews.detail.replied : t.reviews.stats.unanswered}</span>
       </p>
     </div>
   );
 }
 
-function explainReview(r: ReviewItem): { tone: "high" | "low" | "mixed"; summary: string; positives: string[]; negatives: string[]; result: string; action: string } {
+function explainReview(r: ReviewItem, ix: InsightDict, fmtRating: (n: number) => string): { tone: "high" | "low" | "mixed"; summary: string; positives: string[]; negatives: string[]; result: string; action: string } {
   const text = r.comment.toLowerCase();
-  const posLex: Record<string, string> = {
-    great: "praised overall service", excellent: "called service excellent", helpful: "mentioned helpful staff",
-    quick: "liked fast response", friendly: "found staff friendly", clean: "liked cleanliness",
-    recommend: "would recommend", good: "positive overall tone", fast: "liked speed",
-  };
-  const negLex: Record<string, string> = {
-    wait: "complained about waiting", slow: "felt service was slow", rude: "felt staff was rude",
-    bad: "negative overall tone", poor: "rated support poorly", long: "mentioned long delays",
-    busy: "felt staff was too busy", dirty: "flagged cleanliness", expensive: "felt pricing was high",
-    unhappy: "expressed unhappiness",
-  };
-  const positives = Object.entries(posLex).filter(([k]) => text.includes(k)).map(([, v]) => v);
-  const negatives = Object.entries(negLex).filter(([k]) => text.includes(k)).map(([, v]) => v);
+  const positives = Object.entries(ix.lexPos).filter(([k]) => text.includes(k)).map(([, v]) => v);
+  const negatives = Object.entries(ix.lexNeg).filter(([k]) => text.includes(k)).map(([, v]) => v);
   if (r.rating >= 4 && negatives.length === 0) {
     return {
       tone: "high",
-      summary: `This is high because the customer gave ${r.rating}★ with${positives.length ? "" : "out"} explicit praise signals. High ratings like this lift the location average and response-rate health.`,
-      positives: positives.length ? positives : ["high star rating itself"],
+      summary: fill(positives.length ? ix.summaryHighPraise : ix.summaryHighBare, { s: fmtRating(r.rating) }),
+      positives: positives.length ? positives : [ix.fbHighStar],
       negatives,
-      result: `Positive outcome for ${r.locationName}. ${r.replied ? "Already replied — good for trust." : "Reply to lock in loyalty."}`,
-      action: r.replied ? "No urgent fix; thank them and invite them back." : "Post a warm thank-you reply today.",
+      result: fill(ix.resultHigh, { loc: r.locationName, tail: r.replied ? ix.resultHighReplied : ix.resultHighOpen }),
+      action: r.replied ? ix.actionHighReplied : ix.actionHighOpen,
     };
   }
   if (r.rating <= 2) {
     return {
       tone: "low",
-      summary: `This is low because the customer gave ${r.rating}★${negatives.length ? " and the text points at specific pain" : " even without detailed text"}. Low ratings drag the average and need a fast, empathetic reply.`,
+      summary: fill(negatives.length ? ix.summaryLowPain : ix.summaryLowBare, { s: fmtRating(r.rating) }),
       positives,
-      negatives: negatives.length ? negatives : ["low star rating without detail"],
-      result: `At-risk signal for ${r.locationName}. ${r.replied ? "Reply exists — monitor for follow-up." : "Unanswered — highest priority."}`,
-      action: "Reply with apology + concrete fix, then address the root cause operationally.",
+      negatives: negatives.length ? negatives : [ix.fbLowStar],
+      result: fill(ix.resultLow, { loc: r.locationName, tail: r.replied ? ix.resultLowReplied : ix.resultLowOpen }),
+      action: ix.actionLow,
     };
   }
   return {
     tone: "mixed",
-    summary: `This sits in the middle at ${r.rating}★ — not angry, not delighted. These reviews usually hide one fixable friction point.`,
-    positives: positives.length ? positives : ["neutral-to-positive tone"],
-    negatives: negatives.length ? negatives : ["no strong complaint detected"],
-    result: `Neutral outcome. Small fix at ${r.locationName} could convert this customer to 4–5★.`,
-    action: "Acknowledge the feedback and state one specific improvement.",
+    summary: fill(ix.summaryMixed, { s: fmtRating(r.rating) }),
+    positives: positives.length ? positives : [ix.fbMidPos],
+    negatives: negatives.length ? negatives : [ix.fbMidNeg],
+    result: fill(ix.resultMixed, { loc: r.locationName }),
+    action: ix.actionMixed,
   };
 }
 
 function Stars({ rating }: { rating: number }) {
+  const { t, locale } = useI18n();
+  const num = new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(rating);
   return (
-    <span className="flex shrink-0 gap-0.5" aria-label={`${rating} stars`}>
+    <span className="flex shrink-0 gap-0.5" aria-label={fill(t.reviews.star.ariaStars, { n: num })}>
       {[1, 2, 3, 4, 5].map((s) => (
         <svg key={s} viewBox="0 0 24 24" className={`h-3.5 w-3.5 ${s <= rating ? "text-[#FBBC05]" : "text-ink/15 dark:text-fog/15"}`} fill="currentColor">
           <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z" />
