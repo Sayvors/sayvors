@@ -11,6 +11,7 @@ import {
 } from "@/lib/api-meta";
 import { Avatar, BubbleIcon, HeartIcon, INK, INK2, timeAgo } from "../instagram/ui";
 import FacebookPostComposer from "./FacebookPostComposer";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 
 /*
  * The Page's posts: the composer on top, everything already scheduled as a
@@ -29,9 +30,9 @@ function Chip({ children }: { children: string }) {
   );
 }
 
-function fmtWhen(unix: number | null): string {
+function fmtWhen(unix: number | null, locale: string): string {
   if (!unix) return "—";
-  return new Date(unix * 1000).toLocaleString(undefined, {
+  return new Date(unix * 1000).toLocaleString(locale === "ar" ? "ar-SA" : "en-US", {
     weekday: "short",
     month: "short",
     day: "numeric",
@@ -41,6 +42,8 @@ function fmtWhen(unix: number | null): string {
 }
 
 function PostCard({ post, onOpen }: { post: FacebookPost; onOpen: () => void }) {
+  const { t, locale } = useI18n();
+  const p = t.channelHub.facebook.posts;
   const img = post.images[0] ?? post.full_picture ?? null;
   return (
     <li>
@@ -63,7 +66,7 @@ function PostCard({ post, onOpen }: { post: FacebookPost; onOpen: () => void }) 
         )}
         <span className="block p-3">
           <span className={`line-clamp-2 block text-[13px] ${INK}`}>
-            {post.message || "(no text)"}
+            {post.message || p.noText}
           </span>
           <span className={`mt-2 flex items-center gap-3 text-[12px] ${INK2}`}>
             <span className="flex items-center gap-1">
@@ -74,7 +77,7 @@ function PostCard({ post, onOpen }: { post: FacebookPost; onOpen: () => void }) 
               <BubbleIcon className="h-3.5 w-3.5" />
               {post.comments_count}
             </span>
-            <span className="ml-auto">{timeAgo(post.created_time) || ""}</span>
+            <span className="ml-auto">{timeAgo(post.created_time, locale) || ""}</span>
           </span>
         </span>
       </button>
@@ -93,6 +96,8 @@ function PostModal({
 }) {
   const [comments, setComments] = useState<InstagramStoredComment[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { t, locale } = useI18n();
+  const p = t.channelHub.facebook.posts;
 
   useEffect(() => {
     let cancelled = false;
@@ -102,14 +107,14 @@ function PostModal({
       },
       (e: unknown) => {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Could not load comments.");
+          setError(e instanceof Error ? e.message : p.commentsError);
         }
       },
     );
     return () => {
       cancelled = true;
     };
-  }, [pageId, post.id]);
+  }, [pageId, post.id, p.commentsError]);
 
   return (
     <div
@@ -117,26 +122,26 @@ function PostModal({
       onClick={onClose}
       role="dialog"
       aria-modal="true"
-      aria-label="Post details"
+      aria-label={p.modalAria}
     >
       <div
         className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-[24px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-5"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3">
-          <h3 className={`text-[15px] font-semibold ${INK}`}>Post</h3>
+          <h3 className={`text-[15px] font-semibold ${INK}`}>{p.postTitle}</h3>
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close"
+            aria-label={p.close}
             className="rounded-[8px] border border-[var(--ui-line)] px-2.5 py-1 text-[12px] font-semibold text-[var(--ui-ink)]"
           >
-            Close
+            {p.close}
           </button>
         </div>
 
         <p className={`mt-3 whitespace-pre-wrap text-[13px] ${INK}`}>
-          {post.message || "(no text)"}
+          {post.message || p.noText}
         </p>
         {post.images.length > 0 && (
           <div className="mt-3 grid grid-cols-2 gap-2">
@@ -165,7 +170,7 @@ function PostModal({
           <span className="flex items-center gap-1">
             <BubbleIcon className="h-3.5 w-3.5" /> {post.comments_count}
           </span>
-          <span>{timeAgo(post.created_time) || ""}</span>
+          <span>{timeAgo(post.created_time, locale) || ""}</span>
           {post.permalink_url && (
             <a
               href={post.permalink_url}
@@ -173,15 +178,15 @@ function PostModal({
               rel="noopener noreferrer"
               className="underline underline-offset-2"
             >
-              Open on Facebook
+              {t.channelHub.facebook.openOn}
             </a>
           )}
         </p>
 
         <div className="mt-4 border-t border-[var(--ui-line)] pt-3">
-          <p className={`text-[13px] font-semibold ${INK}`}>Comments on this post</p>
+          <p className={`text-[13px] font-semibold ${INK}`}>{p.commentsTitle}</p>
           <p className={`mt-0.5 text-[12px] ${INK2}`}>
-            Reply, hide or delete in the Comments tab — this is the history.
+            {p.commentsBody}
           </p>
           {error && (
             <p role="alert" className="mt-2 text-[12px] font-semibold text-red-600 dark:text-red-400">
@@ -189,19 +194,19 @@ function PostModal({
             </p>
           )}
           {comments !== null && comments.length === 0 && (
-            <p className={`mt-2 text-[12px] ${INK2}`}>No comments yet.</p>
+            <p className={`mt-2 text-[12px] ${INK2}`}>{p.noComments}</p>
           )}
           <ul className="mt-2">
             {(comments ?? []).map((c) => (
               <li key={c.id} className="flex items-start gap-2 py-1.5">
                 <Avatar name={c.author_name || "?"} />
                 <p className="min-w-0 flex-1 text-[13px] leading-snug">
-                  <span className={`font-semibold ${INK}`}>{c.author_name || "Facebook user"}</span>{" "}
+                  <span className={`font-semibold ${INK}`}>{c.author_name || t.channelHub.facebook.userFallback}</span>{" "}
                   <span className={c.deleted_at ? `line-through opacity-60 ${INK}` : INK}>
                     {c.content}
                   </span>
                   <span className={`ml-2 text-[11px] ${INK2}`}>
-                    {timeAgo(c.platform_timestamp ?? c.created_at)}
+                    {timeAgo(c.platform_timestamp ?? c.created_at, locale)}
                   </span>
                 </p>
               </li>
@@ -214,6 +219,8 @@ function PostModal({
 }
 
 function Feed({ pageId, reloadKey, onOpen }: { pageId: string; reloadKey: number; onOpen: (p: FacebookPost) => void }) {
+  const { t, locale } = useI18n();
+  const p = t.channelHub.facebook.posts;
   const [posts, setPosts] = useState<FacebookPost[] | null>(null);
   const [unavailable, setUnavailable] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -239,7 +246,7 @@ function Feed({ pageId, reloadKey, onOpen }: { pageId: string; reloadKey: number
       },
       (e: unknown) => {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Could not load posts.");
+          setError(e instanceof Error ? e.message : p.loadError);
         }
       },
     );
@@ -274,7 +281,7 @@ function Feed({ pageId, reloadKey, onOpen }: { pageId: string; reloadKey: number
           onClick={refresh}
           className="ui-btn mt-3 rounded-lg bg-[var(--ui-surface)] px-4 py-2.5 text-[12px] font-semibold text-[var(--ui-ink)]"
         >
-          Try again
+          {t.channelHub.facebook.retry}
         </button>
       </div>
     );
@@ -291,36 +298,36 @@ function Feed({ pageId, reloadKey, onOpen }: { pageId: string; reloadKey: number
   if (posts.length === 0) {
     return (
       <p className={`text-[13px] ${INK2}`}>
-        No posts yet. Write the first one above — it lands on your Page the moment you publish.
+        {p.empty}
       </p>
     );
   }
 
-  const scheduledRows = posts.filter((p) => scheduled.has(p.id));
+  const scheduledRows = posts.filter((q) => scheduled.has(q.id));
 
   return (
     <div className="space-y-4">
       {scheduledRows.length > 0 && (
         <div>
-          <p className={`text-[12px] font-semibold ${INK2}`}>Scheduled</p>
+          <p className={`text-[12px] font-semibold ${INK2}`}>{p.scheduled}</p>
           <ul className="mt-2 flex flex-wrap gap-2">
-            {scheduledRows.map((p) => (
+            {scheduledRows.map((q) => (
               <li
-                key={p.id}
+                key={q.id}
                 className="flex items-center gap-2 rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2"
               >
                 <span className={`max-w-[10rem] truncate text-[12px] ${INK}`}>
-                  {p.message || "(no text)"}
+                  {q.message || p.noText}
                 </span>
-                <Chip>{fmtWhen(scheduled.get(p.id) ?? null)}</Chip>
+                <Chip>{fmtWhen(scheduled.get(q.id) ?? null, locale)}</Chip>
               </li>
             ))}
           </ul>
         </div>
       )}
       <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        {posts.map((p) => (
-          <PostCard key={p.id} post={p} onOpen={() => onOpen(p)} />
+        {posts.map((q) => (
+          <PostCard key={q.id} post={q} onOpen={() => onOpen(q)} />
         ))}
       </ul>
     </div>
@@ -328,14 +335,15 @@ function Feed({ pageId, reloadKey, onOpen }: { pageId: string; reloadKey: number
 }
 
 export default function PostsTab({ pageId }: { pageId: string }) {
+  const { t } = useI18n();
+  const p = t.channelHub.facebook.posts;
   const [version, setVersion] = useState(0);
   const [open, setOpen] = useState<FacebookPost | null>(null);
   return (
     <section className={PANEL}>
-      <h3 className={`text-[15px] font-semibold ${INK}`}>Posts</h3>
+      <h3 className={`text-[15px] font-semibold ${INK}`}>{p.title}</h3>
       <p className={`mt-1 text-[12px] ${INK2}`}>
-        Publish text, links or photos to your Page — now or later. Tap a post to
-        read its comment history.
+        {p.body}
       </p>
       <div className="mt-4 space-y-5">
         <FacebookPostComposer pageId={pageId} onPublished={() => setVersion((v) => v + 1)} />
