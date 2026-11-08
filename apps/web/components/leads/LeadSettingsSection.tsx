@@ -4,11 +4,19 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchLeadSettings, updateLeadSettings, type LeadSettings } from "@/lib/api-leads";
 import {
   LEAD_CATEGORIES,
-  LEAD_CATEGORY_LABELS,
+  leadCategoryLabelKnown,
   type LeadCategory,
 } from "@/lib/lead-labels";
 import { apiFetch } from "@/lib/api-rag";
 import SettingHelp from "@/components/settings/SettingHelp";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 /*
  * Lead follow-up + escalation controls, rendered as a section on /dashboard/settings.
@@ -132,6 +140,8 @@ function Num({
   disabled: boolean;
   onChange: (n: number) => void;
 }) {
+  const { t, locale } = useI18n();
+  const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
   return (
     <label className="block">
       <span className={`block text-[12px] font-medium ${LABEL}`}>{label}</span>
@@ -156,35 +166,17 @@ function Num({
         </span>
       </span>
       <span className="mt-1 block text-[11px] text-ink/50 dark:text-fog/50">
-        {hint} · allowed {min}–{max}
+        {hint} · {fill(t.reviews.settings.lead.rangeHint, { min: fmt(min), max: fmt(max) })}
       </span>
     </label>
   );
 }
 
-const CADENCE_PHRASES = [
-  "First nudge waits after a reply that asks a question, then sends one gentle nudge.",
-  "Second follow-up comes later if there's still no reply.",
-  "Final follow-up is the last touch before the sequence stops.",
-  "Attempt cap limits total follow-ups; 0 turns the whole sequence off.",
-  "Scenario: lead asks about price -> AI replies and asks to book -> waits -> nudge -> follow-up -> final -> stops.",
-];
-const QUIET_PHRASES = [
-  "Quiet hours let proactive nudges wait until the window ends.",
-  "Customer questions are still answered any time.",
-  "Set the start/end hours on a 24-hour clock and pick a timezone (UTC fallback if unknown).",
-  "Scenario: a 22:00-07:00 window means a 23:30 lead waits until 07:00.",
-];
-const ESCALATION_PHRASES = [
-  "Urgent words (\"urgent\", \"asap\", \"right now\", Arabic equivalents) escalate the thread immediately — no counter involved.",
-  "Escalate after: consecutive turns where the customer came back confused. 0 disables the counter; normal follow-up questions never trip it.",
-  "AI resumes after: hours of silence with no human action.",
-  "Remind after: one reminder only, then never.",
-  "Recipients: up to 10; empty goes to the account owner's email.",
-  "Scenario: customer says \"this is urgent\" -> thread is handed to a human at once; the AI stays quiet until someone replies or the resume window passes.",
-];
-
 export default function LeadSettingsSection() {
+  const { t, locale } = useI18n();
+  const ls = t.reviews.settings.lead;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
   const [settings, setSettings] = useState<LeadSettings | null>(null);
   const [status, setStatus] = useState<Status>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -216,7 +208,7 @@ export default function LeadSettingsSection() {
         setStatus("idle");
       })
       .catch((e: unknown) => {
-        setError(e instanceof Error ? e.message : "Could not load settings.");
+        setError(e instanceof Error ? e.message : ls.loadFailed);
         setStatus("error");
       });
   }, []);
@@ -243,7 +235,7 @@ export default function LeadSettingsSection() {
       .catch((e: unknown) => {
         if (!cancelled) {
           setMemberLoadError(
-            e instanceof Error ? e.message : "Could not load team members.",
+            e instanceof Error ? e.message : ls.teamFailed,
           );
         }
       });
@@ -315,7 +307,7 @@ export default function LeadSettingsSection() {
       setRecipients(saved.escalation_emails ?? []);
       setStatus("saved");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not save.");
+      setError(e instanceof Error ? e.message : ls.saveFailed);
       setStatus("error");
     }
   };
@@ -323,19 +315,19 @@ export default function LeadSettingsSection() {
   const busy = status === "saving" || status === "loading";
 
   if (status === "loading") {
-    return <p className={`text-[13px] ${INK2}`}>Loading lead settings…</p>;
+    return <p className={`text-[13px] ${INK2}`}>{ls.loadSettings}</p>;
   }
 
   if (!settings || !draft) {
     return (
       <div className={`rounded-[3px] border ${HAIRLINE} bg-white p-5 dark:bg-ink`}>
-        <p className="text-[13px] font-semibold text-coral">{error ?? "Could not load settings."}</p>
+        <p className="text-[13px] font-semibold text-coral">{error ?? ls.loadFailed}</p>
         <button
           type="button"
           onClick={retry}
           className={`mt-3 rounded-[2px] border ${HAIRLINE} bg-white px-3 py-1.5 text-[12px] font-semibold ${INK} transition hover:bg-ink/[0.03] dark:bg-ink dark:hover:bg-fog/[0.06] ${FOCUS}`}
         >
-          Retry
+          {ls.retry}
         </button>
       </div>
     );
@@ -371,14 +363,13 @@ export default function LeadSettingsSection() {
       <header className={`flex flex-wrap items-start justify-between gap-3 border-b ${RULE} px-5 py-4`}>
         <div>
           <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-ink/35 dark:text-fog/35">
-            Follow-up · Escalation
+            {ls.eyebrow}
           </p>
           <h2 className="mt-1 text-[15px] font-bold text-ink dark:text-fog">
-            Lead follow-up &amp; escalation
+            {ls.title}
           </h2>
           <p className={`mt-1 max-w-3xl text-[12px] leading-relaxed ${INK2}`}>
-            When the AI follows up on a lead, and when it stops and hands the conversation to a
-            person. Applies to the next reply — no restart needed.
+            {ls.sub}
           </p>
         </div>
         <span
@@ -388,62 +379,62 @@ export default function LeadSettingsSection() {
             status === "error" ? "text-coral" : status === "saved" ? "text-emerald-600" : INK2
           }`}
         >
-          {status === "saving" && "Saving…"}
-          {status === "saved" && "Saved"}
-          {status === "error" && (error ?? "Could not save")}
+          {status === "saving" && ls.saving}
+          {status === "saved" && ls.saved}
+          {status === "error" && (error ?? ls.saveErrorFallback)}
         </span>
       </header>
 
       <div className="space-y-5 px-5 py-5">
         <Group
-          title="Follow-up cadence"
-          note="Only leads whose type is checked in “What counts as qualified” are followed up — a conversation that never showed a commercial signal is left alone."
+          title={ls.cadenceTitle}
+          note={ls.cadenceNote}
           help={
             <SettingHelp
-              ariaLabel="How lead follow-up cadence works"
-              title="Follow-up cadence"
-              phrases={CADENCE_PHRASES}
+              ariaLabel={ls.helpCadenceAria}
+              title={ls.helpCadenceTitle}
+              phrases={ls.cadence}
             />
           }
         >
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Num
-              label="First nudge"
-              hint="After the reply that asks a question"
+              label={ls.nudge1}
+              hint={ls.nudge1Hint}
               value={draft.first_nudge_minutes}
               min={5}
               max={60}
-              suffix="min"
+              suffix={ls.minSuffix}
               disabled={busy}
               onChange={set("first_nudge_minutes")}
             />
             <Num
-              label="Second follow-up"
-              hint="After the first nudge goes out"
+              label={ls.nudge2}
+              hint={ls.nudge2Hint}
               value={draft.second_followup_hours}
               min={2}
               max={168}
-              suffix="h"
+              suffix={ls.hourSuffix}
               disabled={busy}
               onChange={set("second_followup_hours")}
             />
             <Num
-              label="Final follow-up"
-              hint="After the second goes out"
+              label={ls.finalLabel}
+              hint={ls.finalHint}
               value={draft.final_followup_hours}
               min={12}
               max={336}
-              suffix="h"
+              suffix={ls.hourSuffix}
               disabled={busy}
               onChange={set("final_followup_hours")}
             />
             <Num
-              label="Attempt cap"
-              hint="0 switches the whole sequence off"
+              label={ls.capLabel}
+              hint={ls.capHint}
               value={draft.max_attempts}
               min={0}
               max={4}
-              suffix="max"
+              suffix={ls.capSuffix}
               disabled={busy}
               onChange={set("max_attempts")}
             />
@@ -451,11 +442,11 @@ export default function LeadSettingsSection() {
         </Group>
 
         <Group
-          title="What counts as qualified"
-          note="A captured lead enters the sales pipeline only when its type is checked here. Support and info stay on the board as New until the customer shows a commercial signal. Keep at least one checked — an empty set falls back to the defaults rather than silently disabling the pipeline."
+          title={ls.qualTitle}
+          note={ls.qualNote}
         >
           <fieldset>
-            <legend className="sr-only">Which lead types auto-qualify</legend>
+            <legend className="sr-only">{ls.qualLegend}</legend>
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {LEAD_CATEGORIES.map((category) => {
                 const checked = (draft.qualified_categories ?? []).includes(category);
@@ -467,7 +458,7 @@ export default function LeadSettingsSection() {
                     className={`flex cursor-pointer items-center gap-2 rounded-[2px] border ${HAIRLINE} bg-white px-3 py-2 text-[13px] font-medium ${INK} ${FOCUS}`}
                     title={
                       isLastChecked
-                        ? "At least one lead type must stay qualified."
+                        ? ls.lastCheckedTitle
                         : undefined
                     }
                   >
@@ -478,7 +469,7 @@ export default function LeadSettingsSection() {
                       onChange={() => toggleQualifiedCategory(category)}
                       className="h-3.5 w-3.5 accent-[var(--ui-ink)]"
                     />
-                    {LEAD_CATEGORY_LABELS[category]}
+                    {leadCategoryLabelKnown(category, locale) ?? category}
                   </label>
                 );
               })}
@@ -487,45 +478,45 @@ export default function LeadSettingsSection() {
         </Group>
 
         <Group
-          title="Quiet hours"
-          note="Proactive nudges wait until this window ends. Customer questions are answered immediately at any hour — only messages nobody asked for are held back."
+          title={ls.quietTitle}
+          note={ls.quietNote}
           help={
             <SettingHelp
-              ariaLabel="How quiet hours work"
-              title="Quiet hours"
-              phrases={QUIET_PHRASES}
+              ariaLabel={ls.helpQuietAria}
+              title={ls.helpQuietTitle}
+              phrases={ls.quiet}
             />
           }
         >
           <div className="grid gap-4 sm:grid-cols-3">
             <Num
-              label="Quiet starts"
-              hint="Hour, 24h clock"
+              label={ls.quietStart}
+              hint={ls.quietStartHint}
               value={draft.quiet_start_hour}
               min={0}
               max={23}
-              suffix=":00"
+              suffix={ls.hourSuffix2}
               disabled={busy}
               onChange={set("quiet_start_hour")}
             />
             <Num
-              label="Quiet ends"
-              hint="Hour, 24h clock"
+              label={ls.quietEnd}
+              hint={ls.quietEndHint}
               value={draft.quiet_end_hour}
               min={0}
               max={23}
-              suffix=":00"
+              suffix={ls.hourSuffix2}
               disabled={busy}
               onChange={set("quiet_end_hour")}
             />
             <label className="block">
-              <span className={`block text-[12px] font-medium ${LABEL}`}>Timezone</span>
+              <span className={`block text-[12px] font-medium ${LABEL}`}>{ls.tzLabel}</span>
               <input
                 type="text"
                 list="sayvors-timezones"
                 value={draft.timezone}
                 disabled={busy}
-                placeholder="UTC"
+                placeholder={ls.tzPh}
                 onChange={(e) => {
                   setDraft((d) => (d ? { ...d, timezone: e.target.value } : d));
                   if (status === "saved") setStatus("idle");
@@ -538,7 +529,7 @@ export default function LeadSettingsSection() {
                 ))}
               </datalist>
               <span className="mt-1 block text-[11px] text-ink/50 dark:text-fog/50">
-                Pick from the list or type any IANA zone. Unknown zones fall back to UTC.
+                {ls.tzHint}
               </span>
               {/* Offered only when it would change something. Suggesting the
                   value the field already holds is noise, and a tenant whose
@@ -553,7 +544,7 @@ export default function LeadSettingsSection() {
                   }}
                   className={`mt-1.5 inline-flex items-center rounded-[2px] border ${HAIRLINE} bg-white px-2 py-1 text-[11px] font-semibold ${INK2} transition hover:bg-ink/[0.03] disabled:opacity-40 dark:bg-ink dark:hover:bg-fog/[0.06] ${FOCUS}`}
                 >
-                  Use {browserTz}
+                  {fill(ls.useDetected, { tz: browserTz })}
                 </button>
               )}
             </label>
@@ -561,44 +552,44 @@ export default function LeadSettingsSection() {
         </Group>
 
         <Group
-          title="Escalation"
-          note="The AI answers normal follow-up questions indefinitely. It only steps aside when the customer says it is urgent, or when the confusion counter you enable below trips."
+          title={ls.escTitle}
+          note={ls.escNote}
           help={
             <SettingHelp
-              ariaLabel="How lead escalation works"
-              title="Escalation"
-              phrases={ESCALATION_PHRASES}
+              ariaLabel={ls.helpEscAria}
+              title={ls.helpEscTitle}
+              phrases={ls.escalation}
             />
           }
         >
           <div className="grid gap-4 sm:grid-cols-3">
             <Num
-              label="Escalate after"
-              hint="Confused customer turns in a row · 0 = never"
+              label={ls.escAfter}
+              hint={ls.escAfterHint}
               value={draft.escalation_threshold}
               min={0}
               max={10}
-              suffix="cycles"
+              suffix={ls.cyclesSuffix}
               disabled={busy}
               onChange={set("escalation_threshold")}
             />
             <Num
-              label="AI resumes after"
-              hint="With no human action"
+              label={ls.resumeAfter}
+              hint={ls.resumeHint}
               value={draft.escalation_resume_hours}
               min={1}
               max={336}
-              suffix="h"
+              suffix={ls.hourSuffix}
               disabled={busy}
               onChange={set("escalation_resume_hours")}
             />
             <Num
-              label="Remind after"
-              hint="One reminder only, then never"
+              label={ls.remindAfter}
+              hint={ls.remindHint}
               value={draft.escalation_reminder_hours}
               min={1}
               max={72}
-              suffix="h"
+              suffix={ls.hourSuffix}
               disabled={busy}
               onChange={set("escalation_reminder_hours")}
             />
@@ -606,11 +597,11 @@ export default function LeadSettingsSection() {
 
           <div className="mt-4">
             <label className={`block text-[12px] font-medium ${LABEL}`}>
-              Escalation recipients
+              {ls.recipients}
             </label>
             {memberLoadError ? (
               <p className="mt-1 text-[11px] text-ink/50 dark:text-fog/50">
-                Could not load the team list — add addresses by hand below.
+                {ls.teamFallback}
               </p>
             ) : null}
             <div className="mt-1 flex flex-wrap gap-1.5">
@@ -621,7 +612,7 @@ export default function LeadSettingsSection() {
                 className={`h-8 min-w-0 flex-1 rounded-[2px] border ${HAIRLINE} bg-white px-2 text-[13px] ${INK} outline-none focus:border-deep-violet/40 disabled:opacity-50 dark:bg-ink`}
               >
                 <option value="">
-                  {teamMembers.length === 0 ? "No team members found" : "Add a person…"}
+                  {teamMembers.length === 0 ? ls.noMembers : ls.addPerson}
                 </option>
                 {teamMembers
                   .filter((m) => !recipients.includes(m.email))
@@ -640,7 +631,7 @@ export default function LeadSettingsSection() {
                 }}
                 className={`rounded-[2px] bg-deep-violet px-4 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40 ${FOCUS}`}
               >
-                Add
+                {ls.add}
               </button>
             </div>
 
@@ -652,7 +643,7 @@ export default function LeadSettingsSection() {
                 type="email"
                 value={manualRecipient}
                 disabled={busy}
-                placeholder="Or an address outside this workspace"
+                placeholder={ls.manualPh}
                 onChange={(e) => setManualRecipient(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
@@ -668,12 +659,12 @@ export default function LeadSettingsSection() {
                 onClick={() => addRecipient(manualRecipient)}
                 className={`rounded-[2px] border ${HAIRLINE} bg-white px-4 text-[12px] font-bold ${INK} transition hover:bg-ink/[0.03] disabled:opacity-40 dark:bg-ink dark:hover:bg-fog/[0.06] ${FOCUS}`}
               >
-                Add address
+                {ls.addAddress}
               </button>
             </div>
 
             {recipients.length > 0 ? (
-              <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Selected recipients">
+              <ul className="mt-2 flex flex-wrap gap-1.5" aria-label={ls.recipientsAria}>
                 {recipients.map((email) => (
                   <li
                     key={email}
@@ -689,7 +680,7 @@ export default function LeadSettingsSection() {
                         setRecipients((r) => r.filter((x) => x !== email));
                         if (status === "saved") setStatus("idle");
                       }}
-                      aria-label={`Remove ${email}`}
+                      aria-label={fill(ls.removeRecipient, { email })}
                       className={`rounded-[1px] px-1 text-[13px] leading-none ${INK2} transition hover:text-coral disabled:opacity-40 ${FOCUS}`}
                     >
                       ×
@@ -700,15 +691,14 @@ export default function LeadSettingsSection() {
             ) : null}
 
             <span className="mt-1 block text-[11px] text-ink/50 dark:text-fog/50">
-              Up to 10. Empty means every escalation goes to the account owner&apos;s own signup
-              address — nothing to configure.
+              {ls.recipientsHint}
             </span>
           </div>
         </Group>
 
         <Group
-          title="Daily digest"
-          note="One email a day listing the leads still waiting on you. Qualified and follow-up leads only — anything converted, lost, or opted out is left out, and nothing is sent when there is nothing waiting."
+          title={ls.digestTitle}
+          note={ls.digestNote}
         >
           <label className="flex cursor-pointer items-start gap-2.5">
             <input
@@ -723,11 +713,10 @@ export default function LeadSettingsSection() {
             />
             <span>
               <span className={`block text-[13px] font-semibold ${INK}`}>
-                Email me the pending leads each morning
+                {ls.digestLabel}
               </span>
               <span className={`block text-[11px] ${INK2}`}>
-                Goes to the same people as escalation emails. Off by default — turn it on when you
-                want the rollup.
+                {ls.digestHint}
               </span>
             </span>
           </label>
@@ -738,7 +727,7 @@ export default function LeadSettingsSection() {
             className={`mt-4 grid gap-4 sm:grid-cols-2 ${draft.digest_enabled ? "" : "opacity-50"}`}
           >
             <div>
-              <span className={`block text-[12px] font-medium ${LABEL}`}>Send at</span>
+              <span className={`block text-[12px] font-medium ${LABEL}`}>{ls.sendAt}</span>
               <div className="mt-1 flex items-stretch">
                 <select
                   value={digestHour12(draft.digest_hour)}
@@ -766,7 +755,7 @@ export default function LeadSettingsSection() {
                 </select>
                 <div
                   role="radiogroup"
-                  aria-label="AM or PM"
+                  aria-label={ls.amPmAria}
                   className="flex"
                 >
                   {(["AM", "PM"] as const).map((period) => {
@@ -804,17 +793,17 @@ export default function LeadSettingsSection() {
                 </div>
               </div>
               <span className="mt-1 block text-[11px] text-ink/50 dark:text-fog/50">
-                Your timezone ({draft.timezone}) — allowed 0–23
+                {fill(ls.tzLine, { tz: draft.timezone })}
               </span>
             </div>
 
             <Num
-              label="How many to list"
-              hint="A longer list is summarised as &ldquo;and N more&rdquo;"
+              label={ls.howMany}
+              hint={ls.howManyHint}
               value={draft.digest_max_leads}
               min={1}
               max={100}
-              suffix="leads"
+              suffix={ls.leadsSuffix}
               disabled={busy || !draft.digest_enabled}
               onChange={set("digest_max_leads")}
             />
@@ -829,9 +818,7 @@ export default function LeadSettingsSection() {
         className={`flex flex-wrap items-center justify-between gap-3 border-t ${RULE} px-5 py-4`}
       >
         <p className={`text-[11px] ${INK2}`}>
-          {dirty
-            ? "Unsaved changes — nothing is stored until you save."
-            : "These settings apply to the whole account, not per branch."}
+          {dirty ? ls.dirtyNote : ls.cleanNote}
         </p>
         <div className="flex items-center gap-2">
           <button
@@ -840,7 +827,7 @@ export default function LeadSettingsSection() {
             disabled={!dirty || busy}
             className={`rounded-[2px] border ${HAIRLINE} bg-white px-3.5 py-2 text-[12px] font-bold ${INK} transition hover:bg-ink/[0.03] disabled:opacity-40 dark:bg-ink dark:hover:bg-fog/[0.06] ${FOCUS}`}
           >
-            Discard
+            {ls.discard}
           </button>
           <button
             type="button"
@@ -848,7 +835,7 @@ export default function LeadSettingsSection() {
             disabled={!dirty || busy}
             className={`rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40 ${FOCUS}`}
           >
-            {status === "saving" ? "Saving…" : "Save lead settings"}
+            {status === "saving" ? ls.saving : ls.saveLead}
           </button>
         </div>
       </footer>
