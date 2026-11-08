@@ -50,7 +50,8 @@ Rules:
 - topics: only topics actually discussed. Use the listed canonical names.
 - products: only concrete named products/services; empty list if none.
 - problems: only genuine complaints; empty list if none.
-- sentiment_score: -1.0 (angry) to 1.0 (delighted)."""
+- sentiment_score: -1.0 (angry) to 1.0 (delighted).
+- Never use em dashes or en dashes. Use commas or full stops instead."""
 
 
 _TOPIC_RULES = {

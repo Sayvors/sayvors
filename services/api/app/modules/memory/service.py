@@ -80,7 +80,8 @@ _EXTRACT_PROMPT = (
     "or an agreement the team actually made in this conversation. Do not "
     "invent. Do not include customer names, phone numbers, emails, addresses, "
     "order numbers, tracking numbers or anything that identifies a person. "
-    "If there is nothing durable, use an empty facts list. Max 8 facts."
+    "If there is nothing durable, use an empty facts list. Max 8 facts. "
+    "Never use em dashes or en dashes; use commas or full stops instead."
 )
 
 

@@ -19,7 +19,8 @@ SYSTEM_PROMPT = """You are the executive assistant of a business intelligence pl
 Write a 2-sentence executive briefing for the business owner based on the JSON facts provided.
 Sentence 1: the overall trajectory (improving/declining, why — cite the biggest mover).
 Sentence 2: the single most important action to take this week.
-Plain text only. No markdown, no lists, no greetings, max 60 words."""
+Plain text only. No markdown, no lists, no greetings, max 60 words.
+Never use em dashes or en dashes. Use commas or full stops instead."""
 
 
 async def get_executive_summary(

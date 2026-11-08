@@ -172,7 +172,8 @@ async def draft_google_answer(
                 ],
                 system_prompt=(
                     "You write helpful, factual public answers for a local "
-                    "business. Be brief and human. Do not use markdown."
+                    "business. Be brief and human. Do not use markdown. "
+                    "Never use em dashes or en dashes."
                 ),
                 temperature=0.2,
                 max_tokens=300,

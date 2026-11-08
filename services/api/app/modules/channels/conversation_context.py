@@ -50,7 +50,8 @@ _SYSTEM_PROMPT = (
     "Facts: <order numbers, dates, amounts actually stated>\n"
     "Language: <the language the customer writes in>\n"
     "Only state what the transcript supports. If a line has nothing, omit it. "
-    "No preamble, no markdown, no bullet characters."
+    "No preamble, no markdown, no bullet characters. "
+    "Never use em dashes or en dashes; use commas or full stops instead."
 )
 
 

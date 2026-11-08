@@ -187,7 +187,8 @@ General rules:
 - mentions must never exceed the total review count provided.
 - Use the BUSINESS CONTEXT only to interpret wording (e.g. what "it" refers to), never as a source of claims.
 - With few reviews, return few themes. An empty themes array is acceptable when there is nothing to say.
-- Temperature is low; be conservative and factual."""
+- Temperature is low; be conservative and factual.
+- Never use em dashes or en dashes anywhere. Use commas or full stops instead."""
 
 
 # ── Data loading ────────────────────────────────────────────────

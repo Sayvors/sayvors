@@ -152,7 +152,11 @@ async def mine_tenant(db, tenant_id: str) -> dict:
         resp = await complete(
             model="groq:oss-20b",
             messages=[LLMMessage(role="user", content=prompt)],
-            system_prompt="You extract structured insights from customer messages. Return only valid JSON.",
+            system_prompt=(
+                "You extract structured insights from customer messages. "
+                "Return only valid JSON. "
+                "Never use em dashes or en dashes; use commas or full stops instead."
+            ),
             temperature=0.1,
             max_tokens=2048,
             tenant_id=None,

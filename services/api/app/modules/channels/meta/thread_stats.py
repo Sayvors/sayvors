@@ -58,6 +58,7 @@ _CLASSIFY_SYSTEM_PROMPT = (
     "the request, or is angry about the delay. A factual question asked "
     "quickly ('what are your hours, quick?') is NOT urgent. 'Quick "
     "question' is NOT urgent. Judge the intent, not the word 'quick'.\n"
+    "- Never use em dashes or en dashes anywhere in your output.\n"
 )
 
 
