@@ -224,7 +224,7 @@
   <div class="stat"><div class="n amber">Live</div><div class="l">billing &amp; plans — wallet hotfix + durable ledger + 5 plans + admin plan CRUD + tenant grant-plan + entitlements service + enforcement at channel-connect/message-send/LLM; deployed to staging 2026-10-28, schema caught up from 5 migrations behind to <code>h4b5c6d7e8f9</code> head. Plan comparison + request-upgrade UI shipped (<a href="#billing">§6b</a>)</div></div>
   <div class="stat"><div class="n calm">1,645</div><div class="l">backend tests (2 skipped in CI where pgvector runs; 4 skipped locally without Postgres) — CI gates every staging deploy on them; staging CI run #77 passed on <code>d82d800</code></div></div>
   <div class="stat"><div class="n amber">1</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new finding still open: INS-5 (INS-1, INS-2, INS-3, INS-4, INS-6, INS-7 fixed)</div></div>
-  <div class="stat"><div class="n">4</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 0 blockers · 3 majors · 1 medium batches open. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
+  <div class="stat"><div class="n">4</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 0 blockers · 3 majors · 1 medium batches open. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md. Re-verified 2026-11-08: LAUNCH-S8, S9, S10 and M9 remain open (evidence in that file); none are fixed.</div></div>
   <div class="stat"><div class="n">6</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — Review Intelligence + Analytics "actual facts" gaps: grid rank, AI-answer visibility, Review Campaign premium gating. Strategy rule: every number a tenant sees must be verifiable on Google Maps or carry a named source</div></div>
 </div>
 
@@ -564,6 +564,8 @@
   </table></div>
 
   <p class="note">Suggested order: S10 → S8/S9 → the rest. P2, P3, P4, P6, S1, S2, S3, S4, S5, S6, S7, S11, S12, S14, B5, M1, M2, M3, M4, M5, M6, M7, M8 are fixed/decided; M-9(d) and M-9(f) done, M-9(a)/(b)/(c)/(e) remain; B3 was fixed earlier. Infra rows (S8/S9) can land any time on the current box; they stop being optional the day a second replica or real customers arrive.</p>
+
+  <p class="note"><strong>Re-verified 2026-11-08 — still open, do not mark fixed:</strong> (S8) the staging Redis container still runs <code>redis-server --maxmemory 128mb --maxmemory-policy noeviction</code> with <code>appendonly no</code> and no <code>requirepass</code>; Prometheus still has no rule files. (S9) staging Kafka is still <code>PLAINTEXT</code> with <code>KAFKA_AUTO_CREATE_TOPICS_ENABLE=true</code>, RF=1. (S10) <code>detail=str(</code> still appears at 125 sites; the Phase 1 sweep converted 502 paths only. (M9) <code>get_db_read()</code> still has zero call sites, metrics are still per-process globals, and <code>docker-compose.prod.yml</code> still runs <code>alembic upgrade head</code> in the API container command; <code>channel_messages</code> retention remains an open product decision. Source: code at <code>524ef6a</code> plus live <code>docker inspect</code> on staging.</p>
 </section>
 
 <section id="pass-2026-11-02">

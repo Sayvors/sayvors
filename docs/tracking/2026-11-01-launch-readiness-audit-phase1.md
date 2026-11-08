@@ -179,6 +179,33 @@ before launch.
 - **M-12** `llm_usage_events` lacks `(tenant_id, created_at)` composite; review-insights search uses unindexable `LOWER(LIKE %…%)` + offset (`analytics/service.py:275-280`).
 - **M-13** JobPanel dead code (2s poll, not imported); `optimizePackageImports` lists non-dependencies; `DB_POOL_MODE` consumed nowhere.
 
+### Status re-verification — 2026-11-08 (open items only)
+
+The ledger in `readiness-report.html` counts four items still open from this
+pass: S-8, S-9, S-10 and M-9 readiness IDs. All four were re-checked against
+the tree at `524ef6a` and the live staging box; **none are fixed**:
+
+- **S-8 Redis** — staging still runs `redis-server --maxmemory 128mb
+  --maxmemory-policy noeviction`; `CONFIG GET appendonly` returns `no`;
+  `CONFIG GET requirepass` is empty; `deploy/prometheus.yml` has no
+  `rule_files` and there is no alertmanager. The 128 MB ceiling is also the
+  most a 2 GB t3.small can give Redis next to api+worker (768 MB each) and
+  Kafka (384 MB), so the real fix is the managed-cache move, not a bigger
+  `maxmemory`.
+- **S-9 Kafka** — staging still advertises `PLAINTEXT://kafka:9092`, sets
+  `KAFKA_AUTO_CREATE_TOPICS_ENABLE=true`, and runs one broker with
+  replication factor 1. Needs SASL/TLS + a real broker topology (or
+  consolidation onto the Postgres outbox), not a one-line compose edit.
+- **S-10 `str(e)` sweep** — 125 `detail=str(` sites remain, mostly 4xx
+  validation/ownership paths. The Phase 1 `upstream_http_error()` work
+  converted the 502 provider paths; the per-site safe/public split is still
+  the open work.
+- **M-9 scale wiring** — `get_db_read()` still has zero call sites; `/metrics`
+  is still in-process globals under two uvicorn workers; Alembic still runs
+  in the API container command; `channel_messages` retention/partitioning is
+  still an open product decision. Only M-9(d) (indexes) and M-9(f)
+  (throughput runbook) were completed.
+
 ---
 
 ## 4. Verified good (launch-confidence list)
