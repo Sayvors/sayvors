@@ -201,6 +201,11 @@ class Settings(BaseSettings):
     RESEND_WEBHOOK_SECRET: str = ""
     EMAIL_WORKER_BATCH: int = 20
     EMAIL_WORKER_CONCURRENCY: int = 4
+    # Dedicated HMAC key for one-click unsubscribe links. Kept separate from
+    # JWT_SECRET so rotating the login signing key cannot invalidate every
+    # opt-out link already sitting in customers' inboxes. Deployed startup
+    # requires it (>= 32 chars) and rejects reusing JWT_SECRET.
+    EMAIL_UNSUBSCRIBE_SECRET: str = ""
     RESEND_FROM: str = "Sayvors <noreply@sayvors.com>"
     EMAIL_FROM: str = "noreply@sayvors.com"
     # Generic /email/send is restricted to the platform sending domain unless
@@ -414,6 +419,18 @@ def validate_production_settings() -> None:
         errors.append(
             "GOOGLE_REVIEWS_MOCK must stay off in a deployed environment "
             "(it fabricates reviews)"
+        )
+    if not settings.EMAIL_UNSUBSCRIBE_SECRET:
+        errors.append(
+            "EMAIL_UNSUBSCRIBE_SECRET must be set "
+            "(JWT_SECRET rotation must not invalidate unsubscribe links)"
+        )
+    elif len(settings.EMAIL_UNSUBSCRIBE_SECRET) < 32:
+        errors.append("EMAIL_UNSUBSCRIBE_SECRET must be >= 32 chars")
+    elif settings.EMAIL_UNSUBSCRIBE_SECRET == settings.JWT_SECRET:
+        errors.append(
+            "EMAIL_UNSUBSCRIBE_SECRET must differ from JWT_SECRET "
+            "(otherwise rotating JWT still breaks opt-out links)"
         )
     if errors:
         print("FATAL: deployed configuration validation failed:", file=sys.stderr)

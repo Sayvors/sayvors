@@ -64,17 +64,44 @@ async def suppress(db: AsyncSession, email: str, reason: str, detail: str | None
     await db.flush()
 
 
-def _unsubscribe_secret() -> bytes:
-    return (settings.JWT_SECRET or "sayvors-email").encode("utf-8")
+def _unsubscribe_secrets() -> list[bytes]:
+    """Signing keys for unsubscribe links, newest first.
+
+    The dedicated key signs every new link. JWT_SECRET stays in the list as a
+    legacy verifier so links sent before this key existed (and before the
+    deploy that introduced it) keep working; it is never used to mint new
+    links when the dedicated key is configured.
+    """
+    secrets_out: list[bytes] = []
+    for value in (settings.EMAIL_UNSUBSCRIBE_SECRET, settings.JWT_SECRET):
+        if value:
+            encoded = value.encode("utf-8")
+            if encoded not in secrets_out:
+                secrets_out.append(encoded)
+    return secrets_out or [b"sayvors-email"]
 
 
 def unsubscribe_token(email: str) -> str:
     normalized = normalize_email(email) or ""
-    return hmac.new(_unsubscribe_secret(), normalized.encode(), hashlib.sha256).hexdigest()[:40]
+    return hmac.new(
+        _unsubscribe_secrets()[0], normalized.encode(), hashlib.sha256
+    ).hexdigest()[:40]
 
 
 def verify_unsubscribe_token(email: str, token: str) -> bool:
-    return hmac.compare_digest(unsubscribe_token(email), (token or "").strip())
+    normalized = normalize_email(email) or ""
+    presented = (token or "").strip()
+    if not presented:
+        return False
+    # Accept the dedicated key and the legacy JWT-derived key, so a key
+    # migration does not break opt-out links already delivered.
+    for secret in _unsubscribe_secrets():
+        expected = hmac.new(
+            secret, normalized.encode(), hashlib.sha256
+        ).hexdigest()[:40]
+        if hmac.compare_digest(expected, presented):
+            return True
+    return False
 
 
 def unsubscribe_url(email: str) -> str:

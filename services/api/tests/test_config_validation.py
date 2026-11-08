@@ -27,6 +27,7 @@ _PROD = {
     "RAG_DB_ALLOW_PRIVATE_HOSTS": False,
     "TESTING": False,
     "GOOGLE_REVIEWS_MOCK": False,
+    "EMAIL_UNSUBSCRIBE_SECRET": "u" * 40,
 }
 
 
@@ -52,6 +53,9 @@ def test_valid_production_config_passes(monkeypatch):
     ("RAG_DB_ALLOW_PRIVATE_HOSTS", True),
     ("TESTING", True),
     ("GOOGLE_REVIEWS_MOCK", True),
+    ("EMAIL_UNSUBSCRIBE_SECRET", ""),
+    ("EMAIL_UNSUBSCRIBE_SECRET", "short"),
+    ("EMAIL_UNSUBSCRIBE_SECRET", "x" * 40),
 ])
 def test_each_permissive_default_fails_closed(monkeypatch, attr, value):
     for k, v in _PROD.items():

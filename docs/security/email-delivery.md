@@ -45,8 +45,11 @@ Review-request and newsletter emails carry:
 - `List-Unsubscribe`
 - `List-Unsubscribe-Post: List-Unsubscribe=One-Click`
 
-The link is `/api/v1/email/unsubscribe`, HMAC-signed with `JWT_SECRET` so it
-cannot be forged.
+The link is `/api/v1/email/unsubscribe`, HMAC-signed with the dedicated
+`EMAIL_UNSUBSCRIBE_SECRET` so it cannot be forged and rotating `JWT_SECRET`
+does not invalidate links already delivered. Verification also accepts the
+legacy `JWT_SECRET`-signed form so opt-outs sent before the key migration keep
+working; new links are only minted with the dedicated key.
 
 ## Bulk review-request email cap
 
@@ -77,6 +80,7 @@ would suppress arbitrary addresses.
 | `RESEND_API_KEY` | Provider key |
 | `RESEND_FROM` | From address (SPF/DKIM/DMARC-aligned domain) |
 | `RESEND_WEBHOOK_SECRET` | Svix signing secret — webhook is disabled without it |
+| `EMAIL_UNSUBSCRIBE_SECRET` | Dedicated unsubscribe HMAC key; required in deployed envs, must differ from `JWT_SECRET` |
 | `EMAIL_WORKER_BATCH` | Rows claimed per pass (default 20) |
 | `EMAIL_WORKER_CONCURRENCY` | Parallel sends per pass (default 4) |
 | `BULK_EMAIL_DAILY_LIMIT` | Per-tenant review-request email cap per rolling 24h (default 500) |

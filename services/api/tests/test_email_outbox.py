@@ -196,6 +196,25 @@ async def test_unsubscribe_token_round_trip():
     assert outbox.verify_unsubscribe_token("other@example.com", token) is False
 
 
+async def test_dedicated_secret_signs_new_links_and_accepts_legacy(monkeypatch):
+    """Rotating JWT_SECRET must not break links already in inboxes."""
+    from app.config import settings
+
+    email = "person@example.com"
+    # Emulate a link minted before the dedicated key was introduced.
+    monkeypatch.setattr(settings, "EMAIL_UNSUBSCRIBE_SECRET", "")
+    legacy_token = outbox.unsubscribe_token(email)
+
+    monkeypatch.setattr(settings, "EMAIL_UNSUBSCRIBE_SECRET", "d" * 40)
+    new_token = outbox.unsubscribe_token(email)
+
+    assert new_token != legacy_token
+    assert outbox.verify_unsubscribe_token(email, new_token) is True
+    # A link signed before the dedicated key existed still opts out.
+    assert outbox.verify_unsubscribe_token(email, legacy_token) is True
+    assert outbox.verify_unsubscribe_token("other@example.com", new_token) is False
+
+
 async def test_unsubscribe_sets_preference(db, user_id):
     import httpx
 
