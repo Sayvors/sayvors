@@ -96,6 +96,14 @@ export default function EmailCampaignsPage() {
       setError("Subject and body are required.");
       return;
     }
+    if (batchSize < 50 || batchSize > 2000) {
+      setError("Batch size must be between 50 and 2000 recipients.");
+      return;
+    }
+    if (intervalSeconds < 10 || intervalSeconds > 3600) {
+      setError("Interval must be between 10 and 3600 seconds.");
+      return;
+    }
     setBusy("create");
     setError(null);
     setNotice(null);
@@ -216,8 +224,12 @@ export default function EmailCampaignsPage() {
                 max={2000}
                 value={batchSize}
                 onChange={(e) => setBatchSize(Number(e.target.value) || 500)}
+                onBlur={() =>
+                  setBatchSize((value) => Math.min(2000, Math.max(50, value || 500)))
+                }
                 className="mt-1 h-9 w-full rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 text-[12px] text-ink"
               />
+              <span className="mt-1 block text-[10px] text-ink/35">50–2,000 recipients per pass</span>
             </label>
             <label className="block">
               <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-ink/40">
@@ -229,8 +241,12 @@ export default function EmailCampaignsPage() {
                 max={3600}
                 value={intervalSeconds}
                 onChange={(e) => setIntervalSeconds(Number(e.target.value) || 60)}
+                onBlur={() =>
+                  setIntervalSeconds((value) => Math.min(3600, Math.max(10, value || 60)))
+                }
                 className="mt-1 h-9 w-full rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 text-[12px] text-ink"
               />
+              <span className="mt-1 block text-[10px] text-ink/35">10–3,600 seconds between passes</span>
             </label>
           </div>
         </div>

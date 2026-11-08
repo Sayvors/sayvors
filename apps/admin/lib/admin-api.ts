@@ -83,6 +83,19 @@ function extractDetail(text: string, status: number): string {
     const data = JSON.parse(text);
     const detail = data?.detail;
     if (typeof detail === "string" && detail) return detail.slice(0, 200);
+    // FastAPI validation errors arrive as a list of {loc, msg, type}. Showing
+    // "Request failed (422)" hides which field the operator needs to fix.
+    if (Array.isArray(detail) && detail.length > 0) {
+      const parts = detail.slice(0, 4).map((item: unknown) => {
+        const entry = (item ?? {}) as { loc?: unknown; msg?: unknown };
+        const loc = Array.isArray(entry.loc)
+          ? entry.loc.filter((p) => p !== "body" && p !== "query").join(".")
+          : "";
+        const msg = typeof entry.msg === "string" ? entry.msg : "Invalid value";
+        return loc ? `${loc}: ${msg}` : msg;
+      });
+      return parts.join("; ").slice(0, 300);
+    }
   } catch {
     /* not JSON */
   }
