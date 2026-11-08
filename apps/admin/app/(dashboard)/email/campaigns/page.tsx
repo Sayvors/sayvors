@@ -29,6 +29,27 @@ import {
 const FOCUS =
   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet";
 
+const EDITOR_TOOLS: {
+  label: string;
+  title: string;
+  command?: string;
+  value?: string;
+}[] = [
+  { label: "B", title: "Bold", command: "bold" },
+  { label: "I", title: "Italic", command: "italic" },
+  { label: "H2", title: "Heading", command: "formatBlock", value: "<h2>" },
+  { label: "H3", title: "Subheading", command: "formatBlock", value: "<h3>" },
+  { label: "P", title: "Paragraph", command: "formatBlock", value: "<p>" },
+  { label: "•", title: "Bullet list", command: "insertUnorderedList" },
+  { label: "Link", title: "Insert link" },
+];
+
+const DEFAULT_BODY_HTML = `<h2>Hi {name},</h2>
+<p>This weekend your workspace collected <strong>{reviews} reviews</strong> with an average rating of <strong>{avg_rating}</strong>.</p>
+<p><a href="{dashboard_url}">Open your dashboard</a> to see them.</p>
+<p>Read more on our <a href="https://sayvors.com/blog">blog</a>.</p>
+<p><a href="{unsubscribe_url}">Unsubscribe</a></p>`;
+
 function statusStyle(status: EmailCampaign["status"]): {
   pill: string;
   label: string;
@@ -337,18 +358,11 @@ export default function EmailCampaignsPage() {
   const [audience, setAudience] = useState<CampaignAudience | null>(null);
   const [name, setName] = useState("");
   const [subject, setSubject] = useState("");
-  const [html, setHtml] = useState(
-    '<p dir="ltr">Hi {name},</p>\n' +
-      '<p dir="ltr">This weekend your workspace collected {reviews} reviews with an average rating of {avg_rating}.</p>\n' +
-      '<p dir="ltr">Open your dashboard to see them: <a href="{dashboard_url}">{dashboard_url}</a></p>\n' +
-      '<p dir="ltr">Read more on our blog: <a href="https://sayvors.com/blog">sayvors.com/blog</a></p>\n' +
-      '<p dir="ltr" style="font-size:12px;color:#777">You can unsubscribe here: <a href="{unsubscribe_url}">unsubscribe</a></p>',
-  );
-  const [text, setText] = useState("");
+  const [html, setHtml] = useState(DEFAULT_BODY_HTML);
   const [variables, setVariables] = useState<CampaignVariable[]>([]);
   const [preview, setPreview] = useState<CampaignPreview | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
-  const htmlRef = useRef<HTMLTextAreaElement | null>(null);
+  const editorRef = useRef<HTMLDivElement | null>(null);
   const [batchSize, setBatchSize] = useState(500);
   const [intervalSeconds, setIntervalSeconds] = useState(60);
   const [loading, setLoading] = useState(true);
@@ -381,6 +395,14 @@ export default function EmailCampaignsPage() {
       .catch(() => {
         /* palette is helpful, not required to compose */
       });
+  }, []);
+
+  useEffect(() => {
+    // Uncontrolled editor: seed the default body once, then let the browser
+    // own the caret/DOM. State is mirrored on input for create/preview.
+    if (editorRef.current && !editorRef.current.innerHTML.trim()) {
+      editorRef.current.innerHTML = DEFAULT_BODY_HTML;
+    }
   }, []);
 
   useEffect(() => {
@@ -421,7 +443,7 @@ export default function EmailCampaignsPage() {
         name: name.trim() || undefined,
         subject: subject.trim(),
         html,
-        text: text.trim() || null,
+        text: editorRef.current?.innerText?.trim() || null,
         batch_size: batchSize,
         interval_seconds: intervalSeconds,
       });
@@ -436,20 +458,36 @@ export default function EmailCampaignsPage() {
     }
   };
 
+  const exec = (command: string, value?: string) => {
+    editorRef.current?.focus();
+    document.execCommand(command, false, value);
+    if (editorRef.current) setHtml(editorRef.current.innerHTML);
+  };
+
+  const addLink = () => {
+    const url = window.prompt("Link URL", "https://");
+    if (url?.trim()) exec("createLink", url.trim());
+  };
+
   const insertVariable = (key: string) => {
     const token = `{${key}}`;
-    const element = htmlRef.current;
-    if (!element) {
+    const editor = editorRef.current;
+    if (!editor) {
       setHtml((previous) => previous + token);
       return;
     }
-    const start = element.selectionStart ?? html.length;
-    const end = element.selectionEnd ?? start;
-    setHtml(html.slice(0, start) + token + html.slice(end));
-    requestAnimationFrame(() => {
-      element.focus();
-      element.selectionStart = element.selectionEnd = start + token.length;
-    });
+    editor.focus();
+    const selection = window.getSelection();
+    if (
+      selection &&
+      selection.rangeCount > 0 &&
+      editor.contains(selection.anchorNode)
+    ) {
+      document.execCommand("insertText", false, token);
+    } else {
+      editor.innerHTML += token;
+    }
+    setHtml(editor.innerHTML);
   };
 
   const runPreview = async () => {
@@ -464,7 +502,7 @@ export default function EmailCampaignsPage() {
         await previewEmailCampaign({
           subject: subject.trim(),
           html,
-          text: text.trim() || null,
+          text: editorRef.current?.innerText?.trim() || null,
         }),
       );
     } catch (e) {
@@ -620,19 +658,44 @@ export default function EmailCampaignsPage() {
           </div>
         </div>
 
-        <label className="mt-3 block">
+        <div className="mt-3">
           <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-ink/40">
-            HTML body
+            Body
           </span>
-          <textarea
-            ref={htmlRef}
-            value={html}
-            onChange={(e) => setHtml(e.target.value)}
-            rows={8}
-            spellCheck={false}
-            className="mt-1 w-full rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-2 font-mono text-[11.5px] leading-relaxed text-ink"
+          <div className="mt-1 flex flex-wrap items-center gap-1 rounded-t-[2px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-1">
+            {EDITOR_TOOLS.map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                title={item.title}
+                aria-label={item.title}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() =>
+                  item.command ? exec(item.command, item.value) : addLink()
+                }
+                className={`h-7 min-w-7 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-1.5 text-[11px] text-ink/70 hover:bg-[var(--ui-sunken)] ${
+                  item.label === "B" ? "font-bold" : ""
+                } ${item.label === "I" ? "italic" : ""} ${FOCUS}`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <div
+            ref={editorRef}
+            contentEditable
+            suppressContentEditableWarning
+            role="textbox"
+            aria-multiline="true"
+            aria-label="Campaign body"
+            onInput={(e) => setHtml(e.currentTarget.innerHTML)}
+            className="min-h-[200px] rounded-b-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-3 text-[12.5px] leading-relaxed text-ink focus:outline-none [&_a]:text-deep-violet [&_a]:underline [&_h2]:mb-2 [&_h2]:text-[16px] [&_h2]:font-bold [&_h3]:mb-1.5 [&_h3]:text-[13.5px] [&_h3]:font-bold [&_li]:ml-4 [&_li]:list-disc [&_p]:mb-2"
           />
-        </label>
+          <span className="mt-1 block text-[10px] text-ink/35">
+            Use the toolbar for bold, italic, headings, lists and links. The stored
+            email body is generated from this editor.
+          </span>
+        </div>
 
         {variables.length > 0 && (
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -652,18 +715,6 @@ export default function EmailCampaignsPage() {
             ))}
           </div>
         )}
-        <label className="mt-3 block">
-          <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-ink/40">
-            Plain-text fallback <span className="normal-case tracking-normal text-ink/30">(optional)</span>
-          </span>
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            rows={3}
-            className="mt-1 w-full rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-2 text-[11.5px] leading-relaxed text-ink"
-          />
-        </label>
-
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button
             type="button"
