@@ -1,4 +1,4 @@
-export type LocaleCode = "en" | "es" | "fr" | "de" | "ar" | "ur";
+export type LocaleCode = "en" | "es" | "fr" | "de" | "ar" | "ur" | "ch";
 
 export interface LocaleMeta {
   code: LocaleCode;
@@ -15,6 +15,7 @@ export const LOCALES: LocaleMeta[] = [
   { code: "de", label: "German", flag: "🇩🇪", dir: "ltr" },
   { code: "ar", label: "Arabic", flag: "🇸🇦", dir: "rtl" },
   { code: "ur", label: "Urdu", flag: "🇵🇰", dir: "rtl" },
+  { code: "ch", label: "Chinese", flag: "🇨🇳", dir: "ltr" },
 ];
 
 export const DEFAULT_LOCALE: LocaleCode = "en";

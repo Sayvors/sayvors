@@ -8,6 +8,14 @@ import {
 } from "@/lib/api-meta";
 import PostModal from "./PostModal";
 import { BubbleIcon, HeartIcon, INK, INK2 } from "./ui";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 /*
  * The Instagram profile grid: three square columns, hover shows like and
@@ -16,7 +24,11 @@ import { BubbleIcon, HeartIcon, INK, INK2 } from "./ui";
  * words, never with a blank box.
  */
 
-function useAsync<T>(fn: () => Promise<T>, deps: unknown[]) {
+function useAsync<T>(
+  fn: () => Promise<T>,
+  deps: unknown[],
+  fallbackError: string,
+) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -35,7 +47,7 @@ function useAsync<T>(fn: () => Promise<T>, deps: unknown[]) {
       },
       (e: unknown) => {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Something went wrong.");
+          setError(e instanceof Error ? e.message : fallbackError);
           setLoading(false);
         }
       },
@@ -55,11 +67,13 @@ function useAsync<T>(fn: () => Promise<T>, deps: unknown[]) {
 }
 
 function CellBadge({ post }: { post: InstagramPost }) {
+  const { t } = useI18n();
+  const g = t.channelHub.instagram.postsGrid;
   if (post.children?.length > 1) {
     return (
       <span
         aria-hidden
-        title="Carousel"
+        title={g.carousel}
         className="absolute right-2 top-2 text-white drop-shadow"
       >
         <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor">
@@ -73,7 +87,7 @@ function CellBadge({ post }: { post: InstagramPost }) {
     return (
       <span
         aria-hidden
-        title={post.media_product_type === "REELS" ? "Reel" : "Video"}
+        title={post.media_product_type === "REELS" ? g.reel : g.video}
         className="absolute right-2 top-2 text-white drop-shadow"
       >
         <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor">
@@ -92,9 +106,14 @@ export default function PostsGrid({
   igId: string;
   accountUsername?: string | null;
 }) {
+  const { t, locale } = useI18n();
+  const g = t.channelHub.instagram.postsGrid;
+  const fmt = (n: number) =>
+    new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
   const { data, error, loading, retry } = useAsync(
     () => fetchInstagramPosts(igId),
     [igId],
+    g.loadError,
   );
   const [openId, setOpenId] = useState<string | null>(null);
 
@@ -117,7 +136,7 @@ export default function PostsGrid({
           onClick={retry}
           className="ui-btn mt-3 rounded-lg bg-[var(--ui-surface)] px-4 py-2.5 text-[12px] font-semibold text-[var(--ui-ink)]"
         >
-          Try again
+          {g.retry}
         </button>
       </div>
     );
@@ -131,8 +150,7 @@ export default function PostsGrid({
   if (posts.length === 0) {
     return (
       <p className={`text-[13px] ${INK2}`}>
-        No posts yet. When you publish on Instagram, they appear here as a grid —
-        just like your profile.
+        {g.empty}
       </p>
     );
   }
@@ -148,7 +166,9 @@ export default function PostsGrid({
             type="button"
             onClick={() => setOpenId(p.id)}
             aria-label={
-              p.caption ? `Open post: ${p.caption.slice(0, 60)}` : "Open post"
+              p.caption
+                ? fill(g.openPostCaption, { caption: p.caption.slice(0, 60) })
+                : g.openPost
             }
             className="group relative aspect-square overflow-hidden bg-[var(--ui-sunken)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
           >
@@ -163,7 +183,7 @@ export default function PostsGrid({
               />
             ) : (
               <span className="flex h-full items-center justify-center text-[10px] text-[var(--ui-ink-2)]">
-                {p.media_type || "media"}
+                {p.media_type || g.mediaFallback}
               </span>
             )}
             <CellBadge post={p} />
@@ -171,11 +191,11 @@ export default function PostsGrid({
             <span className="absolute inset-0 hidden items-center justify-center gap-5 bg-black/45 text-[13px] font-bold text-white opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100 sm:flex">
               <span className="flex items-center gap-1.5">
                 <HeartIcon className="h-5 w-5" />
-                {p.like_count.toLocaleString()}
+                {fmt(p.like_count)}
               </span>
               <span className="flex items-center gap-1.5">
                 <BubbleIcon className="h-5 w-5" />
-                {p.comments_count.toLocaleString()}
+                {fmt(p.comments_count)}
               </span>
             </span>
           </button>

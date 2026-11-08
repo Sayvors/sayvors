@@ -12,6 +12,14 @@ import {
 } from "@/lib/api-meta";
 import { useInboxRealtime } from "@/lib/use-inbox-realtime";
 import { Avatar, INK, INK2, timeAgo } from "./ui";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 /*
  * The comment inbox: everything anyone has said on this account's posts,
@@ -34,11 +42,12 @@ function Chip({ children }: { children: string }) {
 }
 
 function MediaThumb({ mediaId, thumbs }: { mediaId: string | null; thumbs: Record<string, string | null> }) {
+  const { t } = useI18n();
   const url = mediaId ? thumbs[mediaId] : undefined;
   if (!mediaId) return null;
   return (
     <span
-      title="On this post"
+      title={t.channelHub.instagram.comments.mediaTitle}
       className="relative block h-8 w-8 shrink-0 overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)]"
     >
       {url ? (
@@ -60,6 +69,8 @@ function ReplyBox({
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { t } = useI18n();
+  const g = t.channelHub.instagram.comments;
 
   const send = async () => {
     const message = draft.trim();
@@ -71,7 +82,7 @@ function ReplyBox({
       setDraft("");
       onSent();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not post the reply.");
+      setError(e instanceof Error ? e.message : g.replyError);
     } finally {
       setBusy(false);
     }
@@ -91,8 +102,8 @@ function ReplyBox({
           }}
           rows={2}
           maxLength={2200}
-          aria-label="Write a reply"
-          placeholder="Reply publicly…"
+          aria-label={g.replyAria}
+          placeholder={g.replyPh}
           className="min-h-[38px] flex-1 resize-y rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
         />
         <button
@@ -101,7 +112,7 @@ function ReplyBox({
           disabled={busy || !draft.trim()}
           className="rounded-[12px] bg-[var(--ui-ink)] px-3 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)] disabled:opacity-50"
         >
-          {busy ? "Sending…" : "Reply"}
+          {busy ? g.sending : g.reply}
         </button>
       </div>
       {error && (
@@ -131,14 +142,16 @@ function CommentRow({
   const [replying, setReplying] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const { t, locale } = useI18n();
+  const m = t.channelHub.instagram.comments;
   const inbound = c.direction === "inbound";
   const who = inbound
     ? c.author_name
       ? `@${c.author_name}`
-      : "Instagram user"
+      : m.userFallback
     : accountUsername
       ? `@${accountUsername}`
-      : "You";
+      : m.you;
 
   const toggleHidden = async () => {
     setActionError(null);
@@ -146,7 +159,7 @@ function CommentRow({
       await setInstagramCommentHidden(igId, c.comment_id!, !c.hidden);
       onChanged();
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : "Could not update the comment.");
+      setActionError(e instanceof Error ? e.message : m.updateError);
     }
   };
 
@@ -160,7 +173,7 @@ function CommentRow({
       await deleteInstagramComment(igId, c.comment_id!);
       onChanged();
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : "Could not delete the comment.");
+      setActionError(e instanceof Error ? e.message : m.deleteError);
       setConfirmDel(false);
     }
   };
@@ -168,7 +181,7 @@ function CommentRow({
   return (
     <li className={child ? "border-l-2 border-[var(--ui-line)] py-2 pl-4" : "border-b border-[var(--ui-line)] py-3 last:border-0"}>
       <div className="flex items-start gap-3">
-        <Avatar name={inbound ? who : accountUsername || "You"} />
+        <Avatar name={inbound ? who : accountUsername || m.you} />
         <div className="min-w-0 flex-1">
           <p className="text-[13px] leading-snug">
             <span className={`font-semibold ${INK}`}>{who}</span>{" "}
@@ -177,15 +190,15 @@ function CommentRow({
             </span>
           </p>
           <p className={`mt-1 flex flex-wrap items-center gap-2 text-[12px] ${INK2}`}>
-            <span>{timeAgo(c.platform_timestamp ?? c.created_at) || "just now"}</span>
-            {c.hidden && <Chip>Hidden</Chip>}
-            {c.deleted_at && <Chip>Deleted</Chip>}
-            {c.status === "failed" && <Chip>Failed</Chip>}
-            {!inbound && c.status === "sent" && <Chip>You</Chip>}
+            <span>{timeAgo(c.platform_timestamp ?? c.created_at, locale) || m.justNow}</span>
+            {c.hidden && <Chip>{m.hidden}</Chip>}
+            {c.deleted_at && <Chip>{m.deleted}</Chip>}
+            {c.status === "failed" && <Chip>{m.failed}</Chip>}
+            {!inbound && c.status === "sent" && <Chip>{m.youChip}</Chip>}
           </p>
           {c.status === "failed" && c.error && (
             <p className="mt-1 text-[12px] text-red-600 dark:text-red-400">
-              Instagram refused this reply — try again.
+              {m.refused}
             </p>
           )}
           {actionError && (
@@ -201,21 +214,21 @@ function CommentRow({
                 onClick={() => setReplying((v) => !v)}
                 className={`${INK} underline-offset-2 hover:underline`}
               >
-                {replying ? "Cancel" : "Reply"}
+                {replying ? m.cancel : m.reply}
               </button>
               <button
                 type="button"
                 onClick={() => void toggleHidden()}
                 className={`${INK2} underline-offset-2 hover:underline`}
               >
-                {c.hidden ? "Unhide" : "Hide"}
+                {c.hidden ? m.unhide : m.hide}
               </button>
               <button
                 type="button"
                 onClick={() => void remove()}
                 className="text-red-600 underline-offset-2 hover:underline dark:text-red-400"
               >
-                {confirmDel ? "Really delete?" : "Delete"}
+                {confirmDel ? m.reallyDelete : m.delete}
               </button>
             </div>
           )}
@@ -241,6 +254,10 @@ export default function CommentsTab({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [reload, setReload] = useState(0);
+  const { t, locale } = useI18n();
+  const m = t.channelHub.instagram.comments;
+  const fmt = (n: number) =>
+    new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
 
   // Event handlers (retry, realtime socket) own the synchronous reset; the
   // effect's promise callbacks own everything after the await.
@@ -268,7 +285,7 @@ export default function CommentsTab({
       },
       (e: unknown) => {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Could not load comments.");
+          setError(e instanceof Error ? e.message : m.loadError);
           setLoading(false);
         }
       },
@@ -276,7 +293,7 @@ export default function CommentsTab({
     return () => {
       cancelled = true;
     };
-  }, [igId, reload]);
+  }, [igId, reload, m.loadError]);
 
   useInboxRealtime((e) => {
     if (e.platform && e.platform !== "instagram") return;
@@ -308,7 +325,7 @@ export default function CommentsTab({
           onClick={refresh}
           className="ui-btn mt-3 rounded-lg bg-[var(--ui-surface)] px-4 py-2.5 text-[12px] font-semibold text-[var(--ui-ink)]"
         >
-          Try again
+          {m.retry}
         </button>
       </div>
     );
@@ -318,8 +335,7 @@ export default function CommentsTab({
   if (rows.length === 0) {
     return (
       <p className={`text-[13px] ${INK2}`}>
-        No comments yet. When someone comments on your posts, they show up here —
-        and you reply right from Sayvors.
+        {m.empty}
       </p>
     );
   }
@@ -340,9 +356,9 @@ export default function CommentsTab({
   return (
     <section>
       <div className="flex flex-wrap items-baseline justify-between gap-2 pb-3">
-        <h3 className={`text-[15px] font-semibold ${INK}`}>Comments</h3>
+        <h3 className={`text-[15px] font-semibold ${INK}`}>{m.title}</h3>
         <span className={`text-[12px] ${INK2}`}>
-          {rows.length} stored · live
+          {fill(m.stored, { count: fmt(rows.length) })}
         </span>
       </div>
       <ul>
