@@ -148,8 +148,10 @@ the subject/body against a real eligible tenant before anything is queued.
 `GET /api/v1/admin/email/campaigns/templates` returns ready-made bodies:
 **Weekly update**, **Monthly newsletter**, **Product announcement** and
 **Trial reminder**. Selecting one fills the campaign name, subject and body in
-the editor; all variables are already placed. The unsubscribe link stays in
-the footer and is never part of a preset.
+the editor; all variables are already placed. Every preset is bilingual:
+Arabic first (`dir="rtl"`, right-aligned), then a divider, then English
+(`dir="ltr"`). The unsubscribe link stays in the footer and is never part of a
+preset.
 
 Progress in the admin UI comes from the real outbox statuses, not a second
 counter. The recipient table also shows the latest provider event

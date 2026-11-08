@@ -320,6 +320,11 @@ async def test_admin_campaign_endpoints(client, db):
             "trial-reminder",
         }
         assert any("{reviews}" in preset["body_html"] for preset in presets)
+        weekly = next(p for p in presets if p["id"] == "weekly-update")
+        # Arabic version comes first, English second.
+        assert weekly["body_html"].index("مرحباً") < weekly["body_html"].index(
+            "Hi {name}"
+        )
 
         created = client.post(
             "/api/v1/admin/email/campaigns",

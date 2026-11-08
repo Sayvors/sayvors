@@ -46,9 +46,14 @@ const EDITOR_TOOLS: {
   { label: "Link", title: "Insert link" },
 ];
 
-const DEFAULT_BODY_HTML = `<h2>Hi {name},</h2>
+const DEFAULT_BODY_HTML = `<h2 dir="rtl" style="text-align:right">مرحباً {name}،</h2>
+<p dir="rtl" style="text-align:right">هذا الأسبوع جمعت مساحتك <strong>{reviews} تقييماً</strong> بمتوسط تقييم <strong>{avg_rating}</strong>.</p>
+<p dir="rtl" style="text-align:right"><a href="{dashboard_url}">افتح لوحة التحكم</a> لرؤيتها والرد حيث يلزم.</p>
+<p dir="rtl" style="text-align:right">اقرأ المزيد على <a href="https://sayvors.com/blog">مدونتنا</a>.</p>
+<hr>
+<h2 dir="ltr">Hi {name},</h2>
 <p>This weekend your workspace collected <strong>{reviews} reviews</strong> with an average rating of <strong>{avg_rating}</strong>.</p>
-<p><a href="{dashboard_url}">Open your dashboard</a> to see them.</p>
+<p><a href="{dashboard_url}">Open your dashboard</a> to see them and reply where needed.</p>
 <p>Read more on our <a href="https://sayvors.com/blog">blog</a>.</p>`;
 
 function statusStyle(status: EmailCampaign["status"]): {

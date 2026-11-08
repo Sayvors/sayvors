@@ -70,7 +70,16 @@ CAMPAIGN_PRESETS = [
         "description": "Weekend review summary with dashboard and blog links.",
         "subject": "Your weekly review update from Sayvors",
         "body_html": (
-            "<h2>Hi {name},</h2>"
+            '<h2 dir="rtl" style="text-align:right">مرحباً {name}،</h2>'
+            '<p dir="rtl" style="text-align:right">هذا الأسبوع جمعت مساحتك '
+            "<strong>{reviews} تقييماً</strong> بمتوسط تقييم "
+            "<strong>{avg_rating}</strong>.</p>"
+            '<p dir="rtl" style="text-align:right">'
+            '<a href="{dashboard_url}">افتح لوحة التحكم</a> لرؤيتها والرد حيث يلزم.</p>'
+            '<p dir="rtl" style="text-align:right">اقرأ المزيد على '
+            '<a href="https://sayvors.com/blog">مدونتنا</a>.</p>'
+            "<hr>"
+            "<h2 dir=\"ltr\">Hi {name},</h2>"
             "<p>This weekend your workspace collected "
             "<strong>{reviews} reviews</strong> with an average rating of "
             "<strong>{avg_rating}</strong>.</p>"
@@ -85,7 +94,21 @@ CAMPAIGN_PRESETS = [
         "description": "Month-in-review with the tenant’s rating and plan.",
         "subject": "Your monthly Sayvors update",
         "body_html": (
-            "<h2>Hi {name},</h2>"
+            '<h2 dir="rtl" style="text-align:right">مرحباً {name}،</h2>'
+            '<p dir="rtl" style="text-align:right">إليك ملخص شهرك: '
+            "<strong>{reviews} تقييماً</strong> بمتوسط تقييم "
+            "<strong>{avg_rating}</strong>.</p>"
+            '<p dir="rtl" style="text-align:right">أنت على خطة '
+            "<strong>{tenant_plan}</strong>. "
+            '<a href="{dashboard_url}">افتح لوحة التحكم</a> لمراجعة الأداء '
+            "والتخطيط للشهر القادم.</p>"
+            '<h3 dir="rtl" style="text-align:right">من المدونة</h3>'
+            '<ul dir="rtl" style="text-align:right">'
+            '<li><a href="https://sayvors.com/blog">ما الذي تغيّر هذا الشهر</a></li>'
+            '<li><a href="https://sayvors.com/blog">قائمة مراجعة عملية</a></li>'
+            "</ul>"
+            "<hr>"
+            "<h2 dir=\"ltr\">Hi {name},</h2>"
             "<p>Here is your monthly snapshot: <strong>{reviews} reviews</strong> "
             "and an average rating of <strong>{avg_rating}</strong>.</p>"
             "<p>You are on the <strong>{tenant_plan}</strong> plan. "
@@ -102,7 +125,17 @@ CAMPAIGN_PRESETS = [
         "description": "Short feature announcement with a dashboard CTA.",
         "subject": "New in Sayvors",
         "body_html": (
-            "<h2>Hi {name},</h2>"
+            '<h2 dir="rtl" style="text-align:right">مرحباً {name}،</h2>'
+            '<p dir="rtl" style="text-align:right">أطلقنا شيئاً جديداً لمساحتك.</p>'
+            '<ul dir="rtl" style="text-align:right">'
+            "<li>رؤى أسرع للتقييمات</li>"
+            "<li>تحكم أنظف في صندوق الوارد</li>"
+            "<li>ردود واتساب أكثر موثوقية</li>"
+            "</ul>"
+            '<p dir="rtl" style="text-align:right">'
+            '<a href="{dashboard_url}">شاهده في لوحة التحكم</a>.</p>'
+            "<hr>"
+            "<h2 dir=\"ltr\">Hi {name},</h2>"
             "<p>We shipped something new for your workspace.</p>"
             "<ul><li>Faster review insights</li><li>Cleaner inbox controls</li>"
             "<li>More reliable WhatsApp replies</li></ul>"
@@ -115,7 +148,16 @@ CAMPAIGN_PRESETS = [
         "description": "Trial days left with a dashboard/upgrade CTA.",
         "subject": "You have {tenant_free_trial_days_left} days left on your trial",
         "body_html": (
-            "<h2>Hi {name},</h2>"
+            '<h2 dir="rtl" style="text-align:right">مرحباً {name}،</h2>'
+            '<p dir="rtl" style="text-align:right">تبقّى '
+            "<strong>{tenant_free_trial_days_left} أيام</strong> في فترة التجربة.</p>"
+            '<p dir="rtl" style="text-align:right">جمعت '
+            "<strong>{reviews} تقييماً</strong> بمتوسط تقييم "
+            "<strong>{avg_rating}</strong> حتى الآن.</p>"
+            '<p dir="rtl" style="text-align:right">'
+            '<a href="{dashboard_url}">افتح لوحة التحكم</a> للحفاظ على استمرار كل شيء.</p>'
+            "<hr>"
+            "<h2 dir=\"ltr\">Hi {name},</h2>"
             "<p>Your free trial has <strong>{tenant_free_trial_days_left} days</strong> "
             "left.</p>"
             "<p>You have collected <strong>{reviews} reviews</strong> with an average "
