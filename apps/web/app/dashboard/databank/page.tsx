@@ -17,6 +17,7 @@ import {
   regenerateBusinessProfile,
   type BusinessProfileData,
 } from "@/lib/api-business-profile";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 
 type Databank = {
   id: string;
@@ -35,13 +36,29 @@ function formatBytes(bytes = 0): string {
   return `${value.toFixed(1)} ${units[size]}`;
 }
 
-function StatusBadge({ status }: { status?: string }) {
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [k, v]) => out.replaceAll(`{${k}}`, String(v)),
+    s,
+  );
+}
+
+type BadgeLabels = {
+  ready: string;
+  processing: string;
+  queued: string;
+  failed: string;
+  unknown: string;
+  waiting: string;
+};
+
+function StatusBadge({ status, labels }: { status?: string; labels: BadgeLabels }) {
   const base = "inline-flex items-center gap-1.5 rounded-[2px] px-2.5 py-1 text-[10px] font-bold tracking-wide";
   if (status === "ready" || status === "completed" || status === "processed") {
     return (
       <span className={`${base} bg-emerald/10 text-emerald ring-1 ring-emerald/30`}>
         <span className="h-1.5 w-1.5 rounded-full bg-emerald" />
-        Ready
+        {labels.ready}
       </span>
     );
   }
@@ -49,18 +66,18 @@ function StatusBadge({ status }: { status?: string }) {
     return (
       <span className={`${base} bg-amber/10 text-amber ring-1 ring-amber/30`}>
         <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber" />
-        Processing
+        {labels.processing}
       </span>
     );
   }
   if (status === "pending" || status === "queued") {
     return (
       <span
-        title="Waiting to be parsed"
+        title={labels.waiting}
         className={`${base} bg-sky/10 text-sky ring-1 ring-sky/30`}
       >
         <span className="h-1.5 w-1.5 rounded-full bg-sky" />
-        Queued
+        {labels.queued}
       </span>
     );
   }
@@ -68,13 +85,13 @@ function StatusBadge({ status }: { status?: string }) {
     return (
       <span className={`${base} bg-coral/10 text-coral ring-1 ring-coral/30`}>
         <span className="h-1.5 w-1.5 rounded-full bg-coral" />
-        Failed
+        {labels.failed}
       </span>
     );
   }
   return (
     <span className={`${base} bg-foreground/5 text-foreground/40`}>
-      {status || "Unknown"}
+      {status || labels.unknown}
     </span>
   );
 }
@@ -125,13 +142,25 @@ function FileIcon({ type }: { type?: string }) {
 }
 
 const PROFILE_FIELD_META = [
-  { key: "domain", label: "Domain", placeholder: "e.g. Food & Restaurant", textarea: false },
-  { key: "products_services", label: "Offers / products", placeholder: "e.g. shawarma, mixed grill, catering", textarea: true },
-  { key: "not_offered_and_policies", label: "Not offered & policies", placeholder: "e.g. no alcohol, halal only, pickup until 11pm", textarea: true },
-  { key: "audience_languages", label: "Audience & languages", placeholder: "e.g. local families and offices; Arabic & English", textarea: false },
+  { key: "domain", placeholder: "e.g. Food & Restaurant", textarea: false },
+  { key: "products_services", placeholder: "e.g. shawarma, mixed grill, catering", textarea: true },
+  { key: "not_offered_and_policies", placeholder: "e.g. no alcohol, halal only, pickup until 11pm", textarea: true },
+  { key: "audience_languages", placeholder: "e.g. local families and offices; Arabic & English", textarea: false },
 ] as const;
 
+function profileFieldLabel(
+  key: string,
+  fields: { domain: string; offers: string; notOffered: string; audience: string },
+): string {
+  if (key === "domain") return fields.domain;
+  if (key === "products_services") return fields.offers;
+  if (key === "not_offered_and_policies") return fields.notOffered;
+  return fields.audience;
+}
+
 function BusinessProfileCard() {
+  const { t } = useI18n();
+  const d = t.dashboard.databank.profile;
   const [profile, setProfile] = useState<BusinessProfileData | null>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -175,7 +204,7 @@ function BusinessProfileCard() {
       setProfile(updated);
       setEditing(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not save");
+      setError(e instanceof Error ? e.message : d.saveFailed);
     } finally {
       setSaving(false);
     }
@@ -189,7 +218,7 @@ function BusinessProfileCard() {
       setProfile(updated);
       setEditing(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not generate");
+      setError(e instanceof Error ? e.message : d.generateFailed);
     } finally {
       setRegenerating(false);
     }
@@ -210,22 +239,22 @@ function BusinessProfileCard() {
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-[15px] font-bold leading-tight text-foreground">Business profile</h2>
+              <h2 className="text-[15px] font-bold leading-tight text-foreground">{d.title}</h2>
               {profile && (
                 <span
-                  title={isEdited ? "You edited this card — AI regeneration never overwrites your text" : "Generated from your databank uploads"}
+                  title={isEdited ? d.editedTitle : d.autoTitle}
                   className={`inline-flex items-center gap-1 rounded-[2px] px-2 py-0.5 text-[10px] font-bold ${
                     isEdited
                       ? "bg-sky/10 text-sky ring-1 ring-sky/30"
                       : "bg-accent-soft text-deep-violet ring-1 ring-violet-light/30 dark:text-violet-light"
                   }`}
                 >
-                  {isEdited ? "Edited by you" : "Auto-generated"}
+                  {isEdited ? d.editedByYou : d.autoGen}
                 </span>
               )}
             </div>
             <p className="text-[11px] font-medium text-foreground/40">
-              What your AI knows about your business — used to answer customers instantly.
+              {d.subtitle}
             </p>
           </div>
         </div>
@@ -235,13 +264,13 @@ function BusinessProfileCard() {
               type="button"
               onClick={() => void handleRegenerate()}
               disabled={busy}
-              title="Re-read your databank and refresh the card (your edits are never overwritten)"
+              title={d.regenTitle}
               className="inline-flex items-center gap-1.5 rounded-[2px] border border-card-border bg-card px-3 py-2 text-[11px] font-bold text-foreground/60 transition hover:bg-foreground/[0.04] disabled:opacity-50"
             >
               {regenerating ? (
                 <>
                   <span className="h-3 w-3 animate-spin rounded-full border-2 border-deep-violet/30 border-t-deep-violet" />
-                  Reading your files…
+                  {d.reading}
                 </>
               ) : (
                 <>
@@ -249,7 +278,7 @@ function BusinessProfileCard() {
                     <path d="M21 12a9 9 0 11-9-9" strokeLinecap="round" />
                     <path d="M9 9l3-3 3 3M9 15l3 3 3-3" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
-                  {profile ? "Regenerate" : "Generate"}
+                  {profile ? d.regenerate : d.generate}
                 </>
               )}
             </button>
@@ -263,7 +292,7 @@ function BusinessProfileCard() {
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className="h-3.5 w-3.5">
                   <path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z" />
                 </svg>
-                Edit
+                {d.edit}
               </button>
             )}
           </div>
@@ -279,19 +308,19 @@ function BusinessProfileCard() {
       {editing ? (
         <div className="space-y-3 px-5 py-4">
           <div>
-            <label className="text-[10px] font-bold uppercase tracking-widest text-foreground/40">Summary</label>
+            <label className="text-[10px] font-bold uppercase tracking-widest text-foreground/40">{d.summary}</label>
             <textarea
               value={form.summary ?? ""}
               onChange={(e) => setForm({ ...form, summary: e.target.value })}
               rows={3}
-              placeholder="2–3 sentences on what the business does"
+              placeholder={d.summaryPh}
               className="mt-1 w-full resize-none rounded-[2px] border border-card-border bg-foreground/[0.03] px-3 py-2 text-[12px] font-medium text-foreground placeholder:text-foreground/30 outline-none focus:border-deep-violet/40 focus:bg-card"
             />
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             {PROFILE_FIELD_META.map((f) => (
               <div key={f.key}>
-                <label className="text-[10px] font-bold uppercase tracking-widest text-foreground/40">{f.label}</label>
+                <label className="text-[10px] font-bold uppercase tracking-widest text-foreground/40">{profileFieldLabel(f.key, d.fields)}</label>
                 {f.textarea ? (
                   <textarea
                     value={form[f.key] ?? ""}
@@ -318,7 +347,7 @@ function BusinessProfileCard() {
               disabled={saving}
               className="rounded-[2px] px-4 py-2 text-[12px] font-semibold text-foreground/50 transition hover:bg-foreground/[0.04] disabled:opacity-50"
             >
-              Cancel
+              {t.common.cancel}
             </button>
             <button
               type="button"
@@ -327,7 +356,7 @@ function BusinessProfileCard() {
               className="inline-flex items-center gap-1.5 rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white shadow-sm transition hover:bg-deep-violet/90 disabled:opacity-50"
             >
               {saving && <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white" />}
-              Save profile
+              {d.save}
             </button>
           </div>
         </div>
@@ -341,16 +370,16 @@ function BusinessProfileCard() {
           {profile.summary ? (
             <p className="text-[13px] leading-relaxed text-foreground/80">{profile.summary}</p>
           ) : (
-            <p className="text-[12px] italic text-foreground/35">No summary yet — edit or regenerate.</p>
+            <p className="text-[12px] italic text-foreground/35">{d.noSummary}</p>
           )}
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             {PROFILE_FIELD_META.map((f) => {
               const value = (profile[f.key] as string) ?? "";
               return (
                 <div key={f.key} className="rounded-[2px] bg-foreground/[0.03] px-3 py-2.5">
-                  <div className="text-[10px] font-bold uppercase tracking-widest text-foreground/35">{f.label}</div>
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-foreground/35">{profileFieldLabel(f.key, d.fields)}</div>
                   <div className={`mt-0.5 text-[12px] leading-relaxed ${value ? "text-foreground/75" : "italic text-foreground/30"}`}>
-                    {value || "Not set"}
+                    {value || d.notSet}
                   </div>
                 </div>
               );
@@ -360,8 +389,7 @@ function BusinessProfileCard() {
       ) : (
         <div className="flex flex-col items-start gap-3 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
           <p className="max-w-lg text-[12px] leading-relaxed text-foreground/50">
-            Your AI has no business card yet. Upload files to a databank and generate one — it lets your
-            assistant answer &ldquo;what can you do for me?&rdquo; instantly, without searching your documents.
+            {d.emptyCard}
           </p>
         </div>
       )}
@@ -370,6 +398,11 @@ function BusinessProfileCard() {
 }
 
 export default function DatabankPage() {
+  const { t, locale } = useI18n();
+  const d = t.dashboard.databank;
+  const badgeLabels = d.badge;
+  const fmtDate = (iso: string | null | undefined) =>
+    iso ? new Date(iso).toLocaleDateString(locale === "ar" ? "ar-SA" : "en-US") : "";
   const [databanks, setDatabanks] = useState<Databank[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -537,9 +570,9 @@ export default function DatabankPage() {
                   </svg>
                 </div>
                 <div>
-                  <h1 className="text-[20px] font-bold tracking-tight text-white sm:text-[22px]">Knowledge Base</h1>
+                  <h1 className="text-[20px] font-bold tracking-tight text-white sm:text-[22px]">{d.title}</h1>
                   <p className="mt-0.5 text-[12px] font-medium text-white/70 sm:text-[13px]">
-                    Power your AI agents with company documents, sites & data
+                    {d.subtitle}
                   </p>
                 </div>
               </div>
@@ -550,43 +583,43 @@ export default function DatabankPage() {
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" className="h-3.5 w-3.5">
                   <path d="M12 5v14M5 12h14" strokeLinecap="round" />
                 </svg>
-                New Databank
+                {d.new}
               </Link>
             </div>
             <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
               <div className="rounded-[2px] bg-white/10 px-3 py-3 ring-1 ring-white/10 backdrop-blur">
-                <div className="text-[10px] font-bold uppercase tracking-widest text-white/60">Databanks</div>
+                <div className="text-[10px] font-bold uppercase tracking-widest text-white/60">{d.stats.databanks}</div>
                 <div className="mt-1 text-[20px] font-bold text-white">{databanks.length}</div>
               </div>
               <div className="rounded-[2px] bg-white/10 px-3 py-3 ring-1 ring-white/10 backdrop-blur">
-                <div className="text-[10px] font-bold uppercase tracking-widest text-white/60">Documents</div>
+                <div className="text-[10px] font-bold uppercase tracking-widest text-white/60">{d.stats.documents}</div>
                 <div className="mt-1 text-[20px] font-bold text-white">{totalDocs}</div>
               </div>
               <div className="rounded-[2px] bg-white/10 px-3 py-3 ring-1 ring-white/10 backdrop-blur">
-                <div className="text-[10px] font-bold uppercase tracking-widest text-white/60">Storage</div>
+                <div className="text-[10px] font-bold uppercase tracking-widest text-white/60">{d.stats.storage}</div>
                 <div className="mt-1 text-[20px] font-bold text-white">{formatBytes(totalSize)}</div>
               </div>
               <div className="rounded-[2px] bg-white/10 px-3 py-3 ring-1 ring-white/10 backdrop-blur">
-                <div className="text-[10px] font-bold uppercase tracking-widest text-white/60">AI Ready</div>
+                <div className="text-[10px] font-bold uppercase tracking-widest text-white/60">{d.stats.aiReady}</div>
                 <div className="mt-1 flex items-baseline gap-1.5 text-[20px] font-bold text-white">
                   {readyDocs}
-                  <span className="text-[11px] font-medium text-white/60">/ {docs.length} in view</span>
+                  <span className="text-[11px] font-medium text-white/60">{fill(d.stats.inView, { count: docs.length })}</span>
                 </div>
               </div>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 px-6 py-3 text-[11px] font-medium text-foreground/50">
             <span className="inline-flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full bg-emerald" /> Live indexing
+              <span className="h-2 w-2 rounded-full bg-emerald" /> {d.live.indexing}
             </span>
             <span className="text-foreground/20">•</span>
-            <span>Secure & private to your workspace</span>
+            <span>{d.live.private}</span>
             <span className="ml-auto hidden items-center gap-1 text-foreground/40 sm:inline-flex">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-3.5 w-3.5">
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
                 <path d="M9 12l2 2 4-4" />
               </svg>
-              Enterprise-grade
+              {d.live.enterprise}
             </span>
           </div>
         </div>
@@ -597,8 +630,8 @@ export default function DatabankPage() {
         {/* Databank Grid */}
         <div>
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-[13px] font-bold uppercase tracking-widest text-foreground/40">Your databanks</h2>
-            <span className="text-[11px] font-medium text-foreground/30">{databanks.length} total</span>
+            <h2 className="text-[13px] font-bold uppercase tracking-widest text-foreground/40">{d.yourBanks}</h2>
+            <span className="text-[11px] font-medium text-foreground/30">{fill(d.total, { count: databanks.length })}</span>
           </div>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
             {loading
@@ -657,7 +690,7 @@ export default function DatabankPage() {
                               setConfirmDeleteId(db.id);
                             }}
                             className="rounded-[2px] p-1.5 text-foreground/20 opacity-0 transition hover:bg-coral/10 hover:text-coral group-hover:opacity-100"
-                            title="Delete databank"
+                            title={d.deleteAria}
                           >
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5">
                               <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M10 11v6M14 11v6" />
@@ -667,15 +700,15 @@ export default function DatabankPage() {
                       </div>
                       <div className="mt-4 text-[15px] font-bold leading-tight text-foreground">{db.name}</div>
                       <div className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-foreground/50">
-                        {db.description || "No description — add one to help your team."}
+                        {db.description || d.noDesc}
                       </div>
                       <div className="mt-4 flex items-center gap-2">
                         <span className="inline-flex items-center gap-1 rounded-[2px] bg-foreground/[0.06] px-2.5 py-1 text-[11px] font-semibold text-foreground/60">
                           <span className="h-1.5 w-1.5 rounded-full bg-deep-violet" />
-                          {db.doc_count ?? 0} docs
+                          {fill(d.docs, { count: db.doc_count ?? 0 })}
                         </span>
                         <span className="text-[11px] font-medium text-foreground/30">{formatBytes(db.total_size ?? 0)}</span>
-                        {isSelected && <span className="ml-auto text-[11px] font-bold text-deep-violet">Selected</span>}
+                        {isSelected && <span className="ml-auto text-[11px] font-bold text-deep-violet">{d.selected}</span>}
                       </div>
                     </div>
                   );
@@ -692,9 +725,9 @@ export default function DatabankPage() {
                 <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
               </svg>
             </div>
-            <h2 className="mt-5 text-[18px] font-bold tracking-tight text-foreground">Create your first databank</h2>
+            <h2 className="mt-5 text-[18px] font-bold tracking-tight text-foreground">{d.emptyTitle}</h2>
             <p className="mt-2 max-w-md text-[13px] leading-relaxed text-foreground/50">
-              Upload files, crawl your website, or connect a database. Your AI will search it instantly.
+              {d.emptyDesc}
             </p>
             <Link
               href="/dashboard/databank/new"
@@ -703,7 +736,7 @@ export default function DatabankPage() {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" className="h-4 w-4">
                 <path d="M12 5v14M5 12h14" strokeLinecap="round" />
               </svg>
-              Create Databank
+              {d.createFirst}
             </Link>
           </div>
         )}
@@ -730,7 +763,7 @@ export default function DatabankPage() {
               </div>
               <div className="flex items-center gap-2">
                 <span className="hidden items-center gap-1.5 rounded-[2px] bg-emerald/10 px-3 py-1 text-[11px] font-bold text-emerald ring-1 ring-emerald/30 sm:inline-flex">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald" /> Live
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald" /> {d.detail.live}
                 </span>
                 <Link
                   href="/dashboard/databank/new"
@@ -739,7 +772,7 @@ export default function DatabankPage() {
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3.5 w-3.5">
                     <path d="M12 5v14M5 12h14" strokeLinecap="round" />
                   </svg>
-                  Add source
+                  {d.detail.addSource}
                 </Link>
               </div>
             </div>
@@ -752,7 +785,7 @@ export default function DatabankPage() {
                     <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
                     <path d="M14 2v6h6" />
                   </svg>
-                  Documents
+                  {d.detail.documents}
                 </div>
                 <div className="mt-1 text-[22px] font-bold tracking-tight text-foreground">{selected.doc_count ?? docs.length}</div>
               </div>
@@ -762,21 +795,21 @@ export default function DatabankPage() {
                     <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
                     <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
                   </svg>
-                  Storage
+                  {d.detail.storage}
                 </div>
                 <div className="mt-1 text-[22px] font-bold tracking-tight text-foreground">{formatBytes(selected.total_size ?? 0)}</div>
               </div>
               <div className="px-5 py-4">
                 <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-foreground/40">
-                  <span className="h-2 w-2 rounded-full bg-emerald" /> AI Search
+                  <span className="h-2 w-2 rounded-full bg-emerald" /> {d.detail.aiSearch}
                 </div>
                 <div className="mt-1 text-[13px] font-bold">
-                  {docs.some((d) => d.status === "completed" || d.status === "ready") ? (
-                    <span className="text-emerald">Active — ready to answer</span>
+                  {docs.some((x) => x.status === "completed" || x.status === "ready") ? (
+                    <span className="text-emerald">{d.detail.active}</span>
                   ) : docsLoading ? (
-                    <span className="text-foreground/40">Checking…</span>
+                    <span className="text-foreground/40">{d.detail.checking}</span>
                   ) : (
-                    <span className="text-foreground/40">No indexed data</span>
+                    <span className="text-foreground/40">{d.detail.noData}</span>
                   )}
                 </div>
               </div>
@@ -793,7 +826,7 @@ export default function DatabankPage() {
                   <input
                     value={q}
                     onChange={(e) => setQ(e.target.value)}
-                    placeholder="Search documents…"
+                    placeholder={d.detail.searchPh}
                     className="w-full rounded-[2px] border border-card-border bg-foreground/[0.03] py-2 pl-8 pr-3 text-[12px] font-medium text-foreground placeholder:text-foreground/30 outline-none transition focus:border-deep-violet/30 focus:bg-card"
                   />
                 </div>
@@ -802,16 +835,16 @@ export default function DatabankPage() {
                   onChange={(e) => setFilter(e.target.value)}
                   className="rounded-[2px] border border-card-border bg-card px-2.5 py-2 text-[12px] font-semibold text-foreground/60 outline-none focus:border-deep-violet/30"
                 >
-                  <option value="all">All statuses</option>
-                  <option value="ready">Ready</option>
-                  <option value="processing">Processing</option>
-                  <option value="pending">Queued</option>
-                  <option value="failed">Failed</option>
+                  <option value="all">{d.detail.statuses.all}</option>
+                  <option value="ready">{d.detail.statuses.ready}</option>
+                  <option value="processing">{d.detail.statuses.processing}</option>
+                  <option value="pending">{d.detail.statuses.pending}</option>
+                  <option value="failed">{d.detail.statuses.failed}</option>
                 </select>
               </div>
               <div className="flex items-center gap-2">
                 <span className="hidden text-[11px] font-medium text-foreground/40 sm:block">
-                  {filteredDocs.length} of {docs.length}
+                  {fill(d.detail.of, { a: filteredDocs.length, b: docs.length })}
                 </span>
                 {stuckCount > 0 && (
                   <button
@@ -824,7 +857,7 @@ export default function DatabankPage() {
                       <path d="M21 12a9 9 0 11-9-9" strokeLinecap="round" />
                       <path d="M9 9l3-3 3 3M9 15l3 3 3-3" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
-                    {processing === "all" ? "Retrying…" : `Retry ${stuckCount}`}
+                    {processing === "all" ? d.detail.retrying : fill(d.detail.retry, { count: stuckCount })}
                   </button>
                 )}
               </div>
@@ -846,14 +879,14 @@ export default function DatabankPage() {
                   </svg>
                 </div>
                 <p className="mt-3 text-[13px] font-semibold text-foreground/60">
-                  {q || filter !== "all" ? "No matching documents" : "No documents yet"}
+                  {q || filter !== "all" ? d.detail.noMatch : d.detail.noDocs}
                 </p>
                 <p className="mt-1 max-w-sm text-[12px] leading-relaxed text-foreground/35">
-                  {q || filter !== "all" ? "Try a different search or filter." : "Upload a CSV, PDF, or text file to make your AI smarter."}
+                  {q || filter !== "all" ? d.detail.trySearch : d.detail.uploadCsv}
                 </p>
                 {!q && filter === "all" && (
                   <Link href="/dashboard/databank/new" className="mt-4 inline-flex items-center gap-1.5 rounded-[2px] bg-accent-soft px-4 py-2 text-[12px] font-bold text-deep-violet transition hover:bg-deep-violet/15 dark:text-violet-light">
-                    Add your first source
+                    {d.detail.addFirst}
                   </Link>
                 )}
               </div>
@@ -863,11 +896,11 @@ export default function DatabankPage() {
                   <table className="w-full">
                     <thead>
                       <tr className="border-b border-card-border bg-foreground/[0.02] text-left">
-                        <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-foreground/40">File</th>
-                        <th className="hidden px-3 py-2.5 text-[10px] font-bold uppercase tracking-widest text-foreground/40 sm:table-cell">Type</th>
-                        <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-widest text-foreground/40">Size</th>
-                        <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-widest text-foreground/40">Status</th>
-                        <th className="px-4 py-2.5 text-right text-[10px] font-bold uppercase tracking-widest text-foreground/40">Actions</th>
+                        <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-foreground/40">{d.detail.file}</th>
+                        <th className="hidden px-3 py-2.5 text-[10px] font-bold uppercase tracking-widest text-foreground/40 sm:table-cell">{d.detail.type}</th>
+                        <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-widest text-foreground/40">{d.detail.size}</th>
+                        <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-widest text-foreground/40">{d.detail.status}</th>
+                        <th className="px-4 py-2.5 text-right text-[10px] font-bold uppercase tracking-widest text-foreground/40">{d.detail.actions}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-card-border">
@@ -890,7 +923,7 @@ export default function DatabankPage() {
                             </td>
                             <td className="px-3 py-3 text-[12px] font-medium tabular-nums text-foreground/50">{formatBytes(doc.file_size ?? 0)}</td>
                             <td className="px-3 py-3">
-                              <StatusBadge status={doc.status} />
+                              <StatusBadge status={doc.status} labels={badgeLabels} />
                             </td>
                             <td className="px-4 py-3">
                               <div className="flex items-center justify-end gap-1">
@@ -899,7 +932,7 @@ export default function DatabankPage() {
                                   onClick={() => togglePreview(doc.id)}
                                   className={`rounded-[2px] px-2.5 py-1 text-[11px] font-semibold transition ${previewDocId === doc.id ? "bg-foreground text-background" : "border border-card-border bg-card text-foreground/60 hover:bg-foreground/[0.04]"}`}
                                 >
-                                  {previewDocId === doc.id ? "Hide" : "View"}
+                                  {previewDocId === doc.id ? d.detail.hide : d.detail.view}
                                 </button>
                                 {(doc.status === "pending" || doc.status === "queued" || doc.status === "processing" || doc.status === "failed") && (
                                   <button
@@ -908,7 +941,7 @@ export default function DatabankPage() {
                                     disabled={processing === doc.id}
                                     className="rounded-[2px] bg-accent-soft px-2.5 py-1 text-[11px] font-bold text-deep-violet transition hover:bg-deep-violet/15 disabled:opacity-50 dark:text-violet-light"
                                   >
-                                    {processing === doc.id ? "…" : "Retry"}
+                                    {processing === doc.id ? "…" : d.detail.retryShort}
                                   </button>
                                 )}
                               </div>
@@ -924,14 +957,14 @@ export default function DatabankPage() {
                                     ))}
                                   </div>
                                 ) : !preview ? (
-                                  <p className="py-2 text-center text-[12px] text-foreground/40">Could not load content.</p>
+                                  <p className="py-2 text-center text-[12px] text-foreground/40">{d.detail.previewFail}</p>
                                 ) : preview.kind === "table" ? (
                                   <div className="overflow-hidden rounded-[2px] border border-card-border bg-card shadow-sm">
                                     <div className="flex items-center justify-between border-b border-card-border bg-foreground/[0.02] px-3 py-2">
                                       <span className="text-[11px] font-bold text-foreground/60">
-                                        {preview.total} rows · {preview.columns?.length ?? 0} cols
+                                        {fill(d.detail.rowsCols, { rows: preview.total, cols: preview.columns?.length ?? 0 })}
                                       </span>
-                                      <span className="text-[11px] font-medium text-foreground/30">Page {previewPage}</span>
+                                      <span className="text-[11px] font-medium text-foreground/30">{fill(d.detail.page, { page: previewPage })}</span>
                                     </div>
                                     <div className="overflow-x-auto">
                                       <table className="w-full text-[12px]">
@@ -965,10 +998,10 @@ export default function DatabankPage() {
                                           onClick={() => void loadPreview(doc.id, previewPage - 1)}
                                           className="rounded-[2px] border border-card-border bg-card px-3 py-1.5 text-[11px] font-semibold text-foreground/60 transition hover:bg-foreground/[0.03] disabled:opacity-30"
                                         >
-                                          ← Prev
+                                          {d.detail.prev}
                                         </button>
                                         <span className="text-[11px] font-medium text-foreground/40">
-                                          Page {previewPage} of {Math.ceil(preview.total / preview.page_size)}
+                                          {fill(d.detail.pageOf, { page: previewPage, total: Math.ceil(preview.total / preview.page_size) })}
                                         </span>
                                         <button
                                           type="button"
@@ -976,7 +1009,7 @@ export default function DatabankPage() {
                                           onClick={() => void loadPreview(doc.id, previewPage + 1)}
                                           className="rounded-[2px] border border-card-border bg-card px-3 py-1.5 text-[11px] font-semibold text-foreground/60 transition hover:bg-foreground/[0.03] disabled:opacity-30"
                                         >
-                                          Next →
+                                          {d.detail.next}
                                         </button>
                                       </div>
                                     )}
@@ -984,7 +1017,7 @@ export default function DatabankPage() {
                                 ) : (
                                   <div className="rounded-[2px] border border-card-border bg-card p-4 shadow-sm">
                                     <p className="mb-3 text-[11px] font-bold uppercase tracking-wide text-foreground/40">
-                                      {preview.total} chunks — what the AI actually searches
+                                      {fill(d.detail.chunks, { count: preview.total })}
                                     </p>
                                     <div className="space-y-2">
                                       {(preview.chunks ?? []).map((c, i) => (
@@ -993,7 +1026,7 @@ export default function DatabankPage() {
                                         </p>
                                       ))}
                                       {(preview.chunks ?? []).length === 0 && (
-                                        <p className="py-2 text-center text-[12px] text-foreground/40">No parsed content yet — still processing.</p>
+                                        <p className="py-2 text-center text-[12px] text-foreground/40">{d.detail.noChunks}</p>
                                       )}
                                     </div>
                                   </div>
@@ -1017,7 +1050,7 @@ export default function DatabankPage() {
         <div
           role="alertdialog"
           aria-modal="true"
-          aria-label="Confirm databank deletion"
+          aria-label={d.deleteModal.aria}
           className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 p-4 backdrop-blur-sm"
           onClick={() => !deleting && setConfirmDeleteId(null)}
         >
@@ -1031,16 +1064,16 @@ export default function DatabankPage() {
               </svg>
             </div>
             <h2 className="mt-3 text-[15px] font-bold text-foreground">
-              Delete “{confirmDeleteDb?.name ?? "databank"}”?
+              {fill(d.deleteModal.title, { name: confirmDeleteDb?.name ?? "databank" })}
             </h2>
             <p className="mt-2 text-[13px] leading-relaxed text-foreground/60">
-              All documents, chunks and embeddings inside this databank will be{" "}
-              <strong className="font-bold text-coral">permanently deleted</strong>. Your AI will no longer be able to
-              search this knowledge. This cannot be undone.
+              {d.deleteModal.desc}
             </p>
             {confirmDeleteDb && (confirmDeleteDb.doc_count ?? 0) > 0 && (
               <p className="mt-2 rounded-[2px] bg-amber/10 px-3 py-2 text-[11px] font-medium text-amber ring-1 ring-amber/30">
-                {confirmDeleteDb.doc_count} document{confirmDeleteDb.doc_count === 1 ? "" : "s"} · {formatBytes(confirmDeleteDb.total_size ?? 0)} will be lost.
+                {(confirmDeleteDb.doc_count ?? 0) === 1
+                  ? fill(d.deleteModal.lostOne, { count: confirmDeleteDb.doc_count ?? 0, size: formatBytes(confirmDeleteDb.total_size ?? 0) })
+                  : fill(d.deleteModal.lostMany, { count: confirmDeleteDb.doc_count ?? 0, size: formatBytes(confirmDeleteDb.total_size ?? 0) })}
               </p>
             )}
             <div className="mt-5 flex justify-end gap-2">
@@ -1049,7 +1082,7 @@ export default function DatabankPage() {
                 disabled={deleting}
                 className="rounded-[2px] px-4 py-2 text-[12px] font-semibold text-foreground/60 transition hover:bg-foreground/[0.04] disabled:opacity-50"
               >
-                Cancel
+                {t.common.cancel}
               </button>
               <button
                 onClick={() => void confirmDelete()}
@@ -1059,10 +1092,10 @@ export default function DatabankPage() {
                 {deleting ? (
                   <>
                     <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                    Deleting…
+                    {d.deleteModal.deleting}
                   </>
                 ) : (
-                  "Yes, delete databank"
+                  d.deleteModal.delete
                 )}
               </button>
             </div>
