@@ -83,6 +83,8 @@ async def list_audience(
     return [
         {
             "id": user.id,
+            # Employees act inside their owner's workspace; link there.
+            "tenant_id": user.tenant_id or user.id,
             "email": user.email,
             "first_name": user.first_name,
             "suppressed": bool(is_suppressed),
@@ -346,6 +348,7 @@ async def list_campaign_recipients(
     # "sent" only means Resend accepted the request. Surface the latest
     # provider event so a later bounce/complaint is visible against the address.
     latest: dict[str, EmailEvent] = {}
+    tenant_links: dict[str, str] = {}
     if rows:
         events = (
             await db.execute(
@@ -356,10 +359,22 @@ async def list_campaign_recipients(
         ).scalars().all()
         for event in events:
             latest.setdefault(event.outbox_id, event)
+        user_ids = [row.tenant_id for row in rows if row.tenant_id]
+        if user_ids:
+            user_rows = (
+                await db.execute(
+                    select(User.id, User.tenant_id).where(User.id.in_(user_ids))
+                )
+            ).all()
+            tenant_links = {
+                user_id: (tenant_id or user_id)
+                for user_id, tenant_id in user_rows
+            }
     return {
         "items": [
             {
                 "id": row.id,
+                "tenant_id": tenant_links.get(row.tenant_id or "", row.tenant_id),
                 "email": row.to_email,
                 "status": row.status,
                 "attempts": row.attempts,

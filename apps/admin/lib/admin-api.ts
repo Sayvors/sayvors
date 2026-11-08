@@ -207,6 +207,7 @@ export interface EmailCampaign {
 
 export interface CampaignAudienceItem {
   id: string;
+  tenant_id: string;
   email: string | null;
   first_name: string | null;
   suppressed: boolean;
@@ -220,6 +221,7 @@ export interface CampaignAudience {
 
 export interface CampaignRecipient {
   id: string;
+  tenant_id: string | null;
   email: string;
   status:
     | "queued"

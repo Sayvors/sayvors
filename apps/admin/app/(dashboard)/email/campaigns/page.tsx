@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import {
   useCallback,
   useEffect,
@@ -112,7 +113,17 @@ function AudienceTable({ audience }: { audience: CampaignAudience | null }) {
               {items.map((item) => (
                 <tr key={item.id} className="border-b border-[var(--ui-line)]/60 last:border-0">
                   <td className="py-1.5 pr-3 font-mono text-[11px] text-ink">
-                    {item.email || "—"}
+                    {item.email ? (
+                      <Link
+                        href={`/tenants/${item.tenant_id}`}
+                        className="hover:underline"
+                        title="Open tenant"
+                      >
+                        {item.email}
+                      </Link>
+                    ) : (
+                      "—"
+                    )}
                   </td>
                   <td className="py-1.5 pr-3 text-ink/65">{item.first_name || "—"}</td>
                   <td className="py-1.5">
@@ -245,7 +256,17 @@ function CampaignRecipientsTable({ campaign }: { campaign: EmailCampaign }) {
                 {items.map((item) => (
                   <tr key={item.id} className="border-b border-[var(--ui-line)]/60 last:border-0">
                     <td className="py-1.5 pr-3 font-mono text-[10.5px] text-ink">
-                      {item.email}
+                      {item.tenant_id ? (
+                        <Link
+                          href={`/tenants/${item.tenant_id}`}
+                          className="hover:underline"
+                          title="Open tenant"
+                        >
+                          {item.email}
+                        </Link>
+                      ) : (
+                        item.email
+                      )}
                     </td>
                     <td className="py-1.5 pr-3">
                       <span

@@ -156,6 +156,7 @@ async def test_audience_preview_lists_addresses_and_suppression(db):
         "campaign2@example.com",
     ]
     assert [item["suppressed"] for item in items] == [False, True, False]
+    assert items[0]["tenant_id"] == "campaign-user-0000"
     # Unsubscribed and unverified users are not in the audience at all.
     assert all("unsubscribed" not in (item["email"] or "") for item in items)
     assert all("unverified" not in (item["email"] or "") for item in items)
@@ -182,6 +183,7 @@ async def test_recipient_list_shows_address_status_and_error(db):
 
     assert page["total"] == 1
     assert page["items"][0]["email"] == failed.to_email
+    assert page["items"][0]["tenant_id"] == failed.tenant_id
     assert page["items"][0]["status"] == "failed"
     assert page["items"][0]["error"] == "mailbox full"
 
