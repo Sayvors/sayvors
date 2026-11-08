@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_current_user, get_db, require_admin
-from ..team.context import tenant_id_of
+from ..team.context import TenantContext, require_perm, tenant_id_of
 from . import service
 from .models import Job
 
@@ -45,23 +45,37 @@ def _job_to_dict(job: Job) -> dict:
 @router.post("/jobs", status_code=202)
 async def submit_job_endpoint(
     body: dict,
-    user=Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("settings.manage")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Submit a job. Returns 202 with job_id for polling."""
+    """Submit a job for the caller's own tenant. Returns 202 with job_id.
+
+    This is an operator surface, not a customer one: internal features submit
+    their jobs from the domain service (which already resolved the tenant and
+    the lane), so an arbitrary authenticated user must not be able to enqueue
+    work. Lane, priority and retry budget are server-controlled - accepting
+    them from the client would let a caller starve or flood a lane.
+    """
     job_type = body.get("job_type") or body.get("type")
     if not job_type:
         raise HTTPException(status_code=400, detail="job_type is required")
-    tenant_id = tenant_id_of(user)
+    # Reject registry types that have no handler: enqueuing them would burn
+    # retries and end as `no_handler` without doing any work.
+    from .handlers import HANDLERS
+
+    if job_type not in HANDLERS:
+        raise HTTPException(
+            status_code=400, detail=f"job_type cannot be submitted: {job_type}"
+        )
+    payload = body.get("payload") or {}
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="payload must be an object")
     try:
         job = await service.submit_job(
             db,
-            tenant_id=tenant_id,
+            tenant_id=ctx.tenant_id,
             job_type=job_type,
-            payload=body.get("payload", {}),
-            lane=body.get("lane"),
-            priority=body.get("priority", 50),
-            max_attempts=body.get("max_attempts"),
+            payload=payload,
             idempotency_key=body.get("idempotency_key"),
             subject_type=body.get("subject_type"),
             subject_id=body.get("subject_id"),

@@ -42,7 +42,12 @@ async def handle_stt_job(job: Job, db: AsyncSession) -> dict | None:
         raise ValueError("stt_job_id missing from payload")
 
     stt_job = (
-        await db.execute(select(STTJob).where(STTJob.id == stt_job_id))
+        await db.execute(
+            select(STTJob).where(
+                STTJob.id == stt_job_id,
+                STTJob.user_id == job.tenant_id,
+            )
+        )
     ).scalar_one_or_none()
     if stt_job is None:
         raise ValueError(f"STT job {stt_job_id} not found")

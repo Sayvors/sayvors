@@ -23,6 +23,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import settings
@@ -514,7 +515,12 @@ async def _ensure_location_metadata(
 
 
 async def _backfill_existing_replies(
-    db: AsyncSession, channel: Channel, client, account_id: str, location_id: str
+    db: AsyncSession,
+    channel: Channel,
+    config: AutoReplyConfig,
+    client,
+    account_id: str,
+    location_id: str,
 ) -> int:
     """One-time full read so replies written before this fix are imported.
 
@@ -526,21 +532,36 @@ async def _backfill_existing_replies(
     """
     reviews = await client.list_reviews(account_id, location_id)
     adopted = 0
+    rolled_back = False
     for review in reviews:
         try:
             await _store_inbound_review(db, channel.id, review)
         except Exception as e:
+            # A failed flush leaves the session unusable for every following
+            # review. Roll back before continuing; the next poll retries.
+            await db.rollback()
+            rolled_back = True
             logger.warning("reply backfill inbound store failed for %s: %s", review.review_id, e)
         try:
             if await _adopt_existing_reply(db, channel, review):
                 adopted += 1
         except Exception as e:
+            await db.rollback()
+            rolled_back = True
             logger.warning("reply backfill adoption failed for %s: %s", review.review_id, e)
         try:
             await _enqueue_review_discovered(db, channel, review)
         except Exception as e:
+            await db.rollback()
+            rolled_back = True
             logger.warning("reply backfill review.discovered failed for %s: %s", review.review_id, e)
 
+    if rolled_back:
+        # rollback() expires every loaded attribute; reload both rows before
+        # touching channel.metadata_json or config.min_rating_auto, otherwise
+        # the next sync attribute read raises MissingGreenlet.
+        await db.refresh(channel)
+        await db.refresh(config)
     meta = _channel_meta(channel)
     meta["reply_backfill_done"] = True
     channel.metadata_json = json.dumps(meta)
@@ -552,12 +573,13 @@ async def _store_inbound_review(db: AsyncSession, channel_id: str, review) -> No
     """Mirror the inbound review as a ChannelMessage so the UI can show it."""
     import uuid
 
+    # The unique index on platform_message_id is global, so the existence
+    # check must be global too. A per-channel check passes when the same
+    # Google location is connected twice (or two tenants connect it), then
+    # the insert dies on the index and poisons the whole poll session.
     existing = await db.execute(
         select(ChannelMessage.id)
-        .where(
-            ChannelMessage.channel_id == channel_id,
-            ChannelMessage.platform_message_id == review.review_id[:200],
-        )
+        .where(ChannelMessage.platform_message_id == review.review_id[:200])
         .limit(1)
     )
     if existing.scalar_one_or_none():
@@ -594,7 +616,16 @@ async def _store_inbound_review(db: AsyncSession, channel_id: str, review) -> No
             priority=priority,
         )
     )
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Lost a race with another poller between the check and the insert.
+        # The review is already mirrored by the winner; roll back so this
+        # session can continue with the rest of the feed.
+        await db.rollback()
+        logger.debug(
+            "duplicate inbound review %s ignored", review.review_id[:64]
+        )
 
 
 async def _store_reply_message(
@@ -632,19 +663,21 @@ async def _store_reply_message(
         return
 
     platform_id = f"google-reply:{reply.id}"[:200]
+    # Global, for the same reason as the inbound row: the unique index is not
+    # scoped by channel. If another channel/tenant already mirrored this
+    # Google reply, leave their row alone and do not create a twin.
     existing = (
         await db.execute(
             select(ChannelMessage)
-            .where(
-                ChannelMessage.channel_id == channel.id,
-                ChannelMessage.platform_message_id == platform_id,
-            )
+            .where(ChannelMessage.platform_message_id == platform_id)
             .limit(1)
         )
     ).scalar_one_or_none()
     content = encrypt_message_content(reply.reply_text)
     name = inbound.contact_name or reviewer_name
     if existing is not None:
+        if existing.channel_id != channel.id:
+            return
         existing.content = content
         existing.status = status
         existing.contact_name = name
@@ -1067,6 +1100,9 @@ async def _refresh_edited_review_reply(
 async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyConfig) -> dict:
     """Poll one Google Reviews channel and auto-reply to new reviews."""
     stats = {"reviews": 0, "replied": 0, "queued": 0, "skipped": 0, "adopted": 0, "errors": 0}
+    # Captured before any rollback: after rollback(), reading channel.id
+    # triggers a lazy load that raises MissingGreenlet in a sync logging call.
+    channel_id = channel.id
 
     mock_mode = settings.GOOGLE_REVIEWS_MOCK
     if mock_mode:
@@ -1129,13 +1165,26 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
             if not _channel_meta(channel).get("reply_backfill_done"):
                 try:
                     stats["adopted"] += await _backfill_existing_replies(
-                        db, channel, client, account_id, location_id
+                        db, channel, config, client, account_id, location_id
                     )
                 except Exception as e:
                     # A failed backfill is retried next poll; it must not stop
-                    # normal review polling.
+                    # normal review polling. Roll back first: the session may
+                    # be poisoned by the failed flush, and the next query would
+                    # raise PendingRollbackError instead of the real error.
+                    await db.rollback()
+                    # rollback() expires the channel; reload it so the
+                    # permanent-error branch below can still mark it expired.
+                    try:
+                        await db.refresh(channel)
+                        await db.refresh(config)
+                    except Exception:
+                        logger.exception(
+                            "Could not reload channel %s after a failed backfill",
+                            channel_id,
+                        )
                     logger.warning(
-                        "reply backfill failed for channel %s: %s", channel.id, e
+                        "reply backfill failed for channel %s: %s", channel_id, e
                     )
             reviews = await client.list_reviews(
                 account_id, location_id, updated_after=config.last_polled_at
@@ -1415,6 +1464,8 @@ async def _poll_one_channel(
             if not await _claim_channel(session, config.id, config.last_polled_at):
                 return stats  # another instance has it
 
+            channel_id = channel.id
+            config_id = config.id
             try:
                 now = datetime.now(timezone.utc)
 
@@ -1434,13 +1485,34 @@ async def _poll_one_channel(
                     for k in ("reviews", "replied", "queued", "skipped", "adopted", "errors"):
                         stats[k] += channel_stats[k]
                 except Exception as e:
-                    logger.error("Poll failed for channel %s: %s", channel.id, e)
+                    # Clean the failed transaction before touching the model
+                    # again. Without this, every access to channel.* raises
+                    # PendingRollbackError and hides the original failure.
+                    await session.rollback()
+                    logger.error("Poll failed for channel %s: %s", channel_id, e)
                     stats["errors"] += 1
-                    await _update_channel_health(session, channel, False, type(e).__name__)
+                    try:
+                        await session.refresh(channel)
+                        await _update_channel_health(
+                            session, channel, False, type(e).__name__
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Channel health update failed for %s", channel_id
+                        )
                 else:
                     await _update_channel_health(session, channel, True)
             finally:
-                await _release_channel(session, config.id)
+                try:
+                    await _release_channel(session, config_id)
+                except Exception:
+                    # A poisoned session must not leave the channel claimed
+                    # until the lock expires: roll back and release again.
+                    await session.rollback()
+                    try:
+                        await _release_channel(session, config_id)
+                    except Exception:
+                        logger.exception("Could not release channel %s", channel_id)
 
     return stats
 

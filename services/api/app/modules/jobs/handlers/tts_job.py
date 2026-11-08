@@ -56,7 +56,12 @@ async def handle_tts_job(job: Job, db: AsyncSession) -> dict | None:
         raise ValueError("tts_job_id missing from payload")
 
     tts_job = (
-        await db.execute(select(TTSJob).where(TTSJob.id == tts_job_id))
+        await db.execute(
+            select(TTSJob).where(
+                TTSJob.id == tts_job_id,
+                TTSJob.user_id == job.tenant_id,
+            )
+        )
     ).scalar_one_or_none()
     if tts_job is None:
         raise ValueError(f"TTS job {tts_job_id} not found")

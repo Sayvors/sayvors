@@ -29,7 +29,12 @@ async def handle_rag_ingest(job: Job, db: AsyncSession) -> dict | None:
         raise ValueError("ingest_job_id missing from payload")
 
     ingest_job = (
-        await db.execute(select(IngestJob).where(IngestJob.id == ingest_job_id))
+        await db.execute(
+            select(IngestJob).where(
+                IngestJob.id == ingest_job_id,
+                IngestJob.user_id == job.tenant_id,
+            )
+        )
     ).scalar_one_or_none()
     if ingest_job is None:
         raise ValueError(f"IngestJob {ingest_job_id} not found")
