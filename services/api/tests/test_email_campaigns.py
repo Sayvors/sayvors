@@ -186,12 +186,22 @@ async def test_recipient_list_shows_address_status_and_error(db):
     assert page["items"][0]["error"] == "mailbox full"
 
 
-async def test_cancel_stops_future_expansion(db, monkeypatch):
+async def test_cancel_stops_future_expansion_and_cancels_queued_rows(db, monkeypatch):
     await _seed_users(db)
     campaign = await _draft(db, batch_size=2)
     await campaigns.start_campaign(db, campaign)
-    campaigns.cancel_campaign(campaign)
-    await db.commit()
+    await campaigns.expand_one(db, campaign)  # two rows are queued
+
+    await campaigns.cancel_campaign(db, campaign)
+
+    rows = (
+        await db.execute(
+            select(EmailOutbox).where(EmailOutbox.campaign_id == campaign.id)
+        )
+    ).scalars().all()
+    assert rows
+    assert {row.status for row in rows} == {"cancelled"}
+    assert all(row.error == "Campaign cancelled" for row in rows)
 
     monkeypatch.setattr("app.database.async_session", _factory(db))
     assert await campaigns.expand_due_campaigns() == 0

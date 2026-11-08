@@ -194,6 +194,7 @@ export interface EmailCampaign {
   sent: number;
   failed: number;
   dead: number;
+  cancelled: number;
   suppressed: number;
   batch_size: number;
   interval_seconds: number;
@@ -220,7 +221,14 @@ export interface CampaignAudience {
 export interface CampaignRecipient {
   id: string;
   email: string;
-  status: "queued" | "sending" | "sent" | "failed" | "dead" | "suppressed";
+  status:
+    | "queued"
+    | "sending"
+    | "sent"
+    | "failed"
+    | "dead"
+    | "cancelled"
+    | "suppressed";
   attempts: number;
   error: string | null;
   created_at: string | null;

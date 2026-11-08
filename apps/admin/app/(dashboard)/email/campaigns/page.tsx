@@ -152,6 +152,7 @@ const RECIPIENT_FILTERS = [
   { value: "sent", label: "Sent" },
   { value: "failed", label: "Failed" },
   { value: "dead", label: "Dead" },
+  { value: "cancelled", label: "Cancelled" },
 ];
 
 function CampaignRecipientsTable({ campaign }: { campaign: EmailCampaign }) {
@@ -252,7 +253,9 @@ function CampaignRecipientsTable({ campaign }: { campaign: EmailCampaign }) {
                             ? "bg-emerald-50 text-emerald-700"
                             : item.status === "failed" || item.status === "dead"
                               ? "bg-red-50 text-red-700"
-                              : "bg-amber-50 text-amber-700"
+                              : item.status === "cancelled"
+                                ? "bg-ink/5 text-ink/55"
+                                : "bg-amber-50 text-amber-700"
                         }`}
                       >
                         {item.status}
@@ -632,6 +635,9 @@ export default function EmailCampaignsPage() {
                     <span className={campaign.dead ? "text-red-600" : ""}>
                       dead {campaign.dead.toLocaleString()}
                     </span>
+                    {campaign.cancelled > 0 && (
+                      <span>cancelled {campaign.cancelled.toLocaleString()}</span>
+                    )}
                     {campaign.status === "completed" && (
                       <span>completed {fmtDate(campaign.completed_at)}</span>
                     )}

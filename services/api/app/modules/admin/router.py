@@ -878,7 +878,7 @@ async def admin_email_campaign_recipients(
     from ..email.campaigns import list_campaign_recipients
     from ..email.models import EmailCampaign
 
-    allowed = {"queued", "sending", "sent", "failed", "dead", "suppressed"}
+    allowed = {"queued", "sending", "sent", "failed", "dead", "cancelled", "suppressed"}
     if status and status not in allowed:
         raise HTTPException(status_code=400, detail="Unknown recipient status.")
     if await db.get(EmailCampaign, campaign_id) is None:
@@ -933,8 +933,7 @@ async def admin_email_campaign_cancel(
         raise HTTPException(
             status_code=409, detail="Only draft or running campaigns can be cancelled."
         )
-    cancel_campaign(campaign)
-    await db.commit()
+    await cancel_campaign(db, campaign)
     await db.refresh(campaign)
     return await campaign_out(db, campaign)
 

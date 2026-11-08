@@ -138,12 +138,28 @@ async def start_campaign(db: AsyncSession, campaign: EmailCampaign) -> None:
     await db.refresh(campaign)
 
 
-def cancel_campaign(campaign: EmailCampaign) -> None:
-    """Stop future expansion. Rows already queued still deliver."""
-    if campaign.status in ("draft", "running"):
-        campaign.status = "cancelled"
-        campaign.cancelled_at = _now()
-        campaign.next_expand_at = None
+async def cancel_campaign(db: AsyncSession, campaign: EmailCampaign) -> None:
+    """Stop the campaign and cancel every outbox row that has not started sending.
+
+    A row already in `sending` may still reach Resend; the provider call is
+    already in flight. Everything still `queued` is marked `cancelled` so a
+    cancel actually stops the remaining mail instead of only stopping future
+    batches.
+    """
+    if campaign.status not in ("draft", "running"):
+        return
+    campaign.status = "cancelled"
+    campaign.cancelled_at = _now()
+    campaign.next_expand_at = None
+    await db.execute(
+        update(EmailOutbox)
+        .where(
+            EmailOutbox.campaign_id == campaign.id,
+            EmailOutbox.status == "queued",
+        )
+        .values(status="cancelled", error="Campaign cancelled")
+    )
+    await db.commit()
 
 
 def _render(value: str | None, user: User) -> str | None:
@@ -366,6 +382,7 @@ async def campaign_out(db: AsyncSession, campaign: EmailCampaign) -> dict:
         "sent": counts.get("sent", 0),
         "failed": counts.get("failed", 0),
         "dead": counts.get("dead", 0),
+        "cancelled": counts.get("cancelled", 0),
         "suppressed": counts.get("suppressed", 0),
         "batch_size": campaign.batch_size,
         "interval_seconds": campaign.interval_seconds,

@@ -81,7 +81,9 @@ Admin → **Operations → Email campaigns**. A campaign is composed once
    re-walk safe; the outbox worker owns retries and delivery.
 4. Suppression is checked at enqueue time, so a complaint or unsubscribe
    during a campaign skips the remaining sends for that address.
-5. **Cancel** stops future expansion; rows already in the outbox still deliver.
+5. **Cancel** stops future expansion and marks every still-`queued` outbox
+   row `cancelled`. Only rows already in `sending` (provider call in flight)
+   or already `sent` can still be delivered.
 
 Progress in the admin UI comes from the real outbox statuses, not a second
 counter. Campaigns are capped at `EMAIL_CAMPAIGN_MAX_RECIPIENTS` (default

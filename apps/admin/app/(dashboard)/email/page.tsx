@@ -8,7 +8,15 @@ import { fetchEmailStats, type EmailStats } from "@/lib/admin-api";
 const FOCUS =
   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet";
 const DAY_OPTIONS = [1, 7, 30, 90] as const;
-const OUTBOX_ORDER = ["queued", "sending", "sent", "failed", "dead", "suppressed"];
+const OUTBOX_ORDER = [
+  "queued",
+  "sending",
+  "sent",
+  "failed",
+  "dead",
+  "cancelled",
+  "suppressed",
+];
 const EVENT_ORDER = [
   "queued",
   "sent",
