@@ -395,6 +395,21 @@ def validate_production_settings() -> None:
         errors.append("EMAIL_SEND_ALLOW_ANY_RECIPIENT must stay off (open-relay guard)")
     if settings.RAG_DB_ALLOW_PRIVATE_HOSTS:
         errors.append("RAG_DB_ALLOW_PRIVATE_HOSTS must stay off (SSRF guard)")
+    # TESTING is a normal setting read from the env file, not just a test
+    # fixture. When it leaks into a deploy it skips the Meta webhook HMAC and
+    # disarms ~25 rate limits; a typo must fail at boot, not silently open the
+    # ingress. GOOGLE_REVIEWS_MOCK fabricates reviews, which must never reach
+    # a real tenant.
+    if settings.TESTING:
+        errors.append(
+            "TESTING must stay off in a deployed environment "
+            "(it disables webhook signature checks and rate limits)"
+        )
+    if settings.GOOGLE_REVIEWS_MOCK:
+        errors.append(
+            "GOOGLE_REVIEWS_MOCK must stay off in a deployed environment "
+            "(it fabricates reviews)"
+        )
     if errors:
         print("FATAL: deployed configuration validation failed:", file=sys.stderr)
         for e in errors:

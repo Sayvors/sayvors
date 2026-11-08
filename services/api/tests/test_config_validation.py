@@ -25,6 +25,8 @@ _PROD = {
     "META_OAUTH_REDIRECT_URI": "https://api.sayvors.com/api/v1/meta/facebook/callback",
     "EMAIL_SEND_ALLOW_ANY_RECIPIENT": False,
     "RAG_DB_ALLOW_PRIVATE_HOSTS": False,
+    "TESTING": False,
+    "GOOGLE_REVIEWS_MOCK": False,
 }
 
 
@@ -48,6 +50,8 @@ def test_valid_production_config_passes(monkeypatch):
     ("META_OAUTH_REDIRECT_URI", "http://localhost:8000/api/v1/meta/facebook/callback"),
     ("EMAIL_SEND_ALLOW_ANY_RECIPIENT", True),
     ("RAG_DB_ALLOW_PRIVATE_HOSTS", True),
+    ("TESTING", True),
+    ("GOOGLE_REVIEWS_MOCK", True),
 ])
 def test_each_permissive_default_fails_closed(monkeypatch, attr, value):
     for k, v in _PROD.items():

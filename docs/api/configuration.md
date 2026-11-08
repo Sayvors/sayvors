@@ -112,7 +112,7 @@ Native Google Business Profile OAuth is the only product path (reviews, replies,
 | `GOOGLE_CLIENT_ID` | Empty | Google OAuth client ID for Business Profile reviews. |
 | `GOOGLE_CLIENT_SECRET` | Empty | Google OAuth client secret; server-side only. |
 | `GOOGLE_REVIEWS_REDIRECT_URI` | Local callback URL | OAuth redirect URI registered with Google; must match the API origin used by the browser. |
-| `GOOGLE_REVIEWS_MOCK` | `false` | Use generated review data instead of live OAuth/provider data. |
+| `GOOGLE_REVIEWS_MOCK` | `false` | Use generated review data instead of live OAuth/provider data. Deployed startup fails if `true`. |
 | `GOOGLE_REVIEWS_POLL_INTERVAL_SECONDS` | `300` | Review polling interval. |
 | `GOOGLE_QA_POLL_INTERVAL_SECONDS` | `3600` | Deprecated: Google retired the Q&A API on 2025-11-03; the worker no longer polls it. |
 | `GOOGLE_PLACES_API_KEY` | Empty | Server-side Places API (New) key for service-area resolution and benchmark peers. Empty keeps service-area edits local and shows the benchmark as not connected. |
@@ -178,7 +178,7 @@ These configure the dedicated worker process:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `TESTING` | `false` | Test-only behavior gate; do not enable in a deployed environment. |
+| `TESTING` | `false` | Test-only behavior gate. Deployed startup fails if `true`: it skips the Meta webhook signature check and disarms rate limits. |
 | `RAG_DB_ALLOW_PRIVATE_HOSTS` | `false` | Permit RAG live-database connections to private networks. Production startup rejects true because of SSRF risk. |
 
 LLM provider keys are stored in the database and managed through the platform
