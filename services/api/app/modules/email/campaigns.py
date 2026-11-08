@@ -54,14 +54,76 @@ CAMPAIGN_VARIABLES = [
         "label": "Dashboard link",
         "example": "https://app.sayvors.com/dashboard",
     },
-    {
-        "key": "unsubscribe_url",
-        "label": "Unsubscribe link",
-        "example": "https://api.sayvors.com/api/v1/email/unsubscribe?...",
-    },
+    # The visible unsubscribe link is injected into the shared footer by
+    # `newsletter_email`, so it is not offered as a body variable.
     # Convenience aliases matching the wording admins naturally use.
     {"key": "reviews", "label": "Total reviews (alias)", "example": "128"},
     {"key": "avg_rating", "label": "Average rating (alias)", "example": "4.7"},
+]
+
+# Ready-made bodies for the composer. Every variable here is resolved per
+# recipient; the unsubscribe link lives in the shared footer.
+CAMPAIGN_PRESETS = [
+    {
+        "id": "weekly-update",
+        "name": "Weekly update",
+        "description": "Weekend review summary with dashboard and blog links.",
+        "subject": "Your weekly review update from Sayvors",
+        "body_html": (
+            "<h2>Hi {name},</h2>"
+            "<p>This weekend your workspace collected "
+            "<strong>{reviews} reviews</strong> with an average rating of "
+            "<strong>{avg_rating}</strong>.</p>"
+            "<p><a href=\"{dashboard_url}\">Open your dashboard</a> to see them "
+            "and reply where needed.</p>"
+            "<p>Read more on our <a href=\"https://sayvors.com/blog\">blog</a>.</p>"
+        ),
+    },
+    {
+        "id": "monthly-newsletter",
+        "name": "Monthly newsletter",
+        "description": "Month-in-review with the tenant’s rating and plan.",
+        "subject": "Your monthly Sayvors update",
+        "body_html": (
+            "<h2>Hi {name},</h2>"
+            "<p>Here is your monthly snapshot: <strong>{reviews} reviews</strong> "
+            "and an average rating of <strong>{avg_rating}</strong>.</p>"
+            "<p>You are on the <strong>{tenant_plan}</strong> plan. "
+            "<a href=\"{dashboard_url}\">Open your dashboard</a> to review "
+            "performance and plan next month.</p>"
+            "<h3>From the blog</h3>"
+            "<ul><li><a href=\"https://sayvors.com/blog\">What changed this month</a></li>"
+            "<li><a href=\"https://sayvors.com/blog\">A practical review checklist</a></li></ul>"
+        ),
+    },
+    {
+        "id": "product-announcement",
+        "name": "Product announcement",
+        "description": "Short feature announcement with a dashboard CTA.",
+        "subject": "New in Sayvors",
+        "body_html": (
+            "<h2>Hi {name},</h2>"
+            "<p>We shipped something new for your workspace.</p>"
+            "<ul><li>Faster review insights</li><li>Cleaner inbox controls</li>"
+            "<li>More reliable WhatsApp replies</li></ul>"
+            "<p><a href=\"{dashboard_url}\">See it in your dashboard</a>.</p>"
+        ),
+    },
+    {
+        "id": "trial-reminder",
+        "name": "Trial reminder",
+        "description": "Trial days left with a dashboard/upgrade CTA.",
+        "subject": "You have {tenant_free_trial_days_left} days left on your trial",
+        "body_html": (
+            "<h2>Hi {name},</h2>"
+            "<p>Your free trial has <strong>{tenant_free_trial_days_left} days</strong> "
+            "left.</p>"
+            "<p>You have collected <strong>{reviews} reviews</strong> with an average "
+            "rating of <strong>{avg_rating}</strong> so far.</p>"
+            "<p><a href=\"{dashboard_url}\">Open your dashboard</a> to keep everything "
+            "running.</p>"
+        ),
+    },
 ]
 
 
@@ -319,6 +381,7 @@ async def expand_one(db: AsyncSession, campaign: EmailCampaign) -> int:
             support_email=SUPPORT_EMAIL,
             help_url=f"{frontend_url}/dashboard",
             privacy_url=f"{frontend_url}/privacy",
+            unsubscribe_url=unsubscribe_url(email),
         )
         await enqueue_email(
             db,
@@ -537,6 +600,7 @@ async def preview_campaign(
         support_email=SUPPORT_EMAIL,
         help_url=f"{frontend_url}/dashboard",
         privacy_url=f"{frontend_url}/privacy",
+        unsubscribe_url=unsubscribe_url(user.email or ""),
     )
     return {
         "tenant": {"name": user.first_name, "email": user.email},

@@ -840,6 +840,16 @@ async def admin_email_campaign_variables(
     return {"items": CAMPAIGN_VARIABLES}
 
 
+@router.get("/email/campaigns/templates")
+async def admin_email_campaign_templates(
+    _admin: dict = Depends(require_admin),
+):
+    """Ready-made campaign bodies for the composer."""
+    from ..email.campaigns import CAMPAIGN_PRESETS
+
+    return {"items": CAMPAIGN_PRESETS}
+
+
 @router.post("/email/campaigns/preview")
 async def admin_email_campaign_preview(
     body: CampaignPreviewIn,

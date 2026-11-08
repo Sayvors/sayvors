@@ -131,13 +131,25 @@ admin writes the campaign:
 | `{tenant_plan}` | Current plan slug |
 | `{tenant_free_trial_days_left}` | Days left under `FREE_TRIAL_DAYS` |
 | `{dashboard_url}` | Frontend dashboard link |
-| `{unsubscribe_url}` | One-click unsubscribe link |
+
+The visible **Unsubscribe** link is injected once into the shared email footer
+by `newsletter_email`; it is not a body variable, so an admin cannot forget it
+or accidentally send two. (`{unsubscribe_url}` is still resolved for any legacy
+body that already contains it.)
 
 The internal `tenant_id` is a join key only: it is not in the palette, is not
 rendered, and if written manually it is left as an unknown token. Values are
 resolved in a batch (one aggregate query for reviews), so a 500-recipient pass
 does not issue 500 count/avg queries. The composer's **Preview** button renders
 the subject/body against a real eligible tenant before anything is queued.
+
+### Body templates
+
+`GET /api/v1/admin/email/campaigns/templates` returns ready-made bodies:
+**Weekly update**, **Monthly newsletter**, **Product announcement** and
+**Trial reminder**. Selecting one fills the campaign name, subject and body in
+the editor; all variables are already placed. The unsubscribe link stays in
+the footer and is never part of a preset.
 
 Progress in the admin UI comes from the real outbox statuses, not a second
 counter. The recipient table also shows the latest provider event

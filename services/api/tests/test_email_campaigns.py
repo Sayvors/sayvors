@@ -146,6 +146,9 @@ async def test_preview_renders_against_a_real_tenant(db):
     assert preview["subject"].startswith("Hi User")
     assert "0 reviews" in preview["body_html"]
     assert preview["html"].startswith("<!DOCTYPE html>")
+    # The visible opt-out lives in the shared footer exactly once.
+    assert preview["html"].count("Unsubscribe") == 1
+    assert "unsubscribe?email=" in preview["html"]
 
 
 async def test_campaign_walks_the_snapshot_in_batches(db):
@@ -300,6 +303,23 @@ async def test_admin_campaign_endpoints(client, db):
         audience = client.get("/api/v1/admin/email/campaigns/audience")
         assert audience.status_code == 200
         assert audience.json()["eligible"] == 3
+
+        variables = client.get("/api/v1/admin/email/campaigns/variables")
+        assert variables.status_code == 200
+        keys = {item["key"] for item in variables.json()["items"]}
+        assert "tenant_total_reviews" in keys
+        assert "unsubscribe_url" not in keys
+
+        templates = client.get("/api/v1/admin/email/campaigns/templates")
+        assert templates.status_code == 200
+        presets = templates.json()["items"]
+        assert {preset["id"] for preset in presets} >= {
+            "weekly-update",
+            "monthly-newsletter",
+            "product-announcement",
+            "trial-reminder",
+        }
+        assert any("{reviews}" in preset["body_html"] for preset in presets)
 
         created = client.post(
             "/api/v1/admin/email/campaigns",

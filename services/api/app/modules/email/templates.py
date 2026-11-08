@@ -61,10 +61,21 @@ def shell(
     hero_label_ar: str = "",
     hero_label_en: str = "",
     year: int | None = None,
+    unsubscribe_url: str | None = None,
 ) -> str:
-    """The shared bilingual frame used by every transactional email."""
+    """The shared bilingual frame used by every transactional email.
+
+    `unsubscribe_url` is only passed by marketing campaigns; transactional
+    mail (OTP, reset, billing) does not get an opt-out link.
+    """
     year = year or datetime.now(timezone.utc).year
     logo = icon_url(frontend_url)
+    unsubscribe_link = (
+        f' &nbsp;&middot;&nbsp; <a href="{unsubscribe_url}" '
+        f'style="color:{HERO_FROM};font-weight:600;">Unsubscribe</a>'
+        if unsubscribe_url
+        else ""
+    )
     hero_label = (
         f'<p dir="rtl" style="font-family:{ARABIC};margin:0 0 8px;font-size:13px;'
         f'line-height:20px;font-weight:700;color:#FFD9D3;text-align:center;">{hero_label_ar}</p>'
@@ -152,7 +163,7 @@ def shell(
           <p dir="ltr" style="font-family:{SANS};margin:0 0 8px;font-size:12px;line-height:18px;color:{MUTED};">
             <a href="https://sayvors.com" style="color:{HERO_FROM};font-weight:600;">sayvors.com</a>
             &nbsp;&middot;&nbsp; <a href="{help_url}" style="color:{HERO_FROM};font-weight:600;">Help center</a>
-            &nbsp;&middot;&nbsp; <a href="{privacy_url}" style="color:{HERO_FROM};font-weight:600;">Privacy</a>
+            &nbsp;&middot;&nbsp; <a href="{privacy_url}" style="color:{HERO_FROM};font-weight:600;">Privacy</a>{unsubscribe_link}
           </p>
           <p dir="ltr" style="font-family:{SANS};margin:0 0 4px;font-size:12px;line-height:18px;color:{MUTED};">
             Need help? <a href="mailto:{support_email}" style="color:{HERO_FROM};font-weight:700;">{support_email}</a>
@@ -341,6 +352,7 @@ def newsletter_email(
     support_email: str,
     help_url: str,
     privacy_url: str,
+    unsubscribe_url: str,
 ) -> str:
     """Wrap the admin-composed newsletter body in the shared email shell."""
     return shell(
@@ -352,6 +364,7 @@ def newsletter_email(
         support_email=support_email,
         help_url=help_url,
         privacy_url=privacy_url,
+        unsubscribe_url=unsubscribe_url,
     )
 
 

@@ -220,6 +220,22 @@ export interface CampaignVariable {
   example: string;
 }
 
+export interface CampaignTemplate {
+  id: string;
+  name: string;
+  description: string;
+  subject: string;
+  body_html: string;
+}
+
+export async function fetchCampaignTemplates(): Promise<{
+  items: CampaignTemplate[];
+}> {
+  return adminFetch<{ items: CampaignTemplate[] }>(
+    "/api/v1/admin/email/campaigns/templates",
+  );
+}
+
 export interface CampaignPreview {
   tenant: { name: string | null; email: string | null };
   subject: string;

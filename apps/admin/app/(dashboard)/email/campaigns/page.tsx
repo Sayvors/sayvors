@@ -14,6 +14,7 @@ import {
   createEmailCampaign,
   fetchCampaignAudience,
   fetchCampaignRecipients,
+  fetchCampaignTemplates,
   fetchCampaignVariables,
   fetchEmailCampaigns,
   previewEmailCampaign,
@@ -22,6 +23,7 @@ import {
   type CampaignAudienceItem,
   type CampaignPreview,
   type CampaignRecipient,
+  type CampaignTemplate,
   type CampaignVariable,
   type EmailCampaign,
 } from "@/lib/admin-api";
@@ -47,8 +49,7 @@ const EDITOR_TOOLS: {
 const DEFAULT_BODY_HTML = `<h2>Hi {name},</h2>
 <p>This weekend your workspace collected <strong>{reviews} reviews</strong> with an average rating of <strong>{avg_rating}</strong>.</p>
 <p><a href="{dashboard_url}">Open your dashboard</a> to see them.</p>
-<p>Read more on our <a href="https://sayvors.com/blog">blog</a>.</p>
-<p><a href="{unsubscribe_url}">Unsubscribe</a></p>`;
+<p>Read more on our <a href="https://sayvors.com/blog">blog</a>.</p>`;
 
 function statusStyle(status: EmailCampaign["status"]): {
   pill: string;
@@ -360,6 +361,8 @@ export default function EmailCampaignsPage() {
   const [subject, setSubject] = useState("");
   const [html, setHtml] = useState(DEFAULT_BODY_HTML);
   const [variables, setVariables] = useState<CampaignVariable[]>([]);
+  const [templates, setTemplates] = useState<CampaignTemplate[]>([]);
+  const [templateId, setTemplateId] = useState("");
   const [preview, setPreview] = useState<CampaignPreview | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
   const editorRef = useRef<HTMLDivElement | null>(null);
@@ -394,6 +397,11 @@ export default function EmailCampaignsPage() {
       .then((data) => setVariables(data.items))
       .catch(() => {
         /* palette is helpful, not required to compose */
+      });
+    fetchCampaignTemplates()
+      .then((data) => setTemplates(data.items))
+      .catch(() => {
+        /* templates are a shortcut; composing still works */
       });
   }, []);
 
@@ -467,6 +475,17 @@ export default function EmailCampaignsPage() {
   const addLink = () => {
     const url = window.prompt("Link URL", "https://");
     if (url?.trim()) exec("createLink", url.trim());
+  };
+
+  const applyTemplate = (id: string) => {
+    setTemplateId(id);
+    const template = templates.find((item) => item.id === id);
+    if (!template) return;
+    setName(template.name);
+    setSubject(template.subject);
+    setHtml(template.body_html);
+    if (editorRef.current) editorRef.current.innerHTML = template.body_html;
+    setPreview(null);
   };
 
   const insertVariable = (key: string) => {
@@ -587,7 +606,27 @@ export default function EmailCampaignsPage() {
           per recipient. New links carry one-click unsubscribe headers.
         </p>
 
-        <label className="mt-4 block">
+        {templates.length > 0 && (
+          <label className="mt-4 block">
+            <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-ink/40">
+              Start from a template
+            </span>
+            <select
+              value={templateId}
+              onChange={(e) => applyTemplate(e.target.value)}
+              className="mt-1 h-9 w-full rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 text-[12px] text-ink"
+            >
+              <option value="">Blank / current draft</option>
+              {templates.map((template) => (
+                <option key={template.id} value={template.id}>
+                  {template.name} — {template.description}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        <label className="mt-3 block">
           <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-ink/40">
             Campaign name
           </span>
