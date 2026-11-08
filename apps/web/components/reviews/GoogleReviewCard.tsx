@@ -2,6 +2,17 @@
 
 import Image from "next/image";
 import { useState } from "react";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import type { Dict } from "@/lib/i18n/en";
+
+type CardDict = Dict["reviews"]["card"];
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 export interface GoogleReview {
   id: string;
@@ -29,27 +40,37 @@ function initials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-function relativeDate(iso: string): string {
+function relativeDate(
+  iso: string,
+  c: CardDict,
+  dateLocale: string,
+  fmt: (n: number) => string,
+): string {
   if (!iso) return "";
   const d = new Date(iso.length === 10 ? `${iso}T00:00:00` : iso);
   if (Number.isNaN(d.getTime())) return iso;
   const days = Math.floor((Date.now() - d.getTime()) / 86_400_000);
-  if (days <= 0) return "today";
-  if (days === 1) return "yesterday";
-  if (days < 7) return `${days} days ago`;
-  if (days < 30) return `${Math.floor(days / 7)} wk ago`;
-  return d.toLocaleDateString("en", {
+  if (days <= 0) return c.today;
+  if (days === 1) return c.yesterday;
+  if (days < 7) return fill(c.daysAgo, { n: fmt(days) });
+  if (days < 30) {
+    const w = Math.floor(days / 7);
+    if (w <= 1) return c.weekOne;
+    if (w === 2 && dateLocale.startsWith("ar")) return c.weekTwo;
+    return fill(c.weekN, { n: fmt(w) });
+  }
+  return d.toLocaleDateString(dateLocale, {
     month: "short",
     day: "numeric",
     year: d.getFullYear() !== new Date().getFullYear() ? "numeric" : undefined,
   });
 }
 
-function exactDate(iso: string): string {
+function exactDate(iso: string, dateLocale: string): string {
   if (!iso) return "";
   const d = new Date(iso.length === 10 ? `${iso}T00:00:00` : iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString("en", { month: "short", day: "numeric", year: "numeric" });
+  return d.toLocaleDateString(dateLocale, { month: "short", day: "numeric", year: "numeric" });
 }
 
 export function GoogleWordmark({ className = "text-[11px]" }: { className?: string }) {
@@ -66,8 +87,10 @@ export function GoogleWordmark({ className = "text-[11px]" }: { className?: stri
 }
 
 export function GoogleStars({ rating, size = "h-3.5 w-3.5" }: { rating: number; size?: string }) {
+  const { t, locale } = useI18n();
+  const num = new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(rating);
   return (
-    <span className="flex items-center gap-0.5" role="img" aria-label={`${rating} out of 5 stars`}>
+    <span className="flex items-center gap-0.5" role="img" aria-label={fill(t.reviews.card.starsAria, { n: num })}>
       {[1, 2, 3, 4, 5].map((s) => (
         <svg
           key={s}
@@ -143,6 +166,12 @@ export default function GoogleReviewCard({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const { t, locale } = useI18n();
+  const c = t.reviews.card;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
+  const rel = (iso: string) => relativeDate(iso, c, dateLocale, fmt);
+  const exact = (iso: string) => exactDate(iso, dateLocale);
   const open = () => onOpen(review.id);
   const isLong = review.comment.length > 180;
   const displayText = expanded || !isLong ? review.comment : `${review.comment.slice(0, 180).trimEnd()}...`;
@@ -159,7 +188,7 @@ export default function GoogleReviewCard({
       }}
       tabIndex={0}
       role="button"
-      aria-label={`Review by ${review.reviewer}, ${review.rating} stars. Open details.`}
+      aria-label={fill(c.ariaOpen, { reviewer: review.reviewer, stars: fmt(review.rating) })}
       style={{ fontFamily: "Roboto, Arial, sans-serif" }}
       className="group w-full cursor-pointer rounded-lg border border-[#DADCE0] bg-white text-left outline-none transition hover:border-[#BDC1C6] focus-visible:ring-2 focus-visible:ring-[#1A73E8]/30 focus-visible:ring-offset-1"
     >
@@ -177,17 +206,17 @@ export default function GoogleReviewCard({
                   target="_blank"
                   rel="noreferrer"
                   onClick={(e) => e.stopPropagation()}
-                  aria-label="Open this review on Google"
+                  aria-label={c.openGoogle}
                   className="inline-flex shrink-0 items-center justify-center rounded p-0.5 text-[#1A73E8] hover:bg-[#E8F0FE] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#1A73E8]"
                 >
                   <ExternalLinkIcon className="h-3.5 w-3.5" />
                 </a>
               )}
             </div>
-            <p className="mt-0.5 text-[12px] leading-4 text-[#5F6368]">Google review</p>
+            <p className="mt-0.5 text-[12px] leading-4 text-[#5F6368]">{c.googleReview}</p>
           </div>
-          <span className="shrink-0 text-[11px] leading-4 text-[#5F6368]" title={exactDate(review.createdAt)}>
-            {exactDate(review.createdAt)}
+          <span className="shrink-0 text-[11px] leading-4 text-[#5F6368]" title={exact(review.createdAt)}>
+            {exact(review.createdAt)}
           </span>
         </div>
       </header>
@@ -205,13 +234,13 @@ export default function GoogleReviewCard({
               <h3 className="truncate text-[14px] font-medium leading-5 text-[#202124]">{review.reviewer}</h3>
               <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[12px] leading-4 text-[#5F6368]">
                 <GoogleStars rating={review.rating} />
-                <span title={exactDate(review.createdAt)}>{relativeDate(review.createdAt)}</span>
+                <span title={exact(review.createdAt)}>{rel(review.createdAt)}</span>
                 {review.edited && (
                   <span className="inline-flex items-center gap-1 rounded-full border border-[#FDE293] bg-[#FEF7E0] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#B45309]">
                     <svg viewBox="0 0 24 24" fill="none" aria-hidden className="h-2.5 w-2.5">
                       <path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke="currentColor" strokeWidth={2} strokeLinejoin="round" />
                     </svg>
-                    Edited
+                    {c.edited}
                   </span>
                 )}
               </div>
@@ -226,7 +255,7 @@ export default function GoogleReviewCard({
                     setMenuOpen((v) => !v);
                   }}
                   className="rounded-full p-1 text-[#5F6368] hover:bg-[#F1F3F4] focus-visible:ring-2 focus-visible:ring-[#1A73E8]/30"
-                  aria-label="Review actions"
+                  aria-label={c.flagAria}
                   tabIndex={0}
                 >
                   <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
@@ -248,7 +277,7 @@ export default function GoogleReviewCard({
                         }}
                         className="block w-full px-4 py-2 text-left text-[12px] font-medium text-[#5F6368] hover:bg-[#F1F3F4]"
                       >
-                        Mark as unavailable on Google
+                        {c.flagItem}
                       </button>
                     </div>
                   </>
@@ -261,7 +290,7 @@ export default function GoogleReviewCard({
             dir="auto"
             className="mt-1.5 whitespace-pre-wrap break-words text-[13px] leading-[20px] text-[#202124]"
           >
-            {displayText || <span className="italic text-[#5F6368]">No written comment - star rating only.</span>}
+            {displayText || <span className="italic text-[#5F6368]">{c.noComment}</span>}
           </p>
           {isLong && (
             <button
@@ -272,7 +301,7 @@ export default function GoogleReviewCard({
               }}
               className="mt-1 text-[12px] font-medium leading-4 text-[#1A73E8] hover:text-[#174EA6] hover:underline underline-offset-2"
             >
-              {expanded ? "Less" : "More"}
+              {expanded ? c.less : c.more}
             </button>
           )}
 
@@ -283,17 +312,17 @@ export default function GoogleReviewCard({
                   <svg viewBox="0 0 24 24" fill="none" aria-hidden className="h-3 w-3">
                     <path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke="currentColor" strokeWidth={1.8} strokeLinejoin="round" />
                   </svg>
-                  Before the edit
+                  {c.beforeEdit}
                 </span>
                 {review.previousRating != null && (
                   <span className="ml-auto inline-flex items-center gap-1.5">
                     <GoogleStars rating={review.previousRating} size="h-3 w-3" />
-                    <span className="text-[11px] font-medium text-[#B45309]">{review.previousRating.toFixed(1)}</span>
+                    <span className="text-[11px] font-medium text-[#B45309]">{fmt(review.previousRating)}</span>
                   </span>
                 )}
               </div>
               <p className="mt-1 line-clamp-3 text-[12.5px] italic leading-[18px] text-[#8A6A3B] line-through decoration-[#D9B98C]/70 decoration-1">
-                {review.previousText ? review.previousText : <span className="not-italic">No written comment - star rating only.</span>}
+                {review.previousText ? review.previousText : <span className="not-italic">{c.noComment}</span>}
               </p>
             </div>
           )}
@@ -308,11 +337,11 @@ export default function GoogleReviewCard({
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-1.5 text-[12px] leading-4 text-[#5F6368]">
-              <span className="font-medium text-[#202124]">(owner)</span>
+              <span className="font-medium text-[#202124]">{c.owner}</span>
               {review.replyAt && (
                 <>
                   <span aria-hidden className="text-[#DADCE0]">·</span>
-                  <span title={exactDate(review.replyAt)}>{relativeDate(review.replyAt)}</span>
+                  <span title={exact(review.replyAt)}>{rel(review.replyAt)}</span>
                 </>
               )}
             </div>
@@ -330,7 +359,7 @@ export default function GoogleReviewCard({
               }}
               className="mt-2 rounded-md border border-[#DADCE0] px-3 py-1.5 text-[12px] font-medium text-[#1A73E8] transition hover:bg-[#F8F9FA] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#1A73E8]"
             >
-              Edit
+              {c.editBtn}
             </button>
           </div>
         </div>
@@ -340,23 +369,23 @@ export default function GoogleReviewCard({
         {review.replied ? (
           <span className="inline-flex items-center gap-1.5 text-[12px] font-medium leading-4 text-[#137333]">
             <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-[#34A853]" />
-            Replied
+            {c.replied}
           </span>
         ) : review.skipped ? (
           <span className="inline-flex items-center gap-1.5 text-[12px] font-medium leading-4 text-[#5F6368]">
             <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-[#AAAAAA]" />
-            Unavailable on Google
+            {c.unavailable}
           </span>
         ) : (
           <span className="inline-flex items-center gap-1.5 text-[12px] font-medium leading-4 text-[#5F6368]">
             <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-[#FABB05]" />
-            Needs reply
+            {c.needsReply}
           </span>
         )}
 
         <span aria-hidden className="text-[#DADCE0]">·</span>
-        <span className="text-[12px] leading-4 text-[#5F6368]" title={exactDate(review.createdAt)}>
-          Updated {relativeDate(review.createdAt)}
+        <span className="text-[12px] leading-4 text-[#5F6368]" title={exact(review.createdAt)}>
+          {fill(c.updated, { when: rel(review.createdAt) })}
         </span>
 
         <span className="flex-1" />
@@ -369,7 +398,7 @@ export default function GoogleReviewCard({
             onClick={(e) => e.stopPropagation()}
             className="text-[12px] font-medium leading-4 text-[#1A73E8] hover:text-[#174EA6] hover:underline underline-offset-2"
           >
-            View on Google
+            {c.viewOnGoogle}
           </a>
         )}
 
