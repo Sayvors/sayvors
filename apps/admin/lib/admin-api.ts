@@ -157,6 +157,19 @@ export async function fetchAdminHealth(): Promise<AdminHealth> {
   return adminFetch<AdminHealth>("/api/v1/admin/health");
 }
 
+export interface EmailStats {
+  days: number;
+  outbox: Record<string, number>;
+  events: Record<string, number>;
+  suppressed: number;
+}
+
+export async function fetchEmailStats(days: number): Promise<EmailStats> {
+  return adminFetch<EmailStats>(
+    `/api/v1/admin/email/stats?days=${encodeURIComponent(String(days))}`,
+  );
+}
+
 export interface AdminOverview {
   users_total: number;
   users_verified: number;
