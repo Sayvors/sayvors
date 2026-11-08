@@ -204,17 +204,62 @@ export interface EmailCampaign {
   cancelled_at: string | null;
 }
 
+export interface CampaignAudienceItem {
+  id: string;
+  email: string | null;
+  first_name: string | null;
+  suppressed: boolean;
+}
+
 export interface CampaignAudience {
   eligible: number;
   max_recipients: number;
+  items: CampaignAudienceItem[];
+}
+
+export interface CampaignRecipient {
+  id: string;
+  email: string;
+  status: "queued" | "sending" | "sent" | "failed" | "dead" | "suppressed";
+  attempts: number;
+  error: string | null;
+  created_at: string | null;
+  sent_at: string | null;
+}
+
+export interface CampaignRecipients {
+  items: CampaignRecipient[];
+  total: number;
+  counts: Record<string, number>;
 }
 
 export async function fetchEmailCampaigns(): Promise<{ items: EmailCampaign[] }> {
   return adminFetch<{ items: EmailCampaign[] }>("/api/v1/admin/email/campaigns");
 }
 
-export async function fetchCampaignAudience(): Promise<CampaignAudience> {
-  return adminFetch<CampaignAudience>("/api/v1/admin/email/campaigns/audience");
+export async function fetchCampaignAudience(
+  limit = 50,
+  offset = 0,
+): Promise<CampaignAudience> {
+  return adminFetch<CampaignAudience>(
+    `/api/v1/admin/email/campaigns/audience?limit=${limit}&offset=${offset}`,
+  );
+}
+
+export async function fetchCampaignRecipients(
+  id: string,
+  status?: string,
+  limit = 50,
+  offset = 0,
+): Promise<CampaignRecipients> {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  });
+  if (status) params.set("status", status);
+  return adminFetch<CampaignRecipients>(
+    `/api/v1/admin/email/campaigns/${encodeURIComponent(id)}/recipients?${params}`,
+  );
 }
 
 export async function createEmailCampaign(input: {

@@ -137,6 +137,55 @@ async def test_suppressed_recipient_is_skipped_but_cursor_advances(db):
     assert campaign.expanded_recipients == 3
 
 
+async def test_audience_preview_lists_addresses_and_suppression(db):
+    await _seed_users(db)
+    db.add(
+        EmailSuppression(
+            email="campaign1@example.com",
+            reason="complaint",
+            detail="test",
+        )
+    )
+    await db.commit()
+
+    items = await campaigns.list_audience(db)
+
+    assert [item["email"] for item in items] == [
+        "campaign0@example.com",
+        "campaign1@example.com",
+        "campaign2@example.com",
+    ]
+    assert [item["suppressed"] for item in items] == [False, True, False]
+    # Unsubscribed and unverified users are not in the audience at all.
+    assert all("unsubscribed" not in (item["email"] or "") for item in items)
+    assert all("unverified" not in (item["email"] or "") for item in items)
+
+
+async def test_recipient_list_shows_address_status_and_error(db):
+    await _seed_users(db)
+    campaign = await _draft(db, batch_size=50)
+    await campaigns.start_campaign(db, campaign)
+    await campaigns.expand_one(db, campaign)
+
+    failed = (
+        await db.execute(
+            select(EmailOutbox).where(EmailOutbox.campaign_id == campaign.id)
+        )
+    ).scalars().first()
+    failed.status = "failed"
+    failed.error = "mailbox full"
+    await db.commit()
+
+    page = await campaigns.list_campaign_recipients(
+        db, campaign.id, status="failed"
+    )
+
+    assert page["total"] == 1
+    assert page["items"][0]["email"] == failed.to_email
+    assert page["items"][0]["status"] == "failed"
+    assert page["items"][0]["error"] == "mailbox full"
+
+
 async def test_cancel_stops_future_expansion(db, monkeypatch):
     await _seed_users(db)
     campaign = await _draft(db, batch_size=2)

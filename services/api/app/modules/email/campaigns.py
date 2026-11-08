@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...config import settings
 from ..users.models import User
 from . import templates
-from .models import EmailCampaign, EmailOutbox
+from .models import EmailCampaign, EmailOutbox, EmailSuppression
 from .outbox import enqueue_email, marketing_headers, normalize_email
 from .schemas import CampaignCreateIn
 from .service import SUPPORT_EMAIL
@@ -56,6 +56,39 @@ async def count_audience(db: AsyncSession, *, max_user_id: str | None = None) ->
         select(func.count()).select_from(User).where(*conditions)
     )
     return int(result.scalar() or 0)
+
+
+async def list_audience(
+    db: AsyncSession, *, limit: int = 50, offset: int = 0
+) -> list[dict]:
+    """Preview exactly who the campaign would target, with addresses.
+
+    Admins need to verify the audience before a send, not just see a count.
+    `suppressed` marks an address that consent allows but delivery will skip.
+    """
+    suppressed = (
+        select(EmailSuppression.email)
+        .where(EmailSuppression.email == User.email)
+        .exists()
+    )
+    rows = (
+        await db.execute(
+            select(User, suppressed.label("suppressed"))
+            .where(*_audience_conditions())
+            .order_by(User.id)
+            .limit(limit)
+            .offset(offset)
+        )
+    ).all()
+    return [
+        {
+            "id": user.id,
+            "email": user.email,
+            "first_name": user.first_name,
+            "suppressed": bool(is_suppressed),
+        }
+        for user, is_suppressed in rows
+    ]
 
 
 async def create_campaign(
@@ -250,6 +283,66 @@ async def run_campaign_worker() -> None:
         except Exception:
             logger.exception("Email campaign loop failed")
             await asyncio.sleep(settings.EMAIL_CAMPAIGN_POLL_SECONDS)
+
+
+async def list_campaign_recipients(
+    db: AsyncSession,
+    campaign_id: str,
+    *,
+    status: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    """Per-recipient delivery rows for one campaign, newest first.
+
+    The admin needs the address and the delivery error, not just aggregate
+    counts, so this is the outbox row itself rather than a second projection.
+    """
+    conditions = [EmailOutbox.campaign_id == campaign_id]
+    if status:
+        conditions.append(EmailOutbox.status == status)
+    total = int(
+        (
+            await db.execute(
+                select(func.count()).select_from(EmailOutbox).where(*conditions)
+            )
+        ).scalar()
+        or 0
+    )
+    rows = (
+        await db.execute(
+            select(EmailOutbox)
+            .where(*conditions)
+            .order_by(EmailOutbox.created_at.desc(), EmailOutbox.id)
+            .limit(limit)
+            .offset(offset)
+        )
+    ).scalars().all()
+    counts = dict(
+        (
+            await db.execute(
+                select(EmailOutbox.status, func.count())
+                .where(EmailOutbox.campaign_id == campaign_id)
+                .group_by(EmailOutbox.status)
+            )
+        ).all()
+    )
+    return {
+        "items": [
+            {
+                "id": row.id,
+                "email": row.to_email,
+                "status": row.status,
+                "attempts": row.attempts,
+                "error": row.error,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "sent_at": row.sent_at.isoformat() if row.sent_at else None,
+            }
+            for row in rows
+        ],
+        "total": total,
+        "counts": counts,
+    }
 
 
 async def campaign_out(db: AsyncSession, campaign: EmailCampaign) -> dict:

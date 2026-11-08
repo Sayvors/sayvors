@@ -799,15 +799,18 @@ async def admin_email_stats(
 
 @router.get("/email/campaigns/audience")
 async def admin_email_campaign_audience(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     _admin: dict = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Size of the newsletter audience before composing/starting a campaign."""
-    from ..email.campaigns import count_audience
+    """The newsletter audience with addresses, before a campaign starts."""
+    from ..email.campaigns import count_audience, list_audience
 
     return {
         "eligible": await count_audience(db),
         "max_recipients": settings.EMAIL_CAMPAIGN_MAX_RECIPIENTS,
+        "items": await list_audience(db, limit=limit, offset=offset),
     }
 
 
@@ -860,6 +863,29 @@ async def admin_email_campaign_detail(
     if campaign is None:
         raise HTTPException(status_code=404, detail="Campaign not found.")
     return await campaign_out(db, campaign)
+
+
+@router.get("/email/campaigns/{campaign_id}/recipients")
+async def admin_email_campaign_recipients(
+    campaign_id: str,
+    status: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    _admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Per-recipient outbox rows, including the address and delivery error."""
+    from ..email.campaigns import list_campaign_recipients
+    from ..email.models import EmailCampaign
+
+    allowed = {"queued", "sending", "sent", "failed", "dead", "suppressed"}
+    if status and status not in allowed:
+        raise HTTPException(status_code=400, detail="Unknown recipient status.")
+    if await db.get(EmailCampaign, campaign_id) is None:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    return await list_campaign_recipients(
+        db, campaign_id, status=status, limit=limit, offset=offset
+    )
 
 
 @router.post("/email/campaigns/{campaign_id}/start")

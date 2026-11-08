@@ -1,14 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type SyntheticEvent,
+} from "react";
 
 import {
   cancelEmailCampaign,
   createEmailCampaign,
   fetchCampaignAudience,
+  fetchCampaignRecipients,
   fetchEmailCampaigns,
   startEmailCampaign,
   type CampaignAudience,
+  type CampaignAudienceItem,
+  type CampaignRecipient,
   type EmailCampaign,
 } from "@/lib/admin-api";
 
@@ -28,7 +37,10 @@ function statusStyle(status: EmailCampaign["status"]): {
         label: "Completed",
       };
     case "cancelled":
-      return { pill: "bg-ink/5 text-ink/55 ring-1 ring-[var(--ui-line)]", label: "Cancelled" };
+      return {
+        pill: "bg-amber-50 text-amber-700 ring-1 ring-amber-200",
+        label: "Cancelled",
+      };
     default:
       return { pill: "bg-amber-50 text-amber-700 ring-1 ring-amber-200", label: "Draft" };
   }
@@ -38,6 +50,238 @@ function fmtDate(value: string | null): string {
   if (!value) return "—";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+}
+
+function AudienceTable({ audience }: { audience: CampaignAudience | null }) {
+  const [items, setItems] = useState<CampaignAudienceItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const loadedPages = useRef(0);
+
+  useEffect(() => {
+    if (audience && loadedPages.current === 0) {
+      setItems(audience.items);
+    }
+  }, [audience]);
+
+  const loadMore = async () => {
+    if (!audience) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const next = await fetchCampaignAudience(50, items.length);
+      setItems((prev) => [...prev, ...next.items]);
+      loadedPages.current += 1;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not load the audience.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const total = audience?.eligible ?? 0;
+
+  return (
+    <details className="panel p-4">
+      <summary className="cursor-pointer select-none text-[14px] font-bold text-ink">
+        Who is eligible ({total.toLocaleString()})
+        <span className="ml-2 text-[10.5px] font-normal text-ink/40">
+          verified emails with newsletter consent
+        </span>
+      </summary>
+      <p className="mt-2 text-[11px] text-ink/45">
+        These are the addresses the next campaign snapshots and receives. Suppressed
+        addresses are counted but skipped at enqueue time.
+      </p>
+      {error && (
+        <p className="mt-2 rounded-[2px] bg-red-50 px-2 py-1 text-[11px] text-red-700">{error}</p>
+      )}
+      {items.length === 0 ? (
+        <p className="mt-3 text-[12px] text-ink/45">No eligible recipients yet.</p>
+      ) : (
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full text-left text-[11.5px]">
+            <thead>
+              <tr className="border-b border-[var(--ui-line)] text-[10px] uppercase tracking-[0.08em] text-ink/40">
+                <th className="py-1.5 pr-3 font-bold">Email</th>
+                <th className="py-1.5 pr-3 font-bold">Name</th>
+                <th className="py-1.5 font-bold">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <tr key={item.id} className="border-b border-[var(--ui-line)]/60 last:border-0">
+                  <td className="py-1.5 pr-3 font-mono text-[11px] text-ink">
+                    {item.email || "—"}
+                  </td>
+                  <td className="py-1.5 pr-3 text-ink/65">{item.first_name || "—"}</td>
+                  <td className="py-1.5">
+                    {item.suppressed ? (
+                      <span className="rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-700">
+                        suppressed
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">
+                        eligible
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {items.length < total && (
+        <button
+          type="button"
+          onClick={() => void loadMore()}
+          disabled={loading}
+          className={`mt-2 h-8 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2.5 text-[11px] font-semibold text-ink disabled:opacity-50 ${FOCUS}`}
+        >
+          {loading ? "Loading…" : `Load more (${items.length} / ${total.toLocaleString()})`}
+        </button>
+      )}
+    </details>
+  );
+}
+
+const RECIPIENT_FILTERS = [
+  { value: "", label: "All" },
+  { value: "queued", label: "Queued" },
+  { value: "sent", label: "Sent" },
+  { value: "failed", label: "Failed" },
+  { value: "dead", label: "Dead" },
+];
+
+function CampaignRecipientsTable({ campaign }: { campaign: EmailCampaign }) {
+  const [items, setItems] = useState<CampaignRecipient[]>([]);
+  const [total, setTotal] = useState(0);
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [status, setStatus] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = async (nextStatus: string, offset: number, replace: boolean) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await fetchCampaignRecipients(
+        campaign.id,
+        nextStatus || undefined,
+        50,
+        offset,
+      );
+      setItems((prev) => (replace ? data.items : [...prev, ...data.items]));
+      setTotal(data.total);
+      setCounts(data.counts);
+      setLoaded(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not load recipients.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const onToggle = (event: SyntheticEvent<HTMLDetailsElement>) => {
+    if (event.currentTarget.open && !loaded) {
+      void load(status, 0, true);
+    }
+  };
+
+  return (
+    <details className="mt-3 border-t border-[var(--ui-line)] pt-2" onToggle={onToggle}>
+      <summary className="cursor-pointer select-none text-[11px] font-bold text-ink/60">
+        Recipients · {campaign.sent.toLocaleString()} sent ·{" "}
+        <span className={campaign.failed + campaign.dead > 0 ? "text-red-600" : ""}>
+          {campaign.failed.toLocaleString()} failed
+        </span>
+      </summary>
+
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        {RECIPIENT_FILTERS.map((filter) => (
+          <button
+            key={filter.value || "all"}
+            type="button"
+            onClick={() => {
+              setStatus(filter.value);
+              void load(filter.value, 0, true);
+            }}
+            className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+              status === filter.value
+                ? "bg-deep-violet text-white"
+                : "border border-[var(--ui-line)] bg-[var(--ui-surface)] text-ink/55"
+            } ${FOCUS}`}
+          >
+            {filter.label}
+            {filter.value && counts[filter.value] !== undefined
+              ? ` ${counts[filter.value].toLocaleString()}`
+              : ""}
+          </button>
+        ))}
+      </div>
+
+      {error && (
+        <p className="mt-2 rounded-[2px] bg-red-50 px-2 py-1 text-[11px] text-red-700">{error}</p>
+      )}
+      {!loading && items.length === 0 && loaded ? (
+        <p className="mt-2 text-[11px] text-ink/45">No recipients in this filter.</p>
+      ) : (
+        items.length > 0 && (
+          <div className="mt-2 overflow-x-auto">
+            <table className="w-full text-left text-[11px]">
+              <thead>
+                <tr className="border-b border-[var(--ui-line)] text-[10px] uppercase tracking-[0.08em] text-ink/40">
+                  <th className="py-1.5 pr-3 font-bold">Email</th>
+                  <th className="py-1.5 pr-3 font-bold">Status</th>
+                  <th className="py-1.5 pr-3 font-bold">Tries</th>
+                  <th className="py-1.5 font-bold">Error</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((item) => (
+                  <tr key={item.id} className="border-b border-[var(--ui-line)]/60 last:border-0">
+                    <td className="py-1.5 pr-3 font-mono text-[10.5px] text-ink">
+                      {item.email}
+                    </td>
+                    <td className="py-1.5 pr-3">
+                      <span
+                        className={`rounded-full px-1.5 py-0.5 text-[9.5px] font-bold ${
+                          item.status === "sent"
+                            ? "bg-emerald-50 text-emerald-700"
+                            : item.status === "failed" || item.status === "dead"
+                              ? "bg-red-50 text-red-700"
+                              : "bg-amber-50 text-amber-700"
+                        }`}
+                      >
+                        {item.status}
+                      </span>
+                    </td>
+                    <td className="py-1.5 pr-3 tabular-nums text-ink/55">{item.attempts}</td>
+                    <td className="max-w-[22rem] truncate py-1.5 text-red-600" title={item.error || ""}>
+                      {item.error || "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
+
+      {items.length < total && (
+        <button
+          type="button"
+          onClick={() => void load(status, items.length, false)}
+          disabled={loading}
+          className={`mt-2 h-8 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2.5 text-[11px] font-semibold text-ink disabled:opacity-50 ${FOCUS}`}
+        >
+          {loading ? "Loading…" : `Load more (${items.length} / ${total.toLocaleString()})`}
+        </button>
+      )}
+    </details>
+  );
 }
 
 export default function EmailCampaignsPage() {
@@ -295,6 +539,8 @@ export default function EmailCampaignsPage() {
         </div>
       </section>
 
+      <AudienceTable audience={audience} />
+
       <section className="panel p-4">
         <div className="flex items-baseline justify-between">
           <h2 className="text-[14px] font-bold text-ink">Campaigns</h2>
@@ -356,7 +602,7 @@ export default function EmailCampaignsPage() {
                           type="button"
                           onClick={() => void cancel(campaign)}
                           disabled={busy === campaign.id}
-                          className={`h-8 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2.5 text-[11px] font-semibold text-ink disabled:opacity-50 ${FOCUS}`}
+                          className={`h-8 rounded-[2px] border border-red-200 bg-red-50 px-2.5 text-[11px] font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50 ${FOCUS}`}
                         >
                           Cancel
                         </button>
@@ -395,6 +641,8 @@ export default function EmailCampaignsPage() {
                       {campaign.error}
                     </p>
                   )}
+
+                  <CampaignRecipientsTable campaign={campaign} />
                 </article>
               );
             })}
