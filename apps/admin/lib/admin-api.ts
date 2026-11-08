@@ -185,6 +185,7 @@ export async function fetchEmailStats(days: number): Promise<EmailStats> {
 
 export interface EmailCampaign {
   id: string;
+  name: string;
   subject: string;
   status: "draft" | "running" | "completed" | "cancelled";
   created_by: string | null;
@@ -276,6 +277,7 @@ export async function fetchCampaignRecipients(
 }
 
 export async function createEmailCampaign(input: {
+  name?: string;
   subject: string;
   html: string;
   text?: string | null;

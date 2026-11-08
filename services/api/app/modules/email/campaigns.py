@@ -101,6 +101,7 @@ async def create_campaign(
 ) -> EmailCampaign:
     campaign = EmailCampaign(
         created_by=created_by,
+        name=((body.name or body.subject).strip()[:120]),
         subject=body.subject.strip(),
         html=body.html,
         text=body.text,
@@ -408,6 +409,7 @@ async def campaign_out(db: AsyncSession, campaign: EmailCampaign) -> dict:
     )
     return {
         "id": campaign.id,
+        "name": campaign.name or campaign.subject,
         "subject": campaign.subject,
         "status": campaign.status,
         "created_by": campaign.created_by,

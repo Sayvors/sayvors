@@ -331,6 +331,7 @@ function CampaignRecipientsTable({ campaign }: { campaign: EmailCampaign }) {
 export default function EmailCampaignsPage() {
   const [campaigns, setCampaigns] = useState<EmailCampaign[]>([]);
   const [audience, setAudience] = useState<CampaignAudience | null>(null);
+  const [name, setName] = useState("");
   const [subject, setSubject] = useState("");
   const [html, setHtml] = useState(
     '<p dir="ltr">Hi {name},</p>\n<p dir="ltr">Here is what is new at Sayvors.</p>',
@@ -397,13 +398,15 @@ export default function EmailCampaignsPage() {
     setNotice(null);
     try {
       const campaign = await createEmailCampaign({
+        name: name.trim() || undefined,
         subject: subject.trim(),
         html,
         text: text.trim() || null,
         batch_size: batchSize,
         interval_seconds: intervalSeconds,
       });
-      setNotice(`Draft created: ${campaign.subject}. Review it, then press Start.`);
+      setNotice(`Draft created: ${campaign.name}. Review it, then press Start.`);
+      setName("");
       setSubject("");
       await refresh();
     } catch (e) {
@@ -488,7 +491,23 @@ export default function EmailCampaignsPage() {
           per recipient. New links carry one-click unsubscribe headers.
         </p>
 
-        <div className="mt-4 grid gap-3 lg:grid-cols-2">
+        <label className="mt-4 block">
+          <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-ink/40">
+            Campaign name
+          </span>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            maxLength={120}
+            placeholder="Weekly updates"
+            className="mt-1 h-9 w-full rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 text-[12px] text-ink"
+          />
+          <span className="mt-1 block text-[10px] text-ink/35">
+            Admin label for this list. Falls back to the subject if left blank.
+          </span>
+        </label>
+
+        <div className="mt-3 grid gap-3 lg:grid-cols-2">
           <label className="block">
             <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-ink/40">
               Subject
@@ -618,16 +637,16 @@ export default function EmailCampaignsPage() {
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <h3 className="truncate text-[12.5px] font-bold text-ink">
-                          {campaign.subject}
+                          {campaign.name || campaign.subject}
                         </h3>
                         <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${status.pill}`}>
                           {status.label}
                         </span>
                       </div>
                       <p className="mt-0.5 text-[10.5px] text-ink/40">
-                        Created {fmtDate(campaign.created_at)} by{" "}
-                        {campaign.created_by || "—"} · {campaign.batch_size}/batch every{" "}
-                        {campaign.interval_seconds}s
+                        Subject: {campaign.subject} · Created{" "}
+                        {fmtDate(campaign.created_at)} by {campaign.created_by || "—"} ·{" "}
+                        {campaign.batch_size}/batch every {campaign.interval_seconds}s
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">

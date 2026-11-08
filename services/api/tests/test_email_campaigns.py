@@ -63,6 +63,7 @@ async def _seed_users(db) -> list[str]:
 
 async def _draft(db, *, batch_size: int = 2) -> EmailCampaign:
     campaign = EmailCampaign(
+        name="Weekly updates",
         subject="Hello {name}",
         html="<p>Hi {name}, news for {email}.</p>",
         text="Hi {name}, news for {email}.",
@@ -231,11 +232,17 @@ async def test_admin_campaign_endpoints(client, db):
 
         created = client.post(
             "/api/v1/admin/email/campaigns",
-            json={"subject": "Hello", "html": "<p>Hi</p>"},
+            json={
+                "name": "Weekly updates",
+                "subject": "Hello",
+                "html": "<p>Hi</p>",
+            },
         )
         assert created.status_code == 201, created.text
         campaign = created.json()
         assert campaign["status"] == "draft"
+        assert campaign["name"] == "Weekly updates"
+        assert campaign["subject"] == "Hello"
 
         started = client.post(
             f"/api/v1/admin/email/campaigns/{campaign['id']}/start"

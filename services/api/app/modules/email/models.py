@@ -125,6 +125,11 @@ class EmailCampaign(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Human label for the admin list ("Weekly updates"); the subject is what
+    # recipients see. Older rows fall back to the subject.
+    name: Mapped[str] = mapped_column(
+        String(120), default="", server_default="", nullable=False
+    )
     subject: Mapped[str] = mapped_column(String(500))
     html: Mapped[str] = mapped_column(Text)
     text: Mapped[str | None] = mapped_column(Text, nullable=True)

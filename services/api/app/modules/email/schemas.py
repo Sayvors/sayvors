@@ -3,6 +3,9 @@ from pydantic import BaseModel, Field
 
 
 class CampaignCreateIn(BaseModel):
+    # Admin-facing label. Optional so older clients keep working; falls back
+    # to the subject when absent.
+    name: str | None = Field(None, max_length=120)
     subject: str = Field(..., min_length=1, max_length=200)
     html: str = Field(..., min_length=1, max_length=200_000)
     text: str | None = Field(None, max_length=200_000)

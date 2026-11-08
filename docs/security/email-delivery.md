@@ -99,7 +99,9 @@ not unbounded. Every tenant is capped at `BULK_EMAIL_DAILY_LIMIT` (default
 ## Newsletter campaigns
 
 Admin → **Operations → Email campaigns**. A campaign is composed once
-(`email_campaigns`) and never sends directly.
+(`email_campaigns`) and never sends directly. Each campaign has an
+admin-facing `name` ("Weekly updates") separate from the customer-facing
+subject; older rows fall back to the subject.
 
 1. **Start** snapshots the audience: verified emails with `users.newsletter`
    still true, bounded by `max_user_id` so later signups do not join an
