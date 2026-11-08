@@ -8,6 +8,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 import {
   createWhatsAppTemplate,
   deleteWhatsAppTemplate,
@@ -37,10 +38,10 @@ const STATUS_STYLE: Record<string, string> = {
 const CATEGORIES = ["utility", "marketing"];
 const EDITABLE_CATEGORIES = new Set(CATEGORIES);
 
-function StatusChip({ status }: { status: string }) {
+function StatusChip({ status, label }: { status: string; label: string }) {
   return (
     <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${STATUS_STYLE[status] ?? "bg-[var(--wa-panel-2)] text-[var(--wa-text-3)]"}`}>
-      {status}
+      {label}
     </span>
   );
 }
@@ -53,8 +54,16 @@ function variableCount(body: string): number {
   return highest;
 }
 
-function when(value: string | null): string {
-  return value ? new Date(value).toLocaleString() : "never";
+function when(value: string | null, locale: string, never: string): string {
+  if (!value) return never;
+  return new Date(value).toLocaleString(locale === "ar" ? "ar-SA" : "en-US");
+}
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, val]) => out.replaceAll(`{${key}}`, String(val)),
+    s,
+  );
 }
 
 function TemplateEditor({
@@ -67,6 +76,9 @@ function TemplateEditor({
   onSaved: (message: string) => void;
 }) {
   const editing = Boolean(template);
+  const { t } = useI18n();
+  const tp = t.templates;
+  const e = tp.editor;
   const [name, setName] = useState(template?.name ?? "");
   const [language, setLanguage] = useState(template?.language ?? "en_US");
   const [category, setCategory] = useState(template?.category ?? "utility");
@@ -89,18 +101,18 @@ function TemplateEditor({
     setError(null);
     const cleanName = name.trim().toLowerCase();
     if (!editing && !/^[a-z0-9_]{1,512}$/.test(cleanName)) {
-      setError(
-        "Name must be 1–512 lowercase letters, numbers or underscores.",
-      );
+      setError(e.errName);
       return;
     }
     if (!body.trim()) {
-      setError("Write the message body.");
+      setError(e.errBody);
       return;
     }
     if (vars > 0 && examples.slice(0, vars).some((v) => !v.trim())) {
       setError(
-        `This template has ${vars} variable${vars === 1 ? "" : "s"}. Add a sample value for each one.`,
+        vars === 1
+          ? e.errVarsOne
+          : fill(e.errVars, { count: vars }),
       );
       return;
     }
@@ -112,7 +124,7 @@ function TemplateEditor({
           body,
           examples: examples.slice(0, vars),
         });
-        onSaved("Saved. Meta reviews the change before it can be sent again.");
+        onSaved(e.savedEdit);
       } else {
         await createWhatsAppTemplate({
           name: cleanName,
@@ -121,12 +133,10 @@ function TemplateEditor({
           body,
           examples: examples.slice(0, vars),
         });
-        onSaved(
-          "Template submitted to Meta. It can be sent once it is approved.",
-        );
+        onSaved(e.savedNew);
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not save the template.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : e.errSave);
     } finally {
       setBusy(false);
     }
@@ -137,12 +147,10 @@ function TemplateEditor({
       <div className="flex items-center justify-between border-b border-[var(--wa-border)] px-4 py-2.5">
         <div>
           <p className="text-[13px] font-semibold text-[var(--wa-text)]">
-            {editing ? `Edit ${template?.name}` : "New template"}
+            {editing ? fill(e.editTitle, { name: template?.name ?? "" }) : e.newTitle}
           </p>
           <p className="text-[11px] text-[var(--wa-text-3)]">
-            {editing
-              ? "Meta does not allow renaming a template or changing its language. The body can be edited."
-              : "Meta reviews every new template. Utility templates such as order updates are the usual first step."}
+            {editing ? e.editHint : e.newHint}
           </p>
         </div>
         <button
@@ -150,7 +158,7 @@ function TemplateEditor({
           onClick={onClose}
           className="rounded-full px-3 py-1 text-[11px] font-semibold text-[var(--wa-text-2)] hover:bg-[var(--wa-hover)] hover:text-[var(--wa-text)]"
         >
-          Cancel
+          {tp.cancel}
         </button>
       </div>
 
@@ -167,49 +175,49 @@ function TemplateEditor({
         <div className="grid gap-3 sm:grid-cols-3">
           <div>
             <label className={LABEL} htmlFor="tpl-name">
-              Name
+              {e.name}
             </label>
             <input
               id="tpl-name"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(ev) => setName(ev.target.value)}
               disabled={editing}
               placeholder="order_ready"
               className={`${INPUT} disabled:opacity-60`}
             />
             <p className="mt-1 text-[10.5px] text-[var(--wa-text-3)]">
-              Lowercase letters, numbers and underscores.
+              {e.nameHint}
             </p>
           </div>
           <div>
             <label className={LABEL} htmlFor="tpl-language">
-              Language
+              {e.language}
             </label>
             <input
               id="tpl-language"
               value={language}
-              onChange={(e) => setLanguage(e.target.value)}
+              onChange={(ev) => setLanguage(ev.target.value)}
               disabled={editing}
               placeholder="en_US"
               className={`${INPUT} disabled:opacity-60`}
             />
             <p className="mt-1 text-[10.5px] text-[var(--wa-text-3)]">
-              Meta code, e.g. en_US, ar or ur.
+              {e.languageHint}
             </p>
           </div>
           <div>
             <label className={LABEL} htmlFor="tpl-category">
-              Category
+              {e.category}
             </label>
             <select
               id="tpl-category"
               value={category}
-              onChange={(e) => setCategory(e.target.value)}
+              onChange={(ev) => setCategory(ev.target.value)}
               className={INPUT}
             >
               {CATEGORIES.map((value) => (
                 <option key={value} value={value}>
-                  {value}
+                  {tp.categories[value as keyof typeof tp.categories]}
                 </option>
               ))}
             </select>
@@ -218,20 +226,20 @@ function TemplateEditor({
 
         <div>
           <label className={LABEL} htmlFor="tpl-body">
-            Body
+            {e.body}
           </label>
           <textarea
             id="tpl-body"
             value={body}
-            onChange={(e) => changeBody(e.target.value)}
+            onChange={(ev) => changeBody(ev.target.value)}
             rows={4}
             maxLength={1024}
-            placeholder="Hi {{1}}, your order {{2}} is ready for pickup."
+            placeholder="مرحباً {{1}}، طلبك {{2}} جاهز للاستلام."
             className={`${INPUT} resize-y leading-5`}
           />
           <div className="mt-1 flex items-center justify-between text-[10.5px] text-[var(--wa-text-3)]">
             <span>
-              Use {"{{1}}"}, {"{{2}}"}… for customer-specific details.
+              {e.bodyHint}
             </span>
             <span>{body.length}/1024</span>
           </div>
@@ -239,7 +247,7 @@ function TemplateEditor({
 
         {vars > 0 && (
           <fieldset>
-            <legend className={LABEL}>Sample values for review</legend>
+            <legend className={LABEL}>{e.samples}</legend>
             <div className="grid gap-2 sm:grid-cols-2">
               {Array.from({ length: vars }, (_, index) => (
                 <div key={index} className="flex items-center gap-2">
@@ -248,25 +256,24 @@ function TemplateEditor({
                   </span>
                   <input
                     value={examples[index] ?? ""}
-                    onChange={(e) =>
+                    onChange={(ev) =>
                       setExamples((prev) =>
                         prev.map((value, i) =>
-                          i === index ? e.target.value : value,
+                          i === index ? ev.target.value : value,
                         ),
                       )
                     }
                     placeholder={
                       index === 0 ? "Sara" : index === 1 ? "A-1042" : "sample"
                     }
-                    aria-label={`Sample value for variable ${index + 1}`}
+                    aria-label={fill(e.sampleAria, { n: index + 1 })}
                     className={INPUT}
                   />
                 </div>
               ))}
             </div>
             <p className="mt-1 text-[10.5px] text-[var(--wa-text-3)]">
-              Meta needs a realistic example for every variable. Customers never
-              see these values.
+              {e.samplesHint}
             </p>
           </fieldset>
         )}
@@ -277,7 +284,7 @@ function TemplateEditor({
             onClick={onClose}
             className="rounded-full px-3 py-1.5 text-[12px] font-semibold text-[var(--wa-text-2)] hover:bg-[var(--wa-hover)]"
           >
-            Cancel
+            {tp.cancel}
           </button>
           <button
             type="button"
@@ -286,10 +293,10 @@ function TemplateEditor({
             className="rounded-full bg-[var(--wa-accent)] px-4 py-1.5 text-[12px] font-bold text-white disabled:opacity-50"
           >
             {busy
-              ? "Saving…"
+              ? e.saving
               : editing
-                ? "Save changes"
-                : "Submit to Meta"}
+                ? e.saveChanges
+                : e.submitMeta}
           </button>
         </div>
       </div>
@@ -298,6 +305,11 @@ function TemplateEditor({
 }
 
 export default function TemplatesPanel() {
+  const { t, locale } = useI18n();
+  const tp = t.templates;
+  const fmt = (n: number) =>
+    new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
+  const whenAt = (value: string | null) => when(value, locale, tp.never);
   const [templates, setTemplates] = useState<WhatsAppTemplate[]>([]);
   const [waba, setWaba] = useState<WabaConnection>({
     connected: false,
@@ -326,11 +338,11 @@ export default function TemplatesPanel() {
       setWabaKnown(true);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load templates.");
+      setError(e instanceof Error ? e.message : tp.errors.load);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [tp]);
 
   useEffect(() => {
     void load();
@@ -346,12 +358,14 @@ export default function TemplatesPanel() {
       setWaba(result.waba);
       setWabaKnown(true);
       setNotice(
-        `Synced ${result.created + result.updated} template${
-          result.created + result.updated === 1 ? "" : "s"
-        } from Meta.`,
+        result.created + result.updated === 1
+          ? tp.noticeSyncedOne
+          : fill(tp.noticeSynced, {
+              count: fmt(result.created + result.updated),
+            }),
       );
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not sync from Meta.");
+      setError(e instanceof Error ? e.message : tp.errors.sync);
     } finally {
       setSyncing(false);
     }
@@ -378,9 +392,9 @@ export default function TemplatesPanel() {
       });
       if (expanded === template.id) setExpanded(null);
       setConfirmDelete(null);
-      setNotice(`Deleted ${template.name} at Meta and here.`);
+      setNotice(fill(tp.noticeDeleted, { name: template.name }));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not delete the template.");
+      setError(e instanceof Error ? e.message : tp.errors.remove);
     } finally {
       setDeleting(null);
     }
@@ -399,7 +413,7 @@ export default function TemplatesPanel() {
       setAnalytics((prev) => ({ ...prev, [template.id]: result }));
     } catch (e) {
       setError(
-        e instanceof Error ? e.message : "Could not load template analytics.",
+        e instanceof Error ? e.message : tp.errors.analytics,
       );
     } finally {
       setAnalyticsBusy(null);
@@ -432,20 +446,19 @@ export default function TemplatesPanel() {
       {wabaKnown && !waba.connected && (
         <div className="rounded-lg bg-[var(--wa-warn-bg)] px-3 py-2 text-[12px] text-[var(--wa-warn-text)]">
           <p className="font-semibold">
-            No WhatsApp Business Account is connected.
+            {tp.noWabaTitle}
           </p>
           <p className="mt-0.5">
-            Connect a WhatsApp number first, then come back to create
-            templates.{" "}
+            {tp.noWabaBody}{" "}
             <a href="?tab=numbers" className="font-semibold underline">
-              Open Numbers
+              {tp.openNumbers}
             </a>
           </p>
         </div>
       )}
       {wabaKnown && waba.connected && waba.name && (
         <p className="px-1 text-[11px] text-[var(--wa-text-3)]">
-          WhatsApp Business Account:{" "}
+          {tp.wabaLabel}{" "}
           <span className="font-semibold text-[var(--wa-text-2)]">
             {waba.name}
           </span>
@@ -467,16 +480,16 @@ export default function TemplatesPanel() {
 
       <div className="grid gap-2.5 sm:grid-cols-3">
         {[
-          { label: "Approved", value: counts.approved },
-          { label: "Awaiting review", value: counts.pending },
-          { label: "Approved utility", value: counts.utility },
+          { label: tp.stats.approved, value: counts.approved },
+          { label: tp.stats.pending, value: counts.pending },
+          { label: tp.stats.utility, value: counts.utility },
         ].map((card) => (
           <div key={card.label} className={`${CARD} px-4 py-3`}>
             <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--wa-text-3)]">
               {card.label}
             </p>
             <p className="mt-0.5 text-[20px] font-semibold text-[var(--wa-text)]">
-              {card.value}
+              {fmt(card.value)}
             </p>
           </div>
         ))}
@@ -505,11 +518,11 @@ export default function TemplatesPanel() {
                   : "text-[var(--wa-text-2)] hover:text-[var(--wa-text)]"
               }`}
             >
-              {key}
+              {tp.filters[key]}
             </button>
           ))}
           <span className="ml-auto text-[11px] text-[var(--wa-text-3)]">
-            {visible.length} shown
+            {fill(tp.shown, { count: fmt(visible.length) })}
           </span>
           <button
             type="button"
@@ -521,7 +534,7 @@ export default function TemplatesPanel() {
             disabled={!waba.connected || editing !== null}
             className="rounded-full border border-[var(--wa-accent)] px-3 py-1 text-[11px] font-bold text-[var(--wa-accent-deep)] disabled:opacity-50"
           >
-            New template
+            {tp.newTemplate}
           </button>
           <button
             type="button"
@@ -529,29 +542,29 @@ export default function TemplatesPanel() {
             disabled={syncing || !waba.connected}
             className="rounded-full bg-[var(--wa-accent)] px-3 py-1 text-[11px] font-bold text-white disabled:opacity-50"
           >
-            {syncing ? "Syncing…" : "Sync from Meta"}
+            {syncing ? tp.syncing : tp.sync}
           </button>
         </div>
 
         {loading ? (
           <p className="px-4 py-8 text-center text-[12px] text-[var(--wa-text-3)]">
-            Loading…
+            {tp.loading}
           </p>
         ) : visible.length === 0 ? (
           <div className="px-4 py-8 text-center">
             <p className="text-[13px] font-medium text-[var(--wa-text-2)]">
               {templates.length === 0
-                ? "No templates yet."
-                : "Nothing matches this filter."}
+                ? tp.emptyNone
+                : tp.emptyFilter}
             </p>
             <p className={`mx-auto mt-1 max-w-md ${MUTED}`}>
               {templates.length === 0 && !wabaKnown
-                ? "Could not load the connection state. Reload the panel to try again."
+                ? tp.emptyStateUnknown
                 : templates.length === 0 && waba.connected
-                  ? "Create a utility template here — for example an order update. Meta reviews it, then it can be sent outside the 24-hour window."
+                  ? tp.emptyStateConnected
                   : templates.length === 0
-                    ? "Connect a WhatsApp number, then create your first template here."
-                    : "Try the All filter."}
+                    ? tp.emptyStateNoWaba
+                    : tp.emptyStateFiltered}
             </p>
           </div>
         ) : (
@@ -569,34 +582,38 @@ export default function TemplatesPanel() {
                       {t.name}
                     </p>
                     <span className="rounded-full bg-[var(--wa-panel-2)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--wa-text-3)]">
-                      {t.category}
+                      {tp.categories[t.category as keyof typeof tp.categories] ?? t.category}
                     </span>
                     <span className="text-[11px] font-medium text-[var(--wa-text-3)]">
                       {t.language}
                     </span>
-                    <StatusChip status={t.status} />
+                    <StatusChip status={t.status} label={tp.status[t.status as keyof typeof tp.status] ?? t.status} />
                   </div>
                   <p className="mt-1 whitespace-pre-line text-[12px] leading-5 text-[var(--wa-text-2)]">
-                    {t.body || "No body returned by Meta yet."}
+                    {t.body || tp.noBody}
                   </p>
                   <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10.5px] text-[var(--wa-text-3)]">
                     <span>
                       {t.variables > 0
-                        ? `${t.variables} variable${t.variables === 1 ? "" : "s"}`
-                        : "No variables"}
+                        ? t.variables === 1
+                          ? tp.varsOne
+                          : fill(tp.varsN, { count: fmt(t.variables) })
+                        : tp.noVars}
                     </span>
                     <span>
-                      {t.send_count} attempt{t.send_count === 1 ? "" : "s"}
+                      {t.send_count === 1
+                        ? tp.attemptsOne
+                        : fill(tp.attempts, { count: fmt(t.send_count) })}
                     </span>
                     {t.failed_count > 0 && (
                       <span className="font-semibold text-[#C4304B]">
-                        {t.failed_count} failed
+                        {fill(tp.failedN, { count: fmt(t.failed_count) })}
                       </span>
                     )}
-                    <span>last send {when(t.last_sent_at)}</span>
+                    <span>{fill(tp.lastSend, { when: whenAt(t.last_sent_at) })}</span>
                     {t.last_synced_at && (
                       <span>
-                        synced {new Date(t.last_synced_at).toLocaleString()}
+                        {fill(tp.syncedAt, { when: whenAt(t.last_synced_at) })}
                       </span>
                     )}
                   </div>
@@ -613,13 +630,13 @@ export default function TemplatesPanel() {
                       title={
                         !canEdit
                           ? t.meta_template_id === null
-                            ? "Sync from Meta before editing this template."
-                            : "Authentication templates must be edited in WhatsApp Manager."
+                            ? tp.tipSyncEdit
+                            : tp.tipAuthEdit
                           : undefined
                       }
                       className="rounded-full bg-[var(--wa-panel-2)] px-2.5 py-1 text-[10.5px] font-semibold text-[var(--wa-text-2)] hover:text-[var(--wa-text)] disabled:opacity-50"
                     >
-                      Edit
+                      {tp.edit}
                     </button>
                     <button
                       type="button"
@@ -627,13 +644,12 @@ export default function TemplatesPanel() {
                       aria-expanded={isOpen}
                       className="rounded-full bg-[var(--wa-panel-2)] px-2.5 py-1 text-[10.5px] font-semibold text-[var(--wa-text-2)] hover:text-[var(--wa-text)]"
                     >
-                      {isOpen ? "Hide analytics" : "Analytics"}
+                      {isOpen ? tp.hideAnalytics : tp.analytics}
                     </button>
                     {confirmDelete === t.id ? (
                       <span className="flex items-center gap-1.5">
                         <span className="text-[10.5px] text-[var(--wa-text-2)]">
-                          Delete at Meta and here? An approved name cannot be
-                          reused for 30 days.
+                          {tp.deleteConfirm}
                         </span>
                         <button
                           type="button"
@@ -641,14 +657,14 @@ export default function TemplatesPanel() {
                           disabled={deleting === t.id}
                           className="rounded-full bg-[#C4304B] px-2.5 py-1 text-[10.5px] font-bold text-white disabled:opacity-50"
                         >
-                          {deleting === t.id ? "Deleting…" : "Delete"}
+                          {deleting === t.id ? tp.deleting : tp.delete}
                         </button>
                         <button
                           type="button"
                           onClick={() => setConfirmDelete(null)}
                           className="rounded-full px-2 py-1 text-[10.5px] font-semibold text-[var(--wa-text-2)] hover:bg-[var(--wa-hover)]"
                         >
-                          Cancel
+                          {tp.cancel}
                         </button>
                       </span>
                     ) : (
@@ -658,12 +674,12 @@ export default function TemplatesPanel() {
                         disabled={t.meta_template_id === null}
                         title={
                           t.meta_template_id === null
-                            ? "Sync from Meta before deleting this template."
+                            ? tp.tipSyncDelete
                             : undefined
                         }
                         className="rounded-full px-2.5 py-1 text-[10.5px] font-semibold text-[var(--wa-text-3)] hover:bg-[#FF4F6E]/10 hover:text-[#C4304B] disabled:opacity-50"
                       >
-                        Delete
+                        {tp.delete}
                       </button>
                     )}
                   </div>
@@ -672,42 +688,40 @@ export default function TemplatesPanel() {
                     <div className="mt-2 rounded-lg bg-[var(--wa-panel-2)] px-3 py-2.5">
                       {analyticsBusy === t.id ? (
                         <p className="text-[11px] text-[var(--wa-text-3)]">
-                          Loading analytics…
+                          {tp.loadingAnalytics}
                         </p>
                       ) : stats ? (
                         <>
                           <div className="flex flex-wrap gap-4">
                             <span className="text-[11px] text-[var(--wa-text-2)]">
                               <strong className="text-[var(--wa-text)]">
-                                {stats.sent}
+                                {fmt(stats.sent)}
                               </strong>{" "}
-                              sent
+                              {tp.sent}
                             </span>
                             <span className="text-[11px] text-[var(--wa-text-2)]">
                               <strong className="text-[var(--wa-text)]">
-                                {stats.failed}
+                                {fmt(stats.failed)}
                               </strong>{" "}
-                              failed
+                              {tp.failed}
                             </span>
                             <span className="text-[11px] text-[var(--wa-text-2)]">
                               <strong className="text-[var(--wa-text)]">
-                                {stats.blocked}
+                                {fmt(stats.blocked)}
                               </strong>{" "}
-                              blocked
+                              {tp.blocked}
                             </span>
                             <span className="text-[11px] text-[var(--wa-text-3)]">
-                              last {stats.days} days
+                              {fill(tp.lastDays, { days: fmt(stats.days) })}
                             </span>
                           </div>
                           <p className="mt-1 text-[10.5px] text-[var(--wa-text-3)]">
-                            Last attempt {when(stats.last_sent_at)}. Blocked
-                            means consent or approval was missing, so Meta was
-                            never called.
+                            {fill(tp.lastAttempt, { when: whenAt(stats.last_sent_at) })}
                           </p>
                         </>
                       ) : (
                         <p className="text-[11px] text-[var(--wa-text-3)]">
-                          No analytics available.
+                          {tp.noAnalytics}
                         </p>
                       )}
                     </div>
@@ -720,9 +734,7 @@ export default function TemplatesPanel() {
       </section>
 
       <p className="px-1 text-[11px] leading-5 text-[var(--wa-text-3)]">
-        Outside the 24-hour window only an approved template can be sent. A
-        customer needs a recorded opt-in — the Instagram handoff records it
-        automatically, and an operator can record it from the conversation.
+        {tp.footer}
       </p>
     </div>
   );
