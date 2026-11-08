@@ -163,6 +163,11 @@ export default function PurgedAccountsPage() {
                   <td className="py-2 pr-3 text-ink/55">{fmtDate(item.purged_at)}</td>
                   <td className="py-2 text-ink/55">
                     {item.error || item.reason}
+                    {item.metadata?.purged_by ? (
+                      <span className="ml-2 text-ink/35">
+                        · by {String(item.metadata.purged_by)}
+                      </span>
+                    ) : null}
                     {item.metadata?.plan ? (
                       <span className="ml-2 text-ink/35">· plan {String(item.metadata.plan)}</span>
                     ) : null}

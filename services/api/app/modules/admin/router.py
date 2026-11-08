@@ -600,7 +600,7 @@ class PurgeTenantRequest(BaseModel):
 async def admin_purge_tenant(
     user_id: str,
     body: PurgeTenantRequest,
-    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
     db: AsyncSession = Depends(get_db),
 ):
     """Permanently delete a workspace and all of its data.
@@ -609,6 +609,11 @@ async def admin_purge_tenant(
     undo.
     """
     from ..users.models import User
+    from ..users.unverified_purge import (
+        archive_account,
+        mark_purge_failure,
+        mark_purge_success,
+    )
     from .tenant_ops import purge_tenant
 
     user = await db.get(User, user_id)
@@ -619,10 +624,21 @@ async def admin_purge_tenant(
             status_code=400,
             detail="Confirmation does not match the tenant email.",
         )
+    # Leave the same admin-visible trace as the automatic unverified purge;
+    # a manual purge must not be an untracked disappearance.
+    await archive_account(
+        db, user, reason="admin", actor=admin.get("username")
+    )
     try:
         result = await purge_tenant(db, user_id)
     except ValueError:
+        await mark_purge_failure(db, user_id, "Tenant not found")
         raise HTTPException(status_code=404, detail="Tenant not found.") from None
+    except Exception as e:
+        await db.rollback()
+        await mark_purge_failure(db, user_id, str(e))
+        raise
+    await mark_purge_success(db, user_id)
     logger.warning("Admin purged tenant %s rows=%s", user_id, result.get("total_rows"))
     return {"tenant_id": user_id, **result}
 

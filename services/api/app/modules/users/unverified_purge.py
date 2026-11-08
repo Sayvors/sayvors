@@ -29,6 +29,61 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+async def archive_account(
+    db: AsyncSession,
+    user: User,
+    *,
+    reason: str,
+    actor: str | None = None,
+) -> PurgedAccount:
+    """Write/refresh the admin trace before an account purge."""
+    archive = await db.get(PurgedAccount, user.id)
+    metadata = {
+        "business_type": user.business_type,
+        "newsletter": bool(user.newsletter),
+        "plan": user.plan,
+        "has_google": bool(user.google_sub),
+        "has_facebook": bool(user.facebook_id),
+    }
+    if actor:
+        metadata["purged_by"] = actor
+    if archive is None:
+        archive = PurgedAccount(
+            id=user.id,
+            email=user.email,
+            first_name=user.first_name,
+            last_name=user.last_name,
+            reason=reason,
+            signed_up_at=user.created_at,
+            metadata_json=metadata,
+        )
+        db.add(archive)
+    else:
+        archive.reason = reason
+        archive.metadata_json = metadata
+        archive.status = "pending"
+        archive.error = None
+    archive.purged_at = _now()
+    await db.commit()
+    return archive
+
+
+async def mark_purge_success(db: AsyncSession, user_id: str) -> None:
+    archive = await db.get(PurgedAccount, user_id)
+    if archive is not None:
+        archive.status = "purged"
+        archive.error = None
+        await db.commit()
+
+
+async def mark_purge_failure(db: AsyncSession, user_id: str, error: str) -> None:
+    archive = await db.get(PurgedAccount, user_id)
+    if archive is not None:
+        archive.status = "failed"
+        archive.error = error[:500]
+        await db.commit()
+
+
 async def purge_unverified_accounts(
     db: AsyncSession, limit: int | None = None
 ) -> int:
@@ -52,49 +107,17 @@ async def purge_unverified_accounts(
 
     purged = 0
     for user in users:
-        archive = await db.get(PurgedAccount, user.id)
-        if archive is None:
-            archive = PurgedAccount(
-                id=user.id,
-                email=user.email,
-                first_name=user.first_name,
-                last_name=user.last_name,
-                reason="unverified",
-                signed_up_at=user.created_at,
-                metadata_json={
-                    "business_type": user.business_type,
-                    "newsletter": bool(user.newsletter),
-                    "plan": user.plan,
-                    "has_google": bool(user.google_sub),
-                    "has_facebook": bool(user.facebook_id),
-                },
-            )
-            db.add(archive)
-        else:
-            archive.status = "pending"
-            archive.error = None
-        archive.purged_at = _now()
-        await db.commit()
-
+        await archive_account(db, user, reason="unverified")
         try:
             from ..admin.tenant_ops import purge_tenant
 
             await purge_tenant(db, user.id)
         except Exception as e:  # noqa: BLE001 - record the failure, keep the trace
             await db.rollback()
-            archive = await db.get(PurgedAccount, user.id)
-            if archive is not None:
-                archive.status = "failed"
-                archive.error = str(e)[:500]
-                await db.commit()
+            await mark_purge_failure(db, user.id, str(e))
             logger.exception("Unverified account purge failed for %s", user.id)
             continue
-
-        archive = await db.get(PurgedAccount, user.id)
-        if archive is not None:
-            archive.status = "purged"
-            archive.error = None
-            await db.commit()
+        await mark_purge_success(db, user.id)
         purged += 1
     return purged
 

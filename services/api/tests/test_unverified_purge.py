@@ -84,6 +84,40 @@ async def test_admin_can_run_purge_and_read_the_trace(client, db, monkeypatch):
         app.dependency_overrides.pop(admin_rate_limit, None)
 
 
+async def test_manual_admin_purge_is_archived(client, db):
+    from app.core.deps import require_admin
+    from app.main import app
+    from app.modules.admin.router import admin_rate_limit
+
+    user = _user("purge-admin", "manual@example.com", verified=True, age_days=1)
+    db.add(user)
+    await db.commit()
+
+    app.dependency_overrides[require_admin] = lambda: {
+        "admin": True,
+        "operator_id": "op-1",
+        "username": "tester",
+        "role": "superadmin",
+    }
+    app.dependency_overrides[admin_rate_limit] = lambda: None
+    try:
+        response = client.post(
+            "/api/v1/admin/tenants/purge-admin/purge",
+            json={"confirm": "manual@example.com"},
+        )
+        assert response.status_code == 200, response.text
+    finally:
+        app.dependency_overrides.pop(require_admin, None)
+        app.dependency_overrides.pop(admin_rate_limit, None)
+
+    archive = await db.get(PurgedAccount, "purge-admin")
+    assert archive is not None
+    assert archive.email == "manual@example.com"
+    assert archive.reason == "admin"
+    assert archive.status == "purged"
+    assert archive.metadata_json["purged_by"] == "tester"
+
+
 async def test_verified_and_recent_accounts_are_untouched(db, monkeypatch):
     monkeypatch.setattr(settings, "UNVERIFIED_ACCOUNT_TTL_DAYS", 30)
     db.add(_user("purge-recent", "recent@example.com", verified=False, age_days=5))

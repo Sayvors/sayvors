@@ -55,6 +55,8 @@ verify are removed by the `unverified-purge` worker after
 - before deletion a `purged_accounts` row records the address, name, signup
   time and a small metadata snapshot (`plan`, `business_type`, `newsletter`,
   whether Google/Facebook were linked);
+- a manual admin tenant purge uses the same trace with `reason=admin`, the
+  operator username and the same snapshot;
 - the trace is visible at **Admin → Operations → Purged accounts** and can be
   searched by email. It is platform-level, so a tenant purge cannot remove it.
 
