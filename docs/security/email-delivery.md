@@ -26,8 +26,11 @@ API handler → enqueue_email() → email_outbox(status=queued)
 - Transient: HTTP 429, 5xx, timeout, connection error.
 - Backoff: 1m → 5m → 30m → 2h → 6h; then `dead`.
 - Permanent: 4xx (invalid recipient, rejected payload) → `dead` immediately.
-- A worker crash after claiming leaves a row in `sending`; the row is retried
-  when its `next_attempt_at` passes (the claim query only takes due rows).
+- A worker crash after claiming leaves a row in `sending`. Every worker runs a
+  bounded reaper once a minute: rows whose `claimed_at` is older than 15
+  minutes go back to `queued` with a fresh `next_attempt_at` if attempts
+  remain, or to `dead` when the retry budget is exhausted. Replay is safe
+  because the row keeps the same Resend `Idempotency-Key`.
 - **Every** email is idempotent at the provider too (`Idempotency-Key` header).
 
 ## Suppression
@@ -76,6 +79,7 @@ would suppress arbitrary addresses.
 | `RESEND_WEBHOOK_SECRET` | Svix signing secret — webhook is disabled without it |
 | `EMAIL_WORKER_BATCH` | Rows claimed per pass (default 20) |
 | `EMAIL_WORKER_CONCURRENCY` | Parallel sends per pass (default 4) |
+| `BULK_EMAIL_DAILY_LIMIT` | Per-tenant review-request email cap per rolling 24h (default 500) |
 | `WORKER_LOOPS` | Must include `email-outbox` if the allowlist is used |
 
 ## Domains (ops checklist)

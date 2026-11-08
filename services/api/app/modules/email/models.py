@@ -53,6 +53,12 @@ class EmailOutbox(Base):
     next_attempt_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
+    # When the worker moved the row to `sending`. A crash before the provider
+    # result leaves the row there forever; the reaper uses this timestamp to
+    # requeue it safely (the provider idempotency key prevents a double send).
+    claimed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     provider_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

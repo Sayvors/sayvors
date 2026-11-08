@@ -1,5 +1,5 @@
 """Email outbox: dedupe, suppression, retries, events and unsubscribe."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import select
@@ -94,6 +94,59 @@ async def test_transient_failure_requeues_and_permanent_dead_letters(db, monkeyp
     await outbox.process_once(limit=5)
     await db.refresh(row)
     assert row.status == "dead"
+
+
+async def _stranded_row(db, *, attempts: int = 1, max_attempts: int = 6) -> str:
+    row_id = await _enqueue(db, key="stranded")
+    row = await db.get(EmailOutbox, row_id)
+    row.status = "sending"
+    row.attempts = attempts
+    row.max_attempts = max_attempts
+    row.claimed_at = datetime.now(timezone.utc) - timedelta(
+        seconds=outbox.STALE_SENDING_SECONDS + 1
+    )
+    await db.commit()
+    return row_id
+
+
+async def test_stale_sending_is_requeued(db, monkeypatch):
+    monkeypatch.setattr("app.database.async_session", _factory(db))
+    row_id = await _stranded_row(db)
+
+    assert await outbox.requeue_stale_sending() == 1
+
+    row = await db.get(EmailOutbox, row_id)
+    await db.refresh(row)
+    assert row.status == "queued"
+    assert row.claimed_at is None
+    assert row.next_attempt_at is not None
+    assert "Requeued" in (row.error or "")
+
+
+async def test_fresh_sending_is_left_alone(db, monkeypatch):
+    monkeypatch.setattr("app.database.async_session", _factory(db))
+    row_id = await _enqueue(db, key="fresh-sending")
+    row = await db.get(EmailOutbox, row_id)
+    row.status = "sending"
+    row.claimed_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    assert await outbox.requeue_stale_sending() == 0
+
+    await db.refresh(row)
+    assert row.status == "sending"
+
+
+async def test_exhausted_stale_sending_becomes_dead(db, monkeypatch):
+    monkeypatch.setattr("app.database.async_session", _factory(db))
+    row_id = await _stranded_row(db, attempts=6, max_attempts=6)
+
+    assert await outbox.requeue_stale_sending() == 1
+
+    row = await db.get(EmailOutbox, row_id)
+    await db.refresh(row)
+    assert row.status == "dead"
+    assert "retry budget exhausted" in (row.error or "")
 
 
 async def test_bounce_suppresses_and_duplicate_event_is_ignored(db):

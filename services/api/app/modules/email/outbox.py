@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import logging
 import re
+import time
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -27,6 +28,12 @@ logger = logging.getLogger(__name__)
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 BACKOFF_SECONDS = (60, 300, 1800, 7200, 21600)
 POLL_SECONDS = 3.0
+# A row is "stranded" when it has been in `sending` longer than any provider
+# call could reasonably take (HTTP timeout + queueing). The provider call is
+# bounded by httpx, so 15 minutes is already generous.
+STALE_SENDING_SECONDS = 15 * 60
+REAP_INTERVAL_SECONDS = 60
+REAP_BATCH = 100
 UNSUBSCRIBE_PATH = "/api/v1/email/unsubscribe"
 
 
@@ -264,7 +271,11 @@ async def process_once(limit: int | None = None) -> int:
         await db.execute(
             update(EmailOutbox)
             .where(EmailOutbox.id.in_(due))
-            .values(status="sending", attempts=EmailOutbox.attempts + 1)
+            .values(
+                status="sending",
+                attempts=EmailOutbox.attempts + 1,
+                claimed_at=_now(),
+            )
         )
         await db.commit()
 
@@ -288,10 +299,60 @@ async def process_once(limit: int | None = None) -> int:
     return len(due)
 
 
+async def requeue_stale_sending(limit: int | None = None) -> int:
+    """Return rows stranded in `sending` by a crashed worker to the queue.
+
+    A worker commits `sending` before calling Resend. If the process dies in
+    that window, the claim query (which only takes `queued`) never revisits the
+    row. Replaying is safe because the provider request carries the outbox
+    row's `Idempotency-Key`. Attempts are not incremented here; the next claim
+    does that, so the normal retry budget still applies.
+    """
+    from ...database import async_session
+
+    batch = max(1, min(int(limit or REAP_BATCH), REAP_BATCH))
+    now = _now()
+    cutoff = now - timedelta(seconds=STALE_SENDING_SECONDS)
+    async with async_session() as db:
+        rows = (
+            await db.execute(
+                select(EmailOutbox)
+                .where(
+                    EmailOutbox.status == "sending",
+                    EmailOutbox.claimed_at.is_not(None),
+                    EmailOutbox.claimed_at < cutoff,
+                )
+                .order_by(EmailOutbox.claimed_at)
+                .limit(batch)
+                .with_for_update(skip_locked=True)
+            )
+        ).scalars().all()
+        if not rows:
+            return 0
+        for row in rows:
+            if row.attempts >= row.max_attempts:
+                row.status = "dead"
+                row.error = "Worker stopped after claiming; retry budget exhausted"
+            else:
+                row.status = "queued"
+                row.next_attempt_at = now
+                row.error = "Requeued after worker restart"
+            row.claimed_at = None
+            db.add(row)
+        await db.commit()
+        logger.warning("Requeued %s email(s) stranded in sending", len(rows))
+        return len(rows)
+
+
 async def run_email_worker() -> None:
     logger.info("Email outbox worker started")
+    last_reap = 0.0
     while True:
         try:
+            now_mono = time.monotonic()
+            if now_mono - last_reap >= REAP_INTERVAL_SECONDS:
+                last_reap = now_mono
+                await requeue_stale_sending()
             processed = await process_once()
             if not processed:
                 await asyncio.sleep(POLL_SECONDS)
