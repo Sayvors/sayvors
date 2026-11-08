@@ -35,6 +35,8 @@ import { useAuth } from "@/lib/auth-context";
 import { platformMeta } from "@/lib/platform";
 import { resolveMediaUrl } from "@/lib/media-url";
 import { setActiveThread } from "@/lib/active-thread";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import { leadCategoryLabelKnown } from "@/lib/lead-labels";
 import {
   clearThreadTyping,
   setAiTyping,
@@ -54,13 +56,6 @@ import {
 
 type Filter = "all" | "unread" | "important" | "mine" | "unknown";
 
-const QUICK_REPLIES = [
-  "Thanks for reaching out! How can I help?",
-  "Sure, give me a moment to check that.",
-  "Could you share more details?",
-  "All set — anything else I can do for you?",
-];
-
 const REACTION_EMOJIS = ["👍", "❤️", "😂", "🙏", "🎉", "👀"];
 
 /** Cap on the in-memory thread message buffer. Older entries are dropped on
@@ -69,9 +64,16 @@ const REACTION_EMOJIS = ["👍", "❤️", "😂", "🙏", "🎉", "👀"];
  *  flood) from growing the array without bound. */
 const INBOX_MESSAGE_BUFFER_CAP = 500;
 
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [k, v]) => out.replaceAll(`{${k}}`, String(v)),
+    s,
+  );
+}
+
 /** "+966500000001" / "966500000001" -> "+966 50 000 0001" for scannability. */
-function formatPhone(phone: string | null): string {
-  if (!phone) return "Unknown sender";
+function formatPhone(phone: string | null, unknownLabel: string): string {
+  if (!phone) return unknownLabel;
   const p = phone.startsWith("+") ? phone : `+${phone}`;
   if (p.length <= 8) return p;
   const head = p.slice(0, 4);
@@ -91,16 +93,19 @@ function initials(name: string | null, phone: string | null): string {
  * The rule is the same for every source, so the reason is the
  * conversation's own category and priority, never its platform.
  */
-function importantReason(t: {
-  category?: string | null;
-  priority?: string | null;
-}): string {
+function importantReason(
+  t: {
+    category?: string | null;
+    priority?: string | null;
+  },
+  reasons: { urgent: string; complaint: string; high: string; humanNow: string },
+): string {
   const p = (t.priority || "normal").toLowerCase();
   const c = (t.category || "normal").toLowerCase();
-  if (p === "urgent") return "Marked urgent — needs an answer now.";
-  if (c === "complaint") return "A complaint — needs an answer now.";
-  if (p === "high") return "Marked high priority.";
-  return "Needs a human now.";
+  if (p === "urgent") return reasons.urgent;
+  if (c === "complaint") return reasons.complaint;
+  if (p === "high") return reasons.high;
+  return reasons.humanNow;
 }
 
 /** Profile picture when the platform gave us one, initials otherwise. */
@@ -144,61 +149,82 @@ function Avatar({
   );
 }
 
-function relative(iso: string | null): string {
+type TimeStrings = {
+  now: string;
+  mins: string;
+  hours: string;
+  days: string;
+  dueNow: string;
+  inMins: string;
+  inHours: string;
+  inDays: string;
+  justNow: string;
+  minsAgo: string;
+  hoursAgo: string;
+  daysAgo: string;
+  today: string;
+  yesterday: string;
+};
+
+function relative(iso: string | null, localeTag: string, time: TimeStrings): string {
   if (!iso) return "";
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return "";
   const diff = Date.now() - then;
   const mins = Math.round(diff / 60000);
-  if (mins < 1) return "now";
-  if (mins < 60) return `${mins}m`;
+  if (mins < 1) return time.now;
+  if (mins < 60) return fill(time.mins, { n: mins });
   const hours = Math.round(mins / 60);
-  if (hours < 24) return `${hours}h`;
+  if (hours < 24) return fill(time.hours, { n: hours });
   const days = Math.round(hours / 24);
-  if (days < 7) return `${days}d`;
-  return new Date(iso).toLocaleDateString("en", { month: "short", day: "numeric" });
+  if (days < 7) return fill(time.days, { n: days });
+  return new Date(iso).toLocaleDateString(localeTag, { month: "short", day: "numeric" });
 }
 
 /** Time until an ISO instant, for the auto-resume countdown. Unlike
  *  `relative` this counts forward, and "due now" is meaningful: the sweep may
  *  simply not have run yet, so it must not read as if the AI already resumed. */
-function remaining(iso: string | null): string {
+function remaining(iso: string | null, time: TimeStrings): string {
   if (!iso) return "";
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return "";
   const mins = Math.round((then - Date.now()) / 60000);
-  if (mins <= 0) return "due now";
-  if (mins < 60) return `in ${mins}m`;
+  if (mins <= 0) return time.dueNow;
+  if (mins < 60) return fill(time.inMins, { n: mins });
   const hours = Math.floor(mins / 60);
   const rest = mins % 60;
-  if (hours < 24) return `in ${hours}h${rest ? ` ${rest}m` : ""}`;
+  if (hours < 24) return fill(time.inHours, { h: hours, r: rest ? ` ${rest}m` : "" });
   const days = Math.floor(hours / 24);
   const rem = hours % 24;
-  return `in ${days}d${rem ? ` ${rem}h` : ""}`;
+  return fill(time.inDays, { d: days, r: rem ? ` ${rem}h` : "" });
 }
 
 /** Elapsed time for the escalation chip. `relative` returns a bare magnitude
  *  used elsewhere ("12m"), which would read "now ago" here. */
-function ago(iso: string | null): string {
+function ago(iso: string | null, time: TimeStrings): string {
   if (!iso) return "";
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return "";
   const mins = Math.round((Date.now() - then) / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 1) return time.justNow;
+  if (mins < 60) return fill(time.minsAgo, { n: mins });
   const hours = Math.round(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
+  if (hours < 24) return fill(time.hoursAgo, { n: hours });
+  return fill(time.daysAgo, { n: Math.round(hours / 24) });
 }
 
 /** Reminder state for an escalated thread. A NULL reminder next to a sent
  *  escalation means the reminder already fired — the sweep nulls it — not that
  *  none was ever armed. */
-function reminderLabel(state: ThreadState): string {
-  if (!state.escalated_at) return "Escalation email not delivered";
+function reminderLabel(
+  state: ThreadState,
+  time: TimeStrings,
+  labels: { notSent: string; sent: string; due: string; inTemplate: string },
+): string {
+  if (!state.escalated_at) return labels.notSent;
   const at = state.escalation_reminder_at;
-  if (!at) return "Reminder already sent";
-  return remaining(at) === "due now" ? "Reminder due" : `Reminder ${remaining(at)}`;
+  if (!at) return labels.sent;
+  return remaining(at, time) === time.dueNow ? labels.due : fill(labels.inTemplate, { time: remaining(at, time) });
 }
 
 /** Extract lat/lng from the common Google Maps link shapes. */
@@ -218,37 +244,40 @@ function coordsFromMapsLink(link: string): { lat: number; lng: number } | null {
   return null;
 }
 
-function clockTime(iso: string): string {
+function clockTime(iso: string, localeTag: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString("en", { hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleTimeString(localeTag, { hour: "2-digit", minute: "2-digit" });
 }
 
-function dayLabel(iso: string): string {
+function dayLabel(iso: string, localeTag: string, time: TimeStrings): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   const today = new Date();
-  if (d.toDateString() === today.toDateString()) return "Today";
+  if (d.toDateString() === today.toDateString()) return time.today;
   const yesterday = new Date(today.getTime() - 86400000);
-  if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
-  return d.toLocaleDateString("en", { month: "short", day: "numeric" });
+  if (d.toDateString() === yesterday.toDateString()) return time.yesterday;
+  return d.toLocaleDateString(localeTag, { month: "short", day: "numeric" });
 }
 
 /** Why a context snapshot was written, in the reader's language. */
-function contextReasonLabel(reason: string): string {
+function contextReasonLabel(
+  reason: string,
+  reasons: { modeChange: string; resolve: string; escalation: string; periodic: string; crossChannel: string; manual: string },
+): string {
   switch (reason) {
     case "mode_change":
-      return "when the mode changed";
+      return reasons.modeChange;
     case "resolve":
-      return "when the thread was resolved";
+      return reasons.resolve;
     case "escalation":
-      return "when it was escalated";
+      return reasons.escalation;
     case "periodic":
-      return "mid-conversation";
+      return reasons.periodic;
     case "cross_channel":
-      return "when they moved from Instagram";
+      return reasons.crossChannel;
     default:
-      return "manually";
+      return reasons.manual;
   }
 }
 
@@ -298,6 +327,9 @@ function replyWindowOpen(thread: InboxThread | null): boolean {
 }
 
 export default function InboxView() {
+  const { t, locale } = useI18n();
+  const u = t.dashboard.inbox;
+  const localeTag = locale === "ar" ? "ar-SA" : "en-US";
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const [threads, setThreads] = useState<InboxThread[]>([]);
@@ -410,9 +442,7 @@ export default function InboxView() {
       void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] });
     } catch {
       setListActionError(
-        next
-          ? "Could not pin the conversation. Try again."
-          : "Could not unpin the conversation. Try again.",
+        next ? u.errors.pin : u.errors.unpin,
       );
       void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] });
     }
@@ -432,9 +462,7 @@ export default function InboxView() {
       void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] });
     } catch {
       setListActionError(
-        archived
-          ? "Could not archive the conversation. Try again."
-          : "Could not restore the conversation. Try again.",
+        archived ? u.errors.archive : u.errors.restore,
       );
       void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] });
     }
@@ -452,7 +480,7 @@ export default function InboxView() {
       void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] });
       setDeleteTarget(null);
     } catch {
-      setListActionError("Could not delete the conversation. Try again.");
+      setListActionError(u.errors.delete);
       void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] });
     } finally {
       setDeleteBusy(false);
@@ -492,10 +520,10 @@ export default function InboxView() {
       );
       setReactingTo(null);
       if (!result.sent) {
-        setSendError(result.error || "WhatsApp rejected the reaction.");
+        setSendError(result.error || u.errors.reactRejected);
       }
     } catch (e) {
-      setSendError(e instanceof Error ? e.message : "Could not send the reaction.");
+      setSendError(e instanceof Error ? e.message : u.errors.reactFailed);
     } finally {
       setReactBusy(false);
     }
@@ -503,9 +531,7 @@ export default function InboxView() {
 
   const removeMessage = async (message: InboxMessage) => {
     if (
-      !window.confirm(
-        "Remove this message from the inbox? The customer will still see it on their phone.",
-      )
+      !window.confirm(u.errors.removeConfirm)
     ) {
       return;
     }
@@ -516,7 +542,7 @@ export default function InboxView() {
         prev.map((m) => (m.id === updated.id ? updated : m)),
       );
     } catch (e) {
-      setSendError(e instanceof Error ? e.message : "Could not remove the message.");
+      setSendError(e instanceof Error ? e.message : u.errors.removeFailed);
     }
   };
 
@@ -556,11 +582,11 @@ export default function InboxView() {
     const lat = Number(locLat);
     const lng = Number(locLng);
     if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
-      setSendError("Enter a latitude between -90 and 90.");
+      setSendError(u.errors.lat);
       return;
     }
     if (!Number.isFinite(lng) || lng < -180 || lng > 180) {
-      setSendError("Enter a longitude between -180 and 180.");
+      setSendError(u.errors.lng);
       return;
     }
     setRichBusy(true);
@@ -575,13 +601,13 @@ export default function InboxView() {
         address: locAddress.trim() || null,
       });
       if (!result.sent) {
-        setSendError(result.error || "WhatsApp rejected the location.");
+        setSendError(result.error || u.errors.locationRejected);
         return;
       }
       appendRichMessage(result.message);
       setRichComposer(null);
     } catch (e) {
-      setSendError(e instanceof Error ? e.message : "Could not send the location.");
+      setSendError(e instanceof Error ? e.message : u.errors.locationFailed);
     } finally {
       setRichBusy(false);
     }
@@ -591,7 +617,7 @@ export default function InboxView() {
     const thread = target;
     if (!thread?.contact_phone || richBusy) return;
     if (!cardName.trim() || !cardPhone.trim()) {
-      setSendError("A contact card needs a name and a phone number.");
+      setSendError(u.errors.contactInvalid);
       return;
     }
     setRichBusy(true);
@@ -605,13 +631,13 @@ export default function InboxView() {
         email: cardEmail.trim() || null,
       });
       if (!result.sent) {
-        setSendError(result.error || "WhatsApp rejected the contact card.");
+        setSendError(result.error || u.errors.contactRejected);
         return;
       }
       appendRichMessage(result.message);
       setRichComposer(null);
     } catch (e) {
-      setSendError(e instanceof Error ? e.message : "Could not send the contact card.");
+      setSendError(e instanceof Error ? e.message : u.errors.contactFailed);
     } finally {
       setRichBusy(false);
     }
@@ -621,7 +647,7 @@ export default function InboxView() {
     const thread = target;
     if (!thread?.contact_phone || richBusy) return;
     if (!docFile) {
-      setSendError("Choose a document to send.");
+      setSendError(u.errors.docMissing);
       return;
     }
     setRichBusy(true);
@@ -634,13 +660,13 @@ export default function InboxView() {
         caption: docCaption.trim() || null,
       });
       if (!result.sent) {
-        setSendError(result.error || "WhatsApp rejected the document.");
+        setSendError(result.error || u.errors.docRejected);
         return;
       }
       appendRichMessage(result.message);
       setRichComposer(null);
     } catch (e) {
-      setSendError(e instanceof Error ? e.message : "Could not send the document.");
+      setSendError(e instanceof Error ? e.message : u.errors.docFailed);
     } finally {
       setRichBusy(false);
     }
@@ -650,7 +676,7 @@ export default function InboxView() {
     const thread = target;
     if (!thread?.contact_phone || richBusy) return;
     if (!stickerFile) {
-      setSendError("Choose a WebP sticker to send.");
+      setSendError(u.errors.stickerMissing);
       return;
     }
     setRichBusy(true);
@@ -662,13 +688,13 @@ export default function InboxView() {
         file: stickerFile,
       });
       if (!result.sent) {
-        setSendError(result.error || "WhatsApp rejected the sticker.");
+        setSendError(result.error || u.errors.stickerRejected);
         return;
       }
       appendRichMessage(result.message);
       setRichComposer(null);
     } catch (e) {
-      setSendError(e instanceof Error ? e.message : "Could not send the sticker.");
+      setSendError(e instanceof Error ? e.message : u.errors.stickerFailed);
     } finally {
       setRichBusy(false);
     }
@@ -687,7 +713,7 @@ export default function InboxView() {
       applyThreadState(thread, state);
     } catch (e) {
       setModeError(
-        e instanceof Error ? e.message : "Could not switch this conversation.",
+        e instanceof Error ? e.message : u.errors.mode,
       );
     } finally {
       setModeBusy(false);
@@ -711,7 +737,7 @@ export default function InboxView() {
       void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] });
     } catch (e) {
       setAssigneeError(
-        e instanceof Error ? e.message : "Could not assign this conversation.",
+        e instanceof Error ? e.message : u.errors.assign,
       );
     } finally {
       setAssigneeBusy(false);
@@ -726,7 +752,7 @@ export default function InboxView() {
       applyThreadState(thread, state);
     } catch (e) {
       setModeError(
-        e instanceof Error ? e.message : "Could not resolve this conversation.",
+        e instanceof Error ? e.message : u.errors.resolve,
       );
     } finally {
       setModeBusy(false);
@@ -758,8 +784,8 @@ export default function InboxView() {
         e instanceof Error
           ? e.message
           : blocked
-            ? "Could not block this customer."
-            : "Could not unblock this customer.",
+            ? u.errors.block
+            : u.errors.unblock,
       );
     } finally {
       setBlockBusy(false);
@@ -780,7 +806,7 @@ export default function InboxView() {
       setTemplates((await listWhatsAppTemplates()).templates);
     } catch (e) {
       setTemplateError(
-        e instanceof Error ? e.message : "Could not load templates.",
+        e instanceof Error ? e.message : u.errors.templates,
       );
     }
   };
@@ -797,7 +823,7 @@ export default function InboxView() {
       selectedTemplate.variables > 0 &&
       templateVars.some((v) => !v.trim())
     ) {
-      setTemplateError("Fill every variable before sending.");
+      setTemplateError(u.errors.fillVars);
       return;
     }
     setTemplateBusy(true);
@@ -820,11 +846,11 @@ export default function InboxView() {
         templateKeyRef.current = "";
         await reloadThread(thread);
       } else {
-        setTemplateError(result.error ?? "Meta rejected the template.");
+        setTemplateError(result.error ?? u.errors.templateRejected);
       }
     } catch (e) {
       setTemplateError(
-        e instanceof Error ? e.message : "Could not send the template.",
+        e instanceof Error ? e.message : u.errors.templateFailed,
       );
     } finally {
       setTemplateBusy(false);
@@ -846,7 +872,7 @@ export default function InboxView() {
       );
     } catch (e) {
       setTemplateError(
-        e instanceof Error ? e.message : "Could not record consent.",
+        e instanceof Error ? e.message : u.errors.consent,
       );
     }
   };
@@ -890,7 +916,7 @@ export default function InboxView() {
   }, [threadsQuery.data]);
   useEffect(() => {
     if (threadsQuery.isError) {
-      setError(threadsQuery.error instanceof Error ? threadsQuery.error.message : "Could not load conversations.");
+      setError(threadsQuery.error instanceof Error ? threadsQuery.error.message : u.errors.loadList);
       setThreads([]);
       setLoading(false);
     }
@@ -1184,7 +1210,7 @@ export default function InboxView() {
           setReactingTo(null);
           setRichComposer(null);
           setLoadedKey(targetKey);
-          setError(e instanceof Error ? e.message : "Could not load this conversation.");
+          setError(e instanceof Error ? e.message : u.errors.loadThread);
         }
       }
     })();
@@ -1299,7 +1325,7 @@ export default function InboxView() {
       setNextThreadCursor(page.next_cursor);
     } catch (e) {
       setError(
-        e instanceof Error ? e.message : "Could not load more conversations.",
+        e instanceof Error ? e.message : u.errors.loadMore,
       );
     } finally {
       setLoadingMoreThreads(false);
@@ -1376,7 +1402,7 @@ export default function InboxView() {
     } catch (e) {
       if (requestedKey.current === keyAtStart) {
         setEarlierError(
-          e instanceof Error ? e.message : "Could not load earlier messages.",
+          e instanceof Error ? e.message : u.errors.loadEarlier,
         );
       }
     } finally {
@@ -1428,12 +1454,12 @@ export default function InboxView() {
         setSendError(
           result.error ||
             (thread.platform === "instagram"
-              ? "Instagram rejected this message."
-              : "WhatsApp rejected this message."),
+              ? u.errors.igRejected
+              : u.errors.waRejected),
         );
       }
     } catch {
-      setSendError("Couldn't send the message. Check your connection and try again.");
+      setSendError(u.errors.sendSend);
     } finally {
       setSending(false);
     }
@@ -1450,16 +1476,16 @@ export default function InboxView() {
       {(!isMobile || !openThread) && (
         <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="text-[18px] font-bold text-ink dark:text-fog sm:text-[20px]">Inbox</h1>
+            <h1 className="text-[18px] font-bold text-ink dark:text-fog sm:text-[20px]">{u.title}</h1>
             <p className="mt-0.5 text-[12px] text-ink/45 dark:text-fog/45 sm:text-[13px]">
-              Every conversation across your connected numbers.
+              {u.subtitle}
             </p>
           </div>
           <button
             onClick={() => void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] })}
             className="rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12px] font-semibold text-ink transition hover:border-deep-violet/30 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
           >
-            Refresh
+            {u.refresh}
           </button>
         </div>
       )}
@@ -1474,7 +1500,7 @@ export default function InboxView() {
             onClick={() => setListActionError(null)}
             className="min-h-[44px] shrink-0 rounded-lg px-3 font-semibold underline underline-offset-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
           >
-            Dismiss
+            {t.common.dismiss}
           </button>
         </div>
       )}
@@ -1486,17 +1512,17 @@ export default function InboxView() {
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search conversations"
-              aria-label="Search conversations"
+              placeholder={u.searchPh}
+              aria-label={u.searchAria}
               className="input-field w-full"
             />
             <div className="mt-2 flex flex-wrap items-center gap-1">
               {([
-                { key: "all", label: "All" },
-                { key: "unread", label: `Unread${unreadTotal ? ` (${unreadTotal})` : ""}` },
-                { key: "important", label: `Important${importantTotal ? ` (${importantTotal})` : ""}` },
-                { key: "mine", label: `Mine${mineTotal ? ` (${mineTotal})` : ""}` },
-                { key: "unknown", label: "Unknown" },
+                { key: "all", label: u.all },
+                { key: "unread", label: unreadTotal ? `${u.unread} (${unreadTotal})` : u.unread },
+                { key: "important", label: importantTotal ? `${u.important} (${importantTotal})` : u.important },
+                { key: "mine", label: mineTotal ? `${u.mine} (${mineTotal})` : u.mine },
+                { key: "unknown", label: u.unknown },
               ] as { key: Filter; label: string }[]).map((f) => (
                 <button
                   key={f.key}
@@ -1519,15 +1545,15 @@ export default function InboxView() {
                     : "border-ink/[0.08] bg-white text-ink/60 hover:text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog/60"
                 }`}
               >
-                {showArchived ? "Hide archived" : "Show archived"}
+                {showArchived ? u.hideArchived : u.showArchived}
               </button>
               <select
                 value={platformFilter}
                 onChange={(e) => setPlatformFilter(e.target.value)}
-                aria-label="Filter by platform"
+                aria-label={u.filterPlatform ?? u.allPlatforms}
                 className="ml-auto rounded-lg border border-ink/[0.08] bg-white px-2 py-1 text-[11px] font-semibold text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
               >
-                <option value="all">All platforms</option>
+                <option value="all">{u.allPlatforms}</option>
                 {platformsPresent.map((p) => (
                   <option key={p} value={p}>
                     {platformMeta(p).label}
@@ -1547,7 +1573,7 @@ export default function InboxView() {
                       : "border-ink/[0.08] bg-white text-ink/45 hover:text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog/45"
                   }`}
                 >
-                  All
+                  {u.all}
                 </button>
                 {connectedPlatforms.map((p) => {
                   const meta = platformMeta(p);
@@ -1587,7 +1613,7 @@ export default function InboxView() {
               <div className="flex justify-center py-16"><LogoLoader size={28} /></div>
             ) : visible.length === 0 ? (
               <p className="px-4 py-10 text-center text-[12px] text-ink/40">
-                {search ? "No conversations match that search." : "No messages yet. Once customers message your number they appear here."}
+                {search ? u.emptySearch : u.emptyNone}
               </p>
             ) : (
               <div style={{ height: threadVirtualizer.getTotalSize(), position: "relative", width: "100%" }}>
@@ -1620,61 +1646,61 @@ export default function InboxView() {
                             <span className="flex items-baseline justify-between gap-2">
                               <span className="flex min-w-0 items-center gap-1.5">
                                 <span className="truncate text-[13.5px] font-semibold text-ink dark:text-fog">
-                                  {t.display_name || "Unknown sender"}
+                                  {t.display_name || u.unknownSender}
                                 </span>
                                 {t.lead_category && (
                                   <span className="shrink-0 rounded-full border border-ink/[0.08] px-1.5 py-0.5 text-[9px] font-semibold text-ink/60 dark:border-fog/[0.12] dark:text-fog/60">
-                                    {leadCategoryLabel(t.lead_category)}
+                                    {leadCategoryLabelKnown(t.lead_category, locale) ?? t.lead_category}
                                   </span>
                                 )}
                                 {t.assigned_to && (
                                   <span
                                     title={
                                       t.assigned_to === user?.id
-                                        ? "Assigned to you"
-                                        : `Assigned to ${t.assignee_name ?? "a teammate"}`
+                                        ? u.assignedToYou
+                                        : fill(u.assignedTo, { name: t.assignee_name ?? "" })
                                     }
                                     className="shrink-0 text-[9px] font-semibold text-ink/40 dark:text-fog/40"
                                   >
                                     {t.assigned_to === user?.id
-                                      ? "You"
-                                      : t.assignee_name ?? "Assigned"}
+                                      ? u.you
+                                      : t.assignee_name ?? u.assigned}
                                   </span>
                                 )}
                                 {t.important && (
                                   <span
                                     className="shrink-0 rounded-full bg-[#FF4F6E]/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[#C4304B] dark:bg-[#FF4F6E]/20 dark:text-[#FF8FA3]"
-                                    title={importantReason(t)}
+                                    title={importantReason(t, u.reasons)}
                                   >
-                                    Important
+                                    {u.importantBadge}
                                   </span>
                                 )}
                               </span>
                               <span className="shrink-0 text-[11px] text-ink/35 dark:text-fog/35">
-                                {relative(t.last_message_at)}
+                                {relative(t.last_message_at, localeTag, u.time)}
                               </span>
                             </span>
                             {(t.platform === "google_reviews" || t.platform === "google") && (
                               <span
                                 className="mt-0.5 flex min-w-0 items-center gap-1 text-[10.5px] font-medium text-ink/40 dark:text-fog/40"
-                                title={t.channel_name ?? "Google review"}
+                                title={t.channel_name ?? u.googleReview}
                               >
                                 <svg viewBox="0 0 24 24" fill="none" aria-hidden className="h-3 w-3 shrink-0">
                                   <path d="M12 21s7-5.4 7-11a7 7 0 1 0-14 0c0 5.6 7 11 7 11Z" stroke="currentColor" strokeWidth={1.5} />
                                   <circle cx="12" cy="10" r="2.2" stroke="currentColor" strokeWidth={1.5} />
                                 </svg>
                                 <span className="truncate">
-                                  {t.channel_name ?? "Google review"}
+                                  {t.channel_name ?? u.googleReview}
                                 </span>
                               </span>
                             )}
                             <span className="mt-1 flex items-center gap-1.5">
                               <span className="truncate text-[12.5px] text-ink/50 dark:text-fog/50">
-                                {t.last_direction === "outbound" ? "You: " : ""}
+                                {t.last_direction === "outbound" ? u.youPrefix : ""}
                                 {t.last_message}
                               </span>
                               {t.unread > 0 && (
-                                <span className="ml-auto shrink-0 rounded-full bg-deep-violet px-1.5 text-[10px] font-bold text-white" aria-label={`${t.unread} unread`}>
+                                <span className="ml-auto shrink-0 rounded-full bg-deep-violet px-1.5 text-[10px] font-bold text-white" aria-label={fill(u.unreadCount, { count: t.unread })}>
                                   {t.unread}
                                 </span>
                               )}
@@ -1683,16 +1709,16 @@ export default function InboxView() {
                         </button>
                         <button
                           onClick={() => togglePin(t)}
-                          aria-label={isPinned ? "Unpin thread" : "Pin thread"}
+                          aria-label={isPinned ? u.unpin : u.pin}
                           className={`px-2 py-4 text-[13px] ${isPinned ? "text-deep-violet" : "text-ink/20 hover:text-ink/50"}`}
                         >
                           📌
                         </button>
                         <button
                           onClick={() => void handleArchive(t, !t.archived)}
-                          aria-label={t.archived ? "Unarchive thread" : "Archive thread"}
+                          aria-label={t.archived ? u.unarchive : u.archive}
                           className={`px-2 py-4 text-[13px] ${t.archived ? "text-amber-600" : "text-ink/20 hover:text-ink/50"}`}
-                          title={t.archived ? "Unarchive" : "Archive"}
+                          title={t.archived ? u.unarchiveTitle : u.archiveTitle}
                         >
                           {t.archived ? "📥" : "📦"}
                         </button>
@@ -1701,9 +1727,9 @@ export default function InboxView() {
                             setListActionError(null);
                             setDeleteTarget(t);
                           }}
-                          aria-label="Delete thread"
+                          aria-label={u.deleteAria}
                           className="px-2 py-4 text-[13px] text-ink/20 hover:text-red-600"
-                          title="Delete conversation permanently"
+                          title={u.deleteTitle}
                         >
                           🗑
                         </button>
@@ -1722,8 +1748,8 @@ export default function InboxView() {
                   className="rounded-full border border-ink/[0.08] bg-white px-3 py-1.5 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet/30 hover:text-deep-violet disabled:opacity-50 dark:border-fog/[0.12] dark:bg-ink dark:text-fog/60 dark:hover:text-fog"
                 >
                   {loadingMoreThreads
-                    ? "Loading…"
-                    : "Load more conversations"}
+                    ? u.loading
+                    : u.loadMore}
                 </button>
               </div>
             )}
@@ -1734,7 +1760,7 @@ export default function InboxView() {
         <div className={`${openThread ? "flex" : "hidden lg:flex"} min-h-0 flex-col overflow-hidden rounded-2xl border border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink`}>
           {!target ? (
             <div className="flex flex-1 items-center justify-center px-6 text-center text-[13px] text-ink/40">
-              Select a conversation to read it.
+              {u.selectConversation}
             </div>
           ) : (
             <>
@@ -1744,15 +1770,15 @@ export default function InboxView() {
                     setSelectedKey(null);
                     setShowInfo(false);
                   }}
-                  aria-label="Back to conversations"
+                  aria-label={u.backAria}
                   className="rounded-lg px-2 py-1 text-[13px] font-semibold text-deep-violet lg:hidden"
                 >
-                  ← Back
+                  {u.back}
                 </button>
                 <button
                   onClick={() => setShowInfo((v) => !v)}
                   className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-xl p-1.5 text-left transition hover:bg-ink/[0.04] dark:hover:bg-fog/[0.05]"
-                  aria-label="View contact profile"
+                  aria-label={u.viewProfile}
                 >
                   <Avatar
                     name={target.display_name}
@@ -1765,23 +1791,24 @@ export default function InboxView() {
                   <span className="min-w-0 flex-1">
                     <p className="flex min-w-0 items-center gap-1.5 text-[15px] font-semibold text-ink dark:text-fog">
                       <span className="truncate">
-                        {target.display_name || "Unknown sender"}
+                        {target.display_name || u.unknownSender}
                       </span>
                       {(threadState?.lead_category ?? target.lead_category) && (
                         <span className="shrink-0 rounded-full border border-ink/[0.08] px-1.5 py-0.5 text-[9px] font-semibold text-ink/55 dark:border-fog/[0.12] dark:text-fog/55">
-                          {leadCategoryLabel(
+                          {leadCategoryLabelKnown(
                             threadState?.lead_category ?? target.lead_category,
-                          )}
+                            locale,
+                          ) ?? (threadState?.lead_category ?? target.lead_category)}
                         </span>
                       )}
                     </p>
                     <p className="truncate text-[12px] text-ink/45 dark:text-fog/45">
                       {/* A Google reviewer has no phone number - show the location. */}
                       {target.platform === "google_reviews" || target.platform === "google"
-                        ? target.channel_name ?? "Google review"
+                        ? target.channel_name ?? u.googleReview
                         : target.platform === "instagram"
                           ? target.contact_phone
-                          : formatPhone(target.contact_phone)}
+                          : formatPhone(target.contact_phone, u.unknownSender)}
                       {target.channel_name && target.platform !== "google_reviews" && target.platform !== "google" ? ` · ${target.channel_name}` : ""}
                     </p>
                   </span>
@@ -1789,7 +1816,7 @@ export default function InboxView() {
                 {!target.is_unknown && (
                   <label className="hidden shrink-0 items-center gap-1.5 md:flex">
                     <span className="text-[9px] font-bold uppercase tracking-wide text-ink/35 dark:text-fog/35">
-                      Owner
+                      {u.owner}
                     </span>
                     <select
                       value={currentAssignee ?? ""}
@@ -1797,18 +1824,18 @@ export default function InboxView() {
                         void handleAssignee(target, e.target.value || null)
                       }
                       disabled={assigneeBusy}
-                      aria-label="Conversation owner"
+                      aria-label={u.whoAnswers}
                       className="h-7 max-w-[160px] rounded-full border border-ink/[0.08] bg-white px-2 text-[10px] font-semibold text-ink disabled:opacity-50 dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
                     >
-                      <option value="">Unassigned</option>
+                      <option value="">{u.unassigned}</option>
                       {assigneeNotInList && currentAssignee && (
                         <option value={currentAssignee}>
-                          {currentAssigneeName ?? "Assigned"}
+                          {currentAssigneeName ?? u.assigned}
                         </option>
                       )}
                       {assignees.map((a) => (
                         <option key={a.user_id} value={a.user_id}>
-                          {a.user_id === user?.id ? `${a.name} (you)` : a.name}
+                          {a.user_id === user?.id ? fill(u.youSuffix, { name: a.name }) : a.name}
                         </option>
                       ))}
                     </select>
@@ -1827,7 +1854,7 @@ export default function InboxView() {
                     toggle would hide the fact that a human took over. */}
                 <div
                   role="group"
-                  aria-label="Who answers this conversation"
+                  aria-label={u.whoAnswers}
                   className="ml-auto flex w-full shrink-0 items-center gap-0.5 rounded-full border border-ink/[0.08] bg-white p-0.5 sm:w-auto dark:border-fog/[0.12] dark:bg-ink"
                 >
                   <button
@@ -1835,7 +1862,7 @@ export default function InboxView() {
                     aria-pressed={activeMode === "ai"}
                     disabled={modeBusy}
                     onClick={() => void handleModeChange(target, "ai")}
-                    title="The AI answers this conversation"
+                    title={u.aiAnswers}
                     className={`flex-1 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide transition disabled:opacity-50 sm:flex-none ${
                       activeMode === "ai"
                         ? "bg-deep-violet text-white"
@@ -1849,19 +1876,19 @@ export default function InboxView() {
                     aria-pressed={activeMode === "human"}
                     disabled={modeBusy}
                     onClick={() => void handleModeChange(target, "human")}
-                    title="A person answers; the AI stays silent"
+                    title={u.humanAnswers}
                     className={`flex-1 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide transition disabled:opacity-50 sm:flex-none ${
                       activeMode === "human"
                         ? "bg-deep-violet text-white"
                         : "text-ink/45 hover:text-ink/70 dark:text-fog/45 dark:hover:text-fog/70"
                     }`}
                   >
-                    Human
+                    {u.human}
                   </button>
                 </div>
                 {target.is_unknown && (
                   <span className="hidden shrink-0 rounded-full bg-amber-100 px-2 py-1 text-[10px] font-bold text-amber-700 sm:inline">
-                    Sender not recorded
+                    {u.senderRecorded}
                   </span>
                 )}
               </div>
@@ -1882,12 +1909,12 @@ export default function InboxView() {
                 <div className="border-b border-ink/[0.04] bg-fog/60 dark:border-fog/[0.04] dark:bg-fog/[0.05]">
                   <div className="flex items-center gap-2 px-4 py-2">
                     <span className="rounded-full bg-deep-violet px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">
-                      Human
+                      {u.human}
                     </span>
                     <span className="min-w-0 flex-1 truncate text-[11px] text-ink/60 dark:text-fog/60">
-                      The AI is paused on this conversation.
+                      {u.paused}
                       {threadState?.mode_changed_by === "system"
-                        ? " It was escalated automatically."
+                        ? ` ${u.escalatedAuto}`
                         : ""}
                     </span>
                     <button
@@ -1896,7 +1923,7 @@ export default function InboxView() {
                       onClick={() => void handleResolve(target)}
                       className="shrink-0 rounded-full border border-deep-violet/25 px-2.5 py-1 text-[10px] font-bold text-deep-violet transition hover:bg-deep-violet/10 disabled:opacity-50 dark:border-fog/20 dark:text-fog"
                     >
-                      Resolve
+                      {u.resolve}
                     </button>
                   </div>
 
@@ -1910,45 +1937,43 @@ export default function InboxView() {
                         <span
                           title={
                             threadState.handover_sent_at
-                              ? "The customer was told a human is taking over."
-                              : "The holding line has not been delivered to the customer."
+                              ? u.handoverSent
+                              : u.handoverPending
                           }
                           className="rounded-full bg-amber-200/70 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-900 dark:bg-amber-400/20 dark:text-amber-200"
                         >
-                          Escalated
+                          {u.escalated}
                         </span>
                         <span className="text-[11px] font-medium text-amber-900 dark:text-amber-200">
                           {threadState.priority_since
-                            ? ago(threadState.priority_since)
-                            : "time unknown"}
+                            ? ago(threadState.priority_since, u.time)
+                            : u.timeUnknown}
                           {threadState.ai_miss_count
-                            ? ` · ${threadState.ai_miss_count} missed ${
-                                threadState.ai_miss_count === 1 ? "turn" : "turns"
-                              }`
-                            : " · flagged urgent"}
+                            ? ` · ${threadState.ai_miss_count === 1 ? fill(u.missedOne, { count: threadState.ai_miss_count }) : fill(u.missedMany, { count: threadState.ai_miss_count })}`
+                            : ` · ${u.flaggedUrgent}`}
                         </span>
                         <button
                           type="button"
                           disabled={modeBusy}
                           onClick={() => void handleModeChange(target, "ai")}
-                          title="Skip the scheduled resume and hand this thread back to the AI now."
+                          title={u.resumeNowTitle}
                           className="ml-auto shrink-0 rounded-full bg-deep-violet px-3 py-1 text-[10px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-50"
                         >
-                          Resume AI now
+                          {u.resumeNow}
                         </button>
                       </div>
                       <p className="mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-amber-900/80 dark:text-amber-200/80">
-                        <span>{reminderLabel(threadState)}</span>
+                        <span>{reminderLabel(threadState, u.time, { notSent: u.reminderNotSent, sent: u.reminderSent, due: u.reminderDue, inTemplate: u.reminderIn })}</span>
                         <span aria-hidden>·</span>
                         <span>
                           {threadState.resume_at
-                            ? `AI resumes automatically ${remaining(threadState.resume_at)}`
-                            : "No automatic resume scheduled"}
+                            ? fill(u.autoResume, { time: remaining(threadState.resume_at, u.time) })
+                            : u.noResume}
                         </span>
                         {threadState.resume_at && (
                           <>
                             <span aria-hidden>·</span>
-                            <span>{threadState.escalation_resume_hours ?? 24}h window</span>
+                            <span>{fill(u.window, { hours: threadState.escalation_resume_hours ?? 24 })}</span>
                           </>
                         )}
                       </p>
@@ -1964,11 +1989,11 @@ export default function InboxView() {
                   className="border-b border-ink/[0.04] px-4 py-2 dark:border-fog/[0.04]"
                 >
                   <summary className="cursor-pointer text-[10px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">
-                    Conversation context
+                    {u.contextTitle}
                     <span className="ml-1.5 font-medium normal-case tracking-normal">
-                      · {contextReasonLabel(threadState.context.reason)} ·{" "}
-                      {relative(threadState.context.created_at)} ·{" "}
-                      {threadState.context.message_count} messages
+                      · {contextReasonLabel(threadState.context.reason, u.reasons)} ·{" "}
+                      {relative(threadState.context.created_at, localeTag, u.time)} ·{" "}
+                      {fill(u.messages, { count: threadState.context.message_count })}
                     </span>
                   </summary>
                   <p className="mt-1.5 whitespace-pre-line text-[12px] leading-5 text-ink/70 dark:text-fog/70">
@@ -1981,8 +2006,8 @@ export default function InboxView() {
                 <input
                   value={threadQuery}
                   onChange={(e) => setThreadQuery(e.target.value)}
-                  placeholder="Search in conversation…"
-                  aria-label="Search in conversation"
+                  placeholder={u.searchIn}
+                  aria-label={u.searchInAria}
                   className="input-field w-full"
                 />
               </div>
@@ -1992,7 +2017,7 @@ export default function InboxView() {
                   <div className="flex justify-center py-16"><LogoLoader size={24} /></div>
                 ) : threadView.length === 0 ? (
                   <p className="py-10 text-center text-[12px] text-ink/40">
-                    {threadQuery ? "No messages match." : "No messages."}
+                    {threadQuery ? u.noMatch : u.noMessages}
                   </p>
                 ) : (
                   <>
@@ -2004,13 +2029,13 @@ export default function InboxView() {
                           onClick={() => void loadEarlierMessages()}
                           className="rounded-full border border-ink/[0.08] bg-white px-3 py-1.5 text-[11px] font-semibold text-ink/55 transition hover:border-deep-violet/30 hover:text-deep-violet disabled:opacity-50 dark:border-fog/[0.12] dark:bg-ink dark:text-fog/55 dark:hover:text-fog"
                         >
-                          {loadingEarlier ? "Loading earlier…" : "Load earlier messages"}
+                          {loadingEarlier ? u.loadingEarlier : u.loadEarlier}
                         </button>
                       </div>
                     )}
                     {!threadQuery && historyLimitReached && (
                       <p className="mb-3 text-center text-[10px] text-ink/40 dark:text-fog/40">
-                        Showing the latest {INBOX_MESSAGE_BUFFER_CAP} messages.
+                        {fill(u.latest, { cap: INBOX_MESSAGE_BUFFER_CAP })}
                       </p>
                     )}
                     {!threadQuery && earlierError && (
@@ -2047,13 +2072,13 @@ export default function InboxView() {
                     const isPlaceholder = /^\[[a-z]+ message\]$/.test(m.content);
                     const missingMediaLabel =
                       m.content_type === "image"
-                        ? "Image attachment could not be loaded"
+                        ? u.imageFail
                         : m.content_type === "document"
-                          ? "Document attachment could not be loaded"
+                          ? u.documentFail
                           : m.content_type === "sticker"
-                            ? "Sticker could not be loaded"
+                            ? u.stickerFail
                             : m.content_type === "video"
-                              ? "Video message"
+                              ? u.video
                               : m.content;
                     const attachmentText =
                       m.content_type === "sticker" && mediaSrc
@@ -2072,12 +2097,12 @@ export default function InboxView() {
                         <div key={m.id}>
                           {showDay && (
                             <p className="my-3 text-center text-[11px] font-semibold text-ink/30 dark:text-fog/30">
-                              {dayLabel(m.created_at)}
+                              {dayLabel(m.created_at, localeTag, u.time)}
                             </p>
                           )}
                           <div className={`mb-2 flex ${mine ? "justify-end" : "justify-start"}`}>
                             <span
-                              title={`Reacted ${clockTime(m.created_at)}`}
+                              title={fill(u.reacted, { time: clockTime(m.created_at, localeTag) })}
                               className="rounded-full bg-ink/[0.05] px-3 py-1 text-[20px] leading-7 dark:bg-fog/[0.08]"
                             >
                               {emoji}
@@ -2090,7 +2115,7 @@ export default function InboxView() {
                       <div key={m.id} className="group">
                         {showDay && (
                           <p className="my-3 text-center text-[11px] font-semibold text-ink/30 dark:text-fog/30">
-                            {dayLabel(m.created_at)}
+                            {dayLabel(m.created_at, localeTag, u.time)}
                           </p>
                         )}
                         <div className={`mb-1.5 flex items-end gap-2 ${mine ? "justify-end" : "justify-start"}`}>
@@ -2116,7 +2141,7 @@ export default function InboxView() {
                           >
                             {m.deleted ? (
                               <p className="text-[12px] italic opacity-60">
-                                Message removed from this inbox
+                                {u.removed}
                               </p>
                             ) : (
                               <>
@@ -2126,7 +2151,7 @@ export default function InboxView() {
                                       mine ? "text-white/70" : "text-ink/45 dark:text-fog/45"
                                     }`}
                                   >
-                                    Public reply on Google
+                                    {u.reviewReply}
                                   </p>
                                 )}
                                 {quotedMessage && (
@@ -2145,8 +2170,8 @@ export default function InboxView() {
                                       }`}
                                     >
                                       {quotedMessage.direction === "outbound"
-                                        ? "You"
-                                        : target?.display_name || "Customer"}
+                                        ? u.quoteYou
+                                        : target?.display_name || u.quoteCustomer}
                                     </p>
                                     <p
                                       className={`truncate text-[11px] ${
@@ -2156,12 +2181,12 @@ export default function InboxView() {
                                       }`}
                                     >
                                       {quotedMessage.deleted
-                                        ? "Message removed"
+                                        ? u.quoteRemoved
                                         : quotedMessage.media_url
                                           ? quotedMessage.media_filename ||
                                             (quotedMessage.content_type === "sticker"
-                                              ? "Sticker"
-                                              : "Attachment")
+                                              ? u.sticker
+                                              : u.attachment)
                                           : quotedMessage.content || "…"}
                                     </p>
                                   </div>
@@ -2177,8 +2202,8 @@ export default function InboxView() {
                                     }`}
                                   >
                                     {m.content_type === "location"
-                                      ? "Location"
-                                      : "Contact card"}
+                                      ? u.location
+                                      : u.contactCard}
                                   </p>
                                 ) : null}
                                 {isImageAttachment && mediaSrc ? (
@@ -2194,8 +2219,8 @@ export default function InboxView() {
                                       alt={
                                         m.media_filename ||
                                         (m.content_type === "sticker"
-                                          ? "Sticker"
-                                          : "Image attachment")
+                                          ? u.sticker
+                                          : u.attachment)
                                       }
                                       className={
                                         m.content_type === "sticker"
@@ -2220,14 +2245,14 @@ export default function InboxView() {
                                     <span aria-hidden className="text-[18px]">📄</span>
                                     <span className="min-w-0 flex-1">
                                       <span className="block truncate text-[12px] font-semibold">
-                                        {m.media_filename || "Document"}
+                                        {m.media_filename || u.document}
                                       </span>
                                       <span
                                         className={`text-[10px] ${
                                           mine ? "text-white/70" : "text-ink/50 dark:text-fog/50"
                                         }`}
                                       >
-                                        Download document
+                                        {u.download}
                                       </span>
                                     </span>
                                   </a>
@@ -2244,9 +2269,9 @@ export default function InboxView() {
                                 mine ? (m.status === "failed" ? "text-red-500" : "text-white/70") : "text-ink/35 dark:text-fog/35"
                               }`}
                             >
-                              {clockTime(m.created_at)}
+                              {clockTime(m.created_at, localeTag)}
                               {mine && <StatusTick message={m} />}
-                              {mine && m.status === "failed" ? " · not sent" : ""}
+                              {mine && m.status === "failed" ? u.notSent : ""}
                             </p>
                             {mine && m.status === "failed" && m.error && (
                               <p className="mt-1 border-t border-red-200 pt-1 text-[11px] text-red-600 dark:border-red-900 dark:text-red-300">
@@ -2267,7 +2292,7 @@ export default function InboxView() {
                                 onClick={() => setReplyTo(m)}
                                 className="rounded-full px-2 py-0.5 text-[10px] font-semibold text-ink/45 transition hover:bg-ink/[0.05] hover:text-ink dark:text-fog/45 dark:hover:bg-fog/[0.08] dark:hover:text-fog"
                               >
-                                Reply
+                                {u.reply}
                               </button>
                             )}
                             {!mine && target?.platform === "whatsapp" && (
@@ -2278,17 +2303,17 @@ export default function InboxView() {
                                 }
                                 className="rounded-full px-2 py-0.5 text-[10px] font-semibold text-ink/45 transition hover:bg-ink/[0.05] hover:text-ink dark:text-fog/45 dark:hover:bg-fog/[0.08] dark:hover:text-fog"
                               >
-                                React
+                                {u.react}
                               </button>
                             )}
                             {mine && (
                               <button
                                 type="button"
                                 onClick={() => void removeMessage(m)}
-                                title="Removes it from this inbox only — the customer still has it."
+                                title={u.removeTitle}
                                 className="rounded-full px-2 py-0.5 text-[10px] font-semibold text-ink/45 transition hover:bg-red-50 hover:text-red-600 dark:text-fog/45 dark:hover:bg-red-950/30 dark:hover:text-red-300"
                               >
-                                Remove
+                                {u.remove}
                               </button>
                             )}
                           </div>
@@ -2301,7 +2326,7 @@ export default function InboxView() {
                                 type="button"
                                 disabled={reactBusy}
                                 onClick={() => void react(m, emoji)}
-                                aria-label={`React with ${emoji}`}
+                                aria-label={fill(u.reactWith, { emoji })}
                                 className="rounded-full border border-ink/[0.08] bg-white px-2 py-1 text-[16px] leading-5 transition hover:bg-ink/[0.04] disabled:opacity-50 dark:border-fog/[0.12] dark:bg-ink"
                               >
                                 {emoji}
@@ -2332,10 +2357,10 @@ export default function InboxView() {
                   <div className="mb-2 flex items-start gap-2 rounded-xl border-l-2 border-deep-violet bg-deep-violet/[0.05] px-3 py-2 dark:bg-fog/[0.06]">
                     <div className="min-w-0 flex-1">
                       <p className="text-[9px] font-bold uppercase tracking-wide text-deep-violet/70 dark:text-fog/60">
-                        Replying to{" "}
+                        {u.replyingTo}{" "}
                         {replyTo.direction === "outbound"
-                          ? "your message"
-                          : target?.display_name || "the customer"}
+                          ? u.yourMessage
+                          : target?.display_name || u.theCustomer}
                       </p>
                       <p className="truncate text-[11px] text-ink/60 dark:text-fog/60">
                         {replyTo.content || "…"}
@@ -2344,7 +2369,7 @@ export default function InboxView() {
                     <button
                       type="button"
                       onClick={() => setReplyTo(null)}
-                      aria-label="Cancel reply"
+                      aria-label={u.cancelReply}
                       className="shrink-0 rounded-full px-1.5 text-[14px] leading-5 text-ink/40 hover:text-ink dark:text-fog/40 dark:hover:text-fog"
                     >
                       ×
@@ -2352,7 +2377,7 @@ export default function InboxView() {
                   </div>
                 )}
                 <div className="mb-2 flex gap-1.5 overflow-x-auto">
-                  {QUICK_REPLIES.map((q) => (
+                  {u.quickReplies.map((q) => (
                     <button
                       key={q}
                       onClick={() => setDraft(q)}
@@ -2369,46 +2394,45 @@ export default function InboxView() {
                       onClick={() => openRichComposer("location")}
                       className="rounded-full border border-ink/[0.08] px-2.5 py-1 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet/40 hover:text-deep-violet dark:border-fog/[0.1] dark:text-fog/60"
                     >
-                      📍 Send location
+                      {u.sendLocation}
                     </button>
                     <button
                       type="button"
                       onClick={() => openRichComposer("contact")}
                       className="rounded-full border border-ink/[0.08] px-2.5 py-1 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet/40 hover:text-deep-violet dark:border-fog/[0.1] dark:text-fog/60"
                     >
-                      👤 Send contact
+                      {u.sendContact}
                     </button>
                     <button
                       type="button"
                       onClick={() => openRichComposer("document")}
                       className="rounded-full border border-ink/[0.08] px-2.5 py-1 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet/40 hover:text-deep-violet dark:border-fog/[0.1] dark:text-fog/60"
                     >
-                      📎 Send document
+                      {u.sendDocument}
                     </button>
                     <button
                       type="button"
                       onClick={() => openRichComposer("sticker")}
                       className="rounded-full border border-ink/[0.08] px-2.5 py-1 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet/40 hover:text-deep-violet dark:border-fog/[0.1] dark:text-fog/60"
                     >
-                      🩷 Send sticker
+                      {u.sendSticker}
                     </button>
                   </div>
                 )}
                 {target.is_unknown ? (
                   <p className="text-[12px] text-ink/45 dark:text-fog/45">
-                    These messages predate contact tracking, so there is no number to reply to.
+                    {u.unknownNote}
                   </p>
                 ) : target.can_reply === false ? (
                   <p className="text-[12px] text-ink/45 dark:text-fog/45">
-                    This is a public {target.platform === "google_reviews" ? "Google review" : "post"} — it is
-                    answered from the Reviews page, not from here.
+                    {fill(u.publicNote, { kind: target.platform === "google_reviews" ? u.reviewKind : u.postKind })}
                   </p>
                 ) : (
                   <>
                     {(!replyWindowOpen(target) || windowClosed) && (
                       <div className="mb-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2.5 dark:border-amber-500/30 dark:bg-amber-500/10">
                         <p className="text-[12px] font-medium text-amber-800 dark:text-amber-300">
-                          Reply window closed — Meta only allows free-form replies within 24 hours of the customer&apos;s last message.
+                          {u.windowNote}
                         </p>
                         <div className="mt-2 flex flex-wrap items-center gap-2">
                           <button
@@ -2416,11 +2440,11 @@ export default function InboxView() {
                             onClick={() => void openTemplatePicker(target)}
                             className="rounded-full bg-deep-violet px-3 py-1 text-[11px] font-bold text-white transition active:translate-y-[1px] active:scale-[0.98]"
                           >
-                            {templateOpen ? "Hide templates" : "Send a template"}
+                            {templateOpen ? u.hideTemplates : u.sendTemplate}
                           </button>
                           {threadState?.opt_in_at ? (
                             <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-ink/40 dark:text-amber-200">
-                              Opt-in on record
+                              {u.optIn}
                               {threadState.opt_in_source
                                 ? ` · ${threadState.opt_in_source.replace(/_/g, " ")}`
                                 : ""}
@@ -2428,14 +2452,14 @@ export default function InboxView() {
                           ) : (
                             <>
                               <span className="text-[11px] font-medium text-amber-800/80 dark:text-amber-300/80">
-                                No opt-in on record — templates need one.
+                                {u.noOptIn}
                               </span>
                               <button
                                 type="button"
                                 onClick={() => void handleRecordConsent(target)}
                                 className="rounded-full border border-amber-400/60 px-2.5 py-0.5 text-[10px] font-bold text-amber-800 transition hover:bg-amber-100 dark:border-amber-400/40 dark:text-amber-200"
                               >
-                                Record consent
+                                {u.recordConsent}
                               </button>
                             </>
                           )}
@@ -2450,12 +2474,11 @@ export default function InboxView() {
                             )}
                             {templates === null ? (
                               <p className="text-[11px] text-ink/45 dark:text-fog/45">
-                                Loading templates…
+                                {u.loadingTemplates}
                               </p>
                             ) : approvedTemplates.length === 0 ? (
                               <p className="text-[11px] text-ink/45 dark:text-fog/45">
-                                No approved utility template yet. Create one in
-                                WhatsApp Manager, then sync on the Templates page.
+                                {u.noTemplates}
                               </p>
                             ) : (
                               <>
@@ -2490,8 +2513,8 @@ export default function InboxView() {
                                           next[index] = e.target.value;
                                           setTemplateVars(next);
                                         }}
-                                        placeholder={`Variable ${index + 1}`}
-                                        aria-label={`Template variable ${index + 1}`}
+                                        placeholder={fill(u.variablePh, { index: index + 1 })}
+                                        aria-label={fill(u.variableAria, { index: index + 1 })}
                                         className="input-field"
                                       />
                                     ))}
@@ -2509,7 +2532,7 @@ export default function InboxView() {
                                     disabled={!selectedTemplate || templateBusy}
                                     className="rounded-full bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white transition disabled:opacity-40 active:translate-y-[1px] active:scale-[0.98]"
                                   >
-                                    {templateBusy ? "Sending…" : "Send template"}
+                                    {templateBusy ? u.sending : u.sendTemplateBtn}
                                   </button>
                                 </div>
                               </>
@@ -2531,21 +2554,21 @@ export default function InboxView() {
                         rows={2}
                         placeholder={
                           !replyWindowOpen(target) || windowClosed
-                            ? "Reply window closed"
-                            : "Write a reply…"
+                            ? u.closedPh
+                            : u.writePh
                         }
-                        aria-label="Write a reply"
+                        aria-label={u.writeAria}
                         disabled={!replyWindowOpen(target) || windowClosed}
                         className="input-field flex-1 resize-none disabled:opacity-50"
                       />
                       <button onClick={() => void send()} disabled={!canSend} className="btn-primary disabled:opacity-40">
-                        {sending ? "Sending…" : "Send"}
+                        {sending ? u.sending : u.send}
                       </button>
                     </div>
                     <p className="mt-1.5 text-[11px] text-ink/35 dark:text-fog/35">
                       {replyWindowOpen(target) && !windowClosed
-                        ? `Reply window open — closes ${replyWindowExpiresAt(target)?.toLocaleString() ?? ""}.`
-                        : "WhatsApp/Instagram only allow replies within 24 hours of the customer’s last message."}
+                        ? fill(u.windowOpen, { date: replyWindowExpiresAt(target)?.toLocaleString(localeTag) ?? "" })
+                        : u.windowRules}
                     </p>
                   </>
                 )}
@@ -2560,16 +2583,16 @@ export default function InboxView() {
             <button
               type="button"
               onClick={() => setShowInfo(false)}
-              aria-label="Back to conversation"
+              aria-label={u.backAria}
               className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[13px] font-semibold text-deep-violet"
             >
-              ← Back to chat
+              {u.infoBack}
             </button>
-            <p className="text-[13px] font-bold text-ink dark:text-fog">Contact profile</p>
+            <p className="text-[13px] font-bold text-ink dark:text-fog">{u.infoProfile}</p>
             <span className="w-12" aria-hidden />
           </div>
           {!target ? (
-            <p className="text-[12px] text-ink/40">Select a conversation to see contact details.</p>
+            <p className="text-[12px] text-ink/40">{u.infoEmpty}</p>
           ) : (
             <div className="space-y-4">
               <div className="flex flex-col items-center text-center">
@@ -2581,7 +2604,7 @@ export default function InboxView() {
                   disabled={!target.avatar_url}
                   aria-label={
                     target.avatar_url
-                      ? `View ${target.display_name || "contact"} profile picture`
+                      ? fill(u.viewPic, { name: target.display_name || u.unknownSender })
                       : undefined
                   }
                   className={`rounded-2xl outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
@@ -2600,23 +2623,23 @@ export default function InboxView() {
                   </Avatar>
                 </button>
                 <p className="mt-2 text-[14px] font-semibold text-ink dark:text-fog">
-                  {target.display_name || "Unknown sender"}
+                  {target.display_name || u.unknownSender}
                 </p>
                 {target.username && (
                   <p className="text-[12px] font-medium text-deep-violet">@{target.username}</p>
                 )}
                 <p className="text-[12px] text-ink/45 dark:text-fog/45">
                   {target.platform === "google_reviews" || target.platform === "google"
-                    ? target.channel_name ?? "Google review"
+                    ? target.channel_name ?? u.googleReview
                     : target.platform === "instagram"
                       ? target.contact_phone
-                      : formatPhone(target.contact_phone)}
+                      : formatPhone(target.contact_phone, u.unknownSender)}
                 </p>
               </div>
               {!target.is_unknown && (
                 <label className="block md:hidden">
                   <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-ink/45 dark:text-fog/45">
-                    Owner
+                    {u.owner}
                   </span>
                   <select
                     value={currentAssignee ?? ""}
@@ -2624,18 +2647,18 @@ export default function InboxView() {
                       void handleAssignee(target, e.target.value || null)
                     }
                     disabled={assigneeBusy}
-                    aria-label="Conversation owner"
+                    aria-label={u.whoAnswers}
                     className="h-9 w-full rounded-lg border border-ink/[0.08] bg-white px-2 text-[12px] font-semibold text-ink disabled:opacity-50 dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
                   >
-                    <option value="">Unassigned</option>
+                    <option value="">{u.unassigned}</option>
                     {assigneeNotInList && currentAssignee && (
                       <option value={currentAssignee}>
-                        {currentAssigneeName ?? "Assigned"}
+                        {currentAssigneeName ?? u.assigned}
                       </option>
                     )}
                     {assignees.map((a) => (
                       <option key={a.user_id} value={a.user_id}>
-                        {a.user_id === user?.id ? `${a.name} (you)` : a.name}
+                        {a.user_id === user?.id ? fill(u.youSuffix, { name: a.name }) : a.name}
                       </option>
                     ))}
                   </select>
@@ -2643,35 +2666,35 @@ export default function InboxView() {
               )}
               <dl className="space-y-2 text-[12px]">
                 <div className="flex justify-between">
-                  <dt className="text-ink/45 dark:text-fog/45">Platform</dt>
+                  <dt className="text-ink/45 dark:text-fog/45">{u.platform}</dt>
                   <dd className="font-semibold text-ink dark:text-fog">{platformMeta(target.platform).label}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-ink/45 dark:text-fog/45">Channel</dt>
+                  <dt className="text-ink/45 dark:text-fog/45">{u.channel}</dt>
                   <dd className="truncate font-semibold text-ink dark:text-fog">{target.channel_name ?? "—"}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-ink/45 dark:text-fog/45">Messages</dt>
+                  <dt className="text-ink/45 dark:text-fog/45">{u.messagesStat}</dt>
                   <dd className="font-semibold text-ink dark:text-fog">{target.message_count}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-ink/45 dark:text-fog/45">Unread</dt>
+                  <dt className="text-ink/45 dark:text-fog/45">{u.unreadStat}</dt>
                   <dd className="font-semibold text-ink dark:text-fog">{target.unread}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-ink/45 dark:text-fog/45">Last activity</dt>
-                  <dd className="font-semibold text-ink dark:text-fog">{relative(target.last_message_at)}</dd>
+                  <dt className="text-ink/45 dark:text-fog/45">{u.lastActivity}</dt>
+                  <dd className="font-semibold text-ink dark:text-fog">{relative(target.last_message_at, localeTag, u.time)}</dd>
                 </div>
               </dl>
               {target.platform === "whatsapp" && (
                 <div className="rounded-xl border border-ink/[0.08] p-3 dark:border-fog/[0.1]">
                   <p className="text-[11px] font-bold uppercase tracking-wide text-ink/45 dark:text-fog/45">
-                    Customer access
+                    {u.accessTitle}
                   </p>
                   <p className="mt-1 text-[12px] text-ink/60 dark:text-fog/60">
                     {threadState?.blocked_at
-                      ? "This customer is blocked on WhatsApp."
-                      : "This customer can message this number."}
+                      ? u.blockedText
+                      : u.unblockedText}
                   </p>
                   <button
                     type="button"
@@ -2686,10 +2709,10 @@ export default function InboxView() {
                     }`}
                   >
                     {blockBusy
-                      ? "Working…"
+                      ? u.working
                       : threadState?.blocked_at
-                        ? "Unblock customer"
-                        : "Block customer"}
+                        ? u.unblock
+                        : u.block}
                   </button>
                   {blockError && (
                     <p role="status" className="mt-2 text-[11px] text-red-600">
@@ -2707,14 +2730,14 @@ export default function InboxView() {
         <div
           role="dialog"
           aria-modal="true"
-          aria-label="Profile picture"
+          aria-label={u.pic}
           className="fixed inset-0 z-[100] flex items-center justify-center bg-ink/70 p-6"
           onClick={() => setPhotoOpen(false)}
         >
           <button
             type="button"
             onClick={() => setPhotoOpen(false)}
-            aria-label="Close profile picture"
+            aria-label={u.closePic}
             className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/95 text-[20px] font-medium text-ink shadow-lg transition hover:bg-white focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-white"
           >
             ×
@@ -2722,7 +2745,7 @@ export default function InboxView() {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={resolveMediaUrl(target.avatar_url) || target.avatar_url}
-            alt={target.display_name || "Contact profile picture"}
+            alt={fill(u.photoOf, { name: target.display_name || u.unknownSender })}
             className="max-h-[82vh] max-w-[82vw] rounded-2xl object-contain shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           />
@@ -2737,9 +2760,9 @@ export default function InboxView() {
       {deleteTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl dark:bg-ink">
-            <h2 className="text-[15px] font-bold text-ink dark:text-fog">Delete this conversation?</h2>
+            <h2 className="text-[15px] font-bold text-ink dark:text-fog">{u.deleteModalTitle}</h2>
             <p className="mt-2 text-[12px] text-ink/60 dark:text-fog/60">
-              This permanently deletes all messages in this thread. This cannot be undone.
+              {u.deleteDesc}
             </p>
             {listActionError && (
               <p role="alert" className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-medium text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
@@ -2753,7 +2776,7 @@ export default function InboxView() {
                 onClick={() => setDeleteTarget(null)}
                 className="rounded-[2px] border border-[var(--ui-line)] px-3 py-1.5 text-[12px] font-medium text-ink/70 disabled:opacity-50"
               >
-                Cancel
+                {t.common.cancel}
               </button>
               <button
                 type="button"
@@ -2761,7 +2784,7 @@ export default function InboxView() {
                 onClick={() => void handleDelete(deleteTarget)}
                 className="rounded-[2px] bg-red-600 px-3 py-1.5 text-[12px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {deleteBusy ? "Deleting…" : "Delete"}
+                {deleteBusy ? u.deleting : u.deleteBtn}
               </button>
             </div>
           </div>
@@ -2772,27 +2795,27 @@ export default function InboxView() {
           <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl dark:bg-ink">
             <h2 className="text-[15px] font-bold text-ink dark:text-fog">
               {richComposer === "location"
-                ? "Send a location"
+                ? u.rich.locationTitle
                 : richComposer === "contact"
-                  ? "Send a contact card"
+                  ? u.rich.contactTitle
                   : richComposer === "document"
-                    ? "Send a document"
-                    : "Send a sticker"}
+                    ? u.rich.documentTitle
+                    : u.rich.stickerTitle}
             </h2>
             <p className="mt-1 text-[12px] text-ink/55 dark:text-fog/55">
               {richComposer === "location"
-                ? "The customer gets a native map card, not a link."
+                ? u.rich.locationDesc
                 : richComposer === "contact"
-                  ? "The customer gets a native contact card they can save."
+                  ? u.rich.contactDesc
                   : richComposer === "document"
-                    ? "The customer gets the file as a native WhatsApp document."
-                    : "WebP only, under 500 KB — WhatsApp's sticker format."}
+                    ? u.rich.documentDesc
+                    : u.rich.stickerDesc}
             </p>
 
             {richComposer === "location" ? (
               <div className="mt-3 space-y-2">
                 <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
-                  Google Maps link (optional — fills the coordinates)
+                  {u.rich.mapsLink}
                   <input
                     value={locMaps}
                     onChange={(e) => {
@@ -2809,7 +2832,7 @@ export default function InboxView() {
                   />
                 </label>
                 <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
-                  Place name
+                  {u.rich.placeName}
                   <input
                     value={locName}
                     onChange={(e) => setLocName(e.target.value)}
@@ -2818,7 +2841,7 @@ export default function InboxView() {
                   />
                 </label>
                 <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
-                  Address
+                  {u.rich.address}
                   <input
                     value={locAddress}
                     onChange={(e) => setLocAddress(e.target.value)}
@@ -2828,7 +2851,7 @@ export default function InboxView() {
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
-                    Latitude
+                    {u.rich.latitude}
                     <input
                       value={locLat}
                       onChange={(e) => setLocLat(e.target.value)}
@@ -2838,7 +2861,7 @@ export default function InboxView() {
                     />
                   </label>
                   <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
-                    Longitude
+                    {u.rich.longitude}
                     <input
                       value={locLng}
                       onChange={(e) => setLocLng(e.target.value)}
@@ -2852,7 +2875,7 @@ export default function InboxView() {
             ) : richComposer === "contact" ? (
               <div className="mt-3 space-y-2">
                 <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
-                  Name
+                  {u.rich.name}
                   <input
                     value={cardName}
                     onChange={(e) => setCardName(e.target.value)}
@@ -2861,7 +2884,7 @@ export default function InboxView() {
                   />
                 </label>
                 <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
-                  Phone
+                  {u.rich.phone}
                   <input
                     value={cardPhone}
                     onChange={(e) => setCardPhone(e.target.value)}
@@ -2870,7 +2893,7 @@ export default function InboxView() {
                   />
                 </label>
                 <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
-                  Email (optional)
+                  {u.rich.emailOptional}
                   <input
                     value={cardEmail}
                     onChange={(e) => setCardEmail(e.target.value)}
@@ -2883,7 +2906,7 @@ export default function InboxView() {
             ) : richComposer === "document" ? (
               <div className="mt-3 space-y-2">
                 <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
-                  File (PDF, invoice, menu, spreadsheet — under 32 MB)
+                  {u.rich.fileLabel}
                   <input
                     type="file"
                     onChange={(e) => setDocFile(e.target.files?.[0] ?? null)}
@@ -2896,11 +2919,11 @@ export default function InboxView() {
                   </p>
                 )}
                 <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
-                  Caption (optional)
+                  {u.rich.caption}
                   <input
                     value={docCaption}
                     onChange={(e) => setDocCaption(e.target.value)}
-                    placeholder="Your invoice for order #1234"
+                    placeholder={u.rich.captionPh}
                     className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
                   />
                 </label>
@@ -2908,7 +2931,7 @@ export default function InboxView() {
             ) : (
               <div className="mt-3 space-y-2">
                 <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
-                  Sticker file (.webp, 512×512, under 500 KB)
+                  {u.rich.stickerLabel}
                   <input
                     type="file"
                     accept="image/webp,.webp"
@@ -2930,7 +2953,7 @@ export default function InboxView() {
                 onClick={() => setRichComposer(null)}
                 className="rounded-full border border-[var(--ui-line)] px-3 py-1.5 text-[12px] font-medium text-ink/70 dark:text-fog/70"
               >
-                Cancel
+                {t.common.cancel}
               </button>
               <button
                 type="button"
@@ -2946,7 +2969,7 @@ export default function InboxView() {
                 }
                 className="rounded-full bg-deep-violet px-4 py-1.5 text-[12px] font-bold text-white disabled:opacity-50"
               >
-                {richBusy ? "Sending…" : "Send"}
+                {richBusy ? u.sending : u.send}
               </button>
             </div>
           </div>
