@@ -110,15 +110,16 @@ async def structured_lookup(db, tenant_id: str, bank_ids: list[str],
         logger.warning("structured_lookup: no bank_ids for tenant %s", tenant_id)
         return []
     try:
-        docs = (
-            await db.execute(
-                select(Document).where(
-                    Document.databank_id.in_(bank_ids),
-                    Document.user_id == tenant_id,
-                    Document.file_type == "csv",
+        async with db.begin_nested():
+            docs = (
+                await db.execute(
+                    select(Document).where(
+                        Document.databank_id.in_(bank_ids),
+                        Document.user_id == tenant_id,
+                        Document.file_type == "csv",
+                    )
                 )
-            )
-        ).scalars().all()
+            ).scalars().all()
     except Exception as e:
         logger.warning("Structured lookup doc scan failed: %s", e)
         return []

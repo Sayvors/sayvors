@@ -600,7 +600,7 @@ class PurgeTenantRequest(BaseModel):
 async def admin_purge_tenant(
     user_id: str,
     body: PurgeTenantRequest,
-    admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
     db: AsyncSession = Depends(get_db),
 ):
     """Permanently delete a workspace and all of its data.
@@ -627,7 +627,7 @@ async def admin_purge_tenant(
     # Leave the same admin-visible trace as the automatic unverified purge;
     # a manual purge must not be an untracked disappearance.
     await archive_account(
-        db, user, reason="admin", actor=admin.get("username")
+        db, user, reason="admin", actor=_admin.get("username")
     )
     try:
         result = await purge_tenant(db, user_id)
@@ -889,14 +889,14 @@ async def admin_email_campaigns(
 @router.post("/email/campaigns", status_code=201)
 async def admin_email_campaign_create(
     body: CampaignCreateIn,
-    admin: dict = Depends(require_admin),
+    _admin: dict = Depends(require_admin),
     _rate_limit: None = Depends(admin_rate_limit),
     db: AsyncSession = Depends(get_db),
 ):
     from ..email.campaigns import campaign_out, create_campaign
 
     campaign = await create_campaign(
-        db, created_by=admin.get("username"), body=body
+        db, created_by=_admin.get("username"), body=body
     )
     return await campaign_out(db, campaign)
 
