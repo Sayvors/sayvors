@@ -596,7 +596,7 @@ async def accept_invite(
         user_id=created.id,
         token_hash=hash_token(refresh_raw),
         fingerprint=create_token_fingerprint(user_agent, ip),
-        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.JWT_REFRESH_EXPIRATION_DAYS),
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=settings.JWT_REFRESH_EXPIRATION_HOURS),
         user_agent=user_agent[:500],
         ip_address=ip[:45],
     ))
@@ -606,7 +606,7 @@ async def accept_invite(
         await store_session(
             created.id, created.id,
             {"user_id": created.id, "ip": ip, "user_agent": user_agent[:200]},
-            settings.JWT_REFRESH_EXPIRATION_DAYS * 86400,
+            settings.JWT_REFRESH_EXPIRATION_HOURS * 3600,
         )
     except Exception:
         pass

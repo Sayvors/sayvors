@@ -221,7 +221,7 @@ async def login(body: LoginRequest, db: AsyncSession, user_agent: str, ip: str) 
         user_id=user.id,
         token_hash=hash_token(refresh_raw),
         fingerprint=create_token_fingerprint(user_agent, ip),
-        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.JWT_REFRESH_EXPIRATION_DAYS),
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=settings.JWT_REFRESH_EXPIRATION_HOURS),
         user_agent=user_agent[:500],
         ip_address=ip[:45],
     )
@@ -239,7 +239,7 @@ async def login(body: LoginRequest, db: AsyncSession, user_agent: str, ip: str) 
         from ...modules.redis.client import get_redis
         redis = await get_redis()
         session_data = {"user_id": user.id, "ip": ip, "user_agent": user_agent[:200]}
-        await store_session(user.id, user.id, session_data, settings.JWT_REFRESH_EXPIRATION_DAYS * 86400)
+        await store_session(user.id, user.id, session_data, settings.JWT_REFRESH_EXPIRATION_HOURS * 3600)
     except Exception:
         pass
 
@@ -271,7 +271,7 @@ async def _issue_session(user: User, db: AsyncSession, event: str,
         user_id=user.id,
         token_hash=hash_token(refresh_raw),
         fingerprint=create_token_fingerprint(user_agent, ip),
-        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.JWT_REFRESH_EXPIRATION_DAYS),
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=settings.JWT_REFRESH_EXPIRATION_HOURS),
         user_agent=user_agent[:500],
         ip_address=ip[:45],
     ))
@@ -286,7 +286,7 @@ async def _issue_session(user: User, db: AsyncSession, event: str,
         redis = await get_redis()
         session_data = {"user_id": user.id, "ip": ip, "user_agent": user_agent[:200]}
         await store_session(user.id, user.id, session_data,
-                            settings.JWT_REFRESH_EXPIRATION_DAYS * 86400)
+                            settings.JWT_REFRESH_EXPIRATION_HOURS * 3600)
     except Exception:
         pass
 
@@ -560,7 +560,7 @@ async def refresh_tokens(
         user_id=user_id,
         token_hash=hash_token(new_refresh_raw),
         fingerprint=db_token.fingerprint,
-        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.JWT_REFRESH_EXPIRATION_DAYS),
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=settings.JWT_REFRESH_EXPIRATION_HOURS),
         user_agent=db_token.user_agent,
         ip_address=db_token.ip_address,
     )
@@ -852,7 +852,7 @@ async def verify_signup_otp(
         user_id=user.id,
         token_hash=hash_token(refresh_raw),
         fingerprint=create_token_fingerprint(user_agent, ip),
-        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.JWT_REFRESH_EXPIRATION_DAYS),
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=settings.JWT_REFRESH_EXPIRATION_HOURS),
         user_agent=user_agent[:500],
         ip_address=ip[:45],
     )
@@ -863,7 +863,7 @@ async def verify_signup_otp(
         from ...modules.redis.client import get_redis
         redis = await get_redis()
         session_data = {"user_id": user.id, "ip": ip, "user_agent": user_agent[:200]}
-        await store_session(user.id, user.id, session_data, settings.JWT_REFRESH_EXPIRATION_DAYS * 86400)
+        await store_session(user.id, user.id, session_data, settings.JWT_REFRESH_EXPIRATION_HOURS * 3600)
     except Exception:
         pass
 

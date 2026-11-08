@@ -109,7 +109,7 @@ Login
   │
   ├─▶ Access Token (15m) ──▶ Response body
   │
-  └─▶ Refresh Token (7d) ──▶ HTTP-only cookie
+  └─▶ Refresh Token (12h) ──▶ HTTP-only cookie
        │
        ├─▶ POST /auth/refresh
        │      │

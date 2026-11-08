@@ -28,8 +28,11 @@ class Settings(BaseSettings):
         return mode
     JWT_SECRET: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"
-    JWT_ACCESS_EXPIRATION_MINUTES: int = 60 * 24  # 24 hours; refreshed but long enough that a browser hiccup cannot log the user out mid-session
-    JWT_REFRESH_EXPIRATION_DAYS: int = 7
+    # 12-hour login session. The access token and the rotating refresh token
+    # share the same lifetime, so a user who stops using the app must sign in
+    # again after 12 hours. A refresh before then rolls both forward.
+    JWT_ACCESS_EXPIRATION_MINUTES: int = 60 * 12
+    JWT_REFRESH_EXPIRATION_HOURS: int = 12
     # "production" arms the fail-closed startup validation below.
     ENVIRONMENT: str = "development"
     VERSION: str = "0.1.0"
@@ -107,8 +110,8 @@ class Settings(BaseSettings):
     CSRF_COOKIE_NAME: str = "csrf_token"
     REFRESH_COOKIE_NAME: str = "refresh_token"
     ACCESS_COOKIE_NAME: str = "access_token"
-    REFRESH_COOKIE_MAX_AGE: int = 60 * 60 * 24 * 7  # 7 days
-    ACCESS_COOKIE_MAX_AGE: int = 60 * 60 * 24  # 24 hours, matches JWT access expiry
+    REFRESH_COOKIE_MAX_AGE: int = 60 * 60 * 12  # 12 hours
+    ACCESS_COOKIE_MAX_AGE: int = 60 * 60 * 12  # 12 hours, matches JWT access expiry
     # Parent domain shared by the SPA and the API (e.g. ".sayvors.com").
     # Lets the SPA origin read the non-httpOnly CSRF cookie for the
     # X-CSRF-Token double-submit header in split-domain deployments.

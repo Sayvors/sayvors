@@ -158,7 +158,7 @@ access_token = Column(Text, nullable=False)  # Actually encrypted via property
 ## Authentication Flow
 
 ```
-Login → JWT (15m) + Refresh Cookie (7d) + CSRF Cookie
+Login → JWT (12h) + Refresh Cookie (12h) + CSRF Cookie
          │
          ├─ Access Token → Authorization header
          ├─ Refresh Token → HttpOnly cookie (auto-sent)
