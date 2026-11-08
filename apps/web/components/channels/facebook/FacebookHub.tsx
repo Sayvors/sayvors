@@ -11,6 +11,7 @@ import MessagesTab from "./MessagesTab";
 import PostsTab from "./PostsTab";
 import ProfileTab from "./ProfileTab";
 import { INK, INK2 } from "../instagram/ui";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 
 /*
  * Facebook Page hub.
@@ -25,14 +26,11 @@ const PANEL = "ui-panel bg-[var(--ui-surface)] p-6";
 
 type Tab = "profile" | "messages" | "posts" | "comments";
 
-const TABS: { key: Tab; label: string }[] = [
-  { key: "profile", label: "Profile" },
-  { key: "messages", label: "Messages" },
-  { key: "posts", label: "Posts" },
-  { key: "comments", label: "Comments" },
-];
+const TAB_ORDER: Tab[] = ["profile", "messages", "posts", "comments"];
 
 export default function FacebookHub() {
+  const { t } = useI18n();
+  const h = t.channelHub;
   const [tab, setTab] = useState<Tab>("profile");
   const [assets, setAssets] = useState<MetaAsset[] | null>(null);
   const [selected, setSelected] = useState(0);
@@ -51,15 +49,13 @@ export default function FacebookHub() {
           setSelected((i) => Math.min(i, Math.max(0, list.length - 1)));
         }
       } catch {
-        if (!cancelled) setError("Could not load your Facebook Pages.");
+        if (!cancelled) setError(h.facebook.loadError);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
-
-  const active = TABS.find((t) => t.key === tab)!;
+  }, [h]);
   const page = assets && assets.length > 0 ? assets[Math.min(selected, assets.length - 1)] : null;
 
   return (
@@ -71,25 +67,25 @@ export default function FacebookHub() {
             Facebook
           </h1>
           <p className="mt-0.5 text-[13px] text-[var(--ui-ink-2)]">
-            Pages, messages, posts and comments.
+            {h.facebook.subtitle}
           </p>
         </div>
       </div>
 
-      <nav aria-label="Facebook sections" className="mt-6 flex flex-wrap gap-1 border-b border-[var(--ui-line)]">
-        {TABS.map((t) => (
+      <nav aria-label={h.facebook.sectionsAria} className="mt-6 flex flex-wrap gap-1 border-b border-[var(--ui-line)]">
+        {TAB_ORDER.map((tabKey) => (
           <button
-            key={t.key}
+            key={tabKey}
             type="button"
-            onClick={() => setTab(t.key)}
-            aria-current={tab === t.key ? "page" : undefined}
+            onClick={() => setTab(tabKey)}
+            aria-current={tab === tabKey ? "page" : undefined}
             className={`rounded-t-[8px] border-b-2 px-4 py-2.5 text-[13px] font-semibold ${
-              tab === t.key
+              tab === tabKey
                 ? "border-[var(--ui-ink)] text-[var(--ui-ink)]"
                 : "border-transparent text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
             }`}
           >
-            {t.label}
+            {h.tabs[tabKey]}
           </button>
         ))}
       </nav>
@@ -102,20 +98,20 @@ export default function FacebookHub() {
         )}
 
         {!error && assets === null && (
-          <p className={`text-[13px] ${INK2}`}>Loading your Facebook Pages…</p>
+          <p className={`text-[13px] ${INK2}`}>{h.facebook.loading}</p>
         )}
 
         {!error && assets !== null && assets.length === 0 && (
           <div className={PANEL}>
-            <h3 className={`text-[15px] font-semibold ${INK}`}>No Facebook Page connected</h3>
+            <h3 className={`text-[15px] font-semibold ${INK}`}>{h.facebook.emptyTitle}</h3>
             <p className={`mt-2 text-[13px] ${INK2}`}>
-              Connect Facebook from the channels page, then come back here.
+              {h.facebook.emptyBody}
             </p>
           </div>
         )}
 
         {!error && page && assets !== null && assets.length > 1 && (
-          <div className="mt-4 flex flex-wrap gap-2" role="tablist" aria-label="Facebook Pages">
+          <div className="mt-4 flex flex-wrap gap-2" role="tablist" aria-label={h.facebook.pagesAria}>
             {assets.map((a, i) => (
               <button
                 key={a.id}
@@ -136,15 +132,15 @@ export default function FacebookHub() {
         )}
 
         {!error && page && (
-          active.key === "profile" ? (
+          tab === "profile" ? (
             <div className="mt-6">
               <ProfileTab asset={page} />
             </div>
-          ) : active.key === "messages" ? (
+          ) : tab === "messages" ? (
             <div className="mt-6">
               <MessagesTab />
             </div>
-          ) : active.key === "posts" ? (
+          ) : tab === "posts" ? (
             <div className="mt-6">
               <PostsTab pageId={page.external_asset_id} />
             </div>

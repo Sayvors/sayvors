@@ -15,6 +15,7 @@ import PostComposer from "./PostComposer";
 import PostsGrid from "./PostsGrid";
 import StoriesStrip from "./StoriesStrip";
 import LeadsTab from "./LeadsTab";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 
 /*
  * Instagram hub.
@@ -37,14 +38,21 @@ const FIELD_LABEL = "text-[12px] font-semibold text-[var(--ui-ink-2)]";
 const VALUE = "mt-1 text-[13px] text-[var(--ui-ink)]";
 const HAIRLINE = "border-b border-[var(--ui-line)] pb-4";
 
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
+
 type Tab = "profile" | "audience" | "leads" | "posts" | "comments";
 
-const TABS: { key: Tab; label: string; live: boolean }[] = [
-  { key: "profile", label: "Profile", live: true },
-  { key: "audience", label: "Audience", live: true },
-  { key: "leads", label: "Leads", live: true },
-  { key: "posts", label: "Posts", live: true },
-  { key: "comments", label: "Comments", live: true },
+const TAB_ORDER: { key: Tab; live: boolean }[] = [
+  { key: "profile", live: true },
+  { key: "audience", live: true },
+  { key: "leads", live: true },
+  { key: "posts", live: true },
+  { key: "comments", live: true },
 ];
 
 function Row({ label, value, href }: { label: string; value: string; href?: string }) {
@@ -67,11 +75,11 @@ function Row({ label, value, href }: { label: string; value: string; href?: stri
   );
 }
 
-function Counter({ label, value }: { label: string; value: number }) {
+function Counter({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] px-4 py-3">
       <p className="text-[20px] font-bold tabular-nums text-[var(--ui-ink)]">
-        {value.toLocaleString()}
+        {value}
       </p>
       <p className="mt-0.5 text-[12px] text-[var(--ui-ink-2)]">{label}</p>
     </div>
@@ -79,6 +87,12 @@ function Counter({ label, value }: { label: string; value: number }) {
 }
 
 function ProfileTab({ asset }: { asset: MetaAsset }) {
+  const { t, locale } = useI18n();
+  const g = t.channelHub.instagram;
+  const fmtNum = (n: number) =>
+    new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
+  const when = (value: string) =>
+    new Date(value).toLocaleString(locale === "ar" ? "ar-SA" : "en-US");
   const [profile, setProfile] = useState<InstagramProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -106,7 +120,7 @@ function ProfileTab({ asset }: { asset: MetaAsset }) {
       (e: unknown) => {
         if (!cancelled) {
           setProfile(null);
-          setError(e instanceof Error ? e.message : "Could not load the Instagram profile.");
+          setError(e instanceof Error ? e.message : g.profileError);
           setLoading(false);
         }
       },
@@ -129,11 +143,11 @@ function ProfileTab({ asset }: { asset: MetaAsset }) {
     <div className="space-y-6">
       <section className={PANEL}>
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <h3 className="text-[15px] font-semibold text-[var(--ui-ink)]">Account</h3>
+          <h3 className="text-[15px] font-semibold text-[var(--ui-ink)]">{g.account}</h3>
           <div className="flex items-center gap-2">
             {profile?.stale && (
               <span className="rounded-[8px] bg-[var(--ui-ink)] px-3 py-1 text-[12px] font-bold text-[var(--ui-on-ink)]">
-                Cached copy
+                {g.cached}
               </span>
             )}
             <button
@@ -142,7 +156,7 @@ function ProfileTab({ asset }: { asset: MetaAsset }) {
               disabled={loading}
               className="ui-btn rounded-lg bg-[var(--ui-surface)] px-4 py-2.5 text-[12px] font-semibold text-[var(--ui-ink)]"
             >
-              {loading ? "Refreshing…" : "Refresh"}
+              {loading ? g.refreshing : g.refresh}
             </button>
           </div>
         </div>
@@ -158,15 +172,15 @@ function ProfileTab({ asset }: { asset: MetaAsset }) {
               onClick={refresh}
               className="ui-btn mt-3 rounded-lg bg-[var(--ui-surface)] px-4 py-2.5 text-[12px] font-semibold text-[var(--ui-ink)]"
             >
-              Try again
+              {g.retry}
             </button>
           </div>
         )}
 
         {profile?.stale && !error && (
           <p className="mt-4 rounded-[8px] bg-[var(--ui-sunken)] p-3 text-[12px] text-[var(--ui-ink-2)]">
-            Instagram could not be reached, so this is the last copy we saved.
-            {profile.synced_at ? ` Saved ${new Date(profile.synced_at).toLocaleString()}.` : ""}
+            {g.staleNote}
+            {profile.synced_at ? ` ${fill(g.savedAt, { when: when(profile.synced_at) })}` : ""}
           </p>
         )}
 
@@ -190,7 +204,7 @@ function ProfileTab({ asset }: { asset: MetaAsset }) {
           )}
           <div className="min-w-0">
             <p className="text-[17px] font-bold text-[var(--ui-ink)]">
-              {profile?.name || (loading ? "Loading…" : "Not available")}
+              {profile?.name || (loading ? g.profileLoading : g.notAvailable)}
             </p>
             <p className="mt-0.5 text-[13px] text-[var(--ui-ink-2)]">
               {profile?.username ? `@${profile.username}` : "—"}
@@ -198,7 +212,7 @@ function ProfileTab({ asset }: { asset: MetaAsset }) {
             <div className="mt-2 flex flex-wrap items-center gap-2">
               {profile?.status && (
                 <span className="rounded-[8px] bg-[var(--ui-sunken)] px-3 py-1 text-[12px] font-semibold text-[var(--ui-ink)]">
-                  {profile.status === "connected" ? "Connected" : profile.status}
+                  {profile.status === "connected" ? g.connected : profile.status}
                 </span>
               )}
               {profile?.eligibility && (
@@ -208,7 +222,7 @@ function ProfileTab({ asset }: { asset: MetaAsset }) {
               )}
               {profile?.parent_page_name && (
                 <span className="rounded-[8px] border border-[var(--ui-line)] px-3 py-1 text-[12px] text-[var(--ui-ink-2)]">
-                  via {profile.parent_page_name}
+                  {fill(g.via, { name: profile.parent_page_name })}
                 </span>
               )}
             </div>
@@ -217,24 +231,23 @@ function ProfileTab({ asset }: { asset: MetaAsset }) {
       </section>
 
       <section className={PANEL}>
-        <h3 className="text-[15px] font-semibold text-[var(--ui-ink)]">Profile details</h3>
+        <h3 className="text-[15px] font-semibold text-[var(--ui-ink)]">{g.details}</h3>
         <p className="mt-1 text-[12px] text-[var(--ui-ink-2)]">
-          Instagram does not let apps change these — edit them in the Instagram app, and Sayvors will
-          pick the change up on the next refresh.
+          {g.detailsBody}
         </p>
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          <Row label="Username" value={profile?.username ? `@${profile.username}` : "—"} />
+          <Row label={g.username} value={profile?.username ? `@${profile.username}` : "—"} />
           <Row
-            label="Website"
+            label={g.website}
             value={profile?.website || "—"}
             {...(profile?.website ? { href: profile.website } : {})}
           />
           <div className="sm:col-span-2">
-            <Row label="Bio" value={profile?.biography || "—"} />
+            <Row label={g.bio} value={profile?.biography || "—"} />
           </div>
           <Row
-            label="Open in Instagram"
-            value={handle ? "View the live profile" : "—"}
+            label={g.openIn}
+            value={handle ? g.viewProfile : "—"}
             {...(handle ? { href: handle } : {})}
           />
         </div>
@@ -242,20 +255,19 @@ function ProfileTab({ asset }: { asset: MetaAsset }) {
 
       {profile && (
         <section className={PANEL}>
-          <h3 className="text-[15px] font-semibold text-[var(--ui-ink)]">Audience</h3>
+          <h3 className="text-[15px] font-semibold text-[var(--ui-ink)]">{g.audience}</h3>
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            <Counter label="Followers" value={profile.followers_count} />
-            <Counter label="Following" value={profile.follows_count} />
-            <Counter label="Posts" value={profile.media_count} />
+            <Counter label={g.followers} value={fmtNum(profile.followers_count)} />
+            <Counter label={g.following} value={fmtNum(profile.follows_count)} />
+            <Counter label={g.posts} value={fmtNum(profile.media_count)} />
           </div>
         </section>
       )}
 
       <section className={PANEL}>
-        <h3 className="text-[15px] font-semibold text-[var(--ui-ink)]">Posts</h3>
+        <h3 className="text-[15px] font-semibold text-[var(--ui-ink)]">{g.posts}</h3>
         <p className="mt-1 text-[12px] text-[var(--ui-ink-2)]">
-          Your feed, laid out like your profile. Live stories sit on top; tap any
-          post to open it with its comments.
+          {g.postsBody}
         </p>
         <div className="mt-4 space-y-5">
           <StoriesStrip igId={asset.external_asset_id} />
@@ -275,13 +287,14 @@ function ProfileTab({ asset }: { asset: MetaAsset }) {
  * fresh post shows up without the tenant hunting for a refresh button.
  */
 function PostsTab({ igId, accountUsername }: { igId: string; accountUsername?: string | null }) {
+  const { t } = useI18n();
+  const g = t.channelHub.instagram;
   const [version, setVersion] = useState(0);
   return (
     <section className={PANEL}>
-      <h3 className={`text-[15px] font-semibold ${INK}`}>Posts</h3>
+      <h3 className={`text-[15px] font-semibold ${INK}`}>{g.posts}</h3>
       <p className="mt-1 text-[12px] text-[var(--ui-ink-2)]">
-        Laid out like your profile. Tap a post to open it with its
-        comments, likes and reach.
+        {g.postsTabBody}
       </p>
       <div className="mt-4 space-y-5">
         <PostComposer
@@ -300,6 +313,8 @@ function PostsTab({ igId, accountUsername }: { igId: string; accountUsername?: s
 }
 
 export default function InstagramHub() {
+  const { t } = useI18n();
+  const h = t.channelHub;
   const [tab, setTab] = useState<Tab>("profile");
   const [assets, setAssets] = useState<MetaAsset[] | null>(null);
   const [selected, setSelected] = useState(0);
@@ -316,15 +331,13 @@ export default function InstagramHub() {
           setSelected((i) => Math.min(i, Math.max(0, list.length - 1)));
         }
       } catch {
-        if (!cancelled) setError("Could not load your Instagram accounts.");
+        if (!cancelled) setError(h.instagram.loadError);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
-
-  const active = TABS.find((t) => t.key === tab)!;
+  }, [h]);
   const account = assets && assets.length > 0 ? assets[Math.min(selected, assets.length - 1)] : null;
 
   return (
@@ -336,26 +349,26 @@ export default function InstagramHub() {
             Instagram
           </h1>
           <p className="mt-0.5 text-[13px] text-[var(--ui-ink-2)]">
-            Accounts, leads, posts and comments.
+            {h.instagram.subtitle}
           </p>
         </div>
       </div>
 
-      <nav aria-label="Instagram sections" className="mt-6 flex flex-wrap gap-1 border-b border-[var(--ui-line)]">
-        {TABS.map((t) => (
+      <nav aria-label={h.instagram.sectionsAria} className="mt-6 flex flex-wrap gap-1 border-b border-[var(--ui-line)]">
+        {TAB_ORDER.map((tabDef) => (
           <button
-            key={t.key}
+            key={tabDef.key}
             type="button"
-            onClick={() => setTab(t.key)}
-            aria-current={tab === t.key ? "page" : undefined}
+            onClick={() => setTab(tabDef.key)}
+            aria-current={tab === tabDef.key ? "page" : undefined}
             className={`rounded-t-[8px] border-b-2 px-4 py-2.5 text-[13px] font-semibold ${
-              tab === t.key
+              tab === tabDef.key
                 ? "border-[var(--ui-ink)] text-[var(--ui-ink)]"
                 : "border-transparent text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
             }`}
           >
-            {t.label}
-            {!t.live && <span className="ml-1.5 text-[11px] font-normal text-[var(--ui-ink-2)]">soon</span>}
+            {h.tabs[tabDef.key]}
+            {!tabDef.live && <span className="ml-1.5 text-[11px] font-normal text-[var(--ui-ink-2)]">{h.soon}</span>}
           </button>
         ))}
       </nav>
@@ -368,20 +381,20 @@ export default function InstagramHub() {
         )}
 
         {!error && assets === null && (
-          <p className={`text-[13px] ${INK2}`}>Loading your Instagram accounts…</p>
+          <p className={`text-[13px] ${INK2}`}>{h.instagram.loading}</p>
         )}
 
         {!error && assets !== null && assets.length === 0 && (
           <div className={PANEL}>
-            <h3 className={`text-[15px] font-semibold ${INK}`}>No Instagram account connected</h3>
+            <h3 className={`text-[15px] font-semibold ${INK}`}>{h.instagram.emptyTitle}</h3>
             <p className={`mt-2 text-[13px] ${INK2}`}>
-              Connect Instagram from the channels page, then come back here.
+              {h.instagram.emptyBody}
             </p>
           </div>
         )}
 
         {!error && account && assets !== null && assets.length > 1 && (
-          <div className="mt-4 flex flex-wrap gap-2" role="tablist" aria-label="Instagram accounts">
+          <div className="mt-4 flex flex-wrap gap-2" role="tablist" aria-label={h.instagram.accountsAria}>
             {assets.map((a, i) => (
               <button
                 key={a.id}
@@ -402,17 +415,17 @@ export default function InstagramHub() {
         )}
 
         {!error && account && (
-          active.key === "profile" ? (
+          tab === "profile" ? (
             <div className="mt-6">
               <ProfileTab asset={account} />
             </div>
-          ) : active.key === "audience" ? (
+          ) : tab === "audience" ? (
             <div className="mt-6">
               <AudienceTab igId={account.external_asset_id} />
             </div>
-          ) : active.key === "posts" ? (
+          ) : tab === "posts" ? (
             <PostsTab igId={account.external_asset_id} accountUsername={account.username} />
-          ) : active.key === "comments" ? (
+          ) : tab === "comments" ? (
             <div className="mt-6">
               <CommentsTab
                 igId={account.external_asset_id}
