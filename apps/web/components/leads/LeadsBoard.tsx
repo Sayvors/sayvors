@@ -12,10 +12,31 @@ import { resolveMediaUrl } from "@/lib/media-url";
 import { useAuth } from "@/lib/auth-context";
 import {
   LEAD_CATEGORIES,
-  LEAD_CATEGORY_LABELS,
-  leadCategoryLabel,
+  leadCategoryLabelKnown,
   type LeadCategory,
 } from "@/lib/lead-labels";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import type { Dict } from "@/lib/i18n/en";
+
+type BoardDict = Dict["reviews"]["board"];
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
+
+let rtfEn: Intl.RelativeTimeFormat | null = null;
+let rtfAr: Intl.RelativeTimeFormat | null = null;
+function rtf(locale: string): Intl.RelativeTimeFormat {
+  if (locale.startsWith("ar")) {
+    rtfAr ??= new Intl.RelativeTimeFormat("ar", { numeric: "auto" });
+    return rtfAr;
+  }
+  rtfEn ??= new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+  return rtfEn;
+}
 
 /*
  * The all-channels leads board: every conversation the messaging engine
@@ -47,23 +68,15 @@ const STAGE_CHIP: Record<LeadStage, string> = {
   lost: "bg-[var(--ui-sunken)] text-[var(--ui-ink-2)]",
 };
 
-const STAGE_LABEL: Record<LeadStage, string> = {
-  new: "New",
-  qualified: "Qualified",
-  follow_up: "Follow-up",
-  converted: "Converted",
-  lost: "Lost",
-};
-
 const STAGES: LeadStage[] = ["new", "qualified", "follow_up", "converted", "lost"];
 
 const CHANNELS = ["whatsapp", "instagram", "facebook"] as const;
 
 const AGES = [
-  { key: "any", label: "Any time", days: null },
-  { key: "24h", label: "Last 24 hours", days: 1 },
-  { key: "7d", label: "Last 7 days", days: 7 },
-  { key: "30d", label: "Last 30 days", days: 30 },
+  { key: "any", days: null },
+  { key: "24h", days: 1 },
+  { key: "7d", days: 7 },
+  { key: "30d", days: 30 },
 ] as const;
 type AgeKey = (typeof AGES)[number]["key"];
 
@@ -80,22 +93,21 @@ function requirements(request: string | null): string[] {
   ].slice(0, 8);
 }
 
-function nudgeIn(iso: string): string {
+function nudgeIn(iso: string, locale: string): string {
   const mins = Math.round((new Date(iso).getTime() - Date.now()) / 60000);
-  if (mins <= 0) return "nudge due";
-  if (mins < 60) return `nudge in ${mins}m`;
+  if (mins <= 0) return "";
+  if (mins < 60) return rtf(locale).format(mins, "minute");
   const hours = Math.round(mins / 60);
-  if (hours < 24) return `nudge in ${hours}h`;
-  return `nudge in ${Math.round(hours / 24)}d`;
+  if (hours < 24) return rtf(locale).format(hours, "hour");
+  return rtf(locale).format(Math.round(hours / 24), "day");
 }
 
-function timeAgo(iso: string): string {
+function timeAgo(iso: string, locale: string): string {
   const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
-  if (mins < 60) return `${mins || 1}m ago`;
+  if (mins < 60) return rtf(locale).format(-(mins || 1), "minute");
   const hours = Math.round(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.round(hours / 24);
-  return `${days}d ago`;
+  if (hours < 24) return rtf(locale).format(-hours, "hour");
+  return rtf(locale).format(-Math.round(hours / 24), "day");
 }
 
 function Avatar({ lead }: { lead: Lead }) {
@@ -149,7 +161,11 @@ function LeadCard({
   onCategory: (lead: Lead, category: LeadCategory) => void;
 }) {
   const reqs = requirements(lead.request);
-  const categoryLabel = leadCategoryLabel(lead.category);
+  const { t, locale } = useI18n();
+  const c = t.reviews.board;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
+  const categoryLabel = leadCategoryLabelKnown(lead.category, locale) ?? lead.category;
   return (
     <li
       className={`flex flex-col rounded-[12px] border p-4 ${
@@ -163,21 +179,21 @@ function LeadCard({
         <div className="min-w-0 flex-1">
           <p className={`truncate text-[14px] font-semibold ${INK}`}>
             {lead.contact_name ||
-              (lead.contact_username ? `@${lead.contact_username}` : `${platformLabel(lead.platform)} user`)}
+              (lead.contact_username ? `@${lead.contact_username}` : fill(c.userFallback, { platform: platformLabel(lead.platform) }))}
           </p>
           <p className={`mt-0.5 flex items-center gap-1.5 text-[11px] ${INK2}`}>
             <PlatformMark platform={lead.platform} size={11} />
             <time
               dateTime={lead.created_at}
-              title={new Date(lead.created_at).toLocaleString()}
+              title={new Date(lead.created_at).toLocaleString(dateLocale)}
               className="tabular-nums"
             >
-              {timeAgo(lead.created_at)}
+              {timeAgo(lead.created_at, locale)}
             </time>
             {lead.contact_username && <span>· @{lead.contact_username}</span>}
             {lead.assigned_to && (
-              <span title="Conversation owner">
-                · {lead.assignee_name ?? "Assigned"}
+              <span title={c.ownerTitle}>
+                · {lead.assignee_name ?? c.assignedFallback}
               </span>
             )}
           </p>
@@ -192,22 +208,22 @@ function LeadCard({
             <span
               title={
                 lead.priority_since
-                  ? `Escalated ${timeAgo(lead.priority_since)} — the AI could not resolve this thread`
-                  : "Escalated — the AI could not resolve this thread"
+                  ? fill(c.importantDue, { when: timeAgo(lead.priority_since, locale) })
+                  : c.importantNow
               }
               className="rounded-[8px] bg-coral/10 px-2 py-0.5 text-[11px] font-bold text-coral"
             >
-              Important
+              {c.importantChip}
             </span>
           )}
           <span
             className={`rounded-[8px] px-2 py-0.5 text-[11px] font-bold ${STAGE_CHIP[lead.stage]}`}
           >
-            {STAGE_LABEL[lead.stage]}
+            {c.stages[lead.stage]}
           </span>
           {lead.opt_out && (
             <span className="rounded-[8px] border border-[var(--ui-line)] px-2 py-0.5 text-[10px] font-semibold text-[var(--ui-ink-2)]">
-              Opted out
+              {c.optedOut}
             </span>
           )}
         </div>
@@ -220,13 +236,13 @@ function LeadCard({
           </span>
         )}
         <p className={`min-w-0 flex-1 text-[13px] leading-snug ${INK}`}>
-          {lead.summary || "No summary captured yet."}
+          {lead.summary || c.noSummary}
         </p>
       </div>
 
       {reqs.length > 0 && (
         <div className="mt-3 rounded-[8px] bg-[var(--ui-sunken)] p-3">
-          <p className={`text-[10px] font-bold uppercase tracking-wide ${INK2}`}>Requirements</p>
+          <p className={`text-[10px] font-bold uppercase tracking-wide ${INK2}`}>{c.requirements}</p>
           <ul className="mt-1.5 space-y-1">
             {reqs.map((r) => (
               <li key={r} className={`flex gap-1.5 text-[12px] leading-snug ${INK}`}>
@@ -246,16 +262,16 @@ function LeadCard({
             <span className="flex items-center gap-1.5">
               <span className={`font-semibold tabular-nums ${INK}`}>{lead.phone_number}</span>
               <span className="rounded-[6px] border border-[var(--ui-line)] px-1.5 py-px text-[10px] font-semibold">
-                {lead.phone_status === "verified" ? "Verified · WhatsApp" : "Stated"}
+                {lead.phone_status === "verified" ? c.verifiedWa : c.stated}
               </span>
             </span>
           )}
           {lead.stage === "follow_up" && lead.next_action_at && (
             <span
-              title={new Date(lead.next_action_at).toLocaleString()}
+              title={new Date(lead.next_action_at).toLocaleString(dateLocale)}
               className="tabular-nums"
             >
-              {nudgeIn(lead.next_action_at)}
+              {nudgeIn(lead.next_action_at, locale) || c.nudgeDue}
             </span>
           )}
         </div>
@@ -266,15 +282,15 @@ function LeadCard({
           value={lead.category ?? ""}
           onChange={(e) => onCategory(lead, e.target.value as LeadCategory)}
           disabled={busy}
-          aria-label={`Lead type for ${lead.contact_name || lead.contact_id}`}
+          aria-label={fill(c.typeAria, { name: lead.contact_name || lead.contact_id })}
           className={`h-8 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 text-[12px] font-semibold ${INK} ${FOCUS}`}
         >
           <option value="" disabled>
-            No type
+            {c.noType}
           </option>
-          {LEAD_CATEGORIES.map((c) => (
-            <option key={c} value={c}>
-              {LEAD_CATEGORY_LABELS[c]}
+          {LEAD_CATEGORIES.map((cat) => (
+            <option key={cat} value={cat}>
+              {leadCategoryLabelKnown(cat, locale) ?? cat}
             </option>
           ))}
         </select>
@@ -282,12 +298,12 @@ function LeadCard({
           value={lead.stage}
           onChange={(e) => onMove(lead, e.target.value as LeadStage)}
           disabled={busy}
-          aria-label={`Stage for ${lead.contact_name || lead.contact_id}`}
+          aria-label={fill(c.stageAria, { name: lead.contact_name || lead.contact_id })}
           className={`h-8 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 text-[12px] font-semibold ${INK} ${FOCUS}`}
         >
           {STAGES.map((s) => (
             <option key={s} value={s}>
-              {STAGE_LABEL[s]}
+              {c.stages[s]}
             </option>
           ))}
         </select>
@@ -296,7 +312,7 @@ function LeadCard({
             href={`/dashboard/channels/inbox?channel=${encodeURIComponent(lead.channel_id)}&key=${encodeURIComponent(lead.thread_key)}`}
             className={`ui-btn rounded-lg bg-[var(--ui-ink)] px-3.5 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)] ${FOCUS}`}
           >
-            Open chat
+            {c.openChat}
           </Link>
         )}
         {lead.contact_username && (
@@ -306,7 +322,7 @@ function LeadCard({
             rel="noopener noreferrer"
             className={`rounded-[8px] border border-[var(--ui-line)] px-3 py-2 text-[12px] font-semibold ${INK} ${FOCUS}`}
           >
-            Profile
+            {c.profile}
           </a>
         )}
       </div>
@@ -317,6 +333,12 @@ function LeadCard({
 export default function LeadsBoard({ platform }: { platform?: string }) {
   const queryClient = useQueryClient();
   const { user } = useAuth();
+  const { t, locale } = useI18n();
+  const c = t.reviews.board;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
+  const ageName = (key: AgeKey) =>
+    key === "any" ? c.ages.any : key === "24h" ? c.ages.d24 : key === "7d" ? c.ages.d7 : c.ages.d30;
   const [priorityFirst, setPriorityFirst] = useState(true);
   const [stageFilter, setStageFilter] = useState<"all" | LeadStage>("all");
   const [categoryFilter, setCategoryFilter] = useState<"all" | LeadCategory>("all");
@@ -341,7 +363,7 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
   const error = leadsQuery.isError
     ? leadsQuery.error instanceof Error
       ? leadsQuery.error.message
-      : "Could not load leads."
+      : c.loadFailed
     : null;
 
   const move = async (lead: Lead, stage: LeadStage) => {
@@ -444,14 +466,14 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
           }}
           className={`ui-btn mt-3 block rounded-lg bg-[var(--ui-surface)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-ink)] ${FOCUS}`}
         >
-          Try again
+          {c.retry}
         </button>
       </div>
     );
   }
 
   if (leads === null) {
-    return <p className={`mt-4 text-[13px] ${INK2}`}>Loading leads…</p>;
+    return <p className={`mt-4 text-[13px] ${INK2}`}>{c.loading}</p>;
   }
 
   // Plain computation, not useMemo: this sits after the error/loading early
@@ -481,7 +503,7 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
         <div
           className="flex gap-1 rounded-[8px] bg-[var(--ui-sunken)] p-0.5"
           role="group"
-          aria-label="Filter leads by escalation priority"
+          aria-label={c.priorityAria}
         >
           {(["all", "important"] as const).map((key) => (
             <button
@@ -495,9 +517,9 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
                   : `border-transparent ${INK2} hover:text-[var(--ui-ink)]`
               }`}
             >
-              {key === "all" ? "All priority" : "Important"}
+              {key === "all" ? c.allPriority : c.important}
               {key === "important" && importantCount > 0 && (
-                <span className="ml-1 tabular-nums">{importantCount}</span>
+                <span className="ml-1 tabular-nums">{fmt(importantCount)}</span>
               )}
             </button>
           ))}
@@ -513,7 +535,7 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
               : "border-transparent text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
           }`}
         >
-          Mine
+          {c.mine}
         </button>
 
         <label className="flex cursor-pointer items-center gap-2 text-[12px] font-semibold text-ink/60">
@@ -523,13 +545,13 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
             onChange={(e) => setPriorityFirst(e.target.checked)}
             className={`h-3.5 w-3.5 rounded accent-[var(--ui-ink)] ${FOCUS}`}
           />
-          Escalated first
+          {c.escalatedFirst}
         </label>
 
         <div
           className="flex gap-1 rounded-[8px] bg-[var(--ui-sunken)] p-0.5"
           role="group"
-          aria-label="Filter leads by status"
+          aria-label={c.statusAria}
         >
           {(["all", ...STAGES] as const).map((key) => (
             <button
@@ -543,9 +565,9 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
                   : `border-transparent ${INK2} hover:text-[var(--ui-ink)]`
               }`}
             >
-              {key === "all" ? "All" : STAGE_LABEL[key]}
+              {key === "all" ? c.all : c.stages[key]}
               {key !== "all" && counts[key] > 0 && (
-                <span className="ml-1 tabular-nums">{counts[key]}</span>
+                <span className="ml-1 tabular-nums">{fmt(counts[key])}</span>
               )}
             </button>
           ))}
@@ -554,13 +576,13 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
         <select
           value={categoryFilter}
           onChange={(e) => setCategoryFilter(e.target.value as "all" | LeadCategory)}
-          aria-label="Filter leads by type"
+          aria-label={c.typeFilterAria}
           className={`h-8 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 text-[12px] font-semibold ${INK} ${FOCUS}`}
         >
-          <option value="all">All lead types</option>
-          {LEAD_CATEGORIES.map((c) => (
-            <option key={c} value={c}>
-              {LEAD_CATEGORY_LABELS[c]}
+          <option value="all">{c.allTypes}</option>
+          {LEAD_CATEGORIES.map((cat) => (
+            <option key={cat} value={cat}>
+              {leadCategoryLabelKnown(cat, locale) ?? cat}
             </option>
           ))}
         </select>
@@ -569,7 +591,7 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
           <div
             className="flex gap-1 rounded-[8px] bg-[var(--ui-sunken)] p-0.5"
             role="group"
-            aria-label="Filter leads by channel"
+            aria-label={c.channelAria}
           >
             <button
               type="button"
@@ -581,24 +603,24 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
                   : `border-transparent ${INK2} hover:text-[var(--ui-ink)]`
               }`}
             >
-              All channels
+              {c.allChannels}
             </button>
-            {CHANNELS.map((c) => (
+            {CHANNELS.map((ch) => (
               <button
-                key={c}
+                key={ch}
                 type="button"
-                onClick={() => setChannelFilter(c)}
-                aria-pressed={channelFilter === c}
+                onClick={() => setChannelFilter(ch)}
+                aria-pressed={channelFilter === ch}
                 className={`flex items-center gap-1.5 rounded-[6px] border px-3 py-1 text-[12px] font-semibold ${FOCUS} ${
-                  channelFilter === c
+                  channelFilter === ch
                     ? `border-[var(--ui-line)] bg-[var(--ui-surface)] ${INK}`
                     : `border-transparent ${INK2} hover:text-[var(--ui-ink)]`
                 }`}
               >
-                <PlatformMark platform={c} size={12} />
-                {platformLabel(c)}
-                {(channelCounts[c] ?? 0) > 0 && (
-                  <span className="tabular-nums">{channelCounts[c]}</span>
+                <PlatformMark platform={ch} size={12} />
+                {platformLabel(ch)}
+                {(channelCounts[ch] ?? 0) > 0 && (
+                  <span className="tabular-nums">{fmt(channelCounts[ch])}</span>
                 )}
               </button>
             ))}
@@ -608,23 +630,21 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
         <select
           value={age}
           onChange={(e) => setAge(e.target.value as AgeKey)}
-          aria-label="Filter leads by age"
+          aria-label={c.ageAria}
           className={`ml-auto h-8 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 text-[12px] font-semibold ${INK} ${FOCUS}`}
         >
           {AGES.map((a) => (
             <option key={a.key} value={a.key}>
-              {a.label}
+              {ageName(a.key)}
             </option>
           ))}
         </select>
-        <span className={`text-[12px] tabular-nums ${INK2}`}>{base.length}</span>
+        <span className={`text-[12px] tabular-nums ${INK2}`}>{fmt(base.length)}</span>
       </div>
 
       {visible.length === 0 ? (
         <p className={`mt-6 text-[13px] ${INK2}`}>
-          {priorityFilter === "important"
-            ? "No escalated leads. Nothing here needs a human right now."
-            : "No leads in this view."}
+          {priorityFilter === "important" ? c.emptyImportant : c.emptyView}
         </p>
       ) : (
         <div
