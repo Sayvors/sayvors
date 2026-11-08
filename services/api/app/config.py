@@ -380,6 +380,8 @@ def validate_production_settings() -> None:
         errors.append("CORS_ORIGIN_REGEX must not reference localhost in production")
     if "localhost" in settings.FRONTEND_URL:
         errors.append("FRONTEND_URL must not reference localhost in production")
+    if "localhost" in settings.PUBLIC_API_URL:
+        errors.append("PUBLIC_API_URL must point at the public API origin in production")
     if "localhost" in settings.GOOGLE_REVIEWS_REDIRECT_URI:
         errors.append("GOOGLE_REVIEWS_REDIRECT_URI must not reference localhost in production")
     if "localhost" in settings.META_OAUTH_REDIRECT_URI:
