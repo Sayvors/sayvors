@@ -56,3 +56,30 @@ export const FEATURE_ORDER: string[] = [
 export function featureLabel(key: string): string {
   return FEATURE_LABELS[key] ?? key;
 }
+
+/** Arabic labels for the same catalog (MSA UI). Keys must match FEATURE_LABELS. */
+export const FEATURE_LABELS_AR: Record<string, string> = {
+  channels: "قنوات المراسلة",
+  messaging: "مراسلة الوارد",
+  ai_replies: "ردود الذكاء الاصطناعي",
+  reviews: "إدارة التقييمات",
+  posts: "منشورات التواصل",
+  media: "مكتبة الوسائط",
+  analytics: "التحليلات",
+  automation: "قواعد الأتمتة",
+  databank: "بنك المعرفة",
+  leads: "خط العملاء المحتملين",
+  voice: "الصوت والنص المنطوق",
+  scheduling: "الجدولة",
+  assistant: "مساعد الذكاء الاصطناعي",
+  social_response_style: "أسلوب الرد على التواصل",
+  bulk_edit_csv: "تعديل جماعي CSV",
+  benchmarking: "المقارنة المرجعية",
+  verifications: "التحقق",
+  growth: "رؤى النمو",
+  ticket_assignment: "إسناد التذاكر",
+  voice_replies: "الردود الصوتية (تجريبي)",
+  ask_sayvors_premium: "اسأل Sayvors المميزة",
+  priority_support: "دعم ذي أولوية",
+  sla: "ضمان مستوى الخدمة",
+};
