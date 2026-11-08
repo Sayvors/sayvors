@@ -138,6 +138,7 @@ async def enqueue_email(
     idempotency_key: str | None = None,
     headers: dict | None = None,
     max_attempts: int = 6,
+    campaign_id: str | None = None,
 ) -> str | None:
     """Queue one email. Returns the outbox id, or None when suppressed.
 
@@ -169,6 +170,7 @@ async def enqueue_email(
         kind=(kind or "notification")[:32],
         headers=headers or {},
         idempotency_key=(idempotency_key[:160] if idempotency_key else None),
+        campaign_id=campaign_id,
         max_attempts=max(1, min(int(max_attempts), 10)),
         next_attempt_at=_now(),
     )

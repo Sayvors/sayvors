@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { fetchEmailStats, type EmailStats } from "@/lib/admin-api";
@@ -141,6 +142,12 @@ export default function EmailHealthPage() {
           >
             {refreshing ? "Refreshing..." : "Refresh"}
           </button>
+          <Link
+            href="/email/campaigns"
+            className={`inline-flex h-9 items-center rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 text-[12px] font-semibold text-ink ${FOCUS}`}
+          >
+            Campaigns
+          </Link>
           <a
             href="https://resend.com/emails"
             target="_blank"

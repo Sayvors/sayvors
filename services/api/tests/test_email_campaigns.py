@@ -1,0 +1,197 @@
+"""Newsletter campaigns expand into the durable outbox exactly once per user."""
+import pytest
+from sqlalchemy import select
+
+from app.modules.email import campaigns
+from app.modules.email.models import EmailCampaign, EmailOutbox, EmailSuppression
+from app.modules.users.models import User
+
+pytestmark = pytest.mark.asyncio
+
+
+class _factory:
+    """Session factory bound to the test session's engine."""
+
+    def __init__(self, session):
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+
+        self._factory = async_sessionmaker(session.bind, expire_on_commit=False)
+
+    def __call__(self):
+        return self._factory()
+
+
+async def _seed_users(db) -> list[str]:
+    rows = [
+        User(
+            id=f"campaign-user-{i:04d}",
+            email=f"campaign{i}@example.com",
+            first_name=f"User{i}",
+            last_name="Test",
+            password_hash="x",
+            email_verified=True,
+            newsletter=True,
+        )
+        for i in range(3)
+    ]
+    rows.append(
+        User(
+            id="campaign-user-unsub",
+            email="unsubscribed@example.com",
+            first_name="No",
+            last_name="News",
+            password_hash="x",
+            email_verified=True,
+            newsletter=False,
+        )
+    )
+    rows.append(
+        User(
+            id="campaign-user-unverified",
+            email="unverified@example.com",
+            first_name="Un",
+            last_name="Verified",
+            password_hash="x",
+            email_verified=False,
+            newsletter=True,
+        )
+    )
+    db.add_all(rows)
+    await db.commit()
+    return [row.id for row in rows[:3]]
+
+
+async def _draft(db, *, batch_size: int = 2) -> EmailCampaign:
+    campaign = EmailCampaign(
+        subject="Hello {name}",
+        html="<p>Hi {name}, news for {email}.</p>",
+        text="Hi {name}, news for {email}.",
+        batch_size=batch_size,
+        interval_seconds=60,
+        status="draft",
+    )
+    db.add(campaign)
+    await db.commit()
+    await db.refresh(campaign)
+    return campaign
+
+
+async def test_campaign_walks_the_snapshot_in_batches(db):
+    eligible = await _seed_users(db)
+    campaign = await _draft(db, batch_size=2)
+
+    await campaigns.start_campaign(db, campaign)
+    assert campaign.status == "running"
+    assert campaign.total_recipients == len(eligible)
+    assert campaign.max_user_id == max(eligible)
+
+    walked = await campaigns.expand_one(db, campaign)
+    assert walked == 2
+    assert campaign.status == "running"
+    assert campaign.expanded_recipients == 2
+
+    walked = await campaigns.expand_one(db, campaign)
+    assert walked == 1
+    assert campaign.status == "completed"
+    assert campaign.expanded_recipients == len(eligible)
+
+    rows = (
+        await db.execute(
+            select(EmailOutbox).where(EmailOutbox.campaign_id == campaign.id)
+        )
+    ).scalars().all()
+    assert len(rows) == len(eligible)
+    assert {row.to_email for row in rows} == {
+        f"campaign{i}@example.com" for i in range(3)
+    }
+    assert all(row.kind == "newsletter" for row in rows)
+    assert all(row.headers.get("List-Unsubscribe") for row in rows)
+    assert any("User0" in row.html for row in rows)
+
+
+async def test_suppressed_recipient_is_skipped_but_cursor_advances(db):
+    await _seed_users(db)
+    db.add(
+        EmailSuppression(
+            email="campaign0@example.com",
+            reason="complaint",
+            detail="test",
+        )
+    )
+    await db.commit()
+    campaign = await _draft(db, batch_size=50)
+    await campaigns.start_campaign(db, campaign)
+
+    await campaigns.expand_one(db, campaign)
+
+    rows = (
+        await db.execute(
+            select(EmailOutbox).where(EmailOutbox.campaign_id == campaign.id)
+        )
+    ).scalars().all()
+    assert {row.to_email for row in rows} == {
+        "campaign1@example.com",
+        "campaign2@example.com",
+    }
+    assert campaign.status == "completed"
+    assert campaign.expanded_recipients == 3
+
+
+async def test_cancel_stops_future_expansion(db, monkeypatch):
+    await _seed_users(db)
+    campaign = await _draft(db, batch_size=2)
+    await campaigns.start_campaign(db, campaign)
+    campaigns.cancel_campaign(campaign)
+    await db.commit()
+
+    monkeypatch.setattr("app.database.async_session", _factory(db))
+    assert await campaigns.expand_due_campaigns() == 0
+    await db.refresh(campaign)
+    assert campaign.status == "cancelled"
+
+
+async def test_admin_campaign_endpoints(client, db):
+    from app.core.deps import require_admin
+    from app.main import app
+    from app.modules.admin.router import admin_rate_limit
+
+    await _seed_users(db)
+    app.dependency_overrides[require_admin] = lambda: {
+        "admin": True,
+        "operator_id": "op-1",
+        "username": "tester",
+        "role": "superadmin",
+    }
+    app.dependency_overrides[admin_rate_limit] = lambda: None
+    try:
+        audience = client.get("/api/v1/admin/email/campaigns/audience")
+        assert audience.status_code == 200
+        assert audience.json()["eligible"] == 3
+
+        created = client.post(
+            "/api/v1/admin/email/campaigns",
+            json={"subject": "Hello", "html": "<p>Hi</p>"},
+        )
+        assert created.status_code == 201, created.text
+        campaign = created.json()
+        assert campaign["status"] == "draft"
+
+        started = client.post(
+            f"/api/v1/admin/email/campaigns/{campaign['id']}/start"
+        )
+        assert started.status_code == 200, started.text
+        assert started.json()["status"] == "running"
+        assert started.json()["total_recipients"] == 3
+
+        listed = client.get("/api/v1/admin/email/campaigns")
+        assert listed.status_code == 200
+        assert listed.json()["items"][0]["id"] == campaign["id"]
+
+        cancelled = client.post(
+            f"/api/v1/admin/email/campaigns/{campaign['id']}/cancel"
+        )
+        assert cancelled.status_code == 200
+        assert cancelled.json()["status"] == "cancelled"
+    finally:
+        app.dependency_overrides.pop(require_admin, None)
+        app.dependency_overrides.pop(admin_rate_limit, None)

@@ -170,6 +170,67 @@ export async function fetchEmailStats(days: number): Promise<EmailStats> {
   );
 }
 
+export interface EmailCampaign {
+  id: string;
+  subject: string;
+  status: "draft" | "running" | "completed" | "cancelled";
+  created_by: string | null;
+  total_recipients: number;
+  expanded_recipients: number;
+  queued: number;
+  sent: number;
+  failed: number;
+  dead: number;
+  suppressed: number;
+  batch_size: number;
+  interval_seconds: number;
+  error: string | null;
+  created_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  cancelled_at: string | null;
+}
+
+export interface CampaignAudience {
+  eligible: number;
+  max_recipients: number;
+}
+
+export async function fetchEmailCampaigns(): Promise<{ items: EmailCampaign[] }> {
+  return adminFetch<{ items: EmailCampaign[] }>("/api/v1/admin/email/campaigns");
+}
+
+export async function fetchCampaignAudience(): Promise<CampaignAudience> {
+  return adminFetch<CampaignAudience>("/api/v1/admin/email/campaigns/audience");
+}
+
+export async function createEmailCampaign(input: {
+  subject: string;
+  html: string;
+  text?: string | null;
+  batch_size?: number;
+  interval_seconds?: number;
+}): Promise<EmailCampaign> {
+  return adminFetch<EmailCampaign>("/api/v1/admin/email/campaigns", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function startEmailCampaign(id: string): Promise<EmailCampaign> {
+  return adminFetch<EmailCampaign>(
+    `/api/v1/admin/email/campaigns/${encodeURIComponent(id)}/start`,
+    { method: "POST" },
+  );
+}
+
+export async function cancelEmailCampaign(id: string): Promise<EmailCampaign> {
+  return adminFetch<EmailCampaign>(
+    `/api/v1/admin/email/campaigns/${encodeURIComponent(id)}/cancel`,
+    { method: "POST" },
+  );
+}
+
 export interface AdminOverview {
   users_total: number;
   users_verified: number;

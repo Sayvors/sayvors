@@ -22,6 +22,7 @@ from ..auth.router import get_client_ip
 # SubscriptionOut is needed at import time by the `/tenants/special` decorator,
 # which must be declared before `/tenants/{user_id}` or FastAPI shadows it.
 from ..billing.schemas import SubscriptionOut, TenantFeaturesIn
+from ..email.schemas import CampaignCreateIn
 from . import service as admin_service
 from . import stats as admin_service_stats
 from .schemas import (
@@ -794,6 +795,122 @@ async def admin_email_stats(
     from ..email.outbox import email_stats
 
     return await email_stats(db, days)
+
+
+@router.get("/email/campaigns/audience")
+async def admin_email_campaign_audience(
+    _admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Size of the newsletter audience before composing/starting a campaign."""
+    from ..email.campaigns import count_audience
+
+    return {
+        "eligible": await count_audience(db),
+        "max_recipients": settings.EMAIL_CAMPAIGN_MAX_RECIPIENTS,
+    }
+
+
+@router.get("/email/campaigns")
+async def admin_email_campaigns(
+    limit: int = Query(50, ge=1, le=200),
+    _admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from sqlalchemy import select
+
+    from ..email.campaigns import campaign_out
+    from ..email.models import EmailCampaign
+
+    rows = (
+        await db.execute(
+            select(EmailCampaign)
+            .order_by(EmailCampaign.created_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    return {"items": [await campaign_out(db, campaign) for campaign in rows]}
+
+
+@router.post("/email/campaigns", status_code=201)
+async def admin_email_campaign_create(
+    body: CampaignCreateIn,
+    admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    from ..email.campaigns import campaign_out, create_campaign
+
+    campaign = await create_campaign(
+        db, created_by=admin.get("username"), body=body
+    )
+    return await campaign_out(db, campaign)
+
+
+@router.get("/email/campaigns/{campaign_id}")
+async def admin_email_campaign_detail(
+    campaign_id: str,
+    _admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from ..email.campaigns import campaign_out
+    from ..email.models import EmailCampaign
+
+    campaign = await db.get(EmailCampaign, campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    return await campaign_out(db, campaign)
+
+
+@router.post("/email/campaigns/{campaign_id}/start")
+async def admin_email_campaign_start(
+    campaign_id: str,
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    from ..email.campaigns import campaign_out, count_audience, start_campaign
+    from ..email.models import EmailCampaign
+
+    campaign = await db.get(EmailCampaign, campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    if campaign.status != "draft":
+        raise HTTPException(status_code=409, detail="Only draft campaigns can start.")
+    total = await count_audience(db)
+    if total > settings.EMAIL_CAMPAIGN_MAX_RECIPIENTS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Audience is {total:,}; the limit is "
+                f"{settings.EMAIL_CAMPAIGN_MAX_RECIPIENTS:,}."
+            ),
+        )
+    await start_campaign(db, campaign)
+    return await campaign_out(db, campaign)
+
+
+@router.post("/email/campaigns/{campaign_id}/cancel")
+async def admin_email_campaign_cancel(
+    campaign_id: str,
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    from ..email.campaigns import campaign_out, cancel_campaign
+    from ..email.models import EmailCampaign
+
+    campaign = await db.get(EmailCampaign, campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    if campaign.status not in ("draft", "running"):
+        raise HTTPException(
+            status_code=409, detail="Only draft or running campaigns can be cancelled."
+        )
+    cancel_campaign(campaign)
+    await db.commit()
+    await db.refresh(campaign)
+    return await campaign_out(db, campaign)
 
 
 @router.get("/health", response_model=AdminHealth)

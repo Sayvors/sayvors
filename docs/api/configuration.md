@@ -102,6 +102,9 @@ must use appropriately separated storage/access policies.
 | `EMAIL_SEND_ALLOW_ANY_RECIPIENT` | `false` | Permit arbitrary recipients for self-hosted relays; production startup rejects true. |
 | `EMAIL_UNSUBSCRIBE_SECRET` | Empty (dev falls back to `JWT_SECRET`) | Dedicated HMAC key for one-click unsubscribe links. Deployed startup requires >= 32 chars and rejects reusing `JWT_SECRET`. |
 | `BULK_EMAIL_DAILY_LIMIT` | `500` | Per-tenant review-request email cap per rolling 24 hours. Protects the shared Resend domain; independent of the WhatsApp allowance. |
+| `EMAIL_CAMPAIGN_BATCH_SIZE` | `500` | Recipients expanded into `email_outbox` per campaign worker pass. |
+| `EMAIL_CAMPAIGN_INTERVAL_SECONDS` | `60` | Pause between campaign expansion passes. |
+| `EMAIL_CAMPAIGN_MAX_RECIPIENTS` | `50000` | Hard cap on a single newsletter campaign audience. |
 | `GLITCHTIP_DSN` | Empty | Server-side error-reporting DSN. |
 | `GLITCHTIP_SECRET_KEY` | Empty | Optional server-side GlitchTip integration secret. |
 

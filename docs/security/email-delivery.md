@@ -66,6 +66,27 @@ not unbounded. Every tenant is capped at `BULK_EMAIL_DAILY_LIMIT` (default
 - The cap protects the shared Resend sending domain from one runaway campaign;
   it does not gate OTP, billing or other transactional mail.
 
+## Newsletter campaigns
+
+Admin → **Operations → Email campaigns**. A campaign is composed once
+(`email_campaigns`) and never sends directly.
+
+1. **Start** snapshots the audience: verified emails with `users.newsletter`
+   still true, bounded by `max_user_id` so later signups do not join an
+   in-flight campaign. `total_recipients` is recorded once.
+2. The `email-campaigns` worker leases due campaigns and walks the snapshot in
+   `EMAIL_CAMPAIGN_BATCH_SIZE` batches every `EMAIL_CAMPAIGN_INTERVAL_SECONDS`,
+   writing one `email_outbox` row per recipient (`campaign_id` links them).
+3. Idempotency key `campaign:{campaign_id}:{user_id}` makes a crash/retry
+   re-walk safe; the outbox worker owns retries and delivery.
+4. Suppression is checked at enqueue time, so a complaint or unsubscribe
+   during a campaign skips the remaining sends for that address.
+5. **Cancel** stops future expansion; rows already in the outbox still deliver.
+
+Progress in the admin UI comes from the real outbox statuses, not a second
+counter. Campaigns are capped at `EMAIL_CAMPAIGN_MAX_RECIPIENTS` (default
+50,000); larger sends should be split intentionally.
+
 ## Webhook
 
 `POST /api/v1/email/webhook/resend` — Svix signature required
@@ -84,7 +105,10 @@ would suppress arbitrary addresses.
 | `EMAIL_WORKER_BATCH` | Rows claimed per pass (default 20) |
 | `EMAIL_WORKER_CONCURRENCY` | Parallel sends per pass (default 4) |
 | `BULK_EMAIL_DAILY_LIMIT` | Per-tenant review-request email cap per rolling 24h (default 500) |
-| `WORKER_LOOPS` | Must include `email-outbox` if the allowlist is used |
+| `EMAIL_CAMPAIGN_BATCH_SIZE` | Recipients expanded per campaign pass (default 500) |
+| `EMAIL_CAMPAIGN_INTERVAL_SECONDS` | Pause between campaign expansion passes (default 60) |
+| `EMAIL_CAMPAIGN_MAX_RECIPIENTS` | Hard cap on a single campaign audience (default 50,000) |
+| `WORKER_LOOPS` | Must include `email-outbox` and `email-campaigns` if the allowlist is used |
 
 ## Domains (ops checklist)
 

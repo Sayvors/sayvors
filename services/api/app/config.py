@@ -206,6 +206,12 @@ class Settings(BaseSettings):
     # opt-out link already sitting in customers' inboxes. Deployed startup
     # requires it (>= 32 chars) and rejects reusing JWT_SECRET.
     EMAIL_UNSUBSCRIBE_SECRET: str = ""
+    # Newsletter campaigns expand into email_outbox in batches. The interval
+    # paces delivery so a large audience does not hit Resend in one burst.
+    EMAIL_CAMPAIGN_BATCH_SIZE: int = 500
+    EMAIL_CAMPAIGN_INTERVAL_SECONDS: int = 60
+    EMAIL_CAMPAIGN_MAX_RECIPIENTS: int = 50_000
+    EMAIL_CAMPAIGN_POLL_SECONDS: int = 10
     RESEND_FROM: str = "Sayvors <noreply@sayvors.com>"
     EMAIL_FROM: str = "noreply@sayvors.com"
     # Generic /email/send is restricted to the platform sending domain unless

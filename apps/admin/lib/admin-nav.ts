@@ -39,6 +39,7 @@ export const SECTIONS: { title: string; items: NavItem[] }[] = [
       { href: "/jobs", label: "Jobs", desc: "Queue & workers", icon: "jobs" },
       { href: "/logs", label: "Logs", desc: "Services & failures", icon: "logs" },
       { href: "/email", label: "Email health", desc: "Outbox, delivery, suppression", icon: "logs" },
+      { href: "/email/campaigns", label: "Email campaigns", desc: "Newsletter composer & progress", icon: "logs" },
     ],
   },
   {

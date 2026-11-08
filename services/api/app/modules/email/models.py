@@ -31,6 +31,7 @@ class EmailOutbox(Base):
             postgresql_where=sa_text("idempotency_key IS NOT NULL"),
         ),
         Index("ix_email_outbox_provider_id", "provider_id"),
+        Index("ix_email_outbox_campaign", "campaign_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -44,6 +45,8 @@ class EmailOutbox(Base):
     kind: Mapped[str] = mapped_column(String(32), index=True)
     headers: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=sa_text("'{}'"))
     idempotency_key: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    # Newsletter campaign that produced this row (NULL for transactional mail).
+    campaign_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     # queued | sending | sent | failed | dead | suppressed
     status: Mapped[str] = mapped_column(
         String(16), default="queued", server_default="queued", index=True
@@ -105,3 +108,42 @@ class EmailSuppression(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
+
+
+class EmailCampaign(Base):
+    """A newsletter composed once and expanded into the durable outbox.
+
+    Expansion is a keyset walk over a snapshot of the audience taken at start
+    (`max_user_id`), so new signups do not join a campaign already in flight
+    and a crash resumes from `last_user_id` instead of re-mailing the list.
+    """
+
+    __tablename__ = "email_campaigns"
+    __table_args__ = (
+        Index("ix_email_campaigns_status_due", "status", "next_expand_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    subject: Mapped[str] = mapped_column(String(500))
+    html: Mapped[str] = mapped_column(Text)
+    text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # draft | running | completed | cancelled
+    status: Mapped[str] = mapped_column(
+        String(16), default="draft", server_default="draft", index=True
+    )
+    total_recipients: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    expanded_recipients: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Keyset snapshot: expand users with last_user_id < id <= max_user_id.
+    last_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    max_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    batch_size: Mapped[int] = mapped_column(Integer, default=500, server_default="500")
+    interval_seconds: Mapped[int] = mapped_column(Integer, default=60, server_default="60")
+    next_expand_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

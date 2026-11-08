@@ -333,6 +333,28 @@ def review_request_email(
     )
 
 
+def newsletter_email(
+    *,
+    subject: str,
+    body_html: str,
+    frontend_url: str,
+    support_email: str,
+    help_url: str,
+    privacy_url: str,
+) -> str:
+    """Wrap the admin-composed newsletter body in the shared email shell."""
+    return shell(
+        title_ar="",
+        title_en=subject,
+        preheader=subject,
+        body_html=body_html,
+        frontend_url=frontend_url,
+        support_email=support_email,
+        help_url=help_url,
+        privacy_url=privacy_url,
+    )
+
+
 def reset_email(
     *,
     name: str,
