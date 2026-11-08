@@ -355,10 +355,12 @@ if settings.JWT_SECRET == "change-me-in-production":
 
 
 def validate_production_settings() -> None:
-    """Fail-closed startup gate for ENVIRONMENT=production.
+    """Fail-closed startup gate for deployed environments.
 
-    Dev-tolerant defaults become boot-time fatal errors in production, so a
-    half-configured deploy can never serve traffic insecurely by accident.
+    Everything except development/test is treated as deployed, so staging
+    enforces the same checks while keeping ENVIRONMENT=staging. Dev-tolerant
+    defaults become boot-time fatal errors, so a half-configured deploy can
+    never serve traffic insecurely by accident.
     """
     import sys
 
@@ -377,23 +379,25 @@ def validate_production_settings() -> None:
     if not settings.CORS_ORIGINS or any("localhost" in o for o in settings.CORS_ORIGINS):
         errors.append("CORS_ORIGINS must list the real frontend origin(s), not localhost")
     if settings.CORS_ORIGIN_REGEX and "localhost" in settings.CORS_ORIGIN_REGEX:
-        errors.append("CORS_ORIGIN_REGEX must not reference localhost in production")
+        errors.append("CORS_ORIGIN_REGEX must not reference localhost in a deployed environment")
     if "localhost" in settings.FRONTEND_URL:
-        errors.append("FRONTEND_URL must not reference localhost in production")
+        errors.append("FRONTEND_URL must not reference localhost in a deployed environment")
+    if "localhost" in settings.PUBLIC_API_URL:
+        errors.append("PUBLIC_API_URL must point at the public API origin in a deployed environment")
     if "localhost" in settings.GOOGLE_REVIEWS_REDIRECT_URI:
-        errors.append("GOOGLE_REVIEWS_REDIRECT_URI must not reference localhost in production")
+        errors.append("GOOGLE_REVIEWS_REDIRECT_URI must not reference localhost in a deployed environment")
     if "localhost" in settings.META_OAUTH_REDIRECT_URI:
-        errors.append("META_OAUTH_REDIRECT_URI must not reference localhost in production")
+        errors.append("META_OAUTH_REDIRECT_URI must not reference localhost in a deployed environment")
     if settings.EMAIL_SEND_ALLOW_ANY_RECIPIENT:
         errors.append("EMAIL_SEND_ALLOW_ANY_RECIPIENT must stay off (open-relay guard)")
     if settings.RAG_DB_ALLOW_PRIVATE_HOSTS:
         errors.append("RAG_DB_ALLOW_PRIVATE_HOSTS must stay off (SSRF guard)")
     if errors:
-        print("FATAL: production configuration validation failed:", file=sys.stderr)
+        print("FATAL: deployed configuration validation failed:", file=sys.stderr)
         for e in errors:
             print(f"  - {e}", file=sys.stderr)
         sys.exit(1)
 
 
-if settings.ENVIRONMENT == "production":
+if settings.ENVIRONMENT not in {"development", "test"}:
     validate_production_settings()

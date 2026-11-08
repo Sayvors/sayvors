@@ -71,7 +71,14 @@ def verify_unsubscribe_token(email: str, token: str) -> bool:
 
 
 def unsubscribe_url(email: str) -> str:
-    base = (settings.FRONTEND_URL or "https://sayvors.com").rstrip("/")
+    # The route lives on the API host. Using the frontend host only works if
+    # that host proxies /api/*; staging's Next rewrite targets localhost, so
+    # prefer the public API origin.
+    base = (
+        settings.PUBLIC_API_URL
+        or settings.FRONTEND_URL
+        or "https://sayvors.com"
+    ).rstrip("/")
     from urllib.parse import quote
 
     return f"{base}{UNSUBSCRIBE_PATH}?email={quote(email)}&token={unsubscribe_token(email)}"
