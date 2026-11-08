@@ -857,6 +857,8 @@ class BulkQuotaOut(BaseModel):
     max: int | None = None
     remaining: int | None = None
     requested: int
+    # "month" for the plan's WhatsApp allowance, "24h" for the email cap.
+    window: str = "month"
 
 
 class ReviewRequestBulkOut(BaseModel):

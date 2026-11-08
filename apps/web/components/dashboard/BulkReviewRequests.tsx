@@ -116,7 +116,7 @@ export default function BulkReviewRequests({
           (res.sent_now ? ` · ${res.sent_now} sending now` : "") +
           (res.scheduled ? ` · ${res.scheduled} scheduled` : "") +
           (res.skipped ? ` · ${res.skipped} skipped (missing contact)` : "") +
-          (res.skipped_quota ? ` · ${res.skipped_quota} skipped for plan quota` : "")
+          (res.skipped_quota ? ` · ${res.skipped_quota} skipped for quota` : "")
       );
       setParsed(null);
       setFileName("");

@@ -1,6 +1,6 @@
 # Email delivery (production path)
 
-Last updated: 2026-11-07.
+Last updated: 2026-11-08.
 
 ## Architecture
 
@@ -44,6 +44,21 @@ Review-request and newsletter emails carry:
 
 The link is `/api/v1/email/unsubscribe`, HMAC-signed with `JWT_SECRET` so it
 cannot be forged.
+
+## Bulk review-request email cap
+
+Review-request email is separate from the plan's WhatsApp allowance, but it is
+not unbounded. Every tenant is capped at `BULK_EMAIL_DAILY_LIMIT` (default
+500) review-request emails per rolling 24 hours, counted at enqueue time in
+`review_requests` (`channel='email'`).
+
+- `POST /api/v1/analytics/review-requests/bulk` queues only the remaining
+  headroom and reports `used` / `max` / `remaining` / `window: "24h"`; the rest
+  are returned in `skipped_quota` instead of silently over-sending.
+- `POST /api/v1/analytics/review-requests` with `deliver=true` returns 429
+  once the cap is exhausted.
+- The cap protects the shared Resend sending domain from one runaway campaign;
+  it does not gate OTP, billing or other transactional mail.
 
 ## Webhook
 

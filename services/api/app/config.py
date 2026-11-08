@@ -206,6 +206,11 @@ class Settings(BaseSettings):
     # Generic /email/send is restricted to the platform sending domain unless
     # this is explicitly enabled (self-hosted relay use only).
     EMAIL_SEND_ALLOW_ANY_RECIPIENT: bool = False
+    # Per-tenant cap on review-request emails per rolling 24 hours. Resend is
+    # a shared sending domain: one runaway campaign can burn its reputation
+    # for every tenant. 500 matches the bulk endpoint's per-call maximum, so a
+    # normal campaign still fits in one day while a loop cannot drain the domain.
+    BULK_EMAIL_DAILY_LIMIT: int = 500
     FRONTEND_URL: str = "http://localhost:3000"
     # Public base URL of THIS API, used to build tracked links that customers
     # click from SMS/email/WhatsApp (e.g. https://api.sayvors.com).

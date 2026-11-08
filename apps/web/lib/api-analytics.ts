@@ -482,7 +482,13 @@ export async function bulkReviewRequests(input: {
   scheduled: number;
   skipped: number;
   skipped_quota: number;
-  quota: { used: number; max: number | null; remaining: number | null; requested: number } | null;
+  quota: {
+    used: number;
+    max: number | null;
+    remaining: number | null;
+    requested: number;
+    window?: "month" | "24h";
+  } | null;
 }> {
   return apiFetch("/api/v1/analytics/review-requests/bulk", {
     method: "POST",
