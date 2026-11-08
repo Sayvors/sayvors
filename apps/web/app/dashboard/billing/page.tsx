@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Breadcrumbs from "@/components/Breadcrumbs";
 import LogoLoader from "@/components/LogoLoader";
 import { getProfile } from "@/lib/api-profile";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 import {
   addPaymentMethod,
   chargeCard,
@@ -29,17 +30,41 @@ function fieldInput(hasError: boolean): string {
     : inputCls;
 }
 
-const PLAN_LABELS: Record<string, string> = {
-  "free-trial": "Free Trial",
-  free: "Free",
-  starter: "Starter",
-  pro: "Pro",
-  growth: "Growth",
-  enterprise: "Enterprise",
+const PLAN_SLUG_KEYS: Record<string, "trial" | "free" | "starter" | "pro" | "growth" | "enterprise"> = {
+  "free-trial": "trial",
+  free: "free",
+  starter: "starter",
+  pro: "pro",
+  growth: "growth",
+  enterprise: "enterprise",
 };
 
-function planLabel(slug: string): string {
-  return PLAN_LABELS[slug] || slug || "Free Trial";
+type PlanNames = {
+  trial: string;
+  free: string;
+  starter: string;
+  pro: string;
+  growth: string;
+  enterprise: string;
+};
+
+function planLabel(slug: string | undefined, names: PlanNames, fallback = ""): string {
+  const key = slug ? PLAN_SLUG_KEYS[slug] : undefined;
+  return (key && names[key]) || fallback || slug || names.trial;
+}
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [k, v]) => out.replaceAll(`{${k}}`, String(v)),
+    s,
+  );
+}
+
+function fmtMoney(n: number, locale: string): string {
+  return `$${new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(n)}`;
 }
 
 function Field({ label, hint, required, error, children }: { label: string; hint?: string; required?: boolean; error?: string | null; children: React.ReactNode }) {
@@ -134,8 +159,8 @@ const BRAND_LABEL: Record<string, string> = {
   applepay: "Apple Pay",
 };
 
-function brandLabel(brand: string): string {
-  return BRAND_LABEL[brand.toLowerCase()] ?? (brand.slice(0, 8).toUpperCase() || "Card");
+function brandLabel(brand: string, cardFallback = "Card"): string {
+  return BRAND_LABEL[brand.toLowerCase()] ?? (brand.slice(0, 8).toUpperCase() || cardFallback);
 }
 
 function formatCardGroups(digits: string): string {
@@ -149,16 +174,19 @@ function formatExpiryInput(v: string): string {
   return `${d.slice(0, 2)}/${d.slice(2)}`;
 }
 
-function expiryError(v: string): string | null {
+function expiryError(
+  v: string,
+  msg: { expiryFormat: string; monthRange: string; cardExpired: string; yearFar: string },
+): string | null {
   const d = v.replace(/[^0-9]/g, "");
-  if (d.length < 4) return "Use MM/YY.";
+  if (d.length < 4) return msg.expiryFormat;
   const mm = Number(d.slice(0, 2));
   const yy = Number(d.slice(2, 4));
-  if (mm < 1 || mm > 12) return "Month must be 01–12.";
+  if (mm < 1 || mm > 12) return msg.monthRange;
   const now = new Date();
   const lastDay = new Date(2000 + yy, mm, 0);
-  if (lastDay.getTime() < now.getTime()) return "This card is expired.";
-  if (2000 + yy > now.getFullYear() + 15) return "That year looks too far ahead.";
+  if (lastDay.getTime() < now.getTime()) return msg.cardExpired;
+  if (2000 + yy > now.getFullYear() + 15) return msg.yearFar;
   return null;
 }
 
@@ -167,7 +195,7 @@ function parseExpiry(v: string): { month: number; year: number } {
   return { month: Number(d.slice(0, 2)), year: 2000 + Number(d.slice(2, 4)) };
 }
 
-function CardPreview({ brand, digits, holder, expiry }: { brand: string; digits: string; holder: string; expiry: string }) {
+function CardPreview({ brand, digits, holder, expiry, cardFallback, yourName, expiryPh }: { brand: string; digits: string; holder: string; expiry: string; cardFallback: string; yourName: string; expiryPh: string }) {
   return (
     <div className={`relative overflow-hidden rounded-2xl bg-gradient-to-br p-4 text-white shadow-lg ${brandGradient(brand)}`}>
       <div className="pointer-events-none absolute -right-10 -top-10 h-36 w-36 rounded-full bg-white/10" aria-hidden />
@@ -176,17 +204,17 @@ function CardPreview({ brand, digits, holder, expiry }: { brand: string; digits:
         <div className="flex h-8 w-11 items-center justify-center rounded-md bg-white/25" aria-hidden>
           <div className="h-4 w-6 rounded-[3px] border border-white/50" />
         </div>
-        <span className="text-[15px] font-black tracking-wide">{brandLabel(brand)}</span>
+        <span className="text-[15px] font-black tracking-wide">{brandLabel(brand, cardFallback)}</span>
       </div>
       <p className="relative mt-4 text-[16px] font-semibold tabular-nums tracking-[0.08em]">
         {formatCardGroups(digits)}
       </p>
       <div className="relative mt-3 flex items-end justify-between gap-2">
         <p className="truncate text-[11px] font-medium uppercase tracking-wide text-white/85">
-          {holder.trim() || "YOUR NAME"}
+          {holder.trim() || yourName}
         </p>
         <p className="shrink-0 text-[11px] font-semibold tabular-nums text-white/85">
-          {expiry.replace(/[^0-9/]/g, "") || "MM/YY"}
+          {expiry.replace(/[^0-9/]/g, "") || expiryPh}
         </p>
       </div>
     </div>
@@ -279,6 +307,16 @@ const COUNTRIES: { code: string; name: string }[] = [
 ];
 
 export default function BillingPage() {
+  const { t, locale } = useI18n();
+  const b = t.dashboard.billing;
+  const countryNames = useMemo(() => {
+    if (locale !== "ar") return null;
+    try {
+      return new Intl.DisplayNames(["ar"], { type: "region" });
+    } catch {
+      return null;
+    }
+  }, [locale]);
   const [plan, setPlan] = useState("free");
   const [budget, setBudget] = useState<Budget | null>(null);
   const [profile, setProfile] = useState<BillingProfile>(EMPTY_PROFILE);
@@ -307,27 +345,27 @@ export default function BillingPage() {
     digits.length === 0
       ? null
       : digits.length < 13
-        ? `Too short - keep typing (${digits.length} typed).`
+        ? fill(b.tooShort, { count: digits.length })
         : detected !== "unknown" && detected !== "other" && digits.length !== expectedCardLength(detected)
-          ? `${brandLabel(detected)} cards use ${expectedCardLength(detected)} digits (${digits.length} typed).`
+          ? fill(b.cardDigits, { brand: brandLabel(detected, b.cardFallback), len: expectedCardLength(detected), count: digits.length })
           : !luhnValid(digits)
-            ? "This number doesn't pass the checksum - check and retry."
+            ? b.checksum
             : null;
-  const expiryErr = expiry ? expiryError(expiry) : null;
+  const expiryErr = expiry ? expiryError(expiry, b) : null;
   const holderError: string | null =
-    holder === "" ? null : holder.trim().length < 2 ? "Enter the name printed on the card." : null;
+    holder === "" ? null : holder.trim().length < 2 ? b.holderRequired : null;
 
   const nameError: string | null =
-    (profile.full_name ?? "").trim() === "" ? "Full name is required." : null;
+    (profile.full_name ?? "").trim() === "" ? b.nameRequired : null;
   const emailError: string | null =
     authEmail.trim() === ""
-      ? "Your sign-in email is missing — re-login."
+      ? b.emailMissing
       : !EMAIL_RE.test(authEmail.trim())
-        ? "That email doesn't look valid."
+        ? b.emailInvalid
         : null;
   const countryVal = (profile.country ?? "").trim().toUpperCase();
   const countryError: string | null =
-    countryVal === "" ? "Country is required." : null;
+    countryVal === "" ? b.countryRequired : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -368,7 +406,7 @@ export default function BillingPage() {
   async function saveDetails() {
     setDetailsTouched(true);
     if (nameError || emailError || countryError) {
-      setBanner({ kind: "err", text: "Fix the highlighted billing fields first." });
+      setBanner({ kind: "err", text: b.fieldsFirst });
       return;
     }
     setBusy("profile");
@@ -389,9 +427,9 @@ export default function BillingPage() {
       });
       setProfile(updated);
       setDetailsTouched(false);
-      setBanner({ kind: "ok", text: "Billing details saved." });
+      setBanner({ kind: "ok", text: b.saved });
     } catch (e) {
-      setBanner({ kind: "err", text: e instanceof Error ? e.message.slice(0, 200) : "Could not save." });
+      setBanner({ kind: "err", text: e instanceof Error ? e.message.slice(0, 200) : b.saveFailed });
     } finally {
       setBusy(null);
     }
@@ -401,16 +439,16 @@ export default function BillingPage() {
     setCardTouched(true);
     const numErr =
       digits.length === 0
-        ? "Enter the card number."
+        ? b.cardRequired
         : digits.length < 13
-          ? "Card numbers have 13–19 digits."
+          ? b.cardLength
           : !luhnValid(digits)
-            ? "This number doesn't pass the checksum — check and retry."
+            ? b.checksum
             : null;
-    const expErr = expiry === "" ? "Enter the expiry." : expiryError(expiry);
-    const holdErr = holder.trim().length < 2 ? "Enter the name printed on the card." : null;
+    const expErr = expiry === "" ? b.expiryRequired : expiryError(expiry, b);
+    const holdErr = holder.trim().length < 2 ? b.holderRequired : null;
     if (numErr || expErr || holdErr) {
-      setBanner({ kind: "err", text: numErr ?? expErr ?? holdErr ?? "Check the card fields." });
+      setBanner({ kind: "err", text: numErr ?? expErr ?? holdErr ?? b.checkFields });
       return;
     }
     const { month, year } = parseExpiry(expiry);
@@ -450,9 +488,9 @@ export default function BillingPage() {
       setMakeDefault(false);
       setCardTouched(false);
       setShowAddCard(false);
-      setBanner({ kind: "ok", text: "Card tokenized and saved — only the last 4 digits were sent. Gateway verification lands soon." });
+      setBanner({ kind: "ok", text: b.cardSaved });
     } catch (e) {
-      setBanner({ kind: "err", text: e instanceof Error ? e.message.slice(0, 200) : "Could not save card." });
+      setBanner({ kind: "err", text: e instanceof Error ? e.message.slice(0, 200) : b.cardFailed });
     } finally {
       setBusy(null);
     }
@@ -494,10 +532,10 @@ export default function BillingPage() {
   return (
     <div className="h-full overflow-y-auto p-6 space-y-5">
       <div>
-        <Breadcrumbs items={[{ label: "Billing" }]} />
-        <h1 className="mt-2 text-[20px] font-bold text-ink dark:text-fog">Billing</h1>
+        <Breadcrumbs items={[{ label: b.title }]} />
+        <h1 className="mt-2 text-[20px] font-bold text-ink dark:text-fog">{b.title}</h1>
         <p className="mt-0.5 text-[13px] text-ink/45 dark:text-fog/45">
-          Plan, billing details and saved cards. Card numbers are never stored — only brand, last digits and expiry.
+          {b.subtitle}
         </p>
       </div>
 
@@ -514,8 +552,8 @@ export default function BillingPage() {
             </svg>
           </span>
           <div>
-            <p className="text-[13px] font-bold text-ink dark:text-fog">AI credit ledger</p>
-            <p className="text-[11px] text-ink/45 dark:text-fog/45">Balance, holds, and per-call charges — Postgres is the source of truth.</p>
+            <p className="text-[13px] font-bold text-ink dark:text-fog">{b.ledgerTitle}</p>
+            <p className="text-[11px] text-ink/45 dark:text-fog/45">{b.ledgerDesc}</p>
           </div>
         </div>
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-4 w-4 shrink-0 text-deep-violet/60 transition group-hover:translate-x-0.5 dark:text-violet-soft/60" aria-hidden>
@@ -534,8 +572,8 @@ export default function BillingPage() {
             </svg>
           </span>
           <div>
-            <p className="text-[13px] font-bold text-ink dark:text-fog">Top up messages, AI credit or channels</p>
-            <p className="text-[11px] text-ink/45 dark:text-fog/45">Packs are approved by an operator while online payments are not live.</p>
+            <p className="text-[13px] font-bold text-ink dark:text-fog">{b.topupTitle}</p>
+            <p className="text-[11px] text-ink/45 dark:text-fog/45">{b.topupDesc}</p>
           </div>
         </div>
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-4 w-4 shrink-0 text-ink/30 transition group-hover:translate-x-0.5 dark:text-fog/30" aria-hidden>
@@ -555,7 +593,7 @@ export default function BillingPage() {
           <div className="flex items-center justify-between gap-2">
             <span>{banner.text}</span>
             <button className="shrink-0 text-[12px] underline underline-offset-2" onClick={() => setBanner(null)}>
-              dismiss
+              {t.common.dismiss}
             </button>
           </div>
         </div>
@@ -572,83 +610,83 @@ export default function BillingPage() {
             <div className="pointer-events-none absolute -bottom-16 -left-8 h-48 w-48 rounded-full bg-black/20" aria-hidden />
             <div className="relative flex flex-wrap items-end justify-between gap-4">
               <div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-white/60">Current plan</p>
-                <p className="mt-1 text-[30px] font-black leading-none">{planLabel(plan)}</p>
+                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-white/60">{b.currentPlan}</p>
+                <p className="mt-1 text-[30px] font-black leading-none">{planLabel(plan, b.planNames)}</p>
                 <p className="mt-2 max-w-md text-[12px] text-white/70">
                   {plan === "free-trial"
-                    ? "Your free trial includes $10 of AI credit — every AI reply, analysis and chat message spends from it."
+                    ? b.trialDesc
                     : plan === "free"
-                      ? "Free has no AI credits — choose a plan to unlock AI replies, analyses and chat."
-                      : `${planLabel(plan)} includes AI credit — every AI reply, analysis and chat message spends from it.`}
+                      ? b.freeDesc
+                      : fill(b.planDesc, { plan: planLabel(plan, b.planNames) })}
                 </p>
               </div>
               <div className="text-right">
-                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-white/60">AI credits left</p>
+                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-white/60">{b.creditsLeft}</p>
                 <p className="mt-1 text-[30px] font-black tabular-nums leading-none">
-                  {budget ? `$${budget.balance_dollars.toFixed(2)}` : "—"}
+                  {budget ? fmtMoney(budget.balance_dollars, locale) : "—"}
                 </p>
                 {lowBalance ? (
                   <p className="mt-2 text-[12px] font-bold text-amber-300">
-                    Balance is low — contact support to top up.
+                    {b.lowBalance}
                   </p>
                 ) : (
-                  <p className="mt-2 text-[12px] text-white/70">Top-ups arrive with subscriptions.</p>
+                  <p className="mt-2 text-[12px] text-white/70">{b.topupsWithSubs}</p>
                 )}
               </div>
             </div>
           </div>
 
-          <Section title="Billing details" subtitle="Only the essentials — used on invoices and receipts.">
+          <Section title={b.detailsTitle} subtitle={b.detailsSubtitle}>
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Full name" required error={detailsTouched ? nameError : null}>
+              <Field label={b.fullName} required error={detailsTouched ? nameError : null}>
                 <input value={profile.full_name ?? ""} onChange={(e) => set({ full_name: e.target.value })} disabled={busy !== null} placeholder="Sara Ahmed" className={fieldInput(detailsTouched && !!nameError)} />
               </Field>
-              <Field label="Billing email" required hint="your sign-in email" error={detailsTouched ? emailError : null}>
+              <Field label={b.billingEmail} required hint={b.signinHint} error={detailsTouched ? emailError : null}>
                 <input value={authEmail} disabled placeholder="you@example.com" inputMode="email" readOnly className={`${inputCls} cursor-not-allowed opacity-70`} />
               </Field>
-              <Field label="Country" required error={detailsTouched ? countryError : null}>
+              <Field label={b.country} required error={detailsTouched ? countryError : null}>
                 <select
                   value={countryVal}
                   onChange={(e) => set({ country: e.target.value })}
                   disabled={busy !== null}
                   className={fieldInput(detailsTouched && !!countryError)}
                 >
-                  <option value="">Select country…</option>
+                  <option value="">{b.selectCountry}</option>
                   {COUNTRIES.map((c) => (
-                    <option key={c.code} value={c.code}>{c.name}</option>
+                    <option key={c.code} value={c.code}>{c.code === "OTHER" ? b.other : (countryNames?.of(c.code) ?? c.name)}</option>
                   ))}
                 </select>
               </Field>
-              <Field label="City">
+              <Field label={b.city}>
                 <input value={profile.city ?? ""} onChange={(e) => set({ city: e.target.value })} disabled={busy !== null} placeholder="Riyadh" className={inputCls} />
               </Field>
               <div className="sm:col-span-2">
-                <Field label="Business tax ID (optional)" hint="VAT/GST number for company invoices — leave blank if none">
+                <Field label={b.taxId} hint={b.taxHint}>
                   <input value={profile.tax_id ?? ""} onChange={(e) => set({ tax_id: e.target.value })} disabled={busy !== null} placeholder="e.g. 300123456700003" className={inputCls} />
                 </Field>
               </div>
             </div>
-            <p className="text-[11px] text-ink/40 dark:text-fog/40"><span className="font-bold text-coral">*</span> required</p>
+            <p className="text-[11px] text-ink/40 dark:text-fog/40"><span className="font-bold text-coral">*</span> {b.required}</p>
             <button
               onClick={() => void saveDetails()}
               disabled={busy !== null}
               className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
             >
-              {busy === "profile" ? "Saving…" : "Save billing details"}
+              {busy === "profile" ? b.saving : b.saveDetails}
             </button>
           </Section>
 
-          <Section title="Payment methods" subtitle="Saved cards for future charges. Only brand, last digits and expiry are kept.">
+          <Section title={b.methodsTitle} subtitle={b.methodsSubtitle}>
             {methods.length === 0 ? (
               <p className="rounded-lg bg-ink/[0.03] px-3 py-3 text-[12px] text-ink/50 dark:bg-fog/[0.04] dark:text-fog/50">
-                No cards yet — add one below. Cards are tokenized by our payment provider; only brand, last digits and expiry are kept.
+                {b.noCards}
               </p>
             ) : (
               <ul className="space-y-2">
                 {methods.map((m) => (
                   <li key={m.id} className="flex items-stretch gap-0 overflow-hidden rounded-xl border border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink">
                     <div className={`flex w-24 shrink-0 flex-col justify-between bg-gradient-to-br p-2.5 text-white ${brandGradient(m.brand)}`}>
-                      <span className="text-[11px] font-black tracking-wide">{brandLabel(m.brand)}</span>
+                      <span className="text-[11px] font-black tracking-wide">{brandLabel(m.brand, b.cardFallback)}</span>
                       <span className="text-[10px] font-semibold tabular-nums text-white/85">
                         {String(m.exp_month).padStart(2, "0")}/{m.exp_year}
                       </span>
@@ -657,17 +695,17 @@ export default function BillingPage() {
                       <p className="flex flex-wrap items-center gap-2 text-[14px] font-bold tabular-nums tracking-[0.06em] text-ink dark:text-fog">
                         •••• {m.last4}
                         {m.is_default && (
-                          <span className="rounded-full bg-deep-violet/10 px-2 py-0.5 text-[10px] font-bold tracking-normal text-deep-violet">★ Default</span>
+                          <span className="rounded-full bg-deep-violet/10 px-2 py-0.5 text-[10px] font-bold tracking-normal text-deep-violet">{b.defaultBadge}</span>
                         )}
                         {!m.verified && (
-                          <span title="Gateway verification lands soon" className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold tracking-normal text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
-                            Unverified
+                          <span title={b.unverifiedTitle} className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold tracking-normal text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
+                            {b.unverified}
                           </span>
                         )}
                       </p>
                       <p className="mt-0.5 truncate text-[11px] text-ink/45 dark:text-fog/45">
-                        {m.holder_name ?? "No holder name"}
-                        {m.expired && <span className="ml-1.5 font-bold text-coral">· Expired</span>}
+                        {m.holder_name ?? b.noHolder}
+                        {m.expired && <span className="ml-1.5 font-bold text-coral">{b.expiredBadge}</span>}
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5 px-2.5">
@@ -677,7 +715,7 @@ export default function BillingPage() {
                           disabled={busy !== null}
                           className="rounded-lg px-2 py-1 text-[11px] font-semibold text-deep-violet outline-none transition hover:bg-deep-violet/[0.06] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-40"
                         >
-                          {busy === `default-${m.id}` ? "…" : "Set default"}
+                          {busy === `default-${m.id}` ? "…" : b.setDefault}
                         </button>
                       )}
                       {confirmDelete === m.id ? (
@@ -687,10 +725,10 @@ export default function BillingPage() {
                             disabled={busy !== null}
                             className="rounded-lg bg-red-600 px-2 py-1 text-[11px] font-bold text-white disabled:opacity-40"
                           >
-                            Confirm
+                            {b.confirm}
                           </button>
                           <button onClick={() => setConfirmDelete(null)} className="rounded-lg px-2 py-1 text-[11px] font-semibold text-ink/50">
-                            Keep
+                            {b.keep}
                           </button>
                         </>
                       ) : (
@@ -699,7 +737,7 @@ export default function BillingPage() {
                           disabled={busy !== null}
                           className="rounded-lg px-2 py-1 text-[11px] font-semibold text-red-500 outline-none transition hover:bg-red-500/10 focus-visible:ring-2 focus-visible:ring-red-500/40 disabled:opacity-40"
                         >
-                          Remove
+                          {b.remove}
                         </button>
                       )}
                     </div>
@@ -715,7 +753,7 @@ export default function BillingPage() {
                 aria-expanded={showAddCard}
                 className="flex w-full items-center justify-between gap-2 text-left"
               >
-                <span className="text-[13px] font-bold text-ink dark:text-fog">Add a card</span>
+                <span className="text-[13px] font-bold text-ink dark:text-fog">{b.addCard}</span>
                 <span
                   aria-hidden
                   className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-deep-violet/10 text-[15px] font-bold leading-none text-deep-violet transition-transform duration-200 ${showAddCard ? "rotate-45" : ""}`}
@@ -725,20 +763,20 @@ export default function BillingPage() {
               </button>
               {!showAddCard ? (
                 <p className="mt-1 text-[11px] text-ink/45 dark:text-fog/45">
-                  Brand is detected automatically — only the last 4 digits are ever sent or stored.
+                  {b.addCardHint}
                 </p>
               ) : (
                 <>
                 <p className="mt-0.5 text-[11px] text-ink/45 dark:text-fog/45">
-                  Type the number — the brand is detected automatically and only the last 4 digits are ever sent or stored. Cards go through our payment gateway for tokenization.
+                  {b.addCardDetail}
                 </p>
                   <div className="mt-3">
-                    <CardPreview brand={detected} digits={digits} holder={holder} expiry={expiry} />
+                    <CardPreview brand={detected} digits={digits} holder={holder} expiry={expiry} cardFallback={b.cardFallback} yourName={b.yourName} expiryPh={b.expiryHint} />
                   </div>
                   <div className="mt-3 grid gap-3 sm:grid-cols-2">
                     <div className="sm:col-span-2">
                       <Field
-                        label="Card number"
+                        label={b.cardNumber}
                         required
                         hint={
                           digits.length === 0
@@ -746,8 +784,8 @@ export default function BillingPage() {
                             : numberError
                               ? undefined
                               : detected !== "unknown" && detected !== "other"
-                                ? `Detected: ${brandLabel(detected)} - valid`
-                                : "Valid card number"
+                                ? fill(b.digitsLine, { brand: brandLabel(detected, b.cardFallback) })
+                                : b.validNumber
                         }
                         error={cardTouched ? numberError : null}
                       >
@@ -767,10 +805,10 @@ export default function BillingPage() {
                         />
                       </Field>
                     </div>
-                    <Field label="Name on card" required error={cardTouched ? holderError : null}>
+                    <Field label={b.nameOnCard} required error={cardTouched ? holderError : null}>
                       <input value={holder} onChange={(e) => setHolder(e.target.value)} disabled={busy !== null} placeholder="SARA AHMED" autoComplete="cc-name" className={fieldInput(cardTouched && !!holderError)} />
                     </Field>
-                    <Field label="Expiry" required hint="MM/YY" error={cardTouched ? expiryErr : null}>
+                    <Field label={b.expiry} required hint={b.expiryHint} error={cardTouched ? expiryErr : null}>
                       <input
                         value={expiry}
                         onChange={(e) => setExpiry(formatExpiryInput(e.target.value))}
@@ -784,7 +822,7 @@ export default function BillingPage() {
                   </div>
                   <label className="mt-3 flex cursor-pointer items-center gap-2 text-[12px] font-medium text-ink/60 dark:text-fog/60">
                     <input type="checkbox" checked={makeDefault} onChange={(e) => setMakeDefault(e.target.checked)} disabled={busy !== null} className="h-4 w-4 rounded border-ink/20 text-deep-violet focus:ring-deep-violet/40" />
-                    Make default{methods.length === 0 ? " (first card is default automatically)" : ""}
+                    {b.makeDefault}{methods.length === 0 ? b.firstIsDefault : ""}
                   </label>
                   <div className="mt-3 flex gap-2">
                     <button
@@ -792,7 +830,7 @@ export default function BillingPage() {
                       disabled={busy !== null}
                       className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
                     >
-                      {busy === "add" ? "Saving…" : "Save card"}
+                      {busy === "add" ? b.saving : b.saveCard}
                     </button>
                     <button
                       type="button"
@@ -807,7 +845,7 @@ export default function BillingPage() {
                       disabled={busy !== null}
                       className="rounded-xl px-4 py-2 text-[12px] font-semibold text-ink/50 transition hover:bg-ink/[0.04] disabled:opacity-40 dark:text-fog/50 dark:hover:bg-fog/[0.06]"
                     >
-                      Cancel
+                      {t.common.cancel}
                     </button>
                   </div>
                 </>
