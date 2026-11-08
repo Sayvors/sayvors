@@ -231,6 +231,9 @@ export interface CampaignRecipient {
     | "suppressed";
   attempts: number;
   error: string | null;
+  last_event: string | null;
+  last_event_detail: string | null;
+  last_event_at: string | null;
   created_at: string | null;
   sent_at: string | null;
 }
@@ -295,6 +298,40 @@ export async function cancelEmailCampaign(id: string): Promise<EmailCampaign> {
     `/api/v1/admin/email/campaigns/${encodeURIComponent(id)}/cancel`,
     { method: "POST" },
   );
+}
+
+export interface PurgedAccount {
+  id: string;
+  email: string;
+  first_name: string | null;
+  last_name: string | null;
+  reason: string;
+  status: "pending" | "purged" | "failed";
+  error: string | null;
+  signed_up_at: string | null;
+  purged_at: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export async function fetchPurgedAccounts(
+  limit = 50,
+  offset = 0,
+  q = "",
+): Promise<{ items: PurgedAccount[]; total: number }> {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  });
+  if (q.trim()) params.set("q", q.trim());
+  return adminFetch<{ items: PurgedAccount[]; total: number }>(
+    `/api/v1/admin/purged-accounts?${params}`,
+  );
+}
+
+export async function runUnverifiedPurge(): Promise<{ purged: number }> {
+  return adminFetch<{ purged: number }>("/api/v1/admin/purged-accounts/run", {
+    method: "POST",
+  });
 }
 
 export interface AdminOverview {

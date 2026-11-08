@@ -29,7 +29,14 @@ from ...database import Base
 logger = logging.getLogger(__name__)
 
 # Never exported or purged through a tenant scope.
-_SYSTEM_TABLES = {"platform_operators", "admin_audit_logs", "alembic_version"}
+_SYSTEM_TABLES = {
+    "platform_operators",
+    "admin_audit_logs",
+    "alembic_version",
+    # Platform-level trace of accounts removed without an owner request. It
+    # must survive the tenant purge that deletes the account itself.
+    "purged_accounts",
+}
 
 # Columns that must never appear in an export. Hashes and provider secrets are
 # not customer data, and shipping them in a downloadable file is a leak.

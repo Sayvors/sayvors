@@ -10,6 +10,8 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import text as sa_text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...database import Base
@@ -35,6 +37,40 @@ class PlatformOperator(Base):
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PurgedAccount(Base):
+    """Trace of an account the platform removed without the owner asking.
+
+    Unverified accounts are deleted after a grace period so they cannot
+    accumulate or be mailed. The row keeps the address, signup time and a small
+    metadata snapshot for support/audit; it is not a user and never receives
+    email. `tenant_id` columns deliberately do not exist so a tenant purge
+    cannot delete this table (it is also in admin.tenant_ops._SYSTEM_TABLES).
+    """
+
+    __tablename__ = "purged_accounts"
+    __table_args__ = (
+        Index("ix_purged_accounts_email", "email"),
+        Index("ix_purged_accounts_purged_at", "purged_at"),
+    )
+
+    # The original users.id. A new signup gets a new id, so this stays unique.
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    email: Mapped[str] = mapped_column(String(320))
+    first_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    last_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    reason: Mapped[str] = mapped_column(String(32), default="unverified")
+    # pending | purged | failed
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    signed_up_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    purged_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    metadata_json: Mapped[dict] = mapped_column(
+        JSONB, default=dict, server_default=sa_text("'{}'")
+    )
 
 
 class AdminAuditLog(Base):

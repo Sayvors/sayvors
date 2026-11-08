@@ -235,7 +235,8 @@ function CampaignRecipientsTable({ campaign }: { campaign: EmailCampaign }) {
               <thead>
                 <tr className="border-b border-[var(--ui-line)] text-[10px] uppercase tracking-[0.08em] text-ink/40">
                   <th className="py-1.5 pr-3 font-bold">Email</th>
-                  <th className="py-1.5 pr-3 font-bold">Status</th>
+                  <th className="py-1.5 pr-3 font-bold">Outbox</th>
+                  <th className="py-1.5 pr-3 font-bold">Delivery</th>
                   <th className="py-1.5 pr-3 font-bold">Tries</th>
                   <th className="py-1.5 font-bold">Error</th>
                 </tr>
@@ -260,6 +261,25 @@ function CampaignRecipientsTable({ campaign }: { campaign: EmailCampaign }) {
                       >
                         {item.status}
                       </span>
+                    </td>
+                    <td className="py-1.5 pr-3">
+                      {item.last_event ? (
+                        <span
+                          title={item.last_event_detail || ""}
+                          className={`rounded-full px-1.5 py-0.5 text-[9.5px] font-bold ${
+                            item.last_event === "delivered"
+                              ? "bg-emerald-50 text-emerald-700"
+                              : item.last_event === "bounced" ||
+                                  item.last_event === "complained"
+                                ? "bg-red-50 text-red-700"
+                                : "bg-ink/5 text-ink/55"
+                          }`}
+                        >
+                          {item.last_event}
+                        </span>
+                      ) : (
+                        <span className="text-ink/30">—</span>
+                      )}
                     </td>
                     <td className="py-1.5 pr-3 tabular-nums text-ink/55">{item.attempts}</td>
                     <td className="max-w-[22rem] truncate py-1.5 text-red-600" title={item.error || ""}>

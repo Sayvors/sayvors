@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...config import settings
 from ..users.models import User
 from . import templates
-from .models import EmailCampaign, EmailOutbox, EmailSuppression
+from .models import EmailCampaign, EmailEvent, EmailOutbox, EmailSuppression
 from .outbox import enqueue_email, marketing_headers, normalize_email
 from .schemas import CampaignCreateIn
 from .service import SUPPORT_EMAIL
@@ -343,6 +343,19 @@ async def list_campaign_recipients(
             )
         ).all()
     )
+    # "sent" only means Resend accepted the request. Surface the latest
+    # provider event so a later bounce/complaint is visible against the address.
+    latest: dict[str, EmailEvent] = {}
+    if rows:
+        events = (
+            await db.execute(
+                select(EmailEvent)
+                .where(EmailEvent.outbox_id.in_([row.id for row in rows]))
+                .order_by(EmailEvent.created_at.desc())
+            )
+        ).scalars().all()
+        for event in events:
+            latest.setdefault(event.outbox_id, event)
     return {
         "items": [
             {
@@ -351,6 +364,13 @@ async def list_campaign_recipients(
                 "status": row.status,
                 "attempts": row.attempts,
                 "error": row.error,
+                "last_event": latest[row.id].type if row.id in latest else None,
+                "last_event_detail": latest[row.id].detail if row.id in latest else None,
+                "last_event_at": (
+                    latest[row.id].created_at.isoformat()
+                    if row.id in latest and latest[row.id].created_at
+                    else None
+                ),
                 "created_at": row.created_at.isoformat() if row.created_at else None,
                 "sent_at": row.sent_at.isoformat() if row.sent_at else None,
             }

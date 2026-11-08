@@ -33,6 +33,34 @@ API handler → enqueue_email() → email_outbox(status=queued)
   because the row keeps the same Resend `Idempotency-Key`.
 - **Every** email is idempotent at the provider too (`Idempotency-Key` header).
 
+## OTP sends
+
+OTP mail is throttled per address inside `send_otp_email`, on top of the
+per-IP limits:
+
+- one send per `OTP_RESEND_COOLDOWN_SECONDS` (default 60s);
+- at most `OTP_DAILY_LIMIT` (default 10) per rolling 24 hours.
+
+A blocked resend deliberately leaves the previous code valid, so a repeated
+signup cannot invalidate a code the real owner is about to use.
+
+## Unverified signups
+
+Signup creates the account unverified and sends one OTP. Accounts that never
+verify are removed by the `unverified-purge` worker after
+`UNVERIFIED_ACCOUNT_TTL_DAYS` (default 7):
+
+- the user row and everything tenant-scoped are deleted through the same
+  `purge_tenant` path as an admin purge;
+- before deletion a `purged_accounts` row records the address, name, signup
+  time and a small metadata snapshot (`plan`, `business_type`, `newsletter`,
+  whether Google/Facebook were linked);
+- the trace is visible at **Admin → Operations → Purged accounts** and can be
+  searched by email. It is platform-level, so a tenant purge cannot remove it.
+
+This keeps newsletters and OTP away from addresses that were never proven to
+exist without silently losing the audit trail.
+
 ## Suppression
 
 Checked before enqueue and updated by the webhook:
@@ -86,8 +114,11 @@ Admin → **Operations → Email campaigns**. A campaign is composed once
    or already `sent` can still be delivered.
 
 Progress in the admin UI comes from the real outbox statuses, not a second
-counter. Campaigns are capped at `EMAIL_CAMPAIGN_MAX_RECIPIENTS` (default
-50,000); larger sends should be split intentionally.
+counter. The recipient table also shows the latest provider event
+(`delivered`, `bounced`, `complained`): `sent` only means Resend accepted the
+request, so a bounce is never mistaken for delivery. Campaigns are capped at
+`EMAIL_CAMPAIGN_MAX_RECIPIENTS` (default 50,000); larger sends should be split
+intentionally.
 
 ## Webhook
 
@@ -110,7 +141,10 @@ would suppress arbitrary addresses.
 | `EMAIL_CAMPAIGN_BATCH_SIZE` | Recipients expanded per campaign pass (default 500) |
 | `EMAIL_CAMPAIGN_INTERVAL_SECONDS` | Pause between campaign expansion passes (default 60) |
 | `EMAIL_CAMPAIGN_MAX_RECIPIENTS` | Hard cap on a single campaign audience (default 50,000) |
-| `WORKER_LOOPS` | Must include `email-outbox` and `email-campaigns` if the allowlist is used |
+| `OTP_RESEND_COOLDOWN_SECONDS` | Per-address OTP resend cooldown (default 60) |
+| `OTP_DAILY_LIMIT` | Per-address OTP sends per rolling 24h (default 10) |
+| `UNVERIFIED_ACCOUNT_TTL_DAYS` | Grace period before an unverified account is purged (default 7) |
+| `WORKER_LOOPS` | Must include `email-outbox`, `email-campaigns` and `unverified-purge` if the allowlist is used |
 
 ## Domains (ops checklist)
 

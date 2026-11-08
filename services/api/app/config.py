@@ -201,6 +201,15 @@ class Settings(BaseSettings):
     RESEND_WEBHOOK_SECRET: str = ""
     EMAIL_WORKER_BATCH: int = 20
     EMAIL_WORKER_CONCURRENCY: int = 4
+    # Per-address OTP throttle, independent of the per-IP limits. A repeated
+    # signup/resend must not turn one victim address into a mail cannon.
+    OTP_RESEND_COOLDOWN_SECONDS: int = 60
+    OTP_DAILY_LIMIT: int = 10
+    # Never-verified signups are removed after this grace period. The archive
+    # row in purged_accounts is the admin-visible trace.
+    UNVERIFIED_ACCOUNT_TTL_DAYS: int = 7
+    UNVERIFIED_PURGE_BATCH: int = 20
+    UNVERIFIED_PURGE_INTERVAL_SECONDS: int = 3600
     # Dedicated HMAC key for one-click unsubscribe links. Kept separate from
     # JWT_SECRET so rotating the login signing key cannot invalidate every
     # opt-out link already sitting in customers' inboxes. Deployed startup

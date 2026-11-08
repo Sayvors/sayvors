@@ -938,6 +938,63 @@ async def admin_email_campaign_cancel(
     return await campaign_out(db, campaign)
 
 
+@router.get("/purged-accounts")
+async def admin_purged_accounts(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    q: str | None = Query(None, max_length=320),
+    _admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Trace of accounts removed by the platform (never-verified signups)."""
+    from sqlalchemy import func, select
+
+    from .models import PurgedAccount
+
+    stmt = select(PurgedAccount)
+    count_stmt = select(func.count()).select_from(PurgedAccount)
+    if q and q.strip():
+        pattern = f"%{q.strip().lower()}%"
+        stmt = stmt.where(func.lower(PurgedAccount.email).like(pattern))
+        count_stmt = count_stmt.where(func.lower(PurgedAccount.email).like(pattern))
+    total = int((await db.execute(count_stmt)).scalar() or 0)
+    rows = (
+        await db.execute(
+            stmt.order_by(PurgedAccount.purged_at.desc()).limit(limit).offset(offset)
+        )
+    ).scalars().all()
+    return {
+        "items": [
+            {
+                "id": row.id,
+                "email": row.email,
+                "first_name": row.first_name,
+                "last_name": row.last_name,
+                "reason": row.reason,
+                "status": row.status,
+                "error": row.error,
+                "signed_up_at": row.signed_up_at.isoformat() if row.signed_up_at else None,
+                "purged_at": row.purged_at.isoformat() if row.purged_at else None,
+                "metadata": row.metadata_json or {},
+            }
+            for row in rows
+        ],
+        "total": total,
+    }
+
+
+@router.post("/purged-accounts/run")
+async def admin_run_unverified_purge(
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Run one bounded purge batch immediately instead of waiting for the worker."""
+    from ..users.unverified_purge import purge_unverified_accounts
+
+    return {"purged": await purge_unverified_accounts(db)}
+
+
 @router.get("/health", response_model=AdminHealth)
 async def admin_health(
     probe: bool = Query(False),

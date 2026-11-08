@@ -105,6 +105,9 @@ must use appropriately separated storage/access policies.
 | `EMAIL_CAMPAIGN_BATCH_SIZE` | `500` | Recipients expanded into `email_outbox` per campaign worker pass. |
 | `EMAIL_CAMPAIGN_INTERVAL_SECONDS` | `60` | Pause between campaign expansion passes. |
 | `EMAIL_CAMPAIGN_MAX_RECIPIENTS` | `50000` | Hard cap on a single newsletter campaign audience. |
+| `OTP_RESEND_COOLDOWN_SECONDS` | `60` | Per-address cooldown between OTP sends. |
+| `OTP_DAILY_LIMIT` | `10` | Per-address OTP sends per rolling 24 hours. |
+| `UNVERIFIED_ACCOUNT_TTL_DAYS` | `7` | Grace period before a never-verified owner account is purged (trace kept in `purged_accounts`). |
 | `GLITCHTIP_DSN` | Empty | Server-side error-reporting DSN. |
 | `GLITCHTIP_SECRET_KEY` | Empty | Optional server-side GlitchTip integration secret. |
 
