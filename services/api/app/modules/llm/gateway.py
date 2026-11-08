@@ -142,6 +142,29 @@ def _build_request(
     )
 
 
+def strip_model_dashes(text: str | None) -> str | None:
+    """Remove em/en dashes from model output.
+
+    A prompt instruction alone is not a guarantee. Customer-facing model text
+    must not carry the em dash (and its en dash sibling): it reads as templated
+    machine prose. Commas/periods preserve the meaning with no style change.
+    """
+    if not text:
+        return text
+    return (
+        text.replace("\u2014", ", ")
+        .replace("\u2013", ", ")
+        .replace(",  ", ", ")
+        .replace(" , ", ", ")
+    )
+
+
+def _with_sanitized_content(response):
+    """Copy a provider response with dash-free customer-visible text."""
+    response.content = strip_model_dashes(response.content)
+    return response
+
+
 async def complete(
     *,
     model: str,
@@ -180,14 +203,14 @@ async def complete(
         channel_id=channel_id,
     )
     try:
-        return await provider.complete(req)
+        return _with_sanitized_content(await provider.complete(req))
     except ProviderError as e:
         if e.status_code in (401, 403):
             # The cached client may hold a rotated key. Drop it and retry once
             # against a client rebuilt from the current database key.
             await registry.reset_provider(resolved.provider)
             retry_provider = registry.get_provider_for_model(model)
-            return await retry_provider.complete(req)
+            return _with_sanitized_content(await retry_provider.complete(req))
         raise
 
 

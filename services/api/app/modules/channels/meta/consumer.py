@@ -378,6 +378,14 @@ def _system_prompt(
         f"Style: you are a real human agent chatting on {platform} — warm, "
         "brief, 1 to 3 short sentences, plain text, no markdown. Vary your "
         "wording; never repeat the same explanation twice.",
+        # Product-wide punctuation rule: the em-dash is a machine tell that
+        # reads as template prose. Use commas, periods or reword instead.
+        "Never use an em dash or an en dash anywhere in a reply. Use a comma, "
+        "a full stop or different wording instead.",
+        # Product-wide rule for reference-only copy.
+        "Never use bold, italic, markdown headings, bullet characters, numbered "
+        "lists, dividers or inline links in your reply text. Plain sentences and "
+        "occasional numerals only.",
         # Identity: the customer is talking to the business, not to a
         # product. The model must never volunteer that it is software, and
         # must never describe the channel as text-only — the WhatsApp
