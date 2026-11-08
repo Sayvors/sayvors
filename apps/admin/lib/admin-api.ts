@@ -214,6 +214,39 @@ export interface CampaignAudienceItem {
   suppressed: boolean;
 }
 
+export interface CampaignVariable {
+  key: string;
+  label: string;
+  example: string;
+}
+
+export interface CampaignPreview {
+  tenant: { name: string | null; email: string | null };
+  subject: string;
+  body_html: string;
+  text: string | null;
+  html: string;
+}
+
+export async function fetchCampaignVariables(): Promise<{
+  items: CampaignVariable[];
+}> {
+  return adminFetch<{ items: CampaignVariable[] }>(
+    "/api/v1/admin/email/campaigns/variables",
+  );
+}
+
+export async function previewEmailCampaign(input: {
+  subject: string;
+  html: string;
+  text?: string | null;
+}): Promise<CampaignPreview> {
+  return adminFetch<CampaignPreview>("/api/v1/admin/email/campaigns/preview", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
 export interface CampaignAudience {
   eligible: number;
   max_recipients: number;

@@ -108,6 +108,7 @@ must use appropriately separated storage/access policies.
 | `OTP_RESEND_COOLDOWN_SECONDS` | `60` | Per-address cooldown between OTP sends. |
 | `OTP_DAILY_LIMIT` | `10` | Per-address OTP sends per rolling 24 hours. |
 | `UNVERIFIED_ACCOUNT_TTL_DAYS` | `7` | Grace period before a never-verified owner account is purged (trace kept in `purged_accounts`). |
+| `FREE_TRIAL_DAYS` | `14` | Trial length used by the `{tenant_free_trial_days_left}` campaign variable. |
 | `GLITCHTIP_DSN` | Empty | Server-side error-reporting DSN. |
 | `GLITCHTIP_SECRET_KEY` | Empty | Optional server-side GlitchTip integration secret. |
 

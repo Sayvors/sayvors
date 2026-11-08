@@ -117,6 +117,28 @@ subject; older rows fall back to the subject.
    row `cancelled`. Only rows already in `sending` (provider call in flight)
    or already `sent` can still be delivered.
 
+### Variables
+
+The composer resolves variables per recipient at expansion time, not when the
+admin writes the campaign:
+
+| Variable | Value |
+|---|---|
+| `{name}`, `{email}` | Recipient identity |
+| `{tenant_name}` | Owner/workspace display name |
+| `{tenant_total_reviews}`, `{reviews}` | Synced Google review count |
+| `{tenant_avg_rating}`, `{avg_rating}` | Average rating, one decimal |
+| `{tenant_plan}` | Current plan slug |
+| `{tenant_free_trial_days_left}` | Days left under `FREE_TRIAL_DAYS` |
+| `{dashboard_url}` | Frontend dashboard link |
+| `{unsubscribe_url}` | One-click unsubscribe link |
+
+The internal `tenant_id` is a join key only: it is not in the palette, is not
+rendered, and if written manually it is left as an unknown token. Values are
+resolved in a batch (one aggregate query for reviews), so a 500-recipient pass
+does not issue 500 count/avg queries. The composer's **Preview** button renders
+the subject/body against a real eligible tenant before anything is queued.
+
 Progress in the admin UI comes from the real outbox statuses, not a second
 counter. The recipient table also shows the latest provider event
 (`delivered`, `bounced`, `complained`): `sent` only means Resend accepted the

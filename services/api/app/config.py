@@ -221,6 +221,9 @@ class Settings(BaseSettings):
     EMAIL_CAMPAIGN_INTERVAL_SECONDS: int = 60
     EMAIL_CAMPAIGN_MAX_RECIPIENTS: int = 50_000
     EMAIL_CAMPAIGN_POLL_SECONDS: int = 10
+    # Trial policy used by the {tenant_free_trial_days_left} campaign variable.
+    # The schema has no trial end date yet, so this is the source of truth.
+    FREE_TRIAL_DAYS: int = 14
     RESEND_FROM: str = "Sayvors <noreply@sayvors.com>"
     EMAIL_FROM: str = "noreply@sayvors.com"
     # Generic /email/send is restricted to the platform sending domain unless

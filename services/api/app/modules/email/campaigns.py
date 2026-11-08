@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
+import re
 from datetime import datetime, timedelta, timezone
 from html import escape
 
@@ -21,14 +23,46 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import settings
+from ..analytics.models import ReviewInsight
 from ..users.models import User
 from . import templates
 from .models import EmailCampaign, EmailEvent, EmailOutbox, EmailSuppression
-from .outbox import enqueue_email, marketing_headers, normalize_email
-from .schemas import CampaignCreateIn
+from .outbox import enqueue_email, marketing_headers, normalize_email, unsubscribe_url
+from .schemas import CampaignCreateIn, CampaignPreviewIn
 from .service import SUPPORT_EMAIL
 
 logger = logging.getLogger(__name__)
+
+_VAR_RE = re.compile(r"\{([a-z][a-z0-9_]*)\}")
+
+# Variables exposed to the composer. tenant_id is deliberately absent: it is
+# an internal join key, never shown to the admin or the recipient.
+CAMPAIGN_VARIABLES = [
+    {"key": "name", "label": "First name", "example": "Saeed"},
+    {"key": "email", "label": "Recipient email", "example": "saeed@example.com"},
+    {"key": "tenant_name", "label": "Workspace / owner name", "example": "Saeed"},
+    {"key": "tenant_total_reviews", "label": "Total Google reviews", "example": "128"},
+    {"key": "tenant_avg_rating", "label": "Average rating", "example": "4.7"},
+    {"key": "tenant_plan", "label": "Plan", "example": "free-trial"},
+    {
+        "key": "tenant_free_trial_days_left",
+        "label": "Free-trial days left",
+        "example": "9",
+    },
+    {
+        "key": "dashboard_url",
+        "label": "Dashboard link",
+        "example": "https://app.sayvors.com/dashboard",
+    },
+    {
+        "key": "unsubscribe_url",
+        "label": "Unsubscribe link",
+        "example": "https://api.sayvors.com/api/v1/email/unsubscribe?...",
+    },
+    # Convenience aliases matching the wording admins naturally use.
+    {"key": "reviews", "label": "Total reviews (alias)", "example": "128"},
+    {"key": "avg_rating", "label": "Average rating (alias)", "example": "4.7"},
+]
 
 
 def _now() -> datetime:
@@ -165,14 +199,82 @@ async def cancel_campaign(db: AsyncSession, campaign: EmailCampaign) -> None:
     await db.commit()
 
 
-def _render(value: str | None, user: User) -> str | None:
+def _format_avg(value) -> str:
+    return f"{float(value):.1f}" if value is not None else "—"
+
+
+async def build_variable_contexts(
+    db: AsyncSession, users: list[User]
+) -> dict[str, dict[str, dict[str, str]]]:
+    """Resolve campaign variables for a batch of recipients.
+
+    One aggregate query for reviews covers the whole batch; trial days come
+    from the user row. Returns both an HTML-escaped map (for the body) and a
+    raw map (for the subject/plain text).
+    """
+    ids = [user.id for user in users]
+    review_stats: dict[str, tuple[int, float | None]] = {}
+    if ids:
+        rows = (
+            await db.execute(
+                select(
+                    ReviewInsight.user_id,
+                    func.count(),
+                    func.avg(ReviewInsight.rating),
+                )
+                .where(ReviewInsight.user_id.in_(ids))
+                .group_by(ReviewInsight.user_id)
+            )
+        ).all()
+        review_stats = {
+            user_id: (int(count), avg) for user_id, count, avg in rows
+        }
+
+    now = _now()
+    base = (settings.FRONTEND_URL or "https://sayvors.com").rstrip("/")
+    contexts: dict[str, dict[str, dict[str, str]]] = {}
+    for user in users:
+        count, avg = review_stats.get(user.id, (0, None))
+        trial_left = ""
+        if user.plan == "free-trial" and user.created_at:
+            created = user.created_at
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            end = created + timedelta(days=settings.FREE_TRIAL_DAYS)
+            days = math.ceil(max(0.0, (end - now).total_seconds()) / 86400)
+            trial_left = str(days)
+        raw = {
+            "name": user.first_name or "there",
+            "email": user.email or "",
+            "tenant_name": user.first_name or "there",
+            "tenant_total_reviews": str(count),
+            "tenant_avg_rating": _format_avg(avg),
+            "tenant_plan": user.plan or "",
+            "tenant_free_trial_days_left": trial_left,
+            "reviews": str(count),
+            "avg_rating": _format_avg(avg),
+            "dashboard_url": f"{base}/dashboard",
+            "unsubscribe_url": unsubscribe_url(user.email or ""),
+        }
+        contexts[user.id] = {
+            "html": {key: escape(value, quote=True) for key, value in raw.items()},
+            "text": raw,
+        }
+    return contexts
+
+
+def render_campaign_text(
+    value: str | None, context: dict[str, dict[str, str]], *, html: bool
+) -> str | None:
+    """Replace `{variable}` tokens, leaving unknown tokens visible."""
     if not value:
         return value
-    # The body is admin-authored HTML; only the substituted values are user
-    # data, so escape those and leave the template markup alone.
-    return value.replace("{name}", escape(user.first_name or "there")).replace(
-        "{email}", escape(user.email or "")
-    )
+    values = context["html" if html else "text"]
+
+    def _replace(match: re.Match[str]) -> str:
+        return values.get(match.group(1), match.group(0))
+
+    return _VAR_RE.sub(_replace, value)
 
 
 async def expand_one(db: AsyncSession, campaign: EmailCampaign) -> int:
@@ -199,14 +301,20 @@ async def expand_one(db: AsyncSession, campaign: EmailCampaign) -> int:
         return 0
 
     frontend_url = (settings.FRONTEND_URL or "https://sayvors.com").rstrip("/")
+    contexts = await build_variable_contexts(db, users)
 
     for user in users:
         email = normalize_email(user.email)
         if not email:
             continue
+        context = contexts[user.id]
+        rendered_subject = (
+            render_campaign_text(campaign.subject, context, html=False)
+            or campaign.subject
+        )
         html = templates.newsletter_email(
-            subject=campaign.subject,
-            body_html=_render(campaign.html, user) or "",
+            subject=rendered_subject,
+            body_html=render_campaign_text(campaign.html, context, html=True) or "",
             frontend_url=frontend_url,
             support_email=SUPPORT_EMAIL,
             help_url=f"{frontend_url}/dashboard",
@@ -215,9 +323,9 @@ async def expand_one(db: AsyncSession, campaign: EmailCampaign) -> int:
         await enqueue_email(
             db,
             to=email,
-            subject=campaign.subject,
+            subject=rendered_subject,
             html=html,
-            text=_render(campaign.text, user),
+            text=render_campaign_text(campaign.text, context, html=False),
             kind="newsletter",
             tenant_id=user.id,
             idempotency_key=f"campaign:{campaign.id}:{user.id}",
@@ -394,6 +502,48 @@ async def list_campaign_recipients(
         ],
         "total": total,
         "counts": counts,
+    }
+
+
+async def preview_campaign(
+    db: AsyncSession, body: CampaignPreviewIn
+) -> dict:
+    """Render the composer against a real eligible tenant."""
+    user = None
+    if body.tenant_id:
+        user = await db.get(User, body.tenant_id)
+    if user is None:
+        user = (
+            await db.execute(
+                select(User)
+                .where(*_audience_conditions())
+                .order_by(User.id)
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+    if user is None:
+        raise ValueError("No eligible recipient to preview.")
+
+    contexts = await build_variable_contexts(db, [user])
+    context = contexts[user.id]
+    subject = render_campaign_text(body.subject, context, html=False) or body.subject
+    body_html = render_campaign_text(body.html, context, html=True) or ""
+    text = render_campaign_text(body.text, context, html=False)
+    frontend_url = (settings.FRONTEND_URL or "https://sayvors.com").rstrip("/")
+    html = templates.newsletter_email(
+        subject=subject,
+        body_html=body_html,
+        frontend_url=frontend_url,
+        support_email=SUPPORT_EMAIL,
+        help_url=f"{frontend_url}/dashboard",
+        privacy_url=f"{frontend_url}/privacy",
+    )
+    return {
+        "tenant": {"name": user.first_name, "email": user.email},
+        "subject": subject,
+        "body_html": body_html,
+        "text": text,
+        "html": html,
     }
 
 

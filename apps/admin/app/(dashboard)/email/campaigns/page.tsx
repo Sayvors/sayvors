@@ -14,11 +14,15 @@ import {
   createEmailCampaign,
   fetchCampaignAudience,
   fetchCampaignRecipients,
+  fetchCampaignVariables,
   fetchEmailCampaigns,
+  previewEmailCampaign,
   startEmailCampaign,
   type CampaignAudience,
   type CampaignAudienceItem,
+  type CampaignPreview,
   type CampaignRecipient,
+  type CampaignVariable,
   type EmailCampaign,
 } from "@/lib/admin-api";
 
@@ -334,9 +338,17 @@ export default function EmailCampaignsPage() {
   const [name, setName] = useState("");
   const [subject, setSubject] = useState("");
   const [html, setHtml] = useState(
-    '<p dir="ltr">Hi {name},</p>\n<p dir="ltr">Here is what is new at Sayvors.</p>',
+    '<p dir="ltr">Hi {name},</p>\n' +
+      '<p dir="ltr">This weekend your workspace collected {reviews} reviews with an average rating of {avg_rating}.</p>\n' +
+      '<p dir="ltr">Open your dashboard to see them: <a href="{dashboard_url}">{dashboard_url}</a></p>\n' +
+      '<p dir="ltr">Read more on our blog: <a href="https://sayvors.com/blog">sayvors.com/blog</a></p>\n' +
+      '<p dir="ltr" style="font-size:12px;color:#777">You can unsubscribe here: <a href="{unsubscribe_url}">unsubscribe</a></p>',
   );
   const [text, setText] = useState("");
+  const [variables, setVariables] = useState<CampaignVariable[]>([]);
+  const [preview, setPreview] = useState<CampaignPreview | null>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const htmlRef = useRef<HTMLTextAreaElement | null>(null);
   const [batchSize, setBatchSize] = useState(500);
   const [intervalSeconds, setIntervalSeconds] = useState(60);
   const [loading, setLoading] = useState(true);
@@ -361,6 +373,14 @@ export default function EmailCampaignsPage() {
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    fetchCampaignVariables()
+      .then((data) => setVariables(data.items))
+      .catch(() => {
+        /* palette is helpful, not required to compose */
+      });
   }, []);
 
   useEffect(() => {
@@ -413,6 +433,44 @@ export default function EmailCampaignsPage() {
       setError(e instanceof Error ? e.message : "Could not create the campaign.");
     } finally {
       setBusy(null);
+    }
+  };
+
+  const insertVariable = (key: string) => {
+    const token = `{${key}}`;
+    const element = htmlRef.current;
+    if (!element) {
+      setHtml((previous) => previous + token);
+      return;
+    }
+    const start = element.selectionStart ?? html.length;
+    const end = element.selectionEnd ?? start;
+    setHtml(html.slice(0, start) + token + html.slice(end));
+    requestAnimationFrame(() => {
+      element.focus();
+      element.selectionStart = element.selectionEnd = start + token.length;
+    });
+  };
+
+  const runPreview = async () => {
+    if (!subject.trim() || !html.trim()) {
+      setError("Subject and body are required for a preview.");
+      return;
+    }
+    setPreviewBusy(true);
+    setError(null);
+    try {
+      setPreview(
+        await previewEmailCampaign({
+          subject: subject.trim(),
+          html,
+          text: text.trim() || null,
+        }),
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not render the preview.");
+    } finally {
+      setPreviewBusy(false);
     }
   };
 
@@ -567,6 +625,7 @@ export default function EmailCampaignsPage() {
             HTML body
           </span>
           <textarea
+            ref={htmlRef}
             value={html}
             onChange={(e) => setHtml(e.target.value)}
             rows={8}
@@ -574,6 +633,25 @@ export default function EmailCampaignsPage() {
             className="mt-1 w-full rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-2 font-mono text-[11.5px] leading-relaxed text-ink"
           />
         </label>
+
+        {variables.length > 0 && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-ink/35">
+              Variables
+            </span>
+            {variables.map((variable) => (
+              <button
+                key={variable.key}
+                type="button"
+                title={`${variable.label} (e.g. ${variable.example})`}
+                onClick={() => insertVariable(variable.key)}
+                className={`rounded-full border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 py-0.5 font-mono text-[10px] text-ink/65 hover:bg-[var(--ui-sunken)] ${FOCUS}`}
+              >
+                {`{${variable.key}}`}
+              </button>
+            ))}
+          </div>
+        )}
         <label className="mt-3 block">
           <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-ink/40">
             Plain-text fallback <span className="normal-case tracking-normal text-ink/30">(optional)</span>
@@ -586,7 +664,7 @@ export default function EmailCampaignsPage() {
           />
         </label>
 
-        <div className="mt-3 flex items-center gap-2">
+        <div className="mt-3 flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => void create()}
@@ -595,11 +673,46 @@ export default function EmailCampaignsPage() {
           >
             {busy === "create" ? "Creating…" : "Create draft"}
           </button>
+          <button
+            type="button"
+            onClick={() => void runPreview()}
+            disabled={previewBusy}
+            className={`h-9 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 text-[12px] font-semibold text-ink disabled:opacity-50 ${FOCUS}`}
+          >
+            {previewBusy ? "Rendering…" : "Preview"}
+          </button>
           <span className="text-[10.5px] text-ink/40">
-            A draft does not send anything. Start sends it to the snapshot of eligible
-            recipients.
+            Preview uses a real eligible tenant. A draft does not send anything.
           </span>
         </div>
+
+        {preview && (
+          <div className="mt-4 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)]">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--ui-line)] px-3 py-2">
+              <div className="min-w-0">
+                <p className="truncate text-[12px] font-bold text-ink">
+                  {preview.subject}
+                </p>
+                <p className="text-[10px] text-ink/40">
+                  Preview tenant: {preview.tenant.email || "—"}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreview(null)}
+                className={`h-7 rounded-[2px] border border-[var(--ui-line)] px-2 text-[10.5px] font-semibold text-ink ${FOCUS}`}
+              >
+                Close
+              </button>
+            </div>
+            <iframe
+              title="Campaign preview"
+              srcDoc={preview.html}
+              sandbox=""
+              className="h-[420px] w-full bg-white"
+            />
+          </div>
+        )}
       </section>
 
       <AudienceTable audience={audience} />

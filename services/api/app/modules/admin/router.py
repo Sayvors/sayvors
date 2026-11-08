@@ -22,7 +22,7 @@ from ..auth.router import get_client_ip
 # SubscriptionOut is needed at import time by the `/tenants/special` decorator,
 # which must be declared before `/tenants/{user_id}` or FastAPI shadows it.
 from ..billing.schemas import SubscriptionOut, TenantFeaturesIn
-from ..email.schemas import CampaignCreateIn
+from ..email.schemas import CampaignCreateIn, CampaignPreviewIn
 from . import service as admin_service
 from . import stats as admin_service_stats
 from .schemas import (
@@ -828,6 +828,31 @@ async def admin_email_campaign_audience(
         "max_recipients": settings.EMAIL_CAMPAIGN_MAX_RECIPIENTS,
         "items": await list_audience(db, limit=limit, offset=offset),
     }
+
+
+@router.get("/email/campaigns/variables")
+async def admin_email_campaign_variables(
+    _admin: dict = Depends(require_admin),
+):
+    """The variable palette for the newsletter composer."""
+    from ..email.campaigns import CAMPAIGN_VARIABLES
+
+    return {"items": CAMPAIGN_VARIABLES}
+
+
+@router.post("/email/campaigns/preview")
+async def admin_email_campaign_preview(
+    body: CampaignPreviewIn,
+    _admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Render the composer against a real eligible tenant."""
+    from ..email.campaigns import preview_campaign
+
+    try:
+        return await preview_campaign(db, body)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
 
 
 @router.get("/email/campaigns")

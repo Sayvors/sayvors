@@ -2,6 +2,13 @@
 from pydantic import BaseModel, Field
 
 
+class CampaignPreviewIn(BaseModel):
+    subject: str = Field(..., min_length=1, max_length=200)
+    html: str = Field(..., min_length=1, max_length=200_000)
+    text: str | None = Field(None, max_length=200_000)
+    tenant_id: str | None = Field(None, max_length=36)
+
+
 class CampaignCreateIn(BaseModel):
     # Admin-facing label. Optional so older clients keep working; falls back
     # to the subject when absent.

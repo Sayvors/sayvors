@@ -2,8 +2,11 @@
 import pytest
 from sqlalchemy import select
 
+from app.modules.analytics.models import ReviewInsight
+from app.modules.channels.models import Channel
 from app.modules.email import campaigns
 from app.modules.email.models import EmailCampaign, EmailOutbox, EmailSuppression
+from app.modules.email.schemas import CampaignPreviewIn
 from app.modules.users.models import User
 
 pytestmark = pytest.mark.asyncio
@@ -75,6 +78,74 @@ async def _draft(db, *, batch_size: int = 2) -> EmailCampaign:
     await db.commit()
     await db.refresh(campaign)
     return campaign
+
+
+async def test_variables_resolve_per_tenant_and_hide_the_internal_id(db):
+    ids = await _seed_users(db)
+    db.add(
+        Channel(
+            id="campaign-review-channel",
+            user_id=ids[0],
+            platform="google_reviews",
+            platform_user_id="acc",
+            status="active",
+        )
+    )
+    await db.flush()
+    db.add_all(
+        [
+            ReviewInsight(
+                id="campaign-review-1",
+                user_id=ids[0],
+                channel_id="campaign-review-channel",
+                review_id="review-1",
+                rating=5,
+            ),
+            ReviewInsight(
+                id="campaign-review-2",
+                user_id=ids[0],
+                channel_id="campaign-review-channel",
+                review_id="review-2",
+                rating=4,
+            ),
+        ]
+    )
+    user = await db.get(User, ids[0])
+    user.plan = "free-trial"
+    await db.commit()
+
+    user = await db.get(User, ids[0])
+    contexts = await campaigns.build_variable_contexts(db, [user])
+    context = contexts[ids[0]]
+
+    assert context["text"]["reviews"] == "2"
+    assert context["text"]["tenant_total_reviews"] == "2"
+    assert context["text"]["avg_rating"] == "4.5"
+    assert context["text"]["tenant_free_trial_days_left"] == "14"
+    assert context["text"]["dashboard_url"].endswith("/dashboard")
+
+    rendered = campaigns.render_campaign_text(
+        "Hi {name}: {reviews} reviews, {avg_rating}. {tenant_id}",
+        context,
+        html=False,
+    )
+    assert rendered == "Hi User0: 2 reviews, 4.5. {tenant_id}"
+
+
+async def test_preview_renders_against_a_real_tenant(db):
+    await _seed_users(db)
+    preview = await campaigns.preview_campaign(
+        db,
+        CampaignPreviewIn(
+            subject="Hi {name}",
+            html="<p>{reviews} reviews, average {avg_rating}.</p>",
+        ),
+    )
+
+    assert preview["tenant"]["email"].startswith("campaign")
+    assert preview["subject"].startswith("Hi User")
+    assert "0 reviews" in preview["body_html"]
+    assert preview["html"].startswith("<!DOCTYPE html>")
 
 
 async def test_campaign_walks_the_snapshot_in_batches(db):
