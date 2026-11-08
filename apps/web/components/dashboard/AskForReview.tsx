@@ -4,6 +4,14 @@ import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { apiFetch } from "@/lib/api-rag";
 import { recordReviewRequest } from "@/lib/api-analytics";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 type ReviewChannel = "whatsapp" | "contacts" | "email";
 type PlatformTab = "all" | "whatsapp" | "instagram" | "facebook";
@@ -41,6 +49,9 @@ const PLATFORM_META: Record<string, { label: string; color: string; bg: string }
 };
 
 export default function AskForReview() {
+  const { t, locale } = useI18n();
+  const a = t.reviews.ask;
+  const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
   const [businesses, setBusinesses] = useState<BusinessProfile[]>([]);
   const [groups, setGroups] = useState<ContactGroup[]>(() => {
     try {
@@ -90,7 +101,7 @@ export default function AskForReview() {
               ? `https://search.google.com/local/writereview?placeid=${encodeURIComponent(c.place_id)}`
               : c.maps_url;
             if (!reviewUrl) return [];
-            return [{ id: c.id, name: c.display_name ?? "Location", reviewUrl }];
+            return [{ id: c.id, name: c.display_name ?? a.locationFallback, reviewUrl }];
           });
         setBusinesses(businesses);
       } catch {
@@ -123,7 +134,7 @@ export default function AskForReview() {
           list.push({
             id: `${platform}:${t.key}`,
             platform,
-            name: t.display_name || t.contact_phone || "Unknown",
+            name: t.display_name || t.contact_phone || a.unknownContact,
             number: t.contact_phone ?? "",
             avatarUrl: t.avatar_url ?? null,
           });
@@ -269,14 +280,14 @@ export default function AskForReview() {
         deliver: true,
       });
       if (res.status === "failed") {
-        setEmailMsg(res.error ?? "Email could not be sent.");
+        setEmailMsg(res.error ?? a.sendFailed);
       } else {
-        setEmailMsg("Email request sent with a tracked review link.");
+        setEmailMsg(a.sentOk);
         setEmailAddress("");
         setEmailName("");
       }
     } catch (e) {
-      setEmailMsg(e instanceof Error ? e.message.slice(0, 160) : "Email could not be sent.");
+      setEmailMsg(e instanceof Error ? e.message.slice(0, 160) : a.sendFailed);
     } finally {
       setEmailBusy(false);
     }
@@ -322,12 +333,12 @@ export default function AskForReview() {
     showPlatform: boolean
   ) => {
     if (contactsLoading) {
-      return <p className="px-3 py-2 text-[11px] text-ink/45">Loading contacts…</p>;
+      return <p className="px-3 py-2 text-[11px] text-ink/45">{a.loadingContacts}</p>;
     }
     if (list.length === 0) {
       return (
         <p className="px-3 py-2 text-[11px] text-ink/45">
-          No contacts yet — customers you chat with on WhatsApp, Instagram or Messenger appear here.
+          {a.emptyContacts}
         </p>
       );
     }
@@ -374,7 +385,7 @@ export default function AskForReview() {
 
   return (
     <section
-      aria-label="Ask for review"
+      aria-label={a.sectionAria}
       className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm"
     >
       <div className="flex items-center gap-2">
@@ -384,14 +395,14 @@ export default function AskForReview() {
           </svg>
         </span>
         <div>
-          <h2 className="text-[14px] font-bold text-ink">Ask for Review</h2>
-          <p className="text-[11px] text-ink/45">Reach out to customers directly</p>
+          <h2 className="text-[14px] font-bold text-ink">{a.title}</h2>
+          <p className="text-[11px] text-ink/45">{a.sub}</p>
         </div>
       </div>
 
       <div className="mt-4">
         <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-ink/40">
-          Select business for review
+          {a.selectBusiness}
         </p>
         <div className="space-y-1.5">
           {businesses.map((biz) => (
@@ -428,8 +439,8 @@ export default function AskForReview() {
             </svg>
           </span>
           <div>
-            <p className="text-[12px] font-bold text-ink">WhatsApp</p>
-            <p className="text-[10px] text-ink/45">Direct message</p>
+            <p className="text-[12px] font-bold text-ink">{a.waTitle}</p>
+            <p className="text-[10px] text-ink/45">{a.waSub}</p>
           </div>
         </button>
 
@@ -450,9 +461,9 @@ export default function AskForReview() {
             </svg>
           </span>
           <div>
-            <p className="text-[12px] font-bold text-ink">Contacts</p>
+            <p className="text-[12px] font-bold text-ink">{a.contactsTitle}</p>
             <p className="text-[10px] text-ink/45">
-              {contactsLoading ? "Loading…" : `${contacts.length} connected`}
+              {contactsLoading ? a.contactsLoading : fill(a.contactsN, { n: fmt(contacts.length) })}
             </p>
           </div>
         </button>
@@ -472,8 +483,8 @@ export default function AskForReview() {
             </svg>
           </span>
           <div>
-            <p className="text-[12px] font-bold text-ink">Email</p>
-            <p className="text-[10px] text-ink/45">Send request</p>
+            <p className="text-[12px] font-bold text-ink">{a.emailTitle}</p>
+            <p className="text-[10px] text-ink/45">{a.emailSub}</p>
           </div>
         </button>
 
@@ -481,30 +492,29 @@ export default function AskForReview() {
 
       {activeChannel === "whatsapp" && (
         <div className="mt-4 rounded-xl border border-ink/[0.06] bg-ink/[0.02] p-4">
-          <p className="text-[12px] font-semibold text-ink">Send WhatsApp review request</p>
+          <p className="text-[12px] font-semibold text-ink">{a.waPanelTitle}</p>
           <p className="mt-1 text-[11px] text-ink/50">
-            Opens WhatsApp with a pre-filled message asking for a review.
+            {a.waPanelBody}
           </p>
           <p className="mt-2 rounded-lg border border-amber-300/60 bg-amber-50 px-2.5 py-2 text-[10px] leading-relaxed text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
-            WhatsApp only allows free-form messages within 24 hours of the customer&apos;s last message.
-            Bulk WhatsApp sends outside that window are rejected by Meta and marked failed until an approved template is configured.
+            {a.waWarn}
           </p>
 
           <div className="mt-3">
             <div className="mb-1.5 flex items-center justify-between">
               <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40">
-                WhatsApp contacts
+                {a.waContacts}
               </p>
               <button
                 onClick={() => toggleAllContacts(visibleWhatsappContacts)}
                 className="text-[10px] font-bold text-deep-violet outline-none hover:underline focus-visible:ring-2 focus-visible:ring-deep-violet/40"
               >
-                {allWhatsAppSelected ? "Deselect all" : "Select all"}
+                {allWhatsAppSelected ? a.deselectAll : a.selectAll}
               </button>
             </div>
             <input
               type="search"
-              placeholder="Search WhatsApp contacts…"
+              placeholder={a.waSearchPh}
               value={whatsappSearch}
               onChange={(e) => setWhatsappSearch(e.target.value)}
               className="input-field mb-2 w-full"
@@ -515,19 +525,19 @@ export default function AskForReview() {
                 onClick={handleSendSelected}
                 className="mt-2 w-full rounded-xl bg-emerald px-3 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-emerald/25 outline-none transition hover:bg-emerald/90 focus-visible:ring-2 focus-visible:ring-emerald/40 active:scale-[0.99]"
               >
-                Send to {selectedContactIds.size} selected contact{selectedContactIds.size > 1 ? "s" : ""}
+                {selectedContactIds.size === 1 ? a.sendSelectedOne : fill(a.sendSelectedN, { n: fmt(selectedContactIds.size) })}
               </button>
             )}
           </div>
 
           <div className="mt-3 border-t border-ink/[0.06] pt-3">
             <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-ink/40">
-              Or send to new number
+              {a.newNumber}
             </p>
             <div className="flex flex-col gap-2 sm:flex-row">
               <input
                 type="tel"
-                placeholder="Phone number"
+                placeholder={a.phonePh}
                 value={phoneNumber}
                 onChange={(e) => setPhoneNumber(e.target.value)}
                 className="input-field flex-1"
@@ -537,7 +547,7 @@ export default function AskForReview() {
                 disabled={!phoneNumber.trim()}
                 className="rounded-lg bg-emerald px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-emerald/25 outline-none transition hover:bg-emerald/90 focus-visible:ring-2 focus-visible:ring-emerald/40 active:scale-[0.98] disabled:opacity-50"
               >
-                Send
+                {a.send}
               </button>
             </div>
           </div>
@@ -546,41 +556,41 @@ export default function AskForReview() {
 
       {activeChannel === "contacts" && (
         <div className="mt-4 rounded-xl border border-ink/[0.06] bg-ink/[0.02] p-4">
-          <p className="text-[12px] font-semibold text-ink">Contacts connected on Sayvors</p>
+          <p className="text-[12px] font-semibold text-ink">{a.contactsPanelTitle}</p>
           <p className="mt-1 text-[11px] text-ink/50">
-            Everyone you&apos;ve chatted with on WhatsApp, Instagram and Messenger.
+            {a.contactsPanelBody}
           </p>
 
           <input
             type="search"
-            placeholder="Search by name or number…"
+            placeholder={a.searchPh}
             value={contactSearch}
             onChange={(e) => setContactSearch(e.target.value)}
             className="input-field mt-3"
           />
 
           <div className="mt-3 flex flex-wrap gap-1.5">
-            {(["all", "whatsapp", "instagram", "facebook"] as PlatformTab[]).map((tab) => (
+            {(["all", "whatsapp", "instagram", "facebook"] as PlatformTab[]).map((ptab) => (
               <button
-                key={tab}
-                onClick={() => setPlatformTab(tab)}
+                key={ptab}
+                onClick={() => setPlatformTab(ptab)}
                 className={`rounded-md px-2.5 py-1 text-[11px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
-                  platformTab === tab
+                  platformTab === ptab
                     ? "bg-white text-deep-violet shadow-sm"
                     : "text-ink/45 hover:text-ink/70"
                 }`}
               >
-                {tab === "all" ? "All" : PLATFORM_META[tab]?.label ?? tab}
+                {ptab === "all" ? a.allTab : PLATFORM_META[ptab]?.label ?? ptab}
               </button>
             ))}
           </div>
 
           <div className="mt-4 rounded-lg border border-ink/[0.06] bg-white p-3">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40">Contact groups</p>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40">{a.groupsTitle}</p>
             <div className="mt-2 flex gap-2">
               <input
                 type="text"
-                placeholder="Group name"
+                placeholder={a.groupPh}
                 value={newGroupName}
                 onChange={(e) => setNewGroupName(e.target.value)}
                 className="input-field flex-1"
@@ -590,19 +600,19 @@ export default function AskForReview() {
                 disabled={!newGroupName.trim() || selectedContactIds.size === 0}
                 className="rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white disabled:opacity-40"
               >
-                Save group
+                {a.saveGroup}
               </button>
             </div>
-            <p className="mt-1 text-[10px] text-ink/40">Select contacts above, then save them as a group.</p>
+            <p className="mt-1 text-[10px] text-ink/40">{a.groupHint}</p>
             {groups.length > 0 && (
               <ul className="mt-2 space-y-1.5">
                 {groups.map((g) => (
                   <li key={g.id} className="flex items-center justify-between rounded-lg bg-ink/[0.02] px-3 py-2">
-                    <span className="text-[12px] font-semibold text-ink">{g.name} · {g.contactIds.length}</span>
+                    <span className="text-[12px] font-semibold text-ink">{fill(a.groupLine, { name: g.name, n: fmt(g.contactIds.length) })}</span>
                     <span className="flex gap-2 text-[10px] font-bold">
-                      <button onClick={() => selectGroup(g)} className="text-deep-violet hover:underline">Load</button>
-                      <button onClick={() => sendGroup(g)} className="text-emerald-600 hover:underline">Send</button>
-                      <button onClick={() => deleteGroup(g.id)} className="text-red-500 hover:underline">Delete</button>
+                      <button onClick={() => selectGroup(g)} className="text-deep-violet hover:underline">{a.load}</button>
+                      <button onClick={() => sendGroup(g)} className="text-emerald-600 hover:underline">{a.send}</button>
+                      <button onClick={() => deleteGroup(g.id)} className="text-red-500 hover:underline">{a.delete}</button>
                     </span>
                   </li>
                 ))}
@@ -613,13 +623,13 @@ export default function AskForReview() {
           <div className="mt-3">
             <div className="mb-1.5 flex items-center justify-between">
               <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40">
-                {platformTab === "all" ? "All contacts" : PLATFORM_META[platformTab]?.label}
+                {platformTab === "all" ? a.allContacts : PLATFORM_META[platformTab]?.label}
               </p>
               <button
                 onClick={() => toggleAllContacts()}
                 className="text-[10px] font-bold text-deep-violet outline-none hover:underline focus-visible:ring-2 focus-visible:ring-deep-violet/40"
               >
-                {allContactsSelected ? "Deselect all" : "Select all"}
+                {allContactsSelected ? a.deselectAll : a.selectAll}
               </button>
             </div>
             {platformTab === "all" && groupedContacts ? (
@@ -643,7 +653,7 @@ export default function AskForReview() {
                 onClick={handleSendSelected}
                 className="mt-2 w-full rounded-xl bg-deep-violet px-3 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.99]"
               >
-                Send to {selectedContactIds.size} selected contact{selectedContactIds.size > 1 ? "s" : ""}
+                {selectedContactIds.size === 1 ? a.sendSelectedOne : fill(a.sendSelectedN, { n: fmt(selectedContactIds.size) })}
               </button>
             )}
           </div>
@@ -652,22 +662,22 @@ export default function AskForReview() {
 
       {activeChannel === "email" && (
         <div className="mt-4 rounded-xl border border-ink/[0.06] bg-ink/[0.02] p-4">
-          <p className="text-[12px] font-semibold text-ink">Send email review request</p>
+          <p className="text-[12px] font-semibold text-ink">{a.emailPanelTitle}</p>
           <p className="mt-1 text-[11px] text-ink/50">
-            Sent through Resend with a tracked review link. Only the brand, last digits, and link are used.
+            {a.emailPanelBody}
           </p>
           <div className="mt-3 flex flex-col gap-2 sm:flex-row">
             <input
               type="email"
               value={emailAddress}
               onChange={(e) => setEmailAddress(e.target.value)}
-              placeholder="Customer email"
+              placeholder={a.emailPh}
               className="input-field flex-1"
             />
             <input
               value={emailName}
               onChange={(e) => setEmailName(e.target.value)}
-              placeholder="Name (optional)"
+              placeholder={a.namePh}
               className="input-field sm:w-40"
             />
             <button
@@ -675,7 +685,7 @@ export default function AskForReview() {
               disabled={emailBusy || !emailAddress.trim()}
               className="rounded-lg bg-amber px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-amber/25 outline-none transition hover:bg-amber/90 focus-visible:ring-2 focus-visible:ring-amber/40 active:scale-[0.98] disabled:opacity-50"
             >
-              {emailBusy ? "Sending…" : "Send"}
+              {emailBusy ? a.sending : a.send}
             </button>
           </div>
           {emailMsg && <p className="mt-2 text-[11px] text-ink/60">{emailMsg}</p>}

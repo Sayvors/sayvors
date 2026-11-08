@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import LogoLoader from "@/components/LogoLoader";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 import {
   approveGoogleAnswer,
   draftGoogleAnswer,
@@ -12,6 +13,13 @@ import {
   rejectGoogleAnswerDraft,
   type GoogleQuestion,
 } from "@/lib/api-qa";
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 const MAX_VISIBLE = 5;
 const QA_QUERY_KEY = ["google-qa"] as const;
@@ -29,6 +37,10 @@ function initial(name: string | null): string {
  * approval live here rather than behind a second settings page.
  */
 export default function GoogleQuestionsCard() {
+  const { t, locale } = useI18n();
+  const qa = t.reviews.qa;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
   const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: QA_QUERY_KEY,
@@ -52,7 +64,7 @@ export default function GoogleQuestionsCard() {
       setDraftTexts((prev) => ({ ...prev, [id]: updated.draft_answer_text ?? "" }));
       await queryClient.invalidateQueries({ queryKey: QA_QUERY_KEY });
     } catch {
-      setActionError("That Q&A action did not complete. Try again.");
+      setActionError(qa.actionFailed);
     } finally {
       setBusyId(null);
     }
@@ -66,7 +78,7 @@ export default function GoogleQuestionsCard() {
     questions.filter((q) => !q.is_ignored).length - MAX_VISIBLE,
   );
   const error = actionError || (query.isError
-    ? "Could not load Google questions. Try again in a moment."
+    ? qa.loadFailed
     : null);
 
   return (
@@ -74,15 +86,15 @@ export default function GoogleQuestionsCard() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="text-[14px] font-bold text-ink dark:text-fog">Google Q&amp;A</h2>
+            <h2 className="text-[14px] font-bold text-ink dark:text-fog">{qa.title}</h2>
             {unanswered > 0 && (
               <span className="rounded-full bg-coral/10 px-2 py-0.5 text-[10px] font-bold text-coral">
-                {unanswered} to answer
+                {fill(qa.toAnswer, { n: fmt(unanswered) })}
               </span>
             )}
           </div>
           <p className="mt-0.5 text-[12px] text-ink/45 dark:text-fog/45">
-            Historical questions from Google. The Q&amp;A API is retired, so this list is read-only.
+            {qa.sub}
           </p>
         </div>
         <button
@@ -91,14 +103,13 @@ export default function GoogleQuestionsCard() {
           disabled={query.isFetching}
           className="rounded-lg border border-ink/[0.08] px-2.5 py-1.5 text-[11px] font-semibold text-ink/60 transition hover:text-ink disabled:opacity-50 dark:border-fog/[0.1] dark:text-fog/60 dark:hover:text-fog"
         >
-          Refresh
+          {qa.refresh}
         </button>
       </div>
 
       {QA_RETIRED && (
         <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-medium text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
-          Google retired the Business Profile Q&amp;A API on 3 Nov 2025. Existing
-          questions are read-only; manage new Q&amp;A in Google Maps.
+          {qa.retiredNote}
         </p>
       )}
 
@@ -114,7 +125,7 @@ export default function GoogleQuestionsCard() {
         </div>
       ) : visible.length === 0 ? (
         <p className="py-6 text-center text-[12px] text-ink/40 dark:text-fog/40">
-          No historical Google questions.
+          {qa.empty}
         </p>
       ) : (
         <ul className="mt-3 divide-y divide-ink/[0.05] dark:divide-fog/[0.06]">
@@ -134,11 +145,11 @@ export default function GoogleQuestionsCard() {
                   <div className="min-w-0 flex-1">
                     <p className="text-[12.5px] font-medium text-ink dark:text-fog">{q.question_text}</p>
                     <p className="mt-0.5 text-[10.5px] text-ink/40 dark:text-fog/40">
-                      {q.asker_name || "A customer"}
+                      {q.asker_name || qa.customerFallback}
                       {q.question_created_at
-                        ? ` · ${new Date(q.question_created_at).toLocaleDateString()}`
+                        ? ` · ${new Date(q.question_created_at).toLocaleDateString(dateLocale)}`
                         : ""}
-                      {q.upvote_count > 0 ? ` · ${q.upvote_count} upvotes` : ""}
+                      {q.upvote_count > 0 ? ` · ${fill(qa.upvotes, { n: fmt(q.upvote_count) })}` : ""}
                     </p>
 
                     {q.is_answered && q.answer_text ? (
@@ -153,9 +164,9 @@ export default function GoogleQuestionsCard() {
                             setDraftTexts((prev) => ({ ...prev, [q.id]: e.target.value }))
                           }
                           rows={2}
-                          aria-label="Answer draft"
+                          aria-label={qa.draftAria}
                           className="input-field w-full resize-y text-[12px]"
-                          placeholder="Write a public answer…"
+                          placeholder={qa.draftPh}
                         />
                         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                           <button
@@ -169,7 +180,7 @@ export default function GoogleQuestionsCard() {
                             }
                             className="rounded-lg bg-deep-violet px-2.5 py-1.5 text-[11px] font-bold text-white disabled:opacity-50"
                           >
-                            {busy ? "Posting…" : "Approve & post"}
+                            {busy ? qa.posting : qa.approvePost}
                           </button>
                           <button
                             type="button"
@@ -183,7 +194,7 @@ export default function GoogleQuestionsCard() {
                             }
                             className="rounded-lg border border-ink/[0.08] px-2.5 py-1.5 text-[11px] font-semibold text-ink/60 disabled:opacity-50 dark:border-fog/[0.1] dark:text-fog/60"
                           >
-                            Save draft
+                            {qa.saveDraft}
                           </button>
                           <button
                             type="button"
@@ -196,7 +207,7 @@ export default function GoogleQuestionsCard() {
                             }
                             className="rounded-lg px-2 py-1.5 text-[11px] font-semibold text-ink/40 hover:text-ink dark:text-fog/40 dark:hover:text-fog"
                           >
-                            Discard
+                            {qa.discard}
                           </button>
                         </div>
                         {q.draft_error && (
@@ -223,7 +234,7 @@ export default function GoogleQuestionsCard() {
                           }
                           className="rounded-lg bg-deep-violet px-2.5 py-1.5 text-[11px] font-bold text-white disabled:opacity-50"
                         >
-                          {busy ? "Drafting…" : "Draft with AI"}
+                          {busy ? qa.drafting : qa.draftAi}
                         </button>
                         <button
                           type="button"
@@ -231,7 +242,7 @@ export default function GoogleQuestionsCard() {
                           onClick={() => setEditingId(q.id)}
                           className="rounded-lg border border-ink/[0.08] px-2.5 py-1.5 text-[11px] font-semibold text-ink/60 dark:border-fog/[0.1] dark:text-fog/60"
                         >
-                          Write answer
+                          {qa.writeAnswer}
                         </button>
                         <button
                           type="button"
@@ -239,7 +250,7 @@ export default function GoogleQuestionsCard() {
                           onClick={() => void run(q.id, () => ignoreGoogleQuestion(q.id))}
                           className="rounded-lg px-2 py-1.5 text-[11px] font-semibold text-ink/35 hover:text-ink dark:text-fog/35 dark:hover:text-fog"
                         >
-                          Ignore
+                          {qa.ignore}
                         </button>
                       </div>
                     )}
@@ -257,7 +268,7 @@ export default function GoogleQuestionsCard() {
           onClick={() => setShowAll((v) => !v)}
           className="mt-2 text-[11px] font-semibold text-deep-violet hover:underline"
         >
-          {showAll ? "Show fewer questions" : `Show ${hidden} more question${hidden === 1 ? "" : "s"}`}
+          {showAll ? qa.showFewer : hidden === 1 ? qa.showMoreOne : fill(qa.showMoreN, { n: fmt(hidden) })}
         </button>
       )}
     </section>

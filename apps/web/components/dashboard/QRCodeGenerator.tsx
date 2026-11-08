@@ -3,6 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api-rag";
 import { QRCodeSVG } from "qrcode.react";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 interface BusinessProfile {
   listing_id: string;
@@ -17,6 +25,11 @@ interface BusinessProfile {
 }
 
 export default function QRCodeGenerator() {
+  const { t, locale } = useI18n();
+  const r = t.reviews.qr;
+  const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
+  const fmtRating = (n: number) =>
+    n.toLocaleString(locale === "ar" ? "ar-SA" : "en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
   const [profiles, setProfiles] = useState<BusinessProfile[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -47,7 +60,7 @@ export default function QRCodeGenerator() {
           )
           .map((c) => ({
             listing_id: c.listing_id ?? c.id,
-            listing_name: c.display_name ?? "Location",
+            listing_name: c.display_name ?? r.locationFallback,
             listing_google_id: c.place_id ?? null,
             maps_url: c.maps_url ?? null,
           }));
@@ -56,7 +69,7 @@ export default function QRCodeGenerator() {
           setSelectedId(list[0].listing_id);
         }
       } catch {
-        if (!cancelled) setError("Could not load business profiles");
+        if (!cancelled) setError(r.loadFailed);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -110,7 +123,7 @@ export default function QRCodeGenerator() {
 
   if (loading) {
     return (
-      <section aria-label="QR code generator" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+      <section aria-label={r.sectionAria} className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
         <div className="h-3 w-32 animate-pulse rounded bg-ink/[0.07]" />
         <div className="mt-3 h-64 animate-pulse rounded-xl bg-ink/[0.05]" />
       </section>
@@ -119,7 +132,7 @@ export default function QRCodeGenerator() {
 
   if (error) {
     return (
-      <section aria-label="QR code generator" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+      <section aria-label={r.sectionAria} className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
         <p className="text-[12px] font-medium text-coral">{error}</p>
       </section>
     );
@@ -127,7 +140,7 @@ export default function QRCodeGenerator() {
 
   if (profiles.length === 0) {
     return (
-      <section aria-label="QR code generator" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+      <section aria-label={r.sectionAria} className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
         <div className="flex items-center gap-2">
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-deep-violet to-magenta text-white shadow-sm">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
@@ -138,17 +151,17 @@ export default function QRCodeGenerator() {
             </svg>
           </span>
           <div>
-            <h2 className="text-[14px] font-bold text-ink">Review QR Code</h2>
-            <p className="text-[11px] text-ink/45">Generate a QR code for Google reviews</p>
+            <h2 className="text-[14px] font-bold text-ink">{r.title}</h2>
+            <p className="text-[11px] text-ink/45">{r.sub}</p>
           </div>
         </div>
-        <p className="mt-4 text-[12px] text-ink/50">No business profiles found. Connect a Google business to generate QR codes.</p>
+        <p className="mt-4 text-[12px] text-ink/50">{r.empty}</p>
       </section>
     );
   }
 
   return (
-    <section aria-label="QR code generator" className="rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm sm:p-5">
+    <section aria-label={r.sectionAria} className="rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm sm:p-5">
       <div className="flex items-center gap-2">
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-deep-violet to-magenta text-white shadow-sm">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
@@ -168,7 +181,7 @@ export default function QRCodeGenerator() {
         <div className="order-2 space-y-3 sm:order-1">
           <div>
             <label htmlFor="qr-business-select" className="mb-1 block text-[11px] font-semibold text-ink/55">
-              Business Profile
+              {r.businessLabel}
             </label>
             <select
               id="qr-business-select"
@@ -204,9 +217,9 @@ export default function QRCodeGenerator() {
                 <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-ink/45">
                   <span className="inline-flex items-center gap-1">
                     <span className="font-bold text-amber-600">{"★".repeat(Math.max(0, Math.min(5, Math.round(selected.average_rating ?? 0))))}</span>
-                    {selected.average_rating?.toFixed(1)}
+                    {selected.average_rating != null ? fmtRating(selected.average_rating) : "—"}
                   </span>
-                  <span>{selected.total_reviews} reviews</span>
+                  <span>{selected.total_reviews != null ? fill(r.reviewsLine, { n: fmt(selected.total_reviews) }) : ""}</span>
                 </div>
               )}
             </div>
@@ -217,7 +230,7 @@ export default function QRCodeGenerator() {
             disabled={!selected || downloading}
             className="w-full rounded-xl bg-deep-violet px-3 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.99] disabled:opacity-50"
           >
-            {downloading ? "Generating..." : "Download QR Code"}
+            {downloading ? r.generating : r.download}
           </button>
         </div>
 
@@ -243,7 +256,7 @@ export default function QRCodeGenerator() {
               />
             </div>
             <p className="text-center text-[10px] font-medium text-ink/40">
-              Scan to leave a review
+              {r.scanHint}
             </p>
           </div>
         )}
