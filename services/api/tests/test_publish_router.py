@@ -503,9 +503,13 @@ async def test_batch_delete_ignores_other_tenants(db, client, other_user_id):
 
 
 @pytest.mark.asyncio
-async def test_delete_refuses_a_profile_picture(db, client, user_id):
-    """An avatar is not a post — there is nothing on the platform to
-    delete, so the endpoint says so instead of pretending it did."""
+async def test_single_delete_dismisses_a_published_profile_picture(db, client, user_id):
+    """An avatar is not a post — nothing on the platform can be deleted,
+    but the feed row must be dismissible instead of a permanent 409."""
+    from sqlalchemy import select
+
+    from app.modules.jobs.models import Job
+
     job = _job(
         user_id,
         status="succeeded",
@@ -517,14 +521,20 @@ async def test_delete_refuses_a_profile_picture(db, client, user_id):
     await db.commit()
 
     res = client.post(f"/api/v1/channels/publish/{job.id}/delete", json={})
-    assert res.status_code == 409
-    assert "cannot be deleted" in res.json()["detail"]
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "cancelled"
+    assert "cannot be deleted" in res.json()["last_error"]
+    assert (await db.execute(select(Job).where(Job.id == job.id))).scalar_one_or_none() is None
 
 
 @pytest.mark.asyncio
-async def test_batch_delete_closes_a_profile_picture_without_deleting(db, client, user_id):
-    """The row is closed out, and the reason says the surface was left
-    alone — it must not read as "deleted from the platform"."""
+async def test_batch_delete_dismisses_a_published_banner(db, client, user_id):
+    """The feed row is removed, and the reason says plainly that the
+    Google surface was left alone — it must not read as "deleted"."""
+    from sqlalchemy import select
+
+    from app.modules.jobs.models import Job
+
     job = _job(
         user_id,
         status="succeeded",
@@ -543,3 +553,4 @@ async def test_batch_delete_closes_a_profile_picture_without_deleting(db, client
     row = res.json()[0]
     assert row["status"] == "cancelled"
     assert "cannot be deleted" in row["last_error"]
+    assert (await db.execute(select(Job).where(Job.id == job.id))).scalar_one_or_none() is None

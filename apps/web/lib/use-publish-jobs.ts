@@ -47,17 +47,15 @@ export const QUEUED_STATUSES = new Set(["accepted", "queued", "retrying", "block
 export const TERMINAL_STATUSES = new Set(["failed", "dead", "cancelled"]);
 
 /**
- * Rows that publish an account surface instead of a post. A profile picture
- * or banner cannot be removed from the platform — it can only be replaced
- * by publishing a new one — so these never offer a Remove action *when
- * they actually went out*. A terminal failure never went out at all.
+ * Only in-flight work is left alone — deleting a post the worker is
+ * uploading right now races the publish call itself. Everything else
+ * (including a published profile picture or banner) can be dismissed from
+ * the feed: account surfaces can't be removed from Google, but their feed
+ * row is just a record, so removing it never touches the platform.
  */
-const ACCOUNT_SURFACE_METHODS = new Set<PostMethod>(["profile", "banner"]);
-
 export function isRemovableJob(job: Pick<PublishJob, "status" | "method">): boolean {
-  if (TERMINAL_STATUSES.has(job.status)) return true;
-  if (job.method && ACCOUNT_SURFACE_METHODS.has(job.method)) return false;
-  return DELETABLE_STATUSES.has(job.status);
+  if (job.status === "running") return false;
+  return DELETABLE_STATUSES.has(job.status) || TERMINAL_STATUSES.has(job.status);
 }
 
 export function usePublishJobs() {
