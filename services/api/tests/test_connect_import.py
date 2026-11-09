@@ -454,8 +454,8 @@ async def test_publish_one_posts_only_the_selected_draft(db, user_id, channel_id
         async def reply_to_review(self, review_id, text):
             return None
 
-        async def confirm_reply_live(self, review_id, attempts=3):
-            return True
+        async def read_reply_state(self, review_id, attempts=3):
+            return {"state": "approved", "policy_violation": None}
 
         async def close(self):
             pass

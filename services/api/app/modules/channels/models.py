@@ -983,6 +983,11 @@ class ReviewReply(Base):
              name="review_reply_status"),
         default="pending_approval",
     )
+    # Google's moderation state for this reply (ReviewReplyState, live
+    # 2026-04-01): "pending" | "approved" | "rejected" | None (unknown/legacy).
+    # Distinct from `status`, which is Sayvors' own work lifecycle — a reply
+    # Sayvors calls "posted" can still be waiting on Google's moderation.
+    google_reply_state: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # How many times a draft has been generated for this review
     # (1 = first draft; regenerate/retry/resume increments it).
     generation_attempt: Mapped[int] = mapped_column(

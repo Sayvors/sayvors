@@ -498,8 +498,8 @@ async def test_approve_clears_edited_flag(db, user_id, channel_id, client, monke
         async def reply_to_review(self, review_id, text):
             self.review_id = review_id
 
-        async def confirm_reply_live(self, review_id, attempts=2):
-            return True
+        async def read_reply_state(self, review_id, attempts=2):
+            return {"state": "approved", "policy_violation": None}
 
         async def close(self):
             return None

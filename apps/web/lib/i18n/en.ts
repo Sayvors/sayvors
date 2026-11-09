@@ -587,6 +587,8 @@ const en = {
     },
     badges: {
       published: "Published",
+      moderating: "Awaiting Google approval",
+      rejectedByGoogle: "Rejected by Google",
       pending: "Pending approval",
       failed: "Failed",
       approved: "Approved",

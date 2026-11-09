@@ -421,6 +421,7 @@ def _save_reply_row(
     reply_text: str,
     status: str,
     error: str | None = None,
+    google_reply_state: str | None = None,
 ) -> None:
     """Write `status` onto the resumed failed row in place, or insert a new row."""
     if row is not None:
@@ -432,6 +433,7 @@ def _save_reply_row(
         # A fresh draft was generated to get here — count it.
         row.generation_attempt = (row.generation_attempt or 1) + 1
         row.error = error
+        row.google_reply_state = google_reply_state
         return
     db.add(
         ReviewReply(
@@ -443,6 +445,7 @@ def _save_reply_row(
             reply_text=reply_text,
             status=status,
             error=error,
+            google_reply_state=google_reply_state,
         )
     )
 
@@ -512,6 +515,9 @@ async def _adopt_existing_reply(db: AsyncSession, channel: Channel, review) -> b
     latest.error = None
     latest.reply_external_id = external_id
     latest.replied_at = reply_updated_at
+    latest.google_reply_state = (
+        (getattr(review, "reply_state", None) or "approved").lower()
+    )
     await _store_reply_message(
         db, channel, review.review_id, review.reviewer_name, latest,
         status="read", handled_by="human",
@@ -1128,18 +1134,23 @@ async def _refresh_edited_review_reply(
         and review.rating >= config.min_rating_auto
     )
     status = "pending_approval"
+    reply_state = None
     if autopost and client is not None:
         try:
             await client.reply_to_review(review.review_id, reply_text)
-            if not await client.confirm_reply_live(review.review_id):
+            state = await client.read_reply_state(review.review_id)
+            reply_state = state["state"]
+            if reply_state == "rejected":
                 raise GoogleReviewsError(
-                    "Google accepted the reply but it is not showing on the listing"
+                    "Google rejected the reply"
+                    + (f": {state['policy_violation']}" if state["policy_violation"] else "")
                 )
         except GoogleReviewsError as e:
             _save_reply_row(
                 db, failed_row, channel.id, review.review_id,
                 review.rating, review.text, review.reviewer_name,
                 reply_text, "failed", str(e)[:2000],
+                google_reply_state=reply_state,
             )
             await notify(
                 db, channel.user_id, "reply_failed",
@@ -1154,7 +1165,7 @@ async def _refresh_edited_review_reply(
     _save_reply_row(
         db, failed_row, channel.id, review.review_id,
         review.rating, review.text, review.reviewer_name,
-        reply_text, status,
+        reply_text, status, google_reply_state=reply_state,
     )
     if status == "posted":
         posted_row = (
@@ -1356,11 +1367,15 @@ async def _handle_fetched_review(
         or needs_review
     )
     if not needs_approval:
+        reply_state = None
         try:
             await client.reply_to_review(review.review_id, reply_text)
-            if not await client.confirm_reply_live(review.review_id):
+            state = await client.read_reply_state(review.review_id)
+            reply_state = state["state"]
+            if reply_state == "rejected":
                 raise GoogleReviewsError(
-                    "Google accepted the reply but it is not showing on the listing"
+                    "Google rejected the reply"
+                    + (f": {state['policy_violation']}" if state["policy_violation"] else "")
                 )
             stats["replied"] += 1
         except GoogleReviewsError as e:
@@ -1369,6 +1384,7 @@ async def _handle_fetched_review(
                 db, failed_row, channel.id, review.review_id,
                 review.rating, review.text, review.reviewer_name,
                 reply_text, "failed", str(e)[:2000],
+                google_reply_state=reply_state,
             )
             await notify(
                 db, channel.user_id, "reply_failed",
@@ -1382,7 +1398,7 @@ async def _handle_fetched_review(
         _save_reply_row(
             db, failed_row, channel.id, review.review_id,
             review.rating, review.text, review.reviewer_name,
-            reply_text, "posted",
+            reply_text, "posted", google_reply_state=reply_state,
         )
         await notify(
             db, channel.user_id, "reply_posted",

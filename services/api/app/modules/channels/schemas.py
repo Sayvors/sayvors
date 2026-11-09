@@ -451,6 +451,8 @@ class ReviewReplyResponse(BaseModel):
     reviewer_name: str | None
     reply_text: str
     status: str
+    # Google's moderation state: "pending" | "approved" | "rejected" | null.
+    google_reply_state: str | None = None
     generation_attempt: int = 1
     error: str | None
     created_at: str

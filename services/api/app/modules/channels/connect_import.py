@@ -843,8 +843,14 @@ async def _publish_one(session_id: str, item_id: str, semaphore: asyncio.Semapho
                 if not access_token:
                     await client.refresh_access_token()
                 await client.reply_to_review(reply.review_id, reply.reply_text)
-                if not await client.confirm_reply_live(reply.review_id):
-                    raise GoogleReviewsError("Reply did not appear on Google", 502)
+                state = await client.read_reply_state(reply.review_id)
+                if state["state"] == "rejected":
+                    raise GoogleReviewsError(
+                        "Google rejected the reply"
+                        + (f": {state['policy_violation']}" if state["policy_violation"] else ""),
+                        502,
+                    )
+                reply.google_reply_state = state["state"]
                 reply.status = "posted"
                 reply.error = None
                 item.status = "published"

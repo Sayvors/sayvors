@@ -588,6 +588,8 @@ const ar: Dict = {
     },
     badges: {
       published: "منشور",
+      moderating: "بانتظار موافقة Google",
+      rejectedByGoogle: "مرفوض من Google",
       pending: "بانتظار الاعتماد",
       failed: "فشل",
       approved: "معتمد",

@@ -7,6 +7,8 @@ import {
   CONNECT_IMPORT_EVENT,
   CONNECT_IMPORT_STORAGE_KEY,
   clearActiveConnectImport,
+  dismissConnectImport,
+  isConnectImportDismissed,
 } from "@/lib/connect-import";
 import ConnectImportModal, { type ImportSession } from "./ConnectImportModal";
 
@@ -70,7 +72,14 @@ export default function ConnectImportLauncher() {
 
   useEffect(() => {
     const latest = latestQuery.data?.session;
-    if (latest) {
+    // Only auto-open work that is actually moving. A "ready" session is
+    // waiting on the merchant, and a dismissed one was closed on purpose —
+    // the 20s poll must not resurrect either.
+    if (
+      latest &&
+      ["queued", "fetching", "generating", "publishing"].includes(latest.status) &&
+      !isConnectImportDismissed(latest.id)
+    ) {
       setSessionId(latest.id);
       setOpen(true);
     }
@@ -88,6 +97,21 @@ export default function ConnectImportLauncher() {
     },
   });
   const session = query.data ?? null;
+
+  // Closing is final. Remember it so the 20s latest-session poll cannot pop
+  // the modal back up, and drop the launcher entirely unless work is still
+  // running (the floating progress pill stays for that case).
+  const handleClose = () => {
+    if (sessionId) dismissConnectImport(sessionId);
+    const running = session
+      ? ["queued", "fetching", "generating", "publishing"].includes(session.status)
+      : false;
+    if (!running) {
+      clearActiveConnectImport();
+      setSessionId(null);
+    }
+    setOpen(false);
+  };
 
   useEffect(() => {
     if (query.isError) {
@@ -127,13 +151,7 @@ export default function ConnectImportLauncher() {
     return open ? (
       <ConnectImportModal
         sessionId={sessionId}
-        onClose={() => {
-          if (session.status === "completed" || session.status === "failed") {
-            clearActiveConnectImport();
-            setSessionId(null);
-          }
-          setOpen(false);
-        }}
+        onClose={handleClose}
       />
     ) : null;
   }
@@ -181,7 +199,7 @@ export default function ConnectImportLauncher() {
       {open && (
         <ConnectImportModal
           sessionId={sessionId}
-          onClose={() => setOpen(false)}
+          onClose={handleClose}
         />
       )}
     </>

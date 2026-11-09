@@ -3281,6 +3281,7 @@ async def list_review_replies(
                 reviewer_name=r.reviewer_name,
                 reply_text=r.reply_text,
                 status=r.status,
+                google_reply_state=r.google_reply_state,
                 generation_attempt=r.generation_attempt,
                 error=r.error,
                 created_at=r.created_at.isoformat(),
@@ -3298,12 +3299,21 @@ async def verify_posted_replies(
     ctx: TenantContext = Depends(require_perm("reviews.view")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Re-check every `posted` reply against live Google data.
+    """Re-check stale reply rows against live Google data, both directions.
 
-    Rows with no reply actually showing are flipped to `failed` with a
-    clear reason. "Posted" must mean live — this is the enforcement.
-    Read failures (auth/network) abort without touching anything: we
-    only correct on definitive absence, never on our own errors.
+    Google now moderates replies (`ReviewReplyState`, 2026-04-01), so a write
+    Sayvors accepted can stay unreadable far longer than any read-back window.
+    Verification is therefore conservative:
+
+      - `failed` + Google shows the reply  -> healed to `posted` (the reply was
+        accepted all along; the old read-back gate produced false failures).
+      - `posted` + the review is gone      -> `rejected` (nothing to reply to).
+      - `posted` + reply showing           -> confirmed.
+      - reply absent either way            -> left untouched. Absence is not
+        proof of failure under moderation, so it must never flip a row.
+
+    Read failures (auth/network) abort without touching anything: we only
+    correct on definitive evidence, never on our own errors.
     """
     from .google_reviews import GoogleReviewsClient, GoogleReviewsError
     from .service import decrypt_token
@@ -3316,7 +3326,7 @@ async def verify_posted_replies(
             select(ReviewReply)
             .where(
                 ReviewReply.channel_id == channel.id,
-                ReviewReply.status == "posted",
+                ReviewReply.status.in_(["posted", "failed"]),
             )
             .order_by(ReviewReply.created_at.desc())
             .limit(500)
@@ -3345,14 +3355,15 @@ async def verify_posted_replies(
     client = GoogleReviewsClient(access_token or "", refresh_token)
     confirmed = 0
     corrected = 0
+    healed = 0
     removed = 0
     try:
         for reply in rows:
             payload: dict = {}
             try:
                 # Read the review itself first so a deleted review can be told
-                # apart from a reply that never made it live. confirm_reply_live
-                # folds both into False, which is why a review the customer
+                # apart from a reply that never made it live. read_reply_state
+                # folds both into "absent", which is why a review the customer
                 # deleted surfaced as "publishing failed".
                 for attempt in range(2):
                     payload = await client.get_review(reply.review_id)
@@ -3364,8 +3375,32 @@ async def verify_posted_replies(
                     status_code=e.status_code,
                     detail=f"Could not read Google to verify: {e}",
                 )
-            if payload and payload.get("reviewReply"):
-                confirmed += 1
+            live_reply = payload.get("reviewReply") if payload else None
+            if live_reply:
+                # Same default as read_reply_state: a reply Google shows without
+                # a state is treated as live (legacy rows predate the field).
+                reply.google_reply_state = (
+                    (live_reply.get("reviewReplyState") or "APPROVED").lower()
+                )
+                if reply.status == "failed":
+                    # Google shows the reply: the earlier failure was a
+                    # read-back false negative (moderation lag). Adopt the
+                    # live text/timestamps so the row matches Google.
+                    reply.status = "posted"
+                    reply.error = None
+                    reply.reply_text = (live_reply.get("comment") or "").strip() or reply.reply_text
+                    updated = live_reply.get("updateTime")
+                    if updated:
+                        try:
+                            reply.replied_at = datetime.fromisoformat(
+                                updated.replace("Z", "+00:00")
+                            )
+                        except ValueError:
+                            pass
+                    reply.reply_external_id = f"google:{updated}" if updated else None
+                    healed += 1
+                else:
+                    confirmed += 1
             elif not payload:
                 # Google no longer has this review (deleted by the reviewer or
                 # removed by Google). There is nothing to reply to: this is not
@@ -3376,12 +3411,9 @@ async def verify_posted_replies(
                     "This review was deleted on Google, so there is nothing to reply to."
                 )
                 removed += 1
-            else:
-                reply.status = "failed"
-                reply.error = (
-                    "Google shows no reply on this review. Approve the draft again to republish it."
-                )
-                corrected += 1
+            # else: the review exists but shows no reply. Under Google's
+            # moderation that is not proof of failure (a PENDING reply can be
+            # unreadable), so the row is left exactly as it was.
     finally:
         await client.close()
     await db.commit()
@@ -3390,6 +3422,7 @@ async def verify_posted_replies(
         "checked": len(rows),
         "confirmed": confirmed,
         "corrected": corrected,
+        "healed": healed,
         "removed": removed,
         "skipped_non_google": skipped_non_google,
     }
@@ -3493,17 +3526,22 @@ async def approve_review_reply(
         if not access_token:
             await client.refresh_access_token()
         await client.reply_to_review(reply.review_id, reply.reply_text)
-        # "posted" must mean live on Google: confirm by reading the
-        # review back before stamping the status.
-        if not await client.confirm_reply_live(reply.review_id):
+        # "posted" must mean Google accepted the reply. Moderation
+        # (PENDING) and replication lag are not failures — only an
+        # explicit REJECTED state means the reply is not on Google.
+        state = await client.read_reply_state(reply.review_id)
+        if state["state"] == "rejected":
             reply.status = "failed"
             reply.error = (
-                "Google accepted the reply but it is not showing on the "
-                "listing. Approve again to retry."
+                "Google rejected the reply"
+                + (f": {state['policy_violation']}" if state["policy_violation"] else "")
+                + ". Edit the draft and approve again."
             )
+            reply.google_reply_state = state["state"]
             await db.commit()
             await _notify_reply_failed(db, ctx.user.id, channel, reply, reply.error)
             raise HTTPException(status_code=502, detail=reply.error)
+        reply.google_reply_state = state["state"]
         reply.status = "posted"
         reply.error = None
         from .reviews_worker import _store_reply_message

@@ -489,6 +489,9 @@ async def _attach_latest_replies(db: AsyncSession, rows: list[ReviewInsight]) ->
         insight.published_reply_at = (  # type: ignore[attr-defined]
             (live.replied_at or live.created_at) if live else None
         )
+        # Google's moderation state of the published reply (pending/approved/
+        # rejected). Null = unknown (legacy row or Google omitted it).
+        insight.reply_state = live.google_reply_state if live else None  # type: ignore[attr-defined]
 
 
 # ── Messaging overview (read path over channel_daily_metrics) ─────────

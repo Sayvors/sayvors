@@ -49,8 +49,8 @@ class FakeGoogleClient:
     async def reply_to_review(self, review_id, text):
         FakeGoogleClient.posted.append((review_id, text))
 
-    async def confirm_reply_live(self, review_id, attempts=2):
-        return True
+    async def read_reply_state(self, review_id, attempts=2):
+        return {"state": "approved", "policy_violation": None}
 
     async def close(self):
         pass
