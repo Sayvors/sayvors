@@ -258,6 +258,14 @@ class Settings(BaseSettings):
     GOOGLE_REVIEWS_REDIRECT_URI: str = "http://localhost:8000/api/v1/channels/google/callback"
     # Dev/test mode for Google Reviews: fabricate sample reviews.
     GOOGLE_REVIEWS_MOCK: bool = False
+    # GBP Pub/Sub push (NEW_REVIEW): the OIDC audience configured on the
+    # push subscription. Empty disables the push endpoint entirely —
+    # fail-closed, the 60s poll remains the only ingress.
+    GOOGLE_PUBSUB_PUSH_AUDIENCE: str = ""
+    # Second OIDC check: the push subscription's own service-account email.
+    # When set, a correctly-signed token minted by any other identity is
+    # rejected even though it passed signature/audience/expiry.
+    GOOGLE_PUBSUB_PUSH_EMAIL: str = ""
 
     # ── Google Places API (New) ──────────────────────────────────────────
     # Server-side key for two features: resolving free-text service areas to

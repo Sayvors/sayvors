@@ -304,6 +304,80 @@ async def sync_google_reviews_now(
     }
 
 
+@router.post("/google/pubsub")
+async def google_pubsub_push(request: Request, db: AsyncSession = Depends(get_db)):
+    """Google Business Profile Pub/Sub push ingress (NEW_REVIEW etc.).
+
+    The realtime layer of the review-pull design: a push triggers a
+    targeted pull of that location's channel within seconds instead of
+    waiting for the next poll pass. Fail-closed: unconfigured audience
+    ⇒ 503, anything that fails OIDC verification ⇒ 403. Always acks 200
+    once verified — delivery is best-effort on Google's side and the
+    60s poll + daily sweep heal are the correctness guarantee, so a pull
+    that fails here must never turn into a Pub/Sub retry storm.
+    """
+    from ..auth.router import get_client_ip
+    from . import google_push
+
+    if not settings.TESTING:
+        client_ip = get_client_ip(request)
+        if not await rate_limit(
+            f"google-push:{client_ip}",
+            google_push.PUSH_RATE_MAX,
+            google_push.PUSH_RATE_WINDOW_SECONDS,
+        ):
+            logger.warning("Google push rate limited ip=%s", client_ip)
+            return Response(
+                status_code=429,
+                content="Too many requests",
+                headers={"Retry-After": str(google_push.PUSH_RATE_WINDOW_SECONDS)},
+            )
+
+    if not google_push.push_configured():
+        # Fail-closed: no audience configured means this deployment has no
+        # push subscription whose tokens we could trust.
+        return Response(status_code=503, content="Google push ingress not configured")
+
+    content_length = request.headers.get("content-length")
+    if (
+        content_length
+        and content_length.isdigit()
+        and int(content_length) > google_push.PUSH_MAX_BODY_BYTES
+    ):
+        return Response(status_code=413, content="Payload too large")
+    raw_body = await request.body()
+    if len(raw_body) > google_push.PUSH_MAX_BODY_BYTES:
+        return Response(status_code=413, content="Payload too large")
+
+    if not google_push.verify_push_oidc(request):
+        logger.warning("Google push OIDC rejected")
+        return Response(status_code=403, content="Invalid push token")
+
+    message_id, notification = google_push.parse_push_envelope(raw_body)
+    if notification is None:
+        # Not a shape we can act on. Ack anyway: Pub/Sub would retry the
+        # same bytes forever, and the poll layer is the correctness net.
+        return {"status": "ignored"}
+
+    location_ids = google_push.extract_location_ids(notification)
+    if not location_ids:
+        logger.info(
+            "Google push %s has no usable location reference — ignoring (%.300s)",
+            message_id, notification,
+        )
+        return {"status": "ignored"}
+
+    spawned = await google_push.trigger_pulls_for_locations(db, location_ids)
+    logger.info(
+        "Google push %s type=%s locations=%s spawned_pulls=%d",
+        message_id,
+        notification.get("notificationType"),
+        ",".join(location_ids),
+        spawned,
+    )
+    return {"status": "ok", "triggered": spawned}
+
+
 @router.delete("/{channel_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def disconnect_channel(
     channel_id: str,
