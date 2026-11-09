@@ -1,5 +1,14 @@
 "use client";
 
+import { useI18n } from "@/lib/i18n/I18nProvider";
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
+
 interface LogsTabProps {
   channelSlug: string;
   channelName: string;
@@ -65,12 +74,15 @@ const typeColors: Record<string, string> = {
 };
 
 export default function LogsTab({ channelSlug, channelName }: LogsTabProps) {
+  const { t, locale } = useI18n();
+  const tb = t.channelHub.workspace.tab;
+  const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
   return (
     <div className="p-4 sm:p-6">
       <div className="mx-auto max-w-3xl space-y-6">
         <section>
-          <h2 className="mb-1 text-[15px] font-bold text-ink">Activity Log</h2>
-          <p className="mb-4 text-[13px] text-ink/60">All events and activities on {channelName}.</p>
+          <h2 className="mb-1 text-[15px] font-bold text-ink">{tb.activityLog}</h2>
+          <p className="mb-4 text-[13px] text-ink/60">{fill(tb.activityLogSub, { name: channelName })}</p>
 
           <div className="space-y-1">
             {logs.map((log, i) => (
@@ -103,23 +115,23 @@ export default function LogsTab({ channelSlug, channelName }: LogsTabProps) {
         </section>
 
         <section>
-          <h2 className="mb-1 text-[15px] font-bold text-ink">Log Settings</h2>
-          <p className="mb-4 text-[13px] text-ink/60">Configure logging and retention.</p>
+          <h2 className="mb-1 text-[15px] font-bold text-ink">{tb.logSettings}</h2>
+          <p className="mb-4 text-[13px] text-ink/60">{tb.logSettingsSub}</p>
           <div className="rounded-xl border-2 border-white bg-white/80 p-4 sm:p-5 space-y-3">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-[13px] font-semibold text-ink">Log Retention</p>
-                <p className="text-[11px] text-ink/50">How long to keep activity logs</p>
+                <p className="text-[13px] font-semibold text-ink">{tb.logRetention}</p>
+                <p className="text-[11px] text-ink/50">{tb.logRetentionDesc}</p>
               </div>
-              <span className="rounded-xl bg-ink/[0.04] px-3 py-1.5 text-[12px] font-semibold text-ink/60">30 days</span>
+              <span className="rounded-xl bg-ink/[0.04] px-3 py-1.5 text-[12px] font-semibold text-ink/60">{fill(tb.retentionDays, { n: fmt(30) })}</span>
             </div>
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-[13px] font-semibold text-ink">Export Logs</p>
-                <p className="text-[11px] text-ink/50">Download logs as CSV</p>
+                <p className="text-[13px] font-semibold text-ink">{tb.exportLogs}</p>
+                <p className="text-[11px] text-ink/50">{tb.exportLogsDesc}</p>
               </div>
               <button className="rounded-lg border-2 border-ink/10 px-3 py-1.5 text-[11px] font-semibold text-ink/60 transition hover:bg-ink/[0.03]">
-                Export
+                {tb.exportBtn}
               </button>
             </div>
           </div>

@@ -1,6 +1,14 @@
 "use client";
 
 import { ChannelLogo } from "../ChannelLogos";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 interface ProfileTabProps {
   channelSlug: string;
@@ -17,13 +25,15 @@ const profileData: Record<string, { username: string; followers: string; followi
 };
 
 export default function ProfileTab({ channelSlug, channelName }: ProfileTabProps) {
+  const { t } = useI18n();
+  const tb = t.channelHub.workspace.tab;
   const profile = profileData[channelSlug] || profileData.instagram;
 
   return (
     <div className="p-4 sm:p-6 space-y-6">
       <div>
-        <h2 className="text-[16px] font-bold text-ink">{channelName} Profile</h2>
-        <p className="mt-0.5 text-[13px] text-ink/60">Your public profile information.</p>
+        <h2 className="text-[16px] font-bold text-ink">{fill(tb.profileTitle, { name: channelName })}</h2>
+        <p className="mt-0.5 text-[13px] text-ink/60">{tb.profileSub}</p>
       </div>
 
       {/* Profile Card */}
@@ -50,25 +60,25 @@ export default function ProfileTab({ channelSlug, channelName }: ProfileTabProps
         <div className="mt-6 grid grid-cols-3 gap-4 border-t border-deep-violet/[0.06] pt-5">
           <div className="text-center">
             <p className="text-[20px] font-bold text-ink">{profile.followers}</p>
-            <p className="text-[11px] font-semibold text-ink/45">Followers</p>
+            <p className="text-[11px] font-semibold text-ink/45">{tb.followers}</p>
           </div>
           <div className="text-center">
             <p className="text-[20px] font-bold text-ink">{profile.following}</p>
-            <p className="text-[11px] font-semibold text-ink/45">Following</p>
+            <p className="text-[11px] font-semibold text-ink/45">{tb.following}</p>
           </div>
           <div className="text-center">
             <p className="text-[20px] font-bold text-ink">{profile.posts}</p>
-            <p className="text-[11px] font-semibold text-ink/45">Posts</p>
+            <p className="text-[11px] font-semibold text-ink/45">{tb.posts}</p>
           </div>
         </div>
       </div>
 
       {/* Edit Profile */}
       <div className="rounded-2xl border-2 border-white bg-white/80 p-5 sm:p-6">
-        <h3 className="mb-4 text-[14px] font-bold text-ink">Edit Profile</h3>
+        <h3 className="mb-4 text-[14px] font-bold text-ink">{tb.editProfile}</h3>
         <div className="space-y-4">
           <div>
-            <label className="mb-1.5 block text-[12px] font-semibold text-ink/60">Display Name</label>
+            <label className="mb-1.5 block text-[12px] font-semibold text-ink/60">{tb.displayName}</label>
             <input
               type="text"
               defaultValue={profile.username}
@@ -76,7 +86,7 @@ export default function ProfileTab({ channelSlug, channelName }: ProfileTabProps
             />
           </div>
           <div>
-            <label className="mb-1.5 block text-[12px] font-semibold text-ink/60">Bio</label>
+            <label className="mb-1.5 block text-[12px] font-semibold text-ink/60">{tb.bio}</label>
             <textarea
               defaultValue={profile.bio}
               rows={3}
@@ -84,7 +94,7 @@ export default function ProfileTab({ channelSlug, channelName }: ProfileTabProps
             />
           </div>
           <button className="rounded-xl bg-deep-violet px-5 py-2.5 text-[12px] font-bold text-white shadow-md shadow-deep-violet/25 transition hover:bg-deep-violet/90 active:scale-[0.98]">
-            Save Profile
+            {tb.saveProfile}
           </button>
         </div>
       </div>
