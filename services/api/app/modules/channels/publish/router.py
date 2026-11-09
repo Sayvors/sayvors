@@ -93,8 +93,13 @@ class PublishDestination(BaseModel):
         return v
 
 
+# Formats that cannot exist without an image. Kept here so the API refuses a
+# doomed job even if a client bypasses the composer's gate.
+_MEDIA_REQUIRED_METHODS = {"story", "reel", "status", "profile", "banner"}
+
+
 class PublishBody(BaseModel):
-    media_url: str = Field(..., min_length=1)
+    media_url: str | None = None
     media_type: str = Field("image")
     media_key: str | None = None
     caption: str = Field("", max_length=5000)
@@ -206,11 +211,27 @@ async def publish_post(
     jobs_out: list[JobOut] = []
     idempotency_key = body.idempotency_key
 
-    # The removal must land after the publish, not before it.
+    # Removal must land after publish, not before.
     try:
         body.check_delete_after_publish()
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
+
+    # Google STANDARD/EVENT/OFFER and Meta feed posts allow a text-only post.
+    # These formats do not — a job without media would only fail downstream.
+    if body.media_url is None:
+        for dest in body.destinations:
+            for method in dest.methods:
+                if method in _MEDIA_REQUIRED_METHODS or (
+                    dest.platform == "instagram" and method == "post"
+                ):
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"method '{method}' on {dest.platform} requires an image; "
+                            "remove it or attach an image"
+                        ),
+                    )
 
     # Create every job in a single transaction. A partial failure (e.g. a
     # duplicate idempotency key, or a constraint violation) rolls back the

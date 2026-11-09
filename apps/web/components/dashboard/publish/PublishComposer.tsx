@@ -36,6 +36,12 @@ function fill(s: string, vars: Record<string, string | number>): string {
 type MethodDict = Dict["publish"]["methods"];
 type ComposerDict = Dict["publish"]["composer"];
 
+/** Formats that cannot be published without an image. Google's What's New /
+ * Event / Offer and Meta feed posts allow a text-only post. */
+const MEDIA_ONLY_METHODS = new Set<string>([
+  "story", "reel", "status", "profile", "banner",
+]);
+
 /*
  * The unified Publish composer.
  *
@@ -486,13 +492,19 @@ export default function PublishComposer({
   const formatCount = confirmItems.reduce((n, i) => n + i.methods.length, 0);
   const destStr = confirmItems.length === 1 ? cf.destOne : fill(cf.destN, { n: fmt(confirmItems.length) });
   const fmtStr = formatCount === 1 ? cf.fmtOne : fill(cf.fmtN, { n: fmt(formatCount) });
-  // The publish endpoint requires a fetchable media URL, and WhatsApp's only
-  // format (status) is media-only — a text-only push would fail downstream,
-  // so media is required at the gate too.
-  const canPublish = confirmItems.length > 0 && media !== null;
+  // A text-only post is valid for Google What's New / Event / Offer and Meta
+  // feed posts. Everything else (and every Instagram post) needs an image.
+  const needsMedia = confirmItems.some(({ target, methods }) =>
+    methods.some(
+      (m) =>
+        MEDIA_ONLY_METHODS.has(m) ||
+        (target.platform === "instagram" && m === "post"),
+    ),
+  );
+  const canPublish = confirmItems.length > 0 && (media !== null || !needsMedia);
 
   const openConfirm = () => {
-    if (media === null) {
+    if (needsMedia && media === null) {
       setNotice(pc.needMedia);
       return;
     }
@@ -524,17 +536,24 @@ export default function PublishComposer({
       }
       // Locally-picked files must go to our storage first: providers (and
       // the Google Business uploader) fetch the media from a public URL at
-      // publish time, so a blob: URL can never be delivered.
-      let mediaUrl = media.url;
-      let mediaKey = media.key ?? null;
-      if (media.url.startsWith("blob:")) {
-        if (!media.file) throw new Error(pc.fileGoneErr);
-        const form = new FormData();
-        form.append("file", media.file);
-        const up = await apiFetch("/api/v1/media/upload", { method: "POST", body: form });
-        mediaUrl = up.image_url;
-        mediaKey = up.key ?? null;
-        if (!mediaUrl) throw new Error(pc.uploadEmptyErr);
+      // publish time, so a blob: URL can never be delivered. With no media
+      // at all, the payload carries null and Google creates a text-only post.
+      let mediaUrl: string | null = null;
+      let mediaKey: string | null = null;
+      let mediaType = "image";
+      if (media) {
+        mediaUrl = media.url;
+        mediaKey = media.key ?? null;
+        mediaType = media.type ?? "image";
+        if (media.url.startsWith("blob:")) {
+          if (!media.file) throw new Error(pc.fileGoneErr);
+          const form = new FormData();
+          form.append("file", media.file);
+          const up = await apiFetch("/api/v1/media/upload", { method: "POST", body: form });
+          mediaUrl = up.image_url;
+          mediaKey = up.key ?? null;
+          if (!mediaUrl) throw new Error(pc.uploadEmptyErr);
+        }
       }
 
       const batchId = crypto.randomUUID();
@@ -551,7 +570,7 @@ export default function PublishComposer({
         body: JSON.stringify({
           media_url: mediaUrl,
           media_key: mediaKey,
-          media_type: media.type,
+          media_type: mediaType,
           caption,
           description,
           scheduled_at: scheduleOn && scheduleAt ? new Date(scheduleAt).toISOString() : null,

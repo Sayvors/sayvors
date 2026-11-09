@@ -122,6 +122,48 @@ async def test_list_filters_by_status(db, client, user_id):
 
 
 @pytest.mark.asyncio
+async def test_text_only_google_post_is_allowed(db, client, user_id):
+    """Google STANDARD (What's New) posts are valid without an image."""
+    from sqlalchemy import select
+
+    from app.modules.jobs.models import Job
+
+    res = client.post(
+        "/api/v1/channels/publish",
+        json={
+            "caption": "Manage Your Google Business Profile Smarter",
+            "description": "Boost your local visibility.",
+            "destinations": [
+                {"platform": "google_reviews", "external_asset_id": "loc-1", "methods": ["update"]},
+            ],
+        },
+    )
+    assert res.status_code == 200, res.text
+    rows = res.json()
+    assert len(rows) == 1
+    assert rows[0]["media_url"] is None
+    job = (await db.execute(select(Job).where(Job.tenant_id == user_id))).scalar_one()
+    assert job.payload["media_url"] is None
+
+
+@pytest.mark.asyncio
+async def test_media_only_format_without_image_is_rejected(client):
+    """A banner/story/status job with no media would only fail downstream."""
+    res = client.post(
+        "/api/v1/channels/publish",
+        json={
+            "caption": "Hello",
+            "destinations": [
+                {"platform": "google_reviews", "external_asset_id": "loc-1", "methods": ["banner"]},
+                {"platform": "instagram", "external_asset_id": "ig-1", "methods": ["post"]},
+            ],
+        },
+    )
+    assert res.status_code == 422
+    assert "requires an image" in res.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_publish_creates_one_job_per_destination_and_method(db, client, user_id):
     from sqlalchemy import select
 
