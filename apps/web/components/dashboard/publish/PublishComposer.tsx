@@ -832,21 +832,26 @@ export default function PublishComposer({
                               key={m}
                               type="button"
                               onClick={() => {
-                                if (!isOn) {
-                                  toggleFormat(t, m);
+                                // Clicking an unselected format selects it and
+                                // opens its crop editor; clicking a selected one
+                                // removes it (and closes the editor if it was open).
+                                toggleFormat(t, m);
+                                if (isOn) {
+                                  if (modalCtx?.targetId === t.id && modalCtx?.method === m) {
+                                    cancelConfig();
+                                  }
+                                } else {
+                                  openConfig(t, m);
                                 }
-                                openConfig(t, m);
                               }}
                               className={`inline-flex items-center gap-1.5 rounded-full border py-1 pl-1 pr-2.5 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
-                                isConfigured
+                                isOn
                                   ? "border-[var(--ui-ink)] bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
-                                  : isOn
-                                  ? "border-[var(--ui-line-strong)] bg-[var(--ui-surface)] text-[var(--ui-ink)] hover:bg-[var(--ui-line)]"
                                   : "border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink-2)] hover:bg-[var(--ui-line)]"
                               }`}
                             >
                               <FormatThumb media={media} crop={crop} />
-                              {isConfigured && <span aria-hidden>✓</span>}
+                              {isOn && isConfigured && <span aria-hidden>✓</span>}
                               {methodLabel(m)}
                             </button>
                           );

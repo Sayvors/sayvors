@@ -2430,7 +2430,7 @@ const en = {
       stepDest: "3 · Where it goes",
       destSub: "Flip the master switch for every network, or hand-pick below.",
       formatsTitle: "Configure formats",
-      formatsSub: "Click a format to set its crop and thumbnail.",
+      formatsSub: "Click a format to select it and set its crop. Click a selected format again to remove it.",
       formatsNote: "A profile picture or banner replaces that image on the account — it carries no caption, and it can only be changed by publishing a new one.",
       allPill: "All",
       allTitle: "Select every feed format for this destination",
