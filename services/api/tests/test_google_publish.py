@@ -14,6 +14,15 @@ from app.modules.channels.google_reviews import GoogleReviewsError
 from app.modules.channels.meta.providers.google_publish import GoogleBusinessPublisher
 
 
+@pytest.fixture(autouse=True)
+def _staging_off_by_default(monkeypatch):
+    """Most tests pin the localPosts request shape, not the staging handshake.
+    Staging has its own dedicated tests below."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "GOOGLE_POST_MEDIA_STAGING", False)
+
+
 class _Resp:
     """Minimal stand-in for the httpx response the client returns."""
 
@@ -306,6 +315,109 @@ async def test_location_image_falls_back_to_source_url_on_upload_failure():
     create = captured["calls"][-1]
     assert create["json"]["sourceUrl"] == "https://cdn.example/avatar.jpg"
     assert "dataRef" not in create["json"]
+
+
+@pytest.mark.asyncio
+async def test_post_image_is_staged_on_google(monkeypatch):
+    """Bytes go to Google's own media store; the post uses Google's URL."""
+    from app.config import settings
+    from app.core import storage
+
+    monkeypatch.setattr(settings, "GOOGLE_POST_MEDIA_STAGING", True)
+    monkeypatch.setattr(
+        storage, "media_bytes_from_url",
+        lambda user_id, url: (b"image-bytes", "image/jpeg"),
+    )
+
+    captured: dict = {"calls": []}
+    publisher = GoogleBusinessPublisher("token", "refresh")
+
+    async def fake(method, url, **kwargs):
+        captured["calls"].append({
+            "url": url,
+            "json": kwargs.get("json") or {},
+            "content": kwargs.get("content"),
+        })
+        if url.endswith(":startUpload"):
+            return _Resp({"resourceName": "ref-1"})
+        if "/upload/v1/media/" in url:
+            return _Resp({})
+        if url.endswith("/media"):
+            return _Resp({
+                "name": "accounts/1/locations/2/media/staged",
+                "googleUrl": "https://lh3.googleusercontent.com/staged",
+            })
+        return _Resp({
+            "name": "accounts/1/locations/2/localPosts/3",
+            "topicType": "STANDARD",
+        })
+
+    publisher._client._authed_request = fake
+    await publisher.publish_post(
+        token="token",
+        asset_id="locations/2",
+        method="update",
+        media_url="https://api.example.com/media-files/u1/p.jpg",
+        media_type="image",
+        caption="Grand opening",
+        description="Come say hello",
+        scheduled_at=None,
+        account_id="accounts/1",
+        tenant_id="u1",
+    )
+
+    urls = [c["url"] for c in captured["calls"]]
+    assert urls[0].endswith("/media:startUpload")
+    assert "/upload/v1/media/" in urls[1]
+    assert captured["calls"][1]["content"] == b"image-bytes"
+    assert urls[2].endswith("/media")
+    staged = captured["calls"][2]["json"]
+    assert staged["locationAssociation"] == {"category": "ADDITIONAL"}
+    assert staged["dataRef"] == {"resourceName": "ref-1"}
+
+    post = captured["calls"][-1]["json"]
+    assert post["media"] == [
+        {"mediaFormat": "PHOTO", "sourceUrl": "https://lh3.googleusercontent.com/staged"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_post_image_falls_back_when_staging_fails(monkeypatch):
+    """A staging failure must not sink the publish."""
+    from app.config import settings
+    from app.core import storage
+
+    monkeypatch.setattr(settings, "GOOGLE_POST_MEDIA_STAGING", True)
+    monkeypatch.setattr(
+        storage, "media_bytes_from_url",
+        lambda user_id, url: (b"image-bytes", "image/jpeg"),
+    )
+
+    captured: dict = {"calls": []}
+    publisher = GoogleBusinessPublisher("token", "refresh")
+
+    async def fake(method, url, **kwargs):
+        captured["calls"].append({"url": url, "json": kwargs.get("json") or {}})
+        if url.endswith(":startUpload"):
+            return _Resp({"error": "quota"}, status_code=429)
+        return _Resp({"name": "accounts/1/locations/2/localPosts/3"})
+
+    publisher._client._authed_request = fake
+    await publisher.publish_post(
+        token="token",
+        asset_id="locations/2",
+        method="update",
+        media_url="https://cdn.example/p.jpg",
+        media_type="image",
+        caption="Hi",
+        description="Hi",
+        scheduled_at=None,
+        account_id="accounts/1",
+    )
+    post = captured["calls"][-1]["json"]
+    assert post["media"] == [
+        {"mediaFormat": "PHOTO", "sourceUrl": "https://cdn.example/p.jpg"}
+    ]
 
 
 @pytest.mark.asyncio

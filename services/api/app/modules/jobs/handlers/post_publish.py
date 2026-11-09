@@ -135,6 +135,7 @@ async def handle_post_publish(job: Job, db: AsyncSession) -> dict | None:
             description=description,
             scheduled_at=scheduled_at,
             account_id=account_id,
+            tenant_id=job.tenant_id,
         )
     else:
         provider = _provider_for(platform)

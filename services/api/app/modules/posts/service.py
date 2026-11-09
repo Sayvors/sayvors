@@ -384,6 +384,7 @@ async def _publish_post_inner(
             end_date=effective_end.isoformat() if effective_end else None,
             coupon_code=post.coupon_code,
             terms_conditions=post.terms_conditions,
+            tenant_id=user_id,
         )
     except Exception as e:
         _register_publish_failure(post, str(e)[:500])

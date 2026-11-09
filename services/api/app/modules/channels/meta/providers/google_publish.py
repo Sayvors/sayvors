@@ -96,6 +96,7 @@ class GoogleBusinessPublisher:
         end_date: str | None = None,
         coupon_code: str | None = None,
         terms_conditions: str | None = None,
+        tenant_id: str | None = None,
     ) -> dict:
         """Publish one post to one GBP location.
 
@@ -146,13 +147,39 @@ class GoogleBusinessPublisher:
 
         urls = [u for u in (media_urls or ([media_url] if media_url else [])) if u]
         if urls:
-            body["media"] = [
-                {
-                    "mediaFormat": "PHOTO" if (media_type or "image") == "image" else "VIDEO",
-                    "sourceUrl": url,
-                }
-                for url in urls[:10]
-            ]
+            media_items: list[dict[str, str]] = []
+            for url in urls[:10]:
+                source = url
+                if (
+                    settings.GOOGLE_POST_MEDIA_STAGING
+                    and (media_type or "image") == "image"
+                ):
+                    try:
+                        # Resolve the stored/external URL back to bytes, then
+                        # let Google host them. A Sayvors /media-files URL is
+                        # read straight from our own storage (no HTTP fetch).
+                        from .....core.storage import media_bytes_from_url
+
+                        data, ctype = media_bytes_from_url(tenant_id, url)
+                        hosted, _name = await self.stage_post_image(
+                            account, location, data, ctype or "image/jpeg"
+                        )
+                        source = hosted
+                    except Exception as e:  # noqa: BLE001 — staging is best effort
+                        logger.warning(
+                            "Could not stage post image on Google (%s); "
+                            "falling back to sourceUrl %s",
+                            e, url[:120],
+                        )
+                media_items.append(
+                    {
+                        "mediaFormat": (
+                            "PHOTO" if (media_type or "image") == "image" else "VIDEO"
+                        ),
+                        "sourceUrl": source,
+                    }
+                )
+            body["media"] = media_items
 
         # EVENT posts require an event object with a title and a start date.
         if topic_type == "EVENT":
@@ -272,6 +299,47 @@ class GoogleBusinessPublisher:
         raise GoogleReviewsError(
             f"media upload failed ({last[0]}): {last[1]}", last[0]
         )
+
+    async def stage_post_image(
+        self, account: str, location: str, data: bytes, content_type: str
+    ) -> tuple[str, str]:
+        """Upload bytes into Google's own media store for use by a local post.
+
+        Local Posts refuse raw bytes, but they do accept a ``sourceUrl`` that
+        Google fetches. Staging puts the bytes into a temporary location-media
+        item (category ADDITIONAL) and returns ``(googleUrl, media_name)`` —
+        a Google-hosted URL we can hand back as that sourceUrl. Google then
+        stores its own copy in the post, so the image survives even if the
+        Sayvors copy disappears.
+
+        Note: the temporary item appears in the location's photo gallery. Do
+        not delete it immediately — Google may fetch the URL asynchronously,
+        and deleting the source before that fetch breaks the post image.
+        """
+        ref = await self.start_media_upload(account, location)
+        await self.upload_media_bytes(ref, data, content_type)
+        url = f"{GBP_MEDIA_API}/{account}/{location}/media"
+        resp = await self._client._authed_request(
+            "POST",
+            url,
+            json={
+                "mediaFormat": "PHOTO",
+                "locationAssociation": {"category": "ADDITIONAL"},
+                "dataRef": {"resourceName": ref},
+            },
+        )
+        if resp.status_code not in (200, 201):
+            raise GoogleReviewsError(
+                f"stage_post_image failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        payload = resp.json() or {}
+        hosted = (payload.get("googleUrl") or "").strip()
+        if not hosted:
+            raise GoogleReviewsError(
+                "media.create returned no googleUrl to use as post sourceUrl", 502
+            )
+        return hosted, (payload.get("name") or "").strip()
 
     async def set_location_image(
         self,
