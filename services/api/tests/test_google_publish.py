@@ -276,6 +276,39 @@ async def test_location_image_bytes_are_uploaded_directly():
 
 
 @pytest.mark.asyncio
+async def test_location_image_falls_back_to_source_url_on_upload_failure():
+    """A failed byte upload must not sink the whole publish."""
+    captured: dict = {"calls": []}
+    publisher = GoogleBusinessPublisher("token", "refresh")
+
+    async def _fake_authed_request(http_method: str, url: str, **kwargs):
+        captured["calls"].append({"url": url, "json": kwargs.get("json") or {}})
+        if url.endswith(":startUpload"):
+            return _Resp({"resourceName": "accounts/1/locations/2/media/up-1"})
+        if "/upload/v1/media/" in url:
+            return _Resp({"error": "upload rejected"}, status_code=400)
+        return _Resp({
+            "name": "accounts/1/locations/2/media/profile",
+            "locationAssociation": {"category": "PROFILE"},
+        })
+
+    publisher._client._authed_request = _fake_authed_request
+    res = await publisher.set_location_image(
+        token="token",
+        asset_id="locations/2",
+        method="profile",
+        media_url="https://cdn.example/avatar.jpg",
+        account_id="accounts/1",
+        media_data=b"jpeg-bytes",
+        content_type="image/jpeg",
+    )
+    assert res["name"]
+    create = captured["calls"][-1]
+    assert create["json"]["sourceUrl"] == "https://cdn.example/avatar.jpg"
+    assert "dataRef" not in create["json"]
+
+
+@pytest.mark.asyncio
 async def test_location_image_refuses_a_method_it_has_no_category_for():
     publisher = GoogleBusinessPublisher("token", "refresh")
 

@@ -374,6 +374,13 @@ class JobRunner:
                     "Job %s may have partial external side effects: intent=%s",
                     fresh.id, fresh.external_intent,
                 )
+            # Always surface the real failure. Without this the only line in
+            # the log was the reconciliation warning above, which told an
+            # operator nothing about why the job kept retrying.
+            logger.warning(
+                "Job %s failed (attempt %d, %s): %s",
+                fresh.id, (fresh.attempts or 0) + 1, error_code, error_str,
+            )
 
             await retry_job(
                 db,

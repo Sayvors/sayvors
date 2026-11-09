@@ -225,33 +225,53 @@ class GoogleBusinessPublisher:
         if "/" not in location:
             location = f"locations/{location}"
         url = f"{GBP_MEDIA_API}/{account}/{location}/media:startUpload"
-        resp = await self._client._authed_request("POST", url, json={})
+        # The API requires an empty request body; sending `{}` is not the
+        # same thing and some versions reject it.
+        resp = await self._client._authed_request("POST", url)
         if resp.status_code not in (200, 201):
             raise GoogleReviewsError(
                 f"startUpload failed ({resp.status_code}): {resp.text[:300]}",
                 resp.status_code,
             )
-        ref = (resp.json().get("resourceName") or "").strip()
+        data = resp.json() or {}
+        # The reference says the body is a bare MediaItemDataRef; some
+        # versions wrap it in `dataRef`. Accept both rather than condemning
+        # a successful upload.
+        ref = (
+            data.get("resourceName")
+            or (data.get("dataRef") or {}).get("resourceName")
+            or ""
+        ).strip()
         if not ref:
-            raise GoogleReviewsError("startUpload returned no resourceName", 502)
+            raise GoogleReviewsError(
+                f"startUpload returned no resourceName: {str(data)[:200]}", 502
+            )
         return ref
 
     async def upload_media_bytes(
         self, resource_name: str, data: bytes, content_type: str
     ) -> None:
         """POST the raw image bytes to Google's media upload endpoint."""
-        url = f"{GBP_MEDIA_UPLOAD_API}/{resource_name}?uploadType=media"
-        resp = await self._client._authed_request(
-            "POST",
-            url,
-            content=data,
-            extra_headers={"Content-Type": content_type or "application/octet-stream"},
-        )
-        if resp.status_code not in (200, 201):
-            raise GoogleReviewsError(
-                f"media upload failed ({resp.status_code}): {resp.text[:300]}",
-                resp.status_code,
+        base = f"{GBP_MEDIA_UPLOAD_API}/{resource_name}"
+        headers = {"Content-Type": content_type or "application/octet-stream"}
+        # Google's own docs disagree on the parameter spelling (`uploadType`
+        # in the reference, `upload_type` in the upload guide). Try both so
+        # a doc mismatch cannot break every byte upload.
+        last: tuple[int, str] | None = None
+        for param in ("uploadType=media", "upload_type=media"):
+            resp = await self._client._authed_request(
+                "POST", f"{base}?{param}", content=data, extra_headers=headers,
             )
+            if resp.status_code in (200, 201):
+                return
+            last = (resp.status_code, resp.text[:300])
+            logger.warning(
+                "Google media upload with %s failed (%s): %s",
+                param, last[0], last[1],
+            )
+        raise GoogleReviewsError(
+            f"media upload failed ({last[0]}): {last[1]}", last[0]
+        )
 
     async def set_location_image(
         self,
@@ -313,11 +333,24 @@ class GoogleBusinessPublisher:
             "locationAssociation": {"category": category},
         }
         if media_data is not None:
-            ref = await self.start_media_upload(account, location)
-            await self.upload_media_bytes(
-                ref, media_data, content_type or "image/jpeg"
-            )
-            body["dataRef"] = {"resourceName": ref}
+            try:
+                ref = await self.start_media_upload(account, location)
+                await self.upload_media_bytes(
+                    ref, media_data, content_type or "image/jpeg"
+                )
+                body["dataRef"] = {"resourceName": ref}
+            except GoogleReviewsError as e:
+                if not media_url:
+                    raise
+                # Byte upload is an optimisation, not a requirement: Google
+                # also accepts a public URL. Log the reason and fall back so
+                # a doc/API mismatch cannot make the whole publish fail.
+                logger.warning(
+                    "Google byte upload failed for %s/%s (%s); "
+                    "falling back to sourceUrl",
+                    account, location, e,
+                )
+                body["sourceUrl"] = media_url
         else:
             body["sourceUrl"] = media_url
         url = f"{GBP_MEDIA_API}/{account}/{location}/media"

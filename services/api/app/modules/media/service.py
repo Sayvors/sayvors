@@ -405,6 +405,7 @@ async def _publish_media_inner(
             # bucket is needed for these surfaces.
             from ...core.storage import media_bytes_from_url
 
+            media_data, media_content_type = media_bytes_from_url(user_id, item.image_url)
             response = await publisher.set_location_image(
                 "",
                 listing_id_of(channel),
@@ -412,8 +413,8 @@ async def _publish_media_inner(
                 item.image_url,
                 account_id=channel.platform_user_id,
                 category_override=item.category if method == "gallery" else None,
-                media_data=media_bytes_from_url(user_id, item.image_url),
-                content_type=_content_type_for(item.image_url),
+                media_data=media_data,
+                content_type=media_content_type or _content_type_for(item.image_url),
             )
     except Exception as e:
         _register_publish_failure(item, str(e)[:500])

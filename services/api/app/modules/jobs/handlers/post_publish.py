@@ -239,19 +239,15 @@ async def _publish_account_surface(
         # a profile picture or banner needs no public bucket / image URL.
         from ....core.storage import media_bytes_from_url
 
-        ext = (media_url or "").split("?", 1)[0].rsplit(".", 1)[-1].lower()
-        content_type = {
-            "png": "image/png", "webp": "image/webp", "gif": "image/gif",
-            "jpg": "image/jpeg", "jpeg": "image/jpeg",
-        }.get(ext, "image/jpeg")
+        media_data, content_type = media_bytes_from_url(channel.user_id, media_url)
         result = await publisher.set_location_image(
             token=token,
             asset_id=location_id,
             method=method,
             media_url=media_url,
             account_id=account_id,
-            media_data=media_bytes_from_url(channel.user_id, media_url),
-            content_type=content_type,
+            media_data=media_data,
+            content_type=content_type or "image/jpeg",
         )
         return {
             "provider": "google_reviews",

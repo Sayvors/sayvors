@@ -191,7 +191,7 @@ async def test_gallery_and_profile_publish_natively(monkeypatch, db, user_id):
     # never resolves a public URL for these surfaces.
     monkeypatch.setattr(
         "app.core.storage.media_bytes_from_url",
-        lambda user_id, url: b"image-bytes",
+        lambda user_id, url: (b"image-bytes", "image/jpeg"),
     )
 
     gallery = await media.create_media(

@@ -366,26 +366,29 @@ def get_media(user_id: str, storage_key: str) -> bytes:
     return target.read_bytes()
 
 
-def media_bytes_from_url(user_id: str, url: str) -> bytes:
-    """Resolve a stored media URL back to its bytes.
+def media_bytes_from_url(user_id: str, url: str) -> tuple[bytes, str]:
+    """Resolve a stored media URL to ``(bytes, content_type)``.
 
     The Google publisher uses this to upload location media (logo / cover /
     gallery) to Google directly instead of handing over a public URL, so no
     S3/GCS bucket is required for those surfaces. Sayvors's own
     ``/media-files`` URLs embed the storage key and are read straight from the
     backend; anything else (a public bucket object, or an external image) is
-    fetched through the SSRF-guarded fetcher.
+    fetched through the SSRF-guarded fetcher, which also reports the *real*
+    content type — a CDN can serve JPEG bytes under a ``.PNG`` name.
     """
+    from mimetypes import guess_type
+
     settings = _settings()
     marker = f"{settings.MEDIA_PUBLIC_PATH.rstrip('/')}/{user_id}/"
     if marker in url:
         key = url.split(marker, 1)[1].split("?", 1)[0]
         if key:
-            return get_media(user_id, key)
+            ctype = guess_type(key)[0] or "application/octet-stream"
+            return get_media(user_id, key), ctype
     from .pinned_http import fetch_pinned_media
 
-    data, _content_type = fetch_pinned_media(url)
-    return data
+    return fetch_pinned_media(url)
 
 
 def list_media_objects(user_id: str) -> dict:
