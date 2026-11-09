@@ -398,6 +398,7 @@ async def _publish_media_inner(
                 None,
                 account_id=channel.platform_user_id,
                 media_urls=[item.image_url],
+                tenant_id=user_id,
             )
         else:
             # Location media (gallery / logo / banner): upload the bytes

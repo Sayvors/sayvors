@@ -412,26 +412,28 @@ def public_media_base(request_base: str | None = None) -> str:
     return (request_base or configured or "http://localhost:8000").rstrip("/")
 
 
-def media_bytes_from_url(user_id: str, url: str) -> tuple[bytes, str]:
+def media_bytes_from_url(user_id: str | None, url: str) -> tuple[bytes, str]:
     """Resolve a stored media URL to ``(bytes, content_type)``.
 
-    The Google publisher uses this to upload location media (logo / cover /
-    gallery) to Google directly instead of handing over a public URL, so no
-    S3/GCS bucket is required for those surfaces. Sayvors's own
-    ``/media-files`` URLs embed the storage key and are read straight from the
-    backend; anything else (a public bucket object, or an external image) is
-    fetched through the SSRF-guarded fetcher, which also reports the *real*
-    content type — a CDN can serve JPEG bytes under a ``.PNG`` name.
+    The Google publisher uses this to upload media bytes straight to Google
+    (location media and staged post images), so no S3/GCS bucket is needed.
+    Sayvors's own ``/media-files/{tenant}/{key}`` URLs are read straight from
+    the backend — the tenant id is taken from the URL when the caller does not
+    supply one. Anything else (a public bucket object, or an external image)
+    is fetched through the SSRF-guarded fetcher, which also reports the *real*
+    content type — a CDN can serve JPEG/WebP bytes under a ``.PNG`` name.
     """
     from mimetypes import guess_type
 
     settings = _settings()
-    marker = f"{settings.MEDIA_PUBLIC_PATH.rstrip('/')}/{user_id}/"
+    marker = f"{settings.MEDIA_PUBLIC_PATH.rstrip('/')}/"
     if marker in url:
-        key = url.split(marker, 1)[1].split("?", 1)[0]
-        if key:
+        rest = url.split(marker, 1)[1].split("?", 1)[0]
+        parts = rest.split("/", 1)
+        if len(parts) == 2 and parts[1] and (user_id is None or parts[0] == user_id):
+            tenant, key = parts[0], parts[1]
             ctype = guess_type(key)[0] or "application/octet-stream"
-            return get_media(user_id, key), ctype
+            return get_media(tenant, key), ctype
     from .pinned_http import fetch_pinned_media
 
     return fetch_pinned_media(url)

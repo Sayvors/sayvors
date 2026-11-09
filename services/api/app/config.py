@@ -266,6 +266,16 @@ class Settings(BaseSettings):
     # When set, a correctly-signed token minted by any other identity is
     # rejected even though it passed signature/audience/expiry.
     GOOGLE_PUBSUB_PUSH_EMAIL: str = ""
+    # Local Posts accept media ONLY as a public sourceUrl; Google refuses raw
+    # bytes for posts. This flag uploads the bytes into Google's own
+    # location-media store (startUpload -> dataRef) and uses the returned
+    # googleUrl as the post's sourceUrl. Kept behind a flag because Google
+    # processes staged media asynchronously: localPosts.create with the
+    # not-yet-ready googleUrl returned a deterministic 500 INTERNAL in live
+    # testing, and the staged item also appears in the gallery. Default OFF —
+    # hand Google a public https JPEG/PNG URL instead. When a bucket is
+    # configured, set it explicitly there.
+    GOOGLE_POST_MEDIA_STAGING: bool = False
 
     # ── Google Places API (New) ──────────────────────────────────────────
     # Server-side key for two features: resolving free-text service areas to

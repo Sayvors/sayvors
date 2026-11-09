@@ -257,6 +257,22 @@ async def test_empty_review_abstains(fake_llm):
     assert m["reason"] == "no review text"
 
 
+@pytest.mark.asyncio
+async def test_empty_review_never_touches_the_model_registry(monkeypatch):
+    """Regression: resolving the tenant model before the empty-text guard
+    queried llm_provider_configs, which broke the full CI suite on a bare
+    Postgres where that table does not exist."""
+    from app.modules.analytics import enrichment
+
+    async def _boom(*a, **k):
+        raise AssertionError("an empty review must not resolve a model")
+
+    monkeypatch.setattr(enrichment, "_resolve_tenant_model", _boom)
+    m = await enrichment.extract_meaning(text="", rating=5)
+    assert m["needs_human"] is True
+    assert m["reason"] == "no review text"
+
+
 # ── Human corrections are authoritative ─────────────────────────
 
 def test_human_corrected_records_are_recognised():

@@ -326,13 +326,16 @@ async def extract_meaning(
     """
     from . import subjects as S
 
-    if not model:
-        model = await _resolve_tenant_model(db)
-
+    # Abstain before touching the model registry: an empty review needs no
+    # LLM and must not depend on a DB round trip (which fails when the
+    # llm_provider_configs table is absent, e.g. a bare CI Postgres).
     body = (text or "").strip()
     language = S.detect_language(body)
     if not body:
         return _blank_meaning(reason="no review text", language=language, source="llm")
+
+    if not model:
+        model = await _resolve_tenant_model(db)
 
     try:
         resp = await complete(
