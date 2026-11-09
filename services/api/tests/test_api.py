@@ -164,6 +164,34 @@ async def test_insights_filter_by_sentiment(client, db, channel_id, user_id):
 
 
 @pytest.mark.asyncio
+async def test_insights_surface_google_reply_state(client, db, channel_id, user_id):
+    """The review inbox shows Google's moderation state of the published reply."""
+    from datetime import datetime, timezone
+
+    from app.modules.analytics.models import ReviewInsight
+    from app.modules.channels.models import ReviewReply
+
+    db.add(ReviewInsight(
+        id="ins-state", user_id=user_id, channel_id=channel_id, review_id="r-state",
+        rating=5, review_text="Great!", reviewer_name="A", sentiment="positive",
+        sentiment_score=0.9, topics=[], products=[], problems=[],
+        enrichment_status="done", replied=True,
+        review_updated_at=datetime.now(timezone.utc),
+    ))
+    db.add(ReviewReply(
+        channel_id=channel_id, review_id="r-state",
+        rating=5, review_text="Great!", reviewer_name="A",
+        reply_text="Thanks!", status="posted", google_reply_state="pending",
+    ))
+    await db.commit()
+
+    items = client.get("/api/v1/analytics/reviews/insights").json()["items"]
+    match = next(i for i in items if i["review_id"] == "r-state")
+    assert match["reply_status"] == "posted"
+    assert match["reply_state"] == "pending"
+
+
+@pytest.mark.asyncio
 async def test_autoreply_config_default(client, channel_id):
     r = client.get(f"/api/v1/channels/{channel_id}/autoreply")
     assert r.status_code == 200
@@ -440,8 +468,8 @@ async def test_reply_approve_then_reject(client, channel_id, db, monkeypatch):
         async def reply_to_review(self, review_id, text):
             posted.append((review_id, text))
 
-        async def confirm_reply_live(self, review_id, attempts=2):
-            return True
+        async def read_reply_state(self, review_id, attempts=2):
+            return {"state": "approved", "policy_violation": None}
 
         async def close(self):
             return None
@@ -474,6 +502,102 @@ async def test_reply_approve_then_reject(client, channel_id, db, monkeypatch):
     # cannot reject an already-published reply
     rejected = client.delete(f"/api/v1/channels/{channel_id}/reviews/{reply_id}")
     assert rejected.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_verify_heals_failed_reply_google_shows(client, channel_id, db, monkeypatch):
+    """A `failed` row that Google actually shows a reply for heals to `posted`.
+
+    Regression: the old read-back gate stamped `failed` on replies Google had
+    accepted but moderation kept unreadable. Verification must repair them.
+    """
+    from app.modules.channels import google_reviews
+    from app.modules.channels import router as channels_router
+    from app.modules.channels import service as channels_service
+    from app.modules.channels.models import Channel, ReviewReply
+    from sqlalchemy import select
+
+    monkeypatch.setattr(channels_service, "decrypt_token", lambda v: "tok")
+    channel = await db.get(Channel, channel_id)
+    channel.access_token = "enc-access"
+    channel.refresh_token = "enc-refresh"
+    await db.commit()
+
+    db.add(ReviewReply(
+        channel_id=channel_id,
+        review_id="accounts/a/locations/l/reviews/r1",
+        rating=5, review_text="Great", reply_text="Thanks!",
+        status="failed", error="Google accepted the reply but it is not showing",
+    ))
+    await db.commit()
+
+    class _FakeClient:
+        def __init__(self, access_token, refresh_token=None):
+            pass
+
+        async def get_review(self, review_resource):
+            return {"reviewReply": {"comment": "Thanks!", "updateTime": "2026-11-09T10:00:00Z"}}
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(google_reviews, "GoogleReviewsClient", _FakeClient)
+
+    r = client.post(f"/api/v1/channels/{channel_id}/reviews/verify-posted")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["healed"] == 1
+    assert body["confirmed"] == 0
+
+    row = (await db.execute(select(ReviewReply))).scalars().one()
+    assert row.status == "posted"
+    assert row.error is None
+    assert row.replied_at is not None
+    # Google's moderation state is recorded alongside Sayvors' own status.
+    assert row.google_reply_state == "approved"
+
+
+@pytest.mark.asyncio
+async def test_verify_leaves_posted_when_reply_unreadable(client, channel_id, db, monkeypatch):
+    """Absence is not failure: a `posted` row stays posted when Google shows
+    the review but no reply yet (moderation lag)."""
+    from app.modules.channels import google_reviews
+    from app.modules.channels import service as channels_service
+    from app.modules.channels.models import Channel, ReviewReply
+    from sqlalchemy import select
+
+    monkeypatch.setattr(channels_service, "decrypt_token", lambda v: "tok")
+    channel = await db.get(Channel, channel_id)
+    channel.access_token = "enc-access"
+    channel.refresh_token = "enc-refresh"
+    await db.commit()
+
+    db.add(ReviewReply(
+        channel_id=channel_id,
+        review_id="accounts/a/locations/l/reviews/r2",
+        rating=5, review_text="Nice", reply_text="Thanks", status="posted",
+    ))
+    await db.commit()
+
+    class _FakeClient:
+        def __init__(self, access_token, refresh_token=None):
+            pass
+
+        async def get_review(self, review_resource):
+            # Review exists, reply not readable yet.
+            return {"name": review_resource}
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(google_reviews, "GoogleReviewsClient", _FakeClient)
+
+    r = client.post(f"/api/v1/channels/{channel_id}/reviews/verify-posted")
+    assert r.status_code == 200
+    assert r.json()["healed"] == 0
+
+    row = (await db.execute(select(ReviewReply))).scalars().one()
+    assert row.status == "posted"
 
 
 @pytest.mark.asyncio

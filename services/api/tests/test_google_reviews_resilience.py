@@ -36,9 +36,13 @@ class _FakeTransport:
     def __init__(self, script):
         self.script = list(script)
         self.calls = []
+        # Full request objects (method/body/headers) — `calls` stays URL-only
+        # for the pagination assertions above.
+        self.requests = []
 
     async def handle_async_request(self, request):
         self.calls.append(request.url)
+        self.requests.append(request)
         if not self.script:
             raise AssertionError("no more scripted responses")
         entry = self.script.pop(0)
@@ -248,6 +252,150 @@ async def test_list_reviews_propagates_429_after_exhaustion(monkeypatch):
     with pytest.raises(GoogleReviewsError) as excinfo:
         await client.list_reviews("accounts/a", "locations/l")
     assert excinfo.value.status_code == 429
+
+
+# ──────────────────────────── reply write endpoints ───────────────────────
+
+@pytest.mark.asyncio
+async def test_reply_to_review_hits_update_reply_url():
+    """The reply write must be `PUT .../reviews/{name}/reply`.
+
+    Production showed `replyUpdate failed (404)` with Google's HTML 404 page:
+    the client called the nonexistent `:replyUpdate` segment instead of the
+    transcoded `/reply` path. Pin the URL and verb so a refactor cannot
+    silently regress the write path.
+    """
+    client = _make_client([(200, {}, b"{}")])
+    await client.reply_to_review("accounts/a/locations/l/reviews/r1", "Thanks!")
+
+    assert len(client._http._transport.calls) == 1
+    called = client._http._transport.requests[0]
+    assert called.method == "PUT"
+    assert str(called.url) == (
+        "https://mybusiness.googleapis.com/v4"
+        "/accounts/a/locations/l/reviews/r1/reply"
+    )
+
+
+@pytest.mark.asyncio
+async def test_reply_to_review_sends_review_reply_body():
+    """The body must be a ReviewReply instance, i.e. `{"comment": ...}`."""
+    client = _make_client([(200, {}, b"{}")])
+    await client.reply_to_review("accounts/a/locations/l/reviews/r1", "Thanks!")
+
+    import json as _json_mod
+
+    body = _json_mod.loads(client._http._transport.requests[0].content)
+    assert body == {"comment": "Thanks!"}
+
+
+@pytest.mark.asyncio
+async def test_reply_to_review_404_raises_with_status():
+    """A 404 from Google must surface as GoogleReviewsError(404), not be retried.
+
+    `_authed_request` only retries 401/429, so the 404 propagates on the
+    first response — the exact production symptom this regression pins.
+    """
+    client = _make_client([(404, {}, b"<html>Error 404 (Not Found)</html>")])
+    with pytest.raises(GoogleReviewsError) as excinfo:
+        await client.reply_to_review("accounts/a/locations/l/reviews/r1", "Thanks!")
+    assert excinfo.value.status_code == 404
+    assert "updateReply failed (404)" in str(excinfo.value)
+    assert len(client._http._transport.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_delete_reply_hits_reply_url():
+    """deleteReply transcodes to the same `/reply` segment with DELETE."""
+    client = _make_client([(200, {}, b"{}")])
+    await client.delete_reply("accounts/a/locations/l/reviews/r1")
+
+    called = client._http._transport.requests[0]
+    assert called.method == "DELETE"
+    assert str(called.url) == (
+        "https://mybusiness.googleapis.com/v4"
+        "/accounts/a/locations/l/reviews/r1/reply"
+    )
+
+
+# ──────────────────────────── reply moderation state ──────────────────────
+
+def _review_payload(reply=None):
+    review = {"name": "accounts/a/locations/l/reviews/r1"}
+    if reply is not None:
+        review["reviewReply"] = reply
+    return _json(review)
+
+
+@pytest.mark.asyncio
+async def test_list_reviews_parses_reply_moderation_state():
+    """reviewReply.reviewReplyState is captured so the poll can track
+    Google's moderation (pending -> approved/rejected) on the reply row."""
+    page = _review_page([
+        {"name": "accounts/a/locations/l/reviews/r1", "starRating": "FIVE",
+         "comment": "Great", "reviewer": {"displayName": "A"},
+         "reviewReply": {"comment": "Thanks!", "reviewReplyState": "PENDING"}},
+    ])
+    client = _make_client([(200, {}, _json(page))])
+
+    reviews = await client.list_reviews("accounts/a", "locations/l")
+    assert reviews[0].reply_state == "pending"
+    assert reviews[0].reply_text == "Thanks!"
+
+
+@pytest.mark.asyncio
+async def test_read_reply_state_reports_approved():
+    """APPROVED -> live; the pre-moderation default (no state) is approved."""
+    client = _make_client([
+        (200, {}, _review_payload({"comment": "Thanks", "reviewReplyState": "APPROVED"})),
+    ])
+    assert await client.read_reply_state("r") == {
+        "state": "approved", "policy_violation": None,
+    }
+
+    client = _make_client([
+        (200, {}, _review_payload({"comment": "Thanks"})),
+    ])
+    assert (await client.read_reply_state("r"))["state"] == "approved"
+
+
+@pytest.mark.asyncio
+async def test_read_reply_state_reports_pending_and_rejected():
+    """PENDING is not a failure; REJECTED is, and carries the reason."""
+    client = _make_client([
+        (200, {}, _review_payload({"comment": "Thanks", "reviewReplyState": "PENDING"})),
+    ])
+    assert (await client.read_reply_state("r"))["state"] == "pending"
+
+    client = _make_client([
+        (200, {}, _review_payload({
+            "comment": "Thanks",
+            "reviewReplyState": "REJECTED",
+            "policyViolation": "ADVERTISING_AND_SOLICITATION",
+        })),
+    ])
+    state = await client.read_reply_state("r")
+    assert state["state"] == "rejected"
+    assert state["policy_violation"] == "ADVERTISING_AND_SOLICITATION"
+
+
+@pytest.mark.asyncio
+async def test_read_reply_state_absent_when_not_readable(monkeypatch):
+    """404 / no reviewReply -> "absent", which callers must NOT treat as failed.
+
+    This is the production false-failure: Google accepted the write (2xx) but
+    moderation kept the reply unreadable past the read-back window.
+    """
+    monkeypatch.setattr(asyncio, "sleep", _sleep_stub)
+    _sleep_stub.slept.clear()
+    client = _make_client([
+        (404, {}, b"Not found"),
+        (404, {}, b"Not found"),
+    ])
+    assert await client.read_reply_state("r", attempts=2) == {
+        "state": "absent", "policy_violation": None,
+    }
+    assert len(_sleep_stub.slept) == 1
 
 
 # ──────────────────────────── helpers ──────────────────────────────────────

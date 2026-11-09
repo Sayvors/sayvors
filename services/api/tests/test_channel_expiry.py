@@ -88,13 +88,18 @@ async def test_revoked_token_expires_the_channel_and_notifies(db, user_id, monke
         .scalars()
         .all()
     )
-    assert len(notes) == 1
-    assert notes[0].type == "channel_expired"
-    assert notes[0].data["channel_id"] == channel.id
+    # One expiry bell, plus the Syncs-tab record of the failed pass.
+    assert {n.type for n in notes} == {"channel_expired", "sync_failed"}
+    expired = [n for n in notes if n.type == "channel_expired"]
+    assert len(expired) == 1
+    assert expired[0].data["channel_id"] == channel.id
 
 
 @pytest.mark.asyncio
-async def test_removed_location_expires_the_channel(db, user_id, monkeypatch):
+async def test_removed_location_disconnects_the_channel(db, user_id, monkeypatch):
+    """404 = the listing is gone on Google's side. The grant still works for
+    sibling locations, so the channel leaves the poll set as `disconnected`
+    (reconnectable / accurate banner), not `expired`."""
     _fake_client(monkeypatch, GoogleReviewsError("location not found", 404))
     channel, config = await _channel_and_config(db, user_id, "removed")
 
@@ -102,7 +107,13 @@ async def test_removed_location_expires_the_channel(db, user_id, monkeypatch):
         await reviews_worker.process_channel(db, channel, config)
 
     await db.refresh(channel)
-    assert channel.status == "expired"
+    assert channel.status == "disconnected"
+    notes = (
+        (await db.execute(select(Notification).where(Notification.user_id == user_id)))
+        .scalars()
+        .all()
+    )
+    assert {n.type for n in notes} == {"channel_removed", "sync_failed"}
 
 
 @pytest.mark.asyncio
@@ -121,7 +132,9 @@ async def test_transient_error_does_not_expire_the_channel(db, user_id, monkeypa
         .scalars()
         .all()
     )
-    assert notes == []
+    # No expiry/retirement bell for a transient blip — but the failed sync
+    # itself is recorded on the Syncs tab.
+    assert {n.type for n in notes} == {"sync_failed"}
 
 
 @pytest.mark.asyncio
@@ -135,9 +148,16 @@ async def test_the_merchant_is_not_notified_twice(db, user_id, monkeypatch):
     with pytest.raises(GoogleReviewsError):
         await reviews_worker.process_channel(db, channel, config)
 
-    notes = (
-        (await db.execute(select(Notification).where(Notification.user_id == user_id)))
+    expired = (
+        (
+            await db.execute(
+                select(Notification).where(
+                    Notification.user_id == user_id,
+                    Notification.type == "channel_expired",
+                )
+            )
+        )
         .scalars()
         .all()
     )
-    assert len(notes) == 1
+    assert len(expired) == 1

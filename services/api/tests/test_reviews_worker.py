@@ -49,8 +49,8 @@ class FakeGoogleClient:
     async def reply_to_review(self, review_id, text):
         FakeGoogleClient.posted.append((review_id, text))
 
-    async def confirm_reply_live(self, review_id, attempts=2):
-        return True
+    async def read_reply_state(self, review_id, attempts=2):
+        return {"state": "approved", "policy_violation": None}
 
     async def close(self):
         pass
@@ -572,13 +572,13 @@ async def test_poll_once_sums_every_channel_field(db, channel_id, config_id, mon
     monkeypatch.setattr("app.database.async_session", factory)
 
     async def _fake(ch_id, cfg_id, semaphore):
-        return {"channels": 1, "reviews": 3, "replied": 2, "queued": 1, "skipped": 0, "adopted": 0, "errors": 0}
+        return {"channels": 1, "reviews": 3, "new": 1, "replied": 2, "queued": 1, "skipped": 0, "adopted": 0, "errors": 0}
 
     monkeypatch.setattr(reviews_worker, "_poll_one_channel", _fake)
 
     totals = await reviews_worker.poll_once()
 
-    assert totals == {"channels": 1, "reviews": 3, "replied": 2, "queued": 1, "skipped": 0, "adopted": 0, "errors": 0}
+    assert totals == {"channels": 1, "reviews": 3, "new": 1, "replied": 2, "queued": 1, "skipped": 0, "adopted": 0, "errors": 0}
 
 
 @pytest.mark.asyncio
@@ -609,7 +609,7 @@ async def test_poll_one_channel_reports_the_channel_it_polled(
         return None
 
     async def _process(session, channel, config):
-        return {"reviews": 2, "replied": 1, "queued": 1, "skipped": 0, "errors": 0}
+        return {"reviews": 2, "new": 1, "replied": 1, "queued": 1, "skipped": 0, "adopted": 0, "errors": 0}
 
     monkeypatch.setattr(reviews_worker, "_claim_channel", _claim)
     monkeypatch.setattr(reviews_worker, "_release_channel", _release)
@@ -626,7 +626,7 @@ async def test_poll_one_channel_reports_the_channel_it_polled(
     assert stats["replied"] == 1
     # Everything poll_once aggregates must be present, including on the paths
     # that return early (not claimed / in backoff).
-    for key in ("channels", "reviews", "replied", "queued", "skipped", "errors"):
+    for key in ("channels", "reviews", "new", "replied", "queued", "skipped", "errors"):
         assert key in stats, key
 
 
@@ -970,3 +970,102 @@ async def test_sweep_does_not_duplicate_known_reviews(db, channel_id, config_id,
     replies_after = await _reply_rows(db, channel_id, "gg-old-1")
     assert len(replies_after) == 1
     assert replies_after[0].status == replies_before[0].status
+
+
+# ── Notifications page: sync activity ────────────────────
+
+
+@pytest.mark.asyncio
+async def test_sync_emits_review_pulled_and_sync_completed_once(
+    db, channel_id, config_id, user_id, monkeypatch
+):
+    """A pass that imports genuinely-new reviews announces itself on the
+    Notifications page exactly once; the idempotent replay stays silent."""
+    import json
+
+    from app.modules.notifications.models import Notification
+
+    channel = await _active_channel(db, channel_id)
+    # Simulate an established channel: the one-time reply backfill must not
+    # pre-mirror the review, or nothing counts as "new" on this pass. (That
+    # silence is the intended behavior — history import never rings bells.)
+    meta = json.loads(channel.metadata_json or "{}")
+    meta.update(
+        reply_backfill_done=True,
+        profile_fields_checked=True,
+        place_metadata_checked=True,
+    )
+    channel.metadata_json = json.dumps(meta)
+    await db.commit()
+
+    _install_fakes(monkeypatch, [_review(rating=5)])
+    stats = await reviews_worker.process_channel(
+        db, await db.get(Channel, channel_id),
+        await db.get(AutoReplyConfig, config_id),
+    )
+    assert stats["new"] == 1
+
+    rows = (
+        await db.execute(
+            select(Notification).where(Notification.user_id == user_id)
+        )
+    ).scalars().all()
+    types = {r.type for r in rows}
+    assert "review_pulled" in types
+    assert "sync_completed" in types
+    pulled = next(r for r in rows if r.type == "review_pulled")
+    assert (pulled.data or {}).get("rating") == 5
+    completed = next(r for r in rows if r.type == "sync_completed")
+    assert (completed.data or {}).get("new_reviews") == 1
+
+    # Replay pass: the review is already mirrored, so no new bells —
+    # a steady 60s poll must not spam one notification per pass.
+    before = len(rows)
+    stats2 = await reviews_worker.process_channel(
+        db, await db.get(Channel, channel_id),
+        await db.get(AutoReplyConfig, config_id),
+    )
+    assert stats2["new"] == 0
+    rows_after = (
+        await db.execute(
+            select(Notification).where(Notification.user_id == user_id)
+        )
+    ).scalars().all()
+    assert len(rows_after) == before
+
+
+@pytest.mark.asyncio
+async def test_google_error_notifies_sync_failed(
+    db, channel_id, config_id, user_id, monkeypatch
+):
+    """A Google API failure during the poll raises AND tells the tenant
+    via the Syncs tab, with the HTTP status in the notification data."""
+    from app.modules.notifications.models import Notification
+
+    await _active_channel(db, channel_id)
+
+    class _Boom(FakeGoogleClient):
+        async def list_reviews(self, account_id, location_id, updated_after=None):
+            raise reviews_worker.GoogleReviewsError(
+                "Google said 429", status_code=429
+            )
+
+    monkeypatch.setattr(reviews_worker.settings, "GOOGLE_REVIEWS_MOCK", False)
+    monkeypatch.setattr(reviews_worker, "GoogleReviewsClient", _Boom)
+
+    with pytest.raises(reviews_worker.GoogleReviewsError):
+        await reviews_worker.process_channel(
+            db, await db.get(Channel, channel_id),
+            await db.get(AutoReplyConfig, config_id),
+        )
+
+    rows = (
+        await db.execute(
+            select(Notification).where(
+                Notification.user_id == user_id,
+                Notification.type == "sync_failed",
+            )
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+    assert (rows[0].data or {}).get("error") == "google_429"

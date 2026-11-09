@@ -275,6 +275,147 @@ async def test_generate_one_creates_pending_draft(db, user_id, channel_id, monke
     assert reply.reply_text == "Thanks for visiting!"
 
 
+async def _seed_generate_fixture(db, user_id, channel_id, review_id):
+    """Session + one pending item, ready for _generate_one."""
+    session = ConnectImportSession(
+        user_id=user_id, status="generating", scope_days=180,
+        total_locations=1, fetched_locations=1, total_reviews=1, fetched_reviews=1,
+        total_drafts=1,
+    )
+    db.add(session)
+    await db.flush()
+    item = ConnectImportItem(
+        session_id=session.id, channel_id=channel_id,
+        review_id=review_id, rating=5,
+        reviewer_name="Tester", review_text="Great", status="pending",
+        review_time=datetime.now(timezone.utc),
+    )
+    db.add(item)
+    await db.commit()
+    return session, item
+
+
+def _install_generate(monkeypatch, db):
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    factory = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
+    monkeypatch.setattr("app.database.async_session", factory)
+
+    async def _fake_generate(*args, **kwargs):
+        return "Thanks for visiting!", False
+
+    monkeypatch.setattr(ci, "generate_auto_reply", _fake_generate)
+
+
+@pytest.mark.asyncio
+async def test_generate_one_reuses_existing_pending_draft(db, user_id, channel_id, monkeypatch):
+    """A retry must not stack a second draft on top of the first pass's row —
+    the merchant saw 7 drafts for 5 reviews before this guard."""
+    review_id = "accounts/a/locations/l/reviews/dup"
+    session, item = await _seed_generate_fixture(db, user_id, channel_id, review_id)
+    existing = ReviewReply(
+        channel_id=channel_id, review_id=review_id,
+        rating=5, review_text="Great", reviewer_name="Tester",
+        reply_text="Old stale draft text", status="pending_approval",
+    )
+    db.add(existing)
+    await db.commit()
+    _install_generate(monkeypatch, db)
+
+    await ci._generate_one(session.id, item.id, asyncio.Semaphore(1))
+
+    # _generate_one writes through its own session; drop this session's cached
+    # copies so the selects read what actually landed in the database.
+    db.expire_all()
+
+    rows = (
+        await db.execute(
+            select(ReviewReply).where(
+                ReviewReply.channel_id == channel_id,
+                ReviewReply.review_id == review_id,
+            )
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].id == existing.id
+    assert rows[0].reply_text == "Thanks for visiting!"
+    assert rows[0].error is None
+    await db.refresh(item)
+    assert item.status == "draft_ready"
+    assert item.reply_id == existing.id
+
+
+@pytest.mark.asyncio
+async def test_generate_one_skips_draft_when_reply_already_posted(db, user_id, channel_id, monkeypatch):
+    """The review was answered between passes; drafting again would double-reply."""
+    review_id = "accounts/a/locations/l/reviews/posted"
+    session, item = await _seed_generate_fixture(db, user_id, channel_id, review_id)
+    posted = ReviewReply(
+        channel_id=channel_id, review_id=review_id,
+        rating=5, review_text="Great", reviewer_name="Tester",
+        reply_text="Live on Google", status="posted",
+    )
+    db.add(posted)
+    await db.commit()
+    _install_generate(monkeypatch, db)
+
+    await ci._generate_one(session.id, item.id, asyncio.Semaphore(1))
+
+    rows = (
+        await db.execute(
+            select(ReviewReply).where(
+                ReviewReply.channel_id == channel_id,
+                ReviewReply.review_id == review_id,
+            )
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].status == "posted"
+    await db.refresh(item)
+    assert item.status == "already_replied"
+    assert item.reply_id == posted.id
+
+
+@pytest.mark.asyncio
+async def test_generate_one_rejects_stale_failed_row(db, user_id, channel_id, monkeypatch):
+    """A fresh draft must not leave the old failed twin sitting in the failed tab."""
+    review_id = "accounts/a/locations/l/reviews/stale"
+    session, item = await _seed_generate_fixture(db, user_id, channel_id, review_id)
+    stale = ReviewReply(
+        channel_id=channel_id, review_id=review_id,
+        rating=5, review_text="Great", reviewer_name="Tester",
+        reply_text="Broken draft", status="failed",
+        error="Google said 500",
+    )
+    db.add(stale)
+    await db.commit()
+    _install_generate(monkeypatch, db)
+
+    await ci._generate_one(session.id, item.id, asyncio.Semaphore(1))
+
+    db.expire_all()
+
+    rows = (
+        await db.execute(
+            select(ReviewReply)
+            .where(
+                ReviewReply.channel_id == channel_id,
+                ReviewReply.review_id == review_id,
+            )
+            .order_by(ReviewReply.created_at.asc())
+        )
+    ).scalars().all()
+    assert len(rows) == 2
+    assert rows[0].id == stale.id
+    assert rows[0].status == "rejected"
+    assert rows[0].error == "Replaced by a new draft"
+    assert rows[1].status == "pending_approval"
+    assert rows[1].reply_text == "Thanks for visiting!"
+    await db.refresh(item)
+    assert item.status == "draft_ready"
+    assert item.reply_id == rows[1].id
+
+
 @pytest.mark.asyncio
 async def test_publish_one_posts_only_the_selected_draft(db, user_id, channel_id, monkeypatch):
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -313,8 +454,8 @@ async def test_publish_one_posts_only_the_selected_draft(db, user_id, channel_id
         async def reply_to_review(self, review_id, text):
             return None
 
-        async def confirm_reply_live(self, review_id, attempts=3):
-            return True
+        async def read_reply_state(self, review_id, attempts=3):
+            return {"state": "approved", "policy_violation": None}
 
         async def close(self):
             pass

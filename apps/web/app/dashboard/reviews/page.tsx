@@ -10,7 +10,7 @@ import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import GoogleReviewCard, { GoogleStars, ReviewAvatar } from "@/components/reviews/GoogleReviewCard";
 import { streamReviewReply, type StreamEvent } from "@/lib/api-review-engine";
-import { approveReply, dismissReviewEdit, editReply, generateReply, regenerateReply, rejectReply, type ReviewInsight, type ReviewReplyDTO } from "@/lib/api-analytics";
+import { approveReply, dismissReviewEdit, editReply, generateReply, regenerateReply, rejectReply, verifyPostedReplies, type ReviewInsight, type ReviewReplyDTO } from "@/lib/api-analytics";
 import { clearAbuseFlag, flagReviewAbusive, markAbuseReported, setAbuseVerdict } from "@/lib/api-abuse";
 import MeaningInspector from "@/components/reviews/MeaningInspector";
 import AskForReview from "@/components/dashboard/AskForReview";
@@ -88,6 +88,9 @@ interface ReviewItem {
   publishedReplyAt?: string;
   status?: string;
   replyId?: string;
+  // Google's moderation state of the published reply: "pending" while Google
+  // reviews it, "approved" once it is public, "rejected" if refused.
+  google_reply_state?: string | null;
 }
 
 interface LocationOption {
@@ -150,6 +153,10 @@ function ReviewsInner() {
   const [replyDraft, setReplyDraft] = useState("");
   const [replying, setReplying] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  // Channels already asked to verify stale rows against Google this visit.
+  // The DB status is reconciled by the 60s poll, but a reply Google accepted
+  // can sit "failed" until then — asking Google directly closes that gap.
+  const verifiedChannels = useRef<Set<string>>(new Set());
   const [page, setPage] = useState(1);
   const [needApprovalPage, setNeedApprovalPage] = useState(1);
   const [approvingAllPending, setApprovingAllPending] = useState(false);
@@ -287,6 +294,21 @@ function ReviewsInner() {
     }
     const merged = [...seen.values()].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
     setPendingReplies(merged);
+
+    // Ask Google directly about stale rows once per channel per page load.
+    // The endpoint only heals on definitive evidence (Google shows the reply),
+    // so this is safe to run unattended.
+    for (const id of ids) {
+      if (verifiedChannels.current.has(id)) continue;
+      verifiedChannels.current.add(id);
+      void verifyPostedReplies(id)
+        .then((r) => {
+          if ((r.healed ?? 0) > 0) void loadPendingReplies();
+        })
+        .catch(() => {
+          /* best effort — the next poll reconciles */
+        });
+    }
   };
 
   const fetchReviews = async (withSync: boolean) => {
@@ -598,8 +620,16 @@ function ReviewsInner() {
     }
   }
 
-  function responseBadge(status?: string) {
+  function responseBadge(status?: string, googleState?: string | null) {
     const base = "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide";
+    // Google moderates replies: "posted" in Sayvors only means Google accepted
+    // the write. Show the moderation state until Google approves it.
+    if (status === "posted" && googleState === "pending") {
+      return <span className={`${base} bg-amber-100 text-amber-700`}>{rv.badges.moderating}</span>;
+    }
+    if (status === "posted" && googleState === "rejected") {
+      return <span className={`${base} bg-red-100 text-red-700`}>{rv.badges.rejectedByGoogle}</span>;
+    }
     if (status === "posted") return <span className={`${base} bg-emerald-100 text-emerald-700`}>{rv.badges.published}</span>;
     if (status === "pending_approval") return <span className={`${base} bg-amber-100 text-amber-700`}>{rv.badges.pending}</span>;
     if (status === "failed") return <span className={`${base} bg-red-100 text-red-700`}>{rv.badges.failed}</span>;
@@ -1711,7 +1741,7 @@ function ReviewsInner() {
                             ? dt.newDraft
                             : dt.yourResponse}
                         </p>
-                        {responseBadge(active.status)}
+                        {responseBadge(active.status, active.google_reply_state)}
                         <span className="flex-1" />
                         {editingResponse === active.id ? null : active.replyId ? (
                           <button
@@ -2170,6 +2200,7 @@ function mapInsights(raw: unknown, channelNames: Record<string, string>, fallbac
       // "sends this back for approval" hint never rendered.
       status: typeof r.reply_status === "string" ? r.reply_status : undefined,
       replyId: typeof r.reply_id === "string" ? r.reply_id : undefined,
+      google_reply_state: typeof r.reply_state === "string" ? r.reply_state : null,
     };
   });
 }

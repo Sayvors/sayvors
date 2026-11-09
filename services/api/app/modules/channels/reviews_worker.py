@@ -32,7 +32,7 @@ from .google_reviews import GoogleReview, GoogleReviewsClient, GoogleReviewsErro
 from .models import AutoReplyConfig, Channel, ChannelMessage, ReviewReply
 from ..analytics.models import GoogleQuestionAnswer
 from .review_reply import generate_auto_reply
-from ..notifications.service import notify
+from ..notifications.service import MAX_PER_SYNC, notify
 from .service import decrypt_token, encrypt_message_content
 
 logger = logging.getLogger(__name__)
@@ -421,6 +421,7 @@ def _save_reply_row(
     reply_text: str,
     status: str,
     error: str | None = None,
+    google_reply_state: str | None = None,
 ) -> None:
     """Write `status` onto the resumed failed row in place, or insert a new row."""
     if row is not None:
@@ -432,6 +433,7 @@ def _save_reply_row(
         # A fresh draft was generated to get here — count it.
         row.generation_attempt = (row.generation_attempt or 1) + 1
         row.error = error
+        row.google_reply_state = google_reply_state
         return
     db.add(
         ReviewReply(
@@ -443,6 +445,7 @@ def _save_reply_row(
             reply_text=reply_text,
             status=status,
             error=error,
+            google_reply_state=google_reply_state,
         )
     )
 
@@ -512,6 +515,9 @@ async def _adopt_existing_reply(db: AsyncSession, channel: Channel, review) -> b
     latest.error = None
     latest.reply_external_id = external_id
     latest.replied_at = reply_updated_at
+    latest.google_reply_state = (
+        (getattr(review, "reply_state", None) or "approved").lower()
+    )
     await _store_reply_message(
         db, channel, review.review_id, review.reviewer_name, latest,
         status="read", handled_by="human",
@@ -655,8 +661,12 @@ async def _backfill_existing_replies(
     return adopted
 
 
-async def _store_inbound_review(db: AsyncSession, channel_id: str, review) -> None:
-    """Mirror the inbound review as a ChannelMessage so the UI can show it."""
+async def _store_inbound_review(db: AsyncSession, channel_id: str, review) -> bool:
+    """Mirror the inbound review as a ChannelMessage so the UI can show it.
+
+    Returns True only when this call created the row — callers use it to
+    count genuinely-new reviews so notifications never fire on replays.
+    """
     import uuid
 
     # The unique index on platform_message_id is global, so the existence
@@ -669,7 +679,7 @@ async def _store_inbound_review(db: AsyncSession, channel_id: str, review) -> No
         .limit(1)
     )
     if existing.scalar_one_or_none():
-        return
+        return False
     from .service import categorize_message as _categorize
     from .service import encrypt_contact_phone, hash_contact_phone
 
@@ -704,6 +714,7 @@ async def _store_inbound_review(db: AsyncSession, channel_id: str, review) -> No
     )
     try:
         await db.commit()
+        return True
     except IntegrityError:
         # Lost a race with another poller between the check and the insert.
         # The review is already mirrored by the winner; roll back so this
@@ -712,6 +723,7 @@ async def _store_inbound_review(db: AsyncSession, channel_id: str, review) -> No
         logger.debug(
             "duplicate inbound review %s ignored", review.review_id[:64]
         )
+        return False
 
 
 async def _store_reply_message(
@@ -1122,18 +1134,23 @@ async def _refresh_edited_review_reply(
         and review.rating >= config.min_rating_auto
     )
     status = "pending_approval"
+    reply_state = None
     if autopost and client is not None:
         try:
             await client.reply_to_review(review.review_id, reply_text)
-            if not await client.confirm_reply_live(review.review_id):
+            state = await client.read_reply_state(review.review_id)
+            reply_state = state["state"]
+            if reply_state == "rejected":
                 raise GoogleReviewsError(
-                    "Google accepted the reply but it is not showing on the listing"
+                    "Google rejected the reply"
+                    + (f": {state['policy_violation']}" if state["policy_violation"] else "")
                 )
         except GoogleReviewsError as e:
             _save_reply_row(
                 db, failed_row, channel.id, review.review_id,
                 review.rating, review.text, review.reviewer_name,
                 reply_text, "failed", str(e)[:2000],
+                google_reply_state=reply_state,
             )
             await notify(
                 db, channel.user_id, "reply_failed",
@@ -1148,7 +1165,7 @@ async def _refresh_edited_review_reply(
     _save_reply_row(
         db, failed_row, channel.id, review.review_id,
         review.rating, review.text, review.reviewer_name,
-        reply_text, status,
+        reply_text, status, google_reply_state=reply_state,
     )
     if status == "posted":
         posted_row = (
@@ -1199,7 +1216,24 @@ async def _handle_fetched_review(
     checks), which is what makes sweep re-processing safe.
     """
     stats["reviews"] += 1
-    await _store_inbound_review(db, channel.id, review)
+    if await _store_inbound_review(db, channel.id, review):
+        stats["new"] += 1
+        # One bell per genuinely-new review, capped per pass so a big
+        # backfill (connect import, sweep heal) can't flood the feed —
+        # beyond the cap the sync_completed summary still counts them.
+        if stats["new"] <= MAX_PER_SYNC:
+            reviewer = review.reviewer_name or "a customer"
+            await notify(
+                db, channel.user_id, "review_pulled",
+                f"New {review.rating}-star review from {reviewer}",
+                (review.text or "").strip()[:200] or None,
+                data={
+                    "review_id": review.review_id,
+                    "rating": review.rating,
+                    "listing": channel.display_name or "",
+                },
+                href="/dashboard/reviews",
+            )
     # Analytics events run before the replied-check so content
     # changes on already-answered reviews (reviewer edits) still
     # reach the consumer. The enqueue is content-gated, so
@@ -1333,11 +1367,15 @@ async def _handle_fetched_review(
         or needs_review
     )
     if not needs_approval:
+        reply_state = None
         try:
             await client.reply_to_review(review.review_id, reply_text)
-            if not await client.confirm_reply_live(review.review_id):
+            state = await client.read_reply_state(review.review_id)
+            reply_state = state["state"]
+            if reply_state == "rejected":
                 raise GoogleReviewsError(
-                    "Google accepted the reply but it is not showing on the listing"
+                    "Google rejected the reply"
+                    + (f": {state['policy_violation']}" if state["policy_violation"] else "")
                 )
             stats["replied"] += 1
         except GoogleReviewsError as e:
@@ -1346,6 +1384,7 @@ async def _handle_fetched_review(
                 db, failed_row, channel.id, review.review_id,
                 review.rating, review.text, review.reviewer_name,
                 reply_text, "failed", str(e)[:2000],
+                google_reply_state=reply_state,
             )
             await notify(
                 db, channel.user_id, "reply_failed",
@@ -1359,7 +1398,7 @@ async def _handle_fetched_review(
         _save_reply_row(
             db, failed_row, channel.id, review.review_id,
             review.rating, review.text, review.reviewer_name,
-            reply_text, "posted",
+            reply_text, "posted", google_reply_state=reply_state,
         )
         await notify(
             db, channel.user_id, "reply_posted",
@@ -1390,7 +1429,7 @@ async def _handle_fetched_review(
 
 async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyConfig) -> dict:
     """Poll one Google Reviews channel and auto-reply to new reviews."""
-    stats = {"reviews": 0, "replied": 0, "queued": 0, "skipped": 0, "adopted": 0, "errors": 0}
+    stats = {"reviews": 0, "new": 0, "replied": 0, "queued": 0, "skipped": 0, "adopted": 0, "errors": 0}
     # Captured before any rollback: after rollback(), reading channel.id
     # triggers a lazy load that raises MissingGreenlet in a sync logging call.
     channel_id = channel.id
@@ -1499,6 +1538,17 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                 if prior + 1 >= PERMISSION_FAILURES_BEFORE_EXPIRED:
                     await _mark_channel_expired(db, channel, str(e))
                     await db.commit()
+            # Tell the tenant the sync broke (Syncs tab). Backoff and the
+            # health machinery throttle how often this can fire; a
+            # notification must never mask the original error, so re-raise
+            # regardless of whether the insert succeeded.
+            await notify(
+                db, channel.user_id, "sync_failed",
+                "Google review sync failed",
+                str(e)[:300],
+                data={"error": f"google_{e.status_code}"},
+                href="/dashboard/reviews",
+            )
             raise
 
         await _mark_reviews_seen(db, channel, reviews)
@@ -1570,6 +1620,20 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                     "Removal sweep failed for channel %s: %s", channel.id, e
                 )
 
+        # Sync activity for the Notifications page: only a pass that
+        # actually imported something new announces itself — the steady
+        # 60s "nothing new" heartbeat would be 1440 bells a day per
+        # channel. Healed sweep reviews count too: they are imports.
+        if stats["new"]:
+            listing = channel.display_name or location_id
+            await notify(
+                db, channel.user_id, "sync_completed",
+                f"{stats['new']} new review{'s' if stats['new'] != 1 else ''} synced from Google",
+                None,
+                data={"new_reviews": stats["new"], "listing": listing},
+                href="/dashboard/reviews",
+            )
+
         # Google discontinued the My Business Q&A API on 2025-11-03. There
         # is no replacement; every native call now returns 404. Keep any
         # previously stored questions read-only and never poll Google again.
@@ -1598,7 +1662,7 @@ async def _poll_one_channel(
     """
     from ...database import async_session
 
-    stats = {"channels": 0, "reviews": 0, "replied": 0, "queued": 0, "skipped": 0, "adopted": 0, "errors": 0}
+    stats = {"channels": 0, "reviews": 0, "new": 0, "replied": 0, "queued": 0, "skipped": 0, "adopted": 0, "errors": 0}
 
     async with semaphore:
         async with async_session() as session:
@@ -1629,7 +1693,7 @@ async def _poll_one_channel(
                 stats["channels"] += 1
                 try:
                     channel_stats = await process_channel(session, channel, config)
-                    for k in ("reviews", "replied", "queued", "skipped", "adopted", "errors"):
+                    for k in ("reviews", "new", "replied", "queued", "skipped", "adopted", "errors"):
                         stats[k] += channel_stats[k]
                 except Exception as e:
                     # Clean the failed transaction before touching the model
@@ -1674,7 +1738,7 @@ async def poll_once() -> dict:
     """
     from ...database import async_session
 
-    totals = {"channels": 0, "reviews": 0, "replied": 0, "queued": 0, "skipped": 0, "adopted": 0, "errors": 0}
+    totals = {"channels": 0, "reviews": 0, "new": 0, "replied": 0, "queued": 0, "skipped": 0, "adopted": 0, "errors": 0}
     now = datetime.now(timezone.utc)
     due_before = now - timedelta(seconds=settings.GOOGLE_REVIEWS_POLL_INTERVAL_SECONDS)
 
@@ -1713,7 +1777,7 @@ async def poll_once() -> dict:
             logger.error("Poll task failed for channel %s: %r", ch_id, result, exc_info=result)
             totals["errors"] += 1
         else:
-            for k in ("channels", "reviews", "replied", "queued", "skipped", "adopted", "errors"):
+            for k in ("channels", "reviews", "new", "replied", "queued", "skipped", "adopted", "errors"):
                 totals[k] += result[k]
 
     return totals

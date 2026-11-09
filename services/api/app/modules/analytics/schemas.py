@@ -120,6 +120,7 @@ class ReviewInsightItem(BaseModel):
     reply_id: str | None = None
     reply_text: str | None = None
     reply_status: str | None = None
+    reply_state: str | None = None
     # The live reply currently published on Google, kept separately from the
     # latest row so an edit-created draft cannot hide the wording that is
     # already public.

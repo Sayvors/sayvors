@@ -1016,6 +1016,7 @@ export interface ReviewReplyDTO {
   reviewer_name: string | null;
   reply_text: string;
   status: string;
+  google_reply_state?: string | null;
   generation_attempt?: number;
   error: string | null;
   created_at: string;
@@ -1058,6 +1059,7 @@ export interface VerifyPostedResult {
   checked: number;
   confirmed: number;
   corrected: number;
+  healed?: number;
 }
 
 export function verifyPostedReplies(channelId: string): Promise<VerifyPostedResult> {

@@ -26,6 +26,7 @@ from ..channels.google_reviews import GoogleReviewsClient, GoogleReviewsError
 from ..channels.models import Channel
 from ..channels.service import decrypt_token
 from ..outbox.service import enqueue_event
+from ..notifications.service import notify
 from .models import LocationDailyMetric, SearchKeywordStat
 
 logger = logging.getLogger(__name__)
@@ -101,6 +102,10 @@ async def _sync_channel(channel: Channel) -> int:
             search_totals[day] = search_totals.get(day, 0) + int(value)
 
     days_touched: set = set()
+    # Days with no prior row = genuinely new data. Steady-state re-syncs of
+    # already-known days stay silent; only a new day rings the bell, so the
+    # feed shows at most one metrics notification per channel per day.
+    new_days: set = set()
     async with async_session() as db:
         for metric, dated_values in series.items():
             column = _METRIC_COLUMNS.get(metric)
@@ -122,6 +127,7 @@ async def _sync_channel(channel: Channel) -> int:
                         user_id=channel.user_id,
                         date=day,
                     )
+                    new_days.add(day)
                 setattr(row, column, int(value))
                 if day in search_totals:
                     extra = dict(row.extra) if isinstance(row.extra, dict) else {}
@@ -149,6 +155,7 @@ async def _sync_channel(channel: Channel) -> int:
                     user_id=channel.user_id,
                     date=day,
                 )
+                new_days.add(day)
             extra = dict(row.extra) if isinstance(row.extra, dict) else {}
             extra["impressions_search"] = value
             row.extra = extra
@@ -196,6 +203,38 @@ async def _sync_channel(channel: Channel) -> int:
                     },
                 },
                 topic="metrics-events",
+            )
+        # One bell per pass that imported genuinely-new days — the summary
+        # shows the latest day's numbers so the merchant can see the sync
+        # actually brought data. A first-ever connect collapses ~30 days
+        # into this single notification instead of one per day.
+        if new_days:
+            latest = max(new_days)
+
+            def _val(metric: str) -> int:
+                for day, value in series.get(metric, []):
+                    if day == latest:
+                        return int(value)
+                return 0
+
+            impressions = (
+                _val("BUSINESS_IMPRESSIONS_DESKTOP_MAPS")
+                + _val("BUSINESS_IMPRESSIONS_MOBILE_MAPS")
+                + int(search_totals.get(latest, 0))
+            )
+            await notify(
+                db,
+                channel.user_id,
+                "metrics_synced",
+                f"{len(new_days)} new day{'s' if len(new_days) != 1 else ''} of Google profile metrics synced",
+                (
+                    f"Impressions {impressions} · Calls {_val('CALL_CLICKS')}"
+                    f" · Website clicks {_val('WEBSITE_CLICKS')}"
+                    f" · Directions {_val('BUSINESS_DIRECTION_REQUESTS')}"
+                    f" — latest day {latest.isoformat()}"
+                ),
+                data={"days": len(new_days), "listing": channel.display_name or ""},
+                href="/dashboard/growth",
             )
         await db.commit()
     return len(days_touched)

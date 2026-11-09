@@ -46,7 +46,7 @@ async def test_discovered_flags_edited_review_and_notifies_once(
     ))
     await db.commit()
 
-    async def _fake_enrich(rating, text, reviewer_name, tenant_id=None):
+    async def _fake_enrich(rating, text, reviewer_name, tenant_id=None, **kwargs):
         return {"sentiment": "negative", "sentiment_score": -0.6,
                 "topics": [], "products": [], "problems": []}
 
@@ -112,7 +112,7 @@ async def test_discovered_backfill_is_not_an_edit(db, user_id, channel_id, monke
     ))
     await db.commit()
 
-    async def _fake_enrich(rating, text, reviewer_name, tenant_id=None):
+    async def _fake_enrich(rating, text, reviewer_name, tenant_id=None, **kwargs):
         return {"sentiment": "positive", "sentiment_score": 0.5,
                 "topics": [], "products": [], "problems": []}
 

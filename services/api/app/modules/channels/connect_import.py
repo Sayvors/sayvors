@@ -599,17 +599,77 @@ async def _generate_one(session_id: str, item_id: str, semaphore: asyncio.Semaph
                         db,
                         review_id=item.review_id,
                     )
-                    reply = ReviewReply(
-                        channel_id=channel.id,
-                        review_id=item.review_id,
-                        rating=item.rating,
-                        review_text=item.review_text,
-                        reviewer_name=item.reviewer_name,
-                        reply_text=text,
-                        status="pending_approval",
-                        generation_attempt=1,
-                    )
-                    db.add(reply)
+                    # One draft per review, ever. A retry after an interrupted
+                    # generation used to stack a fresh pending row on top of the
+                    # one the first pass already wrote — the merchant saw more
+                    # drafts than reviews (7 drafts from 5 reviews) and the
+                    # approval queue filled with duplicates of one review.
+                    posted = (
+                        await db.execute(
+                            select(ReviewReply)
+                            .where(
+                                ReviewReply.channel_id == channel.id,
+                                ReviewReply.review_id == item.review_id,
+                                ReviewReply.status == "posted",
+                            )
+                            .limit(1)
+                        )
+                    ).scalar_one_or_none()
+                    if posted is not None:
+                        # The review was answered between passes; a draft would
+                        # double-reply on publish.
+                        item.reply_id = posted.id
+                        item.status = "already_replied"
+                        item.error = None
+                        await _log(
+                            db, session.id,
+                            f"{item.reviewer_name or 'A reviewer'} was already answered on Google.",
+                            "success",
+                        )
+                        await db.commit()
+                        return
+                    existing = (
+                        await db.execute(
+                            select(ReviewReply)
+                            .where(
+                                ReviewReply.channel_id == channel.id,
+                                ReviewReply.review_id == item.review_id,
+                                ReviewReply.status == "pending_approval",
+                            )
+                            .order_by(ReviewReply.created_at.asc())
+                            .limit(1)
+                        )
+                    ).scalar_one_or_none()
+                    if existing is not None:
+                        # Reuse: refresh the text in place and keep a single
+                        # pending row per review.
+                        existing.reply_text = text
+                        existing.error = None
+                        reply = existing
+                    else:
+                        reply = ReviewReply(
+                            channel_id=channel.id,
+                            review_id=item.review_id,
+                            rating=item.rating,
+                            review_text=item.review_text,
+                            reviewer_name=item.reviewer_name,
+                            reply_text=text,
+                            status="pending_approval",
+                            generation_attempt=1,
+                        )
+                        db.add(reply)
+                        # A stale failed row for the same review would sit in
+                        # the failed tab next to the fresh draft — retire it
+                        # (the approve flow collapses siblings the same way).
+                        await db.execute(
+                            update(ReviewReply)
+                            .where(
+                                ReviewReply.channel_id == channel.id,
+                                ReviewReply.review_id == item.review_id,
+                                ReviewReply.status == "failed",
+                            )
+                            .values(status="rejected", error="Replaced by a new draft")
+                        )
                     await db.flush()
                     item.reply_id = reply.id
                     item.status = "draft_ready"
@@ -783,8 +843,14 @@ async def _publish_one(session_id: str, item_id: str, semaphore: asyncio.Semapho
                 if not access_token:
                     await client.refresh_access_token()
                 await client.reply_to_review(reply.review_id, reply.reply_text)
-                if not await client.confirm_reply_live(reply.review_id):
-                    raise GoogleReviewsError("Reply did not appear on Google", 502)
+                state = await client.read_reply_state(reply.review_id)
+                if state["state"] == "rejected":
+                    raise GoogleReviewsError(
+                        "Google rejected the reply"
+                        + (f": {state['policy_violation']}" if state["policy_violation"] else ""),
+                        502,
+                    )
+                reply.google_reply_state = state["state"]
                 reply.status = "posted"
                 reply.error = None
                 item.status = "published"

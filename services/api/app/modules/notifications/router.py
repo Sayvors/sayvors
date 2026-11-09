@@ -66,7 +66,7 @@ def _to_item(n: Notification) -> NotificationItem:
 # Category tabs (the standard notification-center pattern): the feed never
 # loads everything at once — one category per query, counts up front.
 CATEGORIES: dict[str, list[str]] = {
-    "syncs": ["sync_completed", "sync_failed"],
+    "syncs": ["sync_completed", "sync_failed", "metrics_synced"],
     "reviews": ["review_pulled", "review_edited"],
     "replies": ["reply_posted", "reply_failed"],
 }

@@ -303,7 +303,9 @@ function AttentionQueue() {
             severity: "high",
             title: `Rating dipped ${Math.abs(delta)}★ this month`,
             detail: "Check what changed and respond fast",
-            href: "/dashboard/reviews",
+            // The rating trend and distribution charts live in Analytics;
+            // /reviews is a management list, not the diagnosis surface.
+            href: "/dashboard/analytics",
           });
         }
         // Only claim a field is missing when Google actually answered the

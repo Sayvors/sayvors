@@ -4,7 +4,8 @@ Phase-1 channel integration for Sayvors auto-reply.
 
 Google sends no webhooks for reviews, so new reviews are discovered by
 polling `accounts.locations.reviews.list` (see reviews_worker.py) and
-replies are posted via `reviews/{id}:replyUpdate`.
+replies are posted via `accounts.locations.reviews.updateReply`
+(`PUT reviews/{id}/reply` — the method is `/reply`, not `:replyUpdate`).
 
 Required OAuth scope: https://www.googleapis.com/auth/business.manage
 """
@@ -122,6 +123,9 @@ class GoogleReview:
     # response the business had already written on the listing.
     reply_text: str | None = None
     reply_updated_at: datetime | None = None
+    # Google's moderation state for that reply: "pending" | "approved" |
+    # "rejected" | None. Read from reviewReply.reviewReplyState.
+    reply_state: str | None = None
     # Photos the reviewer attached. Google returns these as
     # `reviewMediaItems: [{thumbnailUrl, videoUrl, thumbnailLabel}]`.
     media: list[dict] = field(default_factory=list)
@@ -756,6 +760,7 @@ class GoogleReviewsClient:
                         has_reply=bool(reply),
                         reply_text=((reply.get("comment") or "").strip() or None),
                         reply_updated_at=reply_updated,
+                        reply_state=(reply.get("reviewReplyState") or "").lower() or None,
                         reviewer_photo_url=_photo_url((r.get("reviewer") or {}).get("profilePhotoUrl")),
                         media=_parse_media(r.get("reviewMediaItems")),
                     )
@@ -768,17 +773,24 @@ class GoogleReviewsClient:
         return all_reviews
 
     async def reply_to_review(self, review_id: str, comment: str) -> None:
-        """Post (or update) the merchant reply on a review."""
-        url = f"{GBP_REVIEWS_API}/{review_id}:replyUpdate"
+        """Post (or update) the merchant reply on a review.
+
+        `accounts.locations.reviews.updateReply` transcodes to
+        `PUT .../reviews/{name}/reply` with a `ReviewReply` body — the method
+        segment is `/reply`, not `:replyUpdate`. Google answers the wrong
+        segment with a bare 404 HTML page, which is what production showed.
+        """
+        url = f"{GBP_REVIEWS_API}/{review_id}/reply"
         resp = await self._authed_request("PUT", url, json={"comment": comment})
         if resp.status_code not in (200, 201):
             raise GoogleReviewsError(
-                f"replyUpdate failed ({resp.status_code}): {resp.text[:300]}",
+                f"updateReply failed ({resp.status_code}): {resp.text[:300]}",
                 resp.status_code,
             )
 
     async def delete_reply(self, review_id: str) -> None:
-        url = f"{GBP_REVIEWS_API}/{review_id}:deleteReply"
+        """`accounts.locations.reviews.deleteReply` — same `/reply` segment."""
+        url = f"{GBP_REVIEWS_API}/{review_id}/reply"
         resp = await self._authed_request("DELETE", url)
         if resp.status_code not in (200, 204):
             raise GoogleReviewsError(
@@ -803,20 +815,35 @@ class GoogleReviewsClient:
         data = resp.json()
         return data if isinstance(data, dict) else {}
 
-    async def confirm_reply_live(self, review_resource: str, attempts: int = 3) -> bool:
-        """True only if Google actually shows a reply on the review.
+    async def read_reply_state(
+        self, review_resource: str, attempts: int = 5
+    ) -> dict:
+        """Read Google's moderation state for a reply.
 
-        Never trust the write call alone: a 200 from ``:replyUpdate`` is
-        followed by a read, retried a few times to ride out replication
-        lag. ``posted`` must mean live — anything else is a lie in the UI.
+        Google moderates review replies (``ReviewReplyState``, live
+        2026-04-01): a 2xx from ``updateReply`` only *submits* the reply,
+        and moderation can keep it unreadable far longer than any read-back
+        window. The write's 2xx is therefore authoritative that Google
+        accepted it — a reply that is not readable yet is NOT a failure.
+
+        Returns ``{"state": ..., "policy_violation": ...}`` where state is
+        ``approved`` (live), ``pending`` (accepted, awaiting moderation),
+        ``rejected`` (moderation refused it), or ``absent`` (not readable
+        yet — replication/moderation lag). Only ``rejected`` means the
+        reply is not on Google; callers must not fail on the others.
         """
         for attempt in range(max(1, attempts)):
             payload = await self.get_review(review_resource)
-            if payload and payload.get("reviewReply"):
-                return True
+            reply = (payload or {}).get("reviewReply")
+            if reply:
+                state = (reply.get("reviewReplyState") or "APPROVED").lower()
+                return {
+                    "state": state,
+                    "policy_violation": reply.get("policyViolation"),
+                }
             if attempt < attempts - 1:
-                await asyncio.sleep(2)
-        return False
+                await asyncio.sleep(3)
+        return {"state": "absent", "policy_violation": None}
 
     # ── Questions & Answers (Google Business Profile Q&A v4) ──────────────
 

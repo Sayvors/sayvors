@@ -17,7 +17,7 @@ async def test_discovered_forged_user_id_uses_channel_owner(db, user_id, channel
     """A forged payload user_id must NOT re-attribute the review (B3)."""
     from app.modules.analytics.models import ReviewInsight
 
-    async def _fake_enrich(rating, text, reviewer_name, tenant_id=None):
+    async def _fake_enrich(rating, text, reviewer_name, tenant_id=None, **kwargs):
         assert tenant_id == user_id  # enrichment runs in the owner's context
         return {"sentiment": "positive", "sentiment_score": 0.5,
                 "topics": [], "products": [], "problems": []}
