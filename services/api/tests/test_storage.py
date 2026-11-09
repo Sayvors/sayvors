@@ -33,6 +33,36 @@ def test_media_roundtrip_local(_dirs, tmp_path):
     assert not (tmp_path / "uploads" / "media" / "u1" / key).exists()
 
 
+def test_media_bytes_from_url_reads_sayvors_url_from_storage(_dirs):
+    """The publisher resolves its own /media-files URL back to bytes, so a
+    banner needs no public bucket and no self-HTTP fetch."""
+    key, _ = storage.put_media("u1", "banner.png", b"png-bytes", "image/png")
+    url = storage.local_media_url("https://api.example.com", "u1", key)
+    data, ctype = storage.media_bytes_from_url("u1", url)
+    assert data == b"png-bytes"
+    assert ctype == "image/png"
+
+
+def test_integrations_bootstrap_restores_repo_root_path(monkeypatch):
+    """Regression: starting the API from services/api left the repo-root
+    `integrations` package off sys.path, so even local-disk media uploads
+    died with ModuleNotFoundError: No module named 'integrations'."""
+    import sys
+    from pathlib import Path
+
+    root = next(
+        p for p in Path(storage.__file__).resolve().parents
+        if (p / "integrations" / "storage" / "s3.py").is_file()
+    )
+    monkeypatch.setattr(sys, "path", [p for p in sys.path if p != str(root)])
+    for name in ("integrations", "integrations.storage", "integrations.storage.s3"):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+
+    storage._ensure_integrations_importable()
+    assert str(root) in sys.path
+    import integrations.storage.s3  # noqa: F401  (must not raise)
+
+
 def test_docs_roundtrip_local(_dirs, tmp_path):
     storage.put_doc("bank1", "doc1.txt", b"hello world")
     assert storage.get_doc("bank1", "doc1.txt") == b"hello world"

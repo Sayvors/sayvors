@@ -22,10 +22,41 @@ a clear error only if actually attempted.
 """
 import logging
 import os
+import sys
 import uuid
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_integrations_importable() -> None:
+    """Make the repo-root ``integrations`` package importable from any cwd.
+
+    The API is normally started as ``uvicorn app.main:app`` from
+    ``services/api``, so the repo root is not on ``sys.path``. This module is
+    the only consumer of ``integrations.storage.s3``; without the bootstrap,
+    ``_media_backend()`` raised ``ModuleNotFoundError: No module named
+    'integrations'`` and *every* storage operation failed — even the
+    local-disk fallback, which does not use S3 at all.
+    """
+    try:
+        import integrations.storage.s3  # noqa: F401
+        return
+    except ModuleNotFoundError:
+        pass
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "integrations" / "storage" / "s3.py").is_file():
+            root = str(parent)
+            if root not in sys.path:
+                # Append, not insert: never shadow an installed package.
+                sys.path.append(root)
+            return
+    logger.warning(
+        "integrations.storage.s3 could not be located; S3 storage is unavailable"
+    )
+
+
+_ensure_integrations_importable()
 
 
 def _settings():
