@@ -30,6 +30,10 @@ NEUTRAL_WORDS = frozenset({
     "product", "products", "service", "services", "item", "items", "thing",
     "things", "order", "orders", "place", "store", "company", "business",
     "app", "apps", "experience",
+    # Placeholder words models emit instead of null. They carry no meaning and
+    # must never be treated as a product or complaint subject — doing so
+    # produced "Mentioned item 'null' matches nothing in the business domain".
+    "null", "none", "undefined", "nil", "nan", "n/a",
     # Arabic generic nouns
     "خدمة", "خدمات", "منتج", "منتجات", "سلعة", "بضاعة", "شيء",
     # Urdu generic nouns

@@ -109,6 +109,22 @@ def _salvage_analysis_json(raw: str) -> dict:
     return data
 
 
+_PLACEHOLDER_VALUES = {"null", "none", "undefined", "n/a", "nil", "nan", ""}
+
+
+def _clean_placeholder(value) -> str | None:
+    """Return None for the placeholder words models emit instead of null.
+
+    A quoted ``"null"`` is the common failure: JSON-wise it is a real string,
+    so every downstream check treats the word "null" as a product name or a
+    complaint fact.
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    return None if text.lower() in _PLACEHOLDER_VALUES else text
+
+
 async def analyze_review(
     review_text: str,
     rating: int,
@@ -168,6 +184,15 @@ async def analyze_review(
         data["intent"] = []
     if not data.get("emotion"):
         data["emotion"] = "unknown"
+
+    # Placeholder strings are not data. A model that answers `null` or `none`
+    # as a quoted string used to smuggle the literal word "null" into
+    # product_reference and into complaint facts, which then surfaced as
+    # "Mentioned item 'null' matches nothing" and
+    # "Unaddressed complaint facts: complaint subject (null)".
+    for field in ("issue_type", "product_reference", "product_reference_en",
+                  "customer_request", "language"):
+        data[field] = _clean_placeholder(data.get(field))
 
     analysis = ReviewAnalysis(
         sentiment=data.get("sentiment", "neutral"),

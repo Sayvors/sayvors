@@ -426,9 +426,53 @@ def test_generation_salvage_partial_json():
     assert _salvage_response_text("not json at all") == ""
 
 
+def test_generation_parses_doubled_braces():
+    """Models wrap the contract in extra braces; that is not a failure.
+
+    Regression: `{{"response_text": "..."}}` failed json.loads, the salvage
+    regex then swallowed the closing quote and braces into the reply, and the
+    validator rejected it as "ends mid-sentence" on all three attempts.
+    """
+    import json
+
+    from app.modules.review_engine.generator import (
+        _parse_json_payload,
+        _salvage_response_text,
+    )
+
+    raw = '{{"response_text": "Thanks for testing. We reply quickly."}}'
+    parsed = _parse_json_payload(raw)
+    assert parsed == {"response_text": "Thanks for testing. We reply quickly."}
+    salvaged = _salvage_response_text(raw)
+    assert salvaged == "Thanks for testing. We reply quickly."
+    assert not salvaged.endswith('"')
+    # A fenced object still parses.
+    assert _parse_json_payload(
+        '```json\n' + json.dumps({"response_text": "Fenced."}) + '\n```'
+    ) == {"response_text": "Fenced."}
+
+
+def test_placeholder_product_reference_is_not_a_fact():
+    """A quoted "null" must never become a product name or complaint fact."""
+    from app.modules.review_engine.relevance import NEUTRAL_WORDS
+    from app.modules.review_engine.understanding import _clean_placeholder
+
+    assert _clean_placeholder("null") is None
+    assert _clean_placeholder(" none ") is None
+    assert _clean_placeholder("Acme Coffee") == "Acme Coffee"
+    # Existing stored rows may already carry the word; relevance must ignore it.
+    assert "null" in NEUTRAL_WORDS and "none" in NEUTRAL_WORDS
+
+
+def test_reply_ending_in_arabic_punctuation_is_complete():
+    """Arabic '؟' and a closing quote end a sentence."""
+    from app.modules.review_engine.validator import _SENTENCE_ENDERS
+
+    for char in (".", "!", "?", "…", "؟", ")", '"'):
+        assert char in _SENTENCE_ENDERS
+
+
 def test_generation_salvage_valid_json_with_trailing_prose():
-    """A complete JSON object followed by chatty prose must yield the object,
-    not the prose — the validator rejects trailing text as mid-sentence."""
     from app.modules.review_engine.generator import _salvage_response_text
 
     out = _salvage_response_text('{"response_text": "Shukran!"} hope this helps.')

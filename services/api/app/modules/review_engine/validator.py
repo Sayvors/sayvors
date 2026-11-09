@@ -11,6 +11,12 @@ Everything else is an unsupported claim and fails.
 import logging
 import re
 
+# Characters a complete sentence can legitimately end with, including the
+# Arabic question mark (؟), Urdu full stop (۔) and a closing quote/bracket.
+# Without these, a correct reply ending in `"` or `)` was reported as
+# "ends mid-sentence — likely truncated" and regenerated three times.
+_SENTENCE_ENDERS = ".!?…؟۔)\"'”’»"
+
 from .claims import extract_claims, ground_claims
 from .schemas import (
     ClaimVerdict,
@@ -373,7 +379,7 @@ def validate_response(
     elif len(stripped) < 40:
         complete_ok = False
         problems.append(f"Incomplete response: too short to be complete ({len(stripped)} chars).")
-    elif stripped[-1] not in ".!?…":
+    elif stripped[-1] not in _SENTENCE_ENDERS:
         complete_ok = False
         problems.append("Incomplete response: ends mid-sentence — likely truncated.")
     checks["response_completeness"] = complete_ok
