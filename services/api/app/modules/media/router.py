@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFil
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_current_user, get_db, require_admin
+from ...core.storage import public_media_base
 from ...core.upstream_errors import upstream_http_error
 from ..users.models import User
 from . import service
@@ -47,7 +48,7 @@ async def upload_media_file(
             file.filename or "upload",
             file.content_type,
             data,
-            str(request.base_url),
+            public_media_base(str(request.base_url)),
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

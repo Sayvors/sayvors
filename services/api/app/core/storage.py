@@ -397,6 +397,21 @@ def get_media(user_id: str, storage_key: str) -> bytes:
     return target.read_bytes()
 
 
+def public_media_base(request_base: str | None = None) -> str:
+    """Origin used for public media URLs handed to providers.
+
+    Google's Local Posts API fetches post images from ``sourceUrl`` itself, so
+    the URL must be reachable from the public internet — it cannot be an
+    internal ``http://`` host that only the API container can see. Prefer the
+    configured PUBLIC_API_URL when it is a real https origin; otherwise fall
+    back to the request's own origin (dev / uncon­figured deployments).
+    """
+    configured = (_settings().PUBLIC_API_URL or "").strip().rstrip("/")
+    if configured.startswith("https://") and "localhost" not in configured:
+        return configured
+    return (request_base or configured or "http://localhost:8000").rstrip("/")
+
+
 def media_bytes_from_url(user_id: str, url: str) -> tuple[bytes, str]:
     """Resolve a stored media URL to ``(bytes, content_type)``.
 

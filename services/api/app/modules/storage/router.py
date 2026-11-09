@@ -21,6 +21,7 @@ from starlette.responses import Response
 
 from ...config import settings
 from ...core.deps import get_current_user, get_db
+from ...core.storage import public_media_base
 from ..rag.models import Databank, Document
 from ..users.models import User
 from ..media import service as media_service
@@ -87,7 +88,7 @@ async def upload_object(
             _safe_filename(file.filename or "upload"),
             file.content_type,
             data,
-            str(request.base_url),
+            public_media_base(str(request.base_url)),
         )
         return ObjectOut(
             key=result["key"], url=result["image_url"], size=result["size"],
@@ -147,7 +148,7 @@ async def update_object(
         if not data:
             raise ValueError("Empty file.")
         result = update_media(tenant_id_of(user), safe_key, data, file.content_type or "")
-        public_url = result.get("url") or f"{str(request.base_url).rstrip('/')}{settings.MEDIA_PUBLIC_PATH}/{tenant_id_of(user)}/{Path(safe_key).name}"
+        public_url = result.get("url") or f"{public_media_base(str(request.base_url))}{settings.MEDIA_PUBLIC_PATH}/{tenant_id_of(user)}/{Path(safe_key).name}"
         return ObjectOut(
             key=safe_key, url=public_url, size=result["size"],
             content_type=result["content_type"], operation="update",

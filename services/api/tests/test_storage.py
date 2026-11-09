@@ -43,6 +43,18 @@ def test_media_bytes_from_url_reads_sayvors_url_from_storage(_dirs):
     assert ctype == "image/png"
 
 
+def test_public_media_base_prefers_configured_public_origin(monkeypatch):
+    """Post images are fetched by Google, so the URL must be a real public
+    origin — never an internal http:// host from request.base_url."""
+    monkeypatch.setattr(settings, "PUBLIC_API_URL", "https://api.sayvors.com/")
+    assert storage.public_media_base("http://internal:8000") == "https://api.sayvors.com"
+
+
+def test_public_media_base_falls_back_to_request_origin(monkeypatch):
+    monkeypatch.setattr(settings, "PUBLIC_API_URL", "http://localhost:8000")
+    assert storage.public_media_base("https://dev-api.sayvors.com/") == "https://dev-api.sayvors.com"
+
+
 def test_integrations_bootstrap_restores_repo_root_path(monkeypatch):
     """Regression: starting the API from services/api left the repo-root
     `integrations` package off sys.path, so even local-disk media uploads

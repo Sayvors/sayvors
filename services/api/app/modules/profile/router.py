@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_current_user, get_db
+from ...core.storage import public_media_base
 from . import business_profile, service
 from .schemas import (
     AvatarSourceUpdateRequest,
@@ -64,7 +65,7 @@ async def upload_avatar(
             file.filename or "avatar",
             file.content_type,
             data,
-            str(request.base_url),
+            public_media_base(str(request.base_url)),
             db,
         )
     except ValueError as e:
@@ -87,7 +88,7 @@ async def upload_cover(
             file.filename or "cover",
             file.content_type,
             data,
-            str(request.base_url),
+            public_media_base(str(request.base_url)),
             db,
         )
     except ValueError as e:
