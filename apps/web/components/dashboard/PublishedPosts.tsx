@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import PlatformMark from "@/components/channels/PlatformMark";
 import GoogleBusinessLogo from "@/components/channels/GoogleBusinessLogo";
 import LogoLoader from "@/components/LogoLoader";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import type { Dict } from "@/lib/i18n/en";
 import {
   QUEUED_STATUSES,
   isRemovableJob,
@@ -33,19 +35,28 @@ type FeedEntry =
 
 type Chip = { label: string; cls: string };
 
-function statusChip(job: PublishJob): Chip {
-  if (job.status === "succeeded") return { label: "Published", cls: "bg-[#e7f8ef] text-[#0c7a43]" };
-  if (job.status === "running") return { label: "Publishing…", cls: "bg-amber-500/15 text-amber-700 dark:text-amber-400" };
-  if (job.status === "failed" || job.status === "dead") return { label: "Failed", cls: "bg-red-500/10 text-red-700 dark:text-red-400" };
+type StatusDict = Dict["publish"]["status"];
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
+
+function statusChip(job: PublishJob, c: StatusDict): Chip {
+  if (job.status === "succeeded") return { label: c.published, cls: "bg-[#e7f8ef] text-[#0c7a43]" };
+  if (job.status === "running") return { label: c.publishing, cls: "bg-amber-500/15 text-amber-700 dark:text-amber-400" };
+  if (job.status === "failed" || job.status === "dead") return { label: c.failed, cls: "bg-red-500/10 text-red-700 dark:text-red-400" };
   if (job.status === "cancelled") {
     // A deleted post was removed from its platform; a cancelled one never
     // went out. Saying "deleted" for both would hide the difference.
     return job.result?.deleted === true
-      ? { label: "Deleted", cls: "bg-ink/[0.05] text-ink/45 dark:bg-fog/[0.07] dark:text-fog/45" }
-      : { label: "Cancelled", cls: "bg-ink/[0.05] text-ink/45 dark:bg-fog/[0.07] dark:text-fog/45" };
+      ? { label: c.deleted, cls: "bg-ink/[0.05] text-ink/45 dark:bg-fog/[0.07] dark:text-fog/45" }
+      : { label: c.cancelled, cls: "bg-ink/[0.05] text-ink/45 dark:bg-fog/[0.07] dark:text-fog/45" };
   }
   if (QUEUED_STATUSES.has(job.status)) {
-    return { label: job.scheduled_at ? "Scheduled" : "Queued", cls: "bg-amber-500/15 text-amber-700 dark:text-amber-400" };
+    return { label: job.scheduled_at ? c.scheduled : c.queued, cls: "bg-amber-500/15 text-amber-700 dark:text-amber-400" };
   }
   return { label: job.status, cls: "bg-ink/[0.05] text-ink/45 dark:bg-fog/[0.07] dark:text-fog/45" };
 }
@@ -53,6 +64,10 @@ function statusChip(job: PublishJob): Chip {
 export default function PublishedPosts({ onPublish }: { onPublish: (date?: string) => void }) {
   const { jobs, error, busy, refresh, displayName, removeJobs, cancelJob, deletableIds } = usePublishJobs();
   const { posts: legacyPosts, error: legacyError, refresh: refreshLegacy } = useLocationPosts();
+  const { t, locale } = useI18n();
+  const p = t.publish;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [armDelete, setArmDelete] = useState(false);
   const [notice, setNotice] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
@@ -103,8 +118,8 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
       res.error
         ? { kind: "err", text: res.error }
         : res.removed === 0
-          ? { kind: "err", text: "None of the selected posts could be removed — they may already be gone." }
-          : { kind: "ok", text: `${res.removed} post${res.removed === 1 ? "" : "s"} removed from the platform or cancelled.` },
+          ? { kind: "err", text: p.removedNone }
+          : { kind: "ok", text: res.removed === 1 ? p.removedOne : fill(p.removedN, { n: fmt(res.removed) }) },
     );
     setChecked(new Set());
     setArmDelete(false);
@@ -116,7 +131,7 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
     setNotice(
       res.error
         ? { kind: "err", text: res.error }
-        : { kind: "ok", text: "Scheduled post cancelled — it will never go out." },
+        : { kind: "ok", text: p.cancelledOk },
     );
     setTimeout(() => setNotice(null), 6000);
   };
@@ -127,9 +142,9 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
       <div className="shrink-0 border-b border-ink/[0.06] bg-white px-6 py-4 dark:border-fog/[0.06] dark:bg-ink">
         <div className="mx-auto flex max-w-6xl flex-wrap items-end justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="text-[19px] font-bold text-ink dark:text-fog">Posts &amp; media</h1>
+            <h1 className="text-[19px] font-bold text-ink dark:text-fog">{p.feedTitle}</h1>
             <p className="mt-0.5 max-w-xl text-[12px] text-ink/45 dark:text-fog/45">
-              Every post you published — Instagram, Facebook, WhatsApp and Google.
+              {p.feedSub}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -142,7 +157,7 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
                 <path d="M12 19V5" strokeLinecap="round" />
                 <path d="M5 12l7-7 7 7" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
-              Publish
+              {p.publish}
             </button>
             <button
               type="button"
@@ -150,8 +165,8 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
                 void refresh();
                 void refreshLegacy();
               }}
-              aria-label="Refresh posts"
-              title="Refresh"
+              aria-label={p.refreshAria}
+              title={p.refreshTitle}
               className="flex h-9 w-9 items-center justify-center rounded-[2px] border border-ink/[0.08] text-ink/45 transition hover:bg-ink/[0.04] hover:text-ink focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:border-fog/[0.1] dark:text-fog/45"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden>
@@ -199,16 +214,16 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
           )}
           {jobs !== null && legacyPosts !== null && list.length === 0 && !feedError && (
             <div className="rounded-[2px] border border-dashed border-ink/[0.12] bg-white px-6 py-14 text-center dark:border-fog/[0.12] dark:bg-ink">
-              <p className="text-[15px] font-bold text-ink dark:text-fog">Nothing published yet</p>
+              <p className="text-[15px] font-bold text-ink dark:text-fog">{p.emptyTitle}</p>
               <p className="mx-auto mt-1 max-w-sm text-[12px] leading-relaxed text-ink/40 dark:text-fog/40">
-                Publish a post to every connected network at once — it lands here with its status.
+                {p.emptyBody}
               </p>
               <button
                 type="button"
                 onClick={() => onPublish()}
                 className="mt-5 rounded-[2px] bg-deep-violet px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90"
               >
-                Publish a post
+                {p.publishCta}
               </button>
             </div>
           )}
@@ -239,7 +254,7 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
         <div className="shrink-0 border-t border-ink/[0.06] bg-white px-6 py-3 dark:border-fog/[0.06] dark:bg-ink">
           <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3">
             <p className="min-w-0 flex-1 text-[12px] font-medium text-ink/55 dark:text-fog/55">
-              {selectedDeletable.length} selected · published posts are deleted from their platform, scheduled ones are cancelled.
+              {fill(p.selectedLine, { n: fmt(selectedDeletable.length) })}
             </p>
             <button
               type="button"
@@ -250,7 +265,7 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
               }}
               className="rounded-[2px] border border-ink/[0.1] px-3 py-1.5 text-[12px] font-semibold text-ink/60 transition hover:bg-ink/[0.04] dark:border-fog/[0.12] dark:text-fog/60"
             >
-              Select all removable
+              {p.selectAll}
             </button>
             {selectedDeletable.length > 0 && (
               <button
@@ -267,7 +282,7 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
                   armDelete ? "bg-[#FF4F6E]" : "bg-deep-violet hover:bg-deep-violet/90"
                 }`}
               >
-                {busy ? "Working…" : armDelete ? `Delete ${selectedDeletable.length} now` : "Delete from platforms"}
+                {busy ? p.working : armDelete ? fill(p.deleteNow, { n: fmt(selectedDeletable.length) }) : p.deleteFrom}
               </button>
             )}
           </div>
@@ -277,19 +292,23 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
   );
 }
 
-function legacyChip(post: LocationPost): Chip {
-  if (post.status === "published") return { label: "Published", cls: "bg-[#e7f8ef] text-[#0c7a43]" };
-  if (post.status === "scheduled") return { label: "Scheduled", cls: "bg-amber-500/15 text-amber-700 dark:text-amber-400" };
-  if (post.status === "failed") return { label: "Failed", cls: "bg-red-500/10 text-red-700 dark:text-red-400" };
-  if (post.status === "archived") return { label: "Archived", cls: "bg-ink/[0.05] text-ink/45 dark:bg-fog/[0.07] dark:text-fog/45" };
-  return { label: "Draft", cls: "bg-ink/[0.05] text-ink/45 dark:bg-fog/[0.07] dark:text-fog/45" };
+function legacyChip(post: LocationPost, c: StatusDict): Chip {
+  if (post.status === "published") return { label: c.published, cls: "bg-[#e7f8ef] text-[#0c7a43]" };
+  if (post.status === "scheduled") return { label: c.scheduled, cls: "bg-amber-500/15 text-amber-700 dark:text-amber-400" };
+  if (post.status === "failed") return { label: c.failed, cls: "bg-red-500/10 text-red-700 dark:text-red-400" };
+  if (post.status === "archived") return { label: c.archived, cls: "bg-ink/[0.05] text-ink/45 dark:bg-fog/[0.07] dark:text-fog/45" };
+  return { label: c.draft, cls: "bg-ink/[0.05] text-ink/45 dark:bg-fog/[0.07] dark:text-fog/45" };
 }
 
 /** A Google post from the old per-branch flow. It never passed through the
  * publishing job queue, so it has no remove/cancel actions — the Google-side
  * copy keeps its own lifecycle. */
 function LegacyPostCard({ post }: { post: LocationPost }) {
-  const chip = legacyChip(post);
+  const { t, locale } = useI18n();
+  const c = t.publish;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
+  const chip = legacyChip(post, c.status);
   const text = post.title ? [post.title, post.description].filter(Boolean).join(" — ") : post.description;
   const hasMetrics = post.views !== null || post.cta_clicks !== null;
   const shownAt = post.published_at ?? post.created_at;
@@ -320,16 +339,16 @@ function LegacyPostCard({ post }: { post: LocationPost }) {
         <span className="mt-auto flex flex-wrap items-center gap-1.5 pt-3">
           {post.status === "scheduled" && post.scheduled_on && (
             <span className="rounded-[2px] bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
-              {new Date(post.scheduled_on).toLocaleDateString()}
+              {new Date(post.scheduled_on).toLocaleDateString(dateLocale)}
             </span>
           )}
           {hasMetrics && (
             <span className="rounded-[2px] bg-ink/[0.05] px-2 py-0.5 text-[10px] font-semibold text-ink/50 dark:bg-fog/[0.07] dark:text-fog/50">
-              {post.views ?? 0} views{post.cta_clicks ? ` · ${post.cta_clicks} clicks` : ""}
+              {fill(c.views, { n: fmt(post.views ?? 0) })}{post.cta_clicks ? fill(c.clicks, { n: fmt(post.cta_clicks) }) : ""}
             </span>
           )}
           <span className="ml-auto shrink-0 text-[10px] text-ink/35 dark:text-fog/35">
-            {new Date(shownAt).toLocaleDateString()}
+            {new Date(shownAt).toLocaleDateString(dateLocale)}
           </span>
         </span>
       </div>
@@ -352,7 +371,12 @@ function PostCard({
   onCancel: () => void;
   busy: boolean;
 }) {
-  const chip = statusChip(job);
+  const { t, locale } = useI18n();
+  const c = t.publish;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
+  const chip = statusChip(job, c.status);
+  const metaLabel = (m: string) => c.methods[m as keyof typeof c.methods]?.label ?? m;
   const platform = job.platform as PlatformKey | null;
   const meta = platform ? PLATFORM_META[platform] : null;
   const removable = isRemovableJob(job);
@@ -365,7 +389,7 @@ function PostCard({
       <div className="relative block aspect-video overflow-hidden bg-ink/[0.04] dark:bg-fog/[0.06]">
         <JobThumb url={job.media_url} platform={platform} />
         <span className="absolute left-2 top-2 rounded-[2px] bg-white/90 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-deep-violet dark:bg-ink/85">
-          {meta?.label ?? "Post"}
+          {meta?.label ?? c.postFallback}
         </span>
         <span className="absolute right-2 top-2 flex flex-col items-end gap-1">
           <span className={`rounded-[2px] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide ${chip.cls}`}>
@@ -373,7 +397,7 @@ function PostCard({
           </span>
           {job.method && (
             <span className="rounded-[2px] bg-deep-violet/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-deep-violet">
-              {METHOD_META[job.method].label}
+              {metaLabel(job.method)}
             </span>
           )}
         </span>
@@ -381,7 +405,7 @@ function PostCard({
       <div className="flex flex-1 flex-col p-3.5">
         <span className="truncate text-[13px] font-bold text-ink dark:text-fog">{destination}</span>
         <span className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/55 dark:text-fog/55">
-          {job.caption || "No caption."}
+          {job.caption || c.noCaption}
         </span>
         {job.status === "failed" && job.last_error && (
           <span className="mt-1 line-clamp-2 text-[11px] font-medium text-red-600 dark:text-red-400" title={job.last_error}>
@@ -395,23 +419,23 @@ function PostCard({
                 type="checkbox"
                 checked={checked}
                 onChange={onToggle}
-                aria-label={`Select this post for removal (${meta?.label ?? "unknown platform"})`}
+                aria-label={fill(c.removeAria, { platform: meta?.label ?? c.unknownPlatform })}
                 className="h-3.5 w-3.5 accent-deep-violet"
               />
-              Remove
+              {c.remove}
             </label>
           )}
           {job.delete_at && !alreadyGone && (
             <span
               className="rounded-[2px] bg-ink/[0.05] px-2 py-0.5 text-[10px] font-semibold text-ink/50 dark:bg-fog/[0.07] dark:text-fog/50"
-              title={`Removed automatically on ${new Date(job.delete_at).toLocaleString()}`}
+              title={fill(c.comesDownTitle, { date: new Date(job.delete_at).toLocaleString(dateLocale) })}
             >
-              Comes down {new Date(job.delete_at).toLocaleDateString()}
+              {fill(c.comesDown, { date: new Date(job.delete_at).toLocaleDateString(dateLocale) })}
             </span>
           )}
           {job.scheduled_at && (
             <span className="rounded-[2px] bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
-              {new Date(job.scheduled_at).toLocaleDateString()}
+              {new Date(job.scheduled_at).toLocaleDateString(dateLocale)}
             </span>
           )}
           {cancellable && (
@@ -421,11 +445,11 @@ function PostCard({
               disabled={busy}
               className="rounded-[2px] border border-ink/[0.1] px-2 py-0.5 text-[10px] font-semibold text-ink/60 transition hover:bg-ink/[0.04] disabled:opacity-50 dark:border-fog/[0.12] dark:text-fog/60"
             >
-              Cancel
+              {c.cancel}
             </button>
           )}
           <span className="ml-auto shrink-0 text-[10px] text-ink/35 dark:text-fog/35">
-            {new Date(job.created_at).toLocaleDateString()}
+            {new Date(job.created_at).toLocaleDateString(dateLocale)}
           </span>
         </span>
       </div>
