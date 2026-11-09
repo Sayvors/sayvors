@@ -49,7 +49,6 @@ PUBLISH_PER_SESSION = 3
 WORKER_SESSIONS = 3
 WORKER_POLL_SECONDS = 5
 SESSION_LEASE_SECONDS = 3600
-STALE_ITEM_SECONDS = 600
 MAX_ITEMS = 5000
 
 SCOPE_CHOICES = (30, 180, 365, 0)  # 0 = all time
@@ -673,13 +672,19 @@ async def _generate_one(session_id: str, item_id: str, semaphore: asyncio.Semaph
 
 
 async def _generate_phase(db: AsyncSession, session: ConnectImportSession) -> None:
-    stale = datetime.now(timezone.utc) - timedelta(seconds=STALE_ITEM_SECONDS)
+    # We hold this session's lease, so nobody else can be generating its
+    # items. Any row still marked "generating" was abandoned by a previous
+    # process (crash, deploy, cancelled shutdown) — reset it so this pass
+    # retries the draft instead of stranding it as a permanent failure.
+    # Previously only rows older than STALE_ITEM_SECONDS were reset, which
+    # left freshly interrupted work stuck: the stale check did not fire, no
+    # "pending" rows were found, and the session was marked complete while
+    # the drafts had never been written.
     await db.execute(
         update(ConnectImportItem)
         .where(
             ConnectImportItem.session_id == session.id,
             ConnectImportItem.status == "generating",
-            ConnectImportItem.updated_at < stale,
         )
         .values(status="pending", error=None)
     )
@@ -701,10 +706,17 @@ async def _generate_phase(db: AsyncSession, session: ConnectImportSession) -> No
         return
 
     semaphore = asyncio.Semaphore(GENERATE_PER_SESSION)
-    await asyncio.gather(
+    results = await asyncio.gather(
         *[_generate_one(session.id, item_id, semaphore) for item_id in items],
         return_exceptions=True,
     )
+    # A cancelled task (worker shutdown mid-draft) is not a model failure.
+    # Leave those rows "generating" and re-raise: the session stays claimable,
+    # and the next process resets them to "pending" at the top of this phase.
+    # Condemning them here turned every deploy into permanent "Generation
+    # interrupted" rows the merchant had to retry by hand.
+    if any(isinstance(r, asyncio.CancelledError) for r in results):
+        raise asyncio.CancelledError()
     # A task that died before its own failure handler must not leave a row
     # stuck in "generating" forever.
     await db.execute(
