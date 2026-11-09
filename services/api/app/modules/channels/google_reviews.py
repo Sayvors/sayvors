@@ -803,19 +803,23 @@ class GoogleReviewsClient:
         data = resp.json()
         return data if isinstance(data, dict) else {}
 
-    async def confirm_reply_live(self, review_resource: str, attempts: int = 3) -> bool:
+    async def confirm_reply_live(self, review_resource: str, attempts: int = 5) -> bool:
         """True only if Google actually shows a reply on the review.
 
         Never trust the write call alone: a 200 from ``:replyUpdate`` is
-        followed by a read, retried a few times to ride out replication
-        lag. ``posted`` must mean live — anything else is a lie in the UI.
+        followed by a read, retried to ride out replication lag — Google
+        can take >10s to return a freshly written reply, and giving up too
+        early stamped "failed" on replies that were already live (the
+        merchant sees the reply on Google while the dashboard says failed).
+        5 reads × 3s ≈ 15s of patience. ``posted`` must mean live —
+        anything else is a lie in the UI.
         """
         for attempt in range(max(1, attempts)):
             payload = await self.get_review(review_resource)
             if payload and payload.get("reviewReply"):
                 return True
             if attempt < attempts - 1:
-                await asyncio.sleep(2)
+                await asyncio.sleep(3)
         return False
 
     # ── Questions & Answers (Google Business Profile Q&A v4) ──────────────

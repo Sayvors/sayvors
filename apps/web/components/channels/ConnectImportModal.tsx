@@ -201,6 +201,7 @@ export default function ConnectImportModal({
   const [scope, setScope] = useState(180);
   const [message, setMessage] = useState<string | null>(null);
   const [showSummary, setShowSummary] = useState(false);
+  const [confirmClose, setConfirmClose] = useState(false);
 
   const query = useQuery({
     queryKey: ["connect-import", sessionId],
@@ -314,6 +315,13 @@ export default function ConnectImportModal({
     onClose();
   }
 
+  // A running import must never be closed silently: ask first, and say
+  // exactly what closing means — work continues, the dashboard takes over.
+  function requestClose() {
+    if (inProgress) setConfirmClose(true);
+    else finish();
+  }
+
   return (
     <div
       className="fixed inset-0 z-[80] flex items-end justify-center bg-ink/40 p-0 sm:items-center sm:p-6"
@@ -321,7 +329,7 @@ export default function ConnectImportModal({
       aria-modal="true"
       aria-labelledby="connect-import-title"
     >
-      <div className="flex h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-t-lg bg-white shadow-[0_18px_60px_rgba(20,16,31,0.28)] sm:h-auto sm:max-h-[90vh] sm:rounded-lg">
+      <div className="relative flex h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-t-lg bg-white shadow-[0_18px_60px_rgba(20,16,31,0.28)] sm:h-auto sm:max-h-[90vh] sm:rounded-lg">
         <header className="shrink-0 border-b border-ink/[0.08] px-5 py-4 sm:px-7">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
@@ -346,7 +354,7 @@ export default function ConnectImportModal({
             </div>
             <button
               type="button"
-              onClick={onClose}
+              onClick={requestClose}
               className="shrink-0 rounded-md border border-ink/10 bg-white px-3 py-2 text-[12px] font-bold text-ink/55 transition hover:bg-ink/[0.03] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-deep-violet"
             >
               Close
@@ -494,6 +502,41 @@ export default function ConnectImportModal({
               </span>
             )}
           </footer>
+        )}
+
+        {confirmClose && (
+          <div
+            className="absolute inset-0 z-10 flex items-center justify-center bg-ink/45 p-4"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="confirm-close-title"
+          >
+            <div className="w-full max-w-sm rounded-lg bg-white p-5 shadow-[0_18px_60px_rgba(20,16,31,0.28)]">
+              <p id="confirm-close-title" className="text-[15px] font-bold text-ink">
+                Close this panel?
+              </p>
+              <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink/60">
+                The import keeps running in the background. You can review drafts and publish
+                replies from the dashboard at any time.
+              </p>
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmClose(false)}
+                  className="rounded-md border border-ink/10 bg-white px-4 py-2.5 text-[12px] font-bold text-ink/65 transition active:translate-y-[2px] active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-deep-violet"
+                >
+                  Keep this open
+                </button>
+                <button
+                  type="button"
+                  onClick={finish}
+                  className="rounded-md bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white transition active:translate-y-[2px] active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-deep-violet"
+                >
+                  Close panel
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>
