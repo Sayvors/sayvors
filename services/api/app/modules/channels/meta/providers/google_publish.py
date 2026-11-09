@@ -228,11 +228,13 @@ class GoogleBusinessPublisher:
                 logger.warning("invalid scheduled_at %r - publishing immediately", scheduled_at)
 
         url = f"{GBP_LOCAL_POSTS_API}/{account}/{location}/localPosts"
+        post_body = body
         resp = await self._client._authed_request("POST", url, json=body)
         if resp.status_code not in (200, 201) and used_staging:
-            # Google can reject its own googleUrl as a post sourceUrl (we have
-            # seen a deterministic 500 INTERNAL). Staging is an optimisation,
-            # so retry once with the caller's original URL before giving up.
+            # Google can reject its own googleUrl as a post sourceUrl (a
+            # deterministic 500 INTERNAL — staged media is still PENDING).
+            # Staging is an optimisation, so retry once with the caller's
+            # original URL before giving up.
             logger.warning(
                 "create_local_post with staged Google media failed (%s); "
                 "retrying once with the original sourceUrl",
@@ -240,14 +242,19 @@ class GoogleBusinessPublisher:
             )
             fallback = dict(body)
             fallback["media"] = original_media
+            post_body = fallback
             resp = await self._client._authed_request("POST", url, json=fallback)
         if resp.status_code not in (200, 201):
+            # Keep the whole ValidationError body: the useful part (which
+            # field Google rejected) lives well past 300 chars. Log the body
+            # that actually failed, not the first attempt's body.
+            detail = resp.text[:2000]
             logger.warning(
                 "create_local_post failed (%s): %s | request=%s",
-                resp.status_code, resp.text[:300], str(body)[:800],
+                resp.status_code, detail, str(post_body)[:800],
             )
             raise GoogleReviewsError(
-                f"create_local_post failed ({resp.status_code}): {resp.text[:300]}",
+                f"create_local_post failed ({resp.status_code}): {detail}",
                 resp.status_code,
             )
         data = resp.json()

@@ -267,13 +267,15 @@ class Settings(BaseSettings):
     # rejected even though it passed signature/audience/expiry.
     GOOGLE_PUBSUB_PUSH_EMAIL: str = ""
     # Local Posts accept media ONLY as a public sourceUrl; Google refuses raw
-    # bytes for posts. When on, Sayvors uploads the bytes into Google's own
+    # bytes for posts. This flag uploads the bytes into Google's own
     # location-media store (startUpload -> dataRef) and uses the returned
-    # googleUrl as the post's sourceUrl, so Google ends up hosting the image
-    # and no S3/GCS bucket or long-lived Sayvors URL is needed. Set false to
-    # hand Google your own S3/GCS/CDN URL instead. Staging failures fall back
-    # to the original URL rather than failing the publish.
-    GOOGLE_POST_MEDIA_STAGING: bool = True
+    # googleUrl as the post's sourceUrl. Kept behind a flag because Google
+    # processes staged media asynchronously: localPosts.create with the
+    # not-yet-ready googleUrl returned a deterministic 500 INTERNAL in live
+    # testing, and the staged item also appears in the gallery. Default OFF —
+    # hand Google a public https JPEG/PNG URL instead. When a bucket is
+    # configured, set it explicitly there.
+    GOOGLE_POST_MEDIA_STAGING: bool = False
 
     # ── Google Places API (New) ──────────────────────────────────────────
     # Server-side key for two features: resolving free-text service areas to
