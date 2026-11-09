@@ -212,6 +212,69 @@ async def test_location_image_uses_the_v4_media_endpoint():
     )
 
 
+async def _upload_location_image(method: str) -> dict:
+    """Set a location image from raw bytes, capturing every HTTP call."""
+    captured: dict = {"calls": []}
+    publisher = GoogleBusinessPublisher("token", "refresh")
+
+    async def _fake_authed_request(http_method: str, url: str, **kwargs):
+        captured["calls"].append({
+            "method": http_method,
+            "url": url,
+            "json": kwargs.get("json") or {},
+            "content": kwargs.get("content"),
+            "extra_headers": kwargs.get("extra_headers"),
+        })
+        if url.endswith(":startUpload"):
+            return _Resp({"resourceName": "accounts/1/locations/2/media/up-1"})
+        if "/upload/v1/media/" in url:
+            return _Resp({})
+        return _Resp({
+            "name": "accounts/1/locations/2/media/profile",
+            "locationAssociation": {"category": "PROFILE"},
+            "googleUrl": "https://lh3.googleusercontent.com/x",
+        })
+
+    publisher._client._authed_request = _fake_authed_request
+    await publisher.set_location_image(
+        token="token",
+        asset_id="locations/2",
+        method=method,
+        media_url="",
+        account_id="accounts/1",
+        media_data=b"jpeg-bytes",
+        content_type="image/jpeg",
+    )
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_location_image_bytes_are_uploaded_directly():
+    """No public bucket: startUpload -> byte upload -> create with dataRef."""
+    calls = (await _upload_location_image("profile"))["calls"]
+
+    assert calls[0]["url"] == (
+        "https://mybusiness.googleapis.com/v4/accounts/1/locations/2/media:startUpload"
+    )
+    assert calls[0]["json"] == {}
+
+    assert calls[1]["url"] == (
+        "https://mybusiness.googleapis.com/upload/v1/media"
+        "/accounts/1/locations/2/media/up-1?uploadType=media"
+    )
+    assert calls[1]["content"] == b"jpeg-bytes"
+    assert calls[1]["extra_headers"]["Content-Type"] == "image/jpeg"
+
+    create = calls[2]
+    assert create["url"] == (
+        "https://mybusiness.googleapis.com/v4/accounts/1/locations/2/media"
+    )
+    assert create["json"]["dataRef"] == {
+        "resourceName": "accounts/1/locations/2/media/up-1"
+    }
+    assert "sourceUrl" not in create["json"]
+
+
 @pytest.mark.asyncio
 async def test_location_image_refuses_a_method_it_has_no_category_for():
     publisher = GoogleBusinessPublisher("token", "refresh")

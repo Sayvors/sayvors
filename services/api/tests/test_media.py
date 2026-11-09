@@ -49,10 +49,11 @@ def _patch_image(monkeypatch, *, result=None, error=None):
     calls = []
 
     async def _fake(self, token, asset_id, method, media_url, account_id=None,
-                    *, category_override=None):
+                    *, category_override=None, media_data=None, content_type=None):
         calls.append({
             "asset_id": asset_id, "method": method,
             "category_override": category_override,
+            "media_data": media_data, "content_type": content_type,
         })
         if error:
             raise error
@@ -186,6 +187,12 @@ async def test_gallery_and_profile_publish_natively(monkeypatch, db, user_id):
     profile maps to Google's PROFILE slot."""
     await _connection(db, user_id)
     calls = _patch_image(monkeypatch, result={"id": "mimg-1"})
+    # Location media is uploaded as bytes straight to Google, so the service
+    # never resolves a public URL for these surfaces.
+    monkeypatch.setattr(
+        "app.core.storage.media_bytes_from_url",
+        lambda user_id, url: b"image-bytes",
+    )
 
     gallery = await media.create_media(
         db, user_id, {**_photo(), "publish_method": "gallery",
@@ -196,6 +203,8 @@ async def test_gallery_and_profile_publish_natively(monkeypatch, db, user_id):
     assert res["media"]["status"] == "published"
     assert calls[0]["method"] == "gallery"
     assert calls[0]["category_override"] == "EXTERIOR"
+    assert calls[0]["media_data"] == b"image-bytes"
+    assert calls[0]["content_type"] == "image/jpeg"
 
     profile = await media.create_media(
         db, user_id, {**_photo(), "publish_method": "profile"}
@@ -203,6 +212,16 @@ async def test_gallery_and_profile_publish_natively(monkeypatch, db, user_id):
     await media.publish_media(db, user_id, profile["media"]["id"])
     assert calls[1]["method"] == "profile"
     assert calls[1]["category_override"] is None
+    assert calls[1]["media_data"] == b"image-bytes"
+
+
+@pytest.mark.asyncio
+async def test_banner_is_an_allowed_publish_method(db, user_id):
+    """Banner maps to Google's COVER category and is accepted by the API."""
+    created = await media.create_media(
+        db, user_id, {**_photo(), "publish_method": "banner"}
+    )
+    assert created["media"]["publish_method"] == "banner"
 
 
 @pytest.mark.asyncio

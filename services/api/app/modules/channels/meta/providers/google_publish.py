@@ -32,6 +32,11 @@ GBP_LOCAL_POSTS_API = "https://mybusiness.googleapis.com/v4"
 # for the profile picture and cover image.
 GBP_MEDIA_API = "https://mybusiness.googleapis.com/v4"
 
+# Direct binary upload endpoint (media.startUpload hands back a resourceName
+# that is posted to here). Used instead of a public sourceUrl so location
+# media needs no S3/GCS bucket.
+GBP_MEDIA_UPLOAD_API = "https://mybusiness.googleapis.com/upload/v1/media"
+
 # The method -> the location media category Google stores it under.
 # PROFILE and COVER are the two surfaces that belong to the location
 # itself rather than to a post; a location has exactly one of each.
@@ -207,6 +212,47 @@ class GoogleBusinessPublisher:
             "searchUrl": data.get("searchUrl"),
         }
 
+    async def start_media_upload(self, account_id: str, location_id: str) -> str:
+        """`media:startUpload` -> the resourceName used to upload bytes.
+
+        The upload is tied to the location, so the bytes must belong to a
+        media item for the same location that `set_location_image` creates.
+        """
+        account = (account_id or "").strip()
+        location = (location_id or "").strip()
+        if "/" not in account:
+            account = f"accounts/{account}"
+        if "/" not in location:
+            location = f"locations/{location}"
+        url = f"{GBP_MEDIA_API}/{account}/{location}/media:startUpload"
+        resp = await self._client._authed_request("POST", url, json={})
+        if resp.status_code not in (200, 201):
+            raise GoogleReviewsError(
+                f"startUpload failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        ref = (resp.json().get("resourceName") or "").strip()
+        if not ref:
+            raise GoogleReviewsError("startUpload returned no resourceName", 502)
+        return ref
+
+    async def upload_media_bytes(
+        self, resource_name: str, data: bytes, content_type: str
+    ) -> None:
+        """POST the raw image bytes to Google's media upload endpoint."""
+        url = f"{GBP_MEDIA_UPLOAD_API}/{resource_name}?uploadType=media"
+        resp = await self._client._authed_request(
+            "POST",
+            url,
+            content=data,
+            extra_headers={"Content-Type": content_type or "application/octet-stream"},
+        )
+        if resp.status_code not in (200, 201):
+            raise GoogleReviewsError(
+                f"media upload failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+
     async def set_location_image(
         self,
         token: str,
@@ -216,6 +262,8 @@ class GoogleBusinessPublisher:
         account_id: str | None = None,
         *,
         category_override: str | None = None,
+        media_data: bytes | None = None,
+        content_type: str | None = None,
     ) -> dict:
         """Replace a location's profile picture or cover image.
 
@@ -228,6 +276,11 @@ class GoogleBusinessPublisher:
         item replaces what was there — no separate delete first, which
         would leave the location with no picture if the upload failed.
 
+        Pass ``media_data`` (the image bytes) to upload straight to Google via
+        ``media:startUpload`` and a ``dataRef`` — no public bucket and no
+        publicly reachable image URL. ``media_url`` alone falls back to the
+        legacy ``sourceUrl`` flow.
+
         ``asset_id`` is the location id; ``account_id`` is the Google
         account id.
         """
@@ -239,8 +292,10 @@ class GoogleBusinessPublisher:
             raise GoogleReviewsError(
                 f"GBP location media category is invalid: {category or method!r}", 400
             )
-        if not media_url:
-            raise GoogleReviewsError("a location image needs a media URL", 400)
+        if not media_url and media_data is None:
+            raise GoogleReviewsError(
+                "a location image needs a media URL or image bytes", 400
+            )
 
         account = (account_id or "").strip()
         location = (asset_id or "").strip()
@@ -256,8 +311,15 @@ class GoogleBusinessPublisher:
         body: dict[str, Any] = {
             "mediaFormat": "PHOTO",
             "locationAssociation": {"category": category},
-            "sourceUrl": media_url,
         }
+        if media_data is not None:
+            ref = await self.start_media_upload(account, location)
+            await self.upload_media_bytes(
+                ref, media_data, content_type or "image/jpeg"
+            )
+            body["dataRef"] = {"resourceName": ref}
+        else:
+            body["sourceUrl"] = media_url
         url = f"{GBP_MEDIA_API}/{account}/{location}/media"
         resp = await self._client._authed_request("POST", url, json=body)
         if resp.status_code not in (200, 201):

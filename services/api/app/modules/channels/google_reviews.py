@@ -481,7 +481,14 @@ class GoogleReviewsClient:
     def _headers(self) -> dict:
         return {"Authorization": f"Bearer {self._access_token}"}
 
-    async def _authed_request(self, method: str, url: str, **kwargs) -> httpx.Response:
+    async def _authed_request(
+        self,
+        method: str,
+        url: str,
+        *,
+        extra_headers: dict | None = None,
+        **kwargs,
+    ) -> httpx.Response:
         """Issue a request, transparently refreshing on 401 and backing off on 429.
 
         Handles three expiry/limit paths in one place:
@@ -490,6 +497,10 @@ class GoogleReviewsClient:
              server-side despite our local view).
           3. Exponential-backoff retry with jitter when Google returns 429
              (rate limit), honouring the `Retry-After` header when present.
+
+        `extra_headers` is merged over the auth header — the direct media
+        upload needs a caller-supplied Content-Type, which httpx cannot infer
+        from raw bytes.
 
         Persistence of the new token via the registered persister happens on
         successful 401 recovery. All retries are bounded by
@@ -504,9 +515,10 @@ class GoogleReviewsClient:
                 # try once more below.
                 pass
 
+        headers = {**self._headers(), **(extra_headers or {})}
         last_resp: httpx.Response | None = None
         for attempt in range(1, MAX_REQUEST_ATTEMPTS + 1):
-            resp = await self._http.request(method, url, headers=self._headers(), **kwargs)
+            resp = await self._http.request(method, url, headers=headers, **kwargs)
 
             if resp.status_code not in (401, 429):
                 return resp

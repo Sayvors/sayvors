@@ -235,12 +235,23 @@ async def _publish_account_surface(
         publisher.set_token_persister(_persist)
         publisher.set_known_expiry(channel.token_expires_at)
 
+        # Upload the bytes straight to Google (media:startUpload + dataRef) so
+        # a profile picture or banner needs no public bucket / image URL.
+        from ....core.storage import media_bytes_from_url
+
+        ext = (media_url or "").split("?", 1)[0].rsplit(".", 1)[-1].lower()
+        content_type = {
+            "png": "image/png", "webp": "image/webp", "gif": "image/gif",
+            "jpg": "image/jpeg", "jpeg": "image/jpeg",
+        }.get(ext, "image/jpeg")
         result = await publisher.set_location_image(
             token=token,
             asset_id=location_id,
             method=method,
             media_url=media_url,
             account_id=account_id,
+            media_data=media_bytes_from_url(channel.user_id, media_url),
+            content_type=content_type,
         )
         return {
             "provider": "google_reviews",
