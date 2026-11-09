@@ -3402,6 +3402,7 @@ const ar: Dict = {
       },
       types: {
         sync_completed: "مزامنة",
+        metrics_synced: "البيانات",
         sync_failed: "فشلت المزامنة",
         review_pulled: "تقييم جديد",
         reply_posted: "نُشر الرد",

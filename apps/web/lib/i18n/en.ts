@@ -3393,6 +3393,7 @@ const en = {
     },
     types: {
       sync_completed: "Sync",
+      metrics_synced: "Metrics",
       sync_failed: "Sync failed",
       review_pulled: "New review",
       reply_posted: "Reply posted",
