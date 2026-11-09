@@ -2,7 +2,7 @@
 
 import { CROP_ASPECT } from "./CropFrame";
 import CroppedMedia from "./CroppedMedia";
-import { METHOD_META, PLATFORM_META, type CropState, type MediaState, type PostMethod, type PublishTarget } from "./types";
+import { PLATFORM_META, type CropState, type MediaState, type PostMethod, type PublishTarget } from "./types";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import type { Dict } from "@/lib/i18n/en";
 
@@ -154,7 +154,7 @@ function WhatsAppStatusPreview({
 }) {
   const { t } = useI18n();
   const pv = t.publish.preview;
-  const name = target.name || "Your number";
+  const name = target.name || pv.waName;
   const aspect = aspectFor(crop, 9 / 16);
   return (
     <div className="mx-auto overflow-hidden rounded-[16px] bg-[#eae6df] shadow-sm" style={{ width: PREVIEW_W - 20 }}>
@@ -277,7 +277,7 @@ function GooglePostPreview({
   const pv = t.publish.preview;
   const methods = t.publish.methods;
   const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
-  const author = target.name || "Your business";
+  const author = target.name || pv.bizName;
   const aspect = aspectFor(crop, 1.91);
   const body = caption || description || pv.gpBody;
   const overflow = captionOverflow(caption, "google_reviews");
