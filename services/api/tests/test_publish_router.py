@@ -19,6 +19,19 @@ from app.modules.jobs.models import Job
 from app.modules.jobs.types import JobType
 
 
+def test_lane_key_column_fits_composite_partition_keys():
+    """Regression: a Google banner produced a 77-char lane_key, overflowing
+    the original VARCHAR(64) and 500-ing POST /channels/publish."""
+    length = Job.__table__.c.lane_key.type.length
+    assert length is not None
+    for key in (
+        f"{'e' * 36}:google_reviews:181507565693476724:banner",
+        f"{'e' * 36}:google_reviews:181507565693476724:profile",
+        f"{'e' * 36}:facebook:1784140001:promotion",
+    ):
+        assert len(key) <= length, key
+
+
 def _job(
     tenant_id: str,
     *,

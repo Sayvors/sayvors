@@ -66,7 +66,7 @@ class Job(Base):
     subject_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     subject_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     # Kafka partition key — stored so a replay uses the identical key.
-    lane_key: Mapped[str] = mapped_column(String(64))
+    lane_key: Mapped[str] = mapped_column(String(200))
 
     attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     max_attempts: Mapped[int] = mapped_column(Integer, default=5, server_default="5")
