@@ -2,6 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api-rag";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 export interface ChannelOption {
   id: string;
@@ -9,6 +17,8 @@ export interface ChannelOption {
 }
 
 export function useGoogleChannels() {
+  const { t } = useI18n();
+  const fallback = t.bench.controls.chanFallback;
   const [channels, setChannels] = useState<ChannelOption[]>([]);
   useEffect(() => {
     let cancelled = false;
@@ -19,7 +29,7 @@ export function useGoogleChannels() {
           .filter((c: { platform: string }) => c.platform === "google_reviews")
           .map((c: { id: string; display_name: string | null }) => ({
             id: c.id,
-            label: c.display_name ?? "Google Business",
+            label: c.display_name ?? fallback,
           }));
         setChannels(google);
       })
@@ -29,7 +39,7 @@ export function useGoogleChannels() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [fallback]);
   return channels;
 }
 
@@ -48,6 +58,9 @@ export function RangeChannelControls({
   setChannelId: (c: string | null) => void;
   channels: ChannelOption[];
 }) {
+  const { t, locale } = useI18n();
+  const cc = t.bench.controls;
+  const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
   const rangeBtn = (active: boolean) =>
     `rounded-[2px] px-2.5 py-1 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
       active ? "border border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink)]" : "text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
@@ -58,19 +71,19 @@ export function RangeChannelControls({
         <select
           value={channelId ?? ""}
           onChange={(e) => setChannelId(e.target.value || null)}
-          aria-label="Filter by location"
+          aria-label={cc.filterAria}
           className="ui-input h-8 bg-[var(--ui-surface)] px-2 text-[12px] text-[var(--ui-ink)] transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
         >
-          <option value="">All locations</option>
+          <option value="">{cc.all}</option>
           {channels.map((c) => (
             <option key={c.id} value={c.id}>{c.label}</option>
           ))}
         </select>
       )}
-      <div className="flex rounded-[2px] bg-[var(--ui-sunken)] p-0.5" role="group" aria-label="Time range">
+      <div className="flex rounded-[2px] bg-[var(--ui-sunken)] p-0.5" role="group" aria-label={cc.rangeAria}>
         {RANGES.map((r) => (
           <button key={r} onClick={() => setDays(r)} aria-pressed={days === r} className={rangeBtn(days === r)}>
-            {r}d
+            {fill(cc.daysN, { n: fmt(r) })}
           </button>
         ))}
       </div>
