@@ -149,6 +149,30 @@ def _otp_key(email: str) -> str:
     return f"otp:{email.strip().lower()}"
 
 
+async def _otp_send_allowed(redis, email: str) -> bool:
+    """Per-address cooldown + daily cap for OTP sends.
+
+    The IP limits stop one source; this stops a source rotating addresses from
+    making us mail the same victim repeatedly. A blocked resend deliberately
+    leaves the previous code valid.
+    """
+    normalized = email.strip().lower()
+    cooldown_key = f"otp:cooldown:{normalized}"
+    allowed = await redis.set(
+        cooldown_key,
+        "1",
+        ex=settings.OTP_RESEND_COOLDOWN_SECONDS,
+        nx=True,
+    )
+    if not allowed:
+        return False
+    daily_key = f"otp:daily:{normalized}"
+    count = await redis.incr(daily_key)
+    if count == 1:
+        await redis.expire(daily_key, 24 * 60 * 60)
+    return count <= settings.OTP_DAILY_LIMIT
+
+
 async def send_otp_email(email: str, purpose: str = "verification") -> None:
     """Create and send a one-time passcode for email verification.
 
@@ -160,8 +184,11 @@ async def send_otp_email(email: str, purpose: str = "verification") -> None:
     on lock screens / notification previews.
     """
 
-    code = f"{secrets.randbelow(900000) + 100000}"
     redis = await get_redis()
+    if not await _otp_send_allowed(redis, email):
+        logger.info("OTP send throttled for %s", email.strip().lower())
+        return
+    code = f"{secrets.randbelow(900000) + 100000}"
     await redis.setex(_otp_key(email), OTP_TTL_SECONDS, code)
     await redis.delete(_otp_attempts_key(email))
     if not _configured():

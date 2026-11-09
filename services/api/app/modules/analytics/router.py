@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
+from ...config import settings
 from ...core.deps import get_current_user, get_db
 from ..users.models import User
 from . import benchmark, competitors, growth, growth_cards, insights_cards, intelligence, pulse, service, summary
@@ -698,13 +699,29 @@ async def record_review_request(
     deep link). SMS/email go through the env-gated provider and store the real
     outcome; a provider failure is visible on the row, never hidden.
     """
-    from .review_requests import create_and_deliver, tracked_link
+    from .review_requests import (
+        create_and_deliver,
+        email_requests_in_window,
+        tracked_link,
+    )
 
     allowed_channels = {"whatsapp", "email", "in_person"}
     allowed_triggers = {"manual", "qr", "after_visit", "campaign"}
+    uid = tenant_id_of(user)
+    if body.channel == "email" and body.deliver:
+        used = await email_requests_in_window(db, uid)
+        limit = settings.BULK_EMAIL_DAILY_LIMIT
+        if used >= limit:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"Daily email limit reached ({limit} per 24 hours). "
+                    "Try again later."
+                ),
+            )
     row = await create_and_deliver(
         db,
-        tenant_id_of(user),
+        uid,
         channel_id=body.channel_id,
         contact=body.contact,
         contact_name=body.contact_name,
@@ -760,7 +777,7 @@ async def bulk_review_requests(
 
     from ..billing.entitlements import count_messages_this_month, get_entitlements
     from ..jobs.service import submit_job
-    from .review_requests import create_queued
+    from .review_requests import create_queued, email_requests_in_window
 
     if body.channel not in ("email", "whatsapp"):
         raise HTTPException(status_code=400, detail="Bulk delivery supports email or whatsapp.")
@@ -792,6 +809,22 @@ async def bulk_review_requests(
             "max": max_msgs,
             "remaining": remaining,
             "requested": len(valid),
+            "window": "month",
+        }
+    elif body.channel == "email":
+        # Email is not part of the plan's WhatsApp allowance, but it is not
+        # unlimited either: the shared Resend domain needs a per-tenant ceiling.
+        used = await email_requests_in_window(db, uid)
+        max_emails = settings.BULK_EMAIL_DAILY_LIMIT
+        remaining = max(0, max_emails - used)
+        allowed = min(len(valid), remaining)
+        skipped_quota = len(valid) - allowed
+        quota = {
+            "used": used,
+            "max": max_emails,
+            "remaining": remaining,
+            "requested": len(valid),
+            "window": "24h",
         }
 
     queued = 0

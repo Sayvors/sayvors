@@ -71,33 +71,30 @@ expiry, and optional cardholder name. The full card number is not sent to the
 API; the UI validates it locally and the stub returns a token. Saved cards are
 marked unverified until a real gateway integration is available.
 
-### Messaging quota vs. AI auto-replies
+### WhatsApp messaging quota and AI auto-replies
 
-Sayvors has two separate caps on outbound messages, and they are intentional:
+The plan's message allowance is **WhatsApp-only**. Instagram, Facebook and
+every other channel are excluded from both the count and the gate.
 
-**Messaging quota** (`PLAN_MESSAGE_LIMITS`, e.g. free: 1,000 / month) governs
-human-initiated sends (`/inbox/send`, document, location, contacts, template).
-Every human outbound message passes through `_ensure_messaging_quota()` and is
-counted against the plan's `max_messages_per_month`.
+**What counts.** Outbound WhatsApp messages in the current calendar month. The
+gate covers both human sends (`/inbox/send`, document, sticker, location,
+contact, template) through `ensure_messaging_quota()` and WhatsApp AI
+auto-replies in `meta/consumer.py`. Inbound messages are never counted.
 
-**AI auto-replies** (`meta/consumer.py` reply path) do **not** count against the
-messaging quota. They are bounded instead by the **LLM budget gate**:
-`check_feature(tenant_id, "ai_replies")` (fail-closed entitlement — the plan must
-enable AI replies) plus credit reserve/settle before every LLM call
-(`billing/entitlements.py`, `llm/gateway.py`). AI replies are also selectively
-triggered by `should_ai_reply()` (confusion detection, mode state, escalation
-clock), so not every inbound message generates one.
+**When it stops.** At 100% the inbound message is still stored and shown in the
+inbox; only the generated AI reply is withheld (`ai_reply_status = skipped`)
+and manual WhatsApp sends return 429 with `X-Entitlement-Denied: quota`.
 
-**Decision:** AI auto-replies remain unbounded by `max_messages_per_month`. The
-LLM budget gate is the appropriate control for AI usage because it directly caps
-dollar cost (tokens), whereas the messaging quota caps human conversation
-volume. Extending the messaging quota to AI replies would double-count cost
-control and add latency to the hot reply path without reducing spend.
+**Top-ups.** An approved message pack is stored as
+`tenant_subscriptions.message_bonus` and added to whatever plan the tenant is
+on: `max_messages_per_month + message_bonus`. An admin plan change therefore
+applies immediately and the purchased amount survives.
 
-If you want AI replies to also consume messaging quota, extend
-`_ensure_messaging_quota()` (or `count_messages_this_month()`) to include
-AI-authored outbound rows and call it from the `meta/consumer.py` reply path
-before `adapter.send_text_message()`.
+**AI cost control is separate.** AI replies are also bounded by the **LLM
+budget gate**: `check_feature(tenant_id, "ai_replies")` plus credit
+reserve/settle before every LLM call (`billing/entitlements.py`,
+`llm/gateway.py`). The message allowance caps WhatsApp volume; the budget gate
+caps dollar cost. Instagram AI replies use the budget gate only.
 
 **Payments are not live yet.** The current charge endpoint is a stub and moves
 no money; adding a card does not charge it, create a subscription, or add

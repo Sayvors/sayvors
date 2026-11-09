@@ -9,6 +9,7 @@ import {
 } from "@/lib/api-meta";
 import PlatformMark from "@/components/channels/PlatformMark";
 import { INK2 } from "../instagram/ui";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 
 /*
  * The tenant's OWN Page — read-only, like Instagram's profile: Meta
@@ -40,11 +41,11 @@ function Row({ label, value, href }: { label: string; value: string; href?: stri
   );
 }
 
-function Counter({ label, value }: { label: string; value: number }) {
+function Counter({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] px-4 py-3">
       <p className="text-[20px] font-bold tabular-nums text-[var(--ui-ink)]">
-        {value.toLocaleString()}
+        {value}
       </p>
       <p className="mt-0.5 text-[12px] text-[var(--ui-ink-2)]">{label}</p>
     </div>
@@ -52,6 +53,10 @@ function Counter({ label, value }: { label: string; value: number }) {
 }
 
 export default function ProfileTab({ asset }: { asset: MetaAsset }) {
+  const { t, locale } = useI18n();
+  const f = t.channelHub.facebook;
+  const fmtNum = (n: number) =>
+    new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
   const [profile, setProfile] = useState<FacebookProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -77,7 +82,7 @@ export default function ProfileTab({ asset }: { asset: MetaAsset }) {
       (e: unknown) => {
         if (!cancelled) {
           setProfile(null);
-          setError(e instanceof Error ? e.message : "Could not load the Page profile.");
+          setError(e instanceof Error ? e.message : f.profileError);
           setLoading(false);
         }
       },
@@ -98,14 +103,14 @@ export default function ProfileTab({ asset }: { asset: MetaAsset }) {
     <div className="space-y-6">
       <section className={PANEL}>
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <h3 className="text-[15px] font-semibold text-[var(--ui-ink)]">Page</h3>
+          <h3 className="text-[15px] font-semibold text-[var(--ui-ink)]">{f.page}</h3>
           <button
             type="button"
             onClick={refresh}
             disabled={loading}
             className="ui-btn rounded-lg bg-[var(--ui-surface)] px-4 py-2.5 text-[12px] font-semibold text-[var(--ui-ink)]"
           >
-            {loading ? "Refreshing…" : "Refresh"}
+            {loading ? f.refreshing : f.refresh}
           </button>
         </div>
 
@@ -120,7 +125,7 @@ export default function ProfileTab({ asset }: { asset: MetaAsset }) {
               onClick={refresh}
               className="ui-btn mt-3 rounded-lg bg-[var(--ui-surface)] px-4 py-2.5 text-[12px] font-semibold text-[var(--ui-ink)]"
             >
-              Try again
+              {f.retry}
             </button>
           </div>
         )}
@@ -145,26 +150,25 @@ export default function ProfileTab({ asset }: { asset: MetaAsset }) {
           )}
           <div className="min-w-0">
             <p className="text-[17px] font-bold text-[var(--ui-ink)]">
-              {profile?.name || (loading ? "Loading…" : "Not available")}
+              {profile?.name || (loading ? f.profileLoading : f.notAvailable)}
             </p>
             <p className="mt-0.5 text-[13px] text-[var(--ui-ink-2)]">
-              {profile?.link ? "Facebook Page" : "—"}
+              {profile?.link ? f.pageBadge : "—"}
             </p>
           </div>
         </div>
       </section>
 
       <section className={PANEL}>
-        <h3 className="text-[15px] font-semibold text-[var(--ui-ink)]">Profile details</h3>
+        <h3 className="text-[15px] font-semibold text-[var(--ui-ink)]">{f.details}</h3>
         <p className={`mt-1 text-[12px] ${INK2}`}>
-          Facebook does not let apps change these — edit them in Facebook, and Sayvors will
-          pick the change up on the next refresh.
+          {f.detailsBody}
         </p>
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          <Row label="Page" value={profile?.name || "—"} />
+          <Row label={f.pageRow} value={profile?.name || "—"} />
           <Row
-            label="Open on Facebook"
-            value={profile?.link ? "View the live Page" : "—"}
+            label={f.openOn}
+            value={profile?.link ? f.viewPage : "—"}
             {...(profile?.link ? { href: profile.link } : {})}
           />
         </div>
@@ -172,10 +176,10 @@ export default function ProfileTab({ asset }: { asset: MetaAsset }) {
 
       {profile && (
         <section className={PANEL}>
-          <h3 className="text-[15px] font-semibold text-[var(--ui-ink)]">Audience</h3>
+          <h3 className="text-[15px] font-semibold text-[var(--ui-ink)]">{f.audience}</h3>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <Counter label="Followers" value={profile.followers_count} />
-            <Counter label="Page likes" value={profile.fan_count} />
+            <Counter label={f.followers} value={fmtNum(profile.followers_count)} />
+            <Counter label={f.pageLikes} value={fmtNum(profile.fan_count)} />
           </div>
         </section>
       )}

@@ -22,6 +22,7 @@ from ..auth.router import get_client_ip
 # SubscriptionOut is needed at import time by the `/tenants/special` decorator,
 # which must be declared before `/tenants/{user_id}` or FastAPI shadows it.
 from ..billing.schemas import SubscriptionOut, TenantFeaturesIn
+from ..email.schemas import CampaignCreateIn, CampaignPreviewIn
 from . import service as admin_service
 from . import stats as admin_service_stats
 from .schemas import (
@@ -608,6 +609,11 @@ async def admin_purge_tenant(
     undo.
     """
     from ..users.models import User
+    from ..users.unverified_purge import (
+        archive_account,
+        mark_purge_failure,
+        mark_purge_success,
+    )
     from .tenant_ops import purge_tenant
 
     user = await db.get(User, user_id)
@@ -618,10 +624,21 @@ async def admin_purge_tenant(
             status_code=400,
             detail="Confirmation does not match the tenant email.",
         )
+    # Leave the same admin-visible trace as the automatic unverified purge;
+    # a manual purge must not be an untracked disappearance.
+    await archive_account(
+        db, user, reason="admin", actor=_admin.get("username")
+    )
     try:
         result = await purge_tenant(db, user_id)
     except ValueError:
+        await mark_purge_failure(db, user_id, "Tenant not found")
         raise HTTPException(status_code=404, detail="Tenant not found.") from None
+    except Exception as e:
+        await db.rollback()
+        await mark_purge_failure(db, user_id, str(e))
+        raise
+    await mark_purge_success(db, user_id)
     logger.warning("Admin purged tenant %s rows=%s", user_id, result.get("total_rows"))
     return {"tenant_id": user_id, **result}
 
@@ -794,6 +811,239 @@ async def admin_email_stats(
     from ..email.outbox import email_stats
 
     return await email_stats(db, days)
+
+
+@router.get("/email/campaigns/audience")
+async def admin_email_campaign_audience(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    _admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """The newsletter audience with addresses, before a campaign starts."""
+    from ..email.campaigns import count_audience, list_audience
+
+    return {
+        "eligible": await count_audience(db),
+        "max_recipients": settings.EMAIL_CAMPAIGN_MAX_RECIPIENTS,
+        "items": await list_audience(db, limit=limit, offset=offset),
+    }
+
+
+@router.get("/email/campaigns/variables")
+async def admin_email_campaign_variables(
+    _admin: dict = Depends(require_admin),
+):
+    """The variable palette for the newsletter composer."""
+    from ..email.campaigns import CAMPAIGN_VARIABLES
+
+    return {"items": CAMPAIGN_VARIABLES}
+
+
+@router.get("/email/campaigns/templates")
+async def admin_email_campaign_templates(
+    _admin: dict = Depends(require_admin),
+):
+    """Ready-made campaign bodies for the composer."""
+    from ..email.campaigns import CAMPAIGN_PRESETS
+
+    return {"items": CAMPAIGN_PRESETS}
+
+
+@router.post("/email/campaigns/preview")
+async def admin_email_campaign_preview(
+    body: CampaignPreviewIn,
+    _admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Render the composer against a real eligible tenant."""
+    from ..email.campaigns import preview_campaign
+
+    try:
+        return await preview_campaign(db, body)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+
+
+@router.get("/email/campaigns")
+async def admin_email_campaigns(
+    limit: int = Query(50, ge=1, le=200),
+    _admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from sqlalchemy import select
+
+    from ..email.campaigns import campaign_out
+    from ..email.models import EmailCampaign
+
+    rows = (
+        await db.execute(
+            select(EmailCampaign)
+            .order_by(EmailCampaign.created_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    return {"items": [await campaign_out(db, campaign) for campaign in rows]}
+
+
+@router.post("/email/campaigns", status_code=201)
+async def admin_email_campaign_create(
+    body: CampaignCreateIn,
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    from ..email.campaigns import campaign_out, create_campaign
+
+    campaign = await create_campaign(
+        db, created_by=_admin.get("username"), body=body
+    )
+    return await campaign_out(db, campaign)
+
+
+@router.get("/email/campaigns/{campaign_id}")
+async def admin_email_campaign_detail(
+    campaign_id: str,
+    _admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from ..email.campaigns import campaign_out
+    from ..email.models import EmailCampaign
+
+    campaign = await db.get(EmailCampaign, campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    return await campaign_out(db, campaign)
+
+
+@router.get("/email/campaigns/{campaign_id}/recipients")
+async def admin_email_campaign_recipients(
+    campaign_id: str,
+    status: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    _admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Per-recipient outbox rows, including the address and delivery error."""
+    from ..email.campaigns import list_campaign_recipients
+    from ..email.models import EmailCampaign
+
+    allowed = {"queued", "sending", "sent", "failed", "dead", "cancelled", "suppressed"}
+    if status and status not in allowed:
+        raise HTTPException(status_code=400, detail="Unknown recipient status.")
+    if await db.get(EmailCampaign, campaign_id) is None:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    return await list_campaign_recipients(
+        db, campaign_id, status=status, limit=limit, offset=offset
+    )
+
+
+@router.post("/email/campaigns/{campaign_id}/start")
+async def admin_email_campaign_start(
+    campaign_id: str,
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    from ..email.campaigns import campaign_out, count_audience, start_campaign
+    from ..email.models import EmailCampaign
+
+    campaign = await db.get(EmailCampaign, campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    if campaign.status != "draft":
+        raise HTTPException(status_code=409, detail="Only draft campaigns can start.")
+    total = await count_audience(db)
+    if total > settings.EMAIL_CAMPAIGN_MAX_RECIPIENTS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Audience is {total:,}; the limit is "
+                f"{settings.EMAIL_CAMPAIGN_MAX_RECIPIENTS:,}."
+            ),
+        )
+    await start_campaign(db, campaign)
+    return await campaign_out(db, campaign)
+
+
+@router.post("/email/campaigns/{campaign_id}/cancel")
+async def admin_email_campaign_cancel(
+    campaign_id: str,
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    from ..email.campaigns import campaign_out, cancel_campaign
+    from ..email.models import EmailCampaign
+
+    campaign = await db.get(EmailCampaign, campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    if campaign.status not in ("draft", "running"):
+        raise HTTPException(
+            status_code=409, detail="Only draft or running campaigns can be cancelled."
+        )
+    await cancel_campaign(db, campaign)
+    await db.refresh(campaign)
+    return await campaign_out(db, campaign)
+
+
+@router.get("/purged-accounts")
+async def admin_purged_accounts(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    q: str | None = Query(None, max_length=320),
+    _admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Trace of accounts removed by the platform (never-verified signups)."""
+    from sqlalchemy import func, select
+
+    from .models import PurgedAccount
+
+    stmt = select(PurgedAccount)
+    count_stmt = select(func.count()).select_from(PurgedAccount)
+    if q and q.strip():
+        pattern = f"%{q.strip().lower()}%"
+        stmt = stmt.where(func.lower(PurgedAccount.email).like(pattern))
+        count_stmt = count_stmt.where(func.lower(PurgedAccount.email).like(pattern))
+    total = int((await db.execute(count_stmt)).scalar() or 0)
+    rows = (
+        await db.execute(
+            stmt.order_by(PurgedAccount.purged_at.desc()).limit(limit).offset(offset)
+        )
+    ).scalars().all()
+    return {
+        "items": [
+            {
+                "id": row.id,
+                "email": row.email,
+                "first_name": row.first_name,
+                "last_name": row.last_name,
+                "reason": row.reason,
+                "status": row.status,
+                "error": row.error,
+                "signed_up_at": row.signed_up_at.isoformat() if row.signed_up_at else None,
+                "purged_at": row.purged_at.isoformat() if row.purged_at else None,
+                "metadata": row.metadata_json or {},
+            }
+            for row in rows
+        ],
+        "total": total,
+    }
+
+
+@router.post("/purged-accounts/run")
+async def admin_run_unverified_purge(
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Run one bounded purge batch immediately instead of waiting for the worker."""
+    from ..users.unverified_purge import purge_unverified_accounts
+
+    return {"purged": await purge_unverified_accounts(db)}
 
 
 @router.get("/health", response_model=AdminHealth)

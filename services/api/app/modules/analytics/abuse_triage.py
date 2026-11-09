@@ -40,6 +40,7 @@ not harassment; a genuine complaint is not a policy violation.
 are legitimate.
 - If the review is merely a complaint, the score must be low.
 - Only quote text that appears verbatim in the review.
+- Never use em dashes or en dashes anywhere. Use commas or full stops instead.
 
 Return JSON only:
 {"score": <float 0..1 probability of a policy violation>,

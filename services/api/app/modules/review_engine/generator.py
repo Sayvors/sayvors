@@ -16,18 +16,52 @@ from .validator import strip_em_dashes
 logger = logging.getLogger(__name__)
 
 
-def _salvage_response_text(raw: str) -> str:
-    """Extract a partial response_text from a truncated JSON wrapper.
+def _parse_json_payload(raw: str) -> dict | None:
+    """Parse the first JSON object anywhere in the text.
 
-    Handles: '{"response_text":"Thank you... We' → 'Thank you... We'
+    Models wrap the contract object in extra braces often enough to matter
+    (``{{"response_text": "..."}}``), and some append a trailing sentence.
+    Scanning for the first position that decodes cleanly handles both without
+    guessing where the object starts.
+    """
+    decoder = json.JSONDecoder()
+    for start, char in enumerate(raw):
+        if char != "{":
+            continue
+        try:
+            data, _ = decoder.raw_decode(raw[start:])
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if isinstance(data, dict):
+            return data
+    return None
+
+
+def _salvage_response_text(raw: str) -> str:
+    """Extract a usable response_text from a non-parseable JSON wrapper.
+
+    Handles, in order:
+    1. Valid JSON anywhere in the text, including doubled braces
+       ('{{"response_text":"..."}}') and trailing prose.
+    2. Genuinely truncated JSON ('{"response_text":"Thank... We') — take the
+       partial value, stopping before any closing quote so wrapper punctuation
+       never reaches the reply.
     Returns "" when nothing usable is present.
     """
     import re
 
+    data = _parse_json_payload(raw)
+    if data and isinstance(data.get("response_text"), str):
+        return data["response_text"].strip()
     m = re.search(r'"response_text"\s*:\s*"(.*)', raw, re.DOTALL)
     if not m:
         return ""
     partial = m.group(1)
+    # A closing quote means the value ended; anything after it is wrapper
+    # punctuation (quotes, braces) that must not leak into the reply.
+    closing = re.search(r'(?<!\\)"', partial)
+    if closing:
+        partial = partial[: closing.start()]
     # Unescape common sequences; drop a dangling trailing backslash.
     partial = partial.rstrip("\\").replace('\\"', '"').replace("\\n", " ").replace("\\\\", "\\")
     return partial.strip()
@@ -76,8 +110,9 @@ LANGUAGE — SIMPLE & HUMAN (non-negotiable):
 - One idea per sentence. Short sentences. Max 15 words per sentence.
 - Warm but not over-the-top. No exclamation spam (max one ! per reply, often none).
 - Sound like ONE person, not a PR team.
-- NEVER use em dashes (—). This is strict: no em dash anywhere in the reply.
-  Use commas or periods instead. "Sorry you waited, that's not ok." — never "Sorry you waited — that's not ok."
+- NEVER use em dashes or en dashes. This is strict: no em dash anywhere in the
+  reply. Use commas or periods instead. "Sorry you waited, that's not ok."
+  never use a dash connector in the same place.
 
 Rules:
 - Follow the selected strategies' instructions closely.
@@ -302,15 +337,19 @@ async def generate_response(
         raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
 
     response_text = ""
-    try:
-        data = json.loads(raw)
+    data = _parse_json_payload(raw)
+    if data is not None:
         response_text = (data.get("response_text") or "").strip()
-    except json.JSONDecodeError:
-        # Truncated JSON wrapper (e.g. '{"response_text":"Thank... We') —
-        # salvage the partial value instead of echoing the raw blob.
+    if not response_text:
+        # No parseable object (truncated mid-value) — salvage the partial
+        # response_text instead of echoing the raw blob.
         salvaged = _salvage_response_text(raw)
         if salvaged:
-            logger.warning("Salvaged partial response_text from truncated JSON (%d chars)", len(salvaged))
+            logger.warning(
+                "Salvaged partial response_text from bad JSON "
+                "(finish_reason=%s raw_len=%d salvaged=%d raw_head=%r)",
+                resp.finish_reason, len(raw), len(salvaged), raw[:200],
+            )
             response_text = salvaged
         elif raw and not raw.startswith("{"):
             logger.warning("Failed to parse response JSON, using raw: %s", raw[:200])

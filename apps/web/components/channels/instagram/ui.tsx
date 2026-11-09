@@ -8,12 +8,33 @@
 export const INK = "text-[var(--ui-ink)]";
 export const INK2 = "text-[var(--ui-ink-2)]";
 
-/** Instagram-style compact age: 5m · 3h · 2d · 6w · 1y. */
-export function timeAgo(iso: string | null): string {
+let rtfAr: Intl.RelativeTimeFormat | null = null;
+
+/**
+ * Instagram-style compact age: 5m · 3h · 2d · 6w · 1y.
+ *
+ * With an Arabic locale it switches to `Intl.RelativeTimeFormat` so the
+ * units read as real MSA ("قبل ٥ دقائق", "أمس") instead of Latin letter
+ * suffixes bolted onto Arabic digits.
+ */
+export function timeAgo(iso: string | null, locale?: string): string {
   if (!iso) return "";
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return "";
   const s = Math.max(1, Math.floor((Date.now() - then) / 1000));
+  if (locale?.startsWith("ar")) {
+    rtfAr ??= new Intl.RelativeTimeFormat("ar", { numeric: "auto" });
+    const mins = Math.floor(s / 60);
+    if (mins < 1) return "الآن";
+    if (mins < 60) return rtfAr.format(-mins, "minute");
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return rtfAr.format(-hours, "hour");
+    const days = Math.floor(hours / 24);
+    if (days < 7) return rtfAr.format(-days, "day");
+    const weeks = Math.floor(days / 7);
+    if (weeks < 52) return rtfAr.format(-weeks, "week");
+    return rtfAr.format(-Math.floor(weeks / 52), "year");
+  }
   if (s < 60) return "now";
   const m = Math.floor(s / 60);
   if (m < 60) return `${m}m`;

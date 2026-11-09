@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import logging
 import re
+import time
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -27,6 +28,12 @@ logger = logging.getLogger(__name__)
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 BACKOFF_SECONDS = (60, 300, 1800, 7200, 21600)
 POLL_SECONDS = 3.0
+# A row is "stranded" when it has been in `sending` longer than any provider
+# call could reasonably take (HTTP timeout + queueing). The provider call is
+# bounded by httpx, so 15 minutes is already generous.
+STALE_SENDING_SECONDS = 15 * 60
+REAP_INTERVAL_SECONDS = 60
+REAP_BATCH = 100
 UNSUBSCRIBE_PATH = "/api/v1/email/unsubscribe"
 
 
@@ -57,17 +64,44 @@ async def suppress(db: AsyncSession, email: str, reason: str, detail: str | None
     await db.flush()
 
 
-def _unsubscribe_secret() -> bytes:
-    return (settings.JWT_SECRET or "sayvors-email").encode("utf-8")
+def _unsubscribe_secrets() -> list[bytes]:
+    """Signing keys for unsubscribe links, newest first.
+
+    The dedicated key signs every new link. JWT_SECRET stays in the list as a
+    legacy verifier so links sent before this key existed (and before the
+    deploy that introduced it) keep working; it is never used to mint new
+    links when the dedicated key is configured.
+    """
+    secrets_out: list[bytes] = []
+    for value in (settings.EMAIL_UNSUBSCRIBE_SECRET, settings.JWT_SECRET):
+        if value:
+            encoded = value.encode("utf-8")
+            if encoded not in secrets_out:
+                secrets_out.append(encoded)
+    return secrets_out or [b"sayvors-email"]
 
 
 def unsubscribe_token(email: str) -> str:
     normalized = normalize_email(email) or ""
-    return hmac.new(_unsubscribe_secret(), normalized.encode(), hashlib.sha256).hexdigest()[:40]
+    return hmac.new(
+        _unsubscribe_secrets()[0], normalized.encode(), hashlib.sha256
+    ).hexdigest()[:40]
 
 
 def verify_unsubscribe_token(email: str, token: str) -> bool:
-    return hmac.compare_digest(unsubscribe_token(email), (token or "").strip())
+    normalized = normalize_email(email) or ""
+    presented = (token or "").strip()
+    if not presented:
+        return False
+    # Accept the dedicated key and the legacy JWT-derived key, so a key
+    # migration does not break opt-out links already delivered.
+    for secret in _unsubscribe_secrets():
+        expected = hmac.new(
+            secret, normalized.encode(), hashlib.sha256
+        ).hexdigest()[:40]
+        if hmac.compare_digest(expected, presented):
+            return True
+    return False
 
 
 def unsubscribe_url(email: str) -> str:
@@ -104,6 +138,7 @@ async def enqueue_email(
     idempotency_key: str | None = None,
     headers: dict | None = None,
     max_attempts: int = 6,
+    campaign_id: str | None = None,
 ) -> str | None:
     """Queue one email. Returns the outbox id, or None when suppressed.
 
@@ -135,6 +170,7 @@ async def enqueue_email(
         kind=(kind or "notification")[:32],
         headers=headers or {},
         idempotency_key=(idempotency_key[:160] if idempotency_key else None),
+        campaign_id=campaign_id,
         max_attempts=max(1, min(int(max_attempts), 10)),
         next_attempt_at=_now(),
     )
@@ -264,7 +300,11 @@ async def process_once(limit: int | None = None) -> int:
         await db.execute(
             update(EmailOutbox)
             .where(EmailOutbox.id.in_(due))
-            .values(status="sending", attempts=EmailOutbox.attempts + 1)
+            .values(
+                status="sending",
+                attempts=EmailOutbox.attempts + 1,
+                claimed_at=_now(),
+            )
         )
         await db.commit()
 
@@ -288,10 +328,60 @@ async def process_once(limit: int | None = None) -> int:
     return len(due)
 
 
+async def requeue_stale_sending(limit: int | None = None) -> int:
+    """Return rows stranded in `sending` by a crashed worker to the queue.
+
+    A worker commits `sending` before calling Resend. If the process dies in
+    that window, the claim query (which only takes `queued`) never revisits the
+    row. Replaying is safe because the provider request carries the outbox
+    row's `Idempotency-Key`. Attempts are not incremented here; the next claim
+    does that, so the normal retry budget still applies.
+    """
+    from ...database import async_session
+
+    batch = max(1, min(int(limit or REAP_BATCH), REAP_BATCH))
+    now = _now()
+    cutoff = now - timedelta(seconds=STALE_SENDING_SECONDS)
+    async with async_session() as db:
+        rows = (
+            await db.execute(
+                select(EmailOutbox)
+                .where(
+                    EmailOutbox.status == "sending",
+                    EmailOutbox.claimed_at.is_not(None),
+                    EmailOutbox.claimed_at < cutoff,
+                )
+                .order_by(EmailOutbox.claimed_at)
+                .limit(batch)
+                .with_for_update(skip_locked=True)
+            )
+        ).scalars().all()
+        if not rows:
+            return 0
+        for row in rows:
+            if row.attempts >= row.max_attempts:
+                row.status = "dead"
+                row.error = "Worker stopped after claiming; retry budget exhausted"
+            else:
+                row.status = "queued"
+                row.next_attempt_at = now
+                row.error = "Requeued after worker restart"
+            row.claimed_at = None
+            db.add(row)
+        await db.commit()
+        logger.warning("Requeued %s email(s) stranded in sending", len(rows))
+        return len(rows)
+
+
 async def run_email_worker() -> None:
     logger.info("Email outbox worker started")
+    last_reap = 0.0
     while True:
         try:
+            now_mono = time.monotonic()
+            if now_mono - last_reap >= REAP_INTERVAL_SECONDS:
+                last_reap = now_mono
+                await requeue_stale_sending()
             processed = await process_once()
             if not processed:
                 await asyncio.sleep(POLL_SECONDS)

@@ -3,6 +3,14 @@
 import { useRef, useState } from "react";
 import { CROP_ASPECT } from "./CropFrame";
 import { MAX_MEDIA_MB, type CropState } from "./types";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 export interface ThumbCrop {
   cropKey: CropState["key"];
@@ -11,10 +19,11 @@ export interface ThumbCrop {
   y: number;
 }
 
-export function formatBytes(n: number | undefined): string {
+export function formatBytes(n: number | undefined, t?: { mb: string; kb: string }, fmt?: (n: number) => string): string {
   if (!n || n <= 0) return "";
-  if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)}MB`;
-  return `${Math.round(n / 1024)}KB`;
+  const f = fmt ?? ((v: number) => String(v));
+  if (n >= 1024 * 1024) return fill(t?.mb ?? "{n}MB", { n: f(Math.round((n / 1024 / 1024) * 10) / 10) });
+  return fill(t?.kb ?? "{n}KB", { n: f(Math.round(n / 1024)) });
 }
 
 function thumbBox(cropKey: CropState["key"]): { w: number; h: number } {
@@ -39,6 +48,9 @@ export default function MediaSink({
   const [dropping, setDropping] = useState(false);
   const [urlDraft, setUrlDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const { t, locale } = useI18n();
+  const md = t.publish.media;
+  const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
   const fileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
 
@@ -50,12 +62,12 @@ export default function MediaSink({
     const file = files?.[0];
     if (!file) return;
     if (file.size > MAX_MEDIA_MB * 1024 * 1024) {
-      setError(`Files up to ${MAX_MEDIA_MB}MB only.`);
+      setError(fill(md.tooBig, { n: fmt(MAX_MEDIA_MB) }));
       return;
     }
     const kind = file.type.startsWith("video/") ? "video" : file.type.startsWith("image/") ? "image" : null;
     if (!kind) {
-      setError("Images or video only.");
+      setError(md.badType);
       return;
     }
     onPick(kind, URL.createObjectURL(file), file.name, file.size, file);
@@ -68,14 +80,14 @@ export default function MediaSink({
     try {
       const parsed = new URL(value);
       if (parsed.protocol !== "https:") {
-        setError("Paste a public https link.");
+        setError(md.badUrl);
         return;
       }
       const kind = /\.(mp4|webm|mov|m4v)(\?|$)/i.test(parsed.pathname) ? "video" : "image";
       onPick(kind, value);
       setUrlDraft("");
     } catch {
-      setError("That doesn't look like a URL.");
+      setError(md.notUrl);
     }
   };
 
@@ -119,7 +131,7 @@ export default function MediaSink({
             <button
               type="button"
               onClick={onClear}
-              aria-label="Remove media"
+              aria-label={md.removeMedia}
               className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-[rgba(0,0,0,0.65)] text-[13px] font-bold text-white outline-none transition hover:bg-black focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-white"
             >
               ×
@@ -130,12 +142,12 @@ export default function MediaSink({
               {media.fileName ?? media.url}
             </p>
             <p className="mt-0.5 text-[11px] text-[var(--ui-ink-2)]">
-              {media.type === "video" ? "Video" : "Image"}
+              {media.type === "video" ? md.video : md.image}
               {media.sizeBytes ? ` · ${formatBytes(media.sizeBytes)}` : ""}
             </p>
             {thumbLabel && (
               <p className="mt-1 text-[11px] font-semibold text-[var(--ui-ink)]">
-                Frame mirrors: {thumbLabel}
+                {fill(md.frameMirrors, { label: thumbLabel })}
               </p>
             )}
             <button
@@ -143,7 +155,7 @@ export default function MediaSink({
               onClick={() => fileInput.current?.click()}
               className="mt-2 rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-1.5 text-[11px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-line)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
             >
-              Replace
+              {md.replace}
             </button>
           </div>
         </div>
@@ -178,17 +190,17 @@ export default function MediaSink({
             <path d="M21 15l-5-5L5 21" />
           </svg>
           <p className="mt-2 text-[13px] font-semibold text-[var(--ui-ink)]">
-            Drop an image or video here
+            {md.dropTitle}
           </p>
           <p className="mt-0.5 text-[11px] text-[var(--ui-ink-2)]">
-            JPG · PNG · WEBP · MP4 — up to {MAX_MEDIA_MB}MB
+            {fill(md.dropSub, { n: fmt(MAX_MEDIA_MB) })}
           </p>
           <button
             type="button"
             onClick={() => fileInput.current?.click()}
             className="mt-3 rounded-[10px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-4 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-line)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
           >
-            Browse files
+            {md.browse}
           </button>
         </div>
       )}
@@ -204,8 +216,8 @@ export default function MediaSink({
               addUrl();
             }
           }}
-          placeholder="…or paste a public https media link"
-          aria-label="Paste a media URL"
+          placeholder={md.pastePh}
+          aria-label={md.pasteAria}
           className="min-w-[12rem] flex-1 rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[12px] text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]"
         />
         <button
@@ -214,7 +226,7 @@ export default function MediaSink({
           disabled={!urlDraft.trim()}
           className="rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[12px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-line)] disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
         >
-          Add
+{md.add}
         </button>
       </div>
 

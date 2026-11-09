@@ -22,6 +22,7 @@ const DICTS: Record<LocaleCode, Dict> = {
   fr: en,
   de: en,
   ur: en,
+  ch: en,
 };
 
 interface I18nContextValue {

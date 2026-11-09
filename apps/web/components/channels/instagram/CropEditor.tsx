@@ -2,6 +2,8 @@
 
 import { useRef, useState } from "react";
 import { INK, INK2 } from "./ui";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import type { Dict } from "@/lib/i18n/en";
 
 /*
  * Instagram-style crop: pick a supported aspect ratio, drag to reposition,
@@ -33,11 +35,11 @@ export const STORY_RATIO: CropRatio = {
   key: "9:16", label: "Story", hint: "9:16", aspect: 9 / 16, out: [1080, 1920],
 };
 
-function loadImage(src: string): Promise<HTMLImageElement> {
+function loadImage(src: string, unreadable: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error("Could not read this image."));
+    img.onerror = () => reject(new Error(unreadable));
     img.src = src;
   });
 }
@@ -59,20 +61,34 @@ function fileUrl(file: File): string {
   return url;
 }
 
+/** Translated copy `centerCropBlob` needs — the caller owns the locale. */
+export type CropCopy = {
+  unreadable: string;
+  noCanvas: string;
+  cropFailed: string;
+};
+
+const EN_COPY: CropCopy = {
+  unreadable: "Could not read this image.",
+  noCanvas: "Canvas unavailable in this browser.",
+  cropFailed: "Crop failed.",
+};
+
 /** Center-crop any image to a ratio — used for the automatic 9:16 story
  * variant, so the tenant doesn't crop the same photo twice. */
 export async function centerCropBlob(
   file: File,
   ratio: CropRatio,
+  copy: CropCopy = EN_COPY,
 ): Promise<Blob> {
   const url = URL.createObjectURL(file);
   try {
-    const img = await loadImage(url);
+    const img = await loadImage(url, copy.unreadable);
     const canvas = document.createElement("canvas");
     canvas.width = ratio.out![0];
     canvas.height = ratio.out![1];
     const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("Canvas unavailable in this browser.");
+    if (!ctx) throw new Error(copy.noCanvas);
     const targetAspect = canvas.width / canvas.height;
     const srcAspect = img.naturalWidth / img.naturalHeight;
     let sw: number;
@@ -93,7 +109,7 @@ export async function centerCropBlob(
     );
     return await new Promise<Blob>((resolve, reject) =>
       canvas.toBlob(
-        (b) => (b ? resolve(b) : reject(new Error("Crop failed."))),
+        (b) => (b ? resolve(b) : reject(new Error(copy.cropFailed))),
         "image/jpeg",
         0.92,
       ),
@@ -101,6 +117,28 @@ export async function centerCropBlob(
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+export type CropDict = Dict["channelHub"]["instagram"]["cropper"];
+
+/** Ratio labels live in the dictionary so Arabic shows MSA, not "Square". */
+export function ratioLabel(r: CropRatio, c: CropDict): string {
+  switch (r.key) {
+    case "1:1":
+      return c.ratios.square;
+    case "4:5":
+      return c.ratios.portrait;
+    case "1.91:1":
+      return c.ratios.landscape;
+    case "9:16":
+      return c.ratios.story;
+    case "orig":
+      return c.ratios.original;
+  }
+}
+
+export function ratioHint(r: CropRatio, c: CropDict): string {
+  return r.key === "orig" ? c.ratios.asIs : r.hint;
 }
 
 const BOX = 288; // editor frame on screen, css px
@@ -132,6 +170,8 @@ export default function CropEditor({
   const [loadError, setLoadError] = useState<string | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
   const dragRef = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
+  const { t } = useI18n();
+  const c = t.channelHub.instagram.cropper;
 
   // Derived from the file; never revoked mid-session (see fileUrl above).
   const imgUrl = fileUrl(file);
@@ -155,13 +195,13 @@ export default function CropEditor({
 
   const buildBlob = async (): Promise<Blob> => {
     const img = imgRef.current;
-    if (!img) throw new Error("Image still loading.");
+    if (!img) throw new Error(c.errors.stillLoading);
     if (!activeRatio || !ratio.out) return file; // original: untouched
     const canvas = document.createElement("canvas");
     canvas.width = ratio.out[0];
     canvas.height = ratio.out[1];
     const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("Canvas unavailable in this browser.");
+    if (!ctx) throw new Error(c.errors.noCanvas);
     const coverNow = Math.max(BOX / img.naturalWidth, boxH / img.naturalHeight);
     const scale = coverNow * zoom;
     // The frame's top-left in natural image pixels — the same math that
@@ -174,7 +214,7 @@ export default function CropEditor({
     );
     return await new Promise<Blob>((resolve, reject) =>
       canvas.toBlob(
-        (b) => (b ? resolve(b) : reject(new Error("Crop failed."))),
+        (b) => (b ? resolve(b) : reject(new Error(c.errors.cropFailed))),
         "image/jpeg",
         0.92,
       ),
@@ -188,9 +228,14 @@ export default function CropEditor({
     >
       <div className="flex items-baseline justify-between">
         <p className={`text-[13px] font-semibold ${INK}`}>
-          Crop {total > 1 ? `(${index + 1} of ${total})` : ""}
+          {c.title}{" "}
+          {total > 1
+            ? c.counter
+                .replaceAll("{i}", String(index + 1))
+                .replaceAll("{total}", String(total))
+            : ""}
         </p>
-        <p className={`text-[12px] ${INK2}`}>{ratio.label} · {ratio.hint}</p>
+        <p className={`text-[12px] ${INK2}`}>{ratioLabel(ratio, c)} · {ratioHint(ratio, c)}</p>
       </div>
 
       <div className="mt-3 flex flex-wrap gap-1.5">
@@ -205,7 +250,7 @@ export default function CropEditor({
                 : `border-[var(--ui-line)] bg-[var(--ui-surface)] ${INK} hover:bg-[var(--ui-line)]`
             }`}
           >
-            {r.label}
+            {ratioLabel(r, c)}
           </button>
         ))}
       </div>
@@ -213,7 +258,7 @@ export default function CropEditor({
       <div className="mt-3 flex justify-center">
         <div
           role="application"
-          aria-label="Crop frame — drag to reposition"
+          aria-label={c.frameAria}
           style={{ width: BOX, height: boxH, touchAction: "none" }}
           className="relative flex cursor-grab items-center justify-center overflow-hidden rounded-[8px] bg-black active:cursor-grabbing"
           onPointerDown={(e) => {
@@ -245,12 +290,10 @@ export default function CropEditor({
                 }
               }}
               src={imgUrl}
-              alt="Crop source"
+              alt={c.sourceAlt}
               draggable={false}
               onError={() =>
-                setLoadError(
-                  "This image can't be read — Instagram posts need JPG or PNG. Convert the file and add it again.",
-                )
+                setLoadError(c.errors.badFormat)
               }
               className="pointer-events-none absolute left-1/2 top-1/2 max-w-none select-none"
               style={{
@@ -275,14 +318,14 @@ export default function CropEditor({
 
       {activeRatio && (
         <div className="mt-3 flex items-center gap-3">
-          <span className={`text-[12px] font-semibold ${INK2}`}>Zoom</span>
+          <span className={`text-[12px] font-semibold ${INK2}`}>{c.zoom}</span>
           <input
             type="range"
             min={1}
             max={3}
             step={0.01}
             value={zoom}
-            aria-label="Zoom"
+            aria-label={c.zoom}
             onChange={(e) => {
               const z = Number(e.target.value);
               setZoom(z);
@@ -299,7 +342,7 @@ export default function CropEditor({
           onClick={onCancel}
           className="rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-ink)]"
         >
-          Cancel
+          {c.cancel}
         </button>
         <button
           type="button"
@@ -309,13 +352,13 @@ export default function CropEditor({
               .then(onDone)
               .catch((e: unknown) => {
                 setLoadError(
-                  e instanceof Error ? e.message : "Could not process this image — try another file.",
+                  e instanceof Error ? e.message : c.errors.processFailed,
                 );
               });
           }}
           className="rounded-[12px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)] disabled:opacity-50"
         >
-          {working ? "Uploading…" : "Done"}
+          {working ? c.uploading : c.done}
         </button>
       </div>
     </div>

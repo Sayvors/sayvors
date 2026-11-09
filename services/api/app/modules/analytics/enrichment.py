@@ -25,8 +25,25 @@ from ..llm.gateway import LLMMessage, ProviderError, complete
 
 logger = logging.getLogger(__name__)
 
-ENRICHMENT_MODEL = "groq:qwen3.8-27b"
 MEANING_VERSION = 2
+
+
+async def _resolve_tenant_model(db=None) -> str:
+    """The tenant's enabled model from the admin database.
+
+    Uses the caller's session when given (no extra round trip on the hot poll
+    path), otherwise opens a short-lived one. Raises when nothing is enabled:
+    the caller's heuristic fallback then records a failed enrichment instead of
+    silently picking a provider the admin disabled.
+    """
+    from ..llm.gateway import resolve_tenant_model
+
+    if db is not None:
+        return await resolve_tenant_model(db)
+    from ...database import async_session
+
+    async with async_session() as session:
+        return await resolve_tenant_model(session)
 
 # How many times the LLM call is tried before the heuristic fallback takes
 # over. A provider blip is the common case, and one retry is the difference
@@ -50,7 +67,8 @@ Rules:
 - topics: only topics actually discussed. Use the listed canonical names.
 - products: only concrete named products/services; empty list if none.
 - problems: only genuine complaints; empty list if none.
-- sentiment_score: -1.0 (angry) to 1.0 (delighted)."""
+- sentiment_score: -1.0 (angry) to 1.0 (delighted).
+- Never use em dashes or en dashes. Use commas or full stops instead."""
 
 
 _TOPIC_RULES = {
@@ -144,16 +162,24 @@ async def enrich_review(
     rating: int,
     text: str | None,
     reviewer_name: str | None,
-    model: str = ENRICHMENT_MODEL,
+    model: str | None = None,
     tenant_id: str | None = None,
     attempts: int = ENRICHMENT_ATTEMPTS,
+    db=None,
 ) -> dict:
     """Return {sentiment, sentiment_score, topics, products, problems} for a review.
+
+    ``model`` is resolved from the tenant's enabled models in the admin
+    database when the caller does not name one. There is deliberately no
+    hardcoded provider or model id: a disabled provider must never be called
+    and a model the tenant did not enable must never be billed.
 
     A result built by the heuristic fallback carries ``heuristic: True``; the
     caller records that as a failed enrichment so it is retried later instead
     of being remembered as a finished one.
     """
+    if not model:
+        model = await _resolve_tenant_model(db)
     if not text or not text.strip():
         # Star rating alone: sentiment from stars, nothing else to mine.
         return _heuristic_enrich(rating, None)
@@ -285,10 +311,13 @@ async def extract_meaning(
     text: str | None,
     rating: int,
     reviewer_name: str | None = None,
-    model: str = ENRICHMENT_MODEL,
+    model: str | None = None,
     tenant_id: str | None = None,
+    db=None,
 ) -> dict:
     """Work out what one review means, and refuse to guess.
+
+    ``model`` falls back to the tenant's enabled model; nothing is hardcoded.
 
     Always returns a record. When the model cannot be reached, returns junk, or
     returns something whose evidence is not in the review, the record is
@@ -296,6 +325,9 @@ async def extract_meaning(
     work for a person rather than as a fabricated finding.
     """
     from . import subjects as S
+
+    if not model:
+        model = await _resolve_tenant_model(db)
 
     body = (text or "").strip()
     language = S.detect_language(body)

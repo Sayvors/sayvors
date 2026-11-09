@@ -28,8 +28,11 @@ class Settings(BaseSettings):
         return mode
     JWT_SECRET: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"
-    JWT_ACCESS_EXPIRATION_MINUTES: int = 60 * 24  # 24 hours; refreshed but long enough that a browser hiccup cannot log the user out mid-session
-    JWT_REFRESH_EXPIRATION_DAYS: int = 7
+    # 12-hour login session. The access token and the rotating refresh token
+    # share the same lifetime, so a user who stops using the app must sign in
+    # again after 12 hours. A refresh before then rolls both forward.
+    JWT_ACCESS_EXPIRATION_MINUTES: int = 60 * 12
+    JWT_REFRESH_EXPIRATION_HOURS: int = 12
     # "production" arms the fail-closed startup validation below.
     ENVIRONMENT: str = "development"
     VERSION: str = "0.1.0"
@@ -107,8 +110,8 @@ class Settings(BaseSettings):
     CSRF_COOKIE_NAME: str = "csrf_token"
     REFRESH_COOKIE_NAME: str = "refresh_token"
     ACCESS_COOKIE_NAME: str = "access_token"
-    REFRESH_COOKIE_MAX_AGE: int = 60 * 60 * 24 * 7  # 7 days
-    ACCESS_COOKIE_MAX_AGE: int = 60 * 60 * 24  # 24 hours, matches JWT access expiry
+    REFRESH_COOKIE_MAX_AGE: int = 60 * 60 * 12  # 12 hours
+    ACCESS_COOKIE_MAX_AGE: int = 60 * 60 * 12  # 12 hours, matches JWT access expiry
     # Parent domain shared by the SPA and the API (e.g. ".sayvors.com").
     # Lets the SPA origin read the non-httpOnly CSRF cookie for the
     # X-CSRF-Token double-submit header in split-domain deployments.
@@ -198,11 +201,39 @@ class Settings(BaseSettings):
     RESEND_WEBHOOK_SECRET: str = ""
     EMAIL_WORKER_BATCH: int = 20
     EMAIL_WORKER_CONCURRENCY: int = 4
+    # Per-address OTP throttle, independent of the per-IP limits. A repeated
+    # signup/resend must not turn one victim address into a mail cannon.
+    OTP_RESEND_COOLDOWN_SECONDS: int = 60
+    OTP_DAILY_LIMIT: int = 10
+    # Never-verified signups are removed after this grace period. The archive
+    # row in purged_accounts is the admin-visible trace.
+    UNVERIFIED_ACCOUNT_TTL_DAYS: int = 7
+    UNVERIFIED_PURGE_BATCH: int = 20
+    UNVERIFIED_PURGE_INTERVAL_SECONDS: int = 3600
+    # Dedicated HMAC key for one-click unsubscribe links. Kept separate from
+    # JWT_SECRET so rotating the login signing key cannot invalidate every
+    # opt-out link already sitting in customers' inboxes. Deployed startup
+    # requires it (>= 32 chars) and rejects reusing JWT_SECRET.
+    EMAIL_UNSUBSCRIBE_SECRET: str = ""
+    # Newsletter campaigns expand into email_outbox in batches. The interval
+    # paces delivery so a large audience does not hit Resend in one burst.
+    EMAIL_CAMPAIGN_BATCH_SIZE: int = 500
+    EMAIL_CAMPAIGN_INTERVAL_SECONDS: int = 60
+    EMAIL_CAMPAIGN_MAX_RECIPIENTS: int = 50_000
+    EMAIL_CAMPAIGN_POLL_SECONDS: int = 10
+    # Trial policy used by the {tenant_free_trial_days_left} campaign variable.
+    # The schema has no trial end date yet, so this is the source of truth.
+    FREE_TRIAL_DAYS: int = 14
     RESEND_FROM: str = "Sayvors <noreply@sayvors.com>"
     EMAIL_FROM: str = "noreply@sayvors.com"
     # Generic /email/send is restricted to the platform sending domain unless
     # this is explicitly enabled (self-hosted relay use only).
     EMAIL_SEND_ALLOW_ANY_RECIPIENT: bool = False
+    # Per-tenant cap on review-request emails per rolling 24 hours. Resend is
+    # a shared sending domain: one runaway campaign can burn its reputation
+    # for every tenant. 500 matches the bulk endpoint's per-call maximum, so a
+    # normal campaign still fits in one day while a loop cannot drain the domain.
+    BULK_EMAIL_DAILY_LIMIT: int = 500
     FRONTEND_URL: str = "http://localhost:3000"
     # Public base URL of THIS API, used to build tracked links that customers
     # click from SMS/email/WhatsApp (e.g. https://api.sayvors.com).
@@ -220,13 +251,21 @@ class Settings(BaseSettings):
     # ── Google Business Profile (Reviews) ────────────────
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
-    GOOGLE_REVIEWS_POLL_INTERVAL_SECONDS: int = 300  # 5 min
+    GOOGLE_REVIEWS_POLL_INTERVAL_SECONDS: int = 60  # 1 min
     # Q&A changes much less often than reviews. Poll independently so 1M
     # connected numbers do not make a Q&A request every review cycle.
     GOOGLE_QA_POLL_INTERVAL_SECONDS: int = 3600  # 60 min
     GOOGLE_REVIEWS_REDIRECT_URI: str = "http://localhost:8000/api/v1/channels/google/callback"
     # Dev/test mode for Google Reviews: fabricate sample reviews.
     GOOGLE_REVIEWS_MOCK: bool = False
+    # GBP Pub/Sub push (NEW_REVIEW): the OIDC audience configured on the
+    # push subscription. Empty disables the push endpoint entirely —
+    # fail-closed, the 60s poll remains the only ingress.
+    GOOGLE_PUBSUB_PUSH_AUDIENCE: str = ""
+    # Second OIDC check: the push subscription's own service-account email.
+    # When set, a correctly-signed token minted by any other identity is
+    # rejected even though it passed signature/audience/expiry.
+    GOOGLE_PUBSUB_PUSH_EMAIL: str = ""
 
     # ── Google Places API (New) ──────────────────────────────────────────
     # Server-side key for two features: resolving free-text service areas to
@@ -392,6 +431,33 @@ def validate_production_settings() -> None:
         errors.append("EMAIL_SEND_ALLOW_ANY_RECIPIENT must stay off (open-relay guard)")
     if settings.RAG_DB_ALLOW_PRIVATE_HOSTS:
         errors.append("RAG_DB_ALLOW_PRIVATE_HOSTS must stay off (SSRF guard)")
+    # TESTING is a normal setting read from the env file, not just a test
+    # fixture. When it leaks into a deploy it skips the Meta webhook HMAC and
+    # disarms ~25 rate limits; a typo must fail at boot, not silently open the
+    # ingress. GOOGLE_REVIEWS_MOCK fabricates reviews, which must never reach
+    # a real tenant.
+    if settings.TESTING:
+        errors.append(
+            "TESTING must stay off in a deployed environment "
+            "(it disables webhook signature checks and rate limits)"
+        )
+    if settings.GOOGLE_REVIEWS_MOCK:
+        errors.append(
+            "GOOGLE_REVIEWS_MOCK must stay off in a deployed environment "
+            "(it fabricates reviews)"
+        )
+    if not settings.EMAIL_UNSUBSCRIBE_SECRET:
+        errors.append(
+            "EMAIL_UNSUBSCRIBE_SECRET must be set "
+            "(JWT_SECRET rotation must not invalidate unsubscribe links)"
+        )
+    elif len(settings.EMAIL_UNSUBSCRIBE_SECRET) < 32:
+        errors.append("EMAIL_UNSUBSCRIBE_SECRET must be >= 32 chars")
+    elif settings.EMAIL_UNSUBSCRIBE_SECRET == settings.JWT_SECRET:
+        errors.append(
+            "EMAIL_UNSUBSCRIBE_SECRET must differ from JWT_SECRET "
+            "(otherwise rotating JWT still breaks opt-out links)"
+        )
     if errors:
         print("FATAL: deployed configuration validation failed:", file=sys.stderr)
         for e in errors:

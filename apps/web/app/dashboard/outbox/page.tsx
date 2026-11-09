@@ -14,18 +14,33 @@ import {
   type ReviewReplyDTO,
   type ReviewInsight,
 } from "@/lib/api-analytics";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import type { Dict } from "@/lib/i18n/en";
 
-interface ChannelOption {
-  id: string;
-  display_name: string | null;
-  listing_id?: string | null;
+type OutboxDict = Dict["outbox"];
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
 }
 
-type StatusFilter = "pending_approval" | "posted" | "failed";
-
-function timeAgo(iso: string): string {
+let arRtf: Intl.RelativeTimeFormat | null = null;
+function timeAgo(iso: string, locale?: string): string {
   const ms = Date.now() - new Date(iso).getTime();
   if (Number.isNaN(ms)) return "";
+  if (locale === "ar") {
+    arRtf ??= new Intl.RelativeTimeFormat("ar", { numeric: "auto" });
+    const m = Math.floor(ms / 60000);
+    if (m < 1) return "الآن";
+    if (m < 60) return arRtf.format(-m, "minute");
+    const h = Math.floor(m / 60);
+    if (h < 24) return arRtf.format(-h, "hour");
+    const d = Math.floor(h / 24);
+    if (d < 30) return arRtf.format(-d, "day");
+    return new Date(iso).toLocaleDateString("ar-SA", { month: "short", day: "numeric" });
+  }
   const m = Math.floor(ms / 60000);
   if (m < 1) return "just now";
   if (m < 60) return `${m}m ago`;
@@ -36,25 +51,24 @@ function timeAgo(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-function initialsOf(name: string | null): string {
-  const parts = (name ?? "Anonymous").trim().split(/\s+/).filter(Boolean);
+interface ChannelOption {
+  id: string;
+  display_name: string | null;
+  listing_id?: string | null;
+}
+
+type StatusFilter = "pending_approval" | "posted" | "failed";
+
+function initialsOf(name: string | null, fallback = "Anonymous"): string {
+  const parts = (name ?? fallback).trim().split(/\s+/).filter(Boolean);
   if (parts.length > 1) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   return (parts[0]?.slice(0, 2) ?? "A").toUpperCase();
 }
 
-const STATUS_META: Record<StatusFilter, { label: string; pill: string }> = {
-  pending_approval: {
-    label: "Pending",
-    pill: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
-  },
-  posted: {
-    label: "Posted",
-    pill: "bg-emerald-600/15 text-emerald-700 dark:text-emerald-300",
-  },
-  failed: {
-    label: "Failed",
-    pill: "bg-red-500/15 text-red-600 dark:text-red-400",
-  },
+const STATUS_PILL: Record<StatusFilter, string> = {
+  pending_approval: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+  posted: "bg-emerald-600/15 text-emerald-700 dark:text-emerald-300",
+  failed: "bg-red-500/15 text-red-600 dark:text-red-400",
 };
 
 function apiDetail(e: unknown): string {
@@ -75,6 +89,9 @@ function Pager({ page, totalPages, onPage }: {
   totalPages: number;
   onPage: (p: number) => void;
 }) {
+  const { t, locale } = useI18n();
+  const ob = t.outbox;
+  const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
   if (totalPages <= 1) return null;
   return (
     <div className="flex items-center justify-center gap-3 pt-1">
@@ -83,17 +100,17 @@ function Pager({ page, totalPages, onPage }: {
         disabled={page <= 1}
         className="rounded-lg bg-ink/[0.04] px-3 py-1.5 text-[11px] font-semibold text-ink/60 outline-none transition hover:bg-ink/[0.07] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-40 dark:bg-fog/[0.06] dark:text-fog/60"
       >
-        ← Prev
+        {ob.pagerPrev}
       </button>
       <span className="text-[11px] font-medium tabular-nums text-ink/45 dark:text-fog/45">
-        Page {page} of {totalPages}
+        {fill(ob.pagerLine, { p: fmt(page), t: fmt(totalPages) })}
       </span>
       <button
         onClick={() => onPage(page + 1)}
         disabled={page >= totalPages}
         className="rounded-lg bg-ink/[0.04] px-3 py-1.5 text-[11px] font-semibold text-ink/60 outline-none transition hover:bg-ink/[0.07] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-40 dark:bg-fog/[0.06] dark:text-fog/60"
       >
-        Next →
+        {ob.pagerNext}
       </button>
     </div>
   );
@@ -119,6 +136,9 @@ function PostedCard({ r, branchName, showBranch }: {
   showBranch: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const { t, locale } = useI18n();
+  const ob = t.outbox;
+  const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
   const reviewUrl = (r as ReviewReplyDTO & { review_url?: string }).review_url;
   return (
     <article className="overflow-hidden rounded-2xl border border-ink/[0.06] bg-white shadow-sm dark:border-fog/[0.06] dark:bg-ink">
@@ -129,14 +149,14 @@ function PostedCard({ r, branchName, showBranch }: {
       >
         <GoogleG className="h-5 w-5 shrink-0" />
         <span aria-hidden className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-deep-violet/10 text-[11px] font-bold text-deep-violet">
-          {initialsOf(r.reviewer_name)}
+          {initialsOf(r.reviewer_name, ob.anon)}
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
             <span className="truncate text-[13px] font-bold text-ink dark:text-fog">
-              {r.reviewer_name ?? "Anonymous"}
+              {r.reviewer_name ?? ob.anon}
             </span>
-            <span aria-label={`${r.rating} out of 5 stars`} className="font-bold text-amber-600">
+            <span aria-label={fill(ob.starAria, { value: fmt(r.rating) })} className="font-bold text-amber-600">
               {"★".repeat(Math.max(0, Math.min(5, r.rating)))}
             </span>
           </span>
@@ -144,12 +164,12 @@ function PostedCard({ r, branchName, showBranch }: {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3 w-3 shrink-0 text-emerald-600" aria-hidden>
               <path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-4h6v4" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-            <span className="truncate">{[showBranch ? branchName : null, timeAgo(r.created_at)].filter(Boolean).join(" · ")}</span>
+            <span className="truncate">{[showBranch ? branchName : null, timeAgo(r.created_at, locale)].filter(Boolean).join(" · ")}</span>
           </span>
         </span>
         <span className="hidden shrink-0 items-center gap-1 rounded-full bg-emerald-600/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700 sm:inline-flex dark:text-emerald-300">
           <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-          Live
+          {ob.live}
         </span>
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" className={`h-3.5 w-3.5 shrink-0 text-ink/30 transition-transform dark:text-fog/30 ${open ? "rotate-180" : ""}`} aria-hidden>
           <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
@@ -166,7 +186,7 @@ function PostedCard({ r, branchName, showBranch }: {
 
           <div className="mt-3 rounded-xl border border-emerald-600/15 bg-emerald-600/[0.05] p-3 dark:bg-emerald-500/[0.06]">
             <p className="mb-1.5 text-[9px] font-bold uppercase tracking-wider text-emerald-700/70 dark:text-emerald-300/70">
-              Your reply — live on Google
+              {ob.replyLive}
             </p>
             <p className="whitespace-pre-wrap text-[13px] leading-6 text-ink/85 dark:text-fog/85">
               {r.reply_text || "—"}
@@ -182,7 +202,7 @@ function PostedCard({ r, branchName, showBranch }: {
                 onClick={(e) => e.stopPropagation()}
                 className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-deep-violet underline-offset-2 transition hover:underline"
               >
-                View on Google
+                {ob.viewGoogle}
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-2.5 w-2.5" aria-hidden>
                   <path d="M7 17L17 7M9 7h8v8" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
@@ -208,6 +228,10 @@ export default function OutboxPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [page, setPage] = useState(1);
+  const { t, locale } = useI18n();
+  const ob: OutboxDict = t.outbox;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
   const PAGE_SIZE = 10;
 
   const { groups } = useLocationGroups();
@@ -259,7 +283,7 @@ export default function OutboxPage() {
         if (!prev || d.created_at > prev.created_at) seen.set(d.review_id, d);
       }
       const names: Record<string, string> = {};
-      for (const c of list) names[c.id] = c.display_name || "Location";
+      for (const c of list) names[c.id] = c.display_name || ob.locationFallback;
       // A single channel needs one filtered call; "all" or a group is several,
       // and `ids` is already resolved, so both share the fan-out.
       if (ids.length === 1 && scope && !parseGroupValue(scope)) {
@@ -287,11 +311,11 @@ export default function OutboxPage() {
     } catch {
       setReplies([]);
       setFlagged([]);
-      setBanner({ kind: "err", text: "Could not load the outbox." });
+      setBanner({ kind: "err", text: ob.loadFail });
     } finally {
       setLoading(false);
     }
-  }, [resolveScope]);
+  }, [resolveScope, ob]);
 
   useEffect(() => {
     let cancelled = false;
@@ -357,10 +381,10 @@ export default function OutboxPage() {
     setBanner(null);
     try {
       await retryReply(r.channel_id, r.id);
-      setBanner({ kind: "ok", text: "Returned to the approval queue — approve it when ready." });
+      setBanner({ kind: "ok", text: ob.returnedQueue });
       reload();
     } catch (e) {
-      setBanner({ kind: "err", text: apiDetail(e) || "Retry failed. Try again." });
+      setBanner({ kind: "err", text: apiDetail(e) || ob.retryFail });
     } finally {
       setBusy(null);
     }
@@ -371,10 +395,10 @@ export default function OutboxPage() {
     setBanner(null);
     try {
       await approveReply(r.channel_id, r.id);
-      setBanner({ kind: "ok", text: "Published to Google — verified live." });
+      setBanner({ kind: "ok", text: ob.publishedLive });
       reload();
     } catch (e) {
-      setBanner({ kind: "err", text: apiDetail(e) || "Could not publish. Try again." });
+      setBanner({ kind: "err", text: apiDetail(e) || ob.publishFail });
     } finally {
       setBusy(null);
     }
@@ -405,13 +429,13 @@ export default function OutboxPage() {
       }
       let text: string;
       if (checked === 0 && skipped > 0) {
-        text = `${skipped} legacy ${skipped === 1 ? "reply" : "replies"} skipped — no native Google review id to check.`;
+        text = skipped === 1 ? ob.legacyOne : fill(ob.legacyN, { n: fmt(skipped) });
       } else if (checked === 0) {
-        text = "Nothing to verify right now.";
+        text = ob.nothingVerify;
       } else if (corrected > 0) {
-        text = `${corrected} of ${checked} were not actually on Google — moved back to Failed.`;
+        text = fill(ob.movedBack, { corrected: fmt(corrected), checked: fmt(checked) });
       } else {
-        text = `All ${confirmed} confirmed live on Google.`;
+        text = fill(ob.allConfirmed, { n: fmt(confirmed) });
       }
       setBanner({
         kind: corrected > 0 ? "err" : "ok",
@@ -419,7 +443,7 @@ export default function OutboxPage() {
       });
       reload();
     } catch (e) {
-      setBanner({ kind: "err", text: apiDetail(e) || "Could not verify. Try again." });
+      setBanner({ kind: "err", text: apiDetail(e) || ob.verifyFail });
     } finally {
       setBusy(null);
     }
@@ -432,7 +456,7 @@ export default function OutboxPage() {
       await rejectReply(r.channel_id, r.id);
       reload();
     } catch {
-      setBanner({ kind: "err", text: "Could not discard." });
+      setBanner({ kind: "err", text: ob.discardFail });
     } finally {
       setBusy(null);
     }
@@ -442,10 +466,10 @@ export default function OutboxPage() {
     <div className="h-full overflow-y-auto p-6 space-y-5">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <Breadcrumbs items={[{ label: "Outbox" }]} />
-          <h1 className="mt-2 text-[20px] font-bold text-ink dark:text-fog">Outbox</h1>
+          <Breadcrumbs items={[{ label: ob.crumbs }]} />
+          <h1 className="mt-2 text-[20px] font-bold text-ink dark:text-fog">{ob.title}</h1>
           <p className="mt-0.5 text-[13px] text-ink/45 dark:text-fog/45">
-            Every reply the engine wrote — pending, posted, and failed ones you can retry.
+            {ob.sub}
           </p>
         </div>
         {channels.length > 0 && (
@@ -455,7 +479,7 @@ export default function OutboxPage() {
               onChange={(e) => changeScope(e.target.value)}
               className="w-56 appearance-none rounded-xl border border-ink/[0.08] bg-white py-2 pl-3 pr-9 text-[13px] font-medium text-ink outline-none transition focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.1] dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
             >
-              <option value={ALL_BRANCHES}>All branches ({channels.length})</option>
+              <option value={ALL_BRANCHES}>{fill(ob.allBranches, { n: fmt(channels.length) })}</option>
               {groups
                 .map((g) => ({
                   id: g.id,
@@ -465,12 +489,12 @@ export default function OutboxPage() {
                 .filter((g) => g.n > 0)
                 .map((g) => (
                   <option key={g.id} value={groupValue(g.id)}>
-                    {g.name} ({g.n})
+                    {g.name} ({fmt(g.n)})
                   </option>
                 ))}
               {channels.map((c) => (
                 <option key={c.id} value={c.id}>
-                  {c.display_name || "Location"}
+                  {c.display_name || ob.locationFallback}
                 </option>
               ))}
             </select>
@@ -496,7 +520,7 @@ export default function OutboxPage() {
               onClick={() => setBanner(null)}
               className="shrink-0 text-[12px] underline underline-offset-2"
             >
-              dismiss
+              {ob.dismiss}
             </button>
           </div>
         </div>
@@ -505,10 +529,10 @@ export default function OutboxPage() {
       {/* One tab bar — each tab owns its count, no cross-filter matrix */}
       <div className="flex rounded-lg bg-ink/[0.03] p-0.5 dark:bg-fog/[0.06]">
         {([
-          { key: "pending", label: `Pending (${counts.pending})` },
-          { key: "posted", label: `Posted (${counts.posted})` },
-          { key: "failed", label: `Failed (${counts.failed})` },
-          { key: "flagged", label: `Flagged (${counts.flagged})` },
+          { key: "pending", label: fill(ob.tabs.pending, { n: fmt(counts.pending) }) },
+          { key: "posted", label: fill(ob.tabs.posted, { n: fmt(counts.posted) }) },
+          { key: "failed", label: fill(ob.tabs.failed, { n: fmt(counts.failed) }) },
+          { key: "flagged", label: fill(ob.tabs.flagged, { n: fmt(counts.flagged) }) },
         ] as { key: OutboxTab; label: string }[]).map((t) => (
           <button
             key={t.key}
@@ -528,14 +552,14 @@ export default function OutboxPage() {
       {tab === "posted" && counts.posted > 0 && (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-ink/[0.06] bg-white px-4 py-3 dark:border-fog/[0.06] dark:bg-ink">
           <p className="text-[12px] text-ink/55 dark:text-fog/55">
-            Posted means confirmed live on Google. Re-check any time.
+            {ob.postedHint}
           </p>
           <button
             onClick={() => void onVerifyPosted()}
             disabled={busy !== null || !selected}
             className="shrink-0 rounded-lg bg-deep-violet px-3.5 py-1.5 text-[12px] font-bold text-white shadow-sm transition hover:bg-deep-violet/90 disabled:opacity-50"
           >
-            {busy === "verify" ? "Verifying…" : "Verify against Google"}
+            {busy === "verify" ? ob.verifying : ob.verifyBtn}
           </button>
         </div>
       )}
@@ -546,21 +570,21 @@ export default function OutboxPage() {
         </div>
       ) : channels.length === 0 ? (
         <div className="flex flex-col items-center gap-3 rounded-xl border border-ink/[0.06] bg-white py-14 text-center dark:border-fog/[0.06] dark:bg-ink">
-          <p className="text-[14px] font-semibold text-ink/70 dark:text-fog/70">No locations yet</p>
+          <p className="text-[14px] font-semibold text-ink/70 dark:text-fog/70">{ob.noLocations}</p>
           <p className="max-w-sm text-[12px] text-ink/45 dark:text-fog/45">
-            Connect your Google Business Profile and the engine will start drafting replies here.
+            {ob.noLocBody}
           </p>
           <Link
             href="/dashboard/channels"
             className="rounded-lg bg-deep-violet px-3.5 py-1.5 text-[12px] font-semibold text-white transition hover:opacity-90"
           >
-            Connect
+            {ob.connectBtn}
           </Link>
         </div>
       ) : tab === "flagged" ? (
         flagged.length === 0 ? (
           <div className="rounded-xl border border-ink/[0.06] bg-white py-12 text-center text-[13px] text-ink/40 dark:border-fog/[0.06] dark:bg-ink dark:text-fog/40">
-            No reviews flagged as unavailable yet.
+            {ob.flaggedEmpty}
           </div>
         ) : (
           <>
@@ -571,14 +595,14 @@ export default function OutboxPage() {
                 className="rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink"
               >
                 <div className="flex items-center gap-1.5 text-[11px] text-ink/50 dark:text-fog/50">
-                  <span aria-label={`${r.rating} out of 5 stars`} className="font-bold text-amber-600">
+                  <span aria-label={fill(ob.starAria, { value: fmt(r.rating) })} className="font-bold text-amber-600">
                     {"★".repeat(Math.max(0, Math.min(5, r.rating)))}
                   </span>
                   <span className="truncate font-semibold text-ink dark:text-fog">
-                    {r.reviewer_name ?? "Anonymous"}
+                    {r.reviewer_name ?? ob.anon}
                   </span>
                   <span className="ml-auto rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-600 dark:bg-fog/[0.06] dark:text-fog/50">
-                    Unavailable
+                    {ob.unavailable}
                   </span>
                 </div>
                 {r.review_text && (
@@ -587,7 +611,7 @@ export default function OutboxPage() {
                   </p>
                 )}
                 <p className="mt-1.5 text-[11px] text-ink/45">
-                  Reviewer deleted this review or Google removed it — no reply is possible.
+                {ob.deletedNote}
                 </p>
               </div>
             ))}
@@ -597,9 +621,9 @@ export default function OutboxPage() {
         )
       ) : visible.length === 0 ? (
         <div className="rounded-xl border border-ink/[0.06] bg-white py-12 text-center text-[13px] text-ink/40 dark:border-fog/[0.06] dark:bg-ink dark:text-fog/40">
-          {tab === "pending" && "Nothing waiting — new AI drafts will appear here."}
-          {tab === "posted" && "No posted replies yet — approved replies show here with the live response."}
-          {tab === "failed" && "Nothing failed — everything published cleanly."}
+          {tab === "pending" && ob.pendingEmpty}
+          {tab === "posted" && ob.postedEmpty}
+          {tab === "failed" && ob.failedEmpty}
         </div>
       ) : tab === "posted" ? (
         <>
@@ -608,7 +632,7 @@ export default function OutboxPage() {
             <PostedCard
               key={r.id}
               r={r}
-              branchName={channelNames[r.channel_id] ?? "Location"}
+              branchName={channelNames[r.channel_id] ?? ob.locationFallback}
               showBranch={selected === ALL_BRANCHES || parseGroupValue(selected) !== null}
             />
           ))}
@@ -625,11 +649,11 @@ export default function OutboxPage() {
               className="rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink"
             >
               <div className="flex items-center gap-1.5 text-[11px] text-ink/50 dark:text-fog/50">
-                <span aria-label={`${r.rating} out of 5 stars`} className="font-bold text-amber-600">
+                <span aria-label={fill(ob.starAria, { value: fmt(r.rating) })} className="font-bold text-amber-600">
                   {"★".repeat(Math.max(0, Math.min(5, r.rating)))}
                 </span>
                 <span className="truncate font-semibold text-ink dark:text-fog">
-                  {r.reviewer_name ?? "Anonymous"}
+                  {r.reviewer_name ?? ob.anon}
                 </span>
                 {reviewUrl && (
                   <a
@@ -638,14 +662,14 @@ export default function OutboxPage() {
                     rel="noreferrer"
                     className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-semibold text-deep-violet underline-offset-2 transition hover:underline"
                   >
-                    View on Google
+                    {ob.viewGoogle}
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-2.5 w-2.5" aria-hidden>
                       <path d="M7 17L17 7M9 7h8v8" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
                   </a>
                 )}
-                <span className={`ml-auto rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${STATUS_META[r.status as StatusFilter]?.pill ?? ""}`}>
-                  {STATUS_META[r.status as StatusFilter]?.label ?? r.status}
+                <span className={`ml-auto rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${STATUS_PILL[r.status as StatusFilter] ?? ""}`}>
+                  {ob.status[r.status as StatusFilter] ?? r.status}
                 </span>
               </div>
               {r.review_text && (
@@ -654,7 +678,7 @@ export default function OutboxPage() {
                 </p>
               )}
               <div className="mt-2 rounded-lg bg-ink/[0.03] p-2.5 dark:bg-fog/[0.04]">
-                <p className="text-[9px] font-bold uppercase tracking-wide text-ink/40">AI draft</p>
+                <p className="text-[9px] font-bold uppercase tracking-wide text-ink/40">{ob.draftLabel}</p>
                 <p className="mt-0.5 text-[12px] leading-relaxed text-ink/70 dark:text-fog/70">
                   {r.reply_text || "—"}
                 </p>
@@ -672,14 +696,14 @@ export default function OutboxPage() {
                       disabled={busy !== null}
                       className="rounded-lg px-3 py-1.5 text-[11px] font-semibold text-ink/50 transition hover:bg-ink/[0.04] dark:text-fog/50 disabled:opacity-50"
                     >
-                      Discard
+                      {ob.discard}
                     </button>
                     <button
                       onClick={() => void onRetry(r)}
                       disabled={busy !== null}
                       className="rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] disabled:opacity-50"
                     >
-                      {busy === r.id ? "Retrying…" : "Retry"}
+                      {busy === r.id ? ob.retrying : ob.retry}
                     </button>
                   </>
                 )}
@@ -690,14 +714,14 @@ export default function OutboxPage() {
                       disabled={busy !== null}
                       className="rounded-lg px-3 py-1.5 text-[11px] font-semibold text-ink/50 transition hover:bg-ink/[0.04] dark:text-fog/50 disabled:opacity-50"
                     >
-                      Discard
+                      {ob.discard}
                     </button>
                     <button
                       onClick={() => void onApprove(r)}
                       disabled={busy !== null}
                       className="rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] disabled:opacity-50"
                     >
-                      {busy === r.id ? "Approving…" : "Approve"}
+                      {busy === r.id ? ob.approving : ob.approve}
                     </button>
                   </>
                 )}

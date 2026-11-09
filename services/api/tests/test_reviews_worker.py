@@ -6,14 +6,14 @@ created a new `pending_approval` row on the next poll — the same review
 then appeared in both the "needs approval" and "failed to publish"
 queues on the dashboard.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
 
 from app.modules.channels import reviews_worker
-from app.modules.channels.models import AutoReplyConfig, Channel, ReviewReply
+from app.modules.channels.models import AutoReplyConfig, Channel, ChannelMessage, ReviewReply
 from app.modules.channels.service import encrypt_token
 
 
@@ -41,7 +41,10 @@ class FakeGoogleClient:
         return []
 
     async def list_reviews(self, account_id, location_id, updated_after=None):
-        return FakeGoogleClient.reviews
+        reviews = FakeGoogleClient.reviews
+        if updated_after is not None:
+            reviews = [r for r in reviews if r.updated_at > updated_after]
+        return reviews
 
     async def reply_to_review(self, review_id, text):
         FakeGoogleClient.posted.append((review_id, text))
@@ -681,3 +684,289 @@ async def test_google_review_name_and_reply_are_mirrored_into_the_inbox(db, chan
     assert outbound.content_type == "review_reply"
     assert outbound.contact_phone_hash == inbound.contact_phone_hash
     assert outbound.contact_name == "Abdulrahman Manea"
+
+
+@pytest.mark.asyncio
+async def test_removed_location_is_disconnected_not_expired(db, channel_id, monkeypatch):
+    """A 404 means the listing is gone, not that the grant died.
+
+    Regression: 404 was in the permanent set, so a deleted/merged location
+    marked the whole channel "expired". The token still worked for every
+    sibling location, yet the tenant was told to reconnect forever.
+    """
+    from app.modules.channels.google_reviews import GoogleReviewsError
+
+    notified = []
+
+    async def _notify(db_, user_id, kind, title, body, **kwargs):
+        notified.append((kind, title))
+
+    monkeypatch.setattr(reviews_worker, "notify", _notify)
+
+    channel = await db.get(Channel, channel_id)
+    channel.status = "active"
+    await db.commit()
+
+    await reviews_worker._mark_location_removed(db, channel, "list_reviews failed: 404")
+    await db.commit()
+    await db.refresh(channel)
+
+    assert channel.status == "disconnected"
+    assert notified and notified[0][0] == "channel_removed"
+
+    # Expiry is reserved for a dead grant.
+    channel.status = "active"
+    await db.commit()
+    await reviews_worker._mark_channel_expired(db, channel, "401")
+    await db.commit()
+    await db.refresh(channel)
+    assert channel.status == "expired"
+
+
+def test_permission_status_classification():
+    """Only 401 is immediately terminal; 404 is not a reconnect at all."""
+    assert 401 in reviews_worker.TOKEN_DEAD_STATUSES
+    assert 404 in reviews_worker.LOCATION_GONE_STATUSES
+    assert 403 in reviews_worker.PERMISSION_DENIED_STATUSES
+    assert 403 not in reviews_worker.TOKEN_DEAD_STATUSES
+    assert reviews_worker.PERMISSION_FAILURES_BEFORE_EXPIRED >= 2
+
+
+def test_fetch_cursor_applies_propagation_overlap():
+    """The fetch window must start before the stored cursor.
+
+    Google's list API lags Maps by minutes; fetching strictly after
+    last_polled_at permanently misses reviews that arrived during the lag
+    once the cursor marches past their updateTime.
+    """
+    from datetime import timedelta
+
+    base = datetime(2026, 11, 9, 10, 0, tzinfo=timezone.utc)
+    assert reviews_worker._fetch_cursor(base) == base - timedelta(minutes=15)
+    assert reviews_worker._fetch_cursor(None) is None
+
+
+@pytest.mark.asyncio
+async def test_backoff_skip_leaves_poll_cursor_untouched(db, channel_id, config_id, monkeypatch):
+    """A skipped pass must not move last_polled_at.
+
+    Regression: the release path used to stamp the cursor on every pass, so
+    a health-backoff skip moved the window past reviews Google had not
+    returned yet — later passes filtered them out forever.
+    """
+    import asyncio
+    import json
+    from datetime import timedelta
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    factory = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
+    monkeypatch.setattr("app.database.async_session", factory)
+
+    now = datetime.now(timezone.utc)
+    frozen = now - timedelta(hours=1)
+    config = await db.get(AutoReplyConfig, config_id)
+    config.last_polled_at = frozen
+    channel = await db.get(Channel, channel_id)
+    meta = json.loads(channel.metadata_json or "{}")
+    meta["health"] = {
+        "backoff_until": (now + timedelta(hours=1)).isoformat(),
+        "consecutive_failures": 3,
+    }
+    channel.metadata_json = json.dumps(meta)
+    await db.commit()
+
+    async def _claim(session, config_id_arg, last_polled_at):
+        return True
+
+    monkeypatch.setattr(reviews_worker, "_claim_channel", _claim)
+    # NOTE: _release_channel is deliberately NOT patched — the real one must
+    # only clear the lock, never stamp the cursor.
+
+    stats = await reviews_worker._poll_one_channel(
+        channel_id, config_id, asyncio.Semaphore(1)
+    )
+
+    assert stats["channels"] == 0
+    await db.refresh(config)
+    # SQLite drops tzinfo on round-trip; compare instants, not tz-awareness.
+    assert config.last_polled_at.replace(tzinfo=None) == frozen.replace(tzinfo=None)
+
+
+@pytest.mark.asyncio
+async def test_successful_poll_advances_cursor(db, channel_id, config_id, monkeypatch):
+    """A real fetch must move last_polled_at forward to ~now."""
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    factory = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
+    monkeypatch.setattr("app.database.async_session", factory)
+
+    before = datetime.now(timezone.utc)
+    config = await db.get(AutoReplyConfig, config_id)
+    config.last_polled_at = before
+    await db.commit()
+
+    async def _claim(session, config_id_arg, last_polled_at):
+        return True
+
+    async def _process(session, channel, config):
+        return {"reviews": 1, "replied": 0, "queued": 1, "skipped": 0, "adopted": 0, "errors": 0}
+
+    monkeypatch.setattr(reviews_worker, "_claim_channel", _claim)
+    monkeypatch.setattr(reviews_worker, "_is_in_health_backoff", lambda channel, now: False)
+    monkeypatch.setattr(reviews_worker, "process_channel", _process)
+
+    stats = await reviews_worker._poll_one_channel(
+        channel_id, config_id, asyncio.Semaphore(1)
+    )
+
+    assert stats["channels"] == 1
+    await db.refresh(config)
+    assert config.last_polled_at is not None
+    assert config.last_polled_at.replace(tzinfo=None) >= before.replace(tzinfo=None)
+
+
+# ── Daily sweep heal ─────────────────────────────────────────────────────
+# The daily full read used to serve removal detection only: a review the
+# incremental cursor missed (list-API lag, a failed pass, a lost push) was
+# invisible forever. The sweep now imports unseen reviews through the same
+# pipeline as live ones.
+
+async def _inbox_rows(db, platform_id):
+    result = await db.execute(
+        select(ChannelMessage).where(ChannelMessage.platform_message_id == platform_id)
+    )
+    return result.scalars().all()
+
+
+@pytest.mark.asyncio
+async def test_sweep_heals_review_the_incremental_cursor_missed(
+    db, channel_id, config_id, monkeypatch
+):
+    """A review older than the fetch window must still be recovered by the sweep.
+
+    Google's list lag + a cursor that advanced past the review used to make
+    the miss permanent. The sweep's full fetch sees it, has no inbox row for
+    it, and pushes it through the same store/draft/post pipeline.
+    """
+    await _active_channel(db, channel_id)
+    now = datetime.now(timezone.utc)
+    old = _review("gg-old-1", rating=5)
+    old.updated_at = now - timedelta(hours=2)
+    missed = _review("gg-missed-1", rating=5)
+    missed.updated_at = now - timedelta(minutes=60)  # outside cursor−15min
+
+    _install_fakes(monkeypatch, [old])
+    await reviews_worker.process_channel(
+        db, await db.get(Channel, channel_id),
+        await db.get(AutoReplyConfig, config_id),
+    )
+    assert await _inbox_rows(db, "gg-missed-1") == []  # not fetched yet
+
+    config = await db.get(AutoReplyConfig, config_id)
+    config.last_polled_at = now  # cursor: the incremental window starts at now−15min
+    # The first pass already ran the daily sweep; age the marker so the
+    # second pass runs it again and sees Google's fuller list.
+    import json
+
+    channel = await db.get(Channel, channel_id)
+    meta = json.loads(channel.metadata_json or "{}")
+    meta["removal_sweep_at"] = (now - timedelta(hours=25)).isoformat()
+    channel.metadata_json = json.dumps(meta)
+    await db.commit()
+    FakeGoogleClient.reviews = [old, missed]  # Google's list now has both
+
+    stats = await reviews_worker.process_channel(
+        db, await db.get(Channel, channel_id),
+        await db.get(AutoReplyConfig, config_id),
+    )
+
+    # The incremental fetch (updated_after=now−15min) returned neither —
+    # only the sweep could have imported the missed review.
+    assert stats["reviews"] == 1
+    assert len(await _inbox_rows(db, "gg-missed-1")) == 1
+    rows = await _reply_rows(db, channel_id, "gg-missed-1")
+    assert len(rows) == 1
+    assert rows[0].status == "posted"  # approval_mode=auto + ★5 → posted
+
+
+@pytest.mark.asyncio
+async def test_sweep_heal_is_bounded_per_pass(db, channel_id, config_id, monkeypatch):
+    """The sweep imports at most SWEEP_HEAL_BATCH unseen reviews per pass.
+
+    The channel looks long-lived: the one-time reply backfill and the
+    location metadata backfill already ran, so the sweep heal is the only
+    importer left.
+    """
+    await _active_channel(db, channel_id)
+    monkeypatch.setattr(reviews_worker, "SWEEP_HEAL_BATCH", 2)
+    now = datetime.now(timezone.utc)
+    reviews = []
+    for i in range(5):
+        r = _review(f"gg-cap-{i}", rating=5)
+        r.updated_at = now - timedelta(hours=1)
+        reviews.append(r)
+
+    _install_fakes(monkeypatch, reviews)
+    import json
+
+    channel = await db.get(Channel, channel_id)
+    meta = json.loads(channel.metadata_json or "{}")
+    meta["reply_backfill_done"] = True
+    meta["profile_fields_checked"] = True
+    meta["place_metadata_checked"] = True
+    channel.metadata_json = json.dumps(meta)
+    config = await db.get(AutoReplyConfig, config_id)
+    config.last_polled_at = now  # none of them are inside the incremental window
+    await db.commit()
+
+    stats = await reviews_worker.process_channel(
+        db, await db.get(Channel, channel_id), config
+    )
+
+    assert stats["reviews"] == 2
+    all_inbox = (await db.execute(select(ChannelMessage))).scalars().all()
+    assert len(all_inbox) == 2
+
+
+@pytest.mark.asyncio
+async def test_sweep_does_not_duplicate_known_reviews(db, channel_id, config_id, monkeypatch):
+    """A sweep over already-known reviews must leave every row count unchanged."""
+    await _active_channel(db, channel_id)
+    review = _review("gg-old-1", rating=5)
+    review.updated_at = datetime.now(timezone.utc) - timedelta(hours=2)
+
+    _install_fakes(monkeypatch, [review])
+    await reviews_worker.process_channel(
+        db, await db.get(Channel, channel_id),
+        await db.get(AutoReplyConfig, config_id),
+    )
+    inbox_before = await _inbox_rows(db, "gg-old-1")
+    replies_before = await _reply_rows(db, channel_id, "gg-old-1")
+    assert len(inbox_before) == 1 and len(replies_before) == 1
+
+    # Age the sweep marker so the second pass really runs the sweep over
+    # the same full list (otherwise it would skip the sweep entirely).
+    import json
+
+    channel = await db.get(Channel, channel_id)
+    meta = json.loads(channel.metadata_json or "{}")
+    meta["removal_sweep_at"] = (
+        datetime.now(timezone.utc) - timedelta(hours=25)
+    ).isoformat()
+    channel.metadata_json = json.dumps(meta)
+    await db.commit()
+
+    # Same full list comes back on the sweep pass.
+    stats = await reviews_worker.process_channel(
+        db, await db.get(Channel, channel_id),
+        await db.get(AutoReplyConfig, config_id),
+    )
+
+    assert stats["reviews"] == 1  # the incremental replay re-handles it, idempotently
+    assert len(await _inbox_rows(db, "gg-old-1")) == 1
+    replies_after = await _reply_rows(db, channel_id, "gg-old-1")
+    assert len(replies_after) == 1
+    assert replies_after[0].status == replies_before[0].status

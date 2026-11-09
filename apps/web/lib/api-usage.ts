@@ -43,13 +43,23 @@ export async function getUsageSummary(days = 30): Promise<UsageSummary> {
   return apiFetch(`/api/v1/llm/usage/summary?days=${days}`);
 }
 
-export function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
+export function formatTokens(n: number, locale?: string): string {
+  const fmt = (v: number, digits = 0) =>
+    new Intl.NumberFormat(locale ?? "en-US", {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    }).format(v);
+  if (n >= 1_000_000) return `${fmt(n / 1_000_000, 2)}M`;
+  if (n >= 1_000) return `${fmt(n / 1_000, 1)}K`;
+  return fmt(n);
 }
 
-export function formatMs(ms: number): string {
-  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
-  return `${ms}ms`;
+export function formatMs(ms: number, locale?: string): string {
+  const fmt = (v: number, digits = 0) =>
+    new Intl.NumberFormat(locale ?? "en-US", {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    }).format(v);
+  if (ms >= 1000) return `${fmt(ms / 1000, 1)}s`;
+  return `${fmt(ms)}ms`;
 }

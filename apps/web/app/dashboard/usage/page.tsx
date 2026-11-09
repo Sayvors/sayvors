@@ -4,18 +4,29 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
 import { formatMs, formatTokens, getUsageSummary } from "@/lib/api-usage";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import type { Dict } from "@/lib/i18n/en";
 
-const DAY_OPTIONS = [
-  { days: 1, label: "1d" },
-  { days: 7, label: "7d" },
-  { days: 30, label: "30d" },
-  { days: 90, label: "90d" },
-  { days: 365, label: "1y" },
-];
+type UsageDict = Dict["usage"];
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 const DAYS_PER_PAGE = 10;
 
 function AreaChart({ points }: { points: { x: string; y: number }[] }) {
+  const { t, locale } = useI18n();
+  const u = t.usage;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
+  const fmtK = (n: number) =>
+    n >= 1000
+      ? `${new Intl.NumberFormat(dateLocale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(n / 1000)}K`
+      : fmt(n);
   const W = 560;
   const H = 140;
   const PAD = 28;
@@ -32,7 +43,7 @@ function AreaChart({ points }: { points: { x: string; y: number }[] }) {
         <g key={t}>
           <line x1={PAD} x2={W - PAD} y1={py(t)} y2={py(t)} stroke="currentColor" strokeOpacity={0.08} />
           <text x={PAD - 5} y={py(t) + 3.5} textAnchor="end" fontSize={9} fill="currentColor" opacity={0.45}>
-            {t >= 1000 ? `${(t / 1000).toFixed(1)}K` : t}
+            {fmtK(t)}
           </text>
         </g>
       ))}
@@ -40,7 +51,7 @@ function AreaChart({ points }: { points: { x: string; y: number }[] }) {
       <path d={line} fill="none" stroke="currentColor" strokeWidth={2} strokeLinejoin="round" />
       {points.map((p, i) => (
         <circle key={i} cx={px(i)} cy={py(p.y)} r={i === points.length - 1 ? 3 : 1.6} fill="currentColor">
-          <title>{`${p.x}: ${p.y.toLocaleString()} tokens`}</title>
+          <title>{fill(u.tooltipLine, { x: p.x, y: formatTokens(p.y, dateLocale) })}</title>
         </circle>
       ))}
       <text x={PAD} y={H - 8} fontSize={9} fill="currentColor" opacity={0.45}>
@@ -53,7 +64,20 @@ function AreaChart({ points }: { points: { x: string; y: number }[] }) {
   );
 }
 
+function dayLabel(iso: string, dateLocale: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return iso.slice(5);
+  // Construct in local time to avoid UTC-midnight shifting the day in +03.
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString(dateLocale, {
+    month: "short",
+    day: "numeric",
+  });
+}
 function SplitDonut({ a, b, labelA, labelB }: { a: number; b: number; labelA: string; labelB: string }) {
+  const { t, locale } = useI18n();
+  const u = t.usage;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
   const total = Math.max(1, a + b);
   const R = 44;
   const C = 2 * Math.PI * R;
@@ -68,10 +92,10 @@ function SplitDonut({ a, b, labelA, labelB }: { a: number; b: number; labelA: st
           transform="rotate(-90 55 55)" strokeLinecap="round"
         />
         <text x={55} y={52} textAnchor="middle" fontSize={14} fontWeight={800} fill="currentColor">
-          {total >= 1000 ? `${(total / 1000).toFixed(1)}K` : total}
+          {total >= 1000 ? `${new Intl.NumberFormat(dateLocale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(total / 1000)}K` : fmt(total)}
         </text>
         <text x={55} y={66} textAnchor="middle" fontSize={9} fill="currentColor" opacity={0.5}>
-          tokens
+          {u.tokensWord}
         </text>
       </svg>
       <div className="space-y-1.5 text-[12px]">
@@ -82,7 +106,7 @@ function SplitDonut({ a, b, labelA, labelB }: { a: number; b: number; labelA: st
           <div key={r.label} className="flex items-center gap-2">
             <span className={`h-2.5 w-2.5 rounded-full ${r.color}`} />
             <span className="text-ink/60 dark:text-fog/60">{r.label}</span>
-            <span className="font-bold tabular-nums text-ink dark:text-fog">{((r.value / total) * 100).toFixed(0)}%</span>
+            <span className="font-bold tabular-nums text-ink dark:text-fog">{fmt(Math.round((r.value / total) * 100))}%</span>
           </div>
         ))}
       </div>
@@ -93,6 +117,17 @@ function SplitDonut({ a, b, labelA, labelB }: { a: number; b: number; labelA: st
 export default function UsagePage() {
   const [days, setDays] = useState(30);
   const [page, setPage] = useState(1);
+  const { t, locale } = useI18n();
+  const u: UsageDict = t.usage;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
+  const DAY_OPTIONS = [
+    { days: 1, label: fill(u.daysN, { n: fmt(1) }) },
+    { days: 7, label: fill(u.daysN, { n: fmt(7) }) },
+    { days: 30, label: fill(u.daysN, { n: fmt(30) }) },
+    { days: 90, label: fill(u.daysN, { n: fmt(90) }) },
+    { days: 365, label: u.yearOne },
+  ];
 
   const summaryQuery = useQuery({
     queryKey: queryKeys.usage.summary(days),
@@ -104,7 +139,7 @@ export default function UsagePage() {
   const error = summaryQuery.isError
     ? summaryQuery.error instanceof Error
       ? summaryQuery.error.message
-      : "Failed to load usage"
+      : u.loadFail
     : null;
 
   const maxPurpose = Math.max(1, ...((data?.by_purpose ?? []).map((p) => p.total_tokens)));
@@ -125,9 +160,9 @@ export default function UsagePage() {
       <div className="space-y-5 p-4 sm:p-6">
         <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
           <div>
-            <h1 className="text-[20px] font-bold text-ink dark:text-fog sm:text-[22px]">Token Usage</h1>
+            <h1 className="text-[20px] font-bold text-ink dark:text-fog sm:text-[22px]">{u.title}</h1>
             <p className="mt-0.5 text-[12px] text-ink/65 dark:text-fog/65 sm:text-[13px]">
-              Every AI call metered by task — tokens in/out, latency, and daily trend.
+              {u.sub}
             </p>
           </div>
           <div className="flex gap-1.5">
@@ -164,7 +199,7 @@ export default function UsagePage() {
               onClick={() => void summaryQuery.refetch()}
               className="mt-3 rounded-xl bg-deep-violet px-5 py-2 text-[12px] font-bold text-white"
             >
-              Retry
+              {u.retry}
             </button>
           </div>
         ) : data ? (
@@ -172,10 +207,10 @@ export default function UsagePage() {
             {/* Totals */}
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               {[
-                { label: "Total tokens", value: formatTokens(totals.total_tokens) },
-                { label: "LLM calls", value: String(totals.calls) },
-                { label: "Prompt / completion", value: `${formatTokens(totals.prompt_tokens)} / ${formatTokens(totals.completion_tokens)}` },
-                { label: "Avg latency", value: formatMs(totals.avg_latency_ms) },
+                { label: u.statTotal, value: formatTokens(totals.total_tokens, dateLocale) },
+                { label: u.statCalls, value: fmt(totals.calls) },
+                { label: u.statSplit, value: `${formatTokens(totals.prompt_tokens, dateLocale)} / ${formatTokens(totals.completion_tokens, dateLocale)}` },
+                { label: u.statLatency, value: formatMs(totals.avg_latency_ms, dateLocale) },
               ].map((c) => (
                 <div key={c.label} className="rounded-2xl border-2 border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636] p-4">
                   <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/45 dark:text-fog/45">{c.label}</div>
@@ -188,25 +223,25 @@ export default function UsagePage() {
             <div className="grid gap-3 lg:grid-cols-2">
               {/* Daily trend */}
               <div className="rounded-2xl border-2 border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636] p-4 text-ink dark:text-fog">
-                <h2 className="text-[16px] font-bold text-ink dark:text-fog">Daily trend</h2>
-                <p className="text-[12px] text-ink/50 dark:text-fog/50">Tokens per day.</p>
+                <h2 className="text-[16px] font-bold text-ink dark:text-fog">{u.trendTitle}</h2>
+                <p className="text-[12px] text-ink/50 dark:text-fog/50">{u.trendSub}</p>
                 {daily.length === 0 ? (
-                  <p className="mt-3 text-[12px] text-ink/40 dark:text-fog/40">No data.</p>
+                  <p className="mt-3 text-[12px] text-ink/40 dark:text-fog/40">{u.noData}</p>
                 ) : (
-                  <AreaChart points={daily.map((d) => ({ x: d.day.slice(5), y: d.total_tokens }))} />
+                  <AreaChart points={daily.map((d) => ({ x: dayLabel(d.day, dateLocale), y: d.total_tokens }))} />
                 )}
               </div>
 
               {/* Prompt vs completion */}
               <div className="rounded-2xl border-2 border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636] p-4 text-ink dark:text-fog">
-                <h2 className="text-[16px] font-bold text-ink dark:text-fog">Prompt vs completion</h2>
-                <p className="text-[12px] text-ink/50 dark:text-fog/50">Where your tokens go.</p>
+                <h2 className="text-[16px] font-bold text-ink dark:text-fog">{u.splitTitle}</h2>
+                <p className="text-[12px] text-ink/50 dark:text-fog/50">{u.splitSub}</p>
                 <div className="mt-3">
                   <SplitDonut
                     a={totals.prompt_tokens}
                     b={totals.completion_tokens}
-                    labelA="Prompt"
-                    labelB="Completion"
+                    labelA={u.promptL}
+                    labelB={u.completionL}
                   />
                 </div>
               </div>
@@ -215,10 +250,10 @@ export default function UsagePage() {
             <div className="grid gap-3 lg:grid-cols-2">
               {/* By purpose */}
               <div className="rounded-2xl border-2 border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636] p-4">
-                <h2 className="text-[16px] font-bold text-ink dark:text-fog">By feature</h2>
-                <p className="text-[12px] text-ink/50 dark:text-fog/50">Which engine parts consume tokens.</p>
+                <h2 className="text-[16px] font-bold text-ink dark:text-fog">{u.featTitle}</h2>
+                <p className="text-[12px] text-ink/50 dark:text-fog/50">{u.featSub}</p>
                 {byPurpose.length === 0 ? (
-                  <p className="mt-3 text-[12px] text-ink/40 dark:text-fog/40">No data.</p>
+                  <p className="mt-3 text-[12px] text-ink/40 dark:text-fog/40">{u.noData}</p>
                 ) : (
                   <div className="mt-3 space-y-2">
                     {byPurpose.map((p, i) => (
@@ -230,7 +265,7 @@ export default function UsagePage() {
                             style={{ width: `${Math.max(2, (p.total_tokens / maxPurpose) * 100)}%` }}
                           />
                         </div>
-                        <span className="w-16 text-right tabular-nums text-ink/55 dark:text-fog/55">{formatTokens(p.total_tokens)}</span>
+                        <span className="w-16 text-right tabular-nums text-ink/55 dark:text-fog/55">{formatTokens(p.total_tokens, dateLocale)}</span>
                       </div>
                     ))}
                   </div>
@@ -240,33 +275,33 @@ export default function UsagePage() {
 
             {/* Per day usage */}
             <div className="rounded-2xl border-2 border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636] p-4">
-              <h2 className="text-[16px] font-bold text-ink dark:text-fog">Per day usage</h2>
-              <p className="text-[12px] text-ink/50 dark:text-fog/50">Day-by-day calls, tokens, and latency.</p>
+              <h2 className="text-[16px] font-bold text-ink dark:text-fog">{u.dayTitle}</h2>
+              <p className="text-[12px] text-ink/50 dark:text-fog/50">{u.daySub}</p>
               {daily.length === 0 ? (
-                <p className="mt-3 text-[12px] text-ink/40 dark:text-fog/40">No data.</p>
+                <p className="mt-3 text-[12px] text-ink/40 dark:text-fog/40">{u.noData}</p>
               ) : (
                 <>
                 <div className="mt-3 hidden overflow-x-auto sm:block">
                   <table className="w-full text-left text-[12px]">
                     <thead>
                       <tr className="border-b border-ink/[0.08] dark:border-fog/[0.08] text-[10px] uppercase tracking-[0.12em] text-ink/45 dark:text-fog/45">
-                        <th className="py-2 pr-3 font-bold">Day</th>
-                        <th className="py-2 pr-3 text-right font-bold">Calls</th>
-                        <th className="py-2 pr-3 text-right font-bold">Prompt</th>
-                        <th className="py-2 pr-3 text-right font-bold">Completion</th>
-                        <th className="py-2 pr-3 text-right font-bold">Avg latency</th>
-                        <th className="py-2 text-right font-bold">Total tokens</th>
+                        <th className="py-2 pr-3 font-bold">{u.thDay}</th>
+                        <th className="py-2 pr-3 text-right font-bold">{u.thCalls}</th>
+                        <th className="py-2 pr-3 text-right font-bold">{u.thPrompt}</th>
+                        <th className="py-2 pr-3 text-right font-bold">{u.thCompletion}</th>
+                        <th className="py-2 pr-3 text-right font-bold">{u.thLatency}</th>
+                        <th className="py-2 text-right font-bold">{u.thTotal}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {pageRows.map((d) => (
                         <tr key={d.day} className="border-b border-ink/[0.04] dark:border-fog/[0.04] last:border-0">
-                          <td className="py-2 pr-3 font-semibold text-ink dark:text-fog">{d.day.slice(5)}</td>
-                          <td className="py-2 pr-3 text-right tabular-nums text-ink/55 dark:text-fog/55">{d.calls}</td>
-                          <td className="py-2 pr-3 text-right tabular-nums text-ink/55 dark:text-fog/55">{formatTokens(d.prompt_tokens ?? 0)}</td>
-                          <td className="py-2 pr-3 text-right tabular-nums text-ink/55 dark:text-fog/55">{formatTokens(d.completion_tokens ?? 0)}</td>
-                          <td className="py-2 pr-3 text-right tabular-nums text-ink/55 dark:text-fog/55">{formatMs(d.avg_latency_ms ?? 0)}</td>
-                          <td className="py-2 text-right font-bold tabular-nums text-ink dark:text-fog">{formatTokens(d.total_tokens)}</td>
+                          <td className="py-2 pr-3 font-semibold text-ink dark:text-fog">{dayLabel(d.day, dateLocale)}</td>
+                          <td className="py-2 pr-3 text-right tabular-nums text-ink/55 dark:text-fog/55">{fmt(d.calls)}</td>
+                          <td className="py-2 pr-3 text-right tabular-nums text-ink/55 dark:text-fog/55">{formatTokens(d.prompt_tokens ?? 0, dateLocale)}</td>
+                          <td className="py-2 pr-3 text-right tabular-nums text-ink/55 dark:text-fog/55">{formatTokens(d.completion_tokens ?? 0, dateLocale)}</td>
+                          <td className="py-2 pr-3 text-right tabular-nums text-ink/55 dark:text-fog/55">{formatMs(d.avg_latency_ms ?? 0, dateLocale)}</td>
+                          <td className="py-2 text-right font-bold tabular-nums text-ink dark:text-fog">{formatTokens(d.total_tokens, dateLocale)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -276,22 +311,21 @@ export default function UsagePage() {
                   {pageRows.map((d) => (
                     <div key={d.day} className="rounded-xl border border-ink/[0.06] bg-white px-3 py-2.5 dark:border-fog/[0.08] dark:bg-[#1d1636]">
                       <div className="flex items-center justify-between gap-2">
-                        <p className="text-[12px] font-semibold tabular-nums text-ink dark:text-fog">{d.day}</p>
-                        <p className="text-[12px] font-bold tabular-nums text-ink dark:text-fog">{formatTokens(d.total_tokens)}</p>
+                        <p className="text-[12px] font-semibold tabular-nums text-ink dark:text-fog">{dayLabel(d.day, dateLocale)}</p>
+                        <p className="text-[12px] font-bold tabular-nums text-ink dark:text-fog">{formatTokens(d.total_tokens, dateLocale)}</p>
                       </div>
                       <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-ink/50 dark:text-fog/50">
-                        <span>{d.calls} calls</span>
-                        <span>Prompt {formatTokens(d.prompt_tokens ?? 0)}</span>
-                        <span>Completion {formatTokens(d.completion_tokens ?? 0)}</span>
-                        <span>Latency {formatMs(d.avg_latency_ms ?? 0)}</span>
+                        <span>{fmt(d.calls)} {u.callsWord}</span>
+                        <span>{u.promptL} {formatTokens(d.prompt_tokens ?? 0, dateLocale)}</span>
+                        <span>{u.completionL} {formatTokens(d.completion_tokens ?? 0, dateLocale)}</span>
+                        <span>{u.latencyWord} {formatMs(d.avg_latency_ms ?? 0, dateLocale)}</span>
                       </div>
                     </div>
                   ))}
                 </div>
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-ink/[0.06] pt-3 dark:border-fog/[0.08]">
                   <p className="text-[11px] tabular-nums text-ink/45 dark:text-fog/45">
-                    Showing {(safePage - 1) * DAYS_PER_PAGE + 1}–
-                    {Math.min(safePage * DAYS_PER_PAGE, dailyDesc.length)} of {dailyDesc.length} days
+                    {fill(u.showingLine, { from: fmt((safePage - 1) * DAYS_PER_PAGE + 1), to: fmt(Math.min(safePage * DAYS_PER_PAGE, dailyDesc.length)), total: fmt(dailyDesc.length) })}
                   </p>
                   <div className="flex items-center gap-2">
                     <button
@@ -300,10 +334,10 @@ export default function UsagePage() {
                       disabled={safePage <= 1}
                       className="rounded-lg border border-ink/[0.08] bg-white px-3 py-1.5 text-[11px] font-semibold text-ink transition hover:border-deep-violet/30 disabled:cursor-not-allowed disabled:opacity-40 dark:border-fog/[0.1] dark:bg-[#1d1636] dark:text-fog"
                     >
-                      Previous
+                      {u.prev}
                     </button>
                     <span className="text-[11px] font-semibold tabular-nums text-ink/45 dark:text-fog/45">
-                      Page {safePage} of {pageCount}
+                      {fill(u.pageLine, { p: fmt(safePage), n: fmt(pageCount) })}
                     </span>
                     <button
                       type="button"
@@ -311,7 +345,7 @@ export default function UsagePage() {
                       disabled={safePage >= pageCount}
                       className="rounded-lg border border-ink/[0.08] bg-white px-3 py-1.5 text-[11px] font-semibold text-ink transition hover:border-deep-violet/30 disabled:cursor-not-allowed disabled:opacity-40 dark:border-fog/[0.1] dark:bg-[#1d1636] dark:text-fog"
                     >
-                      Next
+                      {u.next}
                     </button>
                   </div>
                 </div>

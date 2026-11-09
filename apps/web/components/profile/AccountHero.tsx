@@ -9,6 +9,17 @@ import {
 } from "@/lib/api-profile";
 import { resolveMediaUrl } from "@/lib/media-url";
 import { DeviceMark, FacebookMark, GoogleMark } from "./ProviderMarks";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import type { Dict } from "@/lib/i18n/en";
+
+type ProfileDict = Dict["profile"];
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 export type ProfileImageKind = "avatar" | "cover";
 
@@ -111,6 +122,9 @@ export default function AccountHero({
   const [failedCover, setFailedCover] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<"avatar" | "cover" | null>(null);
+  const { t, locale } = useI18n();
+  const pf: ProfileDict = t.profile;
+  const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
 
   const avatarSrc =
     avatarPreview ??
@@ -145,11 +159,11 @@ export default function AccountHero({
 
   function validate(file: File, kind: ProfileImageKind) {
     if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
-      throw new Error("Choose a JPG, PNG or WEBP image.");
+      throw new Error(pf.badType);
     }
     const max = kind === "avatar" ? MAX_AVATAR_BYTES : MAX_COVER_BYTES;
     if (file.size > max) {
-      throw new Error(`That image is too large — max ${Math.round(max / (1024 * 1024))} MB.`);
+      throw new Error(fill(pf.tooBig, { n: fmt(Math.round(max / (1024 * 1024))) }));
     }
   }
 
@@ -163,7 +177,7 @@ export default function AccountHero({
       else setCoverPreview(url);
       await onUpload(kind, file);
     } catch (e) {
-      setError(messageOf(e, "Could not upload that image."));
+      setError(messageOf(e, pf.uploadFail));
     } finally {
       if (kind === "avatar") setAvatarPreview(null);
       else setCoverPreview(null);
@@ -175,14 +189,14 @@ export default function AccountHero({
       // Existing device photo and not selected: switch to it. Otherwise open
       // the picker so the active chip always means "change this photo".
       if (profile.avatar_upload_url && profile.avatar_source !== "upload") {
-        await run(() => onSelectSource("upload"), "Could not switch photo.");
+        await run(() => onSelectSource("upload"), pf.switchFail);
       } else {
         avatarInput.current?.click();
       }
       return;
     }
     if (profile.avatar_source === source) return;
-    await run(() => onSelectSource(source), "Could not switch photo.");
+    await run(() => onSelectSource(source), pf.switchFail);
   }
 
   async function run(action: () => Promise<void>, fallback: string) {
@@ -200,7 +214,7 @@ export default function AccountHero({
       return;
     }
     setConfirmRemove(null);
-    await run(onRemoveAvatar, "Could not remove the photo.");
+    await run(onRemoveAvatar, pf.removePhotoFail);
   }
 
   async function removeCover() {
@@ -209,7 +223,7 @@ export default function AccountHero({
       return;
     }
     setConfirmRemove(null);
-    await run(onRemoveCover, "Could not remove the cover.");
+    await run(onRemoveCover, pf.removeCoverFail);
   }
 
   const sourceChips: {
@@ -221,40 +235,40 @@ export default function AccountHero({
   }[] = [
     {
       id: "google",
-      label: "Google",
+      label: pf.srcGoogle,
       icon: <GoogleMark />,
       disabled: !profile.google_avatar_url,
       title: profile.google_avatar_url
-        ? "Use the photo from your Google account"
+        ? pf.useGoogle
         : profile.google_connected
-          ? "Google is connected but has not shared a photo yet"
-          : "Sign in with Google to use its photo",
+          ? pf.googleNoPhoto
+          : pf.googleSignIn,
     },
     {
       id: "facebook",
-      label: "Facebook",
+      label: pf.srcFacebook,
       icon: <FacebookMark />,
       disabled: !profile.facebook_avatar_url,
       title: profile.facebook_avatar_url
-        ? "Use the photo from your Facebook account"
+        ? pf.useFacebook
         : profile.facebook_connected
-          ? "Facebook is connected but has not shared a photo yet"
-          : "Sign in with Facebook to use its photo",
+          ? pf.fbNoPhoto
+          : pf.fbSignIn,
     },
     {
       id: "upload",
-      label: "Device",
+      label: pf.srcDevice,
       icon: <DeviceMark />,
       disabled: false,
       title: profile.avatar_upload_url
-        ? "Use the photo uploaded from this device"
-        : "Upload a photo from this device",
+        ? pf.useUploaded
+        : pf.uploadNew,
     },
   ];
 
   return (
     <section
-      aria-label="Profile photos"
+      aria-label={pf.heroAria}
       className="overflow-hidden rounded-[32px] bg-white shadow-[0_24px_60px_-30px_rgba(61,29,110,0.35)] ring-1 ring-ink/[0.06] dark:bg-[#1b1530] dark:ring-white/[0.08]"
     >
       {/* Cover — a solid brand panel when empty, never a gradient. */}
@@ -289,8 +303,8 @@ export default function AccountHero({
             className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-2 text-[11px] font-bold text-ink shadow-[0_6px_16px_rgba(20,16,31,0.18)] transition hover:bg-fog focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-white disabled:opacity-60 sm:px-3.5"
           >
             {busy === "cover" ? <Spinner /> : <ImageIcon />}
-            <span className="hidden sm:inline">Change cover</span>
-            <span className="sm:hidden">Cover</span>
+            <span className="hidden sm:inline">{pf.changeCover}</span>
+            <span className="sm:hidden">{pf.coverShort}</span>
           </button>
           {profile.cover_url && (
             <button
@@ -303,7 +317,7 @@ export default function AccountHero({
                   : "bg-white text-ink/60 hover:text-coral"
               }`}
             >
-              {confirmRemove === "cover" ? "Sure?" : "Remove"}
+              {confirmRemove === "cover" ? pf.sure : pf.remove}
             </button>
           )}
         </div>
@@ -318,7 +332,7 @@ export default function AccountHero({
                   // eslint-disable-next-line @next/next/no-img-element -- provider/upload URL is runtime data
                   <img
                     src={resolveMediaUrl(avatarSrc) ?? ""}
-                    alt={`${fullName(profile)} profile photo`}
+                    alt={fill(pf.photoAlt, { name: fullName(profile) })}
                     className="h-full w-full object-cover"
                     onError={() => setFailedAvatar(profile.avatar_url)}
                   />
@@ -335,8 +349,8 @@ export default function AccountHero({
                 type="button"
                 onClick={() => avatarInput.current?.click()}
                 disabled={busy !== null}
-                aria-label="Upload a profile photo from this device"
-                title="Upload a profile photo"
+                aria-label={pf.uploadAria}
+                title={pf.uploadTitle}
                 className="absolute bottom-0.5 right-0.5 flex h-10 w-10 items-center justify-center rounded-full bg-white text-deep-violet shadow-[0_6px_16px_rgba(20,16,31,0.2)] ring-1 ring-ink/[0.06] transition hover:bg-deep-violet hover:text-white focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet disabled:opacity-60"
               >
                 <CameraIcon />
@@ -362,18 +376,18 @@ export default function AccountHero({
                   }`}
                   aria-hidden
                 />
-                {profile.email_verified ? "Verified" : "Unverified"}
+                {profile.email_verified ? pf.verified : pf.unverified}
               </span>
             </div>
             <p className="mt-1 truncate text-[13px] text-ink/55 dark:text-fog/55">{profile.email}</p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               {memberYear && (
                 <span className="inline-flex items-center rounded-full bg-ink/[0.045] px-2.5 py-1 text-[10.5px] font-semibold text-ink/60 dark:bg-white/[0.06] dark:text-fog/60">
-                  Member since {memberYear}
+                  {memberYear ? fill(pf.memberSince, { year: fmt(memberYear) }) : ""}
                 </span>
               )}
               <span className="inline-flex items-center rounded-full bg-ink/[0.045] px-2.5 py-1 text-[10.5px] font-semibold text-ink/60 dark:bg-white/[0.06] dark:text-fog/60">
-                {completion}% complete
+                {fill(pf.completePct, { n: fmt(completion) })}
               </span>
             </div>
           </div>
@@ -382,15 +396,15 @@ export default function AccountHero({
         <div className="mt-6 rounded-[24px] border border-ink/[0.055] bg-[#f7f4fd] p-4 dark:border-white/[0.07] dark:bg-white/[0.035] sm:mt-7 sm:p-5">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
-              <p className="text-[13px] font-bold text-ink dark:text-fog">Profile photo</p>
+              <p className="text-[13px] font-bold text-ink dark:text-fog">{pf.photoTitle}</p>
               <p className="mt-0.5 text-[11.5px] leading-relaxed text-ink/50 dark:text-fog/50">
-                Pick the picture Sayvors shows across your workspace.
+                {pf.photoSub}
               </p>
             </div>
 
             <div
               role="group"
-              aria-label="Profile photo source"
+              aria-label={pf.photoSourceAria}
               className="flex w-full shrink-0 flex-wrap gap-1 rounded-full bg-white p-1 shadow-[0_4px_14px_rgba(61,29,110,0.08)] ring-1 ring-ink/[0.06] dark:bg-white/[0.06] dark:ring-white/[0.08] lg:w-auto"
             >
               {sourceChips.map((chip) => {
@@ -420,7 +434,7 @@ export default function AccountHero({
 
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
             <p className="text-[10.5px] text-ink/40 dark:text-fog/40">
-              JPG, PNG or WEBP · up to 8 MB. Google and Facebook photos refresh when you sign in.
+              {pf.imgHint}
             </p>
             {profile.avatar_url && (
               <button
@@ -433,14 +447,14 @@ export default function AccountHero({
                     : "text-ink/45 hover:text-coral dark:text-fog/45"
                 }`}
               >
-                {confirmRemove === "avatar" ? "Click again to remove" : "Remove photo"}
+                {confirmRemove === "avatar" ? pf.clickAgain : pf.removePhoto}
               </button>
             )}
           </div>
 
           {profile.avatar_source === "none" && !error && (
             <p className="mt-2 text-[10.5px] font-semibold text-ink/45 dark:text-fog/45">
-              No photo selected — your initials are shown instead.
+              {pf.noPhoto}
             </p>
           )}
           {error && (

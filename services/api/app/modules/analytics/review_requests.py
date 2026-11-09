@@ -248,6 +248,29 @@ async def create_and_deliver(
     return row
 
 
+async def email_requests_in_window(
+    db: AsyncSession, tenant_id: str, *, hours: int = 24
+) -> int:
+    """Review-request emails this tenant queued in the rolling window.
+
+    Counting at enqueue time (not delivery) is deliberate: the cap bounds how
+    much a tenant can hand to Resend, including rows scheduled days ahead.
+    """
+    from sqlalchemy import func
+
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    result = await db.execute(
+        select(func.count())
+        .select_from(ReviewRequest)
+        .where(
+            ReviewRequest.user_id == tenant_id,
+            ReviewRequest.channel == "email",
+            ReviewRequest.created_at >= since,
+        )
+    )
+    return int(result.scalar() or 0)
+
+
 async def create_queued(
     db: AsyncSession,
     user_id: str,

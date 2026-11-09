@@ -2,13 +2,41 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  fetchWaProfile, saveWaProfile, uploadWaPhoto, completeness, normalizeUrl, timeAgo, WA_VERTICALS, type WaProfile,
+  fetchWaProfile, saveWaProfile, uploadWaPhoto, completeness, normalizeUrl, WA_VERTICALS, type WaProfile,
 } from "@/lib/api-whatsapp-profile";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 import PhonePreview from "./PhonePreview";
 
 type Draft = Partial<WaProfile> & { displayName?: string };
 
+/** Localized "x ago" for sync labels (keeps the shared English lib untouched). */
+function agoLabel(iso: string | null | undefined, t: {
+  now: string;
+  mins: string;
+  hours: string;
+  days: string;
+}): string {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
+  const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
+  if (mins < 1) return t.now;
+  if (mins < 60) return t.mins.replace("{n}", String(mins));
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return t.hours.replace("{n}", String(hours));
+  return t.days.replace("{n}", String(Math.floor(hours / 24)));
+}
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [k, v]) => out.replaceAll(`{${k}}`, String(v)),
+    s,
+  );
+}
+
 export default function ProfileForm({ phoneId, businessName }: { phoneId: string; businessName?: string | null }) {
+  const { t } = useI18n();
+  const p = t.dashboard.whatsapp.profile;
   const [profile, setProfile] = useState<WaProfile | null>(null);
   const [draft, setDraft] = useState<Draft>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -49,7 +77,7 @@ export default function ProfileForm({ phoneId, businessName }: { phoneId: string
       .catch(() => {
         if (!dead) {
           setStatus("error");
-          setMsg("Couldn't load the profile. Check your connection.");
+          setMsg(p.loadFail);
         }
       });
     return () => {
@@ -78,9 +106,9 @@ export default function ProfileForm({ phoneId, businessName }: { phoneId: string
 
   const validate = (d: Draft): Record<string, string> => {
     const e: Record<string, string> = {};
-    if (d.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(d.email)) e.email = "Emails need an @ — check for a typo.";
-    if ((d.about ?? "").length > 139) e.about = `Keep About under 139 characters (${(d.about ?? "").length} now).`;
-    if ((d.description ?? "").length > 512) e.description = "Keep Description under 512 characters.";
+    if (d.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(d.email)) e.email = p.emailFix;
+    if ((d.about ?? "").length > 139) e.about = fill(p.aboutLen, { count: (d.about ?? "").length });
+    if ((d.description ?? "").length > 512) e.description = p.descLen;
     return e;
   };
 
@@ -88,7 +116,7 @@ export default function ProfileForm({ phoneId, businessName }: { phoneId: string
     const v = validate(draft);
     setErrors(v);
     if (Object.keys(v).length) {
-      setMsg("Fix the highlighted fields, then save again.");
+      setMsg(p.fixFields);
       return;
     }
     setStatus("saving");
@@ -108,22 +136,22 @@ export default function ProfileForm({ phoneId, businessName }: { phoneId: string
         sessionStorage.removeItem(`wa-draft-${phoneId}`);
       } catch { /* noop */ }
       setStatus("saved");
-      setMsg("Saved — profile is live on WhatsApp.");
+      setMsg(p.savedLive);
       setTimeout(() => setStatus("idle"), 2500);
     } catch (e) {
       setStatus("error");
-      setMsg(e instanceof Error ? e.message.slice(0, 200) : "Couldn't save. Your changes are kept — try again.");
+      setMsg(e instanceof Error ? e.message.slice(0, 200) : p.saveFail);
     }
   };
 
   const onPhoto = async (file: File | undefined) => {
     if (!file) return;
     if (!file.type.startsWith("image/")) {
-      setMsg("Only image files are allowed.");
+      setMsg(p.photoType);
       return;
     }
     if (file.size > 5 * 1024 * 1024) {
-      setMsg("Photo must be under 5 MB.");
+      setMsg(p.photoSize);
       return;
     }
     setPhotoBusy(true);
@@ -132,10 +160,10 @@ export default function ProfileForm({ phoneId, businessName }: { phoneId: string
       const updated = await uploadWaPhoto(phoneId, file);
       setProfile(updated);
       setPhotoPreview(URL.createObjectURL(file));
-      setMsg("Photo updated — live on WhatsApp now.");
+      setMsg(p.photoOk);
       setTimeout(() => setStatus("idle"), 2500);
     } catch (e) {
-      setMsg(e instanceof Error ? e.message.slice(0, 200) : "Couldn't upload the photo — try again.");
+      setMsg(e instanceof Error ? e.message.slice(0, 200) : p.uploadFail);
     } finally {
       setPhotoBusy(false);
       if (fileRef.current) fileRef.current.value = "";
@@ -158,16 +186,16 @@ export default function ProfileForm({ phoneId, businessName }: { phoneId: string
   return (
     <div style={{ fontFamily: '"Segoe UI",Helvetica Neue,Helvetica,Arial,sans-serif' }}>
       <div className="mb-4 flex items-center gap-3 rounded-lg bg-[var(--wa-panel)] p-4 shadow-[0_1px_2px_rgba(0,0,0,0.15)]">
-        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[var(--wa-accent)]/15 text-[15px] font-bold text-[var(--wa-accent-deep)]" aria-label={`Profile ${score}% complete`}>{score}%</div>
+        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[var(--wa-accent)]/15 text-[15px] font-bold text-[var(--wa-accent-deep)]" aria-label={fill(p.completeAria, { score })}>{score}%</div>
         <div className="min-w-0 flex-1">
           <div className="h-2 overflow-hidden rounded-full bg-[var(--wa-track)]"><div className="h-full rounded-full bg-[var(--wa-accent)] transition-all" style={{ width: `${score}%` }} /></div>
           <p className="mt-1 text-[12px] text-[var(--wa-text-2)]">
-            {score >= 90 ? "All caught up — looking sharp." : "Add About, a website and contact info to reach 90%+."}
-            {profile?.synced_at && !profile?.stale && ` Synced ${timeAgo(profile.synced_at)} from Meta.`}
+            {score >= 90 ? p.sharp : p.progressHint}
+            {profile?.synced_at && !profile?.stale && fill(p.syncedFrom, { time: agoLabel(profile.synced_at, t.dashboard.inbox.time) })}
           </p>
         </div>
         <button onClick={save} disabled={status === "saving"} className="min-h-11 shrink-0 rounded-full bg-[var(--wa-accent)] px-6 py-2.5 text-[13px] font-semibold text-white shadow transition hover:bg-[var(--wa-accent-deep)] active:scale-[0.98] disabled:opacity-60">
-          {status === "saving" ? "Saving…" : "Save"}
+          {status === "saving" ? p.saving : p.save}
         </button>
       </div>
 
@@ -177,14 +205,14 @@ export default function ProfileForm({ phoneId, businessName }: { phoneId: string
 
       {profile?.stale && (
         <div role="status" className="mb-3 flex max-w-md items-center gap-2 rounded-lg bg-[var(--wa-warn-bg)] px-4 py-2.5 text-[13px] text-[var(--wa-warn-text)] shadow">
-          Meta is unreachable right now — showing the saved copy from {timeAgo(profile.synced_at) || "your last sync"}.
+          {fill(p.stale, { time: agoLabel(profile.synced_at, t.dashboard.inbox.time) || p.lastSync })}
         </div>
       )}
 
       {!profile && status === "error" && (
         <div className="rounded-lg bg-[var(--wa-panel)] p-6 text-center shadow-[0_1px_2px_rgba(0,0,0,0.15)]">
-          <p className="font-semibold text-[var(--wa-text)]">No profile yet</p>
-          <p className="mt-1 text-[13px] text-[var(--wa-text-2)]">Fill the form — the preview shows exactly what customers see.</p>
+          <p className="font-semibold text-[var(--wa-text)]">{p.noProfile}</p>
+          <p className="mt-1 text-[13px] text-[var(--wa-text-2)]">{p.fillForm}</p>
         </div>
       )}
 
@@ -211,40 +239,40 @@ export default function ProfileForm({ phoneId, businessName }: { phoneId: string
               )}
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-[14px] font-semibold text-[var(--wa-text)]">Profile photo</p>
-              <p className="mt-0.5 text-[12px] text-[var(--wa-text-2)]">Shown on your business card. JPG or PNG, under 5 MB.</p>
+              <p className="text-[14px] font-semibold text-[var(--wa-text)]">{p.photoTitle}</p>
+              <p className="mt-0.5 text-[12px] text-[var(--wa-text-2)]">{p.photoSub}</p>
               <div className="mt-2 flex gap-2">
                 <button
                   onClick={() => fileRef.current?.click()}
                   disabled={photoBusy}
                   className="min-h-11 rounded-full border border-[var(--wa-accent)] px-4 text-[12px] font-semibold text-[var(--wa-accent-deep)] transition hover:bg-[var(--wa-accent)]/10 disabled:opacity-50"
                 >
-                  {photoBusy ? "Uploading…" : "Upload photo"}
+                  {photoBusy ? p.uploading : p.uploadPhoto}
                 </button>
                 <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => void onPhoto(e.target.files?.[0])} />
               </div>
             </div>
           </div>
           <div>
-            <label htmlFor="wa-about" className={labelCls}>About {(draft.about ?? "").length}/139</label>
-            <input id="wa-about" value={draft.about ?? ""} onChange={(e) => set("about", e.target.value)} placeholder="Fresh coffee downtown, open till late" className={inputCls} maxLength={200} />
+            <label htmlFor="wa-about" className={labelCls}>{fill(p.about, { count: (draft.about ?? "").length })}</label>
+            <input id="wa-about" value={draft.about ?? ""} onChange={(e) => set("about", e.target.value)} placeholder={p.aboutPh} className={inputCls} maxLength={200} />
             {errors.about && <p className="mt-1 text-[12px] text-[var(--wa-danger)]">{errors.about}</p>}
           </div>
           <div>
-            <label htmlFor="wa-desc" className={labelCls}>Description (optional)</label>
-            <textarea id="wa-desc" value={draft.description ?? ""} onChange={(e) => set("description", e.target.value)} rows={3} placeholder="What you sell, hours, parking…" className={inputCls} maxLength={600} />
+            <label htmlFor="wa-desc" className={labelCls}>{p.description}</label>
+            <textarea id="wa-desc" value={draft.description ?? ""} onChange={(e) => set("description", e.target.value)} rows={3} placeholder={p.descriptionPh} className={inputCls} maxLength={600} />
             {errors.description && <p className="mt-1 text-[12px] text-[var(--wa-danger)]">{errors.description}</p>}
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
-              <label htmlFor="wa-email" className={labelCls}>Email (optional)</label>
+              <label htmlFor="wa-email" className={labelCls}>{p.email}</label>
               <input id="wa-email" type="email" inputMode="email" autoComplete="email" value={draft.email ?? ""} onChange={(e) => set("email", e.target.value)} placeholder="hello@shop.com" className={inputCls} />
               {errors.email && <p className="mt-1 text-[12px] text-[var(--wa-danger)]">{errors.email}</p>}
             </div>
             <div>
-              <label htmlFor="wa-vertical" className={labelCls}>Category</label>
+              <label htmlFor="wa-vertical" className={labelCls}>{p.category}</label>
               <select id="wa-vertical" value={draft.vertical ?? ""} onChange={(e) => set("vertical", e.target.value)} className={inputCls}>
-                <option value="">Pick one…</option>
+                <option value="">{p.pickOne}</option>
                 {WA_VERTICALS.map((v) => <option key={v.value} value={v.value}>{v.label}</option>)}
                 {draft.vertical && !WA_VERTICALS.some((v) => v.value === draft.vertical) && (
                   <option value={draft.vertical}>{draft.vertical}</option>
@@ -253,11 +281,11 @@ export default function ProfileForm({ phoneId, businessName }: { phoneId: string
             </div>
           </div>
           <div>
-            <label htmlFor="wa-addr" className={labelCls}>Address (optional)</label>
+            <label htmlFor="wa-addr" className={labelCls}>{p.address}</label>
             <input id="wa-addr" value={draft.address ?? ""} onChange={(e) => set("address", e.target.value)} autoComplete="street-address" placeholder="12 Main St, City" className={inputCls} />
           </div>
           <div>
-            <label htmlFor="wa-web" className={labelCls}>Website (optional)</label>
+            <label htmlFor="wa-web" className={labelCls}>{p.website}</label>
             <input id="wa-web" value={(draft.websites ?? [])[0] ?? ""} onChange={(e) => set("websites", [e.target.value])} inputMode="url" placeholder="shop.com" className={inputCls} />
           </div>
         </div>

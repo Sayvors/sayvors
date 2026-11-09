@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import uuid
@@ -14,6 +15,7 @@ from ..team.context import TenantContext, get_context, require_perm, tenant_id_o
 from ...database import async_session as _async_session
 from ...config import settings
 from ..auth.rate_limit import rate_limit
+from ..billing.messaging_quota import ensure_messaging_quota
 from ..users.models import User
 from .models import (
     AutoReplyConfig,
@@ -275,6 +277,105 @@ async def disconnect_google(
 
     await rebuild_facts_safe(db, uid)
     return {"disconnected": len(channels)}
+
+
+@router.post("/google/sync-now")
+async def sync_google_reviews_now(
+    ctx: TenantContext = Depends(require_perm("channels.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Manually trigger a Google Reviews sync pass immediately.
+
+    Normally reviews are polled every minute by the background worker.
+    This endpoint runs one polling pass right now over all active
+    Google Reviews channels for the tenant, pulling any new or updated
+    reviews from Google.
+
+    Returns the poll totals: channels polled, reviews found, replies
+    posted/queued, skipped, adopted, and errors.
+    """
+    from .reviews_worker import poll_once
+
+    totals = await poll_once()
+    return {
+        "triggered": True,
+        "interval_seconds": settings.GOOGLE_REVIEWS_POLL_INTERVAL_SECONDS,
+        "totals": totals,
+    }
+
+
+@router.post("/google/pubsub")
+async def google_pubsub_push(request: Request, db: AsyncSession = Depends(get_db)):
+    """Google Business Profile Pub/Sub push ingress (NEW_REVIEW etc.).
+
+    The realtime layer of the review-pull design: a push triggers a
+    targeted pull of that location's channel within seconds instead of
+    waiting for the next poll pass. Fail-closed: unconfigured audience
+    ⇒ 503, anything that fails OIDC verification ⇒ 403. Always acks 200
+    once verified — delivery is best-effort on Google's side and the
+    60s poll + daily sweep heal are the correctness guarantee, so a pull
+    that fails here must never turn into a Pub/Sub retry storm.
+    """
+    from ..auth.router import get_client_ip
+    from . import google_push
+
+    if not settings.TESTING:
+        client_ip = get_client_ip(request)
+        if not await rate_limit(
+            f"google-push:{client_ip}",
+            google_push.PUSH_RATE_MAX,
+            google_push.PUSH_RATE_WINDOW_SECONDS,
+        ):
+            logger.warning("Google push rate limited ip=%s", client_ip)
+            return Response(
+                status_code=429,
+                content="Too many requests",
+                headers={"Retry-After": str(google_push.PUSH_RATE_WINDOW_SECONDS)},
+            )
+
+    if not google_push.push_configured():
+        # Fail-closed: no audience configured means this deployment has no
+        # push subscription whose tokens we could trust.
+        return Response(status_code=503, content="Google push ingress not configured")
+
+    content_length = request.headers.get("content-length")
+    if (
+        content_length
+        and content_length.isdigit()
+        and int(content_length) > google_push.PUSH_MAX_BODY_BYTES
+    ):
+        return Response(status_code=413, content="Payload too large")
+    raw_body = await request.body()
+    if len(raw_body) > google_push.PUSH_MAX_BODY_BYTES:
+        return Response(status_code=413, content="Payload too large")
+
+    if not google_push.verify_push_oidc(request):
+        logger.warning("Google push OIDC rejected")
+        return Response(status_code=403, content="Invalid push token")
+
+    message_id, notification = google_push.parse_push_envelope(raw_body)
+    if notification is None:
+        # Not a shape we can act on. Ack anyway: Pub/Sub would retry the
+        # same bytes forever, and the poll layer is the correctness net.
+        return {"status": "ignored"}
+
+    location_ids = google_push.extract_location_ids(notification)
+    if not location_ids:
+        logger.info(
+            "Google push %s has no usable location reference — ignoring (%.300s)",
+            message_id, notification,
+        )
+        return {"status": "ignored"}
+
+    spawned = await google_push.trigger_pulls_for_locations(db, location_ids)
+    logger.info(
+        "Google push %s type=%s locations=%s spawned_pulls=%d",
+        message_id,
+        notification.get("notificationType"),
+        ",".join(location_ids),
+        spawned,
+    )
+    return {"status": "ok", "triggered": spawned}
 
 
 @router.delete("/{channel_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -2143,37 +2244,6 @@ def _message_out(m: ChannelMessage) -> ChannelMessageResponse:
     )
 
 
-async def _ensure_messaging_quota(ctx: TenantContext, db: AsyncSession) -> None:
-    """The plan gate every outbound conversation message shares."""
-    from ..billing.entitlements import (
-        ENTITLEMENT_DENIED_HEADER,
-        count_messages_this_month,
-        entitlement_403,
-        get_entitlements,
-    )
-    from ..team.context import tenant_id_of
-
-    tid = tenant_id_of(ctx.user)
-    ent = await get_entitlements(tid, db)
-    if not ent.has_feature("messaging"):
-        raise entitlement_403("Messaging is not included in your plan.", "messaging")
-    used = await count_messages_this_month(tid, db)
-    if not ent.message_quota_ok(used):
-        raise HTTPException(
-            status_code=429,
-            detail=f"Monthly message limit reached for plan '{ent.plan_slug}'. Upgrade to send more.",
-            headers={ENTITLEMENT_DENIED_HEADER: "quota"},
-        )
-    # The send is about to add a row; drop the cached count so the next
-    # inbound check (AI reply gate) sees it immediately.
-    try:
-        from ..billing.quotas import invalidate_message_usage
-
-        await invalidate_message_usage(tid)
-    except Exception:
-        pass
-
-
 async def _publish_outbound_message(tenant_id: str, msg: ChannelMessage) -> None:
     from .realtime import publish_inbox_event
 
@@ -2281,7 +2351,7 @@ async def inbox_send(
     """
     if not ctx.can_edit_channel(body.channel_id):
         raise HTTPException(status_code=403, detail="No edit access to this channel")
-    await _ensure_messaging_quota(ctx, db)
+    await ensure_messaging_quota(ctx, db, body.channel_id)
     try:
         msg = await send_message(
             body.channel_id,
@@ -2323,7 +2393,7 @@ async def inbox_send_document(
     """Send a PDF, invoice, menu or other document as a native attachment."""
     if not ctx.can_edit_channel(channel_id):
         raise HTTPException(status_code=403, detail="No edit access to this channel")
-    await _ensure_messaging_quota(ctx, db)
+    await ensure_messaging_quota(ctx, db, channel_id)
 
     # Read one byte past the ceiling so an oversized upload is rejected without
     # buffering the whole file first.
@@ -2370,7 +2440,7 @@ async def inbox_send_sticker(
     """Send a WebP sticker (WhatsApp's only sticker format)."""
     if not ctx.can_edit_channel(channel_id):
         raise HTTPException(status_code=403, detail="No edit access to this channel")
-    await _ensure_messaging_quota(ctx, db)
+    await ensure_messaging_quota(ctx, db, channel_id)
 
     data = await file.read(MAX_OUTBOUND_STICKER_BYTES + 1)
     await file.close()
@@ -2412,7 +2482,7 @@ async def inbox_send_location(
     """Send a native WhatsApp location card (lat/lng, name and address)."""
     if not ctx.can_edit_channel(body.channel_id):
         raise HTTPException(status_code=403, detail="No edit access to this channel")
-    await _ensure_messaging_quota(ctx, db)
+    await ensure_messaging_quota(ctx, db, body.channel_id)
     try:
         msg = await send_location_message(
             body.channel_id,
@@ -2443,7 +2513,7 @@ async def inbox_send_contact(
     """Send a native WhatsApp contact card."""
     if not ctx.can_edit_channel(body.channel_id):
         raise HTTPException(status_code=403, detail="No edit access to this channel")
-    await _ensure_messaging_quota(ctx, db)
+    await ensure_messaging_quota(ctx, db, body.channel_id)
     try:
         msg = await send_contact_message(
             body.channel_id,
@@ -3275,22 +3345,41 @@ async def verify_posted_replies(
     client = GoogleReviewsClient(access_token or "", refresh_token)
     confirmed = 0
     corrected = 0
+    removed = 0
     try:
         for reply in rows:
+            payload: dict = {}
             try:
-                live = await client.confirm_reply_live(reply.review_id, attempts=1)
+                # Read the review itself first so a deleted review can be told
+                # apart from a reply that never made it live. confirm_reply_live
+                # folds both into False, which is why a review the customer
+                # deleted surfaced as "publishing failed".
+                for attempt in range(2):
+                    payload = await client.get_review(reply.review_id)
+                    if payload or attempt == 1:
+                        break
+                    await asyncio.sleep(2)
             except GoogleReviewsError as e:
                 raise HTTPException(
                     status_code=e.status_code,
                     detail=f"Could not read Google to verify: {e}",
                 )
-            if live:
+            if payload and payload.get("reviewReply"):
                 confirmed += 1
+            elif not payload:
+                # Google no longer has this review (deleted by the reviewer or
+                # removed by Google). There is nothing to reply to: this is not
+                # a publish failure and must never ask for a reconnect.
+                # Withdrawing the draft keeps it out of the failed queue.
+                reply.status = "rejected"
+                reply.error = (
+                    "This review was deleted on Google, so there is nothing to reply to."
+                )
+                removed += 1
             else:
                 reply.status = "failed"
                 reply.error = (
-                    "Not found on Google when verified. "
-                    "Reconnect Google if needed, remake the draft, approve again."
+                    "Google shows no reply on this review. Approve the draft again to republish it."
                 )
                 corrected += 1
     finally:
@@ -3301,6 +3390,7 @@ async def verify_posted_replies(
         "checked": len(rows),
         "confirmed": confirmed,
         "corrected": corrected,
+        "removed": removed,
         "skipped_non_google": skipped_non_google,
     }
 
@@ -3427,6 +3517,19 @@ async def approve_review_reply(
         await db.commit()
         await _notify_reply_posted(db, ctx.user.id, channel, reply)
     except GoogleReviewsError as e:
+        if e.status_code == 404:
+            # The review is gone from Google (deleted by the reviewer, or
+            # removed). Republishing can never succeed, so keep it out of the
+            # failed queue and stop telling the merchant to retry.
+            reply.status = "rejected"
+            reply.error = (
+                "This review was deleted on Google, so there is nothing to reply to."
+            )
+            await db.commit()
+            raise HTTPException(
+                status_code=404,
+                detail="This review no longer exists on Google, so there is nothing to reply to.",
+            ) from e
         reply.status = "failed"
         reply.error = str(e)[:2000]
         await db.commit()

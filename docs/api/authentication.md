@@ -263,8 +263,8 @@ Content-Type: application/json
 |----------|-------------|---------|
 | `JWT_SECRET` | Signing secret (min 64 chars) | Required |
 | `JWT_ALGORITHM` | Signing algorithm | `HS256` |
-| `JWT_ACCESS_EXPIRATION_MINUTES` | Access token TTL | `15` |
-| `JWT_REFRESH_EXPIRATION_DAYS` | Refresh token TTL | `7` |
+| `JWT_ACCESS_EXPIRATION_MINUTES` | Access token TTL | `720` (12 hours) |
+| `JWT_REFRESH_EXPIRATION_HOURS` | Refresh token TTL | `12` |
 | `CSRF_COOKIE_NAME` | CSRF cookie name | `csrf_token` |
 | `REFRESH_COOKIE_NAME` | Refresh cookie name | `refresh_token` |
 | `REFRESH_COOKIE_MAX_AGE` | Refresh cookie max age (sec) | `604800` |

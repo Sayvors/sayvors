@@ -41,7 +41,8 @@ _SPLIT_SYSTEM_PROMPT = (
     "reorder content — only move the message boundaries.\n"
     "- No message may be a bare fragment like 'ok' or a single word unless "
     "the reply itself contains it.\n"
-    "- Plain text only (WhatsApp): no markdown, no numbering the split."
+    "- Plain text only (WhatsApp): no markdown, no numbering the split.\n"
+    "- Never use em dashes or en dashes; use commas or full stops instead."
 )
 
 

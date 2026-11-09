@@ -10,7 +10,6 @@ Tenant isolation: every snapshot probe is scoped to the tenant's databank
 ids (explicit > channel-linked > all tenant's). External sources are
 scoped the same way; credentials never leave the server.
 """
-import asyncio
 import logging
 
 from . import mechanisms
@@ -105,44 +104,49 @@ async def retrieve_evidence(
 async def _fulfill_one(need: EvidenceNeed, tenant_id: str,
                        channel_id: str | None, db, bank_ids: list[str],
                        allow_live: bool) -> EvidenceResult:
-    coros = []
+    probes: list[tuple[str, object]] = []
     if need.kind in _STRUCTURED_TYPES:
-        coros.append(mechanisms.structured_lookup(
+        probes.append(("structured", mechanisms.structured_lookup(
             db, tenant_id, bank_ids, _STRUCTURED_TYPES[need.kind],
             need.query, limit=(need.limit or NEED_BUDGETS[need.kind]) * 2,
-        ))
+        )))
     if need.kind in (NEED_PRODUCT, NEED_OFFER, NEED_BUSINESS_PROFILE,
                      NEED_BUSINESS_OVERVIEW):
-        coros.append(mechanisms.hybrid_lookup(
+        probes.append(("hybrid", mechanisms.hybrid_lookup(
             db, bank_ids, need.query,
             top_k=(need.limit or NEED_BUDGETS[need.kind]) * 2,
-        ))
+        )))
     use_live = (
         allow_live and need.kind in LIVE_CAPABLE_NEEDS and bool(bank_ids)
     )
     if use_live:
-        coros.append(mechanisms.external_lookup(
+        probes.append(("external", mechanisms.external_lookup(
             db, tenant_id, bank_ids, need.query,
             limit=(need.limit or NEED_BUDGETS[need.kind]),
-        ))
-    if not coros:
+        )))
+    if not probes:
         return EvidenceResult(need=need)
 
-    names = (
-        (["structured"] if need.kind in _STRUCTURED_TYPES else [])
-        + ["hybrid"]
-        + (["external"] if use_live else [])
-    )
-    raw = await asyncio.gather(*coros, return_exceptions=True)
+    # Run probes sequentially on the shared session: a SQLAlchemy
+    # AsyncSession is not safe for concurrent use, and concurrent probes
+    # (SAVEPOINT + plain query interleaving) silently lose each other's
+    # results. Probes never raise by contract, so one failure cannot
+    # affect the others.
     items: list[Evidence] = []
-    for name, res in zip(names, raw):
-        if isinstance(res, Exception):
-            logger.debug("Mechanism %s failed for %s: %s", name, need.kind, res)
+    for name, coro in probes:
+        try:
+            res = await coro
+        except Exception as e:
+            logger.warning("Mechanism %s failed for %s: %s", name, need.kind, e)
             continue
         for fact, score in res or []:
             if (fact or "").strip():
                 items.append(Evidence(kind=need.kind, fact=fact.strip()[:800],
                                       score=float(score or 0), mechanism=name))
+    for e in _minimize(need, items):
+        logger.debug("Evidence %s via %s (%.3f): %.80s",
+                     e.kind, e.mechanism, e.score, e.fact)
+    return EvidenceResult(need=need, items=_minimize(need, items))
     for e in _minimize(need, items):
         logger.debug("Evidence %s via %s (%.3f): %.80s",
                      e.kind, e.mechanism, e.score, e.fact)

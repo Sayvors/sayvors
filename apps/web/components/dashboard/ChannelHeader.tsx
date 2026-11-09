@@ -2,13 +2,13 @@
 
 import Link from "next/link";
 import { ChannelLogo } from "./ChannelLogos";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 
 export type ChannelTab = "inbox" | "analytics" | "profile" | "ads" | "leads" | "calls" | "logs";
 
-const allTabs: { id: ChannelTab; label: string; icon: React.ReactNode }[] = [
+const allTabs: { id: ChannelTab; icon: React.ReactNode }[] = [
   {
     id: "inbox",
-    label: "Inbox",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
         <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
@@ -17,7 +17,6 @@ const allTabs: { id: ChannelTab; label: string; icon: React.ReactNode }[] = [
   },
   {
     id: "analytics",
-    label: "Analytics",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
         <path d="M18 20V10M12 20V4M6 20v-6" />
@@ -26,7 +25,6 @@ const allTabs: { id: ChannelTab; label: string; icon: React.ReactNode }[] = [
   },
   {
     id: "profile",
-    label: "Profile",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
         <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" />
@@ -36,7 +34,6 @@ const allTabs: { id: ChannelTab; label: string; icon: React.ReactNode }[] = [
   },
   {
     id: "ads",
-    label: "Ads & Campaigns",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
         <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
@@ -45,7 +42,6 @@ const allTabs: { id: ChannelTab; label: string; icon: React.ReactNode }[] = [
   },
   {
     id: "leads",
-    label: "Leads",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
         <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
@@ -56,7 +52,6 @@ const allTabs: { id: ChannelTab; label: string; icon: React.ReactNode }[] = [
   },
   {
     id: "calls",
-    label: "Calls",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
         <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z" />
@@ -65,7 +60,6 @@ const allTabs: { id: ChannelTab; label: string; icon: React.ReactNode }[] = [
   },
   {
     id: "logs",
-    label: "Logs",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
         <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
@@ -94,6 +88,8 @@ export default function ChannelHeader({
   activeTab,
   onTabChange,
 }: ChannelHeaderProps) {
+  const { t } = useI18n();
+  const ws = t.channelHub.workspace;
   const tabs = allTabs.filter((tab) => {
     if (tab.id === "ads") return channelsWithAds.includes(channelSlug);
     if (tab.id === "calls") return channelsWithCalls.includes(channelSlug);
@@ -117,7 +113,7 @@ export default function ChannelHeader({
             <circle cx="12" cy="12" r="3" />
             <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
           </svg>
-          Settings
+          {ws.settingsLink}
         </Link>
       </div>
 
@@ -134,7 +130,7 @@ export default function ChannelHeader({
             }`}
           >
             {tab.icon}
-            {tab.label}
+            {ws.tabs[tab.id]}
             {activeTab === tab.id && (
               <span className="absolute bottom-0 left-0 right-0 h-[2.5px] rounded-t-full bg-deep-violet" />
             )}

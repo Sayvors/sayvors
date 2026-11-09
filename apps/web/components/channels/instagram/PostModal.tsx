@@ -16,6 +16,14 @@ import {
   INK2,
   timeAgo,
 } from "./ui";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 /*
  * Instagram's own post detail: media left, comments right.
@@ -29,7 +37,11 @@ import {
  */
 
 function CommentRow({ comment }: { comment: InstagramComment }) {
-  const who = comment.username || "Unknown";
+  const { t, locale } = useI18n();
+  const m = t.channelHub.instagram.postModal;
+  const fmt = (n: number) =>
+    new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
+  const who = comment.username || m.unknown;
   return (
     <li className="flex items-start gap-3 px-5 py-3">
       <Avatar name={who} />
@@ -41,8 +53,12 @@ function CommentRow({ comment }: { comment: InstagramComment }) {
           <span className={INK}>{comment.text || "—"}</span>
         </p>
         <p className={`mt-1 flex items-center gap-2 text-[12px] ${INK2}`}>
-          {timeAgo(comment.timestamp) && <span>{timeAgo(comment.timestamp)}</span>}
-          {comment.like_count > 0 && <span>{comment.like_count} likes</span>}
+          {timeAgo(comment.timestamp, locale) && (
+            <span>{timeAgo(comment.timestamp, locale)}</span>
+          )}
+          {comment.like_count > 0 && (
+            <span>{fill(m.likeN, { count: fmt(comment.like_count) })}</span>
+          )}
         </p>
         {comment.replies?.length > 0 && (
           <ul className="mt-2 space-y-2 border-l-2 border-[var(--ui-line)] pl-3">
@@ -50,13 +66,17 @@ function CommentRow({ comment }: { comment: InstagramComment }) {
               <li key={`${r.id ?? "r"}-${ri}`}>
                 <p className="text-[12px] leading-snug">
                   <span className={`font-semibold ${INK}`}>
-                    {r.username ? `@${r.username}` : "Unknown"}
+                    {r.username ? `@${r.username}` : m.unknown}
                   </span>{" "}
                   <span className={INK}>{r.text || "—"}</span>
                 </p>
                 <p className={`mt-0.5 flex items-center gap-2 text-[11px] ${INK2}`}>
-                  {timeAgo(r.timestamp) && <span>{timeAgo(r.timestamp)}</span>}
-                  {r.like_count > 0 && <span>{r.like_count} likes</span>}
+                  {timeAgo(r.timestamp, locale) && (
+                    <span>{timeAgo(r.timestamp, locale)}</span>
+                  )}
+                  {r.like_count > 0 && (
+                    <span>{fill(m.likeN, { count: fmt(r.like_count) })}</span>
+                  )}
                 </p>
               </li>
             ))}
@@ -115,6 +135,11 @@ export default function PostModal({
     views: number | null;
   } | null>(null);
   const closeBtnRef = useRef<HTMLButtonElement>(null);
+  const { t, locale } = useI18n();
+  const m = t.channelHub.instagram.postModal;
+  const fmt = (n: number) =>
+    new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
+  const nameFallback = accountUsername || m.igFallback;
 
   const slides = slidesFor(post);
   const current = slides[Math.min(slide, slides.length - 1)];
@@ -167,7 +192,11 @@ export default function PostModal({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label={post.caption ? `Post: ${post.caption.slice(0, 60)}` : "Post"}
+      aria-label={
+        post.caption
+          ? fill(m.dialogAriaCaption, { caption: post.caption.slice(0, 60) })
+          : m.dialogAria
+      }
       className={`fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 sm:p-6 ${
         closing ? "post-modal-out" : "post-modal-in"
       }`}
@@ -218,7 +247,7 @@ export default function PostModal({
             <Image
               key={current.key}
               src={current.mediaUrl}
-              alt={post.caption || "Instagram post"}
+              alt={post.caption || m.mediaAlt}
               width={900}
               height={900}
               unoptimized
@@ -227,7 +256,7 @@ export default function PostModal({
           ) : (
             <span className="flex flex-col items-center gap-2 text-white/70">
               <PlatformMark platform="instagram" size={40} />
-              <span className="text-[13px]">No media returned for this post</span>
+              <span className="text-[13px]">{m.noMedia}</span>
             </span>
           )}
 
@@ -246,7 +275,7 @@ export default function PostModal({
               aria-hidden
               className="absolute left-3 top-3 rounded-[8px] bg-black/60 px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-white"
             >
-              Reel
+              {m.reel}
             </span>
           )}
 
@@ -254,7 +283,7 @@ export default function PostModal({
             <>
               <button
                 type="button"
-                aria-label="Previous image"
+                aria-label={m.prev}
                 onClick={() => setSlide((s) => (s - 1 + slides.length) % slides.length)}
                 className="absolute left-2 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-black/60 text-[18px] font-bold text-white focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-white"
               >
@@ -262,7 +291,7 @@ export default function PostModal({
               </button>
               <button
                 type="button"
-                aria-label="Next image"
+                aria-label={m.next}
                 onClick={() => setSlide((s) => (s + 1) % slides.length)}
                 className="absolute right-2 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-black/60 text-[18px] font-bold text-white focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-white"
               >
@@ -283,7 +312,7 @@ export default function PostModal({
             ref={closeBtnRef}
             type="button"
             onClick={dismiss}
-            aria-label="Close post"
+            aria-label={m.close}
             className="absolute right-3 top-3 flex h-11 w-11 items-center justify-center rounded-full bg-black/60 text-[16px] font-bold text-white focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-white md:hidden"
           >
             ✕
@@ -295,7 +324,7 @@ export default function PostModal({
           <div className="flex items-center justify-between border-b border-[var(--ui-line)] px-5 py-3">
             <p className={`flex items-center gap-2 text-[13px] font-semibold ${INK}`}>
               <Avatar name={accountUsername || "IG"} />
-              {accountUsername ? `@${accountUsername}` : "Instagram"}
+              {accountUsername ? `@${accountUsername}` : nameFallback}
             </p>
             <div className="flex items-center gap-1">
               {post.permalink && (
@@ -305,13 +334,13 @@ export default function PostModal({
                   rel="noopener noreferrer"
                   className={`rounded-[8px] border border-[var(--ui-line)] px-3 py-2 text-[12px] font-semibold ${INK} focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]`}
                 >
-                  View
+                  {m.view}
                 </a>
               )}
               <button
                 type="button"
                 onClick={dismiss}
-                aria-label="Close post"
+                aria-label={m.close}
                 className="hidden h-11 w-11 items-center justify-center rounded-full text-[16px] font-bold text-[var(--ui-ink)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] md:flex"
               >
                 ✕
@@ -325,11 +354,11 @@ export default function PostModal({
                 <Avatar name={accountUsername || "IG"} />
                 <p className="min-w-0 flex-1 text-[13px] leading-snug">
                   <span className={`font-semibold ${INK}`}>
-                    {accountUsername ? `@${accountUsername}` : "Instagram"}
+                    {accountUsername ? `@${accountUsername}` : nameFallback}
                   </span>{" "}
                   <span className={INK}>{post.caption}</span>
                   <span className={`mt-1 block text-[12px] ${INK2}`}>
-                    {timeAgo(post.timestamp)}
+                    {timeAgo(post.timestamp, locale)}
                   </span>
                 </p>
               </div>
@@ -342,7 +371,7 @@ export default function PostModal({
               </ul>
             ) : (
               <p className={`px-5 py-6 text-[13px] ${INK2}`}>
-                No comments yet on this post.
+                {m.noComments}
               </p>
             )}
           </div>
@@ -355,12 +384,14 @@ export default function PostModal({
               <BubbleIcon className="h-6 w-6" />
             </div>
             <p className={`mt-2 text-[13px] font-bold ${INK}`}>
-              {post.like_count.toLocaleString()}{" "}
-              {post.like_count === 1 ? "like" : "likes"}
+              {post.like_count === 1
+                ? fill(m.likeOne, { count: fmt(post.like_count) })
+                : fill(m.likeN, { count: fmt(post.like_count) })}
             </p>
             <p className={`mt-0.5 text-[12px] ${INK2}`}>
-              {post.comments_count.toLocaleString()}{" "}
-              {post.comments_count === 1 ? "comment" : "comments"}
+              {post.comments_count === 1
+                ? fill(m.commentOne, { count: fmt(post.comments_count) })
+                : fill(m.commentN, { count: fmt(post.comments_count) })}
               {post.comments_count > post.comments.length &&
                 post.permalink && (
                   <>
@@ -371,7 +402,7 @@ export default function PostModal({
                       rel="noopener noreferrer"
                       className={`font-semibold underline underline-offset-2 ${INK}`}
                     >
-                      see all on Instagram
+                      {m.seeAll}
                     </a>
                   </>
                 )}
@@ -379,12 +410,16 @@ export default function PostModal({
             {insights && (
               <p className={`mt-1 text-[12px] tabular-nums ${INK2}`}>
                 {[
-                  insights.views != null && `${insights.views.toLocaleString()} views`,
-                  insights.reach != null && `${insights.reach.toLocaleString()} reached`,
+                  insights.views != null &&
+                    fill(m.views, { count: fmt(insights.views) }),
+                  insights.reach != null &&
+                    fill(m.reached, { count: fmt(insights.reach) }),
                   insights.impressions != null &&
-                    `${insights.impressions.toLocaleString()} impressions`,
-                  insights.saves != null && `${insights.saves.toLocaleString()} saves`,
-                  insights.shares != null && `${insights.shares.toLocaleString()} shares`,
+                    fill(m.impressions, { count: fmt(insights.impressions) }),
+                  insights.saves != null &&
+                    fill(m.saves, { count: fmt(insights.saves) }),
+                  insights.shares != null &&
+                    fill(m.shares, { count: fmt(insights.shares) }),
                 ]
                   .filter(Boolean)
                   .join(" · ")}

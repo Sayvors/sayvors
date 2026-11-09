@@ -6,6 +6,14 @@ import { apiFetch } from "@/lib/api-rag";
 import { publishToFacebook } from "@/lib/api-meta";
 import { INK2 } from "../instagram/ui";
 import { Switch } from "../ui";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 /*
  * Composer for the tenant's OWN Page feed: text, link, 1–10 photos, or any
@@ -30,7 +38,18 @@ type Entry = {
   error?: string;
 };
 
-const uploadBlob = async (blob: Blob, baseName: string): Promise<string> => {
+/** Translated copy `uploadBlob` needs — it lives outside React. */
+type UploadCopy = {
+  unreachable: string;
+  uploadFailed: string;
+  notPublic: string;
+};
+
+const uploadBlob = async (
+  blob: Blob,
+  baseName: string,
+  copy: UploadCopy,
+): Promise<string> => {
   // The API checks content against the filename (polyglot guard), so the
   // extension must describe the ACTUAL bytes.
   const ext =
@@ -62,14 +81,12 @@ const uploadBlob = async (blob: Blob, baseName: string): Promise<string> => {
     }
     throw new Error(
       unreachable
-        ? "The server was unreachable for a moment — your image is still here, press Retry."
-        : friendly || "Upload failed.",
+        ? copy.unreachable
+        : friendly || copy.uploadFailed,
     );
   }
   if (typeof result?.url !== "string" || !result.url.startsWith("https://")) {
-    throw new Error(
-      "Facebook fetches images from a public HTTPS url, and this server's storage is not public. Host the image somewhere public and paste its link below.",
-    );
+    throw new Error(copy.notPublic);
   }
   return result.url;
 };
@@ -91,6 +108,8 @@ export default function FacebookPostComposer({
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const { t } = useI18n();
+  const c = t.channelHub.facebook.composer;
 
   const patchEntry = (key: string, patch: Partial<Entry>) => {
     setEntries((list) => list.map((e) => (e.key === key ? { ...e, ...patch } : e)));
@@ -99,12 +118,16 @@ export default function FacebookPostComposer({
   const uploadEntry = async (key: string, file: File) => {
     patchEntry(key, { busy: true, error: undefined });
     try {
-      const url = await uploadBlob(file, file.name || "photo");
+      const url = await uploadBlob(file, file.name || "photo", {
+        unreachable: c.errors.unreachable,
+        uploadFailed: c.errors.uploadFailed,
+        notPublic: c.errors.notPublic,
+      });
       patchEntry(key, { url, busy: false });
     } catch (e) {
       patchEntry(key, {
         busy: false,
-        error: e instanceof Error ? e.message : "Upload failed.",
+        error: e instanceof Error ? e.message : c.errors.uploadFailed,
       });
     }
   };
@@ -130,7 +153,7 @@ export default function FacebookPostComposer({
     setError(null);
     setDone(null);
     if (entries.length >= MAX_IMAGES) {
-      setError(`Facebook takes at most ${MAX_IMAGES} photos per post.`);
+      setError(fill(c.errors.maxPhotos, { max: MAX_IMAGES }));
       return;
     }
     setEntries((list) => [...list, { key: `url-${Date.now()}`, url }]);
@@ -155,31 +178,31 @@ export default function FacebookPostComposer({
     setDone(null);
     const trimmedLink = link.trim();
     if (!message.trim() && !trimmedLink && images.length === 0) {
-      setError("Write a message, add a link, or attach a photo first.");
+      setError(c.errors.empty);
       return;
     }
     if (trimmedLink && images.length > 0) {
-      setError("Facebook takes either a link or photos per post — not both.");
+      setError(c.errors.linkOrPhotos);
       return;
     }
     if (pending > 0) {
-      setError("Hold on — the photos are still uploading.");
+      setError(c.errors.stillUploading);
       return;
     }
     if (failed > 0) {
-      setError("Retry or remove the photo that failed to upload.");
+      setError(c.errors.retryFailed);
       return;
     }
     let scheduleIso: string | undefined;
     if (scheduleOn) {
       if (!scheduleAt) {
-        setError("Pick a date and time to schedule for.");
+        setError(c.errors.pickDate);
         return;
       }
       const when = new Date(scheduleAt);
       const mins = (when.getTime() - Date.now()) / 60000;
       if (Number.isNaN(mins) || mins < 10) {
-        setError("Scheduled time must be at least 10 minutes from now.");
+        setError(c.errors.minTen);
         return;
       }
       scheduleIso = when.toISOString();
@@ -200,12 +223,12 @@ export default function FacebookPostComposer({
       setScheduleAt("");
       setDone(
         out.scheduled
-          ? "Scheduled — Facebook will publish it at the time you picked."
-          : "Published to your Page."
+          ? c.errors.scheduled
+          : c.errors.published
       );
       onPublished();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not publish.");
+      setError(e instanceof Error ? e.message : c.errors.publish);
     } finally {
       setBusy(false);
     }
@@ -218,8 +241,8 @@ export default function FacebookPostComposer({
         onChange={(e) => setMessage(e.target.value)}
         rows={3}
         maxLength={MESSAGE_MAX}
-        aria-label="Post message"
-        placeholder="What's new with your business?"
+        aria-label={c.messageAria}
+        placeholder={c.placeholder}
         className={`${FIELD} w-full resize-y`}
       />
       <p className={`mt-1 text-right text-[11px] ${INK2}`}>
@@ -228,7 +251,7 @@ export default function FacebookPostComposer({
 
       <div className="mt-3">
         <label className={`text-[12px] font-semibold ${INK2}`} htmlFor="fb-link">
-          Link (optional)
+          {c.linkLabel}
         </label>
         <input
           id="fb-link"
@@ -249,7 +272,7 @@ export default function FacebookPostComposer({
             disabled={entries.length >= MAX_IMAGES}
             className="rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-ink)] disabled:opacity-50"
           >
-            Add photos ({entries.length}/{MAX_IMAGES})
+            {fill(c.addPhotos, { n: entries.length, max: MAX_IMAGES })}
           </button>
           <input
             ref={fileInput}
@@ -272,8 +295,8 @@ export default function FacebookPostComposer({
                 addPastedUrl();
               }
             }}
-            placeholder="…or paste an image url"
-            aria-label="Paste an image url"
+            placeholder={c.pastePh}
+            aria-label={c.pasteAria}
             className={`${FIELD} min-w-[12rem] flex-1`}
           />
           <button
@@ -282,7 +305,7 @@ export default function FacebookPostComposer({
             disabled={!pasteUrl.trim()}
             className="rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[12px] font-semibold text-[var(--ui-ink)] disabled:opacity-50"
           >
-            Add
+            {c.add}
           </button>
         </div>
 
@@ -313,7 +336,7 @@ export default function FacebookPostComposer({
                 </span>
                 {e.busy && (
                   <span className="absolute inset-0 flex items-center justify-center rounded-[12px] bg-[var(--ui-surface)]/80 text-[11px] font-bold text-[var(--ui-ink)]">
-                    Uploading…
+                    {c.uploading}
                   </span>
                 )}
                 {e.error && (
@@ -322,13 +345,13 @@ export default function FacebookPostComposer({
                     onClick={() => e.file && void uploadEntry(e.key, e.file)}
                     className="absolute inset-x-1 bottom-1 rounded-[8px] bg-[var(--ui-ink)] px-1 py-0.5 text-[10px] font-bold text-[var(--ui-on-ink)]"
                   >
-                    Retry
+                    {c.retry}
                   </button>
                 )}
                 <button
                   type="button"
                   onClick={() => removeEntry(e.key)}
-                  aria-label="Remove photo"
+                  aria-label={c.removePhoto}
                   className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-[var(--ui-ink)] text-[11px] font-bold text-[var(--ui-on-ink)]"
                 >
                   ×
@@ -351,14 +374,14 @@ export default function FacebookPostComposer({
             setScheduleOn(v);
             setDone(null);
           }}
-          label="Schedule for later"
+          label={c.scheduleLabel}
         />
         {scheduleOn && (
           <input
             type="datetime-local"
             value={scheduleAt}
             onChange={(e) => setScheduleAt(e.target.value)}
-            aria-label="Publish at"
+            aria-label={c.publishAt}
             className={`${FIELD} mt-2 w-full sm:w-64`}
           />
         )}
@@ -383,13 +406,13 @@ export default function FacebookPostComposer({
           className="rounded-[12px] bg-[var(--ui-ink)] px-5 py-2.5 text-[13px] font-semibold text-[var(--ui-on-ink)] disabled:opacity-50"
         >
           {busy
-            ? "Publishing…"
+            ? c.publishing
             : scheduleOn
-              ? "Schedule post"
-              : "Publish to Page"}
+              ? c.schedulePost
+              : c.publishPage}
         </button>
         <span className={`text-[11px] ${INK2}`}>
-          Published posts can&apos;t be edited or boosted from Sayvors — manage those on Facebook.
+          {c.footer}
         </span>
       </div>
     </div>

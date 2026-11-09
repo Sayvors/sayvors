@@ -19,7 +19,8 @@ SYSTEM_PROMPT = """You are the executive assistant of a business intelligence pl
 Write a 2-sentence executive briefing for the business owner based on the JSON facts provided.
 Sentence 1: the overall trajectory (improving/declining, why — cite the biggest mover).
 Sentence 2: the single most important action to take this week.
-Plain text only. No markdown, no lists, no greetings, max 60 words."""
+Plain text only. No markdown, no lists, no greetings, max 60 words.
+Never use em dashes or en dashes. Use commas or full stops instead."""
 
 
 async def get_executive_summary(
@@ -70,7 +71,7 @@ async def get_executive_summary(
     # ── narrative headline ──
     headline = _fallback_headline(overview, top_problem)
     try:
-        headline = await _llm_headline(overview, top_problem, loved, visibility, user_id)
+        headline = await _llm_headline(overview, top_problem, loved, visibility, user_id, db)
     except Exception as e:
         logger.debug("Executive summary LLM unavailable, using fallback: %s", e)
 
@@ -106,12 +107,15 @@ def _fallback_headline(overview: dict, top_problem: dict | None) -> str:
     return (", ".join(parts) + ".").capitalize()
 
 
-async def _llm_headline(overview: dict, top_problem: dict | None, loved: str | None, visibility: dict, tenant_id: str | None = None) -> str:
+async def _llm_headline(overview: dict, top_problem: dict | None, loved: str | None, visibility: dict, tenant_id: str | None = None, db=None) -> str:
     import json
 
-    from ..llm.gateway import LLMMessage, complete
+    from ..llm.gateway import LLMMessage, complete, resolve_tenant_model
 
-    model = "groq:qwen3.8-27b"
+    # Tenant-enabled model, never a hardcoded provider id.
+    model = await resolve_tenant_model(db) if db is not None else None
+    if not model:
+        raise RuntimeError("no enabled LLM model for this tenant")
     facts = {
         "avg_rating": overview["avg_rating"],
         "rating_delta": overview["period"]["rating_delta"],

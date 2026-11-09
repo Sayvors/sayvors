@@ -40,8 +40,8 @@ The runtime environment can override them.
 |----------|---------|---------|
 | `JWT_SECRET` | Unsafe placeholder; must be replaced | Signing secret. Startup exits if the placeholder remains; production requires at least 32 characters. Generate a random value with `python -c "import secrets; print(secrets.token_urlsafe(64))"`. |
 | `JWT_ALGORITHM` | `HS256` | JWT signing algorithm. |
-| `JWT_ACCESS_EXPIRATION_MINUTES` | `1440` | Access-token lifetime (24 hours). |
-| `JWT_REFRESH_EXPIRATION_DAYS` | `7` | Refresh-token lifetime (7 days, rotated on each refresh). |
+| `JWT_ACCESS_EXPIRATION_MINUTES` | `720` | Access-token lifetime (12 hours). |
+| `JWT_REFRESH_EXPIRATION_HOURS` | `12` | Refresh-token lifetime (12 hours, rotated on each refresh). |
 | `TRIAL_CREDIT_CENTS` | `1000` | One-time AI credit granted to every new tenant on the free-trial plan. |
 | `MAX_LOGIN_ATTEMPTS` | `5` | Failed login attempts before lockout. |
 | `LOCKOUT_MINUTES` | `15` | Login lockout duration. |
@@ -100,6 +100,15 @@ must use appropriately separated storage/access policies.
 | `EMAIL_FROM` | `noreply@sayvors.com` | Default email sender address. |
 | `FRONTEND_URL` | `http://localhost:3000` | Frontend base URL used in email links. |
 | `EMAIL_SEND_ALLOW_ANY_RECIPIENT` | `false` | Permit arbitrary recipients for self-hosted relays; production startup rejects true. |
+| `EMAIL_UNSUBSCRIBE_SECRET` | Empty (dev falls back to `JWT_SECRET`) | Dedicated HMAC key for one-click unsubscribe links. Deployed startup requires >= 32 chars and rejects reusing `JWT_SECRET`. |
+| `BULK_EMAIL_DAILY_LIMIT` | `500` | Per-tenant review-request email cap per rolling 24 hours. Protects the shared Resend domain; independent of the WhatsApp allowance. |
+| `EMAIL_CAMPAIGN_BATCH_SIZE` | `500` | Recipients expanded into `email_outbox` per campaign worker pass. |
+| `EMAIL_CAMPAIGN_INTERVAL_SECONDS` | `60` | Pause between campaign expansion passes. |
+| `EMAIL_CAMPAIGN_MAX_RECIPIENTS` | `50000` | Hard cap on a single newsletter campaign audience. |
+| `OTP_RESEND_COOLDOWN_SECONDS` | `60` | Per-address cooldown between OTP sends. |
+| `OTP_DAILY_LIMIT` | `10` | Per-address OTP sends per rolling 24 hours. |
+| `UNVERIFIED_ACCOUNT_TTL_DAYS` | `7` | Grace period before a never-verified owner account is purged (trace kept in `purged_accounts`). |
+| `FREE_TRIAL_DAYS` | `14` | Trial length used by the `{tenant_free_trial_days_left}` campaign variable. |
 | `GLITCHTIP_DSN` | Empty | Server-side error-reporting DSN. |
 | `GLITCHTIP_SECRET_KEY` | Empty | Optional server-side GlitchTip integration secret. |
 
@@ -112,7 +121,7 @@ Native Google Business Profile OAuth is the only product path (reviews, replies,
 | `GOOGLE_CLIENT_ID` | Empty | Google OAuth client ID for Business Profile reviews. |
 | `GOOGLE_CLIENT_SECRET` | Empty | Google OAuth client secret; server-side only. |
 | `GOOGLE_REVIEWS_REDIRECT_URI` | Local callback URL | OAuth redirect URI registered with Google; must match the API origin used by the browser. |
-| `GOOGLE_REVIEWS_MOCK` | `false` | Use generated review data instead of live OAuth/provider data. |
+| `GOOGLE_REVIEWS_MOCK` | `false` | Use generated review data instead of live OAuth/provider data. Deployed startup fails if `true`. |
 | `GOOGLE_REVIEWS_POLL_INTERVAL_SECONDS` | `300` | Review polling interval. |
 | `GOOGLE_QA_POLL_INTERVAL_SECONDS` | `3600` | Deprecated: Google retired the Q&A API on 2025-11-03; the worker no longer polls it. |
 | `GOOGLE_PLACES_API_KEY` | Empty | Server-side Places API (New) key for service-area resolution and benchmark peers. Empty keeps service-area edits local and shows the benchmark as not connected. |
@@ -178,7 +187,7 @@ These configure the dedicated worker process:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `TESTING` | `false` | Test-only behavior gate; do not enable in a deployed environment. |
+| `TESTING` | `false` | Test-only behavior gate. Deployed startup fails if `true`: it skips the Meta webhook signature check and disarms rate limits. |
 | `RAG_DB_ALLOW_PRIVATE_HOSTS` | `false` | Permit RAG live-database connections to private networks. Production startup rejects true because of SSRF risk. |
 
 LLM provider keys are stored in the database and managed through the platform

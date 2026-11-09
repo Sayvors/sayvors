@@ -5,6 +5,7 @@ import Image from "next/image";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { fetchMetaAssets, type MetaAsset } from "@/lib/api-meta";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 import ProfileForm from "./ProfileForm";
 import NumbersHealth from "./NumbersHealth";
 import WhatsAppSettings from "./WhatsAppSettings";
@@ -62,15 +63,24 @@ function initialsOf(n: MetaAsset): string {
 }
 
 const WHATSAPP_TABS: Tab[] = ["profile", "numbers", "settings", "catalog", "templates"];
-const TAB_LABEL: Record<Tab, string> = {
-  profile: "Profile",
-  numbers: "Numbers",
-  settings: "Settings",
-  catalog: "Catalog",
-  templates: "Templates",
-};
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [k, v]) => out.replaceAll(`{${k}}`, String(v)),
+    s,
+  );
+}
 
 export default function WhatsAppHub() {
+  const { t } = useI18n();
+  const w = t.dashboard.whatsapp;
+  const TAB_LABEL: Record<Tab, string> = {
+    profile: w.tabs.profile,
+    numbers: w.tabs.numbers,
+    settings: w.tabs.settings,
+    catalog: w.tabs.catalog,
+    templates: w.tabs.templates,
+  };
   const params = useSearchParams();
   const router = useRouter();
   const rawTab = params.get("tab");
@@ -91,7 +101,7 @@ export default function WhatsAppHub() {
       setNumbers((r.assets ?? []).filter((a) => a.asset_type === "phone_number"));
       setLoadError(null);
     } catch (e) {
-      setLoadError(e instanceof Error ? e.message : "Could not load numbers.");
+      setLoadError(e instanceof Error ? e.message : w.hub.loadFail);
     } finally {
       setLoading(false);
     }
@@ -107,7 +117,7 @@ export default function WhatsAppHub() {
         setLoadError(null);
       } catch (e) {
         if (dead) return;
-        setLoadError(e instanceof Error ? e.message : "Could not load numbers.");
+        setLoadError(e instanceof Error ? e.message : w.hub.loadFail);
       } finally {
         if (!dead) setLoading(false);
       }
@@ -147,9 +157,9 @@ export default function WhatsAppHub() {
         <div className="flex items-center gap-3 bg-[var(--wa-header-bg)] px-4 py-3.5 text-[var(--wa-header-text)]">
           <Image src="/channels/whatsapp-logo.png" alt="WhatsApp" width={36} height={36} className="h-9 w-auto object-contain" />
           <div className="min-w-0 flex-1">
-            <p className="truncate text-[16px] font-semibold leading-tight">Business Numbers</p>
+            <p className="truncate text-[16px] font-semibold leading-tight">{w.hub.businessNumbers}</p>
             <p className="text-[12px] text-[var(--wa-header-muted)]">
-              {loading ? "loading…" : numbers.length === 0 ? "not connected" : needsFix > 0 ? `${needsFix} need attention` : "all connected"}
+              {loading ? w.hub.loading : numbers.length === 0 ? w.hub.notConnected : needsFix > 0 ? fill(w.hub.attention, { count: needsFix }) : w.hub.allConnected}
             </p>
           </div>
         </div>
@@ -157,8 +167,8 @@ export default function WhatsAppHub() {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search business numbers…"
-            aria-label="Search business numbers"
+            placeholder={w.hub.searchPh}
+            aria-label={w.hub.searchAria}
             className="min-h-9 w-full rounded-lg bg-[var(--wa-input-bg)] px-4 text-[13px] text-[var(--wa-text)] outline-none placeholder:text-[var(--wa-text-2)] focus:ring-2 focus:ring-[var(--wa-accent)]/40"
           />
         </div>
@@ -187,12 +197,12 @@ export default function WhatsAppHub() {
                 </span>
                 <span className="min-w-0 flex-1 border-b border-[var(--wa-border-soft)] pb-2.5">
                   <span className="flex items-baseline justify-between gap-2">
-                    <span className="truncate text-[16px] text-[var(--wa-text)]">{n.phone || n.name || "Number"}</span>
+                    <span className="truncate text-[16px] text-[var(--wa-text)]">{n.phone || n.name || w.hub.number}</span>
                     {!n.active && <span className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-[var(--wa-accent)] px-1.5 text-[11px] font-bold text-white">!</span>}
                   </span>
                   <span className="mt-0.5 flex items-center justify-between gap-2">
-                    <span className="truncate text-[13px] text-[var(--wa-text-2)]">{n.name || "WhatsApp Business number"}</span>
-                    <span className={`shrink-0 text-[11px] ${n.active ? "text-[var(--wa-text-2)]" : "font-semibold text-[var(--wa-accent)]"}`}>{n.active ? "live" : "fix"}</span>
+                    <span className="truncate text-[13px] text-[var(--wa-text-2)]">{n.name || w.hub.waNumber}</span>
+                    <span className={`shrink-0 text-[11px] ${n.active ? "text-[var(--wa-text-2)]" : "font-semibold text-[var(--wa-accent)]"}`}>{n.active ? w.hub.live : w.hub.fix}</span>
                   </span>
                 </span>
               </button>
@@ -200,14 +210,14 @@ export default function WhatsAppHub() {
           })}
           {!loading && numbers.length === 0 && (
             <div className="p-6 text-center">
-              <p className="text-[14px] font-semibold text-[var(--wa-text)]">No business numbers yet</p>
-              <p className="mt-1 text-[13px] text-[var(--wa-text-2)]">Connect via Embedded Signup first.</p>
-              <Link href="/dashboard/channels" className="mt-3 inline-block rounded-full bg-[var(--wa-accent)] px-5 py-2 text-[13px] font-semibold text-white">Connect →</Link>
+              <p className="text-[14px] font-semibold text-[var(--wa-text)]">{w.hub.empty}</p>
+              <p className="mt-1 text-[13px] text-[var(--wa-text-2)]">{w.hub.emptyDesc}</p>
+              <Link href="/dashboard/channels" className="mt-3 inline-block rounded-full bg-[var(--wa-accent)] px-5 py-2 text-[13px] font-semibold text-white">{w.hub.connect}</Link>
             </div>
           )}
         </div>
         <div className="border-t border-[var(--wa-border-soft)] px-4 py-2.5 text-[12px] text-[var(--wa-text-2)]">
-          {numbers.length > 0 ? `${numbers.length} business number${numbers.length > 1 ? "s" : ""}` : "WhatsApp Cloud API"}
+          {numbers.length > 0 ? fill(w.hub.footerN, { count: numbers.length }) : w.hub.footerApi}
         </div>
       </aside>
 
@@ -223,12 +233,12 @@ export default function WhatsAppHub() {
             </p>
             <p className="truncate text-[12px] text-[var(--wa-text-2)]">
               {loading
-                ? "loading…"
+                ? w.hub.loading
                 : active
                   ? active.active
-                    ? `online · ${active.status || "connected"}`
-                    : "needs attention"
-                  : "not connected"}
+                    ? fill(w.hub.online, { status: active.status || "connected" })
+                    : w.hub.needsAttention
+                  : w.hub.notConnected}
             </p>
           </div>
           {/* Mobile number picker — the sidebar list is hidden below md */}
@@ -236,7 +246,7 @@ export default function WhatsAppHub() {
             <select
               value={activeId}
               onChange={(e) => goto(tab, e.target.value)}
-              aria-label="Switch number"
+              aria-label={w.hub.switchAria}
               className="min-h-9 max-w-[140px] shrink-0 truncate rounded-lg bg-[var(--wa-panel)] px-2 text-[12px] font-semibold text-[var(--wa-accent-deep)] outline-none focus:ring-2 focus:ring-[var(--wa-accent)]/40 md:hidden"
             >
               {numbers.map((n) => (
@@ -266,15 +276,15 @@ export default function WhatsAppHub() {
             {loadError && (
               <div role="alert" className="mx-auto mb-3 flex max-w-md items-center gap-2 rounded-lg bg-[var(--wa-warn-bg)] px-4 py-2.5 text-[13px] text-[var(--wa-warn-text)] shadow">
                 <span className="flex-1">{loadError}</span>
-                <button onClick={() => window.location.reload()} className="font-bold underline">Retry</button>
+                <button onClick={() => window.location.reload()} className="font-bold underline">{t.common.retry}</button>
               </div>
             )}
             {numbers.length === 0 && !loading && tab !== "catalog" && tab !== "templates" && (
               <div className="mx-auto max-w-md rounded-lg bg-[var(--wa-panel)] p-8 text-center shadow-[0_1px_2px_rgba(0,0,0,0.15)]">
                 <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-[var(--wa-accent)]/10 text-3xl">💬</div>
-                <p className="mt-3 text-[16px] font-semibold text-[var(--wa-text)]">Connect WhatsApp first</p>
-                <p className="mt-1 text-[13px] text-[var(--wa-text-2)]">Link a number via Embedded Signup, then edit its business profile here.</p>
-                <Link href="/dashboard/channels" className="mt-4 inline-block rounded-full bg-[var(--wa-accent)] px-6 py-2.5 text-[13px] font-semibold text-white">Go to Channels →</Link>
+                <p className="mt-3 text-[16px] font-semibold text-[var(--wa-text)]">{w.hub.connectFirst}</p>
+                <p className="mt-1 text-[13px] text-[var(--wa-text-2)]">{w.hub.connectFirstDesc}</p>
+                <Link href="/dashboard/channels" className="mt-4 inline-block rounded-full bg-[var(--wa-accent)] px-6 py-2.5 text-[13px] font-semibold text-white">{w.hub.goChannels}</Link>
               </div>
             )}
             {/* key= remounts the form per number, so its loading state resets cleanly */}

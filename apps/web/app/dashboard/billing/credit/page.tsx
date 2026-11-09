@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import LogoLoader from "@/components/LogoLoader";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 import {
   getLedger,
   type BillingLedgerEntry,
@@ -13,68 +14,95 @@ import {
 /** Rows per page. Small enough to stay readable on a phone. */
 const PAGE_SIZE = 20;
 
-function fmtCents(c: number): string {
-  const sign = c < 0 ? "-" : "";
-  const abs = Math.abs(c);
-  return `${sign}$${(abs / 100).toFixed(2)}`;
+function fmtMoney(cents: number, locale: string): string {
+  const sign = cents < 0 ? "-" : "";
+  const abs = new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Math.abs(cents) / 100);
+  return `${sign}$${abs}`;
 }
 
-function statusStyle(s: TenantBilling["status"]): { pill: string; dot: string; label: string } {
-  switch (s) {
-    case "debt":
-      return { pill: "bg-coral/10 text-coral ring-1 ring-coral/30", dot: "bg-coral", label: "In debt" };
-    case "empty":
-      return { pill: "bg-amber-50 text-amber-700 ring-1 ring-amber-200 dark:bg-amber-900/20 dark:text-amber-300", dot: "bg-amber-400", label: "Empty" };
-    case "low":
-      return { pill: "bg-sky-50 text-sky-700 ring-1 ring-sky-200 dark:bg-sky-900/20 dark:text-sky-300", dot: "bg-sky-500", label: "Low" };
-    default:
-      return { pill: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300", dot: "bg-emerald-500", label: "Healthy" };
-  }
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [k, v]) => out.replaceAll(`{${k}}`, String(v)),
+    s,
+  );
 }
 
-function kindLabel(k: string): string {
-  switch (k) {
-    case "ai_usage": return "AI usage";
-    case "plan_grant": return "Plan grant";
-    case "credit_topup": return "Top-up";
-    case "credit_adjust": return "Adjustment";
-    case "balance_resync": return "Opening balance";
-    case "balance_reconcile": return "Reconcile";
-    default: return k;
-  }
-}
-
-const PURPOSE_LABELS: Record<string, string> = {
-  "review_engine.generate": "Review reply",
-  "review_engine.analysis": "Review analysis",
-  "review_engine.relevance_judge": "Review relevance",
-  "analytics.enrichment": "Review enrichment",
-  "analytics.meaning": "Review meaning",
-  "analytics.intelligence": "Analytics insight",
-  "analytics.summary": "Analytics summary",
-  "analytics.mine_conversations": "Conversation mining",
-  "analytics.abuse_triage": "Abuse triage",
-  "conversation.context": "Conversation context",
-  "review.qa": "Review Q&A",
-  "review_request.template": "Review request",
-  "chat.message": "Assistant chat",
-  "assistant.chat": "Assistant chat",
-  "posts.ai_draft": "Post draft",
-  "memory.extract": "Memory extraction",
-  "databank.business_profile": "Business profile",
-  "databank.ask": "Databank answer",
-  "whatsapp.render_style": "Reply style",
-  "whatsapp.thread_stats": "Thread stats",
-  "instagram.caption_suggest": "Instagram caption",
-  meta_voice_note: "Voice note",
-  "voice.tts": "Text to speech",
-  "tts.job": "Text to speech",
-  "admin.test": "Admin test",
+const PURPOSE_KEYS: Record<string, string> = {
+  "review_engine.generate": "reviewGenerate",
+  "review_engine.analysis": "reviewAnalysis",
+  "review_engine.relevance_judge": "reviewRelevance",
+  "analytics.enrichment": "enrichment",
+  "analytics.meaning": "meaning",
+  "analytics.intelligence": "intelligence",
+  "analytics.summary": "summary",
+  "analytics.mine_conversations": "mine",
+  "analytics.abuse_triage": "abuse",
+  "conversation.context": "conversation",
+  "review.qa": "qa",
+  "review_request.template": "template",
+  "chat.message": "assistantChat",
+  "assistant.chat": "assistantChat",
+  "posts.ai_draft": "postDraft",
+  "memory.extract": "memory",
+  "databank.business_profile": "businessProfile",
+  "databank.ask": "databankAnswer",
+  "whatsapp.render_style": "replyStyle",
+  "whatsapp.thread_stats": "threadStats",
+  "instagram.caption_suggest": "igCaption",
+  meta_voice_note: "voiceNote",
+  "voice.tts": "tts",
+  "tts.job": "tts",
+  "admin.test": "adminTest",
 };
 
-function purposeLabel(purpose: string | null): string | null {
+function purposeLabel(
+  purpose: string | null,
+  purposes: Record<string, string>,
+): string | null {
   if (!purpose) return null;
-  return PURPOSE_LABELS[purpose] ?? purpose.replaceAll("_", " ").replaceAll(".", " · ");
+  const key = PURPOSE_KEYS[purpose];
+  return (
+    (key && purposes[key]) ??
+    purpose.replaceAll("_", " ").replaceAll(".", " · ")
+  );
+}
+
+function kindLabel(kind: string, kinds: Record<string, string>): string {
+  const labels: Record<string, string> = {
+    ai_usage: kinds.aiUsage,
+    plan_grant: kinds.planGrant,
+    credit_topup: kinds.creditTopup,
+    credit_adjust: kinds.creditAdjust,
+    balance_resync: kinds.balanceResync,
+    balance_reconcile: kinds.balanceReconcile,
+  };
+  return labels[kind] ?? kind;
+}
+
+function statusPillLabel(
+  status: string,
+  statuses: Record<string, string>,
+): string {
+  return statuses[status] ?? status;
+}
+
+function statusStyle(
+  s: TenantBilling["status"],
+  statuses: { debt: string; empty: string; low: string; healthy: string },
+): { pill: string; dot: string; label: string } {
+  switch (s) {
+    case "debt":
+      return { pill: "bg-coral/10 text-coral ring-1 ring-coral/30", dot: "bg-coral", label: statuses.debt };
+    case "empty":
+      return { pill: "bg-amber-50 text-amber-700 ring-1 ring-amber-200 dark:bg-amber-900/20 dark:text-amber-300", dot: "bg-amber-400", label: statuses.empty };
+    case "low":
+      return { pill: "bg-sky-50 text-sky-700 ring-1 ring-sky-200 dark:bg-sky-900/20 dark:text-sky-300", dot: "bg-sky-500", label: statuses.low };
+    default:
+      return { pill: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300", dot: "bg-emerald-500", label: statuses.healthy };
+  }
 }
 
 function statusPillClass(status: string): string {
@@ -85,8 +113,8 @@ function statusPillClass(status: string): string {
   return "bg-ink/[0.06] text-ink/50 dark:bg-fog/[0.08] dark:text-fog/50";
 }
 
-function amountText(cents: number): string {
-  return cents === 0 ? "—" : `${cents > 0 ? "+" : ""}${fmtCents(cents)}`;
+function amountText(cents: number, locale: string): string {
+  return cents === 0 ? "—" : `${cents > 0 ? "+" : ""}${fmtMoney(cents, locale)}`;
 }
 
 function amountTone(cents: number): string {
@@ -95,14 +123,17 @@ function amountTone(cents: number): string {
   return "text-ink/30 dark:text-fog/30";
 }
 
-const SORT_OPTIONS: { value: LedgerSort; label: string }[] = [
-  { value: "newest", label: "Newest first" },
-  { value: "oldest", label: "Oldest first" },
-  { value: "cost_high", label: "Highest cost" },
-  { value: "cost_low", label: "Lowest cost" },
-];
-
 export default function CreditLedgerPage() {
+  const { t, locale } = useI18n();
+  const c = t.dashboard.billing.credit;
+  const SORT_OPTIONS: { value: LedgerSort; label: string }[] = [
+    { value: "newest", label: c.sorts.newest },
+    { value: "oldest", label: c.sorts.oldest },
+    { value: "cost_high", label: c.sorts.costHigh },
+    { value: "cost_low", label: c.sorts.costLow },
+  ];
+  const fmtDate = (iso: string | null | undefined) =>
+    iso ? new Date(iso).toLocaleString(locale === "ar" ? "ar-SA" : "en-US") : "—";
   const [billing, setBilling] = useState<TenantBilling | null>(null);
   const [sort, setSort] = useState<LedgerSort>("newest");
   const [offset, setOffset] = useState(0);
@@ -124,7 +155,7 @@ export default function CreditLedgerPage() {
       })
       .catch((e) => {
         if (cancelled) return;
-        setError(e instanceof Error ? e.message : "Load failed.");
+        setError(e instanceof Error ? e.message : c.loadFailed);
       })
       .finally(() => {
         if (cancelled) return;
@@ -154,21 +185,21 @@ export default function CreditLedgerPage() {
     return (
       <div className="p-6">
         <div className="rounded-2xl border border-coral/30 bg-coral/5 p-6 text-center">
-          <p className="text-[14px] font-bold text-ink dark:text-fog">{error ?? "Load failed."}</p>
-          <p className="mt-1 text-[12px] text-ink/45 dark:text-fog/45">Could not load your credit ledger.</p>
+          <p className="text-[14px] font-bold text-ink dark:text-fog">{error ?? c.loadFailed}</p>
+          <p className="mt-1 text-[12px] text-ink/45 dark:text-fog/45">{c.couldNot}</p>
           <button
             type="button"
             onClick={() => setReloadKey((k) => k + 1)}
             className="mt-4 rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-semibold text-white"
           >
-            Try again
+            {c.tryAgain}
           </button>
         </div>
       </div>
     );
   }
 
-  const st = statusStyle(billing.status);
+  const st = statusStyle(billing.status, c.statuses);
   const total = billing.total ?? billing.ledger.length;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1;
@@ -179,24 +210,22 @@ export default function CreditLedgerPage() {
     <div className="mx-auto h-full max-w-5xl space-y-6 overflow-y-auto p-4 pb-24 sm:p-6 sm:pb-8">
       {/* Header */}
       <div>
-        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-ink/40 dark:text-fog/40">Billing · AI credit</p>
-        <h1 className="mt-1 text-[24px] font-bold tracking-tight text-ink dark:text-fog">Credit ledger</h1>
+        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-ink/40 dark:text-fog/40">{c.eyebrow}</p>
+        <h1 className="mt-1 text-[24px] font-bold tracking-tight text-ink dark:text-fog">{c.title}</h1>
         <p className="mt-2 max-w-[640px] text-[13px] font-medium leading-relaxed text-ink/60 dark:text-fog/60">
-          Your AI credit is held in a durable balance. Every LLM call reserves a small hold, then settles to the real cost.
-          Redis is only a cache — deleting it never changes your balance.
+          {c.subtitle1}
         </p>
         <p className="mt-2 max-w-[640px] text-[12px] font-medium leading-relaxed text-ink/45 dark:text-fog/45">
-          The “Used for” column shows what consumed the credit: review analysis, reply generation, assistant chat, and so on.
-          Review enrichment runs on imported reviews even when every review already has a reply.
+          {c.subtitle2}
         </p>
       </div>
 
       {/* Wallet cards */}
       <section className="grid gap-3 sm:grid-cols-3">
         {[
-          { label: "Available", value: fmtCents(billing?.balance_cents ?? 0), note: st ? st.label : "—", tone: (billing?.balance_cents ?? 0) < 0 ? "text-coral" : "text-ink dark:text-fog" },
-          { label: "Held in flight", value: billing && billing.held_cents > 0 ? fmtCents(billing.held_cents) : "—", note: `${billing?.holds.length ?? 0} pending hold${(billing?.holds.length ?? 0) === 1 ? "" : "s"}`, tone: "text-deep-violet dark:text-violet-soft" },
-          { label: "Total committed", value: fmtCents(billing?.total_cents ?? 0), note: "Available + held", tone: "text-ink dark:text-fog" },
+          { label: c.available, value: fmtMoney(billing?.balance_cents ?? 0, locale), note: st ? st.label : "—", tone: (billing?.balance_cents ?? 0) < 0 ? "text-coral" : "text-ink dark:text-fog" },
+          { label: c.held, value: billing && billing.held_cents > 0 ? fmtMoney(billing.held_cents, locale) : "—", note: fill(c.holds, { count: billing?.holds.length ?? 0 }), tone: "text-deep-violet dark:text-violet-soft" },
+          { label: c.committed, value: fmtMoney(billing?.total_cents ?? 0, locale), note: c.heldNote, tone: "text-ink dark:text-fog" },
         ].map((c) => (
           <div key={c.label} className="rounded-2xl border border-ink/[0.06] bg-white p-5 shadow-sm dark:border-fog/[0.06] dark:bg-ink">
             <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-ink/40 dark:text-fog/40">{c.label}</p>
@@ -210,8 +239,8 @@ export default function CreditLedgerPage() {
       <section className="rounded-2xl border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.06] dark:bg-ink">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-ink/40 dark:text-fog/40">Plan</p>
-            <p className="mt-1 text-[18px] font-bold capitalize text-ink dark:text-fog">{billing.plan}</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-ink/40 dark:text-fog/40">{c.plan}</p>
+            <p className="mt-1 text-[18px] font-bold text-ink dark:text-fog">{billing.plan}</p>
           </div>
           {st && (
             <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide ${st.pill}`}>
@@ -223,7 +252,7 @@ export default function CreditLedgerPage() {
             href="/dashboard/billing"
             className="inline-flex items-center gap-1.5 rounded-[14px] bg-deep-violet px-4 py-2 text-[12px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90 active:translate-y-px"
           >
-            Manage payment methods
+            {c.manageMethods}
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden><path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </Link>
         </div>
@@ -232,23 +261,23 @@ export default function CreditLedgerPage() {
       {/* Pending holds */}
       {billing && billing.holds.length > 0 && (
         <section className="rounded-2xl border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.06] dark:bg-ink">
-          <h2 className="text-[15px] font-bold text-ink dark:text-fog">Pending holds · {billing.holds.length}</h2>
-          <p className="mt-0.5 text-[12px] text-ink/45 dark:text-fog/45">Credit reserved by in-flight LLM calls. Released automatically on completion or expiry.</p>
+          <h2 className="text-[15px] font-bold text-ink dark:text-fog">{fill(c.holdsTitle, { count: billing.holds.length })}</h2>
+          <p className="mt-0.5 text-[12px] text-ink/45 dark:text-fog/45">{c.holdsDesc}</p>
           <div className="mt-4 overflow-x-auto">
             <table className="w-full text-[12px]">
               <thead>
                 <tr className="border-b border-ink/[0.06] text-left text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40 dark:border-fog/[0.06] dark:text-fog/40">
-                  <th className="px-3 py-2">Hold</th>
-                  <th className="px-3 py-2 text-right">Reserved</th>
-                  <th className="px-3 py-2 text-right">Expires</th>
+                  <th className="px-3 py-2">{c.hold}</th>
+                  <th className="px-3 py-2 text-right">{c.reserved}</th>
+                  <th className="px-3 py-2 text-right">{c.expires}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-ink/[0.06] dark:divide-fog/[0.06]">
                 {billing.holds.map((h) => (
                   <tr key={h.id}>
                     <td className="px-3 py-2 font-mono text-[10px] text-ink/45 dark:text-fog/45">{h.id.slice(0, 8)}…</td>
-                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-deep-violet dark:text-violet-soft">{fmtCents(h.reserved_cents)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-ink/45 dark:text-fog/45">{h.expires_at ? new Date(h.expires_at).toLocaleTimeString() : "—"}</td>
+                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-deep-violet dark:text-violet-soft">{fmtMoney(h.reserved_cents, locale)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-ink/45 dark:text-fog/45">{fmtDate(h.expires_at)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -261,14 +290,14 @@ export default function CreditLedgerPage() {
       <section className="rounded-2xl border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.06] dark:bg-ink">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <h2 className="text-[15px] font-bold text-ink dark:text-fog">Ledger history</h2>
+            <h2 className="text-[15px] font-bold text-ink dark:text-fog">{c.history}</h2>
             <p className="mt-0.5 text-[12px] text-ink/45 dark:text-fog/45">
-              {total} {total === 1 ? "entry" : "entries"}. Each AI call is one row: reserved on request, settled to the real cost.
+              {total === 1 ? c.entriesOne : fill(c.entriesMany, { count: total })}. {c.historyDesc}
             </p>
           </div>
           <label className="flex shrink-0 items-center gap-2">
             <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40 dark:text-fog/40">
-              Sort
+              {c.sort}
             </span>
             <select
               value={sort}
@@ -276,7 +305,7 @@ export default function CreditLedgerPage() {
                 setSort(e.target.value as LedgerSort);
                 setOffset(0);
               }}
-              aria-label="Sort ledger entries"
+              aria-label={c.sortAria}
               className="h-9 flex-1 rounded-xl border border-ink/[0.08] bg-white px-2.5 text-[12px] font-semibold text-ink outline-none dark:border-fog/[0.1] dark:bg-ink dark:text-fog sm:flex-none"
             >
               {SORT_OPTIONS.map((o) => (
@@ -288,13 +317,13 @@ export default function CreditLedgerPage() {
 
         {error && (
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-coral/30 bg-coral/5 px-3 py-2">
-            <p className="text-[12px] font-semibold text-coral">Could not load this page of the ledger.</p>
+            <p className="text-[12px] font-semibold text-coral">{c.pageError}</p>
             <button
               type="button"
               onClick={() => setReloadKey((k) => k + 1)}
               className="text-[12px] font-bold text-deep-violet dark:text-violet-soft"
             >
-              Try again
+              {c.tryAgain}
             </button>
           </div>
         )}
@@ -302,12 +331,10 @@ export default function CreditLedgerPage() {
         {billing.ledger.length === 0 ? (
           <div className="mt-4 rounded-2xl border border-dashed border-ink/[0.1] p-8 text-center dark:border-fog/[0.1]">
             <p className="text-[13px] font-semibold text-ink/70 dark:text-fog/70">
-              {total > 0 ? "No entries on this page" : "No ledger entries yet"}
+              {total > 0 ? c.emptyPage : c.emptyAll}
             </p>
             <p className="mx-auto mt-1 max-w-[360px] text-[12px] leading-relaxed text-ink/45 dark:text-fog/45">
-              {total > 0
-                ? "Use the page controls below to return to a page with entries."
-                : "Make an AI call and it will appear here with the reserved hold and the final charge."}
+              {total > 0 ? c.emptyPageHint : c.emptyAllHint}
             </p>
           </div>
         ) : (
@@ -315,35 +342,35 @@ export default function CreditLedgerPage() {
             <table className="w-full text-[12px]">
               <thead>
                 <tr className="border-b border-ink/[0.06] text-left text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40 dark:border-fog/[0.06] dark:text-fog/40">
-                  <th className="px-3 py-2">When</th>
-                  <th className="px-3 py-2">Kind</th>
-                  <th className="px-3 py-2">Used for</th>
-                  <th className="px-3 py-2">Status</th>
-                  <th className="px-3 py-2 text-right">Amount</th>
-                  <th className="px-3 py-2 text-right">Reserved</th>
-                  <th className="px-3 py-2 text-right">Balance after</th>
+                  <th className="px-3 py-2">{c.when}</th>
+                  <th className="px-3 py-2">{c.kind}</th>
+                  <th className="px-3 py-2">{c.usedFor}</th>
+                  <th className="px-3 py-2">{c.status}</th>
+                  <th className="px-3 py-2 text-right">{c.amount}</th>
+                  <th className="px-3 py-2 text-right">{c.reservedCol}</th>
+                  <th className="px-3 py-2 text-right">{c.balanceAfter}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-ink/[0.06] dark:divide-fog/[0.06]">
                 {billing.ledger.map((e: BillingLedgerEntry) => (
                   <tr key={e.id} className="transition hover:bg-ink/[0.02] dark:hover:bg-fog/[0.03]">
-                    <td className="px-3 py-2 tabular-nums text-ink/45 dark:text-fog/45">{e.created_at ? new Date(e.created_at).toLocaleString() : "—"}</td>
+                    <td className="px-3 py-2 tabular-nums text-ink/45 dark:text-fog/45">{fmtDate(e.created_at)}</td>
                     <td className="px-3 py-2">
-                      <span className="rounded-full bg-ink/[0.06] px-2 py-0.5 text-[10px] font-bold uppercase text-ink/60 dark:bg-fog/[0.08] dark:text-fog/60">{kindLabel(e.kind)}</span>
+                      <span className="rounded-full bg-ink/[0.06] px-2 py-0.5 text-[10px] font-bold uppercase text-ink/60 dark:bg-fog/[0.08] dark:text-fog/60">{kindLabel(e.kind, c.kinds)}</span>
                     </td>
                     <td className="px-3 py-2 text-ink/60 dark:text-fog/60">
-                      {purposeLabel(e.purpose) ?? "—"}
+                      {purposeLabel(e.purpose, c.purposes) ?? "—"}
                     </td>
                     <td className="px-3 py-2">
                       <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${statusPillClass(e.status)}`}>
-                        {e.status}
+                        {statusPillLabel(e.status, c.entryStatuses)}
                       </span>
                     </td>
                     <td className={`px-3 py-2 text-right tabular-nums font-semibold ${amountTone(e.amount_cents)}`}>
-                      {amountText(e.amount_cents)}
+                      {amountText(e.amount_cents, locale)}
                     </td>
-                    <td className="px-3 py-2 text-right tabular-nums text-ink/45 dark:text-fog/45">{e.reserved_cents > 0 ? fmtCents(e.reserved_cents) : "—"}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-ink/60 dark:text-fog/60">{e.balance_after_cents == null ? "—" : fmtCents(e.balance_after_cents)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-ink/45 dark:text-fog/45">{e.reserved_cents > 0 ? fmtMoney(e.reserved_cents, locale) : "—"}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-ink/60 dark:text-fog/60">{e.balance_after_cents == null ? "—" : fmtMoney(e.balance_after_cents, locale)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -363,23 +390,23 @@ export default function CreditLedgerPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="truncate text-[13px] font-semibold text-ink dark:text-fog">
-                      {purposeLabel(e.purpose) ?? kindLabel(e.kind)}
+                      {purposeLabel(e.purpose, c.purposes) ?? kindLabel(e.kind, c.kinds)}
                     </p>
                     <p className="mt-0.5 text-[10px] tabular-nums text-ink/40 dark:text-fog/40">
-                      {e.created_at ? new Date(e.created_at).toLocaleString() : "—"}
+                      {fmtDate(e.created_at)}
                     </p>
                   </div>
                   <p className={`shrink-0 text-[14px] font-bold tabular-nums ${amountTone(e.amount_cents)}`}>
-                    {amountText(e.amount_cents)}
+                    {amountText(e.amount_cents, locale)}
                   </p>
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-ink/45 dark:text-fog/45">
                   <span className={`rounded-full px-2 py-0.5 font-bold uppercase ${statusPillClass(e.status)}`}>
-                    {e.status}
+                    {statusPillLabel(e.status, c.entryStatuses)}
                   </span>
-                  {e.reserved_cents > 0 && <span>Reserved {fmtCents(e.reserved_cents)}</span>}
+                  {e.reserved_cents > 0 && <span>{c.reservedPrefix} {fmtMoney(e.reserved_cents, locale)}</span>}
                   {e.balance_after_cents != null && (
-                    <span>Balance {fmtCents(e.balance_after_cents)}</span>
+                    <span>{c.balancePrefix} {fmtMoney(e.balance_after_cents, locale)}</span>
                   )}
                 </div>
               </div>
@@ -390,7 +417,7 @@ export default function CreditLedgerPage() {
         {total > 0 && (
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-ink/[0.06] pt-3 dark:border-fog/[0.06]">
             <p className="text-[11px] tabular-nums text-ink/45 dark:text-fog/45">
-              Showing {firstRow}–{lastRow} of {total}
+              {fill(c.showing, { first: firstRow, last: lastRow, total })}
             </p>
             <div className="flex items-center gap-2">
               <button
@@ -399,10 +426,10 @@ export default function CreditLedgerPage() {
                 disabled={offset === 0 || pageLoading}
                 className="rounded-xl border border-ink/[0.08] bg-white px-3 py-1.5 text-[12px] font-semibold text-ink transition hover:border-deep-violet/30 disabled:cursor-not-allowed disabled:opacity-40 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
               >
-                Previous
+                {c.previous}
               </button>
               <span className="text-[11px] font-semibold tabular-nums text-ink/45 dark:text-fog/45">
-                Page {currentPage} of {pageCount}
+                {fill(c.pageOf, { page: currentPage, total: pageCount })}
               </span>
               <button
                 type="button"
@@ -410,7 +437,7 @@ export default function CreditLedgerPage() {
                 disabled={offset + PAGE_SIZE >= total || pageLoading}
                 className="rounded-xl border border-ink/[0.08] bg-white px-3 py-1.5 text-[12px] font-semibold text-ink transition hover:border-deep-violet/30 disabled:cursor-not-allowed disabled:opacity-40 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
               >
-                Next
+                {c.next}
               </button>
             </div>
           </div>
@@ -418,7 +445,7 @@ export default function CreditLedgerPage() {
       </section>
 
       <p className="pb-2 text-center text-[11px] text-ink/30 dark:text-fog/30">
-        Balance is authoritative in Postgres · Redis is a cache · Holds expire after 15 minutes
+        {c.footer}
       </p>
     </div>
   );

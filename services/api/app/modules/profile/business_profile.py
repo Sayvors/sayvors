@@ -49,7 +49,8 @@ Rules:
 - not_offered_and_policies: things it does NOT offer plus policies worth knowing (halal, refunds, delivery radius). Empty string if unknown.
 - audience_languages: who the customers are and which languages they use, one short line.
 - Use ONLY the provided material. Never invent prices, hours, stock or policies.
-- Plain text values, no markdown, no quotes around the JSON. At most 60 words per value."""
+- Plain text values, no markdown, no quotes around the JSON. At most 60 words per value.
+- Never use em dashes or en dashes anywhere. Use commas or full stops instead."""
 
 
 def _iso(dt):

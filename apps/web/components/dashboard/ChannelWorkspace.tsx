@@ -4,6 +4,7 @@ import { useState } from "react";
 import ChannelHeader, { type ChannelTab } from "./ChannelHeader";
 import ChatList from "./ChatList";
 import ChatView from "./ChatView";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 import AnalyticsTab from "./tabs/AnalyticsTab";
 import ProfileTab from "./tabs/ProfileTab";
 import AdsTab from "./tabs/AdsTab";
@@ -18,11 +19,20 @@ import {
   type Conversation,
 } from "@/lib/channel-data";
 
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
+
 interface ChannelWorkspaceProps {
   slug: string;
 }
 
 export default function ChannelWorkspace({ slug }: ChannelWorkspaceProps) {
+  const { t } = useI18n();
+  const ws = t.channelHub.workspace;
   const [channelData, setChannelData] = useState<Channel[]>(initialChannels);
   const [selectedConvId, setSelectedConvId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<Record<string, Conversation[]>>(conversationsByChannel);
@@ -51,7 +61,7 @@ export default function ChannelWorkspace({ slug }: ChannelWorkspaceProps) {
   if (!channel) {
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-[13px] text-ink/60">Channel not found</p>
+        <p className="text-[13px] text-ink/60">{ws.notFound}</p>
       </div>
     );
   }
@@ -67,15 +77,15 @@ export default function ChannelWorkspace({ slug }: ChannelWorkspaceProps) {
                 <div className={`flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br ${channel.color} text-[32px] text-white shadow-lg`}>
                   {channel.icon}
                 </div>
-                <h2 className="mt-4 text-[18px] font-bold text-ink">Connect {channel.name}</h2>
+                <h2 className="mt-4 text-[18px] font-bold text-ink">{fill(ws.connectTitle, { name: channel.name })}</h2>
                 <p className="mt-2 text-[13px] text-ink/60">
-                  Authorize Sayvors to access your {channel.name} account. You&apos;ll be redirected to {channel.name} to grant permissions.
+                  {fill(ws.connectBody, { name: channel.name })}
                 </p>
               </div>
 
               {/* Permissions */}
               <div className="mt-6">
-                <p className="text-[12px] font-semibold text-ink/60 mb-2">Required permissions:</p>
+                <p className="text-[12px] font-semibold text-ink/60 mb-2">{ws.permsTitle}</p>
                 <div className="flex flex-wrap gap-1.5">
                   {channel.scopes.map((scope) => (
                     <span
@@ -98,7 +108,7 @@ export default function ChannelWorkspace({ slug }: ChannelWorkspaceProps) {
                   <polyline points="10 17 15 12 10 7" />
                   <line x1="15" y1="12" x2="3" y2="12" />
                 </svg>
-                Connect with {channel.name}
+                {fill(ws.connectBtn, { name: channel.name })}
               </button>
             </div>
           </div>
@@ -147,8 +157,8 @@ export default function ChannelWorkspace({ slug }: ChannelWorkspaceProps) {
                     <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
                   </svg>
                 </div>
-                <p className="mt-4 text-[13px] font-semibold text-ink/40">Select a conversation</p>
-                <p className="mt-1 text-[11px] text-ink/30">Choose a chat from the list to start messaging</p>
+                <p className="mt-4 text-[13px] font-semibold text-ink/40">{ws.emptyTitle}</p>
+                <p className="mt-1 text-[11px] text-ink/30">{ws.emptyBody}</p>
               </div>
             )}
           </div>

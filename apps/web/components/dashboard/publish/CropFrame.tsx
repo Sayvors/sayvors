@@ -1,6 +1,10 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import type { Dict } from "@/lib/i18n/en";
+
+type CropsDict = Dict["publish"]["crops"];
 
 /*
  * Visual crop frame for the unified Publish previews.
@@ -32,13 +36,15 @@ export const CROP_ASPECT: Record<Exclude<CropKey, "orig">, number> = {
   "9:16": 9 / 16,
 };
 
-export const CROP_LABEL: Record<CropKey, string> = {
-  orig: "Original",
-  "1:1": "Square",
-  "4:5": "Portrait",
-  "16:9": "Landscape",
-  "9:16": "Story",
-};
+export function cropLabel(key: CropKey, c: Dict["publish"]["crops"]): string {
+  switch (key) {
+    case "orig": return c.original;
+    case "1:1": return c.square;
+    case "4:5": return c.portrait;
+    case "16:9": return c.landscape;
+    case "9:16": return c.story;
+  }
+}
 
 export function isVideoUrl(url: string): boolean {
   if (!url) return false;
@@ -70,6 +76,9 @@ export default function CropFrame({
 }) {
   const [naturalState, setNaturalState] = useState<{ url: string; w: number; h: number } | null>(null);
   const [errorState, setErrorState] = useState<{ url: string; text: string } | null>(null);
+  const { t } = useI18n();
+  const cr = t.publish.crop;
+  const cs = t.publish.crops;
   const dragRef = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
 
   // Derived, not effect-synced: a stale reading for another url never shows.
@@ -102,14 +111,14 @@ export default function CropFrame({
             type="button"
             onClick={() => onCropKey(k)}
             aria-pressed={cropKey === k}
-            title={CROP_LABEL[k]}
+            title={cropLabel(k, cs)}
             className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
               cropKey === k
                 ? "border-[var(--ui-ink)] bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
                 : `border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink)] hover:bg-[var(--ui-line)]`
             }`}
           >
-            {CROP_LABEL[k]}
+            {cropLabel(k, cs)}
           </button>
         ))}
       </div>
@@ -118,7 +127,7 @@ export default function CropFrame({
       <div className="mt-3 flex justify-center">
         <div
           role="application"
-          aria-label="Crop frame — drag to reposition the image"
+          aria-label={cr.frameAria}
           style={{ width: BOX, height: boxH, touchAction: "none", aspectRatio: active ? String(CROP_ASPECT[active]) : undefined }}
           className={`relative flex items-center justify-center overflow-hidden rounded-[8px] bg-black ${
             active ? "cursor-grab active:cursor-grabbing" : ""
@@ -145,7 +154,7 @@ export default function CropFrame({
               onError={() =>
                 setErrorState({
                   url,
-                  text: "This image can't be previewed — publish will still receive it.",
+                  text: cr.loadError,
                 })
               }
               onLoad={(e) => {
@@ -178,7 +187,7 @@ export default function CropFrame({
           )}
           {!url && (
             <p className="px-4 text-center text-[12px] font-semibold text-white/50">
-              Add media to crop it here
+              {cr.emptyMedia}
             </p>
           )}
           {error && (
@@ -193,7 +202,7 @@ export default function CropFrame({
       {active && (
         <div className="mt-3 flex items-center gap-3">
           <label htmlFor="publish-crop-zoom" className="text-[12px] font-semibold text-[var(--ui-ink-2)]">
-            Zoom
+            {cr.zoom}
           </label>
           <input
             id="publish-crop-zoom"
@@ -212,7 +221,7 @@ export default function CropFrame({
         </div>
       )}
       <p className="mt-2 text-center text-[10px] font-semibold uppercase tracking-widest text-[var(--ui-ink-2)]">
-        Preview crop — applied for real when this post publishes
+        {cr.footNote}
       </p>
     </div>
   );

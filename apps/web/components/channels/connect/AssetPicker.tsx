@@ -8,6 +8,14 @@ import {
   StepActions,
   StepHeading,
 } from "./OnboardingShell";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [k, v]) => out.replaceAll(`{${k}}`, String(v)),
+    s,
+  );
+}
 
 /**
  * Shared "pick which discovered asset Sayvors should use" step.
@@ -44,6 +52,8 @@ export default function AssetPicker({
   error: string | null;
   savedLabel: string;
 }) {
+  const { t } = useI18n();
+  const pk = t.dashboard.connect.picker;
   return (
     <div>
       <StepHeading eyebrow={eyebrow} title={title} body={body} />
@@ -76,7 +86,7 @@ export default function AssetPicker({
                   <span className="block truncate text-[11px] text-ink/45 dark:text-fog/45">
                     {a.asset_type}
                     {a.status !== "connected" ? ` · ${a.status}` : ""}
-                    {a.active ? " · currently active" : ""}
+                    {a.active ? pk.currentlyActive : ""}
                   </span>
                 </span>
               </label>
@@ -87,9 +97,9 @@ export default function AssetPicker({
 
       <StepActions hint={savedLabel}>
         <PrimaryButton onClick={onSave} disabled={busy || assets.length === 0}>
-          {busy ? "Saving…" : picked.length === 0 ? "Deselect all" : `Use selected (${picked.length})`}
+          {busy ? pk.saving : picked.length === 0 ? pk.deselectAll : fill(pk.useSelected, { count: picked.length })}
         </PrimaryButton>
-        {onBack && <SecondaryButton onClick={onBack} disabled={busy}>Back</SecondaryButton>}
+        {onBack && <SecondaryButton onClick={onBack} disabled={busy}>{pk.back}</SecondaryButton>}
       </StepActions>
     </div>
   );

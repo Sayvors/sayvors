@@ -59,6 +59,15 @@ def fake_llm(monkeypatch):
         monkeypatch.setattr(
             "app.modules.llm.service._resolve_model", lambda model: ("m", None)
         )
+
+        # Meaning/enrichment now resolve the model from the tenant's enabled
+        # models instead of a hardcoded id, so the fake DB must answer.
+        async def _fake_model(*a, **k):
+            return "test:model"
+
+        monkeypatch.setattr(
+            "app.modules.llm.gateway.resolve_tenant_model", _fake_model
+        )
     return install
 
 
@@ -607,7 +616,7 @@ def _human_meaning(language="ar", evidence="مبناكم"):
     }
 
 
-async def _fake_enrich(rating, text, reviewer_name, tenant_id=None):
+async def _fake_enrich(rating, text, reviewer_name, tenant_id=None, **kwargs):
     """The legacy enrichment step; these tests assert on meaning, not this."""
     return {
         "sentiment": "negative", "sentiment_score": -0.6,

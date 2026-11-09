@@ -4,18 +4,27 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { createDatabank, scrapeUrl, uploadFile } from "@/lib/api-rag";
-
-const STEPS = [
-  { id: 1, label: "Details" },
-  { id: 2, label: "Source" },
-  { id: 3, label: "Configure" },
-  { id: 4, label: "Review" },
-] as const;
+import { useI18n } from "@/lib/i18n/I18nProvider";
 
 type SourceType = "files" | "crawler" | "database" | "empty";
 
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [k, v]) => out.replaceAll(`{${k}}`, String(v)),
+    s,
+  );
+}
+
 export default function CreateDatabankPage() {
   const router = useRouter();
+  const { t } = useI18n();
+  const u = t.dashboard.databank.create;
+  const STEPS = [
+    { id: 1, label: u.steps.details },
+    { id: 2, label: u.steps.source },
+    { id: 3, label: u.steps.configure },
+    { id: 4, label: u.steps.review },
+  ] as const;
   const [step, setStep] = useState(1);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -36,14 +45,13 @@ export default function CreateDatabankPage() {
     return true;
   }, [crawlerUrl, files.length, name, sourceType, step]);
 
-  const currentSourceLabel = sourceType
-    ? {
-        files: "Upload files",
-        crawler: "Web crawler",
-        database: "Live database",
-        empty: "Start empty",
-      }[sourceType]
-    : "Not selected";
+  const sourceLabels: Record<SourceType, string> = {
+    files: u.sources.files,
+    crawler: u.sources.crawler,
+    database: u.sources.database,
+    empty: u.sources.empty,
+  };
+  const currentSourceLabel = sourceType ? sourceLabels[sourceType] : u.notSelected;
 
   const handleNext = () => {
     if (canProceed && step < STEPS.length) setStep((prev) => prev + 1);
@@ -76,7 +84,7 @@ export default function CreateDatabankPage() {
       router.push("/dashboard/databank");
     } catch (error) {
       console.error("Failed to create databank", error);
-      alert("Could not create databank. Please check the backend and try again.");
+      alert(u.createFailed);
     } finally {
       setIsSubmitting(false);
     }
@@ -89,19 +97,19 @@ export default function CreateDatabankPage() {
           <div>
             <nav className="mb-2 flex items-center gap-2 text-[11px] font-medium text-ink/55">
               <Link href="/dashboard/databank" className="transition hover:text-deep-violet">
-                Databank
+                {u.breadcrumbDatabank}
               </Link>
               <span>/</span>
-              <span className="text-ink">Create</span>
+              <span className="text-ink">{u.breadcrumbCreate}</span>
             </nav>
-            <h1 className="text-[24px] font-black text-ink">Create Databank</h1>
+            <h1 className="text-[24px] font-black text-ink">{u.title}</h1>
           </div>
 
           <Link
             href="/dashboard/databank"
             className="rounded-xl border border-ink/10 bg-white px-3 py-2 text-[12px] font-semibold text-ink/70 transition hover:bg-ink/[0.02]"
           >
-            Back to list
+            {u.backList}
           </Link>
         </div>
 
@@ -139,23 +147,23 @@ export default function CreateDatabankPage() {
               {step === 1 && (
                 <div className="space-y-4">
                   <div>
-                    <p className="mb-2 text-[12px] font-bold uppercase tracking-[0.12em] text-ink/45">Databank details</p>
-                    <label className="mb-1.5 block text-[11px] font-semibold text-ink/55">Name</label>
+                    <p className="mb-2 text-[12px] font-bold uppercase tracking-[0.12em] text-ink/45">{u.detailsTitle}</p>
+                    <label className="mb-1.5 block text-[11px] font-semibold text-ink/55">{u.name}</label>
                     <input
                       value={name}
                       onChange={(e) => setName(e.target.value)}
-                      placeholder="e.g. Product Knowledge Base"
+                      placeholder={u.namePh}
                       className="w-full rounded-xl border border-ink/10 bg-white px-4 py-2.5 text-[13px] text-ink placeholder:text-ink/30 focus:border-deep-violet/40 focus:outline-none"
                     />
                   </div>
 
                   <div>
-                    <label className="mb-1.5 block text-[11px] font-semibold text-ink/55">Description</label>
+                    <label className="mb-1.5 block text-[11px] font-semibold text-ink/55">{u.description}</label>
                     <textarea
                       value={description}
                       onChange={(e) => setDescription(e.target.value)}
                       rows={5}
-                      placeholder="What should this databank be used for?"
+                      placeholder={u.descriptionPh}
                       className="w-full rounded-xl border border-ink/10 bg-white px-4 py-2.5 text-[13px] text-ink placeholder:text-ink/30 focus:border-deep-violet/40 focus:outline-none"
                     />
                   </div>
@@ -164,13 +172,13 @@ export default function CreateDatabankPage() {
 
               {step === 2 && (
                 <div className="space-y-3">
-                  <p className="text-[12px] font-bold uppercase tracking-[0.12em] text-ink/45">Choose a source</p>
-                  {[
-                    { value: "files", title: "Upload files", desc: "PDFs, docs, text files, CSVs, and more" },
-                    { value: "crawler", title: "Web crawler", desc: "Crawl a web page or documentation site" },
-                    { value: "database", title: "Live database", desc: "Connect PostgreSQL or MySQL later" },
-                    { value: "empty", title: "Start empty", desc: "Create a blank databank and add content later" },
-                  ].map((option) => {
+                  <p className="text-[12px] font-bold uppercase tracking-[0.12em] text-ink/45">{u.chooseSource}</p>
+                  {([
+                    { value: "files", title: u.sources.files, desc: u.sourceDescs.files },
+                    { value: "crawler", title: u.sources.crawler, desc: u.sourceDescs.crawler },
+                    { value: "database", title: u.sources.database, desc: u.sourceDescs.database },
+                    { value: "empty", title: u.sources.empty, desc: u.sourceDescs.empty },
+                  ] as const).map((option) => {
                     const selected = sourceType === option.value;
                     return (
                       <button
@@ -202,15 +210,15 @@ export default function CreateDatabankPage() {
 
               {step === 3 && (
                 <div className="space-y-4">
-                  <p className="text-[12px] font-bold uppercase tracking-[0.12em] text-ink/45">Configure source</p>
+                  <p className="text-[12px] font-bold uppercase tracking-[0.12em] text-ink/45">{u.configure}</p>
 
                   {sourceType === "files" && (
                     <div>
-                      <label className="mb-1.5 block text-[11px] font-semibold text-ink/55">Upload files</label>
+                      <label className="mb-1.5 block text-[11px] font-semibold text-ink/55">{u.uploadFiles}</label>
                       <label className="block cursor-pointer rounded-2xl border-2 border-dashed border-ink/15 bg-white p-5 text-center transition hover:border-deep-violet/40">
-                        <div className="text-[12px] font-semibold text-ink/70">Drop files here or click to browse</div>
+                        <div className="text-[12px] font-semibold text-ink/70">{u.dropHint}</div>
                         <div className="mt-1 text-[10px] text-ink/40">
-                          {files.length ? `${files.length} selected` : "PDF, DOCX, TXT, MD, CSV, XLSX, SQL"}
+                          {files.length ? fill(u.selected, { count: files.length }) : u.formats}
                         </div>
                         <input
                           type="file"
@@ -236,7 +244,7 @@ export default function CreateDatabankPage() {
                   {sourceType === "crawler" && (
                     <div className="space-y-3">
                       <div>
-                        <label className="mb-1.5 block text-[11px] font-semibold text-ink/55">Website URL</label>
+                        <label className="mb-1.5 block text-[11px] font-semibold text-ink/55">{u.websiteUrl}</label>
                         <input
                           type="url"
                           value={crawlerUrl}
@@ -247,7 +255,7 @@ export default function CreateDatabankPage() {
                       </div>
 
                       <div>
-                        <label className="mb-1.5 block text-[11px] font-semibold text-ink/55">Crawl depth</label>
+                        <label className="mb-1.5 block text-[11px] font-semibold text-ink/55">{u.crawlDepth}</label>
                         <input
                           type="number"
                           min={1}
@@ -262,13 +270,13 @@ export default function CreateDatabankPage() {
 
                   {sourceType === "database" && (
                     <div className="rounded-2xl border border-dashed border-ink/15 bg-white p-4 text-[12px] text-ink/60">
-                      You can connect a PostgreSQL or MySQL source after the databank is created from the database tab.
+                      {u.databaseNote}
                     </div>
                   )}
 
                   {sourceType === "empty" && (
                     <div className="rounded-2xl border border-dashed border-ink/15 bg-white p-4 text-[12px] text-ink/60">
-                      This databank will be created empty, and you can add sources later.
+                      {u.emptyNote}
                     </div>
                   )}
                 </div>
@@ -276,25 +284,25 @@ export default function CreateDatabankPage() {
 
               {step === 4 && (
                 <div className="space-y-3">
-                  <p className="text-[12px] font-bold uppercase tracking-[0.12em] text-ink/45">Review</p>
+                  <p className="text-[12px] font-bold uppercase tracking-[0.12em] text-ink/45">{u.review}</p>
 
                   <div className="rounded-2xl border border-ink/10 bg-white p-4">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">Name</p>
-                    <p className="mt-1 text-[14px] font-semibold text-ink">{name || "Untitled databank"}</p>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">{u.name}</p>
+                    <p className="mt-1 text-[14px] font-semibold text-ink">{name || u.untitled}</p>
                   </div>
 
                   {description && (
                     <div className="rounded-2xl border border-ink/10 bg-white p-4">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">Description</p>
+                      <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">{u.description}</p>
                       <p className="mt-1 text-[12px] text-ink/70">{description}</p>
                     </div>
                   )}
 
                   <div className="rounded-2xl border border-ink/10 bg-white p-4">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">Source</p>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">{u.steps.source}</p>
                     <p className="mt-1 text-[12px] text-ink/70">{currentSourceLabel}</p>
-                    {sourceType === "files" && <p className="mt-1 text-[11px] text-ink/50">{files.length} file(s) selected</p>}
-                    {sourceType === "crawler" && <p className="mt-1 text-[11px] text-ink/50">{crawlerUrl} (depth {crawlerDepth})</p>}
+                    {sourceType === "files" && <p className="mt-1 text-[11px] text-ink/50">{fill(u.filesCount, { count: files.length })}</p>}
+                    {sourceType === "crawler" && <p className="mt-1 text-[11px] text-ink/50">{fill(u.crawlerDetail, { url: crawlerUrl, depth: crawlerDepth })}</p>}
                   </div>
                 </div>
               )}
@@ -306,7 +314,7 @@ export default function CreateDatabankPage() {
                 onClick={step === 1 ? () => router.push("/dashboard/databank") : handleBack}
                 className="rounded-xl border border-ink/10 bg-white px-4 py-2 text-[12px] font-semibold text-ink/70 transition hover:bg-ink/[0.02]"
               >
-                {step === 1 ? "Cancel" : "Back"}
+                {step === 1 ? t.common.cancel : t.common.back}
               </button>
 
               {step < STEPS.length ? (
@@ -316,7 +324,7 @@ export default function CreateDatabankPage() {
                   onClick={handleNext}
                   className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  Continue
+                  {u.continue}
                 </button>
               ) : (
                 <button
@@ -325,7 +333,7 @@ export default function CreateDatabankPage() {
                   disabled={isSubmitting || !sourceType}
                   className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  {isSubmitting ? "Creating..." : "Create databank"}
+                  {isSubmitting ? u.creating : u.create}
                 </button>
               )}
             </div>
@@ -333,29 +341,29 @@ export default function CreateDatabankPage() {
 
           <aside className="space-y-4">
             <div className="rounded-3xl border border-white bg-white/80 p-5 shadow-[0_12px_30px_rgba(58,39,120,0.08)]">
-              <p className="mb-3 text-[12px] font-bold uppercase tracking-[0.12em] text-ink/45">Why this works</p>
+              <p className="mb-3 text-[12px] font-bold uppercase tracking-[0.12em] text-ink/45">{u.whyTitle}</p>
               <div className="space-y-3 text-[12px] text-ink/65">
                 <div className="rounded-2xl bg-ink/[0.02] p-3">
-                  <div className="mb-1 font-bold text-ink">Upload files</div>
-                  Best for PDFs, SOPs, manuals, and reference docs you want indexed immediately.
+                  <div className="mb-1 font-bold text-ink">{u.why.files}</div>
+                  {u.why.filesDesc}
                 </div>
                 <div className="rounded-2xl bg-ink/[0.02] p-3">
-                  <div className="mb-1 font-bold text-ink">Web crawler</div>
-                  Great for docs, knowledge bases, and help centers that change over time.
+                  <div className="mb-1 font-bold text-ink">{u.why.crawler}</div>
+                  {u.why.crawlerDesc}
                 </div>
                 <div className="rounded-2xl bg-ink/[0.02] p-3">
-                  <div className="mb-1 font-bold text-ink">Database</div>
-                  Use a live data source when your answers should reflect current records.
+                  <div className="mb-1 font-bold text-ink">{u.why.database}</div>
+                  {u.why.databaseDesc}
                 </div>
               </div>
             </div>
 
             <div className="rounded-3xl border border-white bg-white/80 p-5 shadow-[0_12px_30px_rgba(58,39,120,0.08)]">
-              <p className="mb-2 text-[12px] font-bold uppercase tracking-[0.12em] text-ink/45">Best practices</p>
+              <p className="mb-2 text-[12px] font-bold uppercase tracking-[0.12em] text-ink/45">{u.bestTitle}</p>
               <ul className="space-y-2 text-[12px] text-ink/65">
-                <li>• Use a clear name that matches the subject matter.</li>
-                <li>• Keep the description specific so future teammates know what it contains.</li>
-                <li>• Start with a tight source set; large crawls can be noisy.</li>
+                <li>• {u.best.one}</li>
+                <li>• {u.best.two}</li>
+                <li>• {u.best.three}</li>
               </ul>
             </div>
           </aside>

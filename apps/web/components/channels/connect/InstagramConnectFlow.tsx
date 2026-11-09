@@ -11,6 +11,7 @@ import {
   type MetaAsset,
 } from "@/lib/api-meta";
 import LogoLoader from "@/components/LogoLoader";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 import AssetPicker from "./AssetPicker";
 import OnboardingShell, {
   BenefitList,
@@ -34,28 +35,31 @@ import { startMetaOAuth, warmFacebookSdk } from "./metaSignup";
  * `meta_connected=facebook&next=instagram_select` for that hand-off.
  */
 
-const STEPS = [
-  { key: "start", label: "Get started" },
-  { key: "checks", label: "Before you begin" },
-  { key: "facebook", label: "Facebook" },
-  { key: "accounts", label: "Accounts" },
-  { key: "done", label: "Done" },
-];
-
 const STEP_OVERVIEW = 0;
 const STEP_CHECKS = 1;
 const STEP_FACEBOOK = 2;
 const STEP_ACCOUNTS = 3;
 const STEP_DONE = 4;
 
-const CHECKS = [
-  "My Instagram account is a professional (Business or Creator) account.",
-  "That Instagram account is linked to a Facebook Page I am an admin of.",
-  "I can log in to the Facebook account that manages that Page.",
-];
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [k, v]) => out.replaceAll(`{${k}}`, String(v)),
+    s,
+  );
+}
 
 export default function InstagramConnectFlow() {
   const params = useSearchParams();
+  const { t } = useI18n();
+  const g = t.dashboard.connect.instagram;
+  const STEPS = [
+    { key: "start", label: g.steps.start },
+    { key: "checks", label: g.steps.checks },
+    { key: "facebook", label: g.steps.facebook },
+    { key: "accounts", label: g.steps.accounts },
+    { key: "done", label: g.steps.done },
+  ];
+  const CHECKS = [...g.checks];
   const [step, setStep] = useState(STEP_OVERVIEW);
   const [checks, setChecks] = useState<boolean[]>([false, false, false]);
   const [busy, setBusy] = useState(false);
@@ -82,15 +86,13 @@ export default function InstagramConnectFlow() {
       const res = await discoverInstagram();
       await loadAccounts();
       if (res.assets.length === 0) {
-        setError(
-          "No Instagram professional accounts were found. Link your Instagram account to the Facebook Page, then try again."
-        );
+        setError(g.errors.noneFound);
       }
     } catch (e) {
       setError(
         e instanceof Error
           ? e.message
-          : "Could not discover Instagram accounts. Connect Facebook first, then retry."
+          : g.errors.discover
       );
     } finally {
       setBusy(false);
@@ -115,12 +117,12 @@ export default function InstagramConnectFlow() {
       }
 
       if (failure) {
-        setError(`Meta rejected the connection (${failure}). Try again.`);
+        setError(fill(g.errors.rejected, { code: failure }));
         setStep(STEP_FACEBOOK);
       }
       if (discovery) {
         setError(
-          `Connected, but Page discovery failed (Graph ${discovery}). Grant the Page in the Meta dialog and reconnect.`
+          fill(g.errors.discovery, { code: discovery }),
         );
         setStep(STEP_ACCOUNTS);
       }
@@ -153,7 +155,7 @@ export default function InstagramConnectFlow() {
     try {
       await startMetaOAuth("instagram", "/dashboard/channels/instagram/connect");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not start Instagram connect.");
+      setError(e instanceof Error ? e.message : g.errors.start);
       setBusy(false);
     }
   };
@@ -165,7 +167,7 @@ export default function InstagramConnectFlow() {
       await selectMetaAssets("instagram", picked);
       setStep(STEP_DONE);
     } catch {
-      setError("Could not activate the selected account. Try again, or pick it later on the Instagram page.");
+      setError(g.errors.save);
     } finally {
       setBusy(false);
     }
@@ -176,8 +178,8 @@ export default function InstagramConnectFlow() {
   return (
     <OnboardingShell
       platform="instagram"
-      title="Connect Instagram"
-      subtitle="Answer comments and DMs on your Instagram professional account — through the Facebook Page it is linked to."
+      title={g.title}
+      subtitle={g.subtitle}
       steps={STEPS}
       current={step}
       onStepClick={(i) => {
@@ -187,39 +189,15 @@ export default function InstagramConnectFlow() {
         step === STEP_OVERVIEW ? (
           <>
             <BenefitList
-              title="What you get"
-              items={[
-                {
-                  icon: "💬",
-                  label: "Comment replies",
-                  body: "The AI answers comments on your posts and reels in your brand voice.",
-                },
-                {
-                  icon: "✉️",
-                  label: "DM inbox",
-                  body: "Instagram direct messages land in the same inbox as WhatsApp and Facebook.",
-                },
-                {
-                  icon: "📊",
-                  label: "Post insights",
-                  body: "See reach, saves and shares for every post you publish.",
-                },
-              ]}
+              title={g.benefitsTitle}
+              items={g.benefits.map((b, i) => ({ icon: ["💬", "✉️", "📊"][i], label: b.label, body: b.body }))}
             />
             <RequirementList
-              items={[
-                "An Instagram Business or Creator account.",
-                "That account linked to a Facebook Page you manage.",
-                "Admin access to the Page — editor access cannot grant messaging permissions.",
-              ]}
+              items={[...g.requirements]}
             />
             <GuidelineNote
-              title="Connect your Instagram Account"
-              lines={[
-                "Use your official business account.",
-                "The account must be a Business or Creator account linked to a Facebook Page.",
-                "Unlink any personal accounts you do not want to share with Sayvors.",
-              ]}
+              title={g.guidelineTitle}
+              lines={[...g.guideline]}
             />
           </>
         ) : null
@@ -228,38 +206,38 @@ export default function InstagramConnectFlow() {
       {step === STEP_OVERVIEW && (
         <div>
           <StepHeading
-            title="Connect your professional account"
-            body="Instagram does not have its own login here: Meta grants access through the Facebook Page your account is linked to. That is why the next step asks for Facebook."
+            title={g.overviewTitle}
+            body={g.overviewBody}
           />
 
           {alreadyConnected && (
             <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] leading-relaxed text-emerald-800 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-300">
-              Instagram is already connected. You can reconnect below, or open the{" "}
+              {g.already}{" "}
               <Link href="/dashboard/channels/instagram" className="font-semibold underline underline-offset-2">
-                Instagram page
+                {g.alreadyLink}
               </Link>{" "}
-              to manage it.
+              {g.alreadyTail}
             </p>
           )}
 
           <ul className="mt-4 space-y-2 text-[12.5px] leading-relaxed text-ink/60 dark:text-fog/60">
             <li className="flex gap-2">
               <span aria-hidden className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-ink/25 dark:bg-fog/25" />
-              If your account is still personal, switch it to Business or Creator in the Instagram app first.
+              {g.bullets[0]}
             </li>
             <li className="flex gap-2">
               <span aria-hidden className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-ink/25 dark:bg-fog/25" />
-              Link the Instagram account to your Facebook Page in Meta Business Suite.
+              {g.bullets[1]}
             </li>
             <li className="flex gap-2">
               <span aria-hidden className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-ink/25 dark:bg-fog/25" />
-              Then come back here and continue with Facebook.
+              {g.bullets[2]}
             </li>
           </ul>
 
-          <StepActions hint="Takes about 3 minutes.">
-            <PrimaryButton onClick={() => setStep(STEP_CHECKS)}>Continue</PrimaryButton>
-            <SecondaryButton href="/dashboard/channels">Cancel</SecondaryButton>
+          <StepActions hint={g.overviewHint}>
+            <PrimaryButton onClick={() => setStep(STEP_CHECKS)}>{t.dashboard.connect.continue}</PrimaryButton>
+            <SecondaryButton href="/dashboard/channels">{t.common.cancel}</SecondaryButton>
           </StepActions>
         </div>
       )}
@@ -267,9 +245,9 @@ export default function InstagramConnectFlow() {
       {step === STEP_CHECKS && (
         <div>
           <StepHeading
-            eyebrow="Step 1 of 2"
-            title="Before you begin"
-            body="All three must be true. Meta only returns Instagram accounts that are linked to a Page you administer."
+            eyebrow={g.stepOne}
+            title={g.checksTitle}
+            body={g.checksBody}
           />
           <div className="mt-4 space-y-2">
             {CHECKS.map((item, i) => (
@@ -288,11 +266,11 @@ export default function InstagramConnectFlow() {
               </CheckRow>
             ))}
           </div>
-          <StepActions hint="Nothing is sent to Meta until you press Proceed.">
+          <StepActions hint={g.checksHint}>
             <PrimaryButton onClick={() => setStep(STEP_FACEBOOK)} disabled={!allChecked}>
-              Proceed
+              {t.dashboard.connect.proceed}
             </PrimaryButton>
-            <SecondaryButton onClick={() => setStep(STEP_OVERVIEW)}>Back</SecondaryButton>
+            <SecondaryButton onClick={() => setStep(STEP_OVERVIEW)}>{t.common.back}</SecondaryButton>
           </StepActions>
         </div>
       )}
@@ -300,25 +278,25 @@ export default function InstagramConnectFlow() {
       {step === STEP_FACEBOOK && (
         <div>
           <StepHeading
-            eyebrow="Step 2 of 2"
-            title="Continue with Facebook"
-            body="Meta will ask which Pages to share. Instagram access is granted through that Page, then you come back here to pick the account."
+            eyebrow={g.stepTwo}
+            title={g.fbTitle}
+            body={g.fbBody}
           />
 
           {error && <ErrorNote>{error}</ErrorNote>}
 
-          <StepActions hint="Make sure you are logged in to the account that manages the Page.">
+          <StepActions hint={g.fbHint}>
             <PrimaryButton onClick={() => void handleConnect()} disabled={busy}>
               {busy ? (
                 <span className="inline-flex items-center gap-2">
-                  <LogoLoader size={14} /> Opening Facebook…
+                  <LogoLoader size={14} /> {g.opening}
                 </span>
               ) : (
-                "Continue with Facebook"
+                g.fbTitle
               )}
             </PrimaryButton>
             <SecondaryButton onClick={() => setStep(STEP_CHECKS)} disabled={busy}>
-              Back
+              {t.common.back}
             </SecondaryButton>
           </StepActions>
         </div>
@@ -327,9 +305,9 @@ export default function InstagramConnectFlow() {
       {step === STEP_ACCOUNTS && (
         <div>
           <StepHeading
-            eyebrow="Almost there"
-            title="Which Instagram account should Sayvors use?"
-            body="We look for professional accounts linked to the Pages you just shared. Pick the one the AI should answer on."
+            eyebrow={t.dashboard.connect.almostThere}
+            title={g.accountsTitle}
+            body={g.accountsBody}
           />
 
           {error && <ErrorNote>{error}</ErrorNote>}
@@ -338,20 +316,20 @@ export default function InstagramConnectFlow() {
             <SecondaryButton onClick={() => void discover()} disabled={busy}>
               {busy ? (
                 <span className="inline-flex items-center gap-2">
-                  <LogoLoader size={14} /> Looking for accounts…
+                  <LogoLoader size={14} /> {g.looking}
                 </span>
               ) : (
-                "Discover accounts again"
+                g.discoverAgain
               )}
             </SecondaryButton>
           </div>
 
           <div className="mt-4">
             <AssetPicker
-              eyebrow="Accounts"
-              title="Discovered accounts"
-              body="Only accounts linked to a Page you administer can appear here."
-              emptyText="No Instagram account discovered yet. Use the button above after checking the Page link in Meta Business Suite."
+              eyebrow={g.accountsEyebrow}
+              title={g.discoveredTitle}
+              body={g.discoveredBody}
+              emptyText={g.discoveredEmpty}
               assets={accounts}
               picked={picked}
               onToggle={(id) =>
@@ -361,7 +339,7 @@ export default function InstagramConnectFlow() {
               onBack={() => setStep(STEP_FACEBOOK)}
               busy={busy}
               error={null}
-              savedLabel="Only selected accounts are visible in Sayvors."
+              savedLabel={g.discoveredSaved}
             />
           </div>
         </div>
@@ -370,20 +348,20 @@ export default function InstagramConnectFlow() {
       {step === STEP_DONE && (
         <div>
           <StepHeading
-            title="Instagram is connected"
-            body="Comments and DMs on the selected account now flow into Sayvors."
+            title={g.doneTitle}
+            body={g.doneBody}
           />
           <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-500/25 dark:bg-emerald-500/10">
             <p className="text-[12px] font-semibold text-emerald-800 dark:text-emerald-300">
-              {picked.length} account{picked.length === 1 ? "" : "s"} active
+              {fill(g.activeN, { count: picked.length })}
             </p>
             <p className="mt-0.5 text-[11.5px] leading-relaxed text-emerald-800/80 dark:text-emerald-300/80">
-              New comments and DMs appear in the inbox. Posting and insights live on the Instagram page.
+              {g.doneDetail}
             </p>
           </div>
           <StepActions>
-            <PrimaryButton href="/dashboard/channels/instagram">Open Instagram</PrimaryButton>
-            <SecondaryButton href="/dashboard/channels">Back to channels</SecondaryButton>
+            <PrimaryButton href="/dashboard/channels/instagram">{g.openInstagram}</PrimaryButton>
+            <SecondaryButton href="/dashboard/channels">{g.backChannels}</SecondaryButton>
           </StepActions>
         </div>
       )}

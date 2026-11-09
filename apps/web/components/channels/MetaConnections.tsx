@@ -15,6 +15,7 @@ import {
 } from "@/lib/api-meta";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 import PlatformMark from "@/components/channels/PlatformMark";
 import LogoLoader from "@/components/LogoLoader";
 
@@ -36,26 +37,30 @@ import LogoLoader from "@/components/LogoLoader";
 const PROVIDERS: {
   key: MetaProvider;
   name: string;
-  blurb: string;
   tint: string;
   enabled: boolean;
 }[] = [
-  { key: "whatsapp", name: "WhatsApp", blurb: "AI replies to customer chats", tint: "bg-emerald-600/10", enabled: true },
+  { key: "whatsapp", name: "WhatsApp", tint: "bg-emerald-600/10", enabled: true },
   {
     key: "facebook",
     name: "Facebook",
-    blurb: "Page comments and Messenger",
     tint: "bg-blue-600/10",
     enabled: process.env.NEXT_PUBLIC_META_FACEBOOK_CONNECT_ENABLED === "true",
   },
   {
     key: "instagram",
     name: "Instagram",
-    blurb: "Comments and DMs via your Page",
     tint: "bg-pink-600/10",
     enabled: process.env.NEXT_PUBLIC_META_INSTAGRAM_CONNECT_ENABLED === "true",
   },
 ];
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [k, v]) => out.replaceAll(`{${k}}`, String(v)),
+    s,
+  );
+}
 
 const CONNECT_HREF: Record<MetaProvider, string> = {
   whatsapp: "/dashboard/channels/whatsapp/connect",
@@ -79,6 +84,15 @@ export default function MetaConnections({
 }: {
   onNotice: (kind: "ok" | "err", text: string) => void;
 }) {
+  const { t } = useI18n();
+  const m = t.dashboard.channels.meta;
+  const providerDisplay = (provider: string): string =>
+    PROVIDERS.find((x) => x.key === provider)?.name ?? provider;
+  const providerBlurb = (provider: string): string => {
+    if (provider === "whatsapp") return m.whatsappBlurb;
+    if (provider === "facebook") return m.facebookBlurb;
+    return m.instagramBlurb;
+  };
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState<string | null>(null);
   const [picking, setPicking] = useState<MetaProvider | null>(null);
@@ -136,14 +150,22 @@ export default function MetaConnections({
     },
     onMutate: (provider) => { setBusy(`${provider}-save`); },
     onSuccess: ({ provider, count }) => {
-      onNotice("ok", count > 0 ? `${provider} asset(s) activated.` : `${provider} assets deselected — their data is hidden until you pick them again.`);
+      onNotice(
+        "ok",
+        count > 0
+          ? fill(m.assetsOn, { provider: providerDisplay(provider), count })
+          : fill(m.assetsOff, { provider: providerDisplay(provider) }),
+      );
       setPicking(null);
       setPicked((prev) => ({ ...prev, [provider]: [] }));
       invalidate();
     },
     onError: (_err, provider) => {
       const count = (picked[provider] ?? []).length;
-      onNotice("err", count > 0 ? "Could not activate the selected assets." : "Could not save the selection.");
+      onNotice(
+        "err",
+        count > 0 ? m.activateFailed : m.saveFailed,
+      );
     },
     onSettled: () => { setBusy(null); },
   });
@@ -161,7 +183,13 @@ export default function MetaConnections({
       invalidate();
     },
     onError: (e, provider) => {
-      onNotice("err", `Could not validate ${provider}: ${e instanceof Error ? e.message : "request failed"}`);
+      onNotice(
+        "err",
+        fill(m.validateFailed, {
+          provider: providerDisplay(provider),
+          message: e instanceof Error ? e.message : "request failed",
+        }),
+      );
     },
     onSettled: () => { setBusy(null); },
   });
@@ -175,12 +203,12 @@ export default function MetaConnections({
     },
     onMutate: (provider) => { setBusy(`${provider}-off`); },
     onSuccess: (provider) => {
-      onNotice("ok", `${provider} disconnected. Your messages are kept.`);
+      onNotice("ok", fill(m.disconnectedOk, { provider: providerDisplay(provider) }));
       setConfirmOff(null);
       invalidate();
     },
     onError: (_e, provider) => {
-      onNotice("err", `Could not disconnect ${provider}.`);
+      onNotice("err", fill(m.disconnectFailed, { provider: providerDisplay(provider) }));
     },
     onSettled: () => { setBusy(null); },
   });
@@ -194,14 +222,14 @@ export default function MetaConnections({
     },
     onMutate: () => { setBusy("instagram-discover"); },
     onSuccess: (count) => {
-      onNotice("ok", `Found ${count} Instagram account(s) — pick which to use.`);
+      onNotice("ok", fill(m.foundIg, { count }));
       invalidate();
       const current = (assets.instagram ?? []).filter((a) => a.active).map((a) => a.id);
       setPicked((prev) => ({ ...prev, instagram: current }));
       setPicking("instagram");
     },
     onError: (e) => {
-      onNotice("err", e instanceof Error ? e.message : "Connect Facebook first, then discover Instagram.");
+      onNotice("err", e instanceof Error ? e.message : m.connectFbFirst);
     },
     onSettled: () => { setBusy(null); },
   });
@@ -224,7 +252,7 @@ export default function MetaConnections({
         const isDisconnected = !conn || conn.status === "revoked";
         const needsAsset = !isDisconnected && active.length === 0;
         const label = isDisconnected
-          ? p.blurb
+          ? providerBlurb(p.key)
           : active.length > 0
             ? active
                 .map(
@@ -233,7 +261,7 @@ export default function MetaConnections({
                     a.external_asset_id
                 )
                 .join(", ")
-            : `Connected · no ${p.key === "whatsapp" ? "number" : "asset"} selected`;
+            : `Connected · ${p.key === "whatsapp" ? m.noNumber : m.noAsset}`;
 
         return (
           <article
@@ -254,7 +282,7 @@ export default function MetaConnections({
                 </p>
                 {!p.enabled && (
                   <p className="mt-0.5 text-[10.5px] font-semibold text-amber-600 dark:text-amber-400">
-                    New connections paused for now
+                    {m.paused}
                   </p>
                 )}
               </div>
@@ -267,11 +295,11 @@ export default function MetaConnections({
                     href={CONNECT_HREF[p.key]}
                     className="inline-flex min-h-8 items-center rounded-lg bg-deep-violet px-3 text-[12px] font-semibold text-white shadow-sm outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 focus-visible:ring-offset-2"
                   >
-                    Connect
+                    {m.connect}
                   </Link>
                 ) : (
                   <span className="inline-flex min-h-8 items-center rounded-lg bg-ink/[0.05] px-3 text-[12px] font-semibold text-ink/45 dark:bg-fog/[0.07] dark:text-fog/45">
-                    Coming soon
+                    {m.comingSoon}
                   </span>
                 )
               ) : (
@@ -281,7 +309,7 @@ export default function MetaConnections({
                       onClick={() => openPicker("facebook")}
                       className="inline-flex min-h-8 items-center rounded-lg bg-deep-violet px-3 text-[12px] font-semibold text-white transition hover:bg-deep-violet/90"
                     >
-                      Pick your Pages
+                      {m.pickPages}
                     </button>
                   )}
                   {needsAsset && p.key === "instagram" && (
@@ -290,34 +318,34 @@ export default function MetaConnections({
                       disabled={busy === "instagram-discover"}
                       className="inline-flex min-h-8 items-center rounded-lg bg-deep-violet px-3 text-[12px] font-semibold text-white transition hover:bg-deep-violet/90 disabled:opacity-50"
                     >
-                      {busy === "instagram-discover" ? "Discovering…" : "Discover accounts"}
+                      {busy === "instagram-discover" ? m.discovering : m.discover}
                     </button>
                   )}
                   <button
                     onClick={() => openPicker(p.key)}
                     className="min-h-8 rounded-lg px-2.5 text-[11.5px] font-semibold text-ink/60 outline-none transition hover:bg-ink/[0.04] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:text-fog/60 dark:hover:bg-fog/[0.05]"
                   >
-                    Manage
+                    {m.manage}
                   </button>
                   <button
                     onClick={() => void recheck(p.key)}
                     disabled={busy === `${p.key}-check`}
                     className="min-h-8 rounded-lg px-2.5 text-[11.5px] font-semibold text-ink/60 outline-none transition hover:bg-ink/[0.04] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50 dark:text-fog/60 dark:hover:bg-fog/[0.05]"
                   >
-                    {busy === `${p.key}-check` ? "Checking…" : "Re-check"}
+                    {busy === `${p.key}-check` ? m.checking : m.recheck}
                   </button>
                   <button
                     onClick={() => setConfirmOff(p.key)}
                     disabled={busy === `${p.key}-off`}
                     className="min-h-8 rounded-lg px-2.5 text-[11.5px] font-semibold text-red-600 outline-none transition hover:bg-red-500/10 focus-visible:ring-2 focus-visible:ring-red-500/40 disabled:opacity-50 dark:text-red-400"
                   >
-                    Disconnect
+                    {m.disconnect}
                   </button>
                   <Link
                     href={HUB_HREF[p.key]}
                     className="ml-auto hidden min-h-8 items-center rounded-lg px-2.5 text-[11.5px] font-semibold text-deep-violet transition hover:bg-deep-violet/[0.06] sm:inline-flex"
                   >
-                    Open →
+                    {m.open}
                   </Link>
                 </>
               )}
@@ -342,18 +370,16 @@ export default function MetaConnections({
               <div>
                 <h2 className="text-[15px] font-bold text-ink dark:text-fog">
                   {picking === "whatsapp"
-                    ? "Which numbers should Sayvors use?"
-                    : `Which ${picking} assets should Sayvors use?`}
+                    ? m.chooseNumbers
+                    : fill(m.chooseAssets, { provider: picking })}
                 </h2>
                 <p className="mt-0.5 text-[11.5px] leading-relaxed text-ink/45 dark:text-fog/45">
-                  {picking === "whatsapp"
-                    ? "Pick every number the AI may answer on — you can change this later."
-                    : "Only the checked assets are visible in Sayvors."}
+                  {picking === "whatsapp" ? m.pickNumbers : m.pickAssets}
                 </p>
               </div>
               <button
                 onClick={() => setPicking(null)}
-                aria-label="Close"
+                aria-label={m.close}
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-ink/40 outline-none transition hover:bg-ink/[0.05] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:text-fog/40 dark:hover:bg-fog/[0.06]"
               >
                 <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4" aria-hidden>
@@ -369,12 +395,12 @@ export default function MetaConnections({
                   disabled={busy === "instagram-discover"}
                   className="w-full rounded-lg border border-deep-violet/25 px-3 py-2 text-[11.5px] font-semibold text-deep-violet transition hover:bg-deep-violet/[0.06] disabled:opacity-50"
                 >
-                  {busy === "instagram-discover" ? "Discovering…" : "Discover from my Pages"}
+                  {busy === "instagram-discover" ? m.discovering : m.discoverPages}
                 </button>
               )}
               {pickerAssets.length === 0 && (
                 <p className="rounded-lg bg-ink/[0.03] px-3 py-2.5 text-[12px] text-ink/45 dark:bg-fog/[0.04] dark:text-fog/45">
-                  No assets found yet — connect again or retry.
+                  {m.noAssets}
                 </p>
               )}
               {pickerAssets.map((a) => {
@@ -407,7 +433,7 @@ export default function MetaConnections({
                       <span className="block truncate text-[10.5px] text-ink/45 dark:text-fog/45">
                         {a.asset_type}
                         {a.status !== "connected" ? ` · ${a.status}` : ""}
-                        {a.active ? " · active" : ""}
+                        {a.active ? ` · ${m.activeTag}` : ""}
                       </span>
                     </span>
                   </label>
@@ -420,7 +446,7 @@ export default function MetaConnections({
                 onClick={() => setPicking(null)}
                 className="min-h-9 rounded-lg px-3 text-[12px] font-semibold text-ink/55 transition hover:bg-ink/[0.04] dark:text-fog/55 dark:hover:bg-fog/[0.05]"
               >
-                Cancel
+                {t.common.cancel}
               </button>
               <button
                 onClick={() => void savePick(picking)}
@@ -430,9 +456,9 @@ export default function MetaConnections({
                 {busy === `${picking}-save` ? (
                   <LogoLoader size={14} />
                 ) : (picked[picking] ?? []).length === 0 ? (
-                  "Deselect all"
+                  m.deselectAll
                 ) : (
-                  `Use selected (${(picked[picking] ?? []).length})`
+                  fill(m.useSelected, { count: (picked[picking] ?? []).length })
                 )}
               </button>
             </div>
@@ -452,13 +478,13 @@ export default function MetaConnections({
         >
           <div className="w-full max-w-md rounded-2xl border border-ink/[0.06] bg-white p-4 shadow-xl dark:border-fog/[0.08] dark:bg-ink sm:p-5">
             <h2 className="text-[15px] font-bold text-ink dark:text-fog">
-              Disconnect {PROVIDERS.find((x) => x.key === confirmOff)?.name}?
+              {fill(m.confirmTitle, { provider: providerDisplay(confirmOff) })}
             </h2>
             <p className="mt-2 text-[12px] leading-relaxed text-ink/60 dark:text-fog/60">
-              Your conversations and history are kept — everything is back the moment you reconnect.
+              {m.confirmDesc}
             </p>
             <p className="mt-2 text-[11px] leading-relaxed text-ink/40 dark:text-fog/40">
-              Want to wipe your data instead? Permanently disconnect and delete everything from{" "}
+              {m.wipe}{" "}
               <Link href="/dashboard/settings" className="font-semibold text-red-600 underline underline-offset-2 dark:text-red-400">
                 Settings → Danger zone
               </Link>
@@ -470,14 +496,14 @@ export default function MetaConnections({
                 disabled={busy === `${confirmOff}-off`}
                 className="min-h-9 rounded-lg px-3 text-[12px] font-semibold text-ink/55 transition hover:bg-ink/[0.04] dark:text-fog/55 dark:hover:bg-fog/[0.05]"
               >
-                Cancel
+                {t.common.cancel}
               </button>
               <button
                 onClick={() => void disconnect(confirmOff)}
                 disabled={busy === `${confirmOff}-off`}
                 className="min-h-9 rounded-lg bg-red-600 px-3.5 text-[12px] font-semibold text-white transition hover:bg-red-700 disabled:opacity-50"
               >
-                {busy === `${confirmOff}-off` ? "Disconnecting…" : "Disconnect"}
+                {busy === `${confirmOff}-off` ? m.disconnecting : m.disconnect}
               </button>
             </div>
           </div>
@@ -489,10 +515,12 @@ export default function MetaConnections({
 }
 
 function StatusPill({ conn }: { conn: MetaConnection | undefined }) {
+  const { t } = useI18n();
+  const m = t.dashboard.channels.meta;
   if (!conn || conn.status === "revoked") {
     return (
       <span className="rounded-full bg-ink/[0.05] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink/45 dark:bg-fog/[0.07] dark:text-fog/45">
-        Not connected
+        {m.notConnected}
       </span>
     );
   }
@@ -505,7 +533,7 @@ function StatusPill({ conn }: { conn: MetaConnection | undefined }) {
           : "bg-amber-500/15 text-amber-700 dark:text-amber-300"
       }`}
     >
-      {active ? "Connected" : conn.status.replace("_", " ")}
+      {active ? m.connected : conn.status.replace("_", " ")}
     </span>
   );
 }

@@ -7,29 +7,40 @@ import LogoLoader from "@/components/LogoLoader";
 import { Switch } from "@/components/channels/ui";
 import type { BellNotification } from "@/components/dashboard/NotificationsBell";
 import { apiFetch } from "@/lib/api-rag";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import type { Dict } from "@/lib/i18n/en";
 
-const TYPE_META: Record<string, { icon: string; tint: string; label: string }> = {
-  sync_completed: { icon: "⟳", tint: "bg-sky-500/10 text-sky-600 dark:text-sky-300", label: "Sync" },
-  sync_failed: { icon: "⚠", tint: "bg-red-500/10 text-red-600 dark:text-red-400", label: "Sync failed" },
-  review_pulled: { icon: "★", tint: "bg-amber-500/10 text-amber-600 dark:text-amber-300", label: "New review" },
-  reply_posted: { icon: "✓", tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300", label: "Reply posted" },
-  reply_failed: { icon: "!", tint: "bg-red-500/10 text-red-600 dark:text-red-400", label: "Reply failed" },
-  review_edited: { icon: "✎", tint: "bg-violet-500/10 text-deep-violet dark:text-violet-300", label: "Review edited" },
-  review_ticket_created: { icon: "🎫", tint: "bg-coral/10 text-coral dark:text-coral", label: "New ticket" },
-  review_ticket_updated: { icon: "✎", tint: "bg-violet-500/10 text-deep-violet dark:text-violet-300", label: "Ticket updated" },
-  review_ticket_customer: { icon: "↩", tint: "bg-amber-500/10 text-amber-600 dark:text-amber-300", label: "Customer returned" },
-  post_scheduled: { icon: "🕑", tint: "bg-sky-500/10 text-sky-600 dark:text-sky-300", label: "Post scheduled" },
-  post_published: { icon: "📝", tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300", label: "Post published" },
-  post_failed: { icon: "!", tint: "bg-red-500/10 text-red-600 dark:text-red-400", label: "Post failed" },
-  media_scheduled: { icon: "🕑", tint: "bg-sky-500/10 text-sky-600 dark:text-sky-300", label: "Photo scheduled" },
-  media_published: { icon: "📸", tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300", label: "Photo published" },
-  media_failed: { icon: "!", tint: "bg-red-500/10 text-red-600 dark:text-red-400", label: "Photo failed" },
+type NotifsDict = Dict["notifs"];
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
+
+const TYPE_META: Record<string, { icon: string; tint: string }> = {
+  sync_completed: { icon: "⟳", tint: "bg-sky-500/10 text-sky-600 dark:text-sky-300" },
+  sync_failed: { icon: "⚠", tint: "bg-red-500/10 text-red-600 dark:text-red-400" },
+  review_pulled: { icon: "★", tint: "bg-amber-500/10 text-amber-600 dark:text-amber-300" },
+  reply_posted: { icon: "✓", tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300" },
+  reply_failed: { icon: "!", tint: "bg-red-500/10 text-red-600 dark:text-red-400" },
+  review_edited: { icon: "✎", tint: "bg-violet-500/10 text-deep-violet dark:text-violet-300" },
+  review_ticket_created: { icon: "🎫", tint: "bg-coral/10 text-coral dark:text-coral" },
+  review_ticket_updated: { icon: "✎", tint: "bg-violet-500/10 text-deep-violet dark:text-violet-300" },
+  review_ticket_customer: { icon: "↩", tint: "bg-amber-500/10 text-amber-600 dark:text-amber-300" },
+  post_scheduled: { icon: "🕑", tint: "bg-sky-500/10 text-sky-600 dark:text-sky-300" },
+  post_published: { icon: "📝", tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300" },
+  post_failed: { icon: "!", tint: "bg-red-500/10 text-red-600 dark:text-red-400" },
+  media_scheduled: { icon: "🕑", tint: "bg-sky-500/10 text-sky-600 dark:text-sky-300" },
+  media_published: { icon: "📸", tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300" },
+  media_failed: { icon: "!", tint: "bg-red-500/10 text-red-600 dark:text-red-400" },
 };
 
-function fullTime(iso: string): string {
+function fullTime(iso: string, dateLocale: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, {
+  return d.toLocaleString(dateLocale, {
     month: "short",
     day: "numeric",
     hour: "numeric",
@@ -37,14 +48,14 @@ function fullTime(iso: string): string {
   });
 }
 
-function DetailRows({ n }: { n: BellNotification }) {
+function DetailRows({ n, d, fmt }: { n: BellNotification; d: NotifsDict; fmt: (n: number) => string }) {
   const data = n.data ?? {};
   const rows: [string, string][] = [];
-  if (typeof data.listing === "string") rows.push(["Branch", data.listing]);
-  if (typeof data.rating === "number") rows.push(["Rating", `${data.rating} / 5`]);
-  if (typeof data.previous_rating === "number") rows.push(["Was", `${data.previous_rating} / 5`]);
-  if (typeof data.new_reviews === "number") rows.push(["New reviews", String(data.new_reviews)]);
-  if (typeof data.review_id === "string") rows.push(["Review", data.review_id.slice(-24)]);
+  if (typeof data.listing === "string") rows.push([d.detailKeys.listing, data.listing]);
+  if (typeof data.rating === "number") rows.push([d.detailKeys.rating, `${fmt(data.rating)} / ${fmt(5)}`]);
+  if (typeof data.previous_rating === "number") rows.push([d.detailKeys.previous, `${fmt(data.previous_rating)} / ${fmt(5)}`]);
+  if (typeof data.new_reviews === "number") rows.push([d.detailKeys.newReviews, fmt(data.new_reviews)]);
+  if (typeof data.review_id === "string") rows.push([d.detailKeys.review, data.review_id.slice(-24)]);
   return rows.length === 0 ? null : (
     <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg bg-ink/[0.03] p-2.5 text-[11.5px] dark:bg-fog/[0.04]">
       {rows.map(([k, v]) => (
@@ -58,21 +69,9 @@ function DetailRows({ n }: { n: BellNotification }) {
 }
 
 const PREF_META = [
-  {
-    key: "messages",
-    label: "New messages",
-    hint: "Pop a toast when a customer messages any connected channel.",
-  },
-  {
-    key: "leads",
-    label: "Qualified leads",
-    hint: "Alert the team the moment the AI qualifies a lead.",
-  },
-  {
-    key: "tickets",
-    label: "Review tickets",
-    hint: "Tell me when a Google review opens a ticket, a ticket moves, or the customer comes back on WhatsApp.",
-  },
+  { key: "messages" },
+  { key: "leads" },
+  { key: "tickets" },
 ] as const;
 type PrefKey = (typeof PREF_META)[number]["key"];
 
@@ -81,6 +80,13 @@ type PrefKey = (typeof PREF_META)[number]["key"];
  * back so the switch never lies about what the backend will honor.
  */
 function NotificationPrefs() {
+  const { t } = useI18n();
+  const pf = t.notifs.prefs;
+  const meta = {
+    messages: { label: pf.messages, hint: pf.messagesHint },
+    leads: { label: pf.leads, hint: pf.leadsHint },
+    tickets: { label: pf.tickets, hint: pf.ticketsHint },
+  } as const;
   const [prefs, setPrefs] = useState<Record<PrefKey, boolean> | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -121,15 +127,15 @@ function NotificationPrefs() {
   return (
     <div className="team-ui rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4">
       <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
-        Live popups
+        {pf.title}
       </p>
       <div className="mt-3 space-y-3.5">
         {loading ? (
           PREF_META.map((m) => (
             <div key={m.key} className="flex items-center justify-between gap-4">
               <div className="min-w-0">
-                <p className="text-[13px] font-semibold text-[var(--ui-ink)]">{m.label}</p>
-                <p className="mt-0.5 text-[11.5px] leading-snug text-[var(--ui-ink-2)]">{m.hint}</p>
+                <p className="text-[13px] font-semibold text-[var(--ui-ink)]">{meta[m.key].label}</p>
+                <p className="mt-0.5 text-[11.5px] leading-snug text-[var(--ui-ink-2)]">{meta[m.key].hint}</p>
               </div>
               <span className="h-6 w-10 rounded-full border border-[var(--ui-line-strong)] animate-pulse" />
             </div>
@@ -138,8 +144,8 @@ function NotificationPrefs() {
           PREF_META.map((m) => (
             <div key={m.key} className="flex items-center justify-between gap-4">
               <div className="min-w-0">
-                <p className="text-[13px] font-semibold text-[var(--ui-ink)]">{m.label}</p>
-                <p className="mt-0.5 text-[11.5px] leading-snug text-[var(--ui-ink-2)]">{m.hint}</p>
+                <p className="text-[13px] font-semibold text-[var(--ui-ink)]">{meta[m.key].label}</p>
+                <p className="mt-0.5 text-[11.5px] leading-snug text-[var(--ui-ink-2)]">{meta[m.key].hint}</p>
               </div>
               <Switch
                 checked={prefs![m.key]}
@@ -157,6 +163,15 @@ function NotificationPrefs() {
 
 export default function NotificationsPage() {
   const router = useRouter();
+  const { t, locale } = useI18n();
+  const nt = t.notifs;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
+  const typeLabel = (type: string) =>
+    (nt.types as Record<string, string>)[type] ?? type;
+  const catLabel = (c: string) =>
+    c === "all" ? nt.cats.all : c === "syncs" ? nt.cats.syncs : c === "reviews" ? nt.cats.reviews : c === "replies" ? nt.cats.replies : c;
+  const filterLabel = (f: string) => (f === "all" ? nt.cats.all : nt.cats.unread);
   const [items, setItems] = useState<BellNotification[]>([]);
   const [total, setTotal] = useState(0);
   const [unread, setUnread] = useState(0);
@@ -233,14 +248,14 @@ export default function NotificationsPage() {
     <div className="h-full overflow-y-auto p-6">
       <div className="mx-auto max-w-2xl space-y-4">
         <div>
-          <Breadcrumbs items={[{ label: "Notifications" }]} />
+          <Breadcrumbs items={[{ label: nt.crumbs }]} />
           <div className="mt-2 flex flex-wrap items-end justify-between gap-3">
             <div>
-              <h1 className="text-[20px] font-bold text-ink dark:text-fog">Notifications</h1>
+              <h1 className="text-[20px] font-bold text-ink dark:text-fog">{nt.title}</h1>
               <p className="mt-0.5 text-[13px] text-ink/45 dark:text-fog/45">
                 {total === 0
-                  ? "Syncs, new reviews and reply outcomes land here."
-                  : `${total} total${unread > 0 ? ` · ${unread} unread` : ""}`}
+                  ? nt.subEmpty
+                  : <>{fill(nt.subTotal, { n: fmt(total) })}{unread > 0 ? fill(nt.subUnread, { n: fmt(unread) }) : ""}</>}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -255,10 +270,10 @@ export default function NotificationsPage() {
                         category === c ? "bg-white text-ink shadow-sm dark:bg-ink dark:text-fog" : "text-ink/45 dark:text-fog/45"
                       }`}
                     >
-                      {c}
+                      {catLabel(c)}
                       {unreadN > 0 && (
                         <span className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-coral px-1 text-[9px] font-bold tabular-nums text-white">
-                          {unreadN > 99 ? "99+" : unreadN}
+                          {unreadN > 99 ? "99+" : fmt(unreadN)}
                         </span>
                       )}
                     </button>
@@ -274,7 +289,7 @@ export default function NotificationsPage() {
                       filter === f ? "bg-white text-ink shadow-sm dark:bg-ink dark:text-fog" : "text-ink/45 dark:text-fog/45"
                     }`}
                   >
-                    {f}
+                    {filterLabel(f)}
                   </button>
                 ))}
               </div>
@@ -283,7 +298,7 @@ export default function NotificationsPage() {
                   onClick={() => void markAllRead()}
                   className="rounded-lg px-2.5 py-1.5 text-[12px] font-semibold text-deep-violet outline-none transition hover:bg-deep-violet/[0.06] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
                 >
-                  Mark all read
+                  {nt.markAll}
                 </button>
               )}
             </div>
@@ -299,18 +314,19 @@ export default function NotificationsPage() {
         ) : items.length === 0 ? (
           <div className="rounded-2xl border-2 border-white bg-white/80 p-10 text-center backdrop-blur-sm">
             <p className="text-[14px] font-semibold text-ink/70 dark:text-fog/70">
-              {filter === "unread" ? "All caught up" : "No notifications yet"}
+              {filter === "unread" ? nt.emptyUnreadTitle : nt.emptyTitle}
             </p>
             <p className="mt-1 text-[12px] text-ink/45 dark:text-fog/45">
-              {filter === "unread"
-                ? "Everything here has been read."
-                : "New reviews, syncs and replies will show up here."}
+              {filter === "unread" ? nt.emptyUnreadBody : nt.emptyBody}
             </p>
           </div>
         ) : (
           <div className="overflow-hidden rounded-2xl border-2 border-white bg-white/80 backdrop-blur-sm">
             {items.map((n) => {
-              const meta = TYPE_META[n.type] ?? { icon: "•", tint: "bg-ink/[0.05] text-ink/50", label: n.type };
+              const meta = TYPE_META[n.type];
+              const label = meta ? typeLabel(n.type) : n.type;
+              const tint = meta?.tint ?? "bg-ink/[0.05] text-ink/50";
+              const icon = meta?.icon ?? "•";
               return (
                 <div key={n.id}>
                   <button
@@ -319,26 +335,26 @@ export default function NotificationsPage() {
                       n.read_at ? "" : "bg-deep-violet/[0.025]"
                     }`}
                   >
-                    <span aria-hidden className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[15px] font-bold ${meta.tint}`}>
-                      {meta.icon}
+                    <span aria-hidden className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[15px] font-bold ${tint}`}>
+                      {icon}
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                         <span className="text-[13px] font-bold text-ink dark:text-fog">{n.title}</span>
                         <span className="rounded-full bg-ink/[0.05] px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-ink/45 dark:bg-fog/[0.06] dark:text-fog/45">
-                          {meta.label}
+                          {label}
                         </span>
-                        {!n.read_at && <span aria-label="Unread" className="h-2 w-2 rounded-full bg-deep-violet" />}
+                        {!n.read_at && <span aria-label={nt.unreadAria} className="h-2 w-2 rounded-full bg-deep-violet" />}
                       </span>
                       {n.body && (
                         <span className="mt-1 block text-[12.5px] leading-relaxed text-ink/65 dark:text-fog/65">
                           {n.body}
                         </span>
                       )}
-                      <DetailRows n={n} />
+                      <DetailRows n={n} d={nt} fmt={fmt} />
                       <span className="mt-1.5 block text-[10.5px] text-ink/35 dark:text-fog/35">
-                        {fullTime(n.created_at)}
-                        {n.href ? " · tap to open" : ""}
+                        {fullTime(n.created_at, dateLocale)}
+                        {n.href ? nt.tapToOpen : ""}
                       </span>
                     </span>
                   </button>
@@ -356,7 +372,7 @@ export default function NotificationsPage() {
               disabled={loadingMore}
               className="rounded-xl bg-ink/[0.04] px-4 py-2 text-[12.5px] font-semibold text-ink/60 outline-none transition hover:bg-ink/[0.07] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50 dark:bg-fog/[0.06] dark:text-fog/60"
             >
-              {loadingMore ? "Loading…" : `Load more (${total - items.length} remaining)`}
+              {loadingMore ? nt.loading : fill(nt.loadMore, { n: fmt(total - items.length) })}
             </button>
           </div>
         )}

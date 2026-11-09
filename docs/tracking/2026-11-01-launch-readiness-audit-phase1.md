@@ -169,7 +169,7 @@ before launch.
 - **M-2** Dead Kafka consumer, never started, would never commit offsets if started (`consumer.py:3072-3110`); `meta-events` topic produced but never consumed.
 - **M-3** `int(content_length)` can 500 on malformed header (`channels/router.py:1591`, `webhooks/router.py:46`); `hmac.compare_digest` on verify_token can TypeError on non-ASCII (`verifier.py`).
 - **M-4** PII inconsistency: `ChannelMessage.contact_phone` encrypted, but `WhatsAppThreadState`/`ConversationContext`/IGSID `contact_profile.contact_id` plaintext.
-- **M-5** AI auto-replies bypass `_ensure_messaging_quota` (human sends only) — bounded by budget gate, but free-tier AI reply count is uncapped. <strong>Decision 2026-11-03:</strong> AI auto-replies remain unbounded by `max_messages_per_month`. The LLM budget gate (`check_feature(tenant_id, "ai_replies")`, fail-closed entitlement + credit reserve/settle before every LLM call) directly caps dollar cost (tokens), whereas the messaging quota caps human conversation volume. AI replies are selectively triggered by `should_ai_reply()` — not every inbound message generates one. Documented in docs/guides/billing-and-notifications.md under "Messaging quota vs. AI auto-replies."
+- **M-5** AI auto-replies bypass `_ensure_messaging_quota` (human sends only) — bounded by budget gate, but free-tier AI reply count is uncapped. <strong>Decision 2026-11-03:</strong> AI auto-replies remain unbounded by `max_messages_per_month`. The LLM budget gate (`check_feature(tenant_id, "ai_replies")`, fail-closed entitlement + credit reserve/settle before every LLM call) directly caps dollar cost (tokens), whereas the messaging quota caps human conversation volume. AI replies are selectively triggered by `should_ai_reply()` — not every inbound message generates one. Documented in docs/guides/billing-and-notifications.md under "Messaging quota vs. AI auto-replies." **Superseded 2026-11-08:** the allowance is WhatsApp-only and now gates both human sends (inbox + templates) and WhatsApp AI auto-replies; Instagram/Facebook are excluded. Approved packs are additive `message_bonus` over the plan limit. Current behaviour: `docs/security/message-quotas.md`.
 - **M-6** Logout clears no localStorage: `verification_token` (dead credential, written at `AuthForm.tsx:385`, never read), chat transcripts, contact groups.
 - **M-7** Inbox pin/archive/delete failures swallowed (`catch { /* keep stale */ }`, `InboxView.tsx:369-412`) — violates the repo's no-silent-failure rule; Delete button not busy-guarded (double-fire).
 - **M-8** `send()` wipes the composer draft even when the provider rejected the send (`InboxView.tsx:1072`).
@@ -178,6 +178,33 @@ before launch.
 - **M-11** `channel_messages` has no retention/partitioning story — product decision needed before it is the largest table (`retention.py` covers webhook events, notifications, usage, jobs, outbox only).
 - **M-12** `llm_usage_events` lacks `(tenant_id, created_at)` composite; review-insights search uses unindexable `LOWER(LIKE %…%)` + offset (`analytics/service.py:275-280`).
 - **M-13** JobPanel dead code (2s poll, not imported); `optimizePackageImports` lists non-dependencies; `DB_POOL_MODE` consumed nowhere.
+
+### Status re-verification — 2026-11-08 (open items only)
+
+The ledger in `readiness-report.html` counts four items still open from this
+pass: S-8, S-9, S-10 and M-9 readiness IDs. All four were re-checked against
+the tree at `524ef6a` and the live staging box; **none are fixed**:
+
+- **S-8 Redis** — staging still runs `redis-server --maxmemory 128mb
+  --maxmemory-policy noeviction`; `CONFIG GET appendonly` returns `no`;
+  `CONFIG GET requirepass` is empty; `deploy/prometheus.yml` has no
+  `rule_files` and there is no alertmanager. The 128 MB ceiling is also the
+  most a 2 GB t3.small can give Redis next to api+worker (768 MB each) and
+  Kafka (384 MB), so the real fix is the managed-cache move, not a bigger
+  `maxmemory`.
+- **S-9 Kafka** — staging still advertises `PLAINTEXT://kafka:9092`, sets
+  `KAFKA_AUTO_CREATE_TOPICS_ENABLE=true`, and runs one broker with
+  replication factor 1. Needs SASL/TLS + a real broker topology (or
+  consolidation onto the Postgres outbox), not a one-line compose edit.
+- **S-10 `str(e)` sweep** — 125 `detail=str(` sites remain, mostly 4xx
+  validation/ownership paths. The Phase 1 `upstream_http_error()` work
+  converted the 502 provider paths; the per-site safe/public split is still
+  the open work.
+- **M-9 scale wiring** — `get_db_read()` still has zero call sites; `/metrics`
+  is still in-process globals under two uvicorn workers; Alembic still runs
+  in the API container command; `channel_messages` retention/partitioning is
+  still an open product decision. Only M-9(d) (indexes) and M-9(f)
+  (throughput runbook) were completed.
 
 ---
 

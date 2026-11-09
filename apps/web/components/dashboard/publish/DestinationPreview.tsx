@@ -2,7 +2,18 @@
 
 import { CROP_ASPECT } from "./CropFrame";
 import CroppedMedia from "./CroppedMedia";
-import { METHOD_META, PLATFORM_META, type CropState, type MediaState, type PostMethod, type PublishTarget } from "./types";
+import { PLATFORM_META, type CropState, type MediaState, type PostMethod, type PublishTarget } from "./types";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import type { Dict } from "@/lib/i18n/en";
+
+type PreviewDict = Dict["publish"]["preview"];
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 /*
  * One preview per destination AND format, laid out the way that network
@@ -45,6 +56,9 @@ function InstagramFeedPreview({
   crop: CropState;
 }) {
   const author = target.handle ? `@${target.handle}` : target.name;
+  const { t, locale } = useI18n();
+  const pv = t.publish.preview;
+  const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
   const aspect = aspectFor(crop, 1);
   const overflow = captionOverflow(caption, "instagram");
   return (
@@ -67,11 +81,11 @@ function InstagramFeedPreview({
         </p>
         <p className="mt-2 text-[12px] leading-snug text-[#111]">
           <span className="mr-1.5 font-bold">{author}</span>
-          {caption || "Your caption appears here."}
+          {caption || pv.igBody}
         </p>
         {overflow > 0 && (
           <p className="mt-1.5 text-[10px] font-semibold text-amber-600">
-            {overflow} characters past Instagram&apos;s limit
+            {fill(pv.igOverflow, { n: fmt(overflow) })}
           </p>
         )}
       </div>
@@ -94,6 +108,9 @@ function FacebookFeedPreview({
   description: string;
   crop: CropState;
 }) {
+  const { t, locale } = useI18n();
+  const pv = t.publish.preview;
+  const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
   const aspect = aspectFor(crop, 1.91);
   return (
     <div className="mx-auto overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-white shadow-sm" style={{ width: PREVIEW_W }}>
@@ -108,7 +125,7 @@ function FacebookFeedPreview({
       </div>
       {(caption || description) && (
         <p className="px-3.5 pb-2 text-[12px] leading-snug text-[#111]">
-          {caption || description || "Your message appears here."}
+          {caption || description || pv.fbBody}
         </p>
       )}
       <div className="relative w-full overflow-hidden bg-black" style={{ aspectRatio: String(aspect), height: Math.round(PREVIEW_W / aspect) }}>
@@ -135,7 +152,9 @@ function WhatsAppStatusPreview({
   caption: string;
   crop: CropState;
 }) {
-  const name = target.name || "Your number";
+  const { t } = useI18n();
+  const pv = t.publish.preview;
+  const name = target.name || pv.waName;
   const aspect = aspectFor(crop, 9 / 16);
   return (
     <div className="mx-auto overflow-hidden rounded-[16px] bg-[#eae6df] shadow-sm" style={{ width: PREVIEW_W - 20 }}>
@@ -164,13 +183,13 @@ function WhatsAppStatusPreview({
                 &#128065;
               </span>
               <p className="absolute bottom-0 left-0 right-0 bg-[rgba(0,0,0,0.55)] px-2.5 py-2 text-[11px] leading-snug text-white">
-                {caption || "Your status text appears here."}
+                {caption || pv.waBody}
               </p>
             </>
           )}
           {!media.type && (
             <p className="absolute inset-0 flex items-center justify-center px-3 text-center text-[11px] font-semibold text-white/60">
-              Add media — statuses frame 9:16
+              {pv.waEmpty}
             </p>
           )}
         </div>
@@ -196,6 +215,9 @@ function StoryChrome({
   crop: CropState;
   kind: "story" | "reel";
 }) {
+  const { t } = useI18n();
+  const methods = t.publish.methods;
+  const pv = t.publish.preview;
   const aspect = aspectFor(crop, 9 / 16);
   const boxW = 200;
   const boxH = aspect > 0 ? Math.round(boxW / aspect) : boxW;
@@ -216,7 +238,7 @@ function StoryChrome({
             <span className="ml-auto text-[11px] font-bold text-white/70">&#10005;</span>
           </div>
           <span className="pointer-events-none absolute right-2.5 top-12 rounded-full bg-[rgba(0,0,0,0.5)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white/90">
-            {kind === "reel" ? "Reel" : "Story"}
+            {kind === "reel" ? methods.reel.label : methods.story.label}
           </span>
           {caption && (
             <p className="absolute bottom-0 left-0 right-0 bg-[rgba(0,0,0,0.55)] px-2.5 py-2 text-[11px] leading-snug text-white">
@@ -227,7 +249,7 @@ function StoryChrome({
       )}
       {!media.type && (
         <p className="absolute inset-0 flex items-center justify-center px-4 text-center text-[11px] font-semibold text-white/60">
-          Add media — this format frames 9:16
+          {pv.storyEmpty}
         </p>
       )}
     </div>
@@ -251,12 +273,16 @@ function GooglePostPreview({
   description: string;
   crop: CropState;
 }) {
-  const author = target.name || "Your business";
+  const { t, locale } = useI18n();
+  const pv = t.publish.preview;
+  const methods = t.publish.methods;
+  const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
+  const author = target.name || pv.bizName;
   const aspect = aspectFor(crop, 1.91);
-  const body = caption || description || "Your update appears on Google Search & Maps.";
+  const body = caption || description || pv.gpBody;
   const overflow = captionOverflow(caption, "google_reviews");
   const kindLabel =
-    method === "event" ? "Event" : method === "offer" ? "Promotion" : "Update";
+    method === "event" ? methods.event.label : method === "offer" ? methods.offer.label : methods.update.label;
   return (
     <div className="mx-auto overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-white shadow-sm" style={{ width: PREVIEW_W }}>
       <div className="flex items-center gap-2.5 px-3.5 py-2.5">
@@ -288,7 +314,7 @@ function GooglePostPreview({
       </div>
       {overflow > 0 && (
         <p className="mt-1 px-3.5 text-[10px] font-semibold text-amber-600">
-          {overflow} characters past Google&apos;s limit
+          {fill(pv.gpOverflow, { n: fmt(overflow) })}
         </p>
       )}
     </div>
@@ -345,6 +371,8 @@ function ProfilePicturePreview({
   media: MediaState;
   crop: CropState;
 }) {
+  const { t } = useI18n();
+  const pv = t.publish.preview;
   const aspect = aspectFor(crop, 1);
   const size = 56;
   return (
@@ -359,7 +387,7 @@ function ProfilePicturePreview({
       </div>
       <div className="px-3.5 pb-3.5 pt-10">
         <span className="block truncate text-[13px] font-bold text-[#111]">{target.name}</span>
-        <span className="block text-[11px] text-[#65676b]">Profile picture · replaces your avatar</span>
+        <span className="block text-[11px] text-[#65676b]">{pv.profileHint}</span>
       </div>
     </div>
   );
@@ -375,6 +403,8 @@ function BannerPreview({
   media: MediaState;
   crop: CropState;
 }) {
+  const { t } = useI18n();
+  const pv = t.publish.preview;
   const aspect = aspectFor(crop, 1.91);
   return (
     <div className="mx-auto overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-white shadow-sm" style={{ width: PREVIEW_W }}>
@@ -383,7 +413,7 @@ function BannerPreview({
       </div>
       <div className="px-3.5 py-2.5">
         <span className="block truncate text-[13px] font-bold text-[#111]">{target.name}</span>
-        <span className="block text-[11px] text-[#65676b]">Banner · replaces your cover image</span>
+        <span className="block text-[11px] text-[#65676b]">{pv.bannerHint}</span>
       </div>
     </div>
   );
@@ -406,6 +436,9 @@ export default function DestinationPreview({
   description: string;
   crop: CropState;
 }) {
+  const { t } = useI18n();
+  const methods = t.publish.methods;
+  const pv = t.publish.preview;
   if (target) {
     // Profile surfaces look the same wherever they live — a round avatar
     // and a wide cover — so they resolve before the platform switch.
@@ -455,7 +488,7 @@ export default function DestinationPreview({
       default:
         return (
           <GenericPreview
-            label={`${target.name} · ${METHOD_META[method].label}`}
+            label={`${target.name} · ${methods[method].label}`}
             media={media}
             caption={caption}
             description={description}
@@ -466,7 +499,7 @@ export default function DestinationPreview({
   }
   return (
     <GenericPreview
-      label="How this post reads"
+      label={pv.howRead}
       media={media}
       caption={caption}
       description={description}

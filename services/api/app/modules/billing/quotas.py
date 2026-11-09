@@ -1,6 +1,8 @@
 """Fast message-quota reads for hot paths.
 
-`count_messages_this_month` is a real COUNT over the tenant's outbound rows.
+`count_messages_this_month` is a real COUNT over the tenant's outbound
+WhatsApp rows. Instagram, Facebook and every other channel are excluded: the
+plan's "messages" allowance is WhatsApp-only.
 Calling it on every inbound message would turn one customer message into a
 month-sized scan; this module memoises the value in Redis for a short window
 so a burst of messages pays for one count, not one per message.
@@ -22,11 +24,11 @@ CACHE_TTL_SECONDS = 30
 
 
 def _key(tenant_id: str) -> str:
-    return f"quota:messages:{tenant_id}:{datetime.now(timezone.utc):%Y-%m}"
+    return f"quota:whatsapp_messages:{tenant_id}:{datetime.now(timezone.utc):%Y-%m}"
 
 
 async def get_message_usage(tenant_id: str, db=None) -> int:
-    """Outbound messages this calendar month (cached, DB on miss)."""
+    """Outbound WhatsApp messages this calendar month (cached, DB on miss)."""
     from .entitlements import count_messages_this_month
 
     key = _key(tenant_id)

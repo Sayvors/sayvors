@@ -695,6 +695,7 @@ def _system_prompt(
         "stated window). Never infer a discovery source beyond what those "
         "numbers show.\n"
         "- Be concise (max ~120 words) and concrete; quote real numbers when relevant.\n"
+        "- Never use em dashes or en dashes. Use commas or full stops instead.\n"
         "- Reply in the same language the owner writes in (Arabic stays Arabic).\n"
         "- If the data does not contain the answer, say so plainly and suggest "
         "what to connect or sync to get it.\n"

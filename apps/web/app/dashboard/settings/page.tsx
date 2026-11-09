@@ -16,6 +16,14 @@ import {
   requestPersonalDataDeletion,
   type DeletionState,
 } from "@/lib/api-account";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 interface ChannelCfg {
   channel_id: string;
@@ -169,18 +177,22 @@ interface BulkFailed {
 }
 
 function VariesBadge() {
+  const { t } = useI18n();
   return (
     <span
-      title="Different values across branches — saving will overwrite all of them"
+      title={t.reviews.settings.variesTitle}
       className="ml-1.5 inline-flex items-center rounded-full bg-amber-100 px-1.5 py-px align-middle text-[9px] font-bold uppercase tracking-wide text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
     >
-      varies
+      {t.reviews.settings.variesChip}
     </span>
   );
 }
 
-export default function SettingsPage() {
-  const queryClient = useQueryClient();
+export default function SettingsPage() {  const queryClient = useQueryClient();
+  const { t, locale } = useI18n();
+  const st = t.reviews.settings;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
   const [channels, setChannels] = useState<GoogleChannel[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [configs, setConfigs] = useState<Record<string, ChannelCfg>>({});
@@ -211,7 +223,7 @@ export default function SettingsPage() {
   }>(null);
 
   const isBulk = selectedId === ALL;
-  const bulkBranches = isBulk ? channels.map((c) => ({ id: c.id, name: c.display_name || "Location" })) : [];
+  const bulkBranches = isBulk ? channels.map((c) => ({ id: c.id, name: c.display_name || st.locationFallback })) : [];
 
   // Settings are grouped by what they actually govern. A tenant that only
   // connected WhatsApp has no Google locations at all, so "all branches" is
@@ -435,7 +447,7 @@ export default function SettingsPage() {
     } catch (e) {
       setBanner({
         kind: "err",
-        text: e instanceof Error ? e.message.slice(0, 200) : "Could not save.",
+        text: e instanceof Error ? e.message.slice(0, 200) : st.saveFailedDetail,
       });
     } finally {
       setBusy(null);
@@ -458,30 +470,30 @@ export default function SettingsPage() {
     const failed: BulkFailed[] = [];
     let ok = 0;
     await Promise.all(
-      targets.map(async (t) => {
+      targets.map(async (tg) => {
         try {
-          const updated = await apiFetch(`/api/v1/channels/${t.id}/autoreply`, {
+          const updated = await apiFetch(`/api/v1/channels/${tg.id}/autoreply`, {
             method: "PUT",
             body: JSON.stringify(patch),
           });
-          setConfigs((prev) => ({ ...prev, [t.id]: updated as ChannelCfg }));
+          setConfigs((prev) => ({ ...prev, [tg.id]: updated as ChannelCfg }));
           ok++;
         } catch (e) {
           failed.push({
-            id: t.id,
-            name: t.name,
-            error: e instanceof Error ? e.message.slice(0, 120) : "Failed",
+            id: tg.id,
+            name: tg.name,
+            error: e instanceof Error ? e.message.slice(0, 120) : st.itemFailed,
           });
         }
       })
     );
     const total = targets.length;
     if (failed.length === 0) {
-      showBanner("ok", `${label} saved to all ${total} branch${total === 1 ? "" : "es"}.`);
+      showBanner("ok", total === 1 ? fill(st.savedAllOne, { label }) : fill(st.savedAllN, { label, n: fmt(total) }));
     } else {
       showBanner(
         "err",
-        `${label} saved to ${ok} of ${total} — failed: ${failed.map((f) => f.name).join(", ")}.`
+        fill(st.savedPartial, { label, ok: fmt(ok), total: fmt(total), names: failed.map((f) => f.name).join(", ") }),
       );
     }
     return { ok, failed };
@@ -538,11 +550,11 @@ export default function SettingsPage() {
     try {
       const updated = await updateProfile({ country: country || null });
       setSavedCountry(updated.country ?? null);
-      setBanner({ kind: "ok", text: "Country saved. Display only — your Google listings are untouched." });
+      setBanner({ kind: "ok", text: st.account.countrySaved });
     } catch (e) {
       setBanner({
         kind: "err",
-        text: e instanceof Error ? e.message.slice(0, 200) : "Could not save country.",
+        text: e instanceof Error ? e.message.slice(0, 200) : st.account.countryFail,
       });
     } finally {
       setBusy(null);
@@ -583,11 +595,11 @@ export default function SettingsPage() {
         noSell: updated.business_doesnt_sell ?? "",
         desc: updated.business_description ?? "",
       });
-      setBanner({ kind: "ok", text: "Business context saved — the AI now answers from these facts." });
+      setBanner({ kind: "ok", text: st.account.ctxSaved });
     } catch (e) {
       setBanner({
         kind: "err",
-        text: e instanceof Error ? e.message.slice(0, 200) : "Could not save business context.",
+        text: e instanceof Error ? e.message.slice(0, 200) : st.account.ctxFail,
       });
     } finally {
       setBusy(null);
@@ -595,64 +607,64 @@ export default function SettingsPage() {
   }
 
   const dialectName = (code: string) => {
-    if (code === "auto") return "Auto";
+    if (code === "auto") return st.recap.langAuto;
     const d = dialects.find((x) => x.code === code);
     return d ? `${d.dialect_ar} · ${d.dialect_en}` : code;
   };
-  const langName = replyLang === "en" ? "English" : replyLang === "ar" ? "Arabic" : replyLang === "ur" ? "Urdu" : replyLang === "ur-Latn" ? "Roman Urdu" : "match review";
-  const countryName = COUNTRIES.find((c) => c.code === savedCountry)?.name ?? savedCountry ?? "unset";
-  const selectedName = channels.find((c) => c.id === selectedId)?.display_name ?? "location";
+  const langName = replyLang === "en" ? st.recap.langEn : replyLang === "ar" ? st.recap.langAr : replyLang === "ur" ? st.recap.langUr : replyLang === "ur-Latn" ? st.recap.langUrLatn : st.recap.langMatch;
+  const countryName = COUNTRIES.find((c) => c.code === savedCountry)?.name ?? savedCountry ?? st.unset;
+  const selectedName = channels.find((c) => c.id === selectedId)?.display_name ?? st.locationWord;
 
   return (
     <div className="h-full overflow-y-auto">
       {/* Sticky header: the location selector and save state stay reachable
           while scrolling a page this long. */}
       <div className="sticky top-0 z-10 border-b border-ink/[0.06] bg-white/95 px-6 py-4 backdrop-blur-sm dark:border-fog/[0.06] dark:bg-ink/95">
-        <Breadcrumbs items={[{ label: "Settings" }]} />
+        <Breadcrumbs items={[{ label: st.crumbs }]} />
         <div className="mt-2">
-          <h1 className="text-[20px] font-bold text-ink dark:text-fog">Settings</h1>
+          <h1 className="text-[20px] font-bold text-ink dark:text-fog">{st.title}</h1>
           <p className="mt-0.5 text-[13px] text-ink/50 dark:text-fog/50">
-            Everything Sayvors knows about your business, grouped by what it applies to.
+            {st.sub}
           </p>
         </div>
 
         {/* Domain tabs. The Google tab only appears when a Google Business
             Profile is actually connected -- offering a location picker to a
             tenant who has none is the confusion this replaces. */}
-        <nav className="mt-4 flex flex-wrap gap-1" aria-label="Settings sections">
+        <nav className="mt-4 flex flex-wrap gap-1" aria-label={st.tabs.sectionsAria}>
           {(
             [
-              { key: "account", label: "Account", count: null },
+              { key: "account", label: st.tabs.account, count: null },
               {
                 key: "google",
-                label: "Google locations",
+                label: st.tabs.google,
                 count: channels.length > 0 ? channels.length : null,
                 hide: channels.length === 0,
               },
               {
                 key: "social",
-                label: "Social channels",
+                label: st.tabs.social,
                 count: metaConnections.length > 0 ? metaConnections.length : null,
               },
-              { key: "leads", label: "Lead automation", count: null },
+              { key: "leads", label: st.tabs.leads, count: null },
             ] as const
           )
-            .filter((t) => !("hide" in t) || !t.hide)
-            .map((t) => (
+            .filter((tb) => !("hide" in tb) || !tb.hide)
+            .map((tb) => (
               <button
-                key={t.key}
+                key={tb.key}
                 type="button"
-                onClick={() => setTab(t.key)}
-                aria-current={tab === t.key ? "page" : undefined}
+                onClick={() => setTab(tb.key)}
+                aria-current={tab === tb.key ? "page" : undefined}
                 className={`rounded-[2px] border px-3 py-1.5 text-[12px] font-semibold transition focus-visible:outline focus-visible:outline-[2px] focus-visible:outline-offset-[-1px] focus-visible:outline-[var(--ui-ink)] ${
-                  tab === t.key
+                  tab === tb.key
                     ? "border-ink/15 bg-ink/[0.06] text-ink dark:border-fog/20 dark:bg-fog/[0.08] dark:text-fog"
                     : "border-transparent text-ink/55 hover:bg-ink/[0.04] dark:text-fog/55 dark:hover:bg-fog/[0.06]"
                 }`}
               >
-                {t.label}
-                {"count" in t && t.count ? (
-                  <span className="ml-1.5 tabular-nums opacity-70">{t.count}</span>
+                {tb.label}
+                {"count" in tb && tb.count ? (
+                  <span className="ml-1.5 tabular-nums opacity-70">{fmt(tb.count)}</span>
                 ) : null}
               </button>
             ))}
@@ -676,7 +688,7 @@ export default function SettingsPage() {
             className="shrink-0 text-[12px] underline underline-offset-2"
             onClick={() => setBanner(null)}
           >
-            dismiss
+            {st.bannerDismiss}
           </button>
         </div>
       )}
@@ -688,10 +700,10 @@ export default function SettingsPage() {
       {tab === "google" && isBulk && channels.length > 0 && (
         <div className="rounded-[2px] border-2 border-amber-300 bg-amber-50 p-3 text-[12.5px] dark:border-amber-500/40 dark:bg-amber-500/[0.08]">
           <p className="font-bold text-amber-800 dark:text-amber-200">
-            Editing ALL {channels.length} branches — {channels.map((c) => c.display_name || "Location").join(", ")}
+            {fill(st.bulkAll, { n: fmt(channels.length), names: channels.map((c) => c.display_name || st.locationFallback).join(", ") })}
           </p>
           <p className="mt-0.5 text-amber-700/80 dark:text-amber-200/70">
-            Every save in this tab applies to each branch listed.
+            {st.bulkAllBody}
           </p>
         </div>
       )}
@@ -700,13 +712,13 @@ export default function SettingsPage() {
       {tab === "google" && lastBulkFail && (
         <div className="flex items-center justify-between gap-3 rounded-[2px] border border-red-200 bg-red-50 p-3 text-[13px] text-red-700">
           <span>
-            {lastBulkFail.label} failed on: {lastBulkFail.failed.map((f) => f.name).join(", ")}.
+            {fill(st.bulkFail, { label: lastBulkFail.label, names: lastBulkFail.failed.map((f) => f.name).join(", ") })}
           </span>
           <button
             onClick={lastBulkFail.onRetry}
             className="shrink-0 rounded-[2px] bg-red-600 px-3 py-1.5 text-[12px] font-semibold text-white transition hover:bg-red-700"
           >
-            Retry failed ({lastBulkFail.failed.length})
+            {fill(st.retryFailed, { n: fmt(lastBulkFail.failed.length) })}
           </button>
         </div>
       )}
@@ -716,7 +728,7 @@ export default function SettingsPage() {
         <div
           role="alertdialog"
           aria-modal="true"
-          aria-label="Confirm bulk edit"
+          aria-label={st.confirmTitle}
           className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-sm"
         >
           <div className="w-full max-w-md rounded-[3px] border border-ink/[0.06] bg-white p-5 shadow-2xl dark:border-fog/[0.08] dark:bg-ink">
@@ -724,8 +736,7 @@ export default function SettingsPage() {
               {confirmBulk.title}
             </h2>
             <p className="mt-1 text-[12px] text-ink/50 dark:text-fog/50">
-              Applies to {confirmBulk.branches.length} branches:{" "}
-              {confirmBulk.branches.map((b) => b.name).join(", ")}
+              {fill(st.confirmApplies, { n: fmt(confirmBulk.branches.length), names: confirmBulk.branches.map((b) => b.name).join(", ") })}
             </p>
             <ul className="mt-3 max-h-48 space-y-1.5 overflow-y-auto rounded-[2px] bg-ink/[0.03] p-3 text-[12.5px] text-ink/70 dark:bg-fog/[0.04] dark:text-fog/70">
               {confirmBulk.lines.map((line, i) => (
@@ -741,7 +752,7 @@ export default function SettingsPage() {
                 disabled={confirmBulk.busy}
                 className="rounded-[2px] px-3.5 py-2 text-[12px] font-semibold text-ink/60 transition hover:bg-ink/[0.04] dark:text-fog/60 disabled:opacity-50"
               >
-                Cancel
+                {st.cancel}
               </button>
               <button
                 onClick={confirmBulk.onConfirm}
@@ -749,8 +760,8 @@ export default function SettingsPage() {
                 className="rounded-[2px] bg-amber-500 px-3.5 py-2 text-[12px] font-bold text-white shadow-sm transition hover:bg-amber-600 disabled:opacity-50"
               >
                 {confirmBulk.busy
-                  ? "Applying..."
-                  : `Apply to ${confirmBulk.branches.length} branch${confirmBulk.branches.length === 1 ? "" : "es"}`}
+                  ? st.applying
+                  : confirmBulk.branches.length === 1 ? st.applyOne : fill(st.applyN, { n: fmt(confirmBulk.branches.length) })}
               </button>
             </div>
           </div>
@@ -766,13 +777,13 @@ export default function SettingsPage() {
           {tab === "account" && (
             <>
               <Section
-                eyebrow="Applies to every channel"
-                title="Country"
-                subtitle="Display and defaults only. Your Google listings and channel settings are never modified."
+                eyebrow={st.account.eyebrow}
+                title={st.account.countryTitle}
+                subtitle={st.account.countrySub}
               >
-            <Field label="Business country">
+            <Field label={st.account.countryLabel}>
               <select value={country} onChange={(e) => setCountry(e.target.value)} disabled={busy !== null} className={selectCls}>
-                <option value="">Not set</option>
+                <option value="">{st.notSet}</option>
                 {COUNTRIES.map((c) => (
                   <option key={c.code} value={c.code}>
                     {c.name}
@@ -785,63 +796,63 @@ export default function SettingsPage() {
               disabled={busy !== null || country === (savedCountry ?? "")}
               className="rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
             >
-              {busy === "country" ? "Saving…" : "Save country"}
+              {busy === "country" ? st.saving : st.account.saveCountry}
               </button>
               </Section>
 
               <Section
-                eyebrow="Applies to every channel"
-                title="Business context"
-                subtitle="What your company is. The AI reads this for every reply and post draft — it answers 'do you sell X?' from these facts and declines off-topic questions instead of guessing."
+                eyebrow={st.account.eyebrow}
+                title={st.account.ctxTitle}
+                subtitle={st.account.ctxSub}
               >
-            <Field label="What do you do?" hint="your domain — restaurant, pharmacy, bank…">
+            <Field label={st.account.typeLabel} hint={st.account.typeHint}>
               <select value={bizType} onChange={(e) => setBizType(e.target.value)} disabled={busy !== null} className={selectCls}>
-                <option value="">Not set</option>
-                {BUSINESS_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
+                <option value="">{st.notSet}</option>
+                {BUSINESS_TYPES.map((bt) => (
+                  <option key={bt} value={bt}>
+                    {bt}
                   </option>
                 ))}
               </select>
             </Field>
             {bizType === "Other" && (
-              <Field label="Your domain" hint="free text — e.g. Car Wash, Dental Clinic">
+              <Field label={st.account.customLabel} hint={st.account.customHint}>
                 <input
                   value={bizCustom}
                   onChange={(e) => setBizCustom(e.target.value)}
                   disabled={busy !== null}
-                  placeholder="Describe what you do"
+                  placeholder={st.account.customPh}
                   className={inputCls}
                 />
               </Field>
             )}
-            <Field label="What do you sell?" hint="one per line or comma-separated — your Services page list is included automatically, add only extras here">
+            <Field label={st.account.sellsLabel} hint={st.account.sellsHint}>
               <textarea
                 value={bizSells}
                 onChange={(e) => setBizSells(e.target.value)}
                 disabled={busy !== null}
                 rows={2}
-                placeholder="repairs, installations, consultations"
+                placeholder={st.account.sellsPh}
                 className={`${inputCls} resize-y`}
               />
             </Field>
-            <Field label="What you DON'T sell" hint="the AI will politely decline these instead of inventing them">
+            <Field label={st.account.noSellLabel} hint={st.account.noSellHint}>
               <textarea
                 value={bizNoSell}
                 onChange={(e) => setBizNoSell(e.target.value)}
                 disabled={busy !== null}
                 rows={2}
-                placeholder="anything outside your trade, e.g. alcohol, tobacco"
+                placeholder={st.account.noSellPh}
                 className={`${inputCls} resize-y`}
               />
             </Field>
-            <Field label="One-line description" hint="shown to the AI as ground truth about your business">
+            <Field label={st.account.descLabel} hint={st.account.descHint}>
               <input
                 value={bizDesc}
                 onChange={(e) => setBizDesc(e.target.value)}
                 disabled={busy !== null}
                 maxLength={500}
-                placeholder="Family-run business in Jeddah, known for fast service and fair prices"
+                placeholder={st.account.descPh}
                 className={inputCls}
               />
             </Field>
@@ -850,7 +861,7 @@ export default function SettingsPage() {
               disabled={busy !== null || !bizDirty}
               className="rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
             >
-              {busy === "bizctx" ? "Saving…" : "Save business context"}
+              {busy === "bizctx" ? st.saving : st.account.saveCtx}
               </button>
               </Section>
             </>
@@ -865,15 +876,15 @@ export default function SettingsPage() {
               <div className="flex flex-wrap items-end justify-between gap-3 rounded-[3px] border border-ink/[0.08] bg-white px-5 py-4 dark:border-fog/[0.08] dark:bg-ink">
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-ink/35 dark:text-fog/35">
-                    Configuring
+                    {st.configuring}
                   </p>
                   <p className="mt-1 text-[13px] font-semibold text-ink dark:text-fog">
-                    Google Business Profile locations
+                    {st.gbp}
                   </p>
                 </div>
                 {channels.length > 0 && (
                   <label className="block text-[11px] font-bold text-ink/55 dark:text-fog/55">
-                    Location
+                    {st.location}
                     <select
                       value={selectedId ?? ""}
                       onChange={(e) => {
@@ -883,11 +894,11 @@ export default function SettingsPage() {
                       className="mt-1 block w-64 rounded-[2px] border border-ink/[0.10] bg-white px-2.5 py-1.5 text-[13px] text-ink outline-none focus:border-deep-violet/40 dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
                     >
                       {channels.length > 1 && (
-                        <option value={ALL}>All locations ({channels.length})</option>
+                        <option value={ALL}>{fill(st.allLocations, { n: fmt(channels.length) })}</option>
                       )}
                       {channels.map((c) => (
                         <option key={c.id} value={c.id}>
-                          {c.display_name || "Location"}
+                          {c.display_name || st.locationFallback}
                         </option>
                       ))}
                     </select>
@@ -900,22 +911,22 @@ export default function SettingsPage() {
           {tab === "google" && (selectedId ? (
             <>
               <Section
-                eyebrow="How the AI writes"
-            title="Language & dialect"
-                subtitle={isBulk ? `Replies for all ${bulkBranches.length} branches. Dialect applies to Arabic replies.` : `Replies for ${selectedName}. Dialect applies to Arabic replies.`}
+                eyebrow={st.lang.eyebrow}
+            title={st.lang.title}
+                subtitle={isBulk ? fill(st.lang.subAll, { n: fmt(bulkBranches.length) }) : fill(st.lang.subOne, { name: selectedName })}
               >
                 <div>
                   <p className="mb-1.5 text-[12px] font-medium text-ink/60 dark:text-fog/60">
-                    Reply language
+                    {st.lang.replyLabel}
                     {bulk?.varies.has("reply_language") ? <VariesBadge /> : null}
                   </p>
                   <div className="space-y-1.5">
                     {[
-                      { id: "match", label: "Match the review", hint: "Arabic review → Arabic reply, English → English" },
-                      { id: "en", label: "Always English", hint: "Every reply in English" },
-                      { id: "ar", label: "Always Arabic", hint: "Every reply in Arabic" },
-{ id: "ur", label: "Always Urdu", hint: "Every reply in Urdu script" },
-{ id: "ur-Latn", label: "Always Roman Urdu", hint: "Every reply in Roman Urdu" },
+                      { id: "match", label: st.lang.matchLabel, hint: st.lang.matchHint },
+                      { id: "en", label: st.lang.enLabel, hint: st.lang.enHint },
+                      { id: "ar", label: st.lang.arLabel, hint: st.lang.arHint },
+{ id: "ur", label: st.lang.urLabel, hint: st.lang.urHint },
+{ id: "ur-Latn", label: st.lang.urLatnLabel, hint: st.lang.urLatnHint },
                     ].map((l) => (
                       <label key={l.id} className="flex cursor-pointer items-start gap-2.5 rounded-[2px] border border-ink/[0.06] px-3 py-2 transition hover:border-deep-violet/25 dark:border-fog/[0.06]">
                         <input
@@ -934,9 +945,9 @@ export default function SettingsPage() {
                     ))}
                   </div>
                 </div>
-                <Field label="Arabic dialect" hint="used whenever a reply is written in Arabic" varies={bulk?.varies.has("dialect") ?? false}>
+                <Field label={st.lang.dialectLabel} hint={st.lang.dialectHint} varies={bulk?.varies.has("dialect") ?? false}>
                   <select value={dialect} onChange={(e) => setDialect(e.target.value)} disabled={busy !== null || replyLang === "en" || replyLang === "ur" || replyLang === "ur-Latn"} className={selectCls}>
-                    <option value="auto">Auto — match the review</option>
+                    <option value="auto">{st.lang.dialectAuto}</option>
                     {dialects
                       .filter((d) => d.code !== "auto")
                       .map((d) => (
@@ -949,30 +960,30 @@ export default function SettingsPage() {
                 <button
                   onClick={() => {
                     if (!isBulk) {
-                      void saveCfg({ reply_language: replyLang, dialect }, "Language saved.", "lang");
+                      void saveCfg({ reply_language: replyLang, dialect }, st.lang.saved, "lang");
                       return;
                     }
                     const patch = { reply_language: replyLang, dialect };
                     requestBulkSave(
-                      "Apply language to all branches?",
+                      st.lang.confirmTitle,
                       [
-                        `Reply language → ${replyLang === "en" ? "Always English" : replyLang === "ar" ? "Always Arabic" : "Match the review"}`,
-                        `Dialect → ${dialectName(dialect)}`,
+                        fill(st.lang.lineLang, { v: replyLang === "en" ? st.lang.optEn : replyLang === "ar" ? st.lang.optAr : st.lang.optMatch }),
+                        fill(st.lang.lineDialect, { v: dialectName(dialect) }),
                       ],
-                      () => runBulkCfg("Language", patch),
-                      "Language",
-                      (ids) => runBulkCfg("Language", patch, ids),
+                      () => runBulkCfg(st.bulkNames.language, patch),
+                      st.bulkNames.language,
+                      (ids) => runBulkCfg(st.bulkNames.language, patch, ids),
                     );
                   }}
                   disabled={busy !== null}
                   className="rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
                 >
-                  {busy === "lang" ? "Saving…" : bulk ? `Apply to ${bulk.branches.length} branches` : "Save language"}
+                  {busy === "lang" ? st.saving : bulk ? fill(st.applyN, { n: fmt(bulk.branches.length) }) : st.lang.save}
                 </button>
               </Section>
 
-              <Section eyebrow="How the AI writes" title="Tone & voice" subtitle={isBulk ? `Personality of replies for all ${bulkBranches.length} branches.` : `Personality of replies for ${selectedName}.`}>
-                <Field label="Response tone" varies={bulk?.varies.has("tone") ?? false}>
+              <Section eyebrow={st.tone.eyebrow} title={st.tone.title} subtitle={isBulk ? fill(st.tone.subAll, { n: fmt(bulkBranches.length) }) : fill(st.tone.subOne, { name: selectedName })}>
+                <Field label={st.tone.label} varies={bulk?.varies.has("tone") ?? false}>
                   <select value={tone} onChange={(e) => setTone(e.target.value)} disabled={busy !== null} className={selectCls}>
                     {tones.map((t) => (
                       <option key={t.code} value={t.code}>
@@ -987,34 +998,34 @@ export default function SettingsPage() {
                 <button
                   onClick={() => {
                     if (!isBulk) {
-                      void saveCfg({ tone }, "Tone saved.", "tone");
+                      void saveCfg({ tone }, st.tone.saved, "tone");
                       return;
                     }
                     requestBulkSave(
-                      "Apply tone to all branches?",
-                      [`Tone → ${tone}`],
-                      () => runBulkCfg("Tone", { tone }),
-                      "Tone",
-                      (ids) => runBulkCfg("Tone", { tone }, ids),
+                      st.tone.confirmTitle,
+                      [fill(st.tone.line, { v: tone })],
+                      () => runBulkCfg(st.bulkNames.tone, { tone }),
+                      st.bulkNames.tone,
+                      (ids) => runBulkCfg(st.bulkNames.tone, { tone }, ids),
                     );
                   }}
                   disabled={busy !== null}
                   className="rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
                 >
-                  {busy === "tone" ? "Saving…" : bulk ? `Apply to ${bulk.branches.length} branches` : "Save tone"}
+                  {busy === "tone" ? st.saving : bulk ? fill(st.applyN, { n: fmt(bulk.branches.length) }) : st.tone.save}
                 </button>
               </Section>
 
               <Section
-                eyebrow="Review replies"
-            title="Review reply marketing"
-                subtitle="Off by default. Promotional content can get replies flagged by Google — enable only what you need."
+                eyebrow={st.marketing.eyebrow}
+            title={st.marketing.title}
+                subtitle={st.marketing.sub}
               >
                 {(
                   [
-                    ["promoProducts", "promoProducts", "Allow promotional product mentions", "Name your products/services by exact name when relevant."],
-                    ["promoLinks", "promoLinks", "Allow promotional links", "Include links, but only URLs from your business data — never invented."],
-                    ["promoRelevant", "promoRelevant", "Only promote when relevant to the review", "No unprompted pitching, even when promotion is on."],
+                    ["promoProducts", "promoProducts", st.marketing.products, st.marketing.productsHint],
+                    ["promoLinks", "promoLinks", st.marketing.links, st.marketing.linksHint],
+                    ["promoRelevant", "promoRelevant", st.marketing.relevant, st.marketing.relevantHint],
                   ] as const
                 ).map(([key, varyKey, label, hint]) => {
                   const val = key === "promoProducts" ? promoProducts : key === "promoLinks" ? promoLinks : promoRelevant;
@@ -1038,7 +1049,7 @@ export default function SettingsPage() {
                     </label>
                   );
                 })}
-                <Field label="Maximum promotional CTAs per reply" varies={bulk?.varies.has("promoMax") ?? false}>
+                <Field label={st.marketing.maxLabel} varies={bulk?.varies.has("promoMax") ?? false}>
                   <input
                     type="number"
                     min={0}
@@ -1058,33 +1069,33 @@ export default function SettingsPage() {
                       promo_max_ctas: promoMax,
                     };
                     if (!isBulk) {
-                      void saveCfg(patch, "Marketing preferences saved.", "marketing");
+                      void saveCfg(patch, st.marketing.saved, "marketing");
                       return;
                     }
                     requestBulkSave(
-                      "Apply marketing to all branches?",
+                      st.marketing.confirmTitle,
                       [
-                        `Product mentions → ${promoProducts ? "on" : "off"}`,
-                        `Links → ${promoLinks ? "on" : "off"}`,
-                        `Only when relevant → ${promoRelevant ? "on" : "off"}`,
-                        `Max CTAs → ${promoMax}`,
+                        fill(st.marketing.lineProducts, { v: promoProducts ? st.marketing.on : st.marketing.off }),
+                        fill(st.marketing.lineLinks, { v: promoLinks ? st.marketing.on : st.marketing.off }),
+                        fill(st.marketing.lineRelevant, { v: promoRelevant ? st.marketing.on : st.marketing.off }),
+                        fill(st.marketing.lineMax, { v: fmt(promoMax) }),
                       ],
-                      () => runBulkCfg("Marketing", patch),
-                      "Marketing",
-                      (ids) => runBulkCfg("Marketing", patch, ids),
+                      () => runBulkCfg(st.bulkNames.marketing, patch),
+                      st.bulkNames.marketing,
+                      (ids) => runBulkCfg(st.bulkNames.marketing, patch, ids),
                     );
                   }}
                   disabled={busy !== null}
                   className="rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
                 >
-                  {busy === "marketing" ? "Saving…" : bulk ? `Apply to ${bulk.branches.length} branches` : "Save marketing"}
+                  {busy === "marketing" ? st.saving : bulk ? fill(st.applyN, { n: fmt(bulk.branches.length) }) : st.marketing.save}
                 </button>
               </Section>
 
               <Section
-                eyebrow="Review replies"
-            title="Edited reviews"
-                subtitle="When a customer edits a review you already answered, a fresh reply is drafted for the new content."
+                eyebrow={st.edited.eyebrow}
+            title={st.edited.title}
+                subtitle={st.edited.sub}
               >
                 <label className="flex cursor-pointer items-start gap-2.5">
                   <input
@@ -1096,11 +1107,11 @@ export default function SettingsPage() {
                   />
                   <span>
                     <span className="block text-[13px] font-semibold text-ink dark:text-fog">
-                      Auto-post the updated reply
+                      {st.edited.label}
                       {bulk?.varies.has("editedAutopost") ? <VariesBadge /> : null}
                     </span>
                     <span className="block text-[11px] text-ink/45 dark:text-fog/45">
-                      Off = the updated reply waits for your approval (default). On = it posts automatically, still respecting your approval mode and minimum rating.
+                      {st.edited.hint}
                     </span>
                   </span>
                 </label>
@@ -1108,28 +1119,28 @@ export default function SettingsPage() {
                   onClick={() => {
                     const patch = { edited_review_autopost: editedAutopost };
                     if (!isBulk) {
-                      void saveCfg(patch, "Edited-review preference saved.", "editedReview");
+                      void saveCfg(patch, st.edited.saved, "editedReview");
                       return;
                     }
                     requestBulkSave(
-                      "Apply edited-review preference to all branches?",
-                      [`Edited-review replies → ${editedAutopost ? "auto-post" : "wait for approval"}`],
-                      () => runBulkCfg("Edited reviews", patch),
-                      "editedReview",
-                      (ids) => runBulkCfg("Edited reviews", patch, ids),
+                      st.edited.confirmTitle,
+                      [fill(st.edited.line, { v: editedAutopost ? st.edited.auto : st.edited.wait })],
+                      () => runBulkCfg(st.bulkNames.edited, patch),
+                      st.bulkNames.edited,
+                      (ids) => runBulkCfg(st.bulkNames.edited, patch, ids),
                     );
                   }}
                   disabled={busy !== null}
                   className="rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
                 >
-                  {busy === "editedReview" ? "Saving…" : bulk ? `Apply to ${bulk.branches.length} branches` : "Save"}
+                  {busy === "editedReview" ? st.saving : bulk ? fill(st.applyN, { n: fmt(bulk.branches.length) }) : st.edited.save}
                 </button>
               </Section>
 
               <Section
-                eyebrow="Review replies"
-                title="WhatsApp recovery link"
-                subtitle="When a review needs attention, the public reply offers a WhatsApp link with the customer's ticket code. Pricing and plan questions get a normal WhatsApp sales link instead, without a ticket. The code expires after the lifetime below, so an old reply cannot reopen a closed ticket. Note: this makes your WhatsApp number publicly visible on Google."
+                eyebrow={st.handoff.eyebrow}
+                title={st.handoff.title}
+                subtitle={st.handoff.sub}
               >
                 <label className="flex cursor-pointer items-start gap-2.5">
                   <input
@@ -1141,11 +1152,11 @@ export default function SettingsPage() {
                   />
                   <span>
                     <span className="block text-[13px] font-semibold text-ink dark:text-fog">
-                      Offer reviewers the WhatsApp link
+                      {st.handoff.label}
                       {bulk?.varies.has("handoffLink") ? <VariesBadge /> : null}
                     </span>
                     <span className="block text-[11px] text-ink/45 dark:text-fog/45">
-                      On problem reviews the link carries the ticket code; on pricing/plan questions it opens a normal sales conversation. Off keeps your number off the listing entirely.
+                      {st.handoff.hint}
                     </span>
                   </span>
                 </label>
@@ -1153,26 +1164,26 @@ export default function SettingsPage() {
                   onClick={() => {
                     const patch = { handoff_link_enabled: handoffLink };
                     if (!isBulk) {
-                      void saveCfg(patch, "WhatsApp link preference saved.", "handoffLink");
+                      void saveCfg(patch, st.handoff.saved, "handoffLink");
                       return;
                     }
                     requestBulkSave(
-                      "Apply WhatsApp link preference to all branches?",
-                      [`Recovery link → ${handoffLink ? "offered" : "hidden"}`],
-                      () => runBulkCfg("WhatsApp link", patch),
+                      st.handoff.confirmTitle,
+                      [fill(st.handoff.line, { v: handoffLink ? st.handoff.offered : st.handoff.hidden })],
+                      () => runBulkCfg(st.bulkNames.waLink, patch),
                       "handoffLink",
-                      (ids) => runBulkCfg("WhatsApp link", patch, ids),
+                      (ids) => runBulkCfg(st.bulkNames.waLink, patch, ids),
                     );
                   }}
                   disabled={busy !== null}
                   className="rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
                 >
-                  {busy === "handoffLink" ? "Saving…" : bulk ? `Apply to ${bulk.branches.length} branches` : "Save"}
+                  {busy === "handoffLink" ? st.saving : bulk ? fill(st.applyN, { n: fmt(bulk.branches.length) }) : st.handoff.save}
                 </button>
 
                 <div className="mt-4 border-t border-ink/[0.06] pt-4 dark:border-fog/[0.06]">
                   <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-ink dark:text-fog">
-                    Code lifetime
+                    {st.handoff.ttlLabel}
                     {bulk?.varies.has("handoffTtl") ? <VariesBadge /> : null}
                     <select
                       value={handoffTtlDays}
@@ -1184,56 +1195,53 @@ export default function SettingsPage() {
                         .sort((a, b) => a - b)
                         .map((days) => (
                           <option key={days} value={days}>
-                            {days} day{days === 1 ? "" : "s"}
+                            {days === 1 ? st.handoff.dayOne : fill(st.handoff.dayN, { n: fmt(days) })}
                           </option>
                         ))}
                     </select>
                   </label>
                   <p className="mt-1 text-[11px] leading-relaxed text-ink/45 dark:text-fog/45">
-                    After this many days the code in the review reply stops working — the wa.me link prefills that
-                    code, so the link expires with it. 1 day is the default; 30 is the maximum.
+                    {st.handoff.ttlBody}
                   </p>
                   <button
                     onClick={() => {
                       const patch = { handoff_code_ttl_days: handoffTtlDays };
                       if (!isBulk) {
-                        void saveCfg(patch, "Handoff code lifetime saved.", "handoffTtl");
+                        void saveCfg(patch, st.handoff.ttlSaved, "handoffTtl");
                         return;
                       }
                       requestBulkSave(
-                        "Apply code lifetime to all branches?",
-                        [`Handoff codes expire after ${handoffTtlDays} day${handoffTtlDays === 1 ? "" : "s"}`],
-                        () => runBulkCfg("Code lifetime", patch),
+                        st.handoff.confirmTtlTitle,
+                        [fill(st.handoff.confirmTtlLine, { n: fmt(handoffTtlDays) })],
+                        () => runBulkCfg(st.handoff.ttlLabel, patch),
                         "handoffTtl",
-                        (ids) => runBulkCfg("Code lifetime", patch, ids),
+                        (ids) => runBulkCfg(st.handoff.ttlLabel, patch, ids),
                       );
                     }}
                     disabled={busy !== null}
                     className="mt-2 rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
                   >
-                    {busy === "handoffTtl" ? "Saving…" : bulk ? `Apply to ${bulk.branches.length} branches` : "Save lifetime"}
+                    {busy === "handoffTtl" ? st.saving : bulk ? fill(st.applyN, { n: fmt(bulk.branches.length) }) : st.handoff.saveLifetime}
                   </button>
                 </div>
               </Section>
 
               <p className="rounded-[2px] border border-ink/[0.06] bg-white/60 px-4 py-3 text-[12px] text-ink/55 dark:border-fog/[0.06] dark:bg-ink/60 dark:text-fog/55">
-                Replies in: <strong>{langName}</strong>
-                {langName !== "English" && <> ({dialectName(dialect)})</>} · Tone: <strong className="capitalize">{tone}</strong> · Country:{" "}
-                <strong>{countryName}</strong> · Promo:{" "}
-                <strong>{promoProducts || promoLinks ? `on (max ${promoMax} CTA${promoMax === 1 ? "" : "s"})` : "off"}</strong>
-                {" "}· WhatsApp link: <strong>{handoffLink ? "on" : "off"}</strong>
-                {" "}· Code lifetime: <strong>{handoffTtlDays} day{handoffTtlDays === 1 ? "" : "s"}</strong>
+                {st.recap.repliesIn} <strong>{langName}</strong>
+                {langName !== st.recap.langEn && <> ({dialectName(dialect)})</>} · {st.recap.tone} <strong className="capitalize">{tone}</strong> · {st.recap.country}{" "}
+                <strong>{countryName}</strong> {st.recap.promo}{" "}
+                <strong>{promoProducts || promoLinks ? promoMax === 1 ? st.recap.promoOnOne : fill(st.recap.promoOnN, { n: fmt(promoMax) }) : st.recap.promoOff}</strong>
+                {" "}{st.recap.wa} <strong>{handoffLink ? st.recap.on : st.recap.off}</strong>
+                {" "}{st.recap.ttl} <strong>{handoffTtlDays === 1 ? st.handoff.dayOne : fill(st.handoff.dayN, { n: fmt(handoffTtlDays) })}</strong>
               </p>
             </>
           ) : (
             <div className="rounded-[3px] border border-dashed border-ink/[0.12] bg-white/60 p-10 text-center dark:border-fog/[0.12] dark:bg-ink/60">
               <p className="text-[14px] font-semibold text-ink/70 dark:text-fog/70">
-                No Google locations connected
+                {st.emptyGoogleTitle}
               </p>
               <p className="mx-auto mt-1 max-w-md text-[12px] leading-relaxed text-ink/45 dark:text-fog/45">
-                Language, tone and review marketing are configured per Google Business Profile
-                location. If you only use WhatsApp, Instagram or Facebook you do not need this —
-                everything that applies to you is under Social channels and Lead automation.
+                {st.emptyGoogleBody}
               </p>
             </div>
           ))}
@@ -1243,13 +1251,13 @@ export default function SettingsPage() {
           {/* ── Social channels ───────────────────────────────────────── */}
           {tab === "social" && (
             <Section
-              eyebrow="WhatsApp · Instagram · Facebook"
-              title="Connected channels"
-              subtitle="Messaging channels on this account. Per-channel options — numbering, AI replies, voice, connected pages — live on the Channels page."
+              eyebrow={st.social.eyebrow}
+              title={st.social.title}
+              subtitle={st.social.sub}
             >
               {metaConnections.length === 0 ? (
                 <p className="text-[12px] text-ink/45 dark:text-fog/45">
-                  No messaging channels connected yet.
+                  {st.social.empty}
                 </p>
               ) : (
                 <ul className="divide-y divide-ink/[0.06] dark:divide-fog/[0.06]">
@@ -1260,8 +1268,7 @@ export default function SettingsPage() {
                           {PROVIDER_LABELS[c.provider] ?? c.provider}
                         </p>
                         <p className="text-[11px] text-ink/40 dark:text-fog/40">
-                          Connected {new Date(c.created_at).toLocaleDateString()} · status{" "}
-                          {c.status}
+                          {fill(st.social.connectedOn, { date: new Date(c.created_at).toLocaleDateString(dateLocale) })} · {c.status}
                         </p>
                       </div>
                     </li>
@@ -1280,13 +1287,13 @@ export default function SettingsPage() {
       {tab === "social" && (
       <Section
         tone="danger"
-        eyebrow="Destructive"
-        title="Danger zone"
-        subtitle="Permanently disconnect a channel and delete everything it stores — conversations, messages, channels and assets. This cannot be undone."
+        eyebrow={st.danger.eyebrow}
+        title={st.danger.title}
+        subtitle={st.danger.sub}
       >
         <div className="space-y-2">
           {metaConnections.length === 0 ? (
-            <p className="text-[12px] text-ink/40 dark:text-fog/40">No connected channels.</p>
+            <p className="text-[12px] text-ink/40 dark:text-fog/40">{st.danger.empty}</p>
           ) : (
             metaConnections.map((c) => (
               <div
@@ -1301,7 +1308,7 @@ export default function SettingsPage() {
                     </span>
                   </p>
                   <p className="text-[11px] text-ink/40 dark:text-fog/40">
-                    Connected {new Date(c.created_at).toLocaleDateString()}
+                    Connected {new Date(c.created_at).toLocaleDateString(dateLocale)}
                   </p>
                 </div>
                 <button
@@ -1312,7 +1319,7 @@ export default function SettingsPage() {
                   disabled={dangerBusy !== null}
                   className="rounded-[2px] border border-red-500/40 px-3 py-1.5 text-[12px] font-semibold text-red-600 transition hover:bg-red-500/10 disabled:opacity-50 dark:text-red-400"
                 >
-                  Disconnect &amp; delete all data
+                  {st.danger.disconnect}
                 </button>
               </div>
             ))
@@ -1324,16 +1331,16 @@ export default function SettingsPage() {
       {/* ── Data & privacy (GDPR) — merged with danger zone ─────── */}
       <Section
         tone="danger"
-        eyebrow="Data & privacy"
-        title="Your data"
-        subtitle="Export everything Sayvors holds about you, or schedule deletion of your personal data."
+        eyebrow={st.privacy.eyebrow}
+        title={st.privacy.title}
+        subtitle={st.privacy.sub}
       >
         <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-[2px] border border-ink/[0.06] bg-white px-4 py-3 dark:border-fog/[0.08] dark:bg-ink">
             <div className="min-w-0">
-              <p className="text-[13px] font-semibold text-ink dark:text-fog">Export my data</p>
+              <p className="text-[13px] font-semibold text-ink dark:text-fog">{st.privacy.exportTitle}</p>
               <p className="text-[11px] text-ink/40 dark:text-fog/40">
-                Download a JSON file with all your channels, messages, leads, reviews, notifications, and usage data.
+                {st.privacy.exportBody}
               </p>
             </div>
             <button
@@ -1347,23 +1354,22 @@ export default function SettingsPage() {
               }}
               className="rounded-[2px] border border-ink/[0.12] bg-white px-3 py-1.5 text-[12px] font-semibold text-ink transition hover:bg-ink/[0.04] dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
             >
-              Download export
+              {st.privacy.exportBtn}
             </button>
           </div>
           {deletion?.status === "pending" ? (
             <div className="rounded-[2px] border border-amber-500/30 bg-amber-500/[0.06] px-4 py-3">
               <p className="text-[13px] font-semibold text-amber-800 dark:text-amber-300">
-                Personal data deletion scheduled
+                {st.privacy.delScheduled}
               </p>
               <p className="mt-1 text-[11px] text-ink/55 dark:text-fog/55">
-                Your personal data will be deleted on{" "}
+                {st.privacy.delBodyPre}{" "}
                 <strong>
                   {deletion.scheduled_for
-                    ? new Date(deletion.scheduled_for).toLocaleDateString()
-                    : "the scheduled date"}
+                    ? new Date(deletion.scheduled_for).toLocaleDateString(dateLocale)
+                    : st.privacy.delDateFallback}
                 </strong>
-                . Signing in cancels it. Business records are retained as
-                business data.
+                {st.privacy.delBodyPost}
               </p>
               <div className="mt-3 flex gap-2">
                 <button
@@ -1374,7 +1380,7 @@ export default function SettingsPage() {
                       const state = await cancelPersonalDataDeletion();
                       setDeletion(state);
                     } catch {
-                      alert("Could not cancel. Please try again.");
+                      alert(st.privacy.cancelFailed);
                     } finally {
                       setDeletionBusy(false);
                     }
@@ -1382,7 +1388,7 @@ export default function SettingsPage() {
                   disabled={deletionBusy}
                   className="rounded-[2px] border border-[var(--ui-line)] px-3 py-1.5 text-[12px] font-semibold text-ink transition hover:bg-ink/[0.04] disabled:opacity-50 dark:text-fog"
                 >
-                  {deletionBusy ? "Cancelling…" : "Keep my account"}
+                  {deletionBusy ? st.privacy.cancelling : st.privacy.keepAccount}
                 </button>
               </div>
             </div>
@@ -1390,11 +1396,10 @@ export default function SettingsPage() {
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-[2px] border border-red-500/20 bg-red-500/[0.04] px-4 py-3 dark:border-red-500/20 dark:bg-red-500/[0.06]">
               <div className="min-w-0">
                 <p className="text-[13px] font-semibold text-red-600 dark:text-red-400">
-                  Delete my personal data
+                  {st.privacy.delTitle}
                 </p>
                 <p className="text-[11px] text-ink/40 dark:text-fog/40">
-                  Your name, email, phone and login will be removed in 30 days.
-                  Business records are retained as business data.
+                  {st.privacy.delBody}
                 </p>
               </div>
               <button
@@ -1404,7 +1409,7 @@ export default function SettingsPage() {
                 }}
                 className="rounded-[2px] border border-red-500/40 px-3 py-1.5 text-[12px] font-semibold text-red-600 transition hover:bg-red-500/10 disabled:opacity-50 dark:text-red-400"
               >
-                Delete my personal data
+                {st.privacy.delTitle}
               </button>
             </div>
           )}
@@ -1424,25 +1429,23 @@ export default function SettingsPage() {
         >
           <div className="w-full max-w-md rounded-[3px] border border-red-500/30 bg-white p-5 shadow-xl dark:border-fog/[0.08] dark:bg-ink">
             <p className="text-[15px] font-bold text-red-600 dark:text-red-400">
-              We’ll delete your personal data. Are you sure?
+              {st.privacy.modalTitle}
             </p>
             <p className="mt-2 text-[12px] leading-relaxed text-ink/70 dark:text-fog/70">
-              Your name, email, phone and login will be removed. You have{" "}
-              <strong>30 days</strong> to change your mind — signing in before
-              then cancels the deletion.
+              {st.privacy.modalBodyPre}{" "}
+              <strong>{st.privacy.modalDays}</strong>
+              {st.privacy.modalBodyPost}
             </p>
             <details className="mt-3 rounded-[2px] border border-ink/[0.08] px-3 py-2 dark:border-fog/[0.1]">
               <summary className="cursor-pointer text-[11px] font-semibold text-ink/60 dark:text-fog/60">
-                What happens to my business records?
+                {st.privacy.modalDetails}
               </summary>
               <p className="mt-2 text-[11px] leading-relaxed text-ink/55 dark:text-fog/55">
-                Chats, posts, insights and customer records are retained as
-                business data. Your name, email and phone are removed from
-                them where they appear.
+                {st.privacy.modalDetailsBody}
               </p>
             </details>
             <label className="mt-3 block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
-              Type DELETE to confirm
+              {st.privacy.typeConfirm}
               <input
                 value={deletionConfirm}
                 onChange={(e) => setDeletionConfirm(e.target.value)}
@@ -1456,7 +1459,7 @@ export default function SettingsPage() {
                 onClick={() => setDeletionModal(false)}
                 className="rounded-[2px] border border-[var(--ui-line)] px-3 py-1.5 text-[12px] font-medium text-ink/70 dark:text-fog/70"
               >
-                Keep my account
+                {st.privacy.keepAccount}
               </button>
               <button
                 type="button"
@@ -1472,14 +1475,14 @@ export default function SettingsPage() {
                     setDeletion(state);
                     setDeletionModal(false);
                   } catch {
-                    alert("Could not schedule deletion. Please try again.");
+                    alert(st.privacy.scheduleFailed);
                   } finally {
                     setDeletionBusy(false);
                   }
                 }}
                 className="rounded-[2px] bg-red-600 px-3 py-1.5 text-[12px] font-bold text-white disabled:opacity-40"
               >
-                {deletionBusy ? "Scheduling…" : "Delete my personal data"}
+                {deletionBusy ? st.privacy.scheduling : st.privacy.delTitle}
               </button>
             </div>
           </div>
@@ -1500,16 +1503,14 @@ export default function SettingsPage() {
         >
           <div className="w-full max-w-md rounded-[3px] border border-red-500/30 bg-white p-5 shadow-xl dark:border-fog/[0.08] dark:bg-ink">
             <p className="text-[15px] font-bold text-red-600 dark:text-red-400">
-              Delete all {PROVIDER_LABELS[dangerTarget.provider] ?? dangerTarget.provider} data?
+              {fill(st.dangerModal.title, { provider: PROVIDER_LABELS[dangerTarget.provider] ?? dangerTarget.provider })}
             </p>
             <p className="mt-2 text-[12px] leading-relaxed text-ink/70 dark:text-fog/70">
-              This disconnects the channel and permanently deletes every conversation,
-              message, channel and asset connected to it.{" "}
-              <strong>It cannot be undone.</strong>
+              {st.dangerModal.bodyPre}{" "}
+              <strong>{st.dangerModal.bodyPost}</strong>
             </p>
             <label className="mt-3 block text-[11px] font-semibold text-ink/55 dark:text-fog/55">
-              Type <span className="font-mono text-red-600 dark:text-red-400">DELETE MY DATA</span> to
-              confirm
+              {st.dangerModal.typePre} <span className="font-mono text-red-600 dark:text-red-400">DELETE MY DATA</span> {st.dangerModal.typePost}
               <input
                 autoFocus
                 value={dangerPhrase}
@@ -1528,14 +1529,14 @@ export default function SettingsPage() {
                 disabled={dangerBusy !== null}
                 className="rounded-[2px] px-3 py-1.5 text-[12px] font-semibold text-ink/50 transition hover:bg-ink/[0.04] disabled:opacity-50 dark:text-fog/50"
               >
-                Cancel
+                {st.dangerModal.cancel}
               </button>
               <button
                 onClick={() => void deleteMetaConnection(dangerTarget)}
                 disabled={dangerPhrase !== "DELETE MY DATA" || dangerBusy !== null}
                 className="rounded-[2px] bg-red-600 px-3.5 py-1.5 text-[12px] font-semibold text-white transition hover:bg-red-700 disabled:opacity-40"
               >
-                {dangerBusy === dangerTarget.id ? "Deleting…" : "Delete everything"}
+                {dangerBusy === dangerTarget.id ? st.dangerModal.deleting : st.dangerModal.deleteAll}
               </button>
             </div>
           </div>

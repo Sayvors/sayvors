@@ -85,6 +85,14 @@ class OpenAICompatibleProvider(LLMProvider):
             if req.tools:
                 kwargs["tools"] = [self._to_tool(t) for t in req.tools]
                 kwargs["tool_choice"] = "auto"
+            if self._provider == "openrouter":
+                # Kill thinking at the request, not after the fact. Qwen3 and
+                # other hybrid reasoners return their work in reasoning fields
+                # with an empty content — which surfaces downstream as "Model
+                # returned an empty response". A retry/fallback would cost a
+                # second full round trip; disabling it up front costs nothing.
+                # Harmless no-op for models without a thinking mode.
+                kwargs["extra_body"] = {"reasoning": {"enabled": False}}
             response = await self._client.chat.completions.create(
                 model=req.model,
                 messages=self._build_messages(req),

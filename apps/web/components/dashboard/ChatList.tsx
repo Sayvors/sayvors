@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { Conversation } from "@/lib/channel-data";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 
 interface ChatListProps {
   conversations: Conversation[];
@@ -10,6 +11,8 @@ interface ChatListProps {
 }
 
 export default function ChatList({ conversations, selectedId, onSelect }: ChatListProps) {
+  const { t } = useI18n();
+  const ws = t.channelHub.workspace;
   const [search, setSearch] = useState("");
 
   const filtered = conversations.filter((c) =>
@@ -35,7 +38,8 @@ export default function ChatList({ conversations, selectedId, onSelect }: ChatLi
           </svg>
           <input
             type="text"
-            placeholder="Search conversations..."
+            placeholder={ws.searchPh}
+            aria-label={ws.searchPh}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="h-8 w-full rounded-md border border-ink/[0.08] bg-fog/40 pl-8 pr-3 text-[12px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/30 focus:bg-white focus:ring-2 focus:ring-deep-violet/[0.06] dark:border-fog/[0.08] dark:bg-ink/40 dark:text-fog dark:placeholder:text-fog/30 dark:focus:bg-ink"
@@ -52,7 +56,7 @@ export default function ChatList({ conversations, selectedId, onSelect }: ChatLi
                 <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
               </svg>
             </div>
-            <p className="mt-3 text-[12px] text-ink/40 dark:text-fog/40">No conversations found</p>
+            <p className="mt-3 text-[12px] text-ink/40 dark:text-fog/40">{ws.noConvs}</p>
           </div>
         ) : (
           filtered.map((conv) => (

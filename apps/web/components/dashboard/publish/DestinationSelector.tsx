@@ -5,6 +5,14 @@ import PlatformMark from "@/components/channels/PlatformMark";
 import GoogleBusinessLogo from "@/components/channels/GoogleBusinessLogo";
 import { PLATFORM_META, PLATFORM_ORDER, type PlatformKey, type PublishTarget } from "./types";
 import { Switch } from "./Switch";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 /*
  * Destination picker for the unified Publish composer.
@@ -65,6 +73,8 @@ export default function DestinationSelector({
 }) {
   const usable = targets.filter((t) => !t.demo && PLATFORM_META[t.platform]?.enabled);
   const comingSoon = PLATFORM_ORDER.filter((p) => !PLATFORM_META[p].enabled);
+  const { t } = useI18n();
+  const d = t.publish.dest;
 
   if (status === "loading") {
     return (
@@ -81,10 +91,10 @@ export default function DestinationSelector({
       <div className="rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-5">
         <div className="flex flex-col items-center gap-2">
           <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--ui-ink-2)]">
-            No channels connected
+            {d.emptyTitle}
           </span>
           <p className="text-[13px] font-semibold text-[var(--ui-ink)]">
-            Connect Facebook, Instagram, WhatsApp or Google Business Profile and they appear here.
+            {d.emptyBody}
           </p>
         </div>
         <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -92,7 +102,7 @@ export default function DestinationSelector({
             href="/dashboard/channels"
             className="rounded-[10px] bg-[var(--ui-ink)] px-3.5 py-1.5 text-[12px] font-semibold text-[var(--ui-on-ink)] transition hover:opacity-90 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
           >
-            Connect channels
+            {d.connectBtn}
           </Link>
         </div>
       </div>
@@ -107,10 +117,10 @@ export default function DestinationSelector({
           <div className={SECTION_STYLE.social + " rounded-[10px] px-3 py-2.5 flex items-center justify-between"}>
             <div>
               <p className="text-[11px] font-bold uppercase tracking-widest text-[#1a0dab]">
-                Social networks
+                {d.socialTitle}
               </p>
               <p className="mt-0.5 text-[11px] text-[var(--ui-ink-2)]">
-                Every live destination, always in sync with Channels.
+                {d.socialBody}
               </p>
             </div>
             <Switch checked={allConnected} onChange={onSelectAll} label="" />
@@ -162,7 +172,7 @@ export default function DestinationSelector({
             <div className="flex items-center gap-2">
               <GoogleBusinessLogo size={16} />
               <span className="text-[11px] font-bold uppercase tracking-widest text-[#1a0dab]">
-                Google Business Profile
+                {d.googleTitle}
               </span>
             </div>
             <Switch checked={allGoogleConnected} onChange={onApplyAllGoogle} label="" />
@@ -193,7 +203,7 @@ export default function DestinationSelector({
                       </span>
                     </div>
                     <span className="ml-auto shrink-0 rounded-full bg-[#eef3ff] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#1a0dab]">
-                      Google
+                      {d.googleBadge}
                     </span>
                   </label>
                 </li>
@@ -207,14 +217,14 @@ export default function DestinationSelector({
         <section className="rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-3">
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--ui-ink-2)]">
-              Coming soon
+              {d.comingSoon}
             </span>
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {comingSoon.map((p: PlatformKey) => (
               <span
                 key={p}
-                title={`${PLATFORM_META[p].label} publishing lands later`}
+                title={fill(d.comingTitle, { label: PLATFORM_META[p].label })}
                 className="inline-flex items-center gap-1.5 rounded-full border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2.5 py-1 text-[11px] font-semibold text-[var(--ui-ink-2)] opacity-60"
               >
                 <PlatformMark platform={p} size={14} />

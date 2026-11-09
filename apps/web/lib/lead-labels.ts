@@ -40,3 +40,27 @@ export function leadCategoryLabel(
   if (!value) return null;
   return LEAD_CATEGORY_LABELS[value as LeadCategory] ?? value;
 }
+
+/** Arabic labels for the same canonical catalog (MSA UI). */
+export const LEAD_CATEGORY_LABELS_AR: Record<LeadCategory, string> = {
+  wholesale: "البيع بالجملة",
+  retail: "البيع بالتجزئة",
+  booking: "حجز",
+  quote: "عرض سعر",
+  support: "دعم",
+  info: "معلومات",
+};
+
+/**
+ * Localized label for a known lead category, null when unknown (so callers
+ * can fall back to thread-category labels or the raw value).
+ */
+export function leadCategoryLabelKnown(
+  value: string | null | undefined,
+  locale: string,
+): string | null {
+  if (!value) return null;
+  const known = value as LeadCategory;
+  if (!(known in LEAD_CATEGORY_LABELS)) return null;
+  return locale === "ar" ? LEAD_CATEGORY_LABELS_AR[known] : LEAD_CATEGORY_LABELS[known];
+}

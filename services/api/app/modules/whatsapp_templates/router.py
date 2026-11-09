@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_db
 from ...core.upstream_errors import upstream_http_error
+from ..billing.messaging_quota import ensure_messaging_quota
 from ..channels.models import Channel, Lead
 from ..team.context import TenantContext, require_perm
 from . import service
@@ -97,6 +98,9 @@ async def send_template(
     """Send one approved template. Requires a recorded opt-in."""
     if not ctx.can_edit_channel(body.channel_id):
         raise HTTPException(status_code=403, detail="No edit access to this channel")
+    # Templates are outbound WhatsApp messages: they share the monthly
+    # allowance with manual sends and AI replies.
+    await ensure_messaging_quota(ctx, db, body.channel_id)
     try:
         row, created = await service.send_template(
             db,

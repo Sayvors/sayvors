@@ -17,6 +17,17 @@ import {
 import { useInboxRealtime } from "@/lib/use-inbox-realtime";
 import { fetchAssignees, type Assignee } from "@/lib/api-inbox";
 import { useAuth } from "@/lib/auth-context";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import type { Dict } from "@/lib/i18n/en";
+
+type TicketsDict = Dict["reviews"]["tickets"];
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 /**
  * Review tickets — one row per classified Google review that opened a ticket.
@@ -50,6 +61,12 @@ function Chip({ strong, children }: { strong?: boolean; children: React.ReactNod
 
 export default function ReviewTicketsPage() {
   const { user } = useAuth();
+  const { t, locale } = useI18n();
+  const kt = t.reviews.tickets;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
+  const stLabel = (s: string) => kt.status[s as keyof typeof kt.status] ?? label(s);
+  const prLabel = (s: string) => kt.priority[s as keyof typeof kt.priority] ?? label(s);
   const [statusFilter, setStatusFilter] = useState("");
   const [assigneeFilter, setAssigneeFilter] = useState<"all" | "mine">("all");
   const [q, setQ] = useState("");
@@ -72,7 +89,7 @@ export default function ReviewTicketsPage() {
   const error = issuesQuery.isError
     ? issuesQuery.error instanceof Error
       ? issuesQuery.error.message
-      : "Could not load review tickets."
+      : kt.loadFailed
     : null;
 
   // Live tickets. One poll loop classified a review and opened a ticket while
@@ -179,13 +196,13 @@ export default function ReviewTicketsPage() {
         {/* ── header ─────────────────────────────────────────── */}
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-[20px] font-bold text-[var(--ui-ink)]">Review tickets</h1>
+            <h1 className="text-[20px] font-bold text-[var(--ui-ink)]">{kt.title}</h1>
             <p className="mt-0.5 text-[13px] text-[var(--ui-ink-2)]">
-              Problems customers reported in Google reviews that need action, and the WhatsApp handoff that lets the assistant solve them. Praise and neutral reviews are classified, but they do not get tickets and are not shown here.
+              {kt.body}
             </p>
           </div>
           <button type="button" onClick={() => void issuesQuery.refetch()} disabled={issuesQuery.isFetching} className={BTN_GHOST}>
-            {loading ? "Loading…" : "Refresh"}
+            {loading ? kt.loading : kt.refresh}
           </button>
         </div>
 
@@ -199,18 +216,18 @@ export default function ReviewTicketsPage() {
         <div className="mt-5 grid gap-3 sm:grid-cols-4">
           {(
             [
-              ["Unresolved", stats.unresolved],
-              ["Waiting on you", stats.attention],
-              ["Urgent", stats.urgent],
-              ["Resolved", stats.resolved],
+              [kt.queueUnresolved, stats.unresolved],
+              [kt.queueAttention, stats.attention],
+              [kt.queueUrgent, stats.urgent],
+              [kt.queueResolved, stats.resolved],
             ] as [string, number][]
           ).map(([k, v]) => (
             <div
               key={k}
-              className={`ui-panel px-4 py-3 ${k === "Urgent" && v > 0 ? "border-red-500" : ""}`}
+              className={`ui-panel px-4 py-3 ${k === kt.queueUrgent && v > 0 ? "border-red-500" : ""}`}
             >
               <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">{k}</div>
-              <div className={`mt-1 text-[24px] font-bold leading-none tabular-nums ${k === "Urgent" && v > 0 ? "text-red-600" : "text-[var(--ui-ink)]"}`}>{v.toLocaleString()}</div>
+              <div className={`mt-1 text-[24px] font-bold leading-none tabular-nums ${k === kt.queueUrgent && v > 0 ? "text-red-600" : "text-[var(--ui-ink)]"}`}>{fmt(v)}</div>
             </div>
           ))}
         </div>
@@ -220,13 +237,13 @@ export default function ReviewTicketsPage() {
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            aria-label="Filter by status"
+            aria-label={kt.filterStatusAria}
             className="ui-input w-auto bg-[var(--ui-surface)] px-3 py-2 text-[13px] font-semibold text-[var(--ui-ink)]"
           >
-            <option value="">All statuses</option>
+            <option value="">{kt.allStatuses}</option>
             {STATUSES.map((s) => (
               <option key={s} value={s}>
-                {label(s)} ({issues.filter((i) => i.status === s).length})
+                {stLabel(s)} ({fmt(issues.filter((i) => i.status === s).length)})
               </option>
             ))}
           </select>
@@ -242,18 +259,18 @@ export default function ReviewTicketsPage() {
                 : "bg-[var(--ui-surface)] text-[var(--ui-ink)]"
             }`}
           >
-            Mine
+            {kt.mine}
           </button>
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search ticket, code, reviewer, text"
-            aria-label="Search review tickets"
+            placeholder={kt.searchPh}
+            aria-label={kt.searchAria}
             type="search"
             className="ui-input w-full max-w-72 bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] placeholder:text-[var(--ui-ink-2)]"
           />
           <span className="text-[12px] text-[var(--ui-ink-2)]">
-            <span className="font-bold tabular-nums text-[var(--ui-ink)]">{filtered.length}</span> shown
+            <span className="font-bold tabular-nums text-[var(--ui-ink)]">{fmt(filtered.length)}</span> {kt.shown}
           </span>
         </div>
 
@@ -265,12 +282,12 @@ export default function ReviewTicketsPage() {
         ) : filtered.length === 0 ? (
           <div className="ui-panel mt-4 px-6 py-12 text-center">
             <p className="text-[14px] font-bold text-[var(--ui-ink)]">
-              {issues.length === 0 ? "No tickets yet" : "Nothing matches"}
+              {issues.length === 0 ? kt.emptyNone : kt.emptyFiltered}
             </p>
             <p className="mx-auto mt-1 max-w-md text-[12px] leading-relaxed text-[var(--ui-ink-2)]">
               {issues.length === 0
-                ? `Tickets appear here when a review needs attention. ${total > 0 ? `(${total} exist but none loaded — try Refresh.)` : ""}`
-                : "Try clearing the search or the status filter."}
+                ? <>{kt.emptyNoneBody} {total > 0 ? fill(kt.emptyNoneLoaded, { n: fmt(total) }) : ""}</>
+                : kt.emptyFilteredBody}
             </p>
           </div>
         ) : (
@@ -298,10 +315,10 @@ export default function ReviewTicketsPage() {
                     style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${vi.start}px)` }}
                   >
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-[13px] font-bold tabular-nums text-[var(--ui-ink)]">{i.ticket_number ?? "Unticketed"}</span>
-                      <Chip strong={i.priority === "urgent" || i.priority === "high"}>{label(i.priority)}</Chip>
-                      <Chip strong={UNRESOLVED.has(i.status)}>{label(i.status)}</Chip>
-                      <span className="ml-auto text-[12px] text-[var(--ui-ink-2)]">{new Date(i.created_at).toLocaleDateString()}</span>
+                      <span className="text-[13px] font-bold tabular-nums text-[var(--ui-ink)]">{i.ticket_number ?? kt.unticketed}</span>
+                      <Chip strong={i.priority === "urgent" || i.priority === "high"}>{prLabel(i.priority)}</Chip>
+                      <Chip strong={UNRESOLVED.has(i.status)}>{stLabel(i.status)}</Chip>
+                      <span className="ml-auto text-[12px] text-[var(--ui-ink-2)]">{new Date(i.created_at).toLocaleDateString(dateLocale)}</span>
                     </div>
                     <p className="mt-1.5 truncate text-[13px] text-[var(--ui-ink)]">
                       {i.summary || i.review_text || label(i.primary_category)}
@@ -312,13 +329,13 @@ export default function ReviewTicketsPage() {
                         <>
                           {" · "}
                           <span className="font-semibold text-[var(--ui-ink)]">
-                            {i.assigned_to === user?.id ? "you" : "assigned"}
+                            {i.assigned_to === user?.id ? kt.you : kt.assigned}
                           </span>
                         </>
                       ) : (
-                        " · unassigned"
+                        <>{" · "}{kt.unassigned}</>
                       )}
-                      {i.handoff_code && <> · code <span className="font-semibold tabular-nums text-[var(--ui-ink)]">#{i.handoff_code}</span></>}
+                      {i.handoff_code && <> · {kt.codePrefix} <span className="font-semibold tabular-nums text-[var(--ui-ink)]">#{i.handoff_code}</span></>}
                     </p>
                   </button>
                 );
@@ -352,16 +369,20 @@ export default function ReviewTicketsPage() {
  * a drawer; "expires in 23h" is the decision the merchant is actually making
  * (re-mint now, or leave it).
  */
-function describeExpiry(iso: string | null): string | null {
+function describeExpiry(
+  iso: string | null,
+  ex: { expired: string; minutes: string; hours: string; days: string },
+  fmt: (n: number) => string,
+): string | null {
   if (!iso) return null;
   const ms = new Date(iso).getTime() - Date.now();
   if (!Number.isFinite(ms)) return null;
-  if (ms <= 0) return "expired";
+  if (ms <= 0) return ex.expired;
   const minutes = Math.ceil(ms / 60_000);
-  if (minutes < 60) return `expires in ${minutes} min`;
+  if (minutes < 60) return fill(ex.minutes, { n: fmt(minutes) });
   const hours = Math.ceil(minutes / 60);
-  if (hours < 48) return `expires in ${hours}h`;
-  return `expires in ${Math.ceil(hours / 24)} days`;
+  if (hours < 48) return fill(ex.hours, { n: fmt(hours) });
+  return fill(ex.days, { n: fmt(Math.ceil(hours / 24)) });
 }
 
 function TicketDrawer({
@@ -380,6 +401,12 @@ function TicketDrawer({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { user } = useAuth();
+  const { t, locale } = useI18n();
+  const kt = t.reviews.tickets;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
+  const stLabel = (s: string) => kt.status[s as keyof typeof kt.status] ?? label(s);
+  const prLabel = (s: string) => kt.priority[s as keyof typeof kt.priority] ?? label(s);
   const updateIssue = useUpdateReviewIssue();
   const [code, setCode] = useState<string | null>(issue.handoff_code);
   const [expiresAt, setExpiresAt] = useState<string | null>(
@@ -389,7 +416,7 @@ function TicketDrawer({
 
   const link = code ? waMeLink(waPhone, code) : "";
   const expired = !!expiresAt && new Date(expiresAt).getTime() <= Date.now();
-  const expiryLabel = describeExpiry(expiresAt);
+  const expiryLabel = describeExpiry(expiresAt, { expired: kt.expired, minutes: kt.expiresMin, hours: kt.expiresHours, days: kt.expiresDays }, fmt);
 
   async function setStatus(status: string) {
     setBusy(status);
@@ -398,7 +425,7 @@ function TicketDrawer({
       const row = await updateIssue.mutateAsync({ id: issue.id, patch: { status } });
       onChanged(row);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not update the ticket.");
+      setError(e instanceof Error ? e.message : kt.updateFailed);
     } finally {
       setBusy(null);
     }
@@ -414,7 +441,7 @@ function TicketDrawer({
       });
       onChanged(row);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not assign the ticket.");
+      setError(e instanceof Error ? e.message : kt.assignFailed);
     } finally {
       setBusy(null);
     }
@@ -435,7 +462,7 @@ function TicketDrawer({
     } catch (e) {
       // 422 = praise or neutral chatter: nothing to hand off. A fact about
       // the ticket, so it shows as a message rather than a failure.
-      setError(e instanceof Error ? e.message : "Could not mint a code.");
+      setError(e instanceof Error ? e.message : kt.mintFailed);
     } finally {
       setBusy(null);
     }
@@ -457,34 +484,34 @@ function TicketDrawer({
     <div className="fixed inset-0 z-50 flex justify-end">
       <button
         type="button"
-        aria-label="Close ticket"
+        aria-label={kt.drawerCloseAria}
         onClick={onClose}
         className="absolute inset-0 bg-black/40"
       />
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={`Ticket ${issue.ticket_number ?? issue.review_id}`}
+        aria-label={fill(kt.drawerAria, { n: issue.ticket_number ?? issue.review_id })}
         className="team-ui relative h-full w-full max-w-xl overflow-y-auto border-l border-[var(--ui-line)] bg-[var(--ui-page)] p-5"
       >
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 className="text-[18px] font-bold text-[var(--ui-ink)]">{issue.ticket_number ?? "Unticketed"}</h2>
+            <h2 className="text-[18px] font-bold text-[var(--ui-ink)]">{issue.ticket_number ?? kt.unticketed}</h2>
             <p className="mt-0.5 text-[12px] text-[var(--ui-ink-2)]">
-              {label(issue.primary_category)} · {label(issue.subcategory)} · found {new Date(issue.created_at).toLocaleString()}
+              {label(issue.primary_category)} · {label(issue.subcategory)} · {fill(kt.found, { when: new Date(issue.created_at).toLocaleString(dateLocale) })}
             </p>
           </div>
           <button type="button" onClick={onClose} className={`${UI_BTN} bg-[var(--ui-surface)] px-4 py-2 text-[var(--ui-ink)]`}>
-            Close
+            {kt.close}
           </button>
         </div>
 
         <div className="mt-3 flex flex-wrap gap-2">
-          <Chip strong={issue.priority === "urgent" || issue.priority === "high"}>{label(issue.priority)}</Chip>
-          <Chip strong={UNRESOLVED.has(issue.status)}>{label(issue.status)}</Chip>
+          <Chip strong={issue.priority === "urgent" || issue.priority === "high"}>{prLabel(issue.priority)}</Chip>
+          <Chip strong={UNRESOLVED.has(issue.status)}>{stLabel(issue.status)}</Chip>
           <Chip>{issue.sentiment}</Chip>
-          <Chip>{issue.rating}★</Chip>
-          {issue.needs_attention && <Chip strong>needs attention</Chip>}
+          <Chip>{fmt(issue.rating)}★</Chip>
+          {issue.needs_attention && <Chip strong>{kt.needsAttention}</Chip>}
         </div>
 
         {error && (
@@ -495,20 +522,20 @@ function TicketDrawer({
 
         {issue.review_text && (
           <div className="ui-panel mt-4 px-4 py-3">
-            <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">The review</div>
+            <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">{kt.reviewTitle}</div>
             <p className="mt-1.5 whitespace-pre-wrap text-[13px] leading-relaxed text-[var(--ui-ink)]">{issue.review_text}</p>
           </div>
         )}
 
         <div className="ui-panel mt-3 px-4 py-3">
-          <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">What the assistant understood</div>
+          <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">{kt.understoodTitle}</div>
           <dl className="mt-1.5 space-y-1.5 text-[13px]">
             {(
               [
-                ["Reviewer", issue.reviewer_name ?? "not named"],
-                ["Intent", label(issue.intent)],
-                ["Detail", issue.subcategory_detail],
-                ["Summary", issue.summary],
+                [kt.reviewer, issue.reviewer_name ?? kt.notNamed],
+                [kt.intent, label(issue.intent)],
+                [kt.detail, issue.subcategory_detail],
+                [kt.summary, issue.summary],
               ] as [string, string | null][]
             ).map(([k, v]) => (
               <div key={k} className="flex gap-3">
@@ -520,33 +547,32 @@ function TicketDrawer({
         </div>
 
         <div className="ui-panel mt-3 px-4 py-3">
-          <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">Owner</div>
+          <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">{kt.ownerTitle}</div>
           <p className="mt-1.5 text-[12px] leading-relaxed text-[var(--ui-ink-2)]">
-            Assign the ticket to the teammate who owns the follow-up. They get
-            one notification; the owner is visible on the queue.
+            {kt.ownerBody}
           </p>
           <select
             value={issue.assigned_to ?? ""}
             disabled={busy !== null}
             onChange={(e) => void setAssignee(e.target.value || null)}
-            aria-label="Ticket owner"
+            aria-label={kt.ownerAria}
             className="ui-input mt-2 w-full bg-[var(--ui-surface)] px-3 py-2 text-[13px] font-semibold text-[var(--ui-ink)] disabled:opacity-40"
           >
-            <option value="">Unassigned</option>
+            <option value="">{kt.unassignedOpt}</option>
             {assigneeMissing && issue.assigned_to && (
-              <option value={issue.assigned_to}>Assigned</option>
+              <option value={issue.assigned_to}>{kt.assignedOpt}</option>
             )}
             {assignees.map((a) => (
               <option key={a.user_id} value={a.user_id}>
                 {a.name}
-                {a.user_id === user?.id ? " (you)" : ""}
+                {a.user_id === user?.id ? kt.youSuffix : ""}
               </option>
             ))}
           </select>
         </div>
 
         <div className="ui-panel mt-3 px-4 py-3">
-          <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">Set status</div>
+          <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">{kt.statusTitle}</div>
           <div className="mt-2 flex flex-wrap gap-2">
             {STATUSES.filter((s) => s !== issue.status).map((s) => (
               <button
@@ -556,18 +582,16 @@ function TicketDrawer({
                 onClick={() => void setStatus(s)}
                 className={`${UI_BTN} border border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-2 text-[var(--ui-ink)] disabled:opacity-40`}
               >
-                {busy === s ? "Saving…" : label(s)}
+                {busy === s ? kt.saving : stLabel(s)}
               </button>
             ))}
           </div>
         </div>
 
         <div className="ui-panel mt-3 px-4 py-3">
-          <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">WhatsApp handoff</div>
+          <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">{kt.handoffTitle}</div>
           <p className="mt-1.5 text-[12px] leading-relaxed text-[var(--ui-ink-2)]">
-            {code
-              ? "The customer sends this code on WhatsApp, and the assistant picks up the ticket with the full story already in context. The # is part of the code — it is what tells the assistant this is a ticket, not an ordinary word."
-              : "No code yet. Mint one to hand this ticket to the customer on WhatsApp — the assistant then knows the issue before they say a word."}
+            {code ? kt.handoffHasCode : kt.handoffNoCode}
           </p>
           {code ? (
             <>
@@ -575,12 +599,12 @@ function TicketDrawer({
                 #{code}
               </p>
               <p className="mt-1 text-center text-[11px] text-[var(--ui-ink-2)]">
-                {expiryLabel ? `Code ${expiryLabel}` : "Legacy code — no expiry"}
+                {expiryLabel ? fill(kt.codeLine, { label: expiryLabel }) : kt.legacyCode}
               </p>
               {expired ? (
                 <div className="mt-2">
                   <p className="text-[12px] text-[var(--ui-ink-2)]">
-                    This code has expired, so the link in the old review reply no longer attaches the ticket.
+                    {kt.expiredBody}
                   </p>
                   <button
                     type="button"
@@ -588,27 +612,27 @@ function TicketDrawer({
                     onClick={() => void mint()}
                     className={`${BTN_PRIMARY} mt-2 disabled:opacity-40`}
                   >
-                    {busy === "code" ? "Minting…" : "Mint a new code"}
+                    {busy === "code" ? kt.minting : kt.mintNew}
                   </button>
                 </div>
               ) : link ? (
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <button type="button" onClick={() => void copyLink()} className={BTN_PRIMARY}>
-                    {copied ? "Copied" : "Copy WhatsApp link"}
+                    {copied ? kt.copied : kt.copyLink}
                   </button>
                   <a href={link} target="_blank" rel="noreferrer" className="text-[12px] font-semibold text-[var(--ui-ink)] underline">
-                    Open WhatsApp
+                    {kt.openWa}
                   </a>
                 </div>
               ) : (
                 <p className="mt-2 text-[12px] text-[var(--ui-ink-2)]">
-                  Connect a WhatsApp number (Channels page) to get a tappable link — until then, send the code yourself.
+                  {kt.noWaPhone}
                 </p>
               )}
             </>
           ) : (
             <button type="button" disabled={busy !== null} onClick={() => void mint()} className={`${BTN_PRIMARY} mt-3 w-full disabled:opacity-40`}>
-              {busy === "code" ? "Minting…" : "Mint handoff code"}
+              {busy === "code" ? kt.minting : kt.mintCode}
             </button>
           )}
         </div>

@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import { leadCategoryLabelKnown } from "@/lib/lead-labels";
 import PlatformMark, { platformLabel } from "@/components/channels/PlatformMark";
 import CustomerAvatar from "@/components/customers/CustomerAvatar";
 import {
@@ -38,21 +40,40 @@ function isGoogle(platform: string | null): boolean {
  * internal digest, which must never be shown as contact information; their
  * location is the meaningful identifier instead.
  */
-function contactLine(c: Customer): string {
-  if (isGoogle(c.platform)) return c.channel_name ?? "Google review";
+function contactLine(c: Customer, googleLabel: string, noDetails: string): string {
+  if (isGoogle(c.platform)) return c.channel_name ?? googleLabel;
   if (c.username) return `@${c.username}`;
-  if (!c.contact_phone) return "No contact details";
+  if (!c.contact_phone) return noDetails;
   return c.contact_phone.startsWith("+") ? c.contact_phone : `+${c.contact_phone}`;
 }
 
-function shortDate(iso: string | null): string {
+function shortDate(iso: string | null, locale: string): string {
   if (!iso) return "";
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return date.toLocaleDateString(locale === "ar" ? "ar-SA" : "en-US", { month: "short", day: "numeric" });
+}
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [k, v]) => out.replaceAll(`{${k}}`, String(v)),
+    s,
+  );
 }
 
 export default function CustomersTable() {
+  const { t, locale } = useI18n();
+  const u = t.dashboard.customers;
+  const catLabel = (value: string | null | undefined): string => {
+    if (!value) return "—";
+    const lead = leadCategoryLabelKnown(value, locale);
+    if (lead) return lead;
+    return (u.threadCats as Record<string, string>)[value] ?? value;
+  };
+  const prioLabel = (value: string | null | undefined): string => {
+    if (!value) return "—";
+    return (u.priorities as Record<string, string>)[value] ?? value;
+  };
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [platform, setPlatform] = useState("all");
@@ -104,7 +125,7 @@ export default function CustomersTable() {
   const error = customersQuery.isError
     ? customersQuery.error instanceof Error
       ? customersQuery.error.message
-      : "Could not load customers."
+      : u.loadFailed
     : null;
 
   const profileQuery = useQuery({
@@ -183,7 +204,7 @@ export default function CustomersTable() {
       });
     } catch (e) {
       setLoadMoreError(
-        e instanceof Error ? e.message : "Could not load more customers.",
+        e instanceof Error ? e.message : u.loadMoreFailed,
       );
     } finally {
       setLoadingMore(false);
@@ -205,8 +226,8 @@ export default function CustomersTable() {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search customers"
-            aria-label="Search customers"
+            placeholder={u.searchPh}
+            aria-label={u.searchAria}
             enterKeyHint="search"
             className="input-field h-9 w-full text-[12px] sm:text-[13px]"
           />
@@ -214,10 +235,10 @@ export default function CustomersTable() {
             <select
               value={platform}
               onChange={(e) => setPlatform(e.target.value)}
-              aria-label="Filter by platform"
+              aria-label={u.filterPlatform}
               className={filterSelect}
             >
-              <option value="all">All platforms</option>
+              <option value="all">{u.allPlatforms}</option>
               {platforms.map((p) => (
                 <option key={p} value={p}>
                   {platformLabel(p)}
@@ -227,10 +248,10 @@ export default function CustomersTable() {
             <select
               value={category}
               onChange={(e) => setCategory(e.target.value)}
-              aria-label="Filter by category"
+              aria-label={u.filterCategory}
               className={filterSelect}
             >
-              <option value="all">All categories</option>
+              <option value="all">{u.allCategories}</option>
               {categories.map((c) => (
                 <option key={c} value={c}>
                   {c}
@@ -240,24 +261,24 @@ export default function CustomersTable() {
             <select
               value={priority}
               onChange={(e) => setPriority(e.target.value)}
-              aria-label="Filter by priority"
+              aria-label={u.filterPriority}
               className={filterSelect}
             >
-              <option value="all">All priority</option>
-              <option value="urgent">Urgent</option>
-              <option value="high">High</option>
-              <option value="normal">Normal</option>
-              <option value="low">Low</option>
+              <option value="all">{u.allPriority}</option>
+              <option value="urgent">{u.priorities.urgent}</option>
+              <option value="high">{u.priorities.high}</option>
+              <option value="normal">{u.priorities.normal}</option>
+              <option value="low">{u.priorities.low}</option>
             </select>
             <select
               value={sort}
               onChange={(e) => setSort(e.target.value as "recent" | "important" | "messages")}
-              aria-label="Sort"
+              aria-label={u.sortAria}
               className={`${filterSelect} sm:ml-auto`}
             >
-              <option value="important">Important first</option>
-              <option value="recent">Newest first</option>
-              <option value="messages">Most messages</option>
+              <option value="important">{u.sortImportant}</option>
+              <option value="recent">{u.sortRecent}</option>
+              <option value="messages">{u.sortMessages}</option>
             </select>
             <button
               onClick={() => setImportantOnly((v) => !v)}
@@ -271,7 +292,7 @@ export default function CustomersTable() {
               {importantOnly && (
                 <span className="h-1.5 w-1.5 rounded-full bg-[#C4304B]" aria-hidden />
               )}
-              Important{importantTotal ? ` (${importantTotal})` : ""}
+              {u.important}{importantTotal ? ` (${importantTotal})` : ""}
             </button>
           </div>
         </div>
@@ -280,11 +301,11 @@ export default function CustomersTable() {
         <div className="min-h-0 flex-1 overflow-auto">
           {loading && customers.length === 0 ? (
             <div className="flex justify-center py-16">
-              <span className="text-[12px] text-ink/40">Loading…</span>
+              <span className="text-[12px] text-ink/40">{u.loading}</span>
             </div>
           ) : visible.length === 0 ? (
             <p className="px-4 py-10 text-center text-[12px] text-ink/40">
-              {search ? "No customers match that search." : "No contacts yet. Once someone messages you they appear here."}
+              {search ? u.emptySearch : u.emptyNone}
             </p>
           ) : (
             <>
@@ -302,7 +323,7 @@ export default function CustomersTable() {
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center gap-2">
                         <span className="truncate text-[14px] font-semibold text-ink dark:text-fog">
-                          {c.display_name || "Unknown sender"}
+                          {c.display_name || u.unknownSender}
                         </span>
                         {c.unread > 0 && (
                           <span className="ml-auto rounded-full bg-deep-violet px-1.5 py-0.5 text-[10px] font-bold text-white">
@@ -313,26 +334,26 @@ export default function CustomersTable() {
                       <span className="mt-0.5 flex min-w-0 items-center gap-1 text-[11px] text-ink/45 dark:text-fog/45">
                         <PlatformMark platform={c.platform as never} size={14} />
                         <span className="shrink-0">{platformLabel(c.platform ?? "")}</span>
-                        <span className="truncate">· {contactLine(c)}</span>
+                        <span className="truncate">· {contactLine(c, u.googleReview, u.noDetails)}</span>
                       </span>
                       <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
                         {c.category && c.category !== "normal" && (
                           <span className="rounded-full bg-[var(--ui-sunken)] px-2 py-0.5 text-[10px] font-semibold text-[var(--ui-ink)]">
-                            {c.category}
+                            {catLabel(c.category)}
                           </span>
                         )}
                         {c.priority && c.priority !== "normal" && (
                           <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${PRIORITY_CHIP[c.priority] ?? "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"}`}>
-                            {c.priority}
+                            {prioLabel(c.priority)}
                           </span>
                         )}
                         {c.important && (
                           <span className="rounded-full bg-[#FF4F6E]/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#C4304B]">
-                            Important
+                            {u.important}
                           </span>
                         )}
                         <span className="ml-auto text-[10px] tabular-nums text-ink/35 dark:text-fog/35">
-                          {shortDate(c.last_message_at)}
+                          {shortDate(c.last_message_at, locale)}
                         </span>
                       </span>
                     </span>
@@ -353,13 +374,13 @@ export default function CustomersTable() {
               <table className="hidden w-full table-fixed text-left text-[12px] sm:table">
                 <thead className="sticky top-0 bg-[var(--ui-sunken)] text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
                   <tr>
-                    <th className="w-[40%] px-3 py-2 2xl:w-[30%]">Name</th>
-                    <th className="w-[18%] px-3 py-2 2xl:w-[12%]">Platform</th>
-                    <th className="hidden w-[18%] px-3 py-2 2xl:table-cell">Channel</th>
-                    <th className="w-[14%] px-3 py-2 2xl:w-[10%]">Category</th>
-                    <th className="w-[14%] px-3 py-2 2xl:w-[10%]">Priority</th>
-                    <th className="hidden w-[8%] px-3 py-2 text-right 2xl:table-cell">Msgs</th>
-                    <th className="w-[14%] px-3 py-2 text-center 2xl:w-[12%]">Inbox</th>
+                    <th className="w-[40%] px-3 py-2 2xl:w-[30%]">{u.colName}</th>
+                    <th className="w-[18%] px-3 py-2 2xl:w-[12%]">{u.colPlatform}</th>
+                    <th className="hidden w-[18%] px-3 py-2 2xl:table-cell">{u.colChannel}</th>
+                    <th className="w-[14%] px-3 py-2 2xl:w-[10%]">{u.colCategory}</th>
+                    <th className="w-[14%] px-3 py-2 2xl:w-[10%]">{u.colPriority}</th>
+                    <th className="hidden w-[8%] px-3 py-2 text-right 2xl:table-cell">{u.colMsgs}</th>
+                    <th className="w-[14%] px-3 py-2 text-center 2xl:w-[12%]">{u.colInbox}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -376,7 +397,7 @@ export default function CustomersTable() {
                           <CustomerAvatar name={c.display_name} url={c.avatar_url} size="sm" />
                           <span className="min-w-0">
                             <span className="block truncate font-semibold text-ink dark:text-fog">
-                              {c.display_name || "Unknown sender"}
+                              {c.display_name || u.unknownSender}
                               {c.unread > 0 && (
                                 <span className="ml-1.5 inline-block rounded-full bg-deep-violet px-1.5 text-[9px] font-bold leading-4 text-white">
                                   {c.unread}
@@ -384,13 +405,13 @@ export default function CustomersTable() {
                               )}
                               {c.important && (
                                 <span className="ml-1.5 inline-block rounded-full bg-[#FF4F6E]/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[#C4304B]">
-                                  Important
+                                  {u.important}
                                 </span>
                               )}
                             </span>
                             <span className="block truncate text-[10px] text-ink/40 dark:text-fog/40">
-                              {contactLine(c)}
-                              {c.last_message_at ? ` · ${shortDate(c.last_message_at)}` : ""}
+                              {contactLine(c, u.googleReview, u.noDetails)}
+                              {c.last_message_at ? ` · ${shortDate(c.last_message_at, locale)}` : ""}
                             </span>
                           </span>
                         </div>
@@ -402,11 +423,11 @@ export default function CustomersTable() {
                         </span>
                       </td>
                       <td className="hidden px-3 py-2 text-ink/60 dark:text-fog/60 2xl:table-cell">{c.channel_name || "—"}</td>
-                      <td className="px-3 py-2 text-ink/60 dark:text-fog/60">{c.category || "—"}</td>
+                      <td className="px-3 py-2 text-ink/60 dark:text-fog/60">{c.category ? catLabel(c.category) : "—"}</td>
                       <td className="px-3 py-2">
                         {c.priority ? (
                           <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${PRIORITY_CHIP[c.priority] ?? "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"}`}>
-                            {c.priority}
+                            {prioLabel(c.priority)}
                           </span>
                         ) : "—"}
                       </td>
@@ -417,7 +438,7 @@ export default function CustomersTable() {
                           onClick={(e) => e.stopPropagation()}
                           className="inline-flex items-center gap-1 rounded-md border border-ink/[0.08] bg-white px-2 py-1 text-[10px] font-semibold text-deep-violet transition hover:bg-deep-violet/5 dark:border-fog/[0.1] dark:bg-ink dark:hover:bg-deep-violet/10"
                         >
-                          Open
+                          {u.open}
                           <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="2">
                             <path d="M4 2h6v6M10 2L4 8" strokeLinecap="round" strokeLinejoin="round" />
                           </svg>
@@ -446,7 +467,7 @@ export default function CustomersTable() {
               disabled={loadingMore}
               className="rounded-full border border-ink/[0.08] bg-white px-3 py-1.5 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet/30 hover:text-deep-violet disabled:opacity-50 dark:border-fog/[0.12] dark:bg-ink dark:text-fog/60 dark:hover:text-fog"
             >
-              {loadingMore ? "Loading…" : "Load more customers"}
+              {loadingMore ? u.loading : u.loadMore}
             </button>
           </div>
         )}
@@ -456,7 +477,7 @@ export default function CustomersTable() {
           </p>
         )}
         <div className="border-t border-ink/[0.06] px-4 py-2 text-[11px] text-ink/40 dark:border-fog/[0.06] dark:text-fog/40">
-          {total} customers
+          {fill(u.count, { count: total })}
         </div>
       </div>
 
@@ -467,13 +488,13 @@ export default function CustomersTable() {
             <button
               type="button"
               onClick={() => setSelected(null)}
-              aria-label="Back to customers"
+              aria-label={u.backTo}
               className="flex h-8 items-center gap-1 rounded-lg px-2 text-[12px] font-semibold text-deep-violet transition hover:bg-deep-violet/5 xl:hidden"
             >
-              ← Back
+              ← {t.common.back}
             </button>
             <p className="hidden flex-1 truncate text-[11px] font-bold uppercase tracking-[0.12em] text-ink/40 dark:text-fog/40 xl:block">
-              Customer profile
+              {u.profileTitle}
             </p>
             <div className="flex-1 xl:hidden" />
             <Link
@@ -484,8 +505,8 @@ export default function CustomersTable() {
               }
               className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-deep-violet px-2.5 py-1.5 text-[11px] font-bold text-white transition hover:bg-deep-violet/90"
             >
-              <span className="xl:hidden">{isGoogle(selected.platform) ? "Reviews" : "Inbox"}</span>
-              <span className="hidden xl:inline">{isGoogle(selected.platform) ? "Open in reviews" : "Open in inbox"}</span>
+              <span className="xl:hidden">{isGoogle(selected.platform) ? u.reviews : u.inbox}</span>
+              <span className="hidden xl:inline">{isGoogle(selected.platform) ? u.openReviews : u.openInboxPanel}</span>
               <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
                 <path d="M4 2h6v6M10 2L4 8" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
@@ -493,7 +514,7 @@ export default function CustomersTable() {
             <button
               type="button"
               onClick={() => setSelected(null)}
-              aria-label="Close profile"
+              aria-label={u.closeProfile}
               className="hidden h-8 w-8 items-center justify-center rounded-full text-[16px] font-bold text-ink/45 hover:bg-ink/[0.04] dark:text-fog/45 dark:hover:bg-fog/[0.06] xl:flex"
             >
               ×
@@ -516,7 +537,7 @@ export default function CustomersTable() {
             ) : (
               <div className="px-1 py-6 text-center">
                 <p className="text-[12px] text-ink/45 dark:text-fog/45">
-                  {profileQuery.isError ? "Could not load this customer." : "Profile unavailable."}
+                  {profileQuery.isError ? u.profileError : u.profileNone}
                 </p>
                 {profileQuery.isError && (
                   <button
@@ -524,7 +545,7 @@ export default function CustomersTable() {
                     onClick={() => void profileQuery.refetch()}
                     className="mt-3 rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-semibold text-white"
                   >
-                    Try again
+                    {u.tryAgain}
                   </button>
                 )}
               </div>

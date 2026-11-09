@@ -15,9 +15,19 @@ import CropEditor, {
   CROP_RATIOS,
   STORY_RATIO,
   centerCropBlob,
+  ratioHint,
+  ratioLabel,
   type CropRatio,
 } from "./CropEditor";
 import { INK, INK2 } from "./ui";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 /*
  * Publish to the tenant's OWN Instagram feed — the way the Instagram app
@@ -96,6 +106,8 @@ function PostPreview({
   ratio: CropRatio;
   locationName: string | null;
 }) {
+  const { t } = useI18n();
+  const k = t.channelHub.instagram.composer;
   const aspect = ratio.aspect ?? 1;
   return (
     <div className="w-full max-w-[232px] overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-surface)]">
@@ -106,7 +118,7 @@ function PostPreview({
         >
           <PlatformMark platform="instagram" size={14} />
         </span>
-        <span className={`text-[13px] font-bold ${INK}`}>{username || "your account"}</span>
+        <span className={`text-[13px] font-bold ${INK}`}>{username || k.previewUser}</span>
       </div>
       <div
         className="relative w-full bg-black"
@@ -124,8 +136,8 @@ function PostPreview({
       </div>
       <div className="px-3 py-2">
         <p className={`text-[13px] leading-snug ${INK}`}>
-          <span className="mr-1.5 font-bold">{username || "your account"}</span>
-          {caption || "Your caption appears here."}
+          <span className="mr-1.5 font-bold">{username || k.previewUser}</span>
+          {caption || k.previewCaption}
         </p>
         {locationName && (
           <p className={`mt-1 text-[12px] font-semibold ${INK2}`}>📍 {locationName}</p>
@@ -163,6 +175,11 @@ export default function PostComposer({
   const [quota, setQuota] = useState<{ total: number; used: number } | null>(null);
   const nextKey = useRef(0);
   const cropBusyRef = useRef(false);
+  const { t, locale } = useI18n();
+  const k = t.channelHub.instagram.composer;
+  const cr = t.channelHub.instagram.cropper;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
 
   // The quota line is informational — a refused read (older scope set)
   // degrades to zeros server-side and we simply don't render it.
@@ -214,15 +231,11 @@ export default function PostComposer({
         /* not JSON — show the message as-is */
       }
       throw new Error(
-        unreachable
-          ? "The server was unreachable for a moment — your image is still here, press Done to try again."
-          : friendly || "Upload failed.",
+        unreachable ? k.errors.unreachable : friendly || k.errors.uploadFailed,
       );
     }
     if (typeof result?.url !== "string" || !result.url.startsWith("https://")) {
-      throw new Error(
-        "Instagram fetches images from a public HTTPS url, and this server's storage is not public. Host the image somewhere public and paste its link below.",
-      );
+      throw new Error(k.errors.notPublic);
     }
     return result.url;
   };
@@ -232,7 +245,7 @@ export default function PostComposer({
     const room = MAX_IMAGES - entries.length - pending.length;
     const picked = Array.from(files).slice(0, Math.max(0, room));
     if (picked.length === 0) {
-      setError(`Up to ${MAX_IMAGES} images per post.`);
+      setError(fill(k.errors.maxImages, { max: fmt(MAX_IMAGES) }));
       return;
     }
     setError(null);
@@ -254,7 +267,7 @@ export default function PostComposer({
       setPending((prev) => prev.slice(1));
     } catch (e) {
       // Keep the file queued — the crop editor stays open so Done retries.
-      setError(e instanceof Error ? e.message : "Upload failed.");
+      setError(e instanceof Error ? e.message : k.errors.uploadFailed);
     } finally {
       cropBusyRef.current = false;
       setBusy(false);
@@ -267,11 +280,11 @@ export default function PostComposer({
     try {
       parsed = new URL(value);
     } catch {
-      setError("Enter a valid image URL.");
+      setError(k.errors.badUrl);
       return;
     }
     if (parsed.protocol !== "https:") {
-      setError("Instagram fetches images itself — the link must be public HTTPS.");
+      setError(k.errors.needHttps);
       return;
     }
     setError(null);
@@ -315,7 +328,7 @@ export default function PostComposer({
       const out = await suggestInstagramCaption(igId, "", caption);
       setCaption(out.caption.slice(0, CAPTION_MAX));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Caption generation failed.");
+      setError(e instanceof Error ? e.message : k.errors.caption);
     } finally {
       setAiBusy(false);
     }
@@ -337,9 +350,13 @@ export default function PostComposer({
       if (toStory) {
         const firstFile = entries[0]?.file;
         if (!firstFile) {
-          throw new Error("Stories need an uploaded image we can crop to 9:16 — pasted links can't be cropped here.");
+          throw new Error(k.errors.storyNeedsUpload);
         }
-        const storyBlob = await centerCropBlob(firstFile, STORY_RATIO);
+        const storyBlob = await centerCropBlob(firstFile, STORY_RATIO, {
+          unreadable: cr.errors.unreadable,
+          noCanvas: cr.errors.noCanvas,
+          cropFailed: cr.errors.cropFailed,
+        });
         body.story_image_urls = [await uploadBlob(storyBlob, "story-916")];
       }
 
@@ -347,9 +364,9 @@ export default function PostComposer({
       const failed = out.story_media_ids.filter((s) => s.startsWith("failed:"));
       const storiesOk = out.story_media_ids.length - failed.length;
       setPublishedNote(
-        `Published — it appears in the grid below.` +
-          (storiesOk ? ` Story shared too.` : "") +
-          (failed.length ? ` Story refused: ${failed[0].slice(8, 130)}` : ""),
+        k.published +
+          (storiesOk ? ` ${k.storyOk}` : "") +
+          (failed.length ? ` ${fill(k.storyRefused, { msg: failed[0].slice(8, 130) })}` : ""),
       );
       setEntries([]);
       setCaption("");
@@ -361,7 +378,7 @@ export default function PostComposer({
       onPublished();
       loadQuota();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Instagram refused the post.");
+      setError(e instanceof Error ? e.message : k.errors.publish);
     } finally {
       setBusy(false);
     }
@@ -375,11 +392,11 @@ export default function PostComposer({
           onClick={toggle}
           className="ui-btn rounded-lg bg-[var(--ui-ink)] px-4 py-2.5 text-[12px] font-semibold text-[var(--ui-on-ink)]"
         >
-          New post
+          {k.newPost}
         </button>
         {quota && (
           <span className={`text-[12px] ${INK2}`}>
-            {quota.used} of {quota.total} posts used in the next 24 hours
+            {fill(k.quota, { used: fmt(quota.used), total: fmt(quota.total) })}
           </span>
         )}
       </div>
@@ -392,10 +409,10 @@ export default function PostComposer({
   return (
     <section className="rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h4 className={`text-[13px] font-semibold ${INK}`}>New post</h4>
+        <h4 className={`text-[13px] font-semibold ${INK}`}>{k.newPost}</h4>
         {quota && (
           <span className={`text-[12px] ${INK2}`}>
-            {quota.used} of {quota.total} posts used in the next 24 hours
+            {fill(k.quota, { used: fmt(quota.used), total: fmt(quota.total) })}
           </span>
         )}
       </div>
@@ -435,7 +452,7 @@ export default function PostComposer({
 
             <div className="min-w-0 space-y-3">
               <label className="flex cursor-pointer items-center justify-center rounded-[12px] border border-dashed border-[var(--ui-line)] bg-[var(--ui-sunken)] px-4 py-5 text-[12px] font-semibold text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]">
-                {busy ? "Working…" : "Add images (up to 10 — they become a carousel)"}
+                {busy ? k.working : k.addImages}
                 <input
                   type="file"
                   accept="image/*"
@@ -455,19 +472,19 @@ export default function PostComposer({
                     <li key={e.key} className="relative">
                       <Image
                         src={e.url}
-                        alt={`Post image ${i + 1}`}
+                        alt={fill(k.postImageAlt, { n: fmt(i + 1) })}
                         width={64}
                         height={64}
                         className="h-16 w-16 rounded-[8px] border border-[var(--ui-line)] object-cover"
                       />
                       {i === 0 && (
                         <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 rounded-full bg-[var(--ui-ink)] px-1.5 text-[9px] font-bold text-[var(--ui-on-ink)]">
-                          1st
+                          {k.first}
                         </span>
                       )}
                       <button
                         type="button"
-                        aria-label={`Remove image ${i + 1}`}
+                        aria-label={fill(k.removeImage, { n: fmt(i + 1) })}
                         onClick={() =>
                           setEntries((prev) => prev.filter((x) => x.key !== e.key))
                         }
@@ -490,8 +507,8 @@ export default function PostComposer({
                       addHostedUrl();
                     }
                   }}
-                  placeholder="…or paste a public HTTPS image link"
-                  aria-label="Public image URL"
+                  placeholder={k.pastePh}
+                  aria-label={k.pasteAria}
                   className={`${FIELD} min-w-0 flex-1`}
                 />
                 <button
@@ -500,7 +517,7 @@ export default function PostComposer({
                   disabled={busy || !urlDraft.trim()}
                   className="rounded-[12px] border border-[var(--ui-line)] px-3 py-2 text-[12px] font-semibold text-[var(--ui-ink)] disabled:opacity-50"
                 >
-                  Add
+                  {k.add}
                 </button>
               </div>
 
@@ -508,7 +525,7 @@ export default function PostComposer({
                   mirrors it. Meta crops carousel children to the FIRST
                   image, so the 1st badge is the honest marker. */}
               <div className="flex flex-wrap items-center gap-1.5">
-                <span className={`text-[12px] font-semibold ${INK2}`}>Shape</span>
+                <span className={`text-[12px] font-semibold ${INK2}`}>{k.shape}</span>
                 {CROP_RATIOS.map((r) => (
                   <button
                     key={r.key}
@@ -520,7 +537,7 @@ export default function PostComposer({
                         : `border-[var(--ui-line)] bg-[var(--ui-surface)] ${INK} hover:bg-[var(--ui-line)]`
                     }`}
                   >
-                    {r.label} <span className="opacity-60">{r.hint}</span>
+                    {ratioLabel(r, cr)} <span className="opacity-60">{ratioHint(r, cr)}</span>
                   </button>
                 ))}
               </div>
@@ -532,8 +549,8 @@ export default function PostComposer({
                     onChange={(e) => setCaption(e.target.value)}
                     rows={3}
                     maxLength={CAPTION_MAX}
-                    aria-label="Caption"
-                    placeholder="Caption…"
+                    aria-label={k.captionAria}
+                    placeholder={k.captionPh}
                     className={`${FIELD} w-full resize-y`}
                   />
                 </div>
@@ -552,10 +569,10 @@ export default function PostComposer({
                       height={16}
                       className="rounded-[4px]"
                     />
-                    {aiBusy ? "Writing…" : "Generate AI Caption"}
+                    {aiBusy ? k.writing : k.generate}
                   </button>
                   <span className={`text-[11px] tabular-nums ${INK2}`}>
-                    {caption.length}/{CAPTION_MAX}
+                    {fmt(caption.length)}/{fmt(CAPTION_MAX)}
                   </span>
                 </div>
               </div>
@@ -565,24 +582,22 @@ export default function PostComposer({
                   checked={toStory}
                   onChange={setToStory}
                   disabled={!storyAvailable}
-                  label="Also share to story"
+                  label={k.toStory}
                 />
                 <Switch
                   checked={toFacebook}
                   onChange={setToFacebook}
-                  label="Share to Facebook"
+                  label={k.toFacebook}
                 />
               </div>
               {toStory && !storyAvailable && (
                 <p className={`text-[12px] ${INK2}`}>
-                  Stories must be 9:16 — upload the image here (not a pasted
-                  link) and we crop it automatically.
+                  {k.storyHint}
                 </p>
               )}
               {entries.length === 0 && (
                 <p className={`text-[12px] ${INK2}`}>
-                  Add at least one image above — Publish and the story toggle
-                  unlock once an image is in.
+                  {k.emptyHint}
                 </p>
               )}
 
@@ -592,7 +607,7 @@ export default function PostComposer({
                     📍 {location.name}
                     <button
                       type="button"
-                      aria-label="Remove location"
+                      aria-label={k.removeLocation}
                       onClick={() => {
                         setLocation(null);
                         setLocQuery("");
@@ -607,15 +622,15 @@ export default function PostComposer({
                     <input
                       value={locQuery}
                       onChange={(e) => setLocQuery(e.target.value)}
-                      placeholder="Add location…"
-                      aria-label="Search locations"
+                      placeholder={k.locationPh}
+                      aria-label={k.locationAria}
                       className={`${FIELD} w-full`}
                     />
                     {showResults !== null && (
                       <ul className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)] shadow-[0_4px_12px_rgba(0,0,0,0.12)]">
                         {showResults.length === 0 ? (
                           <li className={`px-3 py-2 text-[12px] ${INK2}`}>
-                            {locQuery.trim().length >= 2 && "No places found — location tagging needs a Facebook-linked account."}
+                            {locQuery.trim().length >= 2 && k.noPlaces}
                           </li>
                         ) : (
                           showResults.map((p) => (
@@ -643,8 +658,8 @@ export default function PostComposer({
                 value={altText}
                 onChange={(e) => setAltText(e.target.value)}
                 maxLength={1000}
-                placeholder="Alt text — describe the image for visually impaired people"
-                aria-label="Alt text"
+                placeholder={k.altPh}
+                aria-label={k.altAria}
                 className={`${FIELD} w-full`}
               />
 
@@ -655,9 +670,7 @@ export default function PostComposer({
               )}
 
               <p className={`text-[11px] leading-relaxed ${INK2}`}>
-                Instagram&apos;s API doesn&apos;t let apps turn comments off,
-                tag people or collaborators, or hide like counts on image
-                posts — manage those in the Instagram app after publishing.
+                {k.footer}
               </p>
 
               <div className="flex items-center justify-end gap-2">
@@ -667,7 +680,7 @@ export default function PostComposer({
                   disabled={busy}
                   className="rounded-[12px] border border-[var(--ui-line)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-ink)] disabled:opacity-50"
                 >
-                  Close
+                  {k.close}
                 </button>
                 <button
                   type="button"
@@ -675,7 +688,7 @@ export default function PostComposer({
                   disabled={busy || entries.length === 0}
                   className="rounded-[12px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)] disabled:opacity-50"
                 >
-                  {busy ? "Publishing…" : "Publish"}
+                  {busy ? k.publishing : k.publish}
                 </button>
               </div>
             </div>

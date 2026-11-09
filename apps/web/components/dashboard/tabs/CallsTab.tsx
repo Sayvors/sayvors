@@ -1,5 +1,14 @@
 "use client";
 
+import { useI18n } from "@/lib/i18n/I18nProvider";
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
+
 interface CallsTabProps {
   channelSlug: string;
   channelName: string;
@@ -14,12 +23,14 @@ const recentCalls = [
 ];
 
 export default function CallsTab({ channelSlug, channelName }: CallsTabProps) {
+  const { t } = useI18n();
+  const tb = t.channelHub.workspace.tab;
   return (
     <div className="p-4 sm:p-6">
       <div className="mx-auto max-w-3xl space-y-6">
         <section>
-          <h2 className="mb-1 text-[15px] font-bold text-ink">Recent Calls</h2>
-          <p className="mb-4 text-[13px] text-ink/60">Inbound and outbound calls on {channelName}.</p>
+          <h2 className="mb-1 text-[15px] font-bold text-ink">{tb.recentCalls}</h2>
+          <p className="mb-4 text-[13px] text-ink/60">{fill(tb.recentCallsSub, { name: channelName })}</p>
 
           <div className="space-y-2">
             {recentCalls.map((call) => (
@@ -72,13 +83,13 @@ export default function CallsTab({ channelSlug, channelName }: CallsTabProps) {
         </section>
 
         <section>
-          <h2 className="mb-1 text-[15px] font-bold text-ink">Call Settings</h2>
-          <p className="mb-4 text-[13px] text-ink/60">Configure call behavior for this channel.</p>
+          <h2 className="mb-1 text-[15px] font-bold text-ink">{tb.callSettings}</h2>
+          <p className="mb-4 text-[13px] text-ink/60">{tb.callSettingsSub}</p>
           <div className="rounded-xl border-2 border-white bg-white/80 p-4 sm:p-5 space-y-3">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-[13px] font-semibold text-ink">Auto-Answer Calls</p>
-                <p className="text-[11px] text-ink/50">Automatically answer incoming calls</p>
+                <p className="text-[13px] font-semibold text-ink">{tb.autoAnswer}</p>
+                <p className="text-[11px] text-ink/50">{tb.autoAnswerDesc}</p>
               </div>
               <div className="h-5 w-9 rounded-full bg-deep-violet p-0.5 transition">
                 <div className="h-4 w-4 rounded-full bg-white shadow-sm translate-x-4" />
@@ -86,8 +97,8 @@ export default function CallsTab({ channelSlug, channelName }: CallsTabProps) {
             </div>
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-[13px] font-semibold text-ink">Call Recording</p>
-                <p className="text-[11px] text-ink/50">Record calls for quality and compliance</p>
+                <p className="text-[13px] font-semibold text-ink">{tb.callRecording}</p>
+                <p className="text-[11px] text-ink/50">{tb.callRecordingDesc}</p>
               </div>
               <div className="h-5 w-9 rounded-full bg-deep-violet p-0.5 transition">
                 <div className="h-4 w-4 rounded-full bg-white shadow-sm translate-x-4" />
@@ -95,8 +106,8 @@ export default function CallsTab({ channelSlug, channelName }: CallsTabProps) {
             </div>
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-[13px] font-semibold text-ink">AI Voice Agent</p>
-                <p className="text-[11px] text-ink/50">Use AI to handle calls automatically</p>
+                <p className="text-[13px] font-semibold text-ink">{tb.aiVoice}</p>
+                <p className="text-[11px] text-ink/50">{tb.aiVoiceDesc}</p>
               </div>
               <div className="h-5 w-9 rounded-full bg-ink/10 p-0.5 transition">
                 <div className="h-4 w-4 rounded-full bg-white shadow-sm" />

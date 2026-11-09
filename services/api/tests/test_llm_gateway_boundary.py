@@ -98,6 +98,16 @@ def test_purpose_is_required_and_keyword_only(entrypoint):
     assert purpose.default is inspect.Parameter.empty
 
 
+def test_strip_model_dashes_removes_em_and_en_dashes():
+    assert (
+        gateway.strip_model_dashes("Waited 45 minutes \u2014 that's not ok")
+        == "Waited 45 minutes, that's not ok"
+    )
+    assert gateway.strip_model_dashes("4\u20135 stars") == "4, 5 stars"
+    assert gateway.strip_model_dashes(None) is None
+    assert gateway.strip_model_dashes("already plain") == "already plain"
+
+
 @pytest.mark.asyncio
 async def test_complete_builds_metering_context(monkeypatch, engine):
     captured = {}
@@ -106,7 +116,7 @@ async def test_complete_builds_metering_context(monkeypatch, engine):
         async def complete(self, req):
             captured["req"] = req
             return LLMResponse(
-                content="ok",
+                content="ok — fine",
                 provider="groq",
                 model="api-x",
                 usage=LLMUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
@@ -131,7 +141,7 @@ async def test_complete_builds_metering_context(monkeypatch, engine):
     assert req.tenant_id == "tenant-1"
     assert req.temperature == 0.2
     assert req.max_tokens == 64
-    assert resp.content == "ok"
+    assert resp.content == "ok, fine"
 
 
 def test_resolve_model_returns_resolved_model():

@@ -23,11 +23,12 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import settings
 from ..outbox.service import enqueue_event
-from .google_reviews import GoogleReviewsClient, GoogleReviewsError
+from .google_reviews import GoogleReview, GoogleReviewsClient, GoogleReviewsError
 from .models import AutoReplyConfig, Channel, ChannelMessage, ReviewReply
 from ..analytics.models import GoogleQuestionAnswer
 from .review_reply import generate_auto_reply
@@ -37,6 +38,23 @@ from .service import decrypt_token, encrypt_message_content
 logger = logging.getLogger(__name__)
 
 LOCK_SECONDS = 120
+
+# Overlap applied to the incremental fetch cursor. Google's reviews.list
+# lags Maps by minutes: a review posted just before a pass may not be in
+# that pass's response yet. Without overlap, last_polled_at marches past it
+# and every later pass filters it out permanently (updateTime is fixed) —
+# a healthy-looking poller that silently misses reviews. Re-fetched rows are
+# deduped by platform_message_id / reply state, so the overlap only replays
+# cheap read paths.
+POLL_OVERLAP = timedelta(minutes=15)
+
+# Max reviews the daily sweep may import per pass. The heal exists for
+# reviews the incremental path missed (list-API lag, a failed pass, a lost
+# push); connect-import already does unbounded backfill at connect time, so
+# the sweep heal only needs to cover small gaps — the bound keeps one
+# pathological channel from monopolizing the pass. Anything above the cap
+# heals on the next daily sweep.
+SWEEP_HEAL_BATCH = 100
 
 # Channel ids already reported as having no stored Google credentials, so the
 # poll loop warns once instead of on every cycle. Process-local by design: a
@@ -140,20 +158,33 @@ async def _update_channel_health(
     db.add(channel)
 
 
-# Google failures that do not fix themselves: the token was revoked (401
-# after a failed refresh), the location was removed (404), or the account
-# lost access (403). A channel in one of these states stays broken until the
-# merchant reconnects - it is not a transient error to retry.
-PERMANENT_GOOGLE_STATUSES = (401, 403, 404)
+# Google failures are NOT one bucket. Only a 401 (token revoked/rejected after
+# a failed refresh) genuinely needs the merchant to re-authorize.
+#
+# 404 means the location itself is gone from the Business Profile (deleted,
+# merged into another listing, or moved). Reconnecting does not bring it back,
+# so marking the channel "expired" told the merchant to reconnect forever over
+# a listing that no longer exists. Its sibling locations stay perfectly
+# healthy, which is why the tenant saw "connection expired" while reviews kept
+# syncing.
+#
+# 403 is ambiguous by nature: quota exhaustion, an API disabled on the Cloud
+# project, or permission propagation all return it, and none of them need a
+# reconnect. Treating the first 403 as permanent killed working channels, so
+# it takes repeated consecutive failures before we conclude the grant is gone.
+TOKEN_DEAD_STATUSES = (401,)
+LOCATION_GONE_STATUSES = (404,)
+PERMISSION_DENIED_STATUSES = (403,)
+PERMISSION_FAILURES_BEFORE_EXPIRED = 3
 
 
 async def _mark_channel_expired(db: AsyncSession, channel: Channel, reason: str) -> None:
     """Mark a channel expired (once) and tell the merchant to reconnect.
 
-    A revoked token, a removed location or a lost account does not repair
-    itself. Leaving the channel "active" means the worker keeps polling a
-    dead connection every cycle and the merchant is told nothing at all - a
-    silently dead channel, which is what this fixes.
+    Reserved for a dead grant (401, or a sustained 403): the token no longer
+    works and only re-authorizing fixes it. Leaving the channel "active" means
+    the worker keeps polling a dead connection every cycle and the merchant is
+    told nothing at all - a silently dead channel, which is what this fixes.
     """
     if channel.status == "expired":
         return
@@ -165,6 +196,33 @@ async def _mark_channel_expired(db: AsyncSession, channel: Channel, reason: str)
         "channel_expired",
         f"Your {channel.platform} connection expired",
         (reason or "Reconnect to keep receiving reviews.")[:160],
+        data={"channel_id": channel.id, "platform": channel.platform},
+        href="/dashboard/channels",
+    )
+
+
+async def _mark_location_removed(db: AsyncSession, channel: Channel, reason: str) -> None:
+    """Retire a channel whose Google location no longer exists.
+
+    A 404 means the listing was deleted or merged on Google's side. The grant
+    is still valid - the sibling locations on the same account keep syncing -
+    so this is NOT a reconnect problem and must not raise the "connection
+    expired" banner. The channel leaves the poll set and the merchant gets one
+    accurate message instead of a permanent nag to re-authorize.
+    """
+    if channel.status in ("disconnected", "removed"):
+        return
+    channel.status = "disconnected"
+    db.add(channel)
+    await notify(
+        db,
+        channel.user_id,
+        "channel_removed",
+        "A Google location is no longer available",
+        (
+            "Google reports this location was removed, so it stopped syncing. "
+            "Your other locations are unaffected."
+        )[:160],
         data={"channel_id": channel.id, "platform": channel.platform},
         href="/dashboard/channels",
     )
@@ -188,12 +246,41 @@ async def _claim_channel(db: AsyncSession, config_id: str, last_polled_at) -> bo
 
 
 async def _release_channel(db: AsyncSession, config_id: str) -> None:
+    """Release the poll claim WITHOUT moving the cursor.
+
+    The cursor (last_polled_at) advances only in _mark_polled, after a real
+    fetch. Releasing used to stamp it unconditionally, so a skipped pass
+    (health backoff) or a failed pass moved the cursor past reviews Google
+    had not returned yet — and later passes filtered them out forever.
+    """
     await db.execute(
         update(AutoReplyConfig)
         .where(AutoReplyConfig.id == config_id)
-        .values(polling_locked_until=None, last_polled_at=datetime.now(timezone.utc))
+        .values(polling_locked_until=None)
     )
     await db.commit()
+
+
+async def _mark_polled(db: AsyncSession, config_id: str) -> None:
+    """Advance the incremental cursor after a real provider fetch."""
+    await db.execute(
+        update(AutoReplyConfig)
+        .where(AutoReplyConfig.id == config_id)
+        .values(last_polled_at=datetime.now(timezone.utc))
+    )
+    await db.commit()
+
+
+def _fetch_cursor(last_polled_at: datetime | None) -> datetime | None:
+    """Fetch window start: the stored cursor minus the propagation overlap.
+
+    Returns None (fetch everything) when no cursor was ever stored.
+    """
+    if last_polled_at is None:
+        return None
+    if last_polled_at.tzinfo is None:
+        last_polled_at = last_polled_at.replace(tzinfo=timezone.utc)
+    return last_polled_at - POLL_OVERLAP
 
 
 async def _mark_reviews_seen(db: AsyncSession, channel: Channel, reviews) -> None:
@@ -514,7 +601,12 @@ async def _ensure_location_metadata(
 
 
 async def _backfill_existing_replies(
-    db: AsyncSession, channel: Channel, client, account_id: str, location_id: str
+    db: AsyncSession,
+    channel: Channel,
+    config: AutoReplyConfig,
+    client,
+    account_id: str,
+    location_id: str,
 ) -> int:
     """One-time full read so replies written before this fix are imported.
 
@@ -526,21 +618,36 @@ async def _backfill_existing_replies(
     """
     reviews = await client.list_reviews(account_id, location_id)
     adopted = 0
+    rolled_back = False
     for review in reviews:
         try:
             await _store_inbound_review(db, channel.id, review)
         except Exception as e:
+            # A failed flush leaves the session unusable for every following
+            # review. Roll back before continuing; the next poll retries.
+            await db.rollback()
+            rolled_back = True
             logger.warning("reply backfill inbound store failed for %s: %s", review.review_id, e)
         try:
             if await _adopt_existing_reply(db, channel, review):
                 adopted += 1
         except Exception as e:
+            await db.rollback()
+            rolled_back = True
             logger.warning("reply backfill adoption failed for %s: %s", review.review_id, e)
         try:
             await _enqueue_review_discovered(db, channel, review)
         except Exception as e:
+            await db.rollback()
+            rolled_back = True
             logger.warning("reply backfill review.discovered failed for %s: %s", review.review_id, e)
 
+    if rolled_back:
+        # rollback() expires every loaded attribute; reload both rows before
+        # touching channel.metadata_json or config.min_rating_auto, otherwise
+        # the next sync attribute read raises MissingGreenlet.
+        await db.refresh(channel)
+        await db.refresh(config)
     meta = _channel_meta(channel)
     meta["reply_backfill_done"] = True
     channel.metadata_json = json.dumps(meta)
@@ -552,12 +659,13 @@ async def _store_inbound_review(db: AsyncSession, channel_id: str, review) -> No
     """Mirror the inbound review as a ChannelMessage so the UI can show it."""
     import uuid
 
+    # The unique index on platform_message_id is global, so the existence
+    # check must be global too. A per-channel check passes when the same
+    # Google location is connected twice (or two tenants connect it), then
+    # the insert dies on the index and poisons the whole poll session.
     existing = await db.execute(
         select(ChannelMessage.id)
-        .where(
-            ChannelMessage.channel_id == channel_id,
-            ChannelMessage.platform_message_id == review.review_id[:200],
-        )
+        .where(ChannelMessage.platform_message_id == review.review_id[:200])
         .limit(1)
     )
     if existing.scalar_one_or_none():
@@ -594,7 +702,16 @@ async def _store_inbound_review(db: AsyncSession, channel_id: str, review) -> No
             priority=priority,
         )
     )
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Lost a race with another poller between the check and the insert.
+        # The review is already mirrored by the winner; roll back so this
+        # session can continue with the rest of the feed.
+        await db.rollback()
+        logger.debug(
+            "duplicate inbound review %s ignored", review.review_id[:64]
+        )
 
 
 async def _store_reply_message(
@@ -632,19 +749,21 @@ async def _store_reply_message(
         return
 
     platform_id = f"google-reply:{reply.id}"[:200]
+    # Global, for the same reason as the inbound row: the unique index is not
+    # scoped by channel. If another channel/tenant already mirrored this
+    # Google reply, leave their row alone and do not create a twin.
     existing = (
         await db.execute(
             select(ChannelMessage)
-            .where(
-                ChannelMessage.channel_id == channel.id,
-                ChannelMessage.platform_message_id == platform_id,
-            )
+            .where(ChannelMessage.platform_message_id == platform_id)
             .limit(1)
         )
     ).scalar_one_or_none()
     content = encrypt_message_content(reply.reply_text)
     name = inbound.contact_name or reviewer_name
     if existing is not None:
+        if existing.channel_id != channel.id:
+            return
         existing.content = content
         existing.status = status
         existing.contact_name = name
@@ -1064,9 +1183,217 @@ async def _refresh_edited_review_reply(
             logger.warning("review.replied enqueue failed for %s: %s", review.review_id, e)
 
 
+async def _handle_fetched_review(
+    db: AsyncSession,
+    channel: Channel,
+    config: AutoReplyConfig,
+    client: GoogleReviewsClient,
+    review: GoogleReview,
+    stats: dict,
+) -> None:
+    """Run one fetched review through the full pipeline: store, classify, draft, post.
+
+    Shared by the incremental poll and the daily sweep heal so a review the
+    cursor missed is handled exactly like a live one. Every stage is
+    idempotent (unique platform_message_id, replied-checks, issue-exists
+    checks), which is what makes sweep re-processing safe.
+    """
+    stats["reviews"] += 1
+    await _store_inbound_review(db, channel.id, review)
+    # Analytics events run before the replied-check so content
+    # changes on already-answered reviews (reviewer edits) still
+    # reach the consumer. The enqueue is content-gated, so
+    # steady-state polls stay quiet.
+    try:
+        await _enqueue_review_discovered(db, channel, review)
+    except Exception as e:
+        # Analytics events must never break auto-reply
+        logger.warning("review.discovered enqueue failed for %s: %s", review.review_id, e)
+    # Persist the structured classification so the WhatsApp handoff and
+    # the "Status: Review" surface have facts to look up. Orchestrated by
+    # the review pipeline graph (classify -> ticket -> handoff); it falls
+    # back to running the same nodes inline if langgraph is unavailable.
+    # Never break the auto-reply pipeline if classification fails (no
+    # model, no network, unreachable provider) -- retried next poll.
+    try:
+        from ..channels.models import ReviewIssue
+        from ..users.models import User
+        from ..review_engine.graph import run_review_pipeline
+        from ..channels.meta.lead_engine import normalize_lead_settings
+
+        existing = await db.execute(
+            select(ReviewIssue).where(
+                ReviewIssue.channel_id == channel.id,
+                ReviewIssue.review_id == review.review_id,
+            ).limit(1)
+        )
+        if existing.scalar_one_or_none() is None:
+            model = getattr(config, "model", None)
+            if not model:
+                try:
+                    from ..review_engine.service import _resolve_engine_model
+                    from ..review_engine.schemas import ReviewEngineRequest
+                    req = ReviewEngineRequest(rating=review.rating, channel_id=channel.id)
+                    # Best-effort; ignored on failure.
+                    model, _ = await _resolve_engine_model(
+                        req,
+                        channel.user_id,
+                        db,
+                    )
+                except Exception:
+                    model = None
+            try:
+                urow = (await db.execute(
+                    select(User.lead_settings).where(User.id == channel.user_id)
+                )).scalar_one_or_none()
+                subcats = normalize_lead_settings(urow).get(
+                    "review_issue_subcategories"
+                ) or []
+            except Exception:
+                subcats = []
+            outcome = await run_review_pipeline(
+                db,
+                tenant_id=channel.user_id,
+                channel_id=channel.id,
+                review_id=review.review_id,
+                rating=review.rating,
+                review_text=review.text,
+                reviewer_name=review.reviewer_name,
+                model=model,
+                tenant_subcategories=subcats,
+            )
+            if outcome.get("classification_error"):
+                logger.warning(
+                    "review issue classification failed for %s: %s",
+                    review.review_id, outcome["classification_error"],
+                )
+            elif outcome.get("issue_created"):
+                logger.info(
+                    "review issue %s -> ticket=%s handoff=%s code=%s",
+                    review.review_id, outcome.get("ticket_number"),
+                    outcome.get("handoff_eligible"),
+                    outcome.get("handoff_code"),
+                )
+                await _announce_new_issue(
+                    db, tenant_id=channel.user_id, outcome=outcome,
+                )
+    except Exception as e:
+        logger.warning("review issue classification failed for %s: %s", review.review_id, e)
+    if await _adopt_existing_reply(db, channel, review):
+        stats["adopted"] += 1
+        stats["skipped"] += 1
+        return
+    if await _already_replied(db, review.review_id):
+        # Idempotency: a draft is already queued (or posted) for
+        # this review — polling it again must not create a duplicate.
+        # But if the reviewer edited the review since we replied or
+        # queued a draft, first bring that response up to date.
+        await _refresh_edited_review_reply(db, channel, config, review, client)
+        stats["skipped"] += 1
+        return
+    if await _draft_dismissed(db, channel.id, review.review_id):
+        # The merchant rejected the draft: don't auto-draft again.
+        # A reviewer edit clears the marker; manual regenerate
+        # bypasses it.
+        stats["skipped"] += 1
+        return
+    failed_row = await _resume_failed_row(db, channel.id, review.review_id)
+
+    try:
+        reply_text, needs_review = await generate_auto_reply(
+            config, channel, review.rating, review.text, review.reviewer_name, db,
+            review_id=review.review_id,
+            attempt=(failed_row.generation_attempt or 1) + 1 if failed_row else 1,
+            previous_draft=failed_row.reply_text if failed_row else None,
+        )
+    except Exception as e:
+        logger.error("Reply generation failed for %s: %s", review.review_id, e)
+        if failed_row is not None:
+            failed_row.error = str(e)[:2000]
+        else:
+            db.add(
+                ReviewReply(
+                    channel_id=channel.id,
+                    review_id=review.review_id,
+                    rating=review.rating,
+                    review_text=review.text,
+                    reviewer_name=review.reviewer_name,
+                    reply_text="",
+                    status="failed",
+                    error=str(e)[:2000],
+                )
+            )
+        await db.commit()
+        stats["errors"] += 1
+        return
+
+    needs_approval = (
+        getattr(config, "approval_mode", "auto") == "approval"
+        or review.rating < config.min_rating_auto
+        or needs_review
+    )
+    if not needs_approval:
+        try:
+            await client.reply_to_review(review.review_id, reply_text)
+            if not await client.confirm_reply_live(review.review_id):
+                raise GoogleReviewsError(
+                    "Google accepted the reply but it is not showing on the listing"
+                )
+            stats["replied"] += 1
+        except GoogleReviewsError as e:
+            stats["errors"] += 1
+            _save_reply_row(
+                db, failed_row, channel.id, review.review_id,
+                review.rating, review.text, review.reviewer_name,
+                reply_text, "failed", str(e)[:2000],
+            )
+            await notify(
+                db, channel.user_id, "reply_failed",
+                f"Auto-reply failed for ★{review.rating} review",
+                str(e)[:160],
+                data={"review_id": review.review_id, "channel_id": channel.id},
+                href="/dashboard/outbox",
+            )
+            await db.commit()
+            return
+        _save_reply_row(
+            db, failed_row, channel.id, review.review_id,
+            review.rating, review.text, review.reviewer_name,
+            reply_text, "posted",
+        )
+        await notify(
+            db, channel.user_id, "reply_posted",
+            f"Auto-replied to ★{review.rating} review from {review.reviewer_name or 'a customer'}",
+            (reply_text or "")[:160],
+            data={"review_id": review.review_id, "channel_id": channel.id},
+            href="/dashboard/reviews",
+        )
+        await db.commit()
+        try:
+            await _enqueue_review_replied(db, channel, review, "posted")
+        except Exception as e:
+            logger.warning("review.replied enqueue failed for %s: %s", review.review_id, e)
+    else:
+        # Low rating: never auto-post — queue for human approval.
+        _save_reply_row(
+            db, failed_row, channel.id, review.review_id,
+            review.rating, review.text, review.reviewer_name,
+            reply_text, "pending_approval",
+        )
+        await db.commit()
+        stats["queued"] += 1
+        try:
+            await _enqueue_review_replied(db, channel, review, "pending_approval")
+        except Exception as e:
+            logger.warning("review.replied enqueue failed for %s: %s", review.review_id, e)
+
+
 async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyConfig) -> dict:
     """Poll one Google Reviews channel and auto-reply to new reviews."""
     stats = {"reviews": 0, "replied": 0, "queued": 0, "skipped": 0, "adopted": 0, "errors": 0}
+    # Captured before any rollback: after rollback(), reading channel.id
+    # triggers a lazy load that raises MissingGreenlet in a sync logging call.
+    channel_id = channel.id
 
     mock_mode = settings.GOOGLE_REVIEWS_MOCK
     if mock_mode:
@@ -1129,220 +1456,63 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
             if not _channel_meta(channel).get("reply_backfill_done"):
                 try:
                     stats["adopted"] += await _backfill_existing_replies(
-                        db, channel, client, account_id, location_id
+                        db, channel, config, client, account_id, location_id
                     )
                 except Exception as e:
                     # A failed backfill is retried next poll; it must not stop
-                    # normal review polling.
+                    # normal review polling. Roll back first: the session may
+                    # be poisoned by the failed flush, and the next query would
+                    # raise PendingRollbackError instead of the real error.
+                    await db.rollback()
+                    # rollback() expires the channel; reload it so the
+                    # permanent-error branch below can still mark it expired.
+                    try:
+                        await db.refresh(channel)
+                        await db.refresh(config)
+                    except Exception:
+                        logger.exception(
+                            "Could not reload channel %s after a failed backfill",
+                            channel_id,
+                        )
                     logger.warning(
-                        "reply backfill failed for channel %s: %s", channel.id, e
+                        "reply backfill failed for channel %s: %s", channel_id, e
                     )
             reviews = await client.list_reviews(
-                account_id, location_id, updated_after=config.last_polled_at
+                account_id, location_id,
+                updated_after=_fetch_cursor(config.last_polled_at),
             )
         except GoogleReviewsError as e:
-            # A permanent rejection is not a transient error: the channel is
-            # marked expired so it stops being polled, and the merchant is
-            # told to reconnect.
-            if e.status_code in PERMANENT_GOOGLE_STATUSES:
+            # Classify before condemning the channel. Only a dead grant means
+            # "reconnect"; a removed location means "this listing is gone".
+            if e.status_code in TOKEN_DEAD_STATUSES:
                 await _mark_channel_expired(db, channel, str(e))
                 await db.commit()
+            elif e.status_code in LOCATION_GONE_STATUSES:
+                await _mark_location_removed(db, channel, str(e))
+                await db.commit()
+            elif e.status_code in PERMISSION_DENIED_STATUSES:
+                # Ambiguous: quota, a disabled API or permission propagation
+                # all land here. Only a sustained run of them means the grant
+                # itself is gone, so a single 403 backs off instead of
+                # permanently killing a working channel.
+                prior = int(_channel_health(channel).get("consecutive_failures", 0) or 0)
+                if prior + 1 >= PERMISSION_FAILURES_BEFORE_EXPIRED:
+                    await _mark_channel_expired(db, channel, str(e))
+                    await db.commit()
             raise
 
         await _mark_reviews_seen(db, channel, reviews)
 
         for review in reviews:
-            stats["reviews"] += 1
-            await _store_inbound_review(db, channel.id, review)
-            # Analytics events run before the replied-check so content
-            # changes on already-answered reviews (reviewer edits) still
-            # reach the consumer. The enqueue is content-gated, so
-            # steady-state polls stay quiet.
-            try:
-                await _enqueue_review_discovered(db, channel, review)
-            except Exception as e:
-                # Analytics events must never break auto-reply
-                logger.warning("review.discovered enqueue failed for %s: %s", review.review_id, e)
-            # Persist the structured classification so the WhatsApp handoff and
-            # the "Status: Review" surface have facts to look up. Orchestrated by
-            # the review pipeline graph (classify -> ticket -> handoff); it falls
-            # back to running the same nodes inline if langgraph is unavailable.
-            # Never break the auto-reply pipeline if classification fails (no
-            # model, no network, unreachable provider) -- retried next poll.
-            try:
-                from ..channels.models import ReviewIssue
-                from ..users.models import User
-                from ..review_engine.graph import run_review_pipeline
-                from ..channels.meta.lead_engine import normalize_lead_settings
-
-                existing = await db.execute(
-                    select(ReviewIssue).where(
-                        ReviewIssue.channel_id == channel.id,
-                        ReviewIssue.review_id == review.review_id,
-                    ).limit(1)
-                )
-                if existing.scalar_one_or_none() is None:
-                    model = getattr(config, "model", None)
-                    if not model:
-                        try:
-                            from ..review_engine.service import _resolve_engine_model
-                            from ..review_engine.schemas import ReviewEngineRequest
-                            req = ReviewEngineRequest(rating=review.rating, channel_id=channel.id)
-                            # Best-effort; ignored on failure.
-                            model, _ = await _resolve_engine_model(
-                                req,
-                                channel.user_id,
-                                db,
-                            )
-                        except Exception:
-                            model = None
-                    try:
-                        urow = (await db.execute(
-                            select(User.lead_settings).where(User.id == channel.user_id)
-                        )).scalar_one_or_none()
-                        subcats = normalize_lead_settings(urow).get(
-                            "review_issue_subcategories"
-                        ) or []
-                    except Exception:
-                        subcats = []
-                    outcome = await run_review_pipeline(
-                        db,
-                        tenant_id=channel.user_id,
-                        channel_id=channel.id,
-                        review_id=review.review_id,
-                        rating=review.rating,
-                        review_text=review.text,
-                        reviewer_name=review.reviewer_name,
-                        model=model,
-                        tenant_subcategories=subcats,
-                    )
-                    if outcome.get("classification_error"):
-                        logger.warning(
-                            "review issue classification failed for %s: %s",
-                            review.review_id, outcome["classification_error"],
-                        )
-                    elif outcome.get("issue_created"):
-                        logger.info(
-                            "review issue %s -> ticket=%s handoff=%s code=%s",
-                            review.review_id, outcome.get("ticket_number"),
-                            outcome.get("handoff_eligible"),
-                            outcome.get("handoff_code"),
-                        )
-                        await _announce_new_issue(
-                            db, tenant_id=channel.user_id, outcome=outcome,
-                        )
-            except Exception as e:
-                logger.warning("review issue classification failed for %s: %s", review.review_id, e)
-            if await _adopt_existing_reply(db, channel, review):
-                stats["adopted"] += 1
-                stats["skipped"] += 1
-                continue
-            if await _already_replied(db, review.review_id):
-                # Idempotency: a draft is already queued (or posted) for
-                # this review — polling it again must not create a duplicate.
-                # But if the reviewer edited the review since we replied or
-                # queued a draft, first bring that response up to date.
-                await _refresh_edited_review_reply(db, channel, config, review, client)
-                stats["skipped"] += 1
-                continue
-            if await _draft_dismissed(db, channel.id, review.review_id):
-                # The merchant rejected the draft: don't auto-draft again.
-                # A reviewer edit clears the marker; manual regenerate
-                # bypasses it.
-                stats["skipped"] += 1
-                continue
-            failed_row = await _resume_failed_row(db, channel.id, review.review_id)
-
-            try:
-                reply_text, needs_review = await generate_auto_reply(
-                    config, channel, review.rating, review.text, review.reviewer_name, db,
-                    review_id=review.review_id,
-                    attempt=(failed_row.generation_attempt or 1) + 1 if failed_row else 1,
-                    previous_draft=failed_row.reply_text if failed_row else None,
-                )
-            except Exception as e:
-                logger.error("Reply generation failed for %s: %s", review.review_id, e)
-                if failed_row is not None:
-                    failed_row.error = str(e)[:2000]
-                else:
-                    db.add(
-                        ReviewReply(
-                            channel_id=channel.id,
-                            review_id=review.review_id,
-                            rating=review.rating,
-                            review_text=review.text,
-                            reviewer_name=review.reviewer_name,
-                            reply_text="",
-                            status="failed",
-                            error=str(e)[:2000],
-                        )
-                    )
-                await db.commit()
-                stats["errors"] += 1
-                continue
-
-            needs_approval = (
-                getattr(config, "approval_mode", "auto") == "approval"
-                or review.rating < config.min_rating_auto
-                or needs_review
-            )
-            if not needs_approval:
-                try:
-                    await client.reply_to_review(review.review_id, reply_text)
-                    if not await client.confirm_reply_live(review.review_id):
-                        raise GoogleReviewsError(
-                            "Google accepted the reply but it is not showing on the listing"
-                        )
-                    stats["replied"] += 1
-                except GoogleReviewsError as e:
-                    stats["errors"] += 1
-                    _save_reply_row(
-                        db, failed_row, channel.id, review.review_id,
-                        review.rating, review.text, review.reviewer_name,
-                        reply_text, "failed", str(e)[:2000],
-                    )
-                    await notify(
-                        db, channel.user_id, "reply_failed",
-                        f"Auto-reply failed for ★{review.rating} review",
-                        str(e)[:160],
-                        data={"review_id": review.review_id, "channel_id": channel.id},
-                        href="/dashboard/outbox",
-                    )
-                    await db.commit()
-                    continue
-                _save_reply_row(
-                    db, failed_row, channel.id, review.review_id,
-                    review.rating, review.text, review.reviewer_name,
-                    reply_text, "posted",
-                )
-                await notify(
-                    db, channel.user_id, "reply_posted",
-                    f"Auto-replied to ★{review.rating} review from {review.reviewer_name or 'a customer'}",
-                    (reply_text or "")[:160],
-                    data={"review_id": review.review_id, "channel_id": channel.id},
-                    href="/dashboard/reviews",
-                )
-                await db.commit()
-                try:
-                    await _enqueue_review_replied(db, channel, review, "posted")
-                except Exception as e:
-                    logger.warning("review.replied enqueue failed for %s: %s", review.review_id, e)
-            else:
-                # Low rating: never auto-post — queue for human approval.
-                _save_reply_row(
-                    db, failed_row, channel.id, review.review_id,
-                    review.rating, review.text, review.reviewer_name,
-                    reply_text, "pending_approval",
-                )
-                await db.commit()
-                stats["queued"] += 1
-                try:
-                    await _enqueue_review_replied(db, channel, review, "pending_approval")
-                except Exception as e:
-                    logger.warning("review.replied enqueue failed for %s: %s", review.review_id, e)
+            await _handle_fetched_review(db, channel, config, client, review, stats)
 
         # A complete sweep is intentionally rare: the normal poll is
         # incremental, so removal detection needs one full read per day.
+        # The same read is the heal pass: reviews the incremental cursor
+        # skipped (Google list lag outrunning the overlap window, a pass
+        # that failed before the cursor-advance fix, a push we never
+        # received) have no inbox row — importing them here bounds the
+        # miss to one sweep interval instead of forever.
         meta = _channel_meta(channel)
         last_sweep = meta.get("removal_sweep_at")
         try:
@@ -1356,6 +1526,32 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
             try:
                 all_reviews = await client.list_reviews(account_id, location_id)
                 seen_ids = {r.review_id for r in all_reviews}
+
+                # Heal: a review with no inbox mirror was never processed.
+                # Push the unseen ones through the same pipeline as live
+                # reviews — every stage is idempotent, so a race with the
+                # incremental path dedups harmlessly.
+                fetched_ids = [r.review_id[:200] for r in all_reviews]
+                known_ids: set[str] = set()
+                for start in range(0, len(fetched_ids), 200):
+                    chunk = fetched_ids[start:start + 200]
+                    known = await db.execute(
+                        select(ChannelMessage.platform_message_id).where(
+                            ChannelMessage.platform_message_id.in_(chunk)
+                        )
+                    )
+                    known_ids.update(k for (k,) in known.all())
+                unseen = [
+                    r for r in all_reviews if r.review_id[:200] not in known_ids
+                ][:SWEEP_HEAL_BATCH]
+                for review in unseen:
+                    await _handle_fetched_review(db, channel, config, client, review, stats)
+                if unseen:
+                    logger.info(
+                        "Sweep healed %d missed review(s) for channel %s",
+                        len(unseen), channel.id,
+                    )
+
                 from .review_removal import mark_removed_reviews
 
                 removed = await mark_removed_reviews(
@@ -1415,6 +1611,8 @@ async def _poll_one_channel(
             if not await _claim_channel(session, config.id, config.last_polled_at):
                 return stats  # another instance has it
 
+            channel_id = channel.id
+            config_id = config.id
             try:
                 now = datetime.now(timezone.utc)
 
@@ -1434,13 +1632,35 @@ async def _poll_one_channel(
                     for k in ("reviews", "replied", "queued", "skipped", "adopted", "errors"):
                         stats[k] += channel_stats[k]
                 except Exception as e:
-                    logger.error("Poll failed for channel %s: %s", channel.id, e)
+                    # Clean the failed transaction before touching the model
+                    # again. Without this, every access to channel.* raises
+                    # PendingRollbackError and hides the original failure.
+                    await session.rollback()
+                    logger.error("Poll failed for channel %s: %s", channel_id, e)
                     stats["errors"] += 1
-                    await _update_channel_health(session, channel, False, type(e).__name__)
+                    try:
+                        await session.refresh(channel)
+                        await _update_channel_health(
+                            session, channel, False, type(e).__name__
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Channel health update failed for %s", channel_id
+                        )
                 else:
                     await _update_channel_health(session, channel, True)
+                    await _mark_polled(session, config.id)
             finally:
-                await _release_channel(session, config.id)
+                try:
+                    await _release_channel(session, config_id)
+                except Exception:
+                    # A poisoned session must not leave the channel claimed
+                    # until the lock expires: roll back and release again.
+                    await session.rollback()
+                    try:
+                        await _release_channel(session, config_id)
+                    except Exception:
+                        logger.exception("Could not release channel %s", channel_id)
 
     return stats
 

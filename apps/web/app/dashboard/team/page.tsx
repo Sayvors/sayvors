@@ -4,6 +4,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api-rag";
 import { resolveMediaUrl } from "@/lib/media-url";
 import PlatformMark, { platformLabel } from "@/components/channels/PlatformMark";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import type { Dict } from "@/lib/i18n/en";
+
+type TeamDict = Dict["team"];
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 /* Team management — members, roles and per-channel access. */
 
@@ -43,20 +54,7 @@ type Level = (typeof LEVELS)[number];
 const FOLLOW = "follow" as const;
 type Access = Level | typeof FOLLOW;
 
-const LEVEL_LABELS: Record<Access, string> = {
-  follow: "Follow role",
-  none: "No access",
-  view: "View",
-  edit: "Edit",
-};
-
-const LEVEL_PHRASES: Record<Level, string> = {
-  none: "no access",
-  view: "viewing",
-  edit: "editing",
-};
-
-function errText(e: unknown): string {
+function errText(e: unknown, fallback?: string): string {
   if (e instanceof Error) {
     try {
       const parsed = JSON.parse(e.message);
@@ -68,14 +66,14 @@ function errText(e: unknown): string {
     }
     return e.message;
   }
-  return "Request failed";
+  return fallback ?? "Request failed";
 }
 
-function shortDate(iso?: string | null): string {
+function shortDate(iso: string | null | undefined, dateLocale?: string): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return d.toLocaleDateString(dateLocale, { month: "short", day: "numeric" });
 }
 
 /*
@@ -92,11 +90,13 @@ const BTN_GHOST = `${BTN} bg-[var(--ui-surface)] text-[var(--ui-ink)]`;
 const BTN_DANGER = `${UI_BTN.replace("ui-btn", "ui-btn-danger")} bg-[var(--ui-sunken)] px-5 py-3 text-[var(--ui-ink)]`;
 
 function StatusBadge({ status }: { status?: string }) {
+  const { t } = useI18n();
+  const tm = t.team;
   const s = (status || "active").toLowerCase();
   // Three colours only, so status is carried by the word and by weight, never
   // by a hue: "Suspended" in bold black reads differently from "Active"
   // without inventing a fifth colour.
-  const label = s === "invited" ? "Invite pending" : s.charAt(0).toUpperCase() + s.slice(1);
+  const label = tm.status[s as keyof typeof tm.status] ?? (s.charAt(0).toUpperCase() + s.slice(1));
   const strong = s === "suspended" || s === "expired";
   return (
     <span
@@ -111,6 +111,8 @@ function StatusBadge({ status }: { status?: string }) {
 
 /** Connection state of a channel — quiet enough to sit next to the name. */
 function StatusDot({ status }: { status?: string }) {
+  const { t } = useI18n();
+  const tm = t.team;
   const s = (status || "active").toLowerCase();
   // The dot is decoration; the state is always spelled out, because a colour
   // dot alone tells a screen-reader user nothing.
@@ -120,16 +122,18 @@ function StatusDot({ status }: { status?: string }) {
         aria-hidden
         className={`inline-block h-1.5 w-1.5 rounded-full ${s === "active" ? "bg-[var(--ui-ink)]" : "bg-[var(--ui-ink-2)]"}`}
       />
-      {s !== "active" ? <span className="font-semibold">{s}</span> : <span className="sr-only">{s}</span>}
+      {s !== "active" ? <span className="font-semibold">{tm.status[s as keyof typeof tm.status] ?? s}</span> : <span className="sr-only">{s}</span>}
     </span>
   );
 }
 
 function RoleBadge({ name, isOwner }: { name?: string; isOwner?: boolean }) {
+  const { t } = useI18n();
+  const tm = t.team;
   if (isOwner || name === "Owner") {
-    return <span className="ui-chip shrink-0 px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)]">Owner</span>;
+    return <span className="ui-chip shrink-0 px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)]">{tm.roleOwner}</span>;
   }
-  return <span className="ui-chip shrink-0 px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)]">{name || "No role"}</span>;
+  return <span className="ui-chip shrink-0 px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)]">{name || tm.roleNone}</span>;
 }
 
 function Initial({
@@ -185,10 +189,14 @@ function areaLabels(areas: string[], catalog: CatalogArea[]): string[] {
 }
 
 function RoleSummary({ role, catalog, membersCount, compact }: { role: TeamRoleOption; catalog: CatalogArea[]; membersCount: number; compact?: boolean }) {
+  const { t, locale } = useI18n();
+  const tm = t.team;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
   const perms = role.permissions || [];
   const labels = areaLabels(roleAreas(role), catalog);
   if (perms.length === 0) {
-    return <p className="text-[12px] text-[var(--ui-ink-2)]">No permissions — cannot access anything.</p>;
+    return <p className="text-[12px] text-[var(--ui-ink-2)]">{tm.noPerms}</p>;
   }
   // One line of text, not a cloud of chips: chips wrapped into ragged rows and
   // collided with the count beside them.
@@ -198,32 +206,16 @@ function RoleSummary({ role, catalog, membersCount, compact }: { role: TeamRoleO
   return (
     <p className="mt-1 text-[12px] leading-relaxed text-[var(--ui-ink-2)]">
       <span className="font-semibold text-[var(--ui-ink)]">
-        {perms.length} permission{perms.length === 1 ? "" : "s"}
+        {perms.length === 1 ? tm.permOne : fill(tm.permN, { n: fmt(perms.length) })}
       </span>
-      {membersCount > 0 && ` · ${membersCount} member${membersCount === 1 ? "" : "s"}`}
+      {membersCount > 0 && ` · ${membersCount === 1 ? tm.memberOne : fill(tm.memberN, { n: fmt(membersCount) })}`}
       <span className="block">
         {shown.join(", ")}
-        {hidden > 0 && ` +${hidden} more`}
+        {hidden > 0 && ` ${fill(tm.moreN, { n: fmt(hidden) })}`}
       </span>
     </p>
   );
 }
-
-/** Short column headings for the permission matrix. */
-const MATRIX_LABELS: Record<string, string> = {
-  inbox: "Inbox",
-  channels: "Channels",
-  reviews: "Reviews",
-  posts: "Posts",
-  analytics: "Analytics",
-  media: "Media",
-  ai: "AI",
-  locations: "Locations",
-  databank: "Databank",
-  notifications: "Notifications",
-  team: "Team",
-  settings: "Settings",
-};
 
 /**
  * Roles as a matrix: one row per role, one column per permission area, and
@@ -241,13 +233,17 @@ function PermissionMatrix({
   onDelete: (r: TeamRoleOption) => void;
   pending: Record<string, boolean>;
 }) {
+  const { t, locale } = useI18n();
+  const tm = t.team;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
   // Hide areas the catalog does not offer, and never show billing: nothing
   // enforces those, so they would be checkboxes that do nothing.
   const areas = catalog
     .filter((a) => a.area !== "billing" && a.actions.length > 0)
     .map((a) => ({
       area: a.area,
-      label: MATRIX_LABELS[a.area] || a.label,
+      label: tm.areas[a.area as keyof typeof tm.areas] || a.label,
       actions: a.actions.map((act) => act.permission),
     }));
 
@@ -255,11 +251,11 @@ function PermissionMatrix({
     <div className="mt-4 overflow-x-auto">
       <table className="w-full min-w-[860px] border-collapse text-left">
         <caption className="sr-only">
-          Permissions per role, by area. Each cell shows how many of the area&apos;s actions the role grants.
+          {tm.matrixCaption}
         </caption>
         <thead>
           <tr className="border-b border-[var(--ui-line)]">
-            <th scope="col" className="pb-2 pr-4 text-[12px] font-semibold text-[var(--ui-ink-2)]">Role</th>
+            <th scope="col" className="pb-2 pr-4 text-[12px] font-semibold text-[var(--ui-ink-2)]">{tm.roleCol}</th>
             {areas.map((a) => (
               <th
                 key={a.area}
@@ -269,8 +265,8 @@ function PermissionMatrix({
                 {a.label}
               </th>
             ))}
-            <th scope="col" className="pb-2 pr-4 text-[12px] font-semibold whitespace-nowrap text-[var(--ui-ink-2)]">Members</th>
-            {canManage && <th scope="col" className="pb-2 text-[12px] font-semibold text-[var(--ui-ink-2)]"><span className="sr-only">Actions</span></th>}
+            <th scope="col" className="pb-2 pr-4 text-[12px] font-semibold whitespace-nowrap text-[var(--ui-ink-2)]">{tm.membersCol}</th>
+            {canManage && <th scope="col" className="pb-2 text-[12px] font-semibold text-[var(--ui-ink-2)]"><span className="sr-only">{tm.actionsCol}</span></th>}
           </tr>
         </thead>
         <tbody>
@@ -283,13 +279,13 @@ function PermissionMatrix({
                   <span className="flex items-center gap-2 whitespace-nowrap">
                     <span className="text-[13px] font-semibold text-[var(--ui-ink)]">{r.name}</span>
                     {r.is_system ? (
-                      <span className="ui-chip px-2 py-0.5 text-[11px] font-semibold text-[var(--ui-ink-2)]">Built-in</span>
+                      <span className="ui-chip px-2 py-0.5 text-[11px] font-semibold text-[var(--ui-ink-2)]">{tm.builtIn}</span>
                     ) : (
-                      <span className="ui-chip px-2 py-0.5 text-[11px] font-semibold text-[var(--ui-ink-2)]">Custom</span>
+                      <span className="ui-chip px-2 py-0.5 text-[11px] font-semibold text-[var(--ui-ink-2)]">{tm.custom}</span>
                     )}
                   </span>
                   <span className="mt-0.5 block text-[12px] tabular-nums text-[var(--ui-ink-2)]">
-                    {perms.size} permission{perms.size === 1 ? "" : "s"}
+                    {perms.size === 1 ? tm.permOne : fill(tm.permN, { n: fmt(perms.size) })}
                   </span>
                 </th>
                 {areas.map((a) => {
@@ -297,7 +293,7 @@ function PermissionMatrix({
                   const total = a.actions.length;
                   const full = granted.length === total;
                   const none = granted.length === 0;
-                  const detail = `${granted.join(", ") || "none"}`;
+                  const detail = `${granted.join(", ") || tm.phrases.none}`;
                   return (
                     <td
                       key={a.area}
@@ -313,16 +309,16 @@ function PermissionMatrix({
                               : "text-[var(--ui-ink)]"
                         }
                       >
-                        {none ? "—" : `${granted.length}/${total}`}
+                        {none ? "—" : `${fmt(granted.length)}/${fmt(total)}`}
                       </span>
                       <span className="sr-only">
-                        {a.label}: {detail} of {total}
+                        {fill(tm.srDetail, { label: a.label, detail, total: fmt(total) })}
                       </span>
                     </td>
                   );
                 })}
                 <td className="py-3 pr-4 align-top text-[12px] text-[var(--ui-ink-2)]">
-                  {inUse > 0 ? `${inUse}` : <span className="text-[var(--ui-ink-2)]">—</span>}
+                  {inUse > 0 ? `${fmt(inUse)}` : <span className="text-[var(--ui-ink-2)]">—</span>}
                 </td>
                 {canManage && (
                   <td className="py-3 text-right align-top">
@@ -332,12 +328,12 @@ function PermissionMatrix({
                         onClick={() => onEdit(r)}
                         className={`${BTN} px-4 py-2 text-[12px] font-semibold`}
                       >
-                        Edit
+                        {tm.editBtn}
                       </button>
                       {!r.is_system && (
                         <ConfirmButton
-                          label="Delete"
-                          confirmLabel="Yes, delete"
+                          label={tm.deleteBtn}
+                          confirmLabel={tm.confirmDelete}
                           pending={pending[`deleterole:${r.id}`]}
                           onConfirm={() => onDelete(r)}
                           className={`${BTN_DANGER} px-4 py-2`}
@@ -352,8 +348,7 @@ function PermissionMatrix({
         </tbody>
       </table>
       <p className="mt-3 text-[12px] text-[var(--ui-ink-2)]">
-        <span className="font-semibold text-[var(--ui-ink)]">2/2</span> means every action in that area ·
-        bold means all of them · <span className="font-semibold text-[var(--ui-ink)]">—</span> means none
+        {tm.legend}
       </p>
     </div>
   );
@@ -364,6 +359,8 @@ function ConfirmButton({
 }: {
   label: string; confirmLabel: string; pending?: boolean; onConfirm: () => void; className: string;
 }) {
+  const { t } = useI18n();
+  const tm = t.team;
   const [armed, setArmed] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -384,7 +381,7 @@ function ConfirmButton({
         disabled={pending}
         onClick={() => { setArmed(false); onConfirm(); }}
       >
-        {pending ? "Working…" : confirmLabel}
+        {pending ? tm.working : confirmLabel}
       </button>
       <button
         type="button"
@@ -392,7 +389,7 @@ function ConfirmButton({
         disabled={pending}
         onClick={() => setArmed(false)}
       >
-        Cancel
+        {tm.cancelBtn}
       </button>
     </span>
   );
@@ -413,6 +410,8 @@ function ChannelAccess({
   channels: TeamChannelOption[]; value: Record<string, string>; roleLabel: string; roleDefault: Level;
   pending?: boolean; onSave: (levels: Record<string, Level>) => void;
 }) {
+  const { t } = useI18n();
+  const tm = t.team;
   // Seeded from the stored overrides; every other channel inherits the role.
   const [levels, setLevels] = useState<Record<string, Access>>(value as Record<string, Access>);
 
@@ -435,31 +434,30 @@ function ChannelAccess({
   };
 
   if (channels.length === 0) {
-    return <p className="text-[11px] text-[var(--ui-ink-2)]">No channels in this workspace yet.</p>;
+    return <p className="text-[11px] text-[var(--ui-ink-2)]">{tm.noChannels}</p>;
   }
 
   return (
     <div className="mt-3 rounded-[8px] bg-[var(--ui-sunken)] p-4">
       <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[11px] font-semibold text-[var(--ui-ink-2)]">Per-channel access</p>
+        <p className="text-[11px] font-semibold text-[var(--ui-ink-2)]">{tm.perChannel}</p>
         <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
             className={`${BTN} text-[var(--ui-ink-2)]`}
             onClick={() => setAll(FOLLOW)}
           >
-            All follow role
+            {tm.allFollow}
           </button>
           {LEVELS.map((lvl) => (
             <button key={lvl} type="button" className={`${BTN} text-[var(--ui-ink-2)]`} onClick={() => setAll(lvl)}>
-              All {LEVEL_LABELS[lvl].toLowerCase()}
+              {fill(tm.allLevel, { level: tm.levels[lvl] })}
             </button>
           ))}
         </div>
       </div>
       <p className="mb-2 text-[12px] text-[var(--ui-ink-2)]">
-        The {roleLabel} role allows {LEVEL_PHRASES[roleDefault]} on every channel. Only store an override when this
-        member differs from that — an override survives later role changes.
+        {fill(tm.roleAllows, { role: roleLabel, level: tm.phrases[roleDefault] })}
       </p>
       <div className="space-y-1">
         {channels.map((ch) => {
@@ -470,7 +468,7 @@ function ChannelAccess({
           return (
             <div
               key={ch.id}
-              title={`${name} · ${label} · ${effective === "none" ? LEVEL_LABELS.none.toLowerCase() : LEVEL_LABELS[effective].toLowerCase()}`}
+              title={`${name} · ${label} · ${lvl === FOLLOW ? fill(tm.followRole, { level: tm.levels[roleDefault] }) : tm.levels[effective as Level]}`}
               className="flex flex-wrap items-start gap-3 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-3 transition hover:bg-[var(--ui-sunken)]"
             >
               {/* Mark and name travel together so a wrap never orphans the mark. */}
@@ -488,7 +486,7 @@ function ChannelAccess({
               </div>
               <select
                 value={lvl}
-                aria-label={`Access for ${name} on ${label}`}
+                aria-label={fill(tm.accessFor, { name, label })}
                 onChange={(e) => setLevels({ ...levels, [ch.id]: e.target.value as Access })}
                 className={`ui-input ml-auto w-full bg-[var(--ui-surface)] px-3 py-3 text-[12px] font-bold sm:w-auto ${
                   lvl === FOLLOW
@@ -496,22 +494,22 @@ function ChannelAccess({
                     : "text-[var(--ui-ink)] font-bold"
                 }`}
               >
-                <option value={FOLLOW}>Follow role → {LEVEL_LABELS[roleDefault]}</option>
-                {LEVELS.map((l) => <option key={l} value={l}>{LEVEL_LABELS[l]}</option>)}
+                <option value={FOLLOW}>{fill(tm.followRole, { level: tm.levels[roleDefault] })}</option>
+                {LEVELS.map((l) => <option key={l} value={l}>{tm.levels[l]}</option>)}
               </select>
             </div>
           );
         })}
       </div>
       <div className="mt-2 flex items-center justify-end gap-2">
-        {dirty && <span className="rounded-[8px] bg-[var(--ui-sunken)] px-3 py-1 text-[12px] font-bold text-[var(--ui-ink)]">Unsaved changes</span>}
+        {dirty && <span className="rounded-[8px] bg-[var(--ui-sunken)] px-3 py-1 text-[12px] font-bold text-[var(--ui-ink)]">{tm.unsaved}</span>}
         <button
           type="button"
           className={BTN_PRIMARY}
           disabled={pending || !dirty}
           onClick={() => onSave(overrides(levels))}
         >
-          {pending ? "Saving…" : "Save access"}
+          {pending ? tm.saving : tm.saveAccess}
         </button>
       </div>
     </div>
@@ -527,6 +525,9 @@ function RoleSelect({
   summary?: boolean; className?: string;
 }) {
   const selected = roles.find((r) => r.id === value);
+  const { t, locale } = useI18n();
+  const tm = t.team;
+  const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
   return (
     <div className="min-w-0">
       <select
@@ -536,13 +537,13 @@ function RoleSelect({
         onChange={(e) => onChange(e.target.value)}
         className={`${className} disabled:opacity-60`}
       >
-        <option value="">Select a role</option>
+        <option value="">{tm.selectRole}</option>
         {roles.map((r) => {
           const n = (r.permissions || []).length;
           const m = membersCount?.(r.id) ?? 0;
           return (
             <option key={r.id} value={r.id}>
-              {r.name} — {n} permission{n === 1 ? "" : "s"}{r.is_system ? " · built-in" : ""}{m > 0 ? ` · ${m} member${m === 1 ? "" : "s"}` : ""}
+              {r.name} — {n === 1 ? tm.permOne : fill(tm.permN, { n: fmt(n) })}{r.is_system ? ` · ${tm.builtIn}` : ""}{m > 0 ? ` · ${m === 1 ? tm.memberOne : fill(tm.memberN, { n: fmt(m) })}` : ""}
             </option>
           );
         })}
@@ -550,7 +551,7 @@ function RoleSelect({
       {summary && (selected ? (
         <RoleSummary role={selected} catalog={catalog} membersCount={membersCount?.(selected.id) ?? 0} compact />
       ) : (
-        <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">Pick a role to see exactly what this person can do.</p>
+        <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">{tm.pickRoleHint}</p>
       ))}
     </div>
   );
@@ -571,6 +572,10 @@ function InviteForm({ roles, catalog, members, channels, membersCount, onInvited
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const { t, locale } = useI18n();
+  const tm = t.team;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
 
   const normalized = email.trim().toLowerCase();
   const emailValid = EMAIL_RE.test(normalized);
@@ -594,11 +599,11 @@ function InviteForm({ roles, catalog, members, channels, membersCount, onInvited
         method: "POST",
         body: JSON.stringify({ email: normalized, role_id: roleId, channel_levels: payload }),
       });
-      setSuccess(`Invite sent to ${data.email || normalized}.`);
+      setSuccess(fill(tm.inviteSent, { email: data.email || normalized }));
       setEmail(""); setRoleId(""); setChannelLevels({}); setShowChannels(false);
       onInvited();
     } catch (e) {
-      setError(errText(e));
+      setError(errText(e, tm.errFallback));
     } finally {
       setSending(false);
     }
@@ -608,7 +613,7 @@ function InviteForm({ roles, catalog, members, channels, membersCount, onInvited
     <div className="mt-3 max-w-5xl space-y-3">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <div>
-          <label htmlFor="invite-email" className="text-[11px] font-medium text-[var(--ui-ink-2)]">Email</label>
+          <label htmlFor="invite-email" className="text-[11px] font-medium text-[var(--ui-ink-2)]">{tm.emailLabel}</label>
           <input
             id="invite-email"
             type="email"
@@ -617,17 +622,17 @@ function InviteForm({ roles, catalog, members, channels, membersCount, onInvited
             placeholder="team-member@example.com"
             className={`mt-1 ${FIELD}`}
           />
-          {email && !emailValid && <p className="mt-1 text-[12px] font-semibold text-[var(--ui-ink)]">Enter a valid email address.</p>}
+          {email && !emailValid && <p className="mt-1 text-[12px] font-semibold text-[var(--ui-ink)]">{tm.invalidEmail}</p>}
           {duplicate && (
             <p className="mt-1 text-[12px] font-medium text-[var(--ui-ink-2)]">
               {duplicate.is_owner || duplicate.status === "active"
-                ? "This person is already in the workspace."
-                : "This person already has a pending invite — use Resend in the members list."}
+                ? tm.dupActive
+                : tm.dupPending}
             </p>
           )}
         </div>
         <div>
-          <span className="text-[11px] font-medium text-[var(--ui-ink-2)]">Role</span>
+          <span className="text-[11px] font-medium text-[var(--ui-ink-2)]">{tm.roleLabel}</span>
           <div className="mt-1">
             <RoleSelect
               value={roleId}
@@ -635,13 +640,13 @@ function InviteForm({ roles, catalog, members, channels, membersCount, onInvited
               catalog={catalog}
               membersCount={membersCount}
               onChange={(id) => { setRoleId(id); setError(""); setSuccess(""); }}
-              label="Role for this invite"
+              label={tm.roleForInvite}
             />
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:col-span-2 xl:col-span-1 xl:justify-end">
           <button type="button" onClick={handleSubmit} disabled={!canSend} className={BTN_PRIMARY}>
-            {sending ? "Sending…" : "Send invite"}
+            {sending ? tm.sending : tm.send}
           </button>
         </div>
       </div>
@@ -666,20 +671,20 @@ function InviteForm({ roles, catalog, members, channels, membersCount, onInvited
             <svg viewBox="0 0 12 12" fill="none" className={`h-3 w-3 shrink-0 text-[var(--ui-ink-2)] transition-transform ${showChannels ? "rotate-90" : ""}`} aria-hidden>
               <path d="M4.5 2.5 8 6l-3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-            <span className="text-[11px] font-semibold text-[var(--ui-ink-2)]">Per-channel access</span>
-            <span className="text-[12px] text-[var(--ui-ink-2)]">optional</span>
+            <span className="text-[11px] font-semibold text-[var(--ui-ink-2)]">{tm.perChannelTitle}</span>
+            <span className="text-[12px] text-[var(--ui-ink-2)]">{tm.optional}</span>
             <span className="ml-auto text-[12px] font-medium text-[var(--ui-ink-2)]">
-              {overrideCount > 0 ? `${overrideCount} override${overrideCount === 1 ? "" : "s"}` : "inherits role"}
+              {overrideCount > 0 ? (overrideCount === 1 ? fill(tm.ovrOne, { n: fmt(overrideCount) }) : fill(tm.ovrN, { n: fmt(overrideCount) })) : tm.inherits}
             </span>
           </button>
           {showChannels && (
             <div className="p-3">
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                <p className="text-[11px] text-[var(--ui-ink-2)]">Narrow what this person can touch, channel by channel.</p>
+                <p className="text-[11px] text-[var(--ui-ink-2)]">{tm.narrowHint}</p>
                 <div className="flex flex-wrap items-center gap-1.5">
                   {LEVELS.map((lvl) => (
                     <button key={lvl} type="button" className={`${BTN} text-[var(--ui-ink-2)]`} onClick={() => setAllChannels(lvl)}>
-                      All {lvl}
+                      {fill(tm.allLevel, { level: tm.levels[lvl] })}
                     </button>
                   ))}
                 </div>
@@ -690,11 +695,11 @@ function InviteForm({ roles, catalog, members, channels, membersCount, onInvited
                     <span className="truncate text-[11px] text-[var(--ui-ink)]">{ch.name || ch.platform}</span>
                     <select
                       value={channelLevels[ch.id] || "none"}
-                      aria-label={`Access for ${ch.name || ch.platform}`}
+                      aria-label={fill(tm.accessForShort, { name: ch.name || ch.platform })}
                       onChange={(e) => { setChannelLevels({ ...channelLevels, [ch.id]: e.target.value }); setSuccess(""); }}
                       className="ui-input shrink-0 px-3 py-3 text-[12px] font-semibold capitalize text-[var(--ui-ink)]"
                     >
-                      {LEVELS.map((lvl) => <option key={lvl} value={lvl}>{lvl}</option>)}
+                      {LEVELS.map((lvl) => <option key={lvl} value={lvl}>{tm.levels[lvl]}</option>)}
                     </select>
                   </div>
                 ))}
@@ -708,6 +713,9 @@ function InviteForm({ roles, catalog, members, channels, membersCount, onInvited
 }
 
 function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | null; catalog: CatalogArea[]; onDone: () => void }) {
+  const { t, locale } = useI18n();
+  const tm = t.team;
+  const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
   const [name, setName] = useState(editing?.name ?? "");
   const [selected, setSelected] = useState<string[]>(editing?.permissions ?? []);
   const [openAreas, setOpenAreas] = useState<Record<string, boolean>>({});
@@ -760,18 +768,18 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
             isSystem ? { permissions: selected } : { name: name.trim(), permissions: selected },
           ),
         });
-        setSuccess(`Role "${data.name}" updated.`);
+        setSuccess(fill(tm.roleUpdated, { name: data.name }));
       } else {
         const data = await apiFetch("/api/v1/team/roles", {
           method: "POST",
           body: JSON.stringify({ name: name.trim(), permissions: selected }),
         });
-        setSuccess(`Role "${data.name}" created.`);
+        setSuccess(fill(tm.roleCreated, { name: data.name }));
       }
       setName(""); setSelected([]);
       onDone();
     } catch (e) {
-      setError(errText(e));
+      setError(errText(e, tm.errFallback));
     } finally {
       setBusy(false);
     }
@@ -782,7 +790,7 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
         <div className="flex-1">
           <label htmlFor="role-name" className="text-[11px] font-medium text-[var(--ui-ink-2)]">
-            {isSystem ? `Built-in role "${editing?.name}" — name is fixed` : editing ? `Editing "${editing.name}" — role name` : "Role name"}
+            {isSystem ? fill(tm.roleNameBuiltIn, { name: editing?.name ?? "" }) : editing ? fill(tm.roleNameEditing, { name: editing.name }) : tm.roleName}
           </label>
           <input
             id="role-name"
@@ -790,19 +798,19 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
             readOnly={isSystem}
             aria-readonly={isSystem}
             onChange={(e) => { setName(e.target.value); setError(""); setSuccess(""); }}
-            placeholder="e.g. Shift lead"
+            placeholder={tm.roleExample}
             className={`mt-1 ${FIELD} ${isSystem ? "cursor-not-allowed opacity-60" : ""}`}
           />
         </div>
         <div className="flex items-center gap-2">
           <span className="text-[11px] font-medium text-[var(--ui-ink-2)]">
-            {selected.length} permission{selected.length === 1 ? "" : "s"} selected
+            {selected.length === 1 ? tm.selOne : fill(tm.selN, { n: fmt(selected.length) })}
           </span>
           <button type="button" onClick={handleSave} disabled={!canSave} className={BTN_PRIMARY}>
-            {busy ? "Saving…" : editing ? "Save changes" : selected.length ? `Create role · ${selected.length}` : "Create role"}
+            {busy ? tm.saving : editing ? tm.saveChanges : selected.length ? fill(tm.createWith, { n: fmt(selected.length) }) : tm.createBtn}
           </button>
           {editing && (
-            <button type="button" onClick={onDone} className={BTN_GHOST}>Cancel</button>
+            <button type="button" onClick={onDone} className={BTN_GHOST}>{tm.cancelBtn}</button>
           )}
         </div>
       </div>
@@ -812,15 +820,15 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
       <input
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search permissions…"
-        aria-label="Search permissions"
+        placeholder={tm.searchPh}
+        aria-label={tm.searchAria}
         className={FIELD}
       />
 
       {areas.length === 0 ? (
-        <p className="text-[12px] text-[var(--ui-ink-2)]">Could not load the permission catalog.</p>
+        <p className="text-[12px] text-[var(--ui-ink-2)]">{tm.noCatalog}</p>
       ) : visibleAreas.length === 0 ? (
-        <p className="text-[12px] text-[var(--ui-ink-2)]">No permissions match your search.</p>
+        <p className="text-[12px] text-[var(--ui-ink-2)]">{tm.noMatch}</p>
       ) : (
         <div className="grid gap-1.5 lg:grid-cols-2">
           {visibleAreas.map((area) => {
@@ -835,7 +843,7 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
                     checked={all}
                     ref={(el) => { if (el) el.indeterminate = count > 0 && !all; }}
                     onChange={() => setArea(area, !all)}
-                    aria-label={`Select all permissions in ${area.label}`}
+                    aria-label={fill(tm.selectAllIn, { area: area.label })}
                     className="h-3.5 w-3.5 shrink-0 accent-[var(--ui-ink)]"
                   />
                   <button
@@ -854,9 +862,9 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
                     </svg>
                     <span className="truncate text-[12px] font-semibold text-[var(--ui-ink)]">{area.label}</span>
                     {count > 0 && (
-                      <span className="ui-chip shrink-0 px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)]">{count}</span>
+                      <span className="ui-chip shrink-0 px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)]">{fmt(count)}</span>
                     )}
-                    <span className="ml-auto text-[12px] tabular-nums text-[var(--ui-ink-2)]">{count}/{area.actions.length}</span>
+                    <span className="ml-auto text-[12px] tabular-nums text-[var(--ui-ink-2)]">{fmt(count)}/{fmt(area.actions.length)}</span>
                   </button>
                 </div>
                 {open && (
@@ -884,10 +892,10 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
                     {!q && (
                       <div className="flex justify-end gap-3 px-2 pb-1 pt-1.5">
                         <button type="button" onClick={() => setArea(area, true)} className="text-[12px] font-semibold text-[var(--ui-ink)] hover:underline">
-                          Select all
+                          {tm.selectAll}
                         </button>
                         <button type="button" onClick={() => setArea(area, false)} className="text-[12px] font-semibold text-[var(--ui-ink-2)] hover:underline">
-                          Clear
+                          {tm.clear}
                         </button>
                       </div>
                     )}
@@ -914,6 +922,10 @@ export default function TeamPage() {
   const [openAccess, setOpenAccess] = useState<string | null>(null);
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { t, locale } = useI18n();
+  const tm = t.team;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
 
   const loadMembers = useCallback(async () => {
     try {
@@ -922,9 +934,9 @@ export default function TeamPage() {
       setMembers(data.members || []);
     } catch {
       setMembers([]);
-      setError("Could not load your team. Check your connection and try again.");
+      setError(tm.teamLoadFail);
     }
-  }, []);
+  }, [tm]);
 
   const loadRoles = useCallback(async () => {
     try {
@@ -932,9 +944,9 @@ export default function TeamPage() {
       setRoles(data.roles || []);
     } catch {
       setRoles([]);
-      setError("Could not load roles. Check your connection and try again.");
+      setError(tm.rolesLoadFail);
     }
-  }, []);
+  }, [tm]);
 
   useEffect(() => {
     (async () => {
@@ -985,7 +997,7 @@ export default function TeamPage() {
     try {
       await fn();
     } catch (e) {
-      setNotice({ kind: "err", text: errText(e) });
+      setNotice({ kind: "err", text: errText(e, tm.errFallback) });
     } finally {
       mark(key, false);
     }
@@ -998,8 +1010,8 @@ export default function TeamPage() {
         body: JSON.stringify({ role_id: roleId }),
       });
       await loadMembers();
-      const name = roles.find((r) => r.id === roleId)?.name || "their new role";
-      setNotice({ kind: "ok", text: `${m.email} is now ${name}.` });
+      const name = roles.find((r) => r.id === roleId)?.name || tm.roleCurrent;
+      setNotice({ kind: "ok", text: fill(tm.nowRole, { email: m.email, name }) });
     });
 
   const saveChannels = (m: TeamMemberRow, levels: Record<string, Level>) =>
@@ -1013,7 +1025,7 @@ export default function TeamPage() {
       });
       await loadMembers();
       setOpenAccess(null);
-      setNotice({ kind: "ok", text: `Channel access updated for ${m.email}.` });
+      setNotice({ kind: "ok", text: fill(tm.chanUpdated, { email: m.email }) });
     });
 
   const toggleStatus = (m: TeamMemberRow) =>
@@ -1026,7 +1038,7 @@ export default function TeamPage() {
       await loadMembers();
       setNotice({
         kind: "ok",
-        text: next === "suspended" ? `${m.email} is suspended.` : `${m.email} is active again.`,
+        text: next === "suspended" ? fill(tm.suspendedMsg, { email: m.email }) : fill(tm.reactivated, { email: m.email }),
       });
     });
 
@@ -1035,19 +1047,19 @@ export default function TeamPage() {
       if (m.status === "invited") {
         await apiFetch(`/api/v1/team/invites/${m.id}`, { method: "DELETE" });
         await loadMembers();
-        setNotice({ kind: "ok", text: `Invite for ${m.email} revoked.` });
+        setNotice({ kind: "ok", text: fill(tm.inviteRevoked, { email: m.email }) });
         return;
       }
       await apiFetch(`/api/v1/team/members/${m.id}`, { method: "DELETE" });
       await loadMembers();
-      setNotice({ kind: "ok", text: `${m.email} removed from the team.` });
+      setNotice({ kind: "ok", text: fill(tm.removedMember, { email: m.email }) });
     });
 
   const resendInvite = (m: TeamMemberRow) =>
     run(`resend:${m.id}`, async () => {
       await apiFetch(`/api/v1/team/invites/${m.id}/resend`, { method: "POST" });
       await loadMembers();
-      setNotice({ kind: "ok", text: `Invite email resent to ${m.email}.` });
+      setNotice({ kind: "ok", text: fill(tm.inviteResent, { email: m.email }) });
     });
 
   const deleteRole = (r: TeamRoleOption) =>
@@ -1055,7 +1067,7 @@ export default function TeamPage() {
       await apiFetch(`/api/v1/team/roles/${r.id}`, { method: "DELETE" });
       if (editingRoleId === r.id) setEditingRoleId(null);
       await loadRoles();
-      setNotice({ kind: "ok", text: `Role "${r.name}" deleted.` });
+      setNotice({ kind: "ok", text: fill(tm.roleDeleted, { name: r.name }) });
     });
 
   const inviteableRoles = roles;
@@ -1064,21 +1076,21 @@ export default function TeamPage() {
     <div className="team-ui relative h-full space-y-8 overflow-y-auto p-4 pb-24 sm:p-6">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
-          <h1 className="text-[20px] font-bold text-[var(--ui-ink)]">Team management</h1>
+          <h1 className="text-[20px] font-bold text-[var(--ui-ink)]">{tm.title}</h1>
           <p className="mt-0.5 text-[13px] text-[var(--ui-ink-2)]">
-            Members, roles and per-channel access.
+            {tm.sub}
           </p>
         </div>
         {context && (
           <p className="text-[12px] text-[var(--ui-ink-2)]">
-            {context.business_name || "Your workspace"} · <span className="font-semibold text-[var(--ui-ink)]">{context.role_name || "Owner"}</span>
-            {!canManage && <span className="ml-2 text-[var(--ui-ink-2)]">read-only</span>}
+            {context.business_name || tm.workspaceFallback} · <span className="font-semibold text-[var(--ui-ink)]">{context.role_name || tm.roleFallback}</span>
+            {!canManage && <span className="ml-2 text-[var(--ui-ink-2)]">{tm.readOnly}</span>}
           </p>
         )}
       </div>
 
       {loading ? (
-        <p className="text-[13px] text-[var(--ui-ink-2)]">Loading…</p>
+        <p className="text-[13px] text-[var(--ui-ink-2)]">{tm.loading}</p>
       ) : (
         <div className="space-y-10">
           {notice && (
@@ -1100,14 +1112,14 @@ export default function TeamPage() {
           {/* Members */}
           <section className={`ui-panel bg-[var(--ui-surface)] p-8`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-[15px] font-semibold text-[var(--ui-ink)]">Members</h2>
+              <h2 className="text-[15px] font-semibold text-[var(--ui-ink)]">{tm.membersTitle}</h2>
               <div className="flex items-center gap-2">
                 <span className="ui-chip shrink-0 px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)]">
-                  {members.length}
+                  {fmt(members.length)}
                 </span>
                 {members.some((m) => m.status === "invited") && (
                   <span className="text-[11px] text-[var(--ui-ink-2)]">
-                    {members.filter((m) => m.status === "invited").length} awaiting response
+                    {fill(tm.awaiting, { n: fmt(members.filter((m) => m.status === "invited").length) })}
                   </span>
                 )}
               </div>
@@ -1124,11 +1136,11 @@ export default function TeamPage() {
                       onClick={() => void Promise.all([loadMembers(), loadRoles()])}
                       className={`${BTN} mt-3`}
                     >
-                      Try again
+                      {tm.tryAgain}
                     </button>
                   </div>
                 ) : (
-                  <p className="col-span-full text-[13px] text-[var(--ui-ink-2)]">No members yet.</p>
+                  <p className="col-span-full text-[13px] text-[var(--ui-ink-2)]">{tm.noMembers}</p>
                 )
               ) : (
                 members.map((m) => {
@@ -1136,11 +1148,11 @@ export default function TeamPage() {
                   const isSelf = !!m.id && m.id === selfId;
                   const editable = canManage && !isOwner && !isSelf && !!m.id;
                   const why = isOwner
-                    ? "The workspace owner always has full access."
+                    ? tm.whyOwner
                     : isSelf
-                      ? "You cannot change your own role — ask the workspace owner."
+                      ? tm.whySelf
                       : !canManage
-                        ? "Your role cannot manage the team."
+                        ? tm.whyNoPerm
                         : undefined;
                   const key = m.id || m.email;
                   const overrideCount = Object.keys(m.channels || {}).length;
@@ -1164,9 +1176,9 @@ export default function TeamPage() {
                           <p className="truncate text-[13px] font-semibold text-[var(--ui-ink)]">{m.email}</p>
                           <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[12px] text-[var(--ui-ink-2)]">
                             <StatusBadge status={m.status} />
-                            {m.status === "invited" && m.invited_at && <span>sent {shortDate(m.invited_at)}</span>}
-                            {m.status === "active" && m.accepted_at && <span>joined {shortDate(m.accepted_at)}</span>}
-                            {isSelf && <span>you</span>}
+                            {m.status === "invited" && m.invited_at && <span>{fill(tm.sent, { date: shortDate(m.invited_at, dateLocale) })}</span>}
+                            {m.status === "active" && m.accepted_at && <span>{fill(tm.joined, { date: shortDate(m.accepted_at, dateLocale) })}</span>}
+                            {isSelf && <span>{tm.you}</span>}
                           </p>
                         </div>
                       </div>
@@ -1180,7 +1192,7 @@ export default function TeamPage() {
                             membersCount={membersCount}
                             onChange={(id) => void changeRole(m, id)}
                             pending={pending[`role:${m.id}`]}
-                            label={`Role for ${m.email}`}
+                            label={fill(tm.roleFor, { email: m.email })}
                             summary={false}
                             className={`${FIELD} min-w-0 px-3 py-2.5 text-[12px]`}
                           />
@@ -1194,28 +1206,28 @@ export default function TeamPage() {
 
                       {editable ? (
                         <div className="flex flex-wrap items-center justify-end gap-2">
-                          {pending[`role:${m.id}`] && <Spinner label="Saving role" />}
+                          {pending[`role:${m.id}`] && <Spinner label={tm.savingRole} />}
                           <button
                             type="button"
                             onClick={() => setOpenAccess(openAccess === key ? null : key)}
                             aria-expanded={openAccess === key}
                             className={`${BTN_GHOST} px-4 py-2.5 text-[12px] whitespace-nowrap`}
                           >
-                            {overrideCount > 0 ? `${overrideCount} override${overrideCount === 1 ? "" : "s"}` : "Follows role"}
+                            {overrideCount > 0 ? (overrideCount === 1 ? fill(tm.ovrOne, { n: fmt(overrideCount) }) : fill(tm.ovrN, { n: fmt(overrideCount) })) : tm.followsRole}
                           </button>
                           {m.status === "invited" && (
                             <button type="button" onClick={() => void resendInvite(m)} disabled={pending[`resend:${m.id}`]} className={`${BTN_GHOST} px-4 py-2.5 text-[12px] whitespace-nowrap`}>
-                              {pending[`resend:${m.id}`] ? "Sending…" : "Resend invite"}
+                              {pending[`resend:${m.id}`] ? tm.sending : tm.resend}
                             </button>
                           )}
                           {m.status !== "invited" && (
                             <button type="button" onClick={() => void toggleStatus(m)} disabled={pending[`status:${m.id}`]} className={`${BTN_GHOST} px-4 py-2.5 text-[12px] whitespace-nowrap`}>
-                              {pending[`status:${m.id}`] ? "Working…" : m.status === "suspended" ? "Reactivate" : "Suspend"}
+                              {pending[`status:${m.id}`] ? tm.working : m.status === "suspended" ? tm.reactivate : tm.suspend}
                             </button>
                           )}
                           <ConfirmButton
-                            label={m.status === "invited" ? "Revoke invite" : "Remove"}
-                            confirmLabel={m.status === "invited" ? "Yes, revoke" : "Yes, remove"}
+                            label={m.status === "invited" ? tm.removeInvite : tm.removeBtn}
+                            confirmLabel={m.status === "invited" ? tm.confirmRevoke : tm.confirmRemove}
                             pending={pending[`remove:${m.id}`]}
                             onConfirm={() => void removeMember(m)}
                             className={`${BTN_DANGER} px-4 py-2.5`}
@@ -1231,7 +1243,7 @@ export default function TeamPage() {
                           key={key}
                           channels={channels}
                           value={m.channels || {}}
-                          roleLabel={memberRole?.name || m.role_name || "current"}
+                          roleLabel={memberRole?.name || m.role_name || tm.roleCurrent}
                           roleDefault={roleDefault}
                           pending={pending[`chan:${m.id}`]}
                           onSave={(levels) => void saveChannels(m, levels)}
@@ -1247,12 +1259,12 @@ export default function TeamPage() {
 
           {/* Invite member */}
           <section className={`ui-panel bg-[var(--ui-surface)] p-8`}>
-            <h2 className="text-[15px] font-semibold text-[var(--ui-ink)]">Invite member</h2>
+            <h2 className="text-[15px] font-semibold text-[var(--ui-ink)]">{tm.inviteTitle}</h2>
             <p className="mt-0.5 text-[11px] text-[var(--ui-ink-2)]">
-              The recipient gets an email with a link to set up their access. Pending invites can be resent from the members list.
+              {tm.inviteSub}
             </p>
             {inviteableRoles.length === 0 ? (
-              <p className="mt-3 text-[12px] text-[var(--ui-ink-2)]">No roles available yet — create one below first.</p>
+              <p className="mt-3 text-[12px] text-[var(--ui-ink-2)]">{tm.noRolesYet}</p>
             ) : (
               <InviteForm
                 roles={inviteableRoles}
@@ -1267,10 +1279,9 @@ export default function TeamPage() {
 
           {/* Roles */}
           <section className={`ui-panel bg-[var(--ui-surface)] p-8`}>
-            <h2 className="text-[15px] font-semibold text-[var(--ui-ink)]">Roles</h2>
+            <h2 className="text-[15px] font-semibold text-[var(--ui-ink)]">{tm.rolesTitle}</h2>
             <p className="mt-0.5 text-[11px] text-[var(--ui-ink-2)]">
-              Every role is yours to set — tick or untick any permission, on built-in roles too. Built-in roles keep their
-              names and can never be deleted.
+              {tm.rolesSub}
             </p>
             {roles.length === 0 ? (
               error ? (
@@ -1278,7 +1289,7 @@ export default function TeamPage() {
                   {error}
                 </p>
               ) : (
-                <p className="mt-4 text-[13px] text-[var(--ui-ink-2)]">No roles yet.</p>
+                <p className="mt-4 text-[13px] text-[var(--ui-ink-2)]">{tm.rolesEmpty}</p>
               )
             ) : (
               <PermissionMatrix
@@ -1296,14 +1307,14 @@ export default function TeamPage() {
           {/* Role builder */}
           <section className={`ui-panel bg-[var(--ui-surface)] p-8`}>
             <h2 className="text-[15px] font-semibold text-[var(--ui-ink)]">
-              {editingRole ? `Editing ${editingRole.name}` : "Role builder"}
+              {editingRole ? fill(tm.builderEditing, { name: editingRole.name }) : tm.builderTitle}
             </h2>
             <p className="mt-0.5 text-[11px] text-[var(--ui-ink-2)]">
               {editingRole
                 ? editingRole.is_system
-                  ? `Built-in "${editingRole.name}" — tick exactly what it can do. Members keep this role and pick up the new access.`
-                  : "Change the name or the permissions, then save. Members keep this role and pick up the new access."
-                : "Pick permissions and give the role a name. New roles appear in the list above and in the invite form."}
+                  ? fill(tm.builderSubSystem, { name: editingRole.name })
+                  : tm.builderSubEdit
+                : tm.builderSubNew}
             </p>
             {canManage ? (
               <RoleBuilder
@@ -1313,7 +1324,7 @@ export default function TeamPage() {
                 onDone={() => { setEditingRoleId(null); void loadRoles(); }}
               />
             ) : (
-              <p className="mt-3 text-[12px] text-[var(--ui-ink-2)]">Your role cannot create or edit roles.</p>
+              <p className="mt-3 text-[12px] text-[var(--ui-ink-2)]">{tm.cannotManage}</p>
             )}
           </section>
         </div>

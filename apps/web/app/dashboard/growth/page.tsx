@@ -19,12 +19,24 @@ import { StatCard } from "@/components/analytics/StatCard";
 import { FactSource } from "@/components/analytics/FactSource";
 import { GBP_DASHBOARD_URL } from "@/lib/google-links";
 import GrowthCardsSection from "@/components/analytics/GrowthCards";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import type { Dict } from "@/lib/i18n/en";
 
-const TYPE_STYLES: Record<string, { bg: string; label: string }> = {
-  operations: { bg: "bg-[var(--ui-sunken)] text-[var(--ui-ink)]", label: "Operations" },
-  reputation: { bg: "bg-[var(--ui-sunken)] text-[var(--ui-ink)]", label: "Reputation" },
-  marketing: { bg: "bg-[var(--ui-sunken)] text-[var(--ui-ink)]", label: "Marketing" },
-  profile: { bg: "bg-[var(--ui-sunken)] text-[var(--ui-ink)]", label: "Profile" },
+type GrowthDict = Dict["growth"];
+type PageDict = Dict["growth"]["page"];
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
+
+const TYPE_STYLES: Record<string, { bg: string; labelKey: "typeOperations" | "typeReputation" | "typeMarketing" | "typeProfile" }> = {
+  operations: { bg: "bg-[var(--ui-sunken)] text-[var(--ui-ink)]", labelKey: "typeOperations" },
+  reputation: { bg: "bg-[var(--ui-sunken)] text-[var(--ui-ink)]", labelKey: "typeReputation" },
+  marketing: { bg: "bg-[var(--ui-sunken)] text-[var(--ui-ink)]", labelKey: "typeMarketing" },
+  profile: { bg: "bg-[var(--ui-sunken)] text-[var(--ui-ink)]", labelKey: "typeProfile" },
 };
 
 const ACTION_ICONS: Record<string, React.ReactNode> = {
@@ -54,6 +66,8 @@ const ACTION_ICONS: Record<string, React.ReactNode> = {
 };
 
 function TrendArrow({ value }: { value: number | null }) {
+  const { locale } = useI18n();
+  const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
   if (value === null || value === undefined) return <span className="text-[11px] text-[var(--ui-ink-2)]">—</span>;
   const up = value > 0;
   const flat = value === 0;
@@ -64,7 +78,7 @@ function TrendArrow({ value }: { value: number | null }) {
           <path d="M6 10V2M2.5 5.5L6 2l3.5 3.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       )}
-      {up ? "+" : ""}{value}%
+      {up ? "+" : ""}{fmt(Math.abs(Math.round(value * 10) / 10))}%
     </span>
   );
 }
@@ -78,7 +92,7 @@ function trendValue(p: TimeseriesPoint, metric: TrendMetricKey): number {
   return p.impressions_maps;
 }
 
-function rollupMonthly(points: TimeseriesPoint[], metric: TrendMetricKey): { label: string; value: number }[] {
+function rollupMonthly(points: TimeseriesPoint[], metric: TrendMetricKey, dateLocale: string): { label: string; value: number }[] {
   const byMonth = new Map<string, number>();
   for (const p of points) {
     const key = p.date.slice(0, 7);
@@ -88,7 +102,7 @@ function rollupMonthly(points: TimeseriesPoint[], metric: TrendMetricKey): { lab
     .sort(([a], [b]) => (a < b ? -1 : 1))
     .map(([key, value]) => {
       const [y, m] = key.split("-").map(Number);
-      const label = new Date(y, m - 1, 1).toLocaleDateString("en", { month: "short" });
+      const label = new Date(y, m - 1, 1).toLocaleDateString(dateLocale, { month: "short" });
       return { label, value };
     });
 }
@@ -98,10 +112,15 @@ function TrendChart({ points, metric, granularity }: {
   metric: TrendMetricKey;
   granularity: "day" | "month";
 }) {
+  const { t, locale } = useI18n();
+  const pg = t.growth.page;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
+  const metricLabel = metric === "impressions" ? pg.mViews : metric === "website" ? pg.mClicks : metric === "calls" ? pg.mCalls : pg.mVisits;
   const buckets = granularity === "month"
-    ? rollupMonthly(points, metric)
+    ? rollupMonthly(points, metric, dateLocale)
     : points.map((p) => ({
-        label: new Date(`${p.date}T00:00:00`).toLocaleDateString("en", { day: "numeric", month: "short" }),
+        label: new Date(`${p.date}T00:00:00`).toLocaleDateString(dateLocale, { day: "numeric", month: "short" }),
         value: trendValue(p, metric),
       }));
   const max = Math.max(1, ...buckets.map((b) => b.value));
@@ -109,7 +128,7 @@ function TrendChart({ points, metric, granularity }: {
   const H = 150;
   const PAD = 12;
   if (buckets.length === 0) {
-    return <div className="flex h-36 items-center justify-center text-[12px] text-[var(--ui-ink-2)]">No activity in this period yet</div>;
+    return <div className="flex h-36 items-center justify-center text-[12px] text-[var(--ui-ink-2)]">{pg.noActivity}</div>;
   }
   const step = buckets.length > 1 ? (W - PAD * 2) / (buckets.length - 1) : 0;
   const path = buckets
@@ -118,7 +137,7 @@ function TrendChart({ points, metric, granularity }: {
   const ticks = buckets.filter((_, i) => i % Math.max(1, Math.ceil(buckets.length / 6)) === 0);
   return (
     <div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="h-36 w-full" role="img" aria-label={`${metric} trend`}>
+      <svg viewBox={`0 0 ${W} ${H}`} className="h-36 w-full" role="img" aria-label={fill(pg.trendAria, { metric: metricLabel })}>
         {[0.25, 0.5, 0.75].map((f) => (
           <line key={f} x1={PAD} x2={W - PAD} y1={H * f} y2={H * f} className="stroke-[var(--ui-line)]" />
         ))}
@@ -131,7 +150,7 @@ function TrendChart({ points, metric, granularity }: {
             r="3"
             className="fill-[var(--ui-ink)]"
           >
-            <title>{`${b.label}: ${b.value.toLocaleString("en")}`}</title>
+            <title>{`${b.label}: ${fmt(b.value)}`}</title>
           </circle>
         ))}
       </svg>
@@ -188,8 +207,13 @@ export default function GrowthPage() {
   const growthCards = growthQuery.data?.growthCards ?? null;
   const loading = growthQuery.isPending;
   const error = growthQuery.isError && !growthQuery.data;
+  const { t, locale } = useI18n();
+  const pg: PageDict = t.growth.page;
+  const gc = t.growth.cards;
+  const gbp = t.bench.fact.gbp;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
 
-  const fmt = (n: number) => new Intl.NumberFormat("en").format(n);
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
   const nativePerf = !!visibility && visibility.impressions_maps > 0;
   const impressions = visibility?.impressions_maps ?? 0;
   const website = acquisition?.website_clicks.total ?? 0;
@@ -205,9 +229,9 @@ export default function GrowthPage() {
     <div className="team-ui h-full overflow-y-auto p-4 sm:p-6">
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-[20px] font-bold text-[var(--ui-ink)] sm:text-[22px]">Growth</h1>
+          <h1 className="text-[20px] font-bold text-[var(--ui-ink)] sm:text-[22px]">{pg.title}</h1>
           <p className="mt-0.5 text-[12px] text-[var(--ui-ink-2)] sm:text-[13px]">
-            Google visibility, customer acquisition and where to grow next.
+            {pg.sub}
           </p>
         </div>
         <RangeChannelControls
@@ -233,21 +257,21 @@ export default function GrowthPage() {
 
       {error && !loading ? (
         <div className="ui-card flex flex-col items-center gap-3 py-16 text-center">
-          <p className="text-[13px] font-semibold text-[var(--ui-ink-2)]">Couldn&apos;t load growth data.</p>
+          <p className="text-[13px] font-semibold text-[var(--ui-ink-2)]">{pg.loadFail}</p>
           <button
             onClick={() => {
               void queryClient.invalidateQueries({ queryKey: ["growth"] });
             }}
             className="ui-btn rounded-[2px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)]"
           >
-            Retry
+            {pg.retry}
           </button>
         </div>
       ) : showEmpty ? (
         <div className="ui-card flex flex-col items-center gap-3 py-16 text-center">
-          <p className="text-[14px] font-bold text-[var(--ui-ink)]">No performance data yet</p>
+          <p className="text-[14px] font-bold text-[var(--ui-ink)]">{pg.emptyTitle}</p>
           <p className="max-w-sm text-[12px] text-[var(--ui-ink-2)]">
-            Google performance metrics sync automatically for connected channels — check back after the next sync.
+            {pg.emptyBody}
           </p>
         </div>
       ) : (
@@ -256,85 +280,85 @@ export default function GrowthPage() {
           <div className="grid grid-cols-2 gap-5 sm:gap-6 lg:grid-cols-4">
             <StatCard
               loading={loading}
-              label="Maps impressions"
+              label={pg.kpiMaps}
               value={fmt(impressions)}
-              sub="people who saw you"
+              sub={pg.kpiMapsSub}
               delta={visibility?.impressions_trend_pct}
               accent="bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
               icon={ACTION_ICONS.impressions}
               source="Google Business Profile"
-              sourceDetail={`last ${days} days`}
+              sourceDetail={fill(pg.lastDays, { n: fmt(days) })}
               sourceHref={channels.length > 0 ? GBP_DASHBOARD_URL : undefined}
-              sourceLinkLabel="Open GBP dashboard"
+              sourceLinkLabel={gbp}
             />
             <StatCard
               loading={loading}
-              label="Website clicks"
+              label={pg.kpiWeb}
               value={fmt(website)}
-              sub={`last ${days} days`}
+              sub={fill(pg.lastDays, { n: fmt(days) })}
               delta={acquisition?.website_clicks.trend_pct}
               accent="bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
               icon={ACTION_ICONS.website}
               source="Google Business Profile"
-              sourceDetail={`last ${days} days`}
+              sourceDetail={fill(pg.lastDays, { n: fmt(days) })}
               sourceHref={channels.length > 0 ? GBP_DASHBOARD_URL : undefined}
-              sourceLinkLabel="Open GBP dashboard"
+              sourceLinkLabel={gbp}
             />
             <StatCard
               loading={loading}
-              label="Calls"
+              label={pg.kpiCalls}
               value={fmt(calls)}
-              sub={`last ${days} days`}
+              sub={fill(pg.lastDays, { n: fmt(days) })}
               delta={acquisition?.call_clicks.trend_pct}
               accent="bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
               icon={ACTION_ICONS.calls}
               source="Google Business Profile"
-              sourceDetail={`last ${days} days`}
+              sourceDetail={fill(pg.lastDays, { n: fmt(days) })}
               sourceHref={channels.length > 0 ? GBP_DASHBOARD_URL : undefined}
-              sourceLinkLabel="Open GBP dashboard"
+              sourceLinkLabel={gbp}
             />
             <StatCard
               loading={loading}
-              label="Directions"
+              label={pg.kpiDirections}
               value={fmt(directions)}
-              sub={`last ${days} days`}
+              sub={fill(pg.lastDays, { n: fmt(days) })}
               delta={acquisition?.direction_requests.trend_pct}
               accent="bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
               icon={ACTION_ICONS.directions}
               source="Google Business Profile"
-              sourceDetail={`last ${days} days`}
+              sourceDetail={fill(pg.lastDays, { n: fmt(days) })}
               sourceHref={channels.length > 0 ? GBP_DASHBOARD_URL : undefined}
-              sourceLinkLabel="Open GBP dashboard"
+              sourceLinkLabel={gbp}
             />
           </div>
 
           {/* CTR panel */}
           {showMain && (
           <div className="ui-card p-5">
-              <h3 className="text-[14px] font-bold text-[var(--ui-ink)]">Conversion</h3>
+              <h3 className="text-[14px] font-bold text-[var(--ui-ink)]">{pg.convTitle}</h3>
               <p className="mt-3 text-[32px] font-bold text-[var(--ui-ink)]">
-                {ctr !== null ? `${ctr}%` : "—"}
+                {ctr !== null ? `${fmt(Math.round(ctr * 10) / 10)}%` : "—"}
               </p>
-              <p className="text-[11px] text-[var(--ui-ink-2)]">of impressions became a click, call or direction request</p>
+              <p className="text-[11px] text-[var(--ui-ink-2)]">{pg.convSub}</p>
               <div className="mt-4 space-y-2 border-t border-[var(--ui-line)] pt-4 text-[12px] text-[var(--ui-ink-2)]">
                 <p className="flex justify-between">
-                  <span>Customer actions</span>
+                  <span>{pg.custActions}</span>
                   <span className="font-semibold text-[var(--ui-ink)]">{fmt(actions)}</span>
                 </p>
                 <p className="flex justify-between">
-                  <span>Total reviews</span>
+                  <span>{pg.totalReviews}</span>
                   <span className="font-semibold text-[var(--ui-ink)]">{fmt(overview?.total_reviews ?? 0)}</span>
                 </p>
                 <p className="flex justify-between">
-                  <span>Response rate</span>
-                  <span className="font-semibold text-[var(--ui-ink)]">{overview ? `${Math.round(overview.response_rate)}%` : "—"}</span>
+                  <span>{pg.respRate}</span>
+                  <span className="font-semibold text-[var(--ui-ink)]">{overview ? `${fmt(Math.round(overview.response_rate))}%` : "—"}</span>
                 </p>
               </div>
               <FactSource
                 source="Google Business Profile"
-                detail={`last ${days} days`}
+                detail={fill(pg.lastDays, { n: fmt(days) })}
                 href={channels.length > 0 ? GBP_DASHBOARD_URL : null}
-                linkLabel="Open GBP dashboard"
+                linkLabel={gbp}
               />
           </div>
           )}
@@ -342,19 +366,19 @@ export default function GrowthPage() {
           {/* Trends — daily / monthly, fed by location_daily_metrics
               (native Google Performance API) */}
           {showMain && (
-          <section aria-label="Trends" className="ui-card p-5">
+          <section aria-label={pg.trendsAria} className="ui-card p-5">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
               <div>
-                <h3 className="text-[14px] font-bold text-[var(--ui-ink)]">Trends</h3>
-                <p className="text-[11px] text-[var(--ui-ink-2)]">Which lever is moving — views, clicks, calls or visits.</p>
+                <h3 className="text-[14px] font-bold text-[var(--ui-ink)]">{pg.trendsTitle}</h3>
+                <p className="text-[11px] text-[var(--ui-ink-2)]">{pg.trendsSub}</p>
               </div>
               <div className="flex gap-2">
-                <div className="flex rounded-[2px] bg-[var(--ui-sunken)] p-0.5" role="group" aria-label="Trend metric">
+                <div className="flex rounded-[2px] bg-[var(--ui-sunken)] p-0.5" role="group" aria-label={pg.metricAria}>
                   {([
-                    { key: "impressions", label: "Views" },
-                    { key: "website", label: "Clicks" },
-                    { key: "calls", label: "Calls" },
-                    { key: "directions", label: "Visits" },
+                    { key: "impressions", label: pg.mViews },
+                    { key: "website", label: pg.mClicks },
+                    { key: "calls", label: pg.mCalls },
+                    { key: "directions", label: pg.mVisits },
                   ] as const).map((m) => (
                     <button
                       key={m.key}
@@ -368,7 +392,7 @@ export default function GrowthPage() {
                     </button>
                   ))}
                 </div>
-                <div className="flex rounded-[2px] bg-[var(--ui-sunken)] p-0.5" role="group" aria-label="Granularity">
+                <div className="flex rounded-[2px] bg-[var(--ui-sunken)] p-0.5" role="group" aria-label={pg.granAria}>
                   {(["day", "month"] as const).map((g) => (
                     <button
                       key={g}
@@ -378,7 +402,7 @@ export default function GrowthPage() {
                         granularity === g ? "border border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink)]" : "text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
                       }`}
                     >
-                      {g === "day" ? "Daily" : "Monthly"}
+                      {g === "day" ? pg.daily : pg.monthly}
                     </button>
                   ))}
                 </div>
@@ -391,17 +415,17 @@ export default function GrowthPage() {
             )}
             <FactSource
               source="Google Business Profile"
-              detail={`${granularity === "day" ? "daily" : "monthly"} · last ${days} days`}
+              detail={`${granularity === "day" ? pg.granDay : pg.granMonth} · ${fill(pg.lastDays, { n: fmt(days) })}`}
               href={channels.length > 0 ? GBP_DASHBOARD_URL : null}
-              linkLabel="Open GBP dashboard"
+              linkLabel={gbp}
             />
           </section>
           )}
 
           {/* Search keywords — native Google only; honest empty state otherwise */}
-          <section aria-label="Search keywords" className="ui-card p-5">
-            <h3 className="text-[14px] font-bold text-[var(--ui-ink)]">Search keywords</h3>
-            <p className="text-[11px] text-[var(--ui-ink-2)]">What people searched when they found you — reuse these words in posts and replies.</p>
+          <section aria-label={pg.kwAria} className="ui-card p-5">
+            <h3 className="text-[14px] font-bold text-[var(--ui-ink)]">{pg.kwTitle}</h3>
+            <p className="text-[11px] text-[var(--ui-ink-2)]">{pg.kwSub}</p>
             {loading || !keywords ? (
               <div className="mt-3 space-y-2" aria-hidden>
                 {[0, 1, 2].map((i) => (
@@ -410,37 +434,37 @@ export default function GrowthPage() {
               </div>
             ) : !keywords.available ? (
               <p className="mt-3 rounded-[2px] bg-[var(--ui-sunken)] px-3 py-3 text-[12px] text-[var(--ui-ink-2)]">
-                Keyword data needs the native Google connection — it arrives automatically once your Google approval lands. No estimates shown meanwhile.
+                {pg.kwNeedNative}
               </p>
             ) : keywords.keywords.length === 0 ? (
               <p className="mt-3 rounded-[2px] bg-[var(--ui-sunken)] px-3 py-3 text-[12px] text-[var(--ui-ink-2)]">
-                No keyword data yet — the next performance sync will populate this table.
+                {pg.kwEmpty}
               </p>
             ) : (
               <ol className="mt-3 divide-y divide-[var(--ui-line)]">
                 {keywords.keywords.slice(0, 10).map((k) => (
                   <li key={k.keyword} className="flex items-center gap-3 py-2">
                     <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[var(--ui-ink)]">{k.keyword}</span>
-                    <span className="shrink-0 text-[12px] tabular-nums text-[var(--ui-ink-2)]">{fmt(k.impressions)} views</span>
+                    <span className="shrink-0 text-[12px] tabular-nums text-[var(--ui-ink-2)]">{fmt(k.impressions)} {pg.viewsWord}</span>
                     <TrendArrow value={k.trend_pct} />
                   </li>
                 ))}
               </ol>
             )}
             <p className="mt-2 text-[10px] text-[var(--ui-ink-2)]">
-              Google reports keyword impressions monthly; the selected range buckets them by month.
+              {pg.kwNote}
             </p>
             <FactSource
-              source="Google Business Profile search terms"
-              detail={`last ${days} days · native Google connection`}
+              source={pg.kwSource}
+              detail={fill(pg.kwDetail, { n: fmt(days) })}
               href={channels.length > 0 ? GBP_DASHBOARD_URL : null}
-              linkLabel="Open GBP dashboard"
+              linkLabel={gbp}
             />
           </section>
 
           {/* Opportunities — independent of performance data */}
-          <section aria-label="Growth opportunities" className="ui-card p-5">
-            <h3 className="mb-4 text-[14px] font-bold text-[var(--ui-ink)]">AI growth opportunities</h3>
+          <section aria-label={pg.oppAria} className="ui-card p-5">
+            <h3 className="mb-4 text-[14px] font-bold text-[var(--ui-ink)]">{pg.oppTitle}</h3>
             {loading || !opportunities ? (
               <div className="space-y-2" aria-hidden>
                 {[0, 1, 2].map((i) => (
@@ -448,7 +472,7 @@ export default function GrowthPage() {
                 ))}
               </div>
             ) : opportunities.opportunities.length === 0 ? (
-              <p className="py-4 text-center text-[12px] text-[var(--ui-ink-2)]">No opportunities right now — you&apos;re on top of it.</p>
+              <p className="py-4 text-center text-[12px] text-[var(--ui-ink-2)]">{pg.oppEmpty}</p>
             ) : (
               <ol className="space-y-2.5">
                 {opportunities.opportunities.map((o) => {
@@ -456,12 +480,12 @@ export default function GrowthPage() {
                   return (
                     <li key={o.priority} className="flex items-start gap-3 rounded-xl p-3 transition hover:bg-[var(--ui-sunken)]">
                       <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--ui-ink)] text-[11px] font-bold text-[var(--ui-on-ink)]">
-                        {o.priority}
+                        {fmt(o.priority)}
                       </span>
                       <div className="min-w-0">
                         <p className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[var(--ui-ink)]">
                           {o.title}
-                          <span className={`rounded px-1.5 py-px text-[9px] font-bold uppercase ${style.bg}`}>{style.label}</span>
+                          <span className={`rounded px-1.5 py-px text-[9px] font-bold uppercase ${style.bg}`}>{gc[style.labelKey]}</span>
                         </p>
                         <p className="mt-0.5 text-[11px] leading-relaxed text-[var(--ui-ink-2)]">{o.detail}</p>
                       </div>
@@ -471,43 +495,43 @@ export default function GrowthPage() {
               </ol>
             )}
             <FactSource
-              source="Sayvors analysis of your Google data"
-              detail="recommendations, not measured facts"
+              source={pg.oppSource}
+              detail={pg.oppDetail}
               href={channels.length > 0 ? GBP_DASHBOARD_URL : null}
-              linkLabel="Open GBP dashboard"
+              linkLabel={gbp}
             />
           </section>
 
           {/* Messaging growth — customer growth from stored daily rollups */}
           {messagingGrowth && (
-            <section aria-label="Messaging growth" className="ui-card p-5">
-              <h3 className="mb-4 text-[14px] font-bold text-[var(--ui-ink)]">Customer growth (messaging)</h3>
+            <section aria-label={pg.msgAria} className="ui-card p-5">
+              <h3 className="mb-4 text-[14px] font-bold text-[var(--ui-ink)]">{pg.msgTitle}</h3>
               <div className="grid gap-4 sm:grid-cols-3">
                 <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">New contacts</p>
-                  <p className="mt-1 text-[22px] font-black tabular-nums text-[var(--ui-ink)]">{messagingGrowth.total_new_contacts}</p>
-                  <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">unique contacts who messaged you</p>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">{pg.newContacts}</p>
+                  <p className="mt-1 text-[22px] font-black tabular-nums text-[var(--ui-ink)]">{fmt(messagingGrowth.total_new_contacts)}</p>
+                  <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">{pg.newContactsSub}</p>
                 </div>
                 <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">Messages in</p>
-                  <p className="mt-1 text-[22px] font-black tabular-nums text-[var(--ui-ink)]">{messagingGrowth.total_messages_in}</p>
-                  <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">inbound messages</p>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">{pg.msgIn}</p>
+                  <p className="mt-1 text-[22px] font-black tabular-nums text-[var(--ui-ink)]">{fmt(messagingGrowth.total_messages_in)}</p>
+                  <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">{pg.msgInSub}</p>
                 </div>
                 <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">Messages out</p>
-                  <p className="mt-1 text-[22px] font-black tabular-nums text-[var(--ui-ink)]">{messagingGrowth.total_messages_out}</p>
-                  <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">outbound replies</p>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">{pg.msgOut}</p>
+                  <p className="mt-1 text-[22px] font-black tabular-nums text-[var(--ui-ink)]">{fmt(messagingGrowth.total_messages_out)}</p>
+                  <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">{pg.msgOutSub}</p>
                 </div>
               </div>
               {messagingGrowth.customer_growth.length > 0 && (
                 <div className="mt-5">
-                  <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">New contacts per week</p>
+                  <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">{pg.perWeek}</p>
                   <div className="flex items-end gap-2" style={{ height: 80 }}>
                     {messagingGrowth.customer_growth.map((w) => {
                       const max = Math.max(...messagingGrowth.customer_growth.map((x) => x.new_contacts), 1);
                       const pct = (w.new_contacts / max) * 100;
                       return (
-                        <div key={w.week} className="flex flex-1 flex-col items-center justify-end gap-1" title={`${w.week}: ${w.new_contacts} new contacts`}>
+                        <div key={w.week} className="flex flex-1 flex-col items-center justify-end gap-1" title={fill(pg.weekTitle, { week: w.week, n: fmt(w.new_contacts) })}>
                           <div className="w-full rounded-t-[2px] bg-[var(--ui-ink)] transition-all" style={{ height: `${Math.max(2, pct)}%` }} />
                           <span className="text-[9px] tabular-nums text-[var(--ui-ink-2)]">{w.week.split("-W")[1]}</span>
                         </div>
@@ -518,24 +542,24 @@ export default function GrowthPage() {
               )}
               {messagingGrowth.follower_growth && (
                 <div className="mt-5 border-t border-[var(--ui-line)] pt-4">
-                  <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">Follower growth</p>
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">{pg.followers}</p>
                   {messagingGrowth.follower_growth.collecting ? (
-                    <p className="mt-2 text-[12px] text-[var(--ui-ink-2)]">Collecting history — need 7+ days of snapshots for a trend.</p>
+                    <p className="mt-2 text-[12px] text-[var(--ui-ink-2)]">{pg.collectingFollowers}</p>
                   ) : (
                     <div className="mt-2 flex items-baseline gap-4">
                       <span className="text-[22px] font-black tabular-nums text-[var(--ui-ink)]">
-                        {messagingGrowth.follower_growth.net >= 0 ? "+" : ""}{messagingGrowth.follower_growth.net}
+                        {messagingGrowth.follower_growth.net >= 0 ? "+" : ""}{fmt(messagingGrowth.follower_growth.net)}
                       </span>
                       <span className="text-[12px] text-[var(--ui-ink-2)]">
-                        {messagingGrowth.follower_growth.rate_pct !== null ? `${messagingGrowth.follower_growth.rate_pct}%` : "—"} change
+                        {messagingGrowth.follower_growth.rate_pct !== null ? `${fmt(Math.round(messagingGrowth.follower_growth.rate_pct * 10) / 10)}%` : "—"} {pg.changeWord}
                       </span>
                     </div>
                   )}
                 </div>
               )}
               <FactSource
-                source="Sayvors message rollup"
-                detail={`last ${days} days`}
+                source={pg.rollupSource}
+                detail={fill(pg.lastDays, { n: fmt(days) })}
               />
             </section>
           )}

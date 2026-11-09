@@ -2,7 +2,18 @@
 
 import { useEffect, useRef } from "react";
 import PlatformMark from "@/components/channels/PlatformMark";
-import { METHOD_META, type MediaState, type PostMethod, type PublishTarget } from "./types";
+import { type MediaState, type PostMethod, type PublishTarget } from "./types";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import type { Dict } from "@/lib/i18n/en";
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
+
+type MethodDict = Dict["publish"]["methods"];
 
 /*
  * The final gate before a post leaves the composer. The confirm button
@@ -37,7 +48,14 @@ export default function ConfirmModal({
   onClose: () => void;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
+  const { t, locale } = useI18n();
+  const cf = t.publish.confirm;
+  const ml = t.publish.methods as MethodDict;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
   const formatCount = items.reduce((n, i) => n + i.methods.length, 0);
+  const destStr = items.length === 1 ? cf.destOne : fill(cf.destN, { n: fmt(items.length) });
+  const fmtStr = formatCount === 1 ? cf.fmtOne : fill(cf.fmtN, { n: fmt(formatCount) });
 
   useEffect(() => {
     if (!open || busy) return;
@@ -55,7 +73,7 @@ export default function ConfirmModal({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Review before publishing"
+      aria-label={cf.dialogAria}
       onClick={(e) => {
         if (e.target === e.currentTarget && !busy) onClose();
       }}
@@ -64,9 +82,9 @@ export default function ConfirmModal({
       <div className="w-full max-w-[420px] rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-5 shadow-2xl">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 className="text-[16px] font-bold text-[var(--ui-ink)]">Review before publishing</h2>
+            <h2 className="text-[16px] font-bold text-[var(--ui-ink)]">{cf.title}</h2>
             <p className="mt-0.5 text-[12px] text-[var(--ui-ink-2)]">
-              {scheduled ? "This is a scheduled post." : "One push to every destination listed."}
+              {scheduled ? cf.scheduledSub : cf.nowSub}
             </p>
           </div>
           <button
@@ -74,7 +92,7 @@ export default function ConfirmModal({
             type="button"
             onClick={onClose}
             disabled={busy}
-            aria-label="Close review"
+            aria-label={cf.closeAria}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[15px] font-bold text-[var(--ui-ink-2)] transition hover:bg-[var(--ui-sunken)] hover:text-[var(--ui-ink)] disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
           >
             ×
@@ -84,23 +102,21 @@ export default function ConfirmModal({
         <div className="mt-3 flex flex-wrap items-center gap-2 rounded-[10px] bg-[var(--ui-sunken)] px-3 py-2.5">
           {media.type && (
             <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">
-              {media.type === "video" ? "Video" : "Image"}
+              {media.type === "video" ? cf.mediaVideo : cf.mediaImage}
             </span>
           )}
           <span className="text-[11px] font-semibold text-[var(--ui-ink-2)]">
-            Caption {captionLen} · Description {descriptionLen}
+            {fill(cf.captionLen, { n: fmt(captionLen), m: fmt(descriptionLen) })}
           </span>
           {removes && (
             <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">
-              Removed {new Date(removes).toLocaleString()}
+              {fill(cf.removedOn, { date: new Date(removes).toLocaleString(dateLocale) })}
             </span>
           )}
         </div>
 
         <p className="mt-3 px-1 text-[10px] font-bold uppercase tracking-widest text-[var(--ui-ink-2)]">
-          {items.length === 0
-            ? "No destination with a format selected"
-            : `Publishing to ${items.length} destination${items.length === 1 ? "" : "s"} · ${formatCount} format${formatCount === 1 ? "" : "s"}`}
+          {items.length === 0 ? cf.emptyTitle : `${destStr} · ${fmtStr}`}
         </p>
         <ul className="mt-1.5 space-y-1">
           {items.map(({ target: t, methods }) => (
@@ -108,13 +124,13 @@ export default function ConfirmModal({
               <PlatformMark platform={t.platform} size={16} />
               <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--ui-ink)]">{t.name}</span>
               <span className="shrink-0 text-right text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
-                {methods.map((m) => METHOD_META[m].label).join(" · ")}
+                {methods.map((m) => ml[m].label).join(" · ")}
               </span>
             </li>
           ))}
           {items.length === 0 && (
             <li className="px-3 py-2 text-[12px] font-semibold text-[var(--ui-ink-2)]">
-              Pick at least one destination and format before publishing.
+              {cf.emptyHint}
             </li>
           )}
         </ul>
@@ -127,7 +143,7 @@ export default function ConfirmModal({
           )}
           {busy && !error && (
             <span role="status" className="mt-3 block px-1 text-[12px] font-semibold text-[var(--ui-ink-2)]">
-              Publishing — this can take a few seconds…
+              {cf.busyNote}
             </span>
           )}
         </p>
@@ -139,7 +155,7 @@ export default function ConfirmModal({
             disabled={busy}
             className="rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-2 text-[13px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
           >
-            Keep editing
+            {cf.keepEditing}
           </button>
           <button
             type="button"
@@ -147,7 +163,7 @@ export default function ConfirmModal({
             disabled={busy || items.length === 0}
             className="rounded-[10px] bg-[var(--ui-ink)] px-5 py-2.5 text-[13px] font-semibold text-[var(--ui-on-ink)] transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
           >
-            {busy ? "Publishing…" : scheduled ? "Schedule now" : "Publish now"}
+            {busy ? cf.publishing : scheduled ? cf.scheduleBtn : cf.publishBtn}
           </button>
         </div>
       </div>

@@ -165,6 +165,14 @@ async def test_orchestration_ai_path_overrides_numbers(monkeypatch):
                 '"opportunities": [], "strengths": [], "actions": []}', "gemini:x")
 
     monkeypatch.setattr(ai, "_call_llm", _fake_llm)
+
+    # The model now comes from the tenant's enabled models (no hardcoded
+    # chain), so the fake DB has to answer for that lookup.
+    async def _fake_model(*a, **k):
+        return "gemini:x"
+
+    monkeypatch.setattr("app.modules.llm.gateway.resolve_tenant_model", _fake_model)
+
     res = await ai.get_review_intelligence(object(), SimpleNamespace(id="u1"))
     assert res["source"] == "ai"
     assert res["model"] == "gemini:x"

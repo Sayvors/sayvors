@@ -96,7 +96,9 @@ async def _amain() -> None:
     from ..modules.channels.meta.digest_worker import run_lead_digest_sweeps
     from ..modules.channels.meta.escalation_worker import run_escalation_sweeps
     from ..modules.billing.ledger import run_hold_reaper
+    from ..modules.email.campaigns import run_campaign_worker
     from ..modules.email.outbox import run_email_worker
+    from ..modules.users.unverified_purge import run_unverified_purge
     from ..modules.channels.reviews_worker import run_google_reviews_worker
     from ..modules.channels.connect_import import run_connect_import_worker
     from ..modules.jobs.reaper import run_job_reaper
@@ -136,6 +138,8 @@ async def _amain() -> None:
         "meta-events-ai-replies": run_meta_events_worker,
         "lead-actions": run_lead_action_worker,
         "email-outbox": run_email_worker,
+        "email-campaigns": run_campaign_worker,
+        "unverified-purge": run_unverified_purge,
     }
     # RAG ingest worker (was lazily started from request handlers).
     loops["rag-ingest"] = rag_jobs.start_worker

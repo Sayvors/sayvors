@@ -83,6 +83,19 @@ function extractDetail(text: string, status: number): string {
     const data = JSON.parse(text);
     const detail = data?.detail;
     if (typeof detail === "string" && detail) return detail.slice(0, 200);
+    // FastAPI validation errors arrive as a list of {loc, msg, type}. Showing
+    // "Request failed (422)" hides which field the operator needs to fix.
+    if (Array.isArray(detail) && detail.length > 0) {
+      const parts = detail.slice(0, 4).map((item: unknown) => {
+        const entry = (item ?? {}) as { loc?: unknown; msg?: unknown };
+        const loc = Array.isArray(entry.loc)
+          ? entry.loc.filter((p) => p !== "body" && p !== "query").join(".")
+          : "";
+        const msg = typeof entry.msg === "string" ? entry.msg : "Invalid value";
+        return loc ? `${loc}: ${msg}` : msg;
+      });
+      return parts.join("; ").slice(0, 300);
+    }
   } catch {
     /* not JSON */
   }
@@ -155,6 +168,223 @@ export async function fetchLiveStats(minutes: 30 | 60): Promise<LiveStats> {
 
 export async function fetchAdminHealth(): Promise<AdminHealth> {
   return adminFetch<AdminHealth>("/api/v1/admin/health");
+}
+
+export interface EmailStats {
+  days: number;
+  outbox: Record<string, number>;
+  events: Record<string, number>;
+  suppressed: number;
+}
+
+export async function fetchEmailStats(days: number): Promise<EmailStats> {
+  return adminFetch<EmailStats>(
+    `/api/v1/admin/email/stats?days=${encodeURIComponent(String(days))}`,
+  );
+}
+
+export interface EmailCampaign {
+  id: string;
+  name: string;
+  subject: string;
+  status: "draft" | "running" | "completed" | "cancelled";
+  created_by: string | null;
+  total_recipients: number;
+  expanded_recipients: number;
+  queued: number;
+  sent: number;
+  failed: number;
+  dead: number;
+  cancelled: number;
+  suppressed: number;
+  batch_size: number;
+  interval_seconds: number;
+  error: string | null;
+  created_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  cancelled_at: string | null;
+}
+
+export interface CampaignAudienceItem {
+  id: string;
+  tenant_id: string;
+  email: string | null;
+  first_name: string | null;
+  suppressed: boolean;
+}
+
+export interface CampaignVariable {
+  key: string;
+  label: string;
+  example: string;
+}
+
+export interface CampaignTemplate {
+  id: string;
+  name: string;
+  description: string;
+  subject: string;
+  body_html: string;
+}
+
+export async function fetchCampaignTemplates(): Promise<{
+  items: CampaignTemplate[];
+}> {
+  return adminFetch<{ items: CampaignTemplate[] }>(
+    "/api/v1/admin/email/campaigns/templates",
+  );
+}
+
+export interface CampaignPreview {
+  tenant: { name: string | null; email: string | null };
+  subject: string;
+  body_html: string;
+  text: string | null;
+  html: string;
+}
+
+export async function fetchCampaignVariables(): Promise<{
+  items: CampaignVariable[];
+}> {
+  return adminFetch<{ items: CampaignVariable[] }>(
+    "/api/v1/admin/email/campaigns/variables",
+  );
+}
+
+export async function previewEmailCampaign(input: {
+  subject: string;
+  html: string;
+  text?: string | null;
+}): Promise<CampaignPreview> {
+  return adminFetch<CampaignPreview>("/api/v1/admin/email/campaigns/preview", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export interface CampaignAudience {
+  eligible: number;
+  max_recipients: number;
+  items: CampaignAudienceItem[];
+}
+
+export interface CampaignRecipient {
+  id: string;
+  tenant_id: string | null;
+  email: string;
+  status:
+    | "queued"
+    | "sending"
+    | "sent"
+    | "failed"
+    | "dead"
+    | "cancelled"
+    | "suppressed";
+  attempts: number;
+  error: string | null;
+  last_event: string | null;
+  last_event_detail: string | null;
+  last_event_at: string | null;
+  created_at: string | null;
+  sent_at: string | null;
+}
+
+export interface CampaignRecipients {
+  items: CampaignRecipient[];
+  total: number;
+  counts: Record<string, number>;
+}
+
+export async function fetchEmailCampaigns(): Promise<{ items: EmailCampaign[] }> {
+  return adminFetch<{ items: EmailCampaign[] }>("/api/v1/admin/email/campaigns");
+}
+
+export async function fetchCampaignAudience(
+  limit = 50,
+  offset = 0,
+): Promise<CampaignAudience> {
+  return adminFetch<CampaignAudience>(
+    `/api/v1/admin/email/campaigns/audience?limit=${limit}&offset=${offset}`,
+  );
+}
+
+export async function fetchCampaignRecipients(
+  id: string,
+  status?: string,
+  limit = 50,
+  offset = 0,
+): Promise<CampaignRecipients> {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  });
+  if (status) params.set("status", status);
+  return adminFetch<CampaignRecipients>(
+    `/api/v1/admin/email/campaigns/${encodeURIComponent(id)}/recipients?${params}`,
+  );
+}
+
+export async function createEmailCampaign(input: {
+  name?: string;
+  subject: string;
+  html: string;
+  text?: string | null;
+  batch_size?: number;
+  interval_seconds?: number;
+}): Promise<EmailCampaign> {
+  return adminFetch<EmailCampaign>("/api/v1/admin/email/campaigns", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function startEmailCampaign(id: string): Promise<EmailCampaign> {
+  return adminFetch<EmailCampaign>(
+    `/api/v1/admin/email/campaigns/${encodeURIComponent(id)}/start`,
+    { method: "POST" },
+  );
+}
+
+export async function cancelEmailCampaign(id: string): Promise<EmailCampaign> {
+  return adminFetch<EmailCampaign>(
+    `/api/v1/admin/email/campaigns/${encodeURIComponent(id)}/cancel`,
+    { method: "POST" },
+  );
+}
+
+export interface PurgedAccount {
+  id: string;
+  email: string;
+  first_name: string | null;
+  last_name: string | null;
+  reason: string;
+  status: "pending" | "purged" | "failed";
+  error: string | null;
+  signed_up_at: string | null;
+  purged_at: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export async function fetchPurgedAccounts(
+  limit = 50,
+  offset = 0,
+  q = "",
+): Promise<{ items: PurgedAccount[]; total: number }> {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  });
+  if (q.trim()) params.set("q", q.trim());
+  return adminFetch<{ items: PurgedAccount[]; total: number }>(
+    `/api/v1/admin/purged-accounts?${params}`,
+  );
+}
+
+export async function runUnverifiedPurge(): Promise<{ purged: number }> {
+  return adminFetch<{ purged: number }>("/api/v1/admin/purged-accounts/run", {
+    method: "POST",
+  });
 }
 
 export interface AdminOverview {

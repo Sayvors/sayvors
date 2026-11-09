@@ -272,9 +272,18 @@ class TenantSubscription(Base):
     # absent keys inherit the plan. Empty dict = no overrides (this is what
     # the admin "Special list" keys off).
     features_override: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
-    # Per-tenant allowance top-ups bought from the billing page. NULL = inherit
-    # the plan. Approval adds to the effective limit, so a 500-message pack on
-    # a 500-message plan yields 1000.
+    # Additive top-ups bought from the billing page. The effective allowance is
+    # always plan limit + bonus, so an admin plan change moves the tenant
+    # immediately and the purchased amount survives. 0 = no top-up.
+    message_bonus: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    channels_bonus: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    # Legacy absolute overrides from before the additive model. The migration
+    # converts them into bonuses and clears them; they are no longer read or
+    # written. Kept physically so a rolling deploy cannot break old workers.
     message_limit_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
     channels_limit_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

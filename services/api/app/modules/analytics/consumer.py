@@ -201,6 +201,7 @@ async def _handle_discovered(payload: dict) -> None:
         result = await enrich_review(
             insight.rating, insight.review_text, insight.reviewer_name,
             tenant_id=insight.user_id or None,
+            db=db,
         )
         insight.sentiment = result["sentiment"]
         insight.sentiment_score = result["sentiment_score"]

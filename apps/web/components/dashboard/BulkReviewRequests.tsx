@@ -13,6 +13,14 @@ import {
   type ColumnGuess,
   type ParsedCsv,
 } from "@/lib/csv";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 export default function BulkReviewRequests({
   channelId,
@@ -22,6 +30,9 @@ export default function BulkReviewRequests({
   onDone?: () => void;
 }) {
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const { t, locale } = useI18n();
+  const b = t.reviews.bulk;
+  const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
   const [parsed, setParsed] = useState<ParsedCsv | null>(null);
   const [mapping, setMapping] = useState<ColumnGuess>({ email: null, phone: null, name: null, lastName: null });
   const [fileName, setFileName] = useState("");
@@ -84,12 +95,12 @@ export default function BulkReviewRequests({
     setAiBusy(true);
     setMessage(null);
     try {
-      const t = await generateReviewTemplate({ channel, tone: "friendly" });
-      setBody(t.body);
-      if (channel === "email") setSubject(t.subject);
-      setMessage(t.source === "ai" ? "Template drafted by AI. Review before sending." : "AI unavailable - a safe fallback template was used.");
+      const tpl = await generateReviewTemplate({ channel, tone: "friendly" });
+      setBody(tpl.body);
+      if (channel === "email") setSubject(tpl.subject);
+      setMessage(tpl.source === "ai" ? b.aiDrafted : b.aiFallback);
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : "Could not draft a template.");
+      setMessage(e instanceof Error ? e.message : b.draftFailed);
     } finally {
       setAiBusy(false);
     }
@@ -112,18 +123,18 @@ export default function BulkReviewRequests({
         body,
       });
       setMessage(
-        `${res.queued} queued` +
-          (res.sent_now ? ` · ${res.sent_now} sending now` : "") +
-          (res.scheduled ? ` · ${res.scheduled} scheduled` : "") +
-          (res.skipped ? ` · ${res.skipped} skipped (missing contact)` : "") +
-          (res.skipped_quota ? ` · ${res.skipped_quota} skipped for plan quota` : "")
+        fill(b.resultQueued, { n: fmt(res.queued) }) +
+          (res.sent_now ? fill(b.resultSending, { n: fmt(res.sent_now) }) : "") +
+          (res.scheduled ? fill(b.resultScheduled, { n: fmt(res.scheduled) }) : "") +
+          (res.skipped ? fill(b.resultSkipped, { n: fmt(res.skipped) }) : "") +
+          (res.skipped_quota ? fill(b.resultSkippedQuota, { n: fmt(res.skipped_quota) }) : "")
       );
       setParsed(null);
       setFileName("");
       if (fileRef.current) fileRef.current.value = "";
       onDone?.();
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : "Bulk send failed.");
+      setMessage(e instanceof Error ? e.message : b.sendFailed);
     } finally {
       setBusy(false);
     }
@@ -133,14 +144,14 @@ export default function BulkReviewRequests({
     <section className="rounded-2xl border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.08] dark:bg-ink">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h3 className="text-[14px] font-bold text-ink dark:text-fog">Bulk review requests (CSV)</h3>
+          <h3 className="text-[14px] font-bold text-ink dark:text-fog">{b.title}</h3>
           <p className="mt-0.5 text-[11px] text-ink/50 dark:text-fog/50">
-            Upload a CSV with email/phone and optional name. Send all at once or in timed batches.
+            {b.body}
           </p>
         </div>
         {valid.length > 0 && (
           <span className="rounded-full bg-deep-violet/10 px-2.5 py-1 text-[11px] font-bold text-deep-violet">
-            {valid.length} ready
+            {fill(b.readyN, { n: fmt(valid.length) })}
           </span>
         )}
       </div>
@@ -159,15 +170,15 @@ export default function BulkReviewRequests({
       {parsed && (
         <div className="mt-3 rounded-xl border border-ink/[0.06] p-3 dark:border-fog/[0.08]">
           <p className="text-[10px] font-bold uppercase tracking-wide text-ink/45 dark:text-fog/45">
-            Column mapping · {parsed.headers.length} columns found
+            {fill(b.mappingTitle, { n: fmt(parsed.headers.length) })}
           </p>
           <p className="mt-0.5 text-[10px] text-ink/45 dark:text-fog/45">
-            Only the mapped columns are read. Everything else in the sheet is ignored.
+            {b.mappingBody}
           </p>
           <div className="mt-2 grid gap-2 sm:grid-cols-3">
             <label className="block">
               <span className="mb-1 block text-[10px] font-semibold text-ink/60 dark:text-fog/60">
-                {channel === "email" ? "Email column" : "Phone / WhatsApp column"}
+                {channel === "email" ? b.emailCol : b.phoneCol}
               </span>
               <select
                 value={channel === "email" ? mapping.email ?? "" : mapping.phone ?? ""}
@@ -177,50 +188,50 @@ export default function BulkReviewRequests({
                 }}
                 className="w-full rounded-lg border border-ink/[0.08] bg-white px-2 py-1.5 text-[11px] text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
               >
-                <option value="">Not mapped</option>
-                {parsed.headers.map((h, i) => <option key={i} value={i}>{h || `Column ${i + 1}`}</option>)}
+                <option value="">{b.notMapped}</option>
+                {parsed.headers.map((h, i) => <option key={i} value={i}>{h || fill(b.colN, { n: fmt(i + 1) })}</option>)}
               </select>
               <p className="mt-0.5 truncate text-[9px] text-ink/40 dark:text-fog/40">
-                {sampleFor(channel === "email" ? mapping.email : mapping.phone) ?? "No sample value"}
+                {sampleFor(channel === "email" ? mapping.email : mapping.phone) ?? b.noSample}
               </p>
             </label>
             <label className="block">
-              <span className="mb-1 block text-[10px] font-semibold text-ink/60 dark:text-fog/60">Name column (optional)</span>
+              <span className="mb-1 block text-[10px] font-semibold text-ink/60 dark:text-fog/60">{b.nameCol}</span>
               <select
                 value={mapping.name ?? ""}
                 onChange={(e) => setMapping((m) => ({ ...m, name: e.target.value === "" ? null : Number(e.target.value) }))}
                 className="w-full rounded-lg border border-ink/[0.08] bg-white px-2 py-1.5 text-[11px] text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
               >
-                <option value="">Not mapped</option>
-                {parsed.headers.map((h, i) => <option key={i} value={i}>{h || `Column ${i + 1}`}</option>)}
+                <option value="">{b.notMapped}</option>
+                {parsed.headers.map((h, i) => <option key={i} value={i}>{h || fill(b.colN, { n: fmt(i + 1) })}</option>)}
               </select>
               <p className="mt-0.5 truncate text-[9px] text-ink/40 dark:text-fog/40">
-                {sampleFor(mapping.name) ?? "No sample value"}
+                {sampleFor(mapping.name) ?? b.noSample}
               </p>
             </label>
             <label className="block">
-              <span className="mb-1 block text-[10px] font-semibold text-ink/60 dark:text-fog/60">Last name (optional)</span>
+              <span className="mb-1 block text-[10px] font-semibold text-ink/60 dark:text-fog/60">{b.lastNameCol}</span>
               <select
                 value={mapping.lastName ?? ""}
                 onChange={(e) => setMapping((m) => ({ ...m, lastName: e.target.value === "" ? null : Number(e.target.value) }))}
                 className="w-full rounded-lg border border-ink/[0.08] bg-white px-2 py-1.5 text-[11px] text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
               >
-                <option value="">Not mapped</option>
-                {parsed.headers.map((h, i) => <option key={i} value={i}>{h || `Column ${i + 1}`}</option>)}
+                <option value="">{b.notMapped}</option>
+                {parsed.headers.map((h, i) => <option key={i} value={i}>{h || fill(b.colN, { n: fmt(i + 1) })}</option>)}
               </select>
               <p className="mt-0.5 truncate text-[9px] text-ink/40 dark:text-fog/40">
-                {sampleFor(mapping.lastName) ?? "No sample value"}
+                {sampleFor(mapping.lastName) ?? b.noSample}
               </p>
             </label>
           </div>
           {missingContactColumn && (
             <p className="mt-2 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
-              No {channel === "email" ? "email" : "phone"} column detected. Pick the right column above - nothing will be sent until it is mapped.
+              {fill(b.noContactCol, { which: channel === "email" ? b.whichEmail : b.whichPhone })}
             </p>
           )}
           {invalidCount > 0 && (
             <p className="mt-2 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
-              {invalidCount} row{invalidCount === 1 ? "" : "s"} skipped: the mapped {channel === "email" ? "email" : "phone"} cell is missing or invalid.
+              {fill(b.invalidRows, { n: fmt(invalidCount), which: channel === "email" ? b.whichEmail : b.whichPhone })}
             </p>
           )}
         </div>
@@ -231,8 +242,8 @@ export default function BulkReviewRequests({
           <table className="w-full text-left text-[11px]">
             <thead className="bg-ink/[0.03] text-[10px] uppercase tracking-wide text-ink/50 dark:bg-fog/[0.04] dark:text-fog/50">
               <tr>
-                <th className="px-2 py-1.5">Contact</th>
-                <th className="px-2 py-1.5">Name</th>
+                <th className="px-2 py-1.5">{b.tableContact}</th>
+                <th className="px-2 py-1.5">{b.tableName}</th>
               </tr>
             </thead>
             <tbody>
@@ -244,31 +255,31 @@ export default function BulkReviewRequests({
               ))}
             </tbody>
           </table>
-          {valid.length > 5 && <p className="px-2 py-1 text-[10px] text-ink/40 dark:text-fog/40">+{valid.length - 5} more</p>}
+          {valid.length > 5 && <p className="px-2 py-1 text-[10px] text-ink/40 dark:text-fog/40">{fill(b.moreRows, { n: fmt(valid.length - 5) })}</p>}
         </div>
       )}
 
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <label className="block">
-          <span className="mb-1 block text-[11px] font-semibold text-ink/60 dark:text-fog/60">Channel</span>
+          <span className="mb-1 block text-[11px] font-semibold text-ink/60 dark:text-fog/60">{b.channelLabel}</span>
           <select
             value={channel}
             onChange={(e) => setChannel(e.target.value as "email" | "whatsapp")}
             className="w-full rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12px] text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
           >
-            <option value="email">Email (Resend)</option>
-            <option value="whatsapp">WhatsApp (Cloud API)</option>
+            <option value="email">{b.channelEmail}</option>
+            <option value="whatsapp">{b.channelWa}</option>
           </select>
         </label>
         <label className="block">
-          <span className="mb-1 block text-[11px] font-semibold text-ink/60 dark:text-fog/60">Delivery</span>
+          <span className="mb-1 block text-[11px] font-semibold text-ink/60 dark:text-fog/60">{b.deliveryLabel}</span>
           <select
             value={mode}
             onChange={(e) => setMode(e.target.value as "now" | "batched")}
             className="w-full rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12px] text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
           >
-            <option value="batched">Scheduled in batches</option>
-            <option value="now">Send all now</option>
+            <option value="batched">{b.deliveryBatched}</option>
+            <option value="now">{b.deliveryNow}</option>
           </select>
         </label>
       </div>
@@ -276,7 +287,7 @@ export default function BulkReviewRequests({
       {mode === "batched" && (
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <label className="block">
-            <span className="mb-1 block text-[11px] font-semibold text-ink/60 dark:text-fog/60">Batch size</span>
+            <span className="mb-1 block text-[11px] font-semibold text-ink/60 dark:text-fog/60">{b.batchSize}</span>
             <input
               type="number"
               min={1}
@@ -287,7 +298,7 @@ export default function BulkReviewRequests({
             />
           </label>
           <label className="block">
-            <span className="mb-1 block text-[11px] font-semibold text-ink/60 dark:text-fog/60">Minutes between batches</span>
+            <span className="mb-1 block text-[11px] font-semibold text-ink/60 dark:text-fog/60">{b.interval}</span>
             <input
               type="number"
               min={1}
@@ -303,12 +314,10 @@ export default function BulkReviewRequests({
       {channel === "whatsapp" && (
         <div className="mt-3 rounded-xl border border-amber-300/60 bg-amber-50 p-3 dark:border-amber-500/30 dark:bg-amber-500/10">
           <p className="text-[11px] font-bold text-amber-800 dark:text-amber-300">
-            24-hour window warning
+            {b.waWarnTitle}
           </p>
           <p className="mt-0.5 text-[10px] leading-relaxed text-amber-800/80 dark:text-amber-200/80">
-            WhatsApp only allows free-form messages within 24 hours of the customer&apos;s last message.
-            Contacts outside that window will be rejected by Meta and shown as <strong>failed</strong>.
-            An approved WhatsApp template is required for cold sends - do not promise delivery until it is configured.
+            {b.waWarnPre} <strong>{b.waWarnStrong}</strong>{b.waWarnPost}
           </p>
         </div>
       )}
@@ -316,16 +325,16 @@ export default function BulkReviewRequests({
       {channel === "whatsapp" && entitlements && (
         <div className="mt-3 rounded-xl border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.08] dark:bg-fog/[0.03]">
           <p className="text-[11px] font-semibold text-ink dark:text-fog">
-            {valid.length} selected → {valid.length} WhatsApp message{valid.length === 1 ? "" : "s"} from your plan
+            {valid.length === 1 ? fill(b.quotaOne, { n: fmt(valid.length) }) : fill(b.quotaN, { n: fmt(valid.length) })}
           </p>
           <p className="mt-0.5 text-[10px] text-ink/50 dark:text-fog/50">
             {maxMessages === null
-              ? "Your plan has unlimited messages."
-              : `${usedMessages} used · ${remaining} remaining this month on ${entitlements.plan_name}`}
+              ? b.unlimited
+              : fill(b.usedLine, { used: fmt(usedMessages), rem: fmt(remaining ?? 0), plan: entitlements.plan_name })}
           </p>
           {quotaShort && (
             <p className="mt-1 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
-              Only {remaining} can be queued now; {valid.length - (remaining ?? 0)} will be skipped for quota. Upgrade the plan to send more.
+            {fill(b.quotaShort, { rem: fmt(remaining ?? 0), skip: fmt(valid.length - (remaining ?? 0)) })}
             </p>
           )}
         </div>
@@ -334,14 +343,14 @@ export default function BulkReviewRequests({
       <div className="mt-3">
         <div className="mb-1 flex items-center justify-between gap-2">
           <span className="text-[11px] font-semibold text-ink/60 dark:text-fog/60">
-            Template <span className="font-normal text-ink/35 dark:text-fog/35">({"name"} and {"link"} are replaced)</span>
+            {b.templateLabel} <span className="font-normal text-ink/35 dark:text-fog/35">{b.varsHint}</span>
           </span>
           <button
             onClick={() => void writeWithAi()}
             disabled={aiBusy}
             className="rounded-lg bg-deep-violet/10 px-2.5 py-1 text-[10px] font-bold text-deep-violet transition hover:bg-deep-violet/15 disabled:opacity-50"
           >
-            {aiBusy ? "Writing…" : "Write with AI"}
+            {aiBusy ? b.writing : b.writeAi}
           </button>
         </div>
         {channel === "email" && (
@@ -349,7 +358,7 @@ export default function BulkReviewRequests({
             value={subject}
             onChange={(e) => setSubject(e.target.value)}
             className="mb-2 w-full rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12px] text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
-            placeholder="Subject"
+            placeholder={b.subjectPh}
           />
         )}
         <textarea
@@ -366,13 +375,13 @@ export default function BulkReviewRequests({
           disabled={busy || valid.length === 0}
           className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
         >
-          {busy ? "Queueing…" : `Queue ${valid.length || ""} request${valid.length === 1 ? "" : "s"}`}
+          {busy ? b.queueing : valid.length === 0 ? b.queueEmpty : valid.length === 1 ? b.queueOne : fill(b.queueN, { n: fmt(valid.length) })}
         </button>
         {message && <p className="text-[11px] text-ink/60 dark:text-fog/60">{message}</p>}
       </div>
 
       <p className="mt-3 text-[10px] text-ink/40 dark:text-fog/40">
-        Batches are sent by the durable job worker, so closing the tab does not stop them. WhatsApp free-form messages require an open 24-hour customer window; outside it, Meta rejects the send and it shows as failed (an approved template is the production fix). Delivery failures appear in the Growth funnel, never as sent.
+        {b.footer}
       </p>
     </section>
   );

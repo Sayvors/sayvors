@@ -94,8 +94,8 @@ class Settings(BaseSettings):
     # Auth
     JWT_SECRET: str = "change-me-in-production"  # Fatal if default
     JWT_ALGORITHM: str = "HS256"
-    JWT_ACCESS_EXPIRATION_MINUTES: int = 15
-    JWT_REFRESH_EXPIRATION_DAYS: int = 7
+    JWT_ACCESS_EXPIRATION_MINUTES: int = 720
+    JWT_REFRESH_EXPIRATION_HOURS: int = 12
     
     # Security
     MAX_LOGIN_ATTEMPTS: int = 5
@@ -245,7 +245,7 @@ def create_access_token(subject: str) -> str:
     )
 
 def create_refresh_token(subject: str) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(days=settings.JWT_REFRESH_EXPIRATION_DAYS)
+    expire = datetime.now(timezone.utc) + timedelta(hours=settings.JWT_REFRESH_EXPIRATION_HOURS)
     jti = secrets.token_hex(16)
     return jwt.encode(
         {"sub": subject, "exp": expire, "jti": jti, "type": "refresh"},

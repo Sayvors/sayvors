@@ -39,8 +39,8 @@ Approval applies:
 
 | Kind | Effect |
 |---|---|
-| `messages` | Adds the amount to `tenant_subscriptions.message_limit_override` (plan limit + pack). Invalidates the message-usage cache. |
-| `channels` | Adds to `channels_limit_override`. |
+| `messages` | Adds the amount to `tenant_subscriptions.message_bonus`. The effective WhatsApp allowance is always `plans.max_messages_per_month + message_bonus`, so a later plan change keeps the pack without pinning the tenant to an old absolute limit. Invalidates the message-usage cache. |
+| `channels` | Adds to `channels_bonus`; effective limit is `plans.max_channels + channels_bonus`. |
 | `ai_credit` | `grant_credit()` with idempotency key `billing-request:{id}` — double approval cannot double-grant. |
 | `plan` | Sets the subscription to the requested plan; no fake charge. |
 

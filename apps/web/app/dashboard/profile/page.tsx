@@ -27,7 +27,8 @@ import {
 } from "@/lib/api-profile";
 
 export default function ProfilePage() {
-  const { setLocale } = useI18n();
+  const { t, setLocale } = useI18n();
+  const pf = t.profile;
   const { refreshAuth } = useAuth();
 
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -65,7 +66,7 @@ export default function ProfilePage() {
       setUsage(nextUsage.items ?? []);
       setUsageCached(Boolean(nextUsage.cached));
     } catch (e) {
-      setError(e instanceof Error && e.message ? e.message : "Could not load profile.");
+      setError(e instanceof Error && e.message ? e.message : pf.loadFail);
     } finally {
       setLoading(false);
     }
@@ -83,7 +84,7 @@ export default function ProfilePage() {
       setUsage(next.items ?? []);
       setUsageCached(Boolean(next.cached));
     } catch (e) {
-      notify(e instanceof Error && e.message ? e.message : "Could not refresh usage.");
+      notify(e instanceof Error && e.message ? e.message : pf.refreshFail);
     } finally {
       setUsageLoading(false);
     }
@@ -92,7 +93,7 @@ export default function ProfilePage() {
   async function handleAccountSave(patch: AccountFormPatch): Promise<Profile> {
     const next = await updateProfile(patch);
     setProfile(next);
-    notify("Account details saved.");
+    notify(pf.savedAcct);
     // The header renders the same name and photo, so refresh its copy too.
     void refreshAuth();
     return next;
@@ -104,9 +105,9 @@ export default function ProfilePage() {
       const next = await updatePreferences(theme, language);
       setProfile(next);
       if (isLocaleCode(language)) setLocale(language, false);
-      notify("Preferences saved.");
+      notify(pf.savedPrefs);
     } catch (e) {
-      notify(e instanceof Error && e.message ? e.message : "Could not save preferences.");
+      notify(e instanceof Error && e.message ? e.message : pf.prefsFail);
       throw e;
     } finally {
       setPreferencesSaving(false);
@@ -118,7 +119,7 @@ export default function ProfilePage() {
     try {
       const next = await uploadProfileImage(kind, file);
       setProfile(next);
-      notify(kind === "avatar" ? "Profile photo updated." : "Cover image updated.");
+      notify(kind === "avatar" ? pf.photoUpdated : pf.coverUpdated);
       if (kind === "avatar") void refreshAuth();
     } finally {
       setImageBusy(null);
@@ -130,7 +131,7 @@ export default function ProfilePage() {
     try {
       const next = await setAvatarSource(source);
       setProfile(next);
-      notify("Profile photo switched.");
+      notify(pf.photoSwitched);
       void refreshAuth();
     } finally {
       setImageBusy(null);
@@ -142,7 +143,7 @@ export default function ProfilePage() {
     try {
       const next = await removeAvatar();
       setProfile(next);
-      notify("Profile photo removed.");
+      notify(pf.photoRemoved);
       void refreshAuth();
     } finally {
       setImageBusy(null);
@@ -154,7 +155,7 @@ export default function ProfilePage() {
     try {
       const next = await removeCover();
       setProfile(next);
-      notify("Cover image removed.");
+      notify(pf.coverRemoved);
     } finally {
       setImageBusy(null);
     }
@@ -164,7 +165,7 @@ export default function ProfilePage() {
     return (
       <div className="h-full overflow-y-auto">
         <div className="flex min-h-[60vh] items-center justify-center p-6">
-          <LogoLoader size={56} label="Loading profile…" showText />
+          <LogoLoader size={56} label={pf.loadingLabel} showText />
         </div>
       </div>
     );
@@ -178,16 +179,16 @@ export default function ProfilePage() {
             role="alert"
             className="rounded-[32px] bg-white p-8 text-center shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)] ring-1 ring-coral/25 dark:bg-[#1b1530]"
           >
-            <h1 className="text-[17px] font-black text-ink dark:text-fog">Could not load profile</h1>
+            <h1 className="text-[17px] font-black text-ink dark:text-fog">{pf.loadFailTitle}</h1>
             <p className="mt-1 break-words text-[12px] text-ink/55 dark:text-fog/55">
-              {error ?? "Unknown error."}
+              {error ?? pf.unknownErr}
             </p>
             <button
               type="button"
               onClick={() => void loadAll()}
               className="mt-5 rounded-[20px] bg-deep-violet px-5 py-2.5 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 active:translate-y-0.5 active:scale-[0.98]"
             >
-              Try again
+              {pf.tryAgain}
             </button>
           </div>
         </div>
@@ -200,12 +201,12 @@ export default function ProfilePage() {
       <div className="mx-auto max-w-6xl space-y-5 p-4 sm:p-6 lg:p-8">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <Breadcrumbs items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Account" }]} />
+            <Breadcrumbs items={[{ label: pf.crumbsDash, href: "/dashboard" }, { label: pf.crumbsAcct }]} />
             <h1 className="mt-2 text-[26px] font-black tracking-tight text-ink dark:text-fog sm:text-[30px]">
-              Account
+              {pf.title}
             </h1>
             <p className="mt-0.5 max-w-xl text-[12.5px] leading-relaxed text-ink/55 dark:text-fog/55">
-              Your photo, personal details and workspace preferences — all in one place.
+              {pf.sub}
             </p>
           </div>
           <button
@@ -226,7 +227,7 @@ export default function ProfilePage() {
               <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" />
               <path d="M13.5 2.5V5H11" />
             </svg>
-            Refresh
+            {pf.refresh}
           </button>
         </div>
 

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy import select
 
+from app.modules.billing.entitlements import get_entitlements
 from app.modules.billing.models import Plan, TenantSubscription
 from app.modules.billing.requests import (
     RequestError,
@@ -100,11 +101,28 @@ async def test_approving_a_message_pack_raises_the_effective_limit(db, user_id):
         ))
     ).first()
     assert sub is not None
-    base_plan = (
-        await db.execute(select(Plan).where(Plan.slug == "free-trial"))
-    ).scalar_one()
-    base_limit = base_plan.max_messages_per_month or 0
-    assert sub.message_limit_override == base_limit + 500
+    # The pack is stored as a bonus, not an absolute limit, so the plan stays
+    # authoritative for the base.
+    assert sub.message_bonus == 500
+    assert sub.message_limit_override is None
+
+
+async def test_plan_change_keeps_the_bonus_and_uses_the_new_base(db, user_id):
+    """A bought pack must survive a plan change instead of pinning the limit."""
+    await _seed(db, user_id)
+    pack, _ = await create_request(
+        db, tenant_id=user_id, created_by=user_id, kind="messages", amount=500
+    )
+    await decide_request(db, pack.id, approve=True, operator="operator-a")
+
+    upgrade, _ = await create_request(
+        db, tenant_id=user_id, created_by=user_id, kind="plan", plan_slug="pro"
+    )
+    await decide_request(db, upgrade.id, approve=True, operator="operator-a")
+
+    ent = await get_entitlements(user_id, db)
+    assert ent.plan_slug == "pro"
+    assert ent.max_messages_per_month == 25_500
 
 
 async def test_approving_a_plan_switches_the_subscription(db, user_id):
@@ -143,4 +161,4 @@ async def test_reject_does_not_apply_anything(db, user_id):
             TenantSubscription.__table__.select().where(TenantSubscription.tenant_id == user_id)
         )
     ).first()
-    assert remaining is None or remaining.message_limit_override is None
+    assert remaining is None or not remaining.message_bonus

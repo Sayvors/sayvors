@@ -131,6 +131,50 @@ async def test_openrouter_is_an_openai_compatible_provider():
 
 
 @pytest.mark.asyncio
+async def test_openrouter_disables_thinking_up_front():
+    """Thinking must die in the request, not in a retry.
+
+    Regression: Qwen3-class hybrids returned reasoning-only payloads with
+    empty content, which surfaced downstream as "Model returned an empty
+    response". A retry fallback doubles latency on every hit; sending
+    reasoning.enabled=false costs nothing and is a no-op for models
+    without a thinking mode. Other providers must not get the param.
+    """
+
+    def _provider_with_captured_create(provider_name):
+        inst = OpenAICompatibleProvider(provider_name, api_key="test-key")
+        captured = {}
+
+        async def _create(**kwargs):
+            captured.update(kwargs)
+            msg = SimpleNamespace(content='{"response_text": "hi"}', tool_calls=None)
+            choice = SimpleNamespace(message=msg, finish_reason="stop")
+            usage = SimpleNamespace(prompt_tokens=1, completion_tokens=1, total_tokens=2)
+            return SimpleNamespace(choices=[choice], usage=usage, model="test-model")
+
+        inst._client = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=_create))
+        )
+        return inst, captured
+
+    req = LLMRequest(
+        model="qwen/qwen3-coder-flash",
+        messages=[LLMMessage(role="user", content="hello")],
+        temperature=0.6,
+        max_tokens=800,
+    )
+
+    inst, captured = _provider_with_captured_create("openrouter")
+    resp = await inst._complete(req)
+    assert captured["extra_body"] == {"reasoning": {"enabled": False}}
+    assert resp.content == '{"response_text": "hi"}'
+
+    inst, captured = _provider_with_captured_create("openai")
+    await inst._complete(req)
+    assert "extra_body" not in captured
+
+
+@pytest.mark.asyncio
 async def test_unchanged_refresh_keeps_cached_provider():
     """The 15s TTL refresh must not churn connection pools when nothing changed."""
     enc = encrypt_token("gsk_db")

@@ -4,6 +4,25 @@ import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api-rag";
 import { fetchMessagingOverview, type MessagingOverview } from "@/lib/api-analytics";
 import { ChannelLogo } from "../ChannelLogos";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import type { Dict } from "@/lib/i18n/en";
+
+type TabDict = Dict["channelHub"]["workspace"]["tab"];
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
+
+function fmtDuration(seconds: number | null, tb: TabDict, fmt: (n: number) => string): string {
+  if (seconds === null) return "—";
+  if (seconds < 60) return fill(tb.durS, { n: fmt(Math.round(seconds)) });
+  if (seconds < 3600) return fill(tb.durMin, { n: fmt(Math.round(seconds / 60)) });
+  if (seconds < 86_400) return fill(tb.durH, { n: fmt(Math.round((seconds / 3600) * 10) / 10) });
+  return fill(tb.durD, { n: fmt(Math.round((seconds / 86_400) * 10) / 10) });
+}
 
 interface AnalyticsTabProps {
   channelSlug: string;
@@ -15,15 +34,11 @@ interface ChannelRow {
   platform: string;
 }
 
-function fmtDuration(seconds: number | null): string {
-  if (seconds === null) return "—";
-  if (seconds < 60) return `${Math.round(seconds)}s`;
-  if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
-  if (seconds < 86_400) return `${(seconds / 3600).toFixed(1)} h`;
-  return `${(seconds / 86_400).toFixed(1)} d`;
-}
-
 export default function AnalyticsTab({ channelSlug, channelName }: AnalyticsTabProps) {
+  const { t, locale } = useI18n();
+  const tb = t.channelHub.workspace.tab;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [data, setData] = useState<MessagingOverview | null>(null);
@@ -76,10 +91,10 @@ export default function AnalyticsTab({ channelSlug, channelName }: AnalyticsTabP
   const totals = data?.totals;
   const stats = totals
     ? [
-        { label: "Messages In", value: totals.messages_in.toLocaleString(), change: null },
-        { label: "Messages Out", value: totals.messages_out.toLocaleString(), change: null },
-        { label: "Conversations", value: totals.conversations.toLocaleString(), change: null },
-        { label: "Response Rate", value: totals.response_rate !== null ? `${totals.response_rate}%` : "—", change: null },
+        { label: tb.msgIn, value: fmt(totals.messages_in), change: null },
+        { label: tb.msgOut, value: fmt(totals.messages_out), change: null },
+        { label: tb.convs, value: fmt(totals.conversations), change: null },
+        { label: tb.respRate, value: totals.response_rate !== null ? `${fmt(totals.response_rate)}%` : "—", change: null },
       ]
     : [];
 
@@ -89,10 +104,10 @@ export default function AnalyticsTab({ channelSlug, channelName }: AnalyticsTabP
       <div>
         <h2 className="text-[16px] font-bold text-ink flex items-center gap-2">
           <ChannelLogo channel={channelSlug} />
-          {channelName} Analytics
+          {fill(tb.analyticsTitle, { name: channelName })}
         </h2>
         <p className="mt-0.5 text-[13px] text-ink/60">
-          Messaging performance over the last 30 days (stored rollups).
+          {tb.analyticsSub}
         </p>
       </div>
 
@@ -104,13 +119,13 @@ export default function AnalyticsTab({ channelSlug, channelName }: AnalyticsTabP
 
       {!loading && error && (
         <div className="rounded-2xl border border-ink/[0.06] bg-white/80 p-6 text-center">
-          <p className="text-[13px] text-ink/60">Could not load analytics. Try again later.</p>
+          <p className="text-[13px] text-ink/60">{tb.loadError}</p>
         </div>
       )}
 
       {!loading && !error && !data && (
         <div className="rounded-2xl border border-ink/[0.06] bg-white/80 p-6 text-center">
-          <p className="text-[13px] text-ink/60">No messaging data yet. Data appears after the daily rollup runs.</p>
+          <p className="text-[13px] text-ink/60">{tb.noData}</p>
         </div>
       )}
 
@@ -130,23 +145,23 @@ export default function AnalyticsTab({ channelSlug, channelName }: AnalyticsTabP
 
           {/* Response health */}
           <div className="rounded-2xl border-2 border-white bg-white/80 p-4 sm:p-5">
-            <h3 className="mb-3 text-[13px] font-bold text-ink">Response Health</h3>
+            <h3 className="mb-3 text-[13px] font-bold text-ink">{tb.respHealth}</h3>
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
               <div>
-                <p className="text-[11px] font-semibold text-ink/50">Median First Reply</p>
-                <p className="mt-1 text-[18px] font-bold text-ink">{fmtDuration(totals!.median_first_response_seconds)}</p>
+                <p className="text-[11px] font-semibold text-ink/50">{tb.medianReply}</p>
+                <p className="mt-1 text-[18px] font-bold text-ink">{fmtDuration(totals!.median_first_response_seconds, tb, fmt)}</p>
               </div>
               <div>
-                <p className="text-[11px] font-semibold text-ink/50">P90 First Reply</p>
-                <p className="mt-1 text-[18px] font-bold text-ink">{fmtDuration(totals!.p90_first_response_seconds)}</p>
+                <p className="text-[11px] font-semibold text-ink/50">{tb.p90Reply}</p>
+                <p className="mt-1 text-[18px] font-bold text-ink">{fmtDuration(totals!.p90_first_response_seconds, tb, fmt)}</p>
               </div>
               <div>
-                <p className="text-[11px] font-semibold text-ink/50">Unanswered Now</p>
-                <p className="mt-1 text-[18px] font-bold text-ink">{totals!.unanswered_now ?? "—"}</p>
+                <p className="text-[11px] font-semibold text-ink/50">{tb.unanswered}</p>
+                <p className="mt-1 text-[18px] font-bold text-ink">{totals!.unanswered_now === null || totals!.unanswered_now === undefined ? "—" : fmt(totals!.unanswered_now)}</p>
               </div>
             </div>
             <p className="mt-3 text-[10px] text-ink/40">
-              Meta &quot;Very responsive&quot; gate: 90% answered, median under 15 min.
+              {tb.metaGate}
             </p>
           </div>
         </>

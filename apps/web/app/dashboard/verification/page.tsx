@@ -9,6 +9,28 @@ import { apiFetch } from "@/lib/api-rag";
 import { GBP_DASHBOARD_URL } from "@/lib/google-links";
 import LogoLoader from "@/components/LogoLoader";
 import GoogleBusinessLogo from "@/components/channels/GoogleBusinessLogo";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import type { Dict } from "@/lib/i18n/en";
+
+type VerificationDict = Dict["verification"];
+type MethodDict = Dict["verification"]["methods"];
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
+
+function labelFor(method: string | undefined, vm: MethodDict) {
+  const known = method ? vm[method as keyof MethodDict] : undefined;
+  if (known && typeof known === "object") return known;
+  return {
+    title: method ? method.replaceAll("_", " ").toLowerCase() : vm.unknownTitle,
+    description: vm.unknownDesc,
+    timing: "",
+  };
+}
 
 type Channel = { id: string; display_name: string | null; platform: string; status: string };
 
@@ -53,23 +75,6 @@ type Verification = {
   provider_error: string | null;
 };
 
-const METHOD_LABELS: Record<string, { title: string; description: string; timing: string }> = {
-  ADDRESS: { title: "Postcard", description: "Mail a PIN to the business address on file.", timing: "5-14 days" },
-  PHONE_CALL: { title: "Phone call", description: "Google calls the eligible business number with a PIN.", timing: "Instant" },
-  SMS: { title: "SMS", description: "Google texts a PIN to the eligible business number.", timing: "Instant" },
-  EMAIL: { title: "Email", description: "Google emails a PIN to an eligible business address.", timing: "Instant" },
-  AUTO: { title: "Instant", description: "Google can verify this location without more action.", timing: "Instant" },
-  TRUSTED_PARTNER: { title: "Partner", description: "Verify through Google's trusted partner flow.", timing: "Partner" },
-};
-
-function labelFor(method: string | undefined) {
-  return (method && METHOD_LABELS[method]) || {
-    title: method ? method.replaceAll("_", " ").toLowerCase() : "Verification",
-    description: "Use the method Google returned for this location.",
-    timing: "",
-  };
-}
-
 function optionTarget(option: VerificationOption): string {
   if (option.phoneNumber) return option.phoneNumber;
   const email = option.emailData;
@@ -109,6 +114,10 @@ export default function VerificationPage() {
   const [mailerContact, setMailerContact] = useState("");
   const [pin, setPin] = useState("");
   const [message, setMessage] = useState<string | null>(null);
+  const { t, locale } = useI18n();
+  const vf: VerificationDict = t.verification;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
 
   const channelsQuery = useQuery({
     queryKey: queryKeys.verification.channels(),
@@ -172,7 +181,7 @@ export default function VerificationPage() {
 
   const requestVerification = useMutation({
     mutationFn: async () => {
-      if (!activeMethod) throw new Error("Choose a verification method first.");
+      if (!activeMethod) throw new Error(vf.chooseMethodFirst);
       const body: Record<string, string> = { method: activeMethod, language_code: "en" };
       if (activeMethod === "SMS" || activeMethod === "PHONE_CALL") {
         body.phone_number = phoneNumber.trim() || selectedOption?.phoneNumber || "";
@@ -193,12 +202,12 @@ export default function VerificationPage() {
       setPin("");
       setMessage(
         next.status === "verified"
-          ? "Google verified this location."
-          : "Google sent the verification request. Enter the PIN below when it arrives.",
+          ? vf.verifiedOk
+          : vf.sentPin,
       );
     },
     onError: (error) => {
-      setMessage(error instanceof Error ? error.message : "Google could not start verification.");
+      setMessage(error instanceof Error ? error.message : vf.startFail);
     },
   });
 
@@ -211,10 +220,10 @@ export default function VerificationPage() {
     onSuccess: (next) => {
       queryClient.setQueryData(queryKeys.verification.detail(selectedId), next);
       setPin("");
-      setMessage(next.status === "verified" ? "Verification complete." : "PIN submitted; Google is still reviewing the location.");
+      setMessage(next.status === "verified" ? vf.pinOk : vf.pinReview);
     },
     onError: (error) => {
-      setMessage(error instanceof Error ? error.message : "Google could not complete verification.");
+      setMessage(error instanceof Error ? error.message : vf.pinFail);
     },
   });
 
@@ -222,7 +231,7 @@ export default function VerificationPage() {
   const loading = channelsQuery.isPending;
   const busy = requestVerification.isPending || completeVerification.isPending;
   const brandStep = verified ? 3 : pending ? 2 : activeMethod ? 1 : 0;
-  const brandSteps = ["Location", "Method", "Google review", "Verified"];
+  const brandSteps = [vf.steps.location, vf.steps.method, vf.steps.review, vf.steps.verified];
 
   return (
     <div className="team-ui h-full overflow-y-auto">
@@ -232,21 +241,19 @@ export default function VerificationPage() {
             <div className="flex items-center gap-2 text-[var(--ui-ink-2)]">
               <GoogleBusinessLogo size={20} />
               <span className="text-[10px] font-bold uppercase tracking-[0.16em]">
-                Google Business Profile
+                {vf.eyebrow}
               </span>
             </div>
             <h1 className="mt-1 text-[20px] font-bold tracking-tight text-[var(--ui-ink)] sm:text-[24px]">
-              Verification
+              {vf.title}
             </h1>
             <p className="mt-1 max-w-2xl text-[12px] leading-relaxed text-[var(--ui-ink-2)] sm:text-[13px]">
-              Confirm ownership of each connected location. Sayvors shows the
-              methods Google currently allows and submits the request on your
-              behalf.
+              {vf.sub}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className={`rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-wide ${channels.length ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200" : "bg-amber-50 text-amber-700 ring-1 ring-amber-200"}`}>
-              {channels.length ? "Google connected" : "Google not connected"}
+              {channels.length ? vf.connectedBadge : vf.notConnectedBadge}
             </span>
             <button
               type="button"
@@ -254,7 +261,7 @@ export default function VerificationPage() {
               disabled={!selectedId || verificationQuery.isFetching}
               className="rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-2 text-[12px] font-bold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] active:translate-y-px disabled:opacity-40"
             >
-              {verificationQuery.isFetching ? "Refreshing..." : "Refresh"}
+              {verificationQuery.isFetching ? vf.refreshing : vf.refresh}
             </button>
           </div>
         </div>
@@ -272,23 +279,22 @@ export default function VerificationPage() {
             <div className="flex items-center gap-3">
               <GoogleBusinessLogo size={32} />
               <div>
-                <h2 className="text-[16px] font-bold text-[var(--ui-ink)]">Connect Google first</h2>
-                <p className="mt-1 text-[12px] text-[var(--ui-ink-2)]">Verification is available after a Google Business Profile location is connected.</p>
+                <h2 className="text-[16px] font-bold text-[var(--ui-ink)]">{vf.noConnectTitle}</h2>
+                <p className="mt-1 text-[12px] text-[var(--ui-ink-2)]">{vf.noConnectBody}</p>
               </div>
             </div>
             <p className="mt-3 max-w-2xl text-[12.5px] leading-relaxed text-[var(--ui-ink-2)]">
-              Once connected, this page reads the live verification state and
-              the methods Google offers for each location.
+              {vf.noConnectHint}
             </p>
           </section>
         ) : (
           <>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               {[
-                { label: "Locations", value: String(channels.length) },
-                { label: "Selected", value: selected?.display_name || "â€”" },
+                { label: vf.statLocations, value: fmt(channels.length) },
+                { label: vf.statSelected, value: selected?.display_name || "—" },
                 { label: "Status", value: (verification?.status ?? "unstarted").replaceAll("_", " ") },
-                { label: "Methods", value: String(options.length) },
+                { label: vf.statMethods, value: fmt(options.length) },
               ].map((item) => (
                 <div key={item.label} className="rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2.5">
                   <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-[var(--ui-ink-2)]">{item.label}</p>
@@ -301,7 +307,7 @@ export default function VerificationPage() {
               <div className="flex items-center gap-2">
                 <GoogleBusinessLogo size={16} />
                 <label className="block text-[11px] font-bold uppercase tracking-[0.1em] text-[var(--ui-ink-2)]" htmlFor="verification-location">
-                  Business location
+                  {vf.bizLocLabel}
                 </label>
               </div>
               <select
@@ -310,10 +316,10 @@ export default function VerificationPage() {
                 onChange={(event) => setSelectedId(event.target.value)}
                 className="mt-2 h-10 w-full rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 text-[12px] font-semibold text-[var(--ui-ink)] outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]"
               >
-                <option value="">No location selected</option>
+                <option value="">{vf.noSelection}</option>
                 {channels.map((channel) => (
                   <option key={channel.id} value={channel.id}>
-                    {channel.display_name || "Unnamed location"}
+                    {channel.display_name || vf.unnamed}
                   </option>
                 ))}
               </select>
@@ -322,9 +328,9 @@ export default function VerificationPage() {
             <section className="rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 sm:p-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-[16px] font-bold text-ink">Verification status</h2>
+                  <h2 className="text-[16px] font-bold text-ink">{vf.statusTitle}</h2>
                   <p className="mt-1 text-[11px] text-ink/45">
-                    {selected?.display_name || "No connected location data"}
+                    {selected?.display_name || vf.noData}
                   </p>
                 </div>
                 <span className={`rounded-full px-3 py-1 text-[10px] font-bold capitalize ${statusTone(verification?.status ?? "unstarted")}`}>
@@ -358,7 +364,7 @@ export default function VerificationPage() {
                 <p className="mt-4 rounded-xl bg-rose-50 px-3 py-2 text-[12px] text-rose-700">
                   {verificationQuery.error instanceof Error
                     ? verificationQuery.error.message
-                    : "Could not read verification status from Google."}
+                    : vf.loadStatusFail}
                 </p>
               )}
               {verification?.provider_error && (
@@ -369,45 +375,44 @@ export default function VerificationPage() {
 
               <div className="mt-4 rounded-xl border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3">
                 <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[var(--ui-ink-2)]">
-                  Google location data
+                  {vf.dataTitle}
                 </p>
                 <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                  <Info label="Address" value={verification?.location_address ?? ""} />
-                  <Info label="Country" value={verification?.location_country ?? ""} />
-                  <Info label="Phone" value={verification?.location_phone ?? ""} />
-                  <Info label="Website" value={verification?.location_website ?? ""} />
-                  <Info label="Connected account" value={verification?.account_name ?? ""} />
+                  <Info label={vf.addrLabel} value={verification?.location_address ?? ""} />
+                  <Info label={vf.countryLabel} value={verification?.location_country ?? ""} />
+                  <Info label={vf.phoneLabel} value={verification?.location_phone ?? ""} />
+                  <Info label={vf.websiteLabel} value={verification?.location_website ?? ""} />
+                  <Info label={vf.accountLabel} value={verification?.account_name ?? ""} />
                 </div>
                 {verification &&
                   !verification.location_phone &&
                   !verification.location_website && (
                     <p className="mt-2 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
-                      Google has no phone or website for this location. Add them in Google
-                      Business Profile; incomplete locations often fail verification.
+                      {vf.noContactWarn}
                     </p>
                   )}
               </div>
 
               <div className="mt-4 grid gap-3 sm:grid-cols-3">
                 <Info
-                  label="Voice of Merchant"
+                  label={vf.voiceLabel}
                   value={
                     verification?.has_voice_of_merchant == null
                       ? ""
                       : verification.has_voice_of_merchant
-                        ? "Yes"
-                        : "No"
+                        ? vf.yesWord
+                        : vf.noWord
                   }
                 />
                 <Info
-                  label="Last method"
-                  value={verification?.method ? labelFor(verification.method).title : ""}
+                  label={vf.lastMethod}
+                  value={verification?.method ? labelFor(verification.method, vf.methods).title : ""}
                 />
                 <Info
-                  label="Last request"
+                  label={vf.lastRequest}
                   value={
                     verification?.requested_at
-                      ? new Date(verification.requested_at).toLocaleDateString()
+                      ? new Date(verification.requested_at).toLocaleDateString(dateLocale)
                       : ""
                   }
                 />
@@ -415,13 +420,13 @@ export default function VerificationPage() {
 
               {verified && (
                 <div className="mt-4 rounded-xl bg-emerald-50 px-4 py-3 text-[12.5px] text-emerald-800">
-                  <p>Google already considers this location verified. No further action is needed.</p>
+                  <p>{vf.verifiedNote}</p>
                   {nextHref && (
                     <Link
                       href={nextHref}
                       className="mt-3 flex w-full items-center justify-center rounded-xl bg-deep-violet px-3 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 active:translate-y-px"
                     >
-                      Continue to profile setup
+                      {vf.continueSetup}
                     </Link>
                   )}
                 </div>
@@ -431,7 +436,7 @@ export default function VerificationPage() {
                   href={nextHref}
                   className="mt-4 inline-flex text-[12px] font-bold text-deep-violet underline underline-offset-2"
                 >
-                  Set up hours, description and photos while Google reviews →
+                  {vf.setupWhile}
                 </Link>
               )}
             </section>
@@ -439,9 +444,9 @@ export default function VerificationPage() {
             {!verified && options.length > 0 && (
               <section>
                 <div className="mb-3">
-                  <h2 className="text-[16px] font-bold text-ink">Choose a verification method</h2>
+                  <h2 className="text-[16px] font-bold text-ink">{vf.methodTitle}</h2>
                   <p className="mt-1 text-[12px] text-ink/45">
-                    These are the methods Google currently offers for this location.
+                    {vf.methodSub}
                   </p>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -464,14 +469,9 @@ export default function VerificationPage() {
 
             {!verified && options.length === 0 && (
               <section className="rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)] p-5 sm:p-6">
-                <h2 className="text-[16px] font-bold text-ink">Verification needs Google Business Profile</h2>
+                <h2 className="text-[16px] font-bold text-ink">{vf.needGbpTitle}</h2>
                 <p className="mt-2 max-w-2xl text-[12.5px] leading-relaxed text-ink/55">
-                  Google reports this account does not have business authority for this
-                  location yet, so Sayvors can&apos;t offer a verification method. Some
-                  locations require video verification, which Google only exposes in
-                  Google Business Profile. Complete verification there, then refresh. If
-                  Google says you do not have access, ask the profile owner to grant owner
-                  or manager access.
+                  {vf.needGbpBody}
                 </p>
                 <a
                   href={GBP_DASHBOARD_URL}
@@ -479,47 +479,47 @@ export default function VerificationPage() {
                   rel="noreferrer"
                   className="mt-4 inline-flex rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-2 text-[12px] font-bold text-deep-violet shadow-sm transition active:translate-y-[2px] active:scale-[0.98]"
                 >
-                  Open Google Business Profile
+                  {vf.openGbp}
                 </a>
               </section>
             )}
 
             {!verified && options.length > 0 && (
               <section className="rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 sm:p-5">
-                <h2 className="text-[16px] font-bold text-ink">Request details</h2>
+                <h2 className="text-[16px] font-bold text-ink">{vf.reqTitle}</h2>
                 <p className="mt-1 text-[12px] text-ink/45">
-                  {activeMethod ? labelFor(activeMethod).description : "Select a method above."}
+                  {activeMethod ? labelFor(activeMethod, vf.methods).description : vf.selectMethod}
                 </p>
 
                 <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                  {(activeMethod === "SMS" || activeMethod === "PHONE_CALL") && (
+                  {activeMethod === "SMS" || activeMethod === "PHONE_CALL" ? (
                     <Field
-                      label="Phone number"
+                      label={vf.phoneField}
                       value={phoneNumber}
                       onChange={setPhoneNumber}
-                      placeholder={selectedOption?.phoneNumber || "Number Google returned"}
+                      placeholder={selectedOption?.phoneNumber || vf.phonePh}
                     />
-                  )}
-                  {activeMethod === "EMAIL" && (
+                  ) : null}
+                  {activeMethod === "EMAIL" ? (
                     <Field
-                      label="Email address"
+                      label={vf.emailLabel}
                       value={emailAddress}
                       onChange={setEmailAddress}
                       placeholder={
                         selectedOption?.emailData?.user && selectedOption?.emailData?.domain
                           ? `${selectedOption.emailData.user}@${selectedOption.emailData.domain}`
-                          : "Address Google returned"
+                          : vf.emailPh
                       }
                     />
-                  )}
-                  {activeMethod === "ADDRESS" && (
+                  ) : null}
+                  {activeMethod === "ADDRESS" ? (
                     <Field
-                      label="Contact name"
+                      label={vf.contactLabel}
                       value={mailerContact}
                       onChange={setMailerContact}
-                      placeholder="Name on the postcard"
+                      placeholder={vf.contactPh}
                     />
-                  )}
+                  ) : null}
                 </div>
 
                 <button
@@ -528,26 +528,26 @@ export default function VerificationPage() {
                   disabled={!selectedId || !activeMethod || !contactReady || busy}
                   className="mt-5 rounded-xl bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white shadow-sm transition active:translate-y-[2px] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  {requestVerification.isPending ? "Starting..." : "Start verification"}
+                  {requestVerification.isPending ? vf.starting : vf.startBtn}
                 </button>
               </section>
             )}
 
             {pending && (
               <section className="rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 sm:p-5">
-                <h2 className="text-[16px] font-bold text-ink">Enter the PIN</h2>
+                <h2 className="text-[16px] font-bold text-ink">{vf.pinTitle}</h2>
                 <p className="mt-1 text-[12px] text-ink/45">
-                  Google is waiting for the code it sent through {labelFor(verification?.method ?? undefined).title.toLowerCase()}.
+                  {fill(vf.pinSub, { method: labelFor(verification?.method ?? undefined, vf.methods).title.toLowerCase() })}
                 </p>
                 <div className="mt-4 grid gap-4 sm:grid-cols-[1fr_auto] sm:items-end">
-                  <Field label="Verification PIN" value={pin} onChange={setPin} placeholder="Code from Google" />
+                  <Field label={vf.pinLabel} value={pin} onChange={setPin} placeholder={vf.pinPh} />
                   <button
                     type="button"
                     onClick={() => completeVerification.mutate()}
                     disabled={!pin.trim() || busy}
                     className="rounded-xl bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white shadow-sm transition active:translate-y-[2px] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    {completeVerification.isPending ? "Submitting..." : "Complete verification"}
+                    {completeVerification.isPending ? vf.submitting : vf.completeBtn}
                   </button>
                 </div>
               </section>
@@ -555,15 +555,15 @@ export default function VerificationPage() {
 
             {verification?.verifications && verification.verifications.length > 0 && (
               <section className="rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 sm:p-5">
-                <h2 className="text-[16px] font-bold text-ink">Google verification history</h2>
+                <h2 className="text-[16px] font-bold text-ink">{vf.histTitle}</h2>
                 <ul className="mt-3 divide-y divide-ink/[0.06]">
                   {verification.verifications.map((item) => (
                     <li key={item.name} className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-[12px]">
                       <span className="font-semibold text-ink/75">
-                        {labelFor(item.method).title}
+                        {labelFor(item.method, vf.methods).title}
                       </span>
                       <span className="text-ink/45">
-                        {item.createTime ? new Date(item.createTime).toLocaleDateString() : ""}
+                        {item.createTime ? new Date(item.createTime).toLocaleDateString(dateLocale) : ""}
                       </span>
                       <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${statusTone(String(item.state).toLowerCase() === "completed" ? "verified" : String(item.state).toLowerCase())}`}>
                         {String(item.state || "").toLowerCase()}
@@ -593,7 +593,8 @@ function MethodCard({
   disabled: boolean;
   onClick: () => void;
 }) {
-  const label = labelFor(method);
+  const { t } = useI18n();
+  const label = labelFor(method, t.verification.methods);
   return (
     <button
       type="button"

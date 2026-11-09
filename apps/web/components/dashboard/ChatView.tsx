@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import type { Message, Conversation } from "@/lib/channel-data";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 
 interface ChatViewProps {
   conversation: Conversation;
@@ -10,6 +11,8 @@ interface ChatViewProps {
 }
 
 export default function ChatView({ conversation, messages, onToggleAgent }: ChatViewProps) {
+  const { t } = useI18n();
+  const ws = t.channelHub.workspace;
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -34,7 +37,7 @@ export default function ChatView({ conversation, messages, onToggleAgent }: Chat
           <div>
             <p className="text-[13px] font-semibold text-ink dark:text-fog">{conversation.name}</p>
             <p className="text-[11px] text-ink/40 dark:text-fog/40">
-              {conversation.agentMode ? "Agent responding" : "You"}
+              {conversation.agentMode ? ws.agentResponding : ws.you}
             </p>
           </div>
         </div>
@@ -45,7 +48,7 @@ export default function ChatView({ conversation, messages, onToggleAgent }: Chat
           className="flex items-center gap-2"
         >
           <span className="text-[11px] font-medium text-ink/50 dark:text-fog/50">
-            {conversation.agentMode ? "Agent" : "Human"}
+            {conversation.agentMode ? ws.agent : ws.human}
           </span>
           <div
             className={`relative h-5 w-9 rounded-full transition-colors ${
@@ -90,7 +93,7 @@ export default function ChatView({ conversation, messages, onToggleAgent }: Chat
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSend()}
-            placeholder={conversation.agentMode ? "Agent is handling this conversation..." : "Type a message..."}
+            placeholder={conversation.agentMode ? ws.agentHandling : ws.typeMsg}
             disabled={conversation.agentMode}
             className="flex-1 rounded-xl border border-ink/[0.08] bg-white px-4 py-2.5 text-[13px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.06] disabled:cursor-not-allowed disabled:opacity-50 dark:border-fog/[0.08] dark:bg-ink dark:text-fog dark:placeholder:text-fog/30"
           />
@@ -99,12 +102,12 @@ export default function ChatView({ conversation, messages, onToggleAgent }: Chat
             disabled={conversation.agentMode || !input.trim()}
             className="flex h-10 items-center justify-center rounded-xl bg-gradient-to-r from-deep-violet to-magenta px-5 text-[13px] font-semibold text-white transition hover:shadow-md active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Send
+            {ws.send}
           </button>
         </div>
         {conversation.agentMode && (
           <p className="mt-2 text-center text-[11px] text-ink/30 dark:text-fog/30">
-            Agent is automatically responding to this conversation
+            {ws.agentAuto}
           </p>
         )}
       </div>

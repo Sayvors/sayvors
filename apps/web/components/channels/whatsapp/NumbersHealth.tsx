@@ -10,6 +10,14 @@ import {
   verifyWhatsAppCode,
   type MetaAsset,
 } from "@/lib/api-meta";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [k, v]) => out.replaceAll(`{${k}}`, String(v)),
+    s,
+  );
+}
 
 type RegState = "idle" | "registering" | "success" | "error";
 type CodeState = "idle" | "sending" | "sent" | "verifying" | "verified";
@@ -24,6 +32,8 @@ export default function NumbersHealth({
   activeId: string;
   onRefresh: () => Promise<void>;
 }) {
+  const { t } = useI18n();
+  const ns = t.dashboard.whatsapp.numbers;
   const [busy, setBusy] = useState<string | null>(null);
   const [pin, setPin] = useState<Record<string, string>>({});
   const [reg, setReg] = useState<Record<string, RegState>>({});
@@ -43,7 +53,7 @@ export default function NumbersHealth({
   const register = async (id: string) => {
     const p = (pin[id] ?? "").trim();
     if (!/^\d{6}$/.test(p)) {
-      setRegError((m) => ({ ...m, [id]: "PIN must be exactly 6 digits — paste allowed." }));
+      setRegError((m) => ({ ...m, [id]: ns.pinDigits }));
       setReg((s) => ({ ...s, [id]: "error" }));
       return;
     }
@@ -57,7 +67,7 @@ export default function NumbersHealth({
     } catch (e) {
       setRegError((m) => ({
         ...m,
-        [id]: e instanceof Error ? e.message.slice(0, 200) : "Registration failed — try again.",
+        [id]: e instanceof Error ? e.message.slice(0, 200) : ns.regFailed,
       }));
       setReg((s) => ({ ...s, [id]: "error" }));
     }
@@ -72,7 +82,7 @@ export default function NumbersHealth({
     } catch (e) {
       setCodeError((m) => ({
         ...m,
-        [id]: e instanceof Error ? e.message.slice(0, 200) : "Could not request a code.",
+        [id]: e instanceof Error ? e.message.slice(0, 200) : ns.codeFailed,
       }));
       setCodeState((s) => ({ ...s, [id]: "idle" }));
     }
@@ -81,7 +91,7 @@ export default function NumbersHealth({
   const verify = async (id: string) => {
     const value = (code[id] ?? "").trim();
     if (!/^\d{6}$/.test(value)) {
-      setCodeError((m) => ({ ...m, [id]: "The code is 6 digits." }));
+      setCodeError((m) => ({ ...m, [id]: ns.codeDigits }));
       return;
     }
     setCodeState((s) => ({ ...s, [id]: "verifying" }));
@@ -93,7 +103,7 @@ export default function NumbersHealth({
     } catch (e) {
       setCodeError((m) => ({
         ...m,
-        [id]: e instanceof Error ? e.message.slice(0, 200) : "Verification failed.",
+        [id]: e instanceof Error ? e.message.slice(0, 200) : ns.verifyFailed,
       }));
       setCodeState((s) => ({ ...s, [id]: "sent" }));
     }
@@ -102,7 +112,7 @@ export default function NumbersHealth({
   const saveTwoStep = async (id: string) => {
     const value = (twoStepPin[id] ?? "").trim();
     if (!/^\d{6}$/.test(value)) {
-      setTwoStepError((m) => ({ ...m, [id]: "PIN must be exactly 6 digits." }));
+      setTwoStepError((m) => ({ ...m, [id]: ns.pinDigitsShort }));
       return;
     }
     setTwoStepState((s) => ({ ...s, [id]: "saving" }));
@@ -114,14 +124,14 @@ export default function NumbersHealth({
     } catch (e) {
       setTwoStepError((m) => ({
         ...m,
-        [id]: e instanceof Error ? e.message.slice(0, 200) : "Could not update the PIN.",
+        [id]: e instanceof Error ? e.message.slice(0, 200) : ns.pinUpdateFailed,
       }));
       setTwoStepState((s) => ({ ...s, [id]: "idle" }));
     }
   };
 
   const deregister = async (id: string) => {
-    if (!window.confirm("Deregister this number? Sending stops immediately until it is registered again.")) {
+    if (!window.confirm(ns.dereConfirm)) {
       return;
     }
     setDeregistering(id);
@@ -129,9 +139,9 @@ export default function NumbersHealth({
     try {
       await deregisterWhatsAppNumber(id);
       await onRefresh();
-      setMsg("Number deregistered. Register it again when you are ready.");
+      setMsg(ns.dereDone);
     } catch (e) {
-      setMsg(e instanceof Error ? e.message.slice(0, 200) : "Deregistration failed.");
+      setMsg(e instanceof Error ? e.message.slice(0, 200) : ns.deregFailed);
     } finally {
       setDeregistering(null);
     }
@@ -142,9 +152,9 @@ export default function NumbersHealth({
     try {
       await validateMeta("whatsapp");
       await onRefresh();
-      setMsg("Health refreshed.");
+      setMsg(ns.healthRefreshed);
     } catch (e) {
-      setMsg(e instanceof Error ? e.message.slice(0, 200) : "Refresh failed.");
+      setMsg(e instanceof Error ? e.message.slice(0, 200) : ns.refreshFailed);
     } finally {
       setBusy(null);
     }
@@ -166,36 +176,36 @@ export default function NumbersHealth({
                 <p className="truncate text-[11px] text-[var(--wa-text-2)]">{n.name || "WhatsApp number"} · {n.status}</p>
               </div>
               <button onClick={revalidate} disabled={busy !== null} className="min-h-11 rounded-xl border border-[var(--wa-border)] px-3 text-[12px] font-semibold text-[var(--wa-text)] disabled:opacity-50">
-                {busy === "all" ? "Checking…" : "Refresh"}
+                {busy === "all" ? ns.checking : ns.refresh}
               </button>
             </div>
 
             <details className="mt-3 rounded-xl border border-[var(--wa-border)] p-3">
               <summary className="cursor-pointer text-[12px] font-bold text-[var(--wa-text)]">
-                Number lifecycle
+                {ns.lifecycle}
               </summary>
 
               <div className="mt-3 space-y-3">
                 <div>
                   <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--wa-text-2)]">
-                    1 · Verify the number
+                    {ns.verify}
                   </p>
                   <div className="mt-1 flex flex-wrap items-center gap-2">
                     <select
                       value={method[n.external_asset_id] ?? "SMS"}
                       onChange={(e) => setMethod((m) => ({ ...m, [n.external_asset_id]: e.target.value as "SMS" | "VOICE" }))}
-                      aria-label={`Code delivery method for ${n.phone ?? n.external_asset_id}`}
+                      aria-label={fill(ns.delivery, { phone: n.phone ?? n.external_asset_id })}
                       className="min-h-11 rounded-xl border border-[var(--wa-input-border)] bg-[var(--wa-input-bg)] px-3 text-[13px] text-[var(--wa-text)]"
                     >
-                      <option value="SMS">SMS</option>
-                      <option value="VOICE">Voice call</option>
+                      <option value="SMS">{ns.sms}</option>
+                      <option value="VOICE">{ns.voice}</option>
                     </select>
                     <button
                       onClick={() => sendCode(n.external_asset_id)}
                       disabled={cState === "sending" || cState === "verifying"}
                       className="min-h-11 rounded-full border border-[var(--wa-border)] px-4 text-[12px] font-semibold text-[var(--wa-text)] disabled:opacity-50"
                     >
-                      {cState === "sending" ? "Requesting…" : "Request code"}
+                      {cState === "sending" ? ns.requesting : ns.requestCode}
                     </button>
                     {(cState === "sent" || cState === "verifying" || cState === "verified") && (
                       <>
@@ -204,8 +214,8 @@ export default function NumbersHealth({
                           onChange={(e) => setCode((c) => ({ ...c, [n.external_asset_id]: sixDigits(e.target.value) }))}
                           inputMode="numeric"
                           maxLength={6}
-                          placeholder="6-digit code"
-                          aria-label={`Verification code for ${n.phone ?? n.external_asset_id}`}
+                          placeholder={ns.codePh}
+                          aria-label={fill(ns.codeAria, { phone: n.phone ?? n.external_asset_id })}
                           className="min-h-11 w-36 rounded-xl border border-[var(--wa-input-border)] bg-[var(--wa-input-bg)] px-3 text-[13px] tracking-widest text-[var(--wa-text)]"
                         />
                         <button
@@ -213,7 +223,7 @@ export default function NumbersHealth({
                           disabled={cState === "verifying" || cState === "verified"}
                           className="min-h-11 rounded-full bg-[var(--wa-accent)] px-4 text-[12px] font-semibold text-white disabled:opacity-50"
                         >
-                          {cState === "verified" ? "Verified" : cState === "verifying" ? "Verifying…" : "Verify"}
+                          {cState === "verified" ? ns.verified : cState === "verifying" ? ns.verifying : ns.verifyBtn}
                         </button>
                       </>
                     )}
@@ -225,7 +235,7 @@ export default function NumbersHealth({
 
                 <div>
                   <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--wa-text-2)]">
-                    2 · Register with the 6-digit PIN
+                    {ns.registerTitle}
                   </p>
                   <div className="mt-1 flex flex-wrap items-center gap-2">
                     <input
@@ -233,8 +243,8 @@ export default function NumbersHealth({
                       onChange={(e) => setPin((p) => ({ ...p, [n.external_asset_id]: sixDigits(e.target.value) }))}
                       inputMode="numeric"
                       maxLength={6}
-                      placeholder="6-digit PIN"
-                      aria-label={`PIN for ${n.phone ?? n.external_asset_id}`}
+                      placeholder={ns.pinPh}
+                      aria-label={fill(ns.pinAria, { phone: n.phone ?? n.external_asset_id })}
                       className="min-h-11 w-36 rounded-xl border border-[var(--wa-input-border)] bg-[var(--wa-input-bg)] px-3 text-[13px] tracking-widest text-[var(--wa-text)]"
                     />
                     <button
@@ -242,11 +252,11 @@ export default function NumbersHealth({
                       disabled={state === "registering"}
                       className="min-h-11 rounded-full bg-[var(--wa-accent)] px-5 text-[12px] font-semibold text-white disabled:opacity-50"
                     >
-                      {state === "registering" ? "Registering…" : "Register"}
+                      {state === "registering" ? ns.registering : ns.register}
                     </button>
                     {state === "success" && (
                       <span role="status" className="text-[12px] font-semibold text-[var(--wa-ok-text)]">
-                        Registered — this number can send now.
+                        {ns.registered}
                       </span>
                     )}
                   </div>
@@ -254,13 +264,13 @@ export default function NumbersHealth({
                     <p role="alert" className="mt-1 text-[12px] font-medium text-[var(--wa-danger)]">{regError[n.external_asset_id]}</p>
                   )}
                   <p className="mt-1 text-[11px] text-[var(--wa-text-2)]">
-                    Meta allows re-registration for 14 days after signup; later needs a fresh Embedded Signup.
+                    {ns.reread}
                   </p>
                 </div>
 
                 <div>
                   <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--wa-text-2)]">
-                    3 · Two-step verification PIN
+                    {ns.twoStep}
                   </p>
                   <div className="mt-1 flex flex-wrap items-center gap-2">
                     <input
@@ -268,8 +278,8 @@ export default function NumbersHealth({
                       onChange={(e) => setTwoStepPin((p) => ({ ...p, [n.external_asset_id]: sixDigits(e.target.value) }))}
                       inputMode="numeric"
                       maxLength={6}
-                      placeholder="New 6-digit PIN"
-                      aria-label={`Two-step PIN for ${n.phone ?? n.external_asset_id}`}
+                      placeholder={ns.newPinPh}
+                      aria-label={fill(ns.twoStepAria, { phone: n.phone ?? n.external_asset_id })}
                       className="min-h-11 w-40 rounded-xl border border-[var(--wa-input-border)] bg-[var(--wa-input-bg)] px-3 text-[13px] tracking-widest text-[var(--wa-text)]"
                     />
                     <button
@@ -277,14 +287,14 @@ export default function NumbersHealth({
                       disabled={pState === "saving"}
                       className="min-h-11 rounded-full border border-[var(--wa-border)] px-4 text-[12px] font-semibold text-[var(--wa-text)] disabled:opacity-50"
                     >
-                      {pState === "saving" ? "Saving…" : pState === "saved" ? "Saved" : "Save PIN"}
+                      {pState === "saving" ? ns.saving : pState === "saved" ? ns.saved : ns.savePin}
                     </button>
                   </div>
                   {twoStepError[n.external_asset_id] && (
                     <p role="alert" className="mt-1 text-[12px] font-medium text-[var(--wa-danger)]">{twoStepError[n.external_asset_id]}</p>
                   )}
                   <p className="mt-1 text-[11px] text-[var(--wa-text-2)]">
-                    Meta has no endpoint to disable two-step verification; changing the PIN is the supported path.
+                    {ns.twoStepNote}
                   </p>
                 </div>
 
@@ -294,10 +304,10 @@ export default function NumbersHealth({
                     disabled={deregistering === n.external_asset_id}
                     className="min-h-11 rounded-full border border-[var(--wa-danger)] px-4 text-[12px] font-semibold text-[var(--wa-danger)] disabled:opacity-50"
                   >
-                    {deregistering === n.external_asset_id ? "Deregistering…" : "Deregister number"}
+                    {deregistering === n.external_asset_id ? ns.deregistering : ns.deregister}
                   </button>
                   <p className="mt-1 text-[11px] text-[var(--wa-text-2)]">
-                    Deregistering stops sending immediately. The number can be registered again later.
+                    {ns.deregNote}
                   </p>
                 </div>
               </div>

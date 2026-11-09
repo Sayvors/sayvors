@@ -1,23 +1,30 @@
 # Message quota enforcement
 
-Last updated: 2026-11-07.
+Last updated: 2026-11-08.
 
 ## What is limited
 
 Every plan carries `max_messages_per_month` (nullable = unlimited). The count
-is **outbound messages per tenant per calendar month** — the same number the
-inbox send path has always used. Inbound messages are never counted; they are
-what the quota protects the business from answering.
+is **outbound WhatsApp messages per tenant per calendar month**. Instagram,
+Facebook, Telegram and every other channel are excluded — they have their own
+limits and must not consume the WhatsApp allowance. Inbound messages are never
+counted; they are what the quota protects the business from answering.
+
+The limit is per tenant/workspace, not per WhatsApp number: every number under
+the tenant shares it. It resets on the 1st of each calendar month, UTC.
 
 ## Where it is enforced
 
-1. **Manual sends** (`/api/v1/inbox/send*`) — `_ensure_messaging_quota` returns
-   429 with `X-Entitlement-Denied: quota` once the limit is reached.
-2. **AI auto-replies** (WhatsApp and Instagram, `channels/meta/consumer.py`) —
-   the gate runs before any model work. The inbound message is still stored
-   and published to the inbox; only the generated reply is withheld. The
-   inbound row is marked `ai_reply_status = skipped` with
-   `Monthly message limit reached` for the operator.
+1. **Manual WhatsApp sends** (`/api/v1/inbox/send*` and
+   `/api/v1/whatsapp/templates/send`) — `ensure_messaging_quota`
+   (`billing/messaging_quota.py`) resolves the target channel and returns 429
+   with `X-Entitlement-Denied: quota` once the limit is reached. Non-WhatsApp
+   channels pass the feature check but are not blocked by this allowance.
+2. **WhatsApp AI auto-replies** (`channels/meta/consumer.py`) — the gate runs
+   before any model work. The inbound message is still stored and published to
+   the inbox; only the generated reply is withheld. The inbound row is marked
+   `ai_reply_status = skipped` with `Monthly message limit reached` for the
+   operator. The Instagram AI path has no message-quota gate.
 3. **LLM gateway** — `check_feature("ai_replies")` still applies; a plan
    without the AI feature never reaches the provider.
 
@@ -25,9 +32,11 @@ what the quota protects the business from answering.
 
 `billing/quotas.py`:
 
-- `count_messages_this_month` (DB) is the source of truth.
-- `get_message_usage` memoises it in Redis for **30 seconds**, so a burst of
-  inbound messages performs at most one COUNT.
+- `count_messages_this_month` (DB) is the source of truth. It joins
+  `channels` and filters `platform = 'whatsapp'` before counting outbound rows.
+- `get_message_usage` memoises it in Redis for **30 seconds** under
+  `quota:whatsapp_messages:{tenant}:{month}`, so a burst of inbound messages
+  performs at most one COUNT.
 - `invalidate_message_usage` is called after a successful manual send, so the
   next inbound check sees the new message immediately.
 - Redis failure falls back to the database; a quota lookup failure in the
@@ -42,6 +51,20 @@ what the quota protects the business from answering.
   amber "Running low" with the remaining count, red "Message limit reached"
   once exhausted, always with a link to the plans page. There is no
   self-serve top-up yet; the plans page carries the Enterprise contact.
+
+## Top-ups vs. plan limits
+
+Approved message packs are stored as `tenant_subscriptions.message_bonus`,
+never as an absolute limit. Effective allowance is always:
+
+```
+plans.max_messages_per_month + COALESCE(message_bonus, 0)
+```
+
+An admin plan change (or a plan-catalog edit) therefore moves the tenant
+immediately, and the purchased bonus stacks on the new base. Plans with
+`max_messages_per_month = NULL` are unlimited; a bonus has no effect on them
+and the approval returns "nothing to add".
 
 ## Invariants
 

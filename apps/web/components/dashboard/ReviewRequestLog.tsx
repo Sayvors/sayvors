@@ -9,6 +9,14 @@ import {
   type ReviewRequestItem,
   type ReviewRequestList,
 } from "@/lib/api-analytics";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 const STATUS_STYLE: Record<string, string> = {
   queued: "bg-amber-100 text-amber-700",
@@ -23,6 +31,10 @@ const STATUS_STYLE: Record<string, string> = {
 const PAGE = 25;
 
 export default function ReviewRequestLog() {
+  const { t, locale } = useI18n();
+  const l = t.reviews.log;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
   const [data, setData] = useState<ReviewRequestList | null>(null);
   const [status, setStatus] = useState("");
   const [channel, setChannel] = useState("");
@@ -43,7 +55,7 @@ export default function ReviewRequestLog() {
       });
       setData(res);
     } catch {
-      setMessage("Could not load the request log.");
+      setMessage(l.loadFailed);
     } finally {
       setBusy(false);
     }
@@ -59,7 +71,7 @@ export default function ReviewRequestLog() {
       await retryReviewRequest(row.id);
       await load();
     } catch (e) {
-      setMessage(e instanceof Error ? e.message.slice(0, 160) : "Retry failed.");
+      setMessage(e instanceof Error ? e.message.slice(0, 160) : l.retryFailed);
     }
   };
 
@@ -67,10 +79,10 @@ export default function ReviewRequestLog() {
     setMessage(null);
     try {
       const res = await retryFailedReviewRequests();
-      setMessage(`${res.retried} failed request${res.retried === 1 ? "" : "s"} queued for retry.`);
+      setMessage(res.retried === 1 ? l.retriedOne : fill(l.retriedN, { n: fmt(res.retried) }));
       await load();
     } catch (e) {
-      setMessage(e instanceof Error ? e.message.slice(0, 160) : "Retry failed.");
+      setMessage(e instanceof Error ? e.message.slice(0, 160) : l.retryFailed);
     }
   };
 
@@ -80,7 +92,7 @@ export default function ReviewRequestLog() {
       await cancelReviewRequest(row.id);
       await load();
     } catch (e) {
-      setMessage(e instanceof Error ? e.message.slice(0, 160) : "Cancel failed.");
+      setMessage(e instanceof Error ? e.message.slice(0, 160) : l.cancelFailed);
     }
   };
 
@@ -91,9 +103,9 @@ export default function ReviewRequestLog() {
     <section className="rounded-2xl border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.08] dark:bg-ink">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h3 className="text-[14px] font-bold text-ink dark:text-fog">Request log</h3>
+          <h3 className="text-[14px] font-bold text-ink dark:text-fog">{l.title}</h3>
           <p className="mt-0.5 text-[11px] text-ink/50 dark:text-fog/50">
-            Every bulk and single request, with its delivery status. Retry failed rows individually or all at once.
+            {l.body}
           </p>
         </div>
         {failed > 0 && (
@@ -102,7 +114,7 @@ export default function ReviewRequestLog() {
             disabled={busy}
             className="rounded-lg bg-coral px-3 py-1.5 text-[11px] font-bold text-white transition hover:bg-coral/90 disabled:opacity-50"
           >
-            Retry all failed ({failed})
+            {fill(l.retryAll, { n: fmt(failed) })}
           </button>
         )}
       </div>
@@ -117,7 +129,7 @@ export default function ReviewRequestLog() {
               status === s ? "bg-ink text-white dark:bg-fog dark:text-ink" : "bg-ink/[0.05] text-ink/60 dark:bg-fog/[0.08] dark:text-fog/60"
             }`}
           >
-            {s} {counts[s] ? `(${counts[s]})` : ""}
+            {l.status[s]} {counts[s] ? `(${fmt(counts[s])})` : ""}
           </button>
         ))}
       </div>
@@ -128,15 +140,15 @@ export default function ReviewRequestLog() {
           onChange={(e) => { setChannel(e.target.value); setOffset(0); }}
           className="rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12px] text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
         >
-          <option value="">All channels</option>
-          <option value="email">Email</option>
-          <option value="whatsapp">WhatsApp</option>
-          <option value="in_person">In person</option>
+          <option value="">{l.allChannels}</option>
+          <option value="email">{l.channels.email}</option>
+          <option value="whatsapp">{l.channels.whatsapp}</option>
+          <option value="in_person">{l.channels.in_person}</option>
         </select>
         <input
           value={q}
           onChange={(e) => { setQ(e.target.value); setOffset(0); }}
-          placeholder="Search contact"
+          placeholder={l.searchPh}
           className="min-w-[180px] flex-1 rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12px] text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
         />
       </div>
@@ -147,8 +159,7 @@ export default function ReviewRequestLog() {
         (r) => r.status === "failed" && r.channel === "whatsapp" && /24|template|window/i.test(r.error ?? "")
       ) && (
         <p className="mt-2 rounded-lg border border-amber-300/60 bg-amber-50 px-2.5 py-2 text-[10px] leading-relaxed text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
-          Some WhatsApp sends were rejected because the customer was outside the 24-hour window.
-          Free-form WhatsApp asks only work inside that window; an approved template is required for cold sends.
+          {l.windowNote}
         </p>
       )}
 
@@ -156,17 +167,17 @@ export default function ReviewRequestLog() {
         <table className="w-full text-left text-[11px]">
           <thead className="border-b border-ink/[0.06] text-[10px] uppercase tracking-wide text-ink/45 dark:border-fog/[0.08] dark:text-fog/45">
             <tr>
-              <th className="px-2 py-1.5">Contact</th>
-              <th className="px-2 py-1.5">Channel</th>
-              <th className="px-2 py-1.5">Status</th>
-              <th className="px-2 py-1.5">Sent</th>
-              <th className="px-2 py-1.5">Detail</th>
-              <th className="px-2 py-1.5 text-right">Action</th>
+              <th className="px-2 py-1.5">{l.thContact}</th>
+              <th className="px-2 py-1.5">{l.thChannel}</th>
+              <th className="px-2 py-1.5">{l.thStatus}</th>
+              <th className="px-2 py-1.5">{l.thSent}</th>
+              <th className="px-2 py-1.5">{l.thDetail}</th>
+              <th className="px-2 py-1.5 text-right">{l.thAction}</th>
             </tr>
           </thead>
           <tbody>
             {!data || data.items.length === 0 ? (
-              <tr><td colSpan={6} className="px-2 py-8 text-center text-ink/40 dark:text-fog/40">{busy ? "Loading…" : "No requests yet."}</td></tr>
+              <tr><td colSpan={6} className="px-2 py-8 text-center text-ink/40 dark:text-fog/40">{busy ? l.loading : l.empty}</td></tr>
             ) : (
               data.items.map((r) => (
                 <tr key={r.id} className="border-b border-ink/[0.04] last:border-0 dark:border-fog/[0.06]">
@@ -174,20 +185,20 @@ export default function ReviewRequestLog() {
                     <span className="block truncate text-ink dark:text-fog">{r.contact_name || r.contact || "-"}</span>
                     {r.contact_name && r.contact && <span className="block truncate text-[10px] text-ink/40 dark:text-fog/40">{r.contact}</span>}
                   </td>
-                  <td className="px-2 py-2 capitalize text-ink/60 dark:text-fog/60">{r.channel.replace(/_/g, " ")}</td>
+                  <td className="px-2 py-2 capitalize text-ink/60 dark:text-fog/60">{l.channels[r.channel as keyof typeof l.channels] ?? r.channel.replace(/_/g, " ")}</td>
                   <td className="px-2 py-2">
                     <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold capitalize ${STATUS_STYLE[r.status] ?? "bg-ink/10 text-ink/50"}`}>
-                      {r.status}
+                      {l.status[r.status as keyof typeof l.status] ?? r.status}
                     </span>
                   </td>
                   <td className="px-2 py-2 text-[10px] text-ink/50 dark:text-fog/50">
-                    {new Date(r.sent_at).toLocaleString()}
+                    {new Date(r.sent_at).toLocaleString(dateLocale)}
                   </td>
                   <td className="max-w-[220px] px-2 py-2 text-[10px] text-ink/50 dark:text-fog/50">
                     {r.status === "failed" ? (
-                      <span className="text-coral" title={r.error ?? ""}>{r.error ?? "Send failed"}</span>
+                      <span className="text-coral" title={r.error ?? ""}>{r.error ?? l.sendFailedDetail}</span>
                     ) : r.clicked_at ? (
-                      `clicked ${new Date(r.clicked_at).toLocaleDateString()}`
+                      fill(l.clickedOn, { date: new Date(r.clicked_at).toLocaleDateString(dateLocale) })
                     ) : (
                       r.sent_via ?? "-"
                     )}
@@ -195,17 +206,17 @@ export default function ReviewRequestLog() {
                   <td className="px-2 py-2 text-right">
                     {r.status === "failed" && (
                       <button onClick={() => void retryOne(r)} className="text-[10px] font-bold text-deep-violet hover:underline">
-                        Retry
+                        {l.retry}
                       </button>
                     )}
                     {r.status === "queued" && (
                       <button onClick={() => void cancelOne(r)} className="text-[10px] font-bold text-ink/50 hover:underline dark:text-fog/50">
-                        Cancel
+                        {l.cancel}
                       </button>
                     )}
                     {r.link && (r.status === "sent" || r.status === "clicked") && (
                       <a href={r.link} target="_blank" rel="noreferrer" className="ml-2 text-[10px] font-bold text-deep-violet hover:underline">
-                        Link
+                        {l.link}
                       </a>
                     )}
                   </td>
@@ -222,17 +233,17 @@ export default function ReviewRequestLog() {
           disabled={offset === 0 || busy}
           className="rounded-lg border border-ink/[0.08] px-3 py-1.5 text-[11px] font-semibold text-ink/70 disabled:opacity-40 dark:border-fog/[0.1] dark:text-fog/70"
         >
-          Previous
+          {l.prev}
         </button>
         <span className="text-[10px] text-ink/40 dark:text-fog/40">
-          {data ? `${Math.min(offset + 1, data.total)}–${Math.min(offset + PAGE, data.total)} of ${data.total}` : ""}
+          {data ? fill(l.range, { a: fmt(Math.min(offset + 1, data.total)), b: fmt(Math.min(offset + PAGE, data.total)), total: fmt(data.total) }) : ""}
         </span>
         <button
           onClick={() => setOffset(offset + PAGE)}
           disabled={!data || offset + PAGE >= data.total || busy}
           className="rounded-lg border border-ink/[0.08] px-3 py-1.5 text-[11px] font-semibold text-ink/70 disabled:opacity-40 dark:border-fog/[0.1] dark:text-fog/70"
         >
-          Next
+          {l.next}
         </button>
       </div>
     </section>

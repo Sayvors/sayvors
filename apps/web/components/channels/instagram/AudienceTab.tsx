@@ -7,6 +7,14 @@ import {
   type InstagramDemographics,
   type InstagramPerson,
 } from "@/lib/api-meta";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 /*
  * Audience: who engaged with the account.
@@ -35,19 +43,23 @@ function Bar({
   value: number;
   max: number;
 }) {
+  const { locale } = useI18n();
+  const formatted = new Intl.NumberFormat(
+    locale === "ar" ? "ar-SA" : "en-US",
+  ).format(value);
   const pct = max > 0 ? Math.max(2, Math.round((value / max) * 100)) : 2;
   return (
     <li>
       <div className="flex items-baseline justify-between gap-3">
         <span className={`text-[12px] ${INK}`}>{label}</span>
-        <span className={`text-[12px] tabular-nums ${INK2}`}>{value.toLocaleString()}</span>
+        <span className={`text-[12px] tabular-nums ${INK2}`}>{formatted}</span>
       </div>
       <div className="mt-1.5 h-2 w-full rounded-full bg-[var(--ui-sunken)]">
         <div
           className="h-2 rounded-full bg-[var(--ui-ink)]"
           style={{ width: `${pct}%` }}
           role="img"
-          aria-label={`${label}: ${value}`}
+          aria-label={`${label}: ${formatted}`}
         />
       </div>
     </li>
@@ -76,12 +88,14 @@ function Breakdown({
 }
 
 function Demographics({ demo }: { demo: InstagramDemographics }) {
+  const { t } = useI18n();
+  const a = t.channelHub.instagram.audienceTab;
   if (!demo.available) {
     return (
       <div>
-        <h3 className={`text-[15px] font-semibold ${INK}`}>Follower demographics</h3>
+        <h3 className={`text-[15px] font-semibold ${INK}`}>{a.demoTitle}</h3>
         <p className={`mt-2 text-[13px] ${INK2}`}>
-          {demo.reason || "Instagram has not shared follower demographics for this account yet."}
+          {demo.reason || a.demoReasonFallback}
         </p>
       </div>
     );
@@ -90,29 +104,31 @@ function Demographics({ demo }: { demo: InstagramDemographics }) {
   if (!hasAny) {
     return (
       <div>
-        <h3 className={`text-[15px] font-semibold ${INK}`}>Follower demographics</h3>
-        <p className={`mt-2 text-[13px] ${INK2}`}>No demographic data returned yet.</p>
+        <h3 className={`text-[15px] font-semibold ${INK}`}>{a.demoTitle}</h3>
+        <p className={`mt-2 text-[13px] ${INK2}`}>{a.demoEmpty}</p>
       </div>
     );
   }
   return (
     <div>
-      <h3 className={`text-[15px] font-semibold ${INK}`}>Follower demographics</h3>
+      <h3 className={`text-[15px] font-semibold ${INK}`}>{a.demoTitle}</h3>
       <p className={`mt-1 text-[12px] ${INK2}`}>
-        Instagram publishes these in aggregate only — counts by age, gender and location. It never
-        shares who the individual followers are.
+        {a.demoBody}
       </p>
       <div className="mt-4 grid gap-6 sm:grid-cols-2">
-        <Breakdown title="Age" rows={demo.age} />
-        <Breakdown title="Gender" rows={demo.gender} />
-        <Breakdown title="Top cities" rows={demo.cities} />
-        <Breakdown title="Top countries" rows={demo.countries} />
+        <Breakdown title={a.age} rows={demo.age} />
+        <Breakdown title={a.gender} rows={demo.gender} />
+        <Breakdown title={a.topCities} rows={demo.cities} />
+        <Breakdown title={a.topCountries} rows={demo.countries} />
       </div>
     </div>
   );
 }
 
 function PersonRow({ person }: { person: InstagramPerson }) {
+  const { t, locale } = useI18n();
+  const a = t.channelHub.instagram.audienceTab;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
   const when = person.occurred_at ? new Date(person.occurred_at) : null;
   return (
     <li className="flex flex-wrap items-start gap-3 border-b border-[var(--ui-line)] py-3 last:border-0">
@@ -124,22 +140,28 @@ function PersonRow({ person }: { person: InstagramPerson }) {
       </span>
       <div className="min-w-[10rem] flex-1">
         <p className={`text-[13px] font-semibold ${INK}`}>
-          {person.name || person.username || "Unknown"}
+          {person.name || person.username || a.unknown}
         </p>
         <p className={`text-[12px] ${INK2}`}>
-          {person.username ? `@${person.username}` : "no username"}
+          {person.username ? `@${person.username}` : a.noUsername}
           <span className="mx-1.5">·</span>
-          {person.source === "comment" ? "commented" : "sent you a message"}
+          {person.source === "comment" ? a.commented : a.sentMessage}
           {person.like_count > 0 && (
             <>
               <span className="mx-1.5">·</span>
-              {person.like_count} like{person.like_count === 1 ? "" : "s"}
+              {person.like_count === 1
+                ? a.likeOne
+                : fill(a.likeN, {
+                    count: new Intl.NumberFormat(dateLocale).format(
+                      person.like_count,
+                    ),
+                  })}
             </>
           )}
           {when && !Number.isNaN(when.getTime()) && (
             <>
               <span className="mx-1.5">·</span>
-              {when.toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+              {when.toLocaleDateString(dateLocale, { month: "short", day: "numeric" })}
             </>
           )}
         </p>
@@ -155,7 +177,7 @@ function PersonRow({ person }: { person: InstagramPerson }) {
             rel="noopener noreferrer"
             className={`rounded-[8px] border border-[var(--ui-line)] px-3 py-2 text-[12px] font-semibold ${INK}`}
           >
-            Post
+            {a.post}
           </a>
         )}
         {person.profile_url ? (
@@ -165,10 +187,10 @@ function PersonRow({ person }: { person: InstagramPerson }) {
             rel="noopener noreferrer"
             className={`ui-btn rounded-lg bg-[var(--ui-ink)] px-4 py-2.5 text-[12px] font-semibold text-[var(--ui-on-ink)]`}
           >
-            Profile
+            {a.profile}
           </a>
         ) : (
-          <span className={`text-[12px] ${INK2}`}>No profile link</span>
+          <span className={`text-[12px] ${INK2}`}>{a.noProfileLink}</span>
         )}
       </div>
     </li>
@@ -176,6 +198,10 @@ function PersonRow({ person }: { person: InstagramPerson }) {
 }
 
 export default function AudienceTab({ igId }: { igId: string }) {
+  const { t, locale } = useI18n();
+  const a = t.channelHub.instagram.audienceTab;
+  const fmt = (n: number) =>
+    new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
   const [data, setData] = useState<InstagramAudience | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -192,7 +218,7 @@ export default function AudienceTab({ igId }: { igId: string }) {
       },
       (e: unknown) => {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Could not load your audience.");
+          setError(e instanceof Error ? e.message : a.loadError);
           setLoading(false);
         }
       },
@@ -200,9 +226,9 @@ export default function AudienceTab({ igId }: { igId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [igId]);
+  }, [igId, a.loadError]);
 
-  if (loading) return <p className={`text-[13px] ${INK2}`}>Loading your audience…</p>;
+  if (loading) return <p className={`text-[13px] ${INK2}`}>{a.loading}</p>;
 
   if (error) {
     return (
@@ -218,12 +244,13 @@ export default function AudienceTab({ igId }: { igId: string }) {
     <div className="space-y-6">
       <section className={PANEL}>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h3 className={`text-[15px] font-semibold ${INK}`}>People who engaged</h3>
-          <span className={`text-[12px] ${INK2}`}>{people.length} people</span>
+          <h3 className={`text-[15px] font-semibold ${INK}`}>{a.title}</h3>
+          <span className={`text-[12px] ${INK2}`}>
+            {fill(a.peopleCount, { count: fmt(people.length) })}
+          </span>
         </div>
         <p className={`mt-1 text-[12px] ${INK2}`}>
-          Instagram does not share follower lists, so this is everyone who actually reached out:
-          people who commented on your posts and people who messaged you.
+          {a.peopleBody}
         </p>
 
         {data?.comments_unavailable && (
@@ -234,7 +261,7 @@ export default function AudienceTab({ igId }: { igId: string }) {
 
         {people.length === 0 ? (
           <p className={`mt-4 text-[13px] ${INK2}`}>
-            Nobody has commented or messaged yet. Once they do, they show up here.
+            {a.empty}
           </p>
         ) : (
           <ul className="mt-4">

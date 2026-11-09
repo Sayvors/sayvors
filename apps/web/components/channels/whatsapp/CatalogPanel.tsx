@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api-rag";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 import {
   createCatalogItem,
   createCatalogShare,
@@ -51,7 +52,18 @@ const EMPTY: Draft = {
   image_url: "", item_url: "", in_stock: true,
 };
 
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
+
 export default function CatalogPanel() {
+  const { t, locale } = useI18n();
+  const k = t.catalog;
+  const fmt = (n: number) =>
+    new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
   const [items, setItems] = useState<CatalogItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -72,11 +84,11 @@ export default function CatalogPanel() {
       setItems(rows);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load the catalog.");
+      setError(e instanceof Error ? e.message : k.errors.load);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [k]);
 
   useEffect(() => {
     void refresh();
@@ -122,7 +134,7 @@ export default function CatalogPanel() {
       setAdding(false);
       await refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not add the item.");
+      setError(e instanceof Error ? e.message : k.errors.add);
     } finally {
       setBusy(null);
     }
@@ -134,20 +146,20 @@ export default function CatalogPanel() {
       const updated = await updateCatalogItem(item.id, patch);
       setItems((prev) => prev.map((i) => (i.id === item.id ? updated : i)));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not update the item.");
+      setError(e instanceof Error ? e.message : k.errors.update);
     } finally {
       setBusy(null);
     }
   };
 
   const remove = async (item: CatalogItem) => {
-    if (!window.confirm(`Delete “${item.name}”? This cannot be undone.`)) return;
+    if (!window.confirm(fill(k.deleteConfirm, { name: item.name }))) return;
     setBusy(item.id);
     try {
       await deleteCatalogItem(item.id);
       setItems((prev) => prev.filter((i) => i.id !== item.id));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not delete the item.");
+      setError(e instanceof Error ? e.message : k.errors.remove);
     } finally {
       setBusy(null);
     }
@@ -163,19 +175,19 @@ export default function CatalogPanel() {
         setSharePath((await createCatalogShare()).path);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not update the link.");
+      setError(e instanceof Error ? e.message : k.errors.link);
     } finally {
       setBusy(null);
     }
   };
 
   const rotateShare = async () => {
-    if (!window.confirm("Replace the link? The old one stops working immediately.")) return;
+    if (!window.confirm(k.replaceConfirm)) return;
     setBusy("share");
     try {
       setSharePath((await createCatalogShare(true)).path);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not replace the link.");
+      setError(e instanceof Error ? e.message : k.errors.replace);
     } finally {
       setBusy(null);
     }
@@ -188,7 +200,7 @@ export default function CatalogPanel() {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      setError("Could not copy. Select the link and copy it manually.");
+      setError(k.copiedNote);
     }
   };
 
@@ -208,7 +220,7 @@ export default function CatalogPanel() {
       );
     } catch (e) {
       setGrounding(previous);
-      setError(e instanceof Error ? e.message : "Could not save the setting.");
+      setError(e instanceof Error ? e.message : k.errors.setting);
     } finally {
       setGroundingBusy(false);
     }
@@ -225,9 +237,9 @@ export default function CatalogPanel() {
       <section className={`${CARD} p-4`}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
-            <h2 className="text-[14px] font-semibold text-[var(--wa-text)]">Public catalog link</h2>
+            <h2 className="text-[14px] font-semibold text-[var(--wa-text)]">{k.shareTitle}</h2>
             <p className={`mt-0.5 ${MUTED}`}>
-              A read-only page with your active items. Turn it off to revoke access.
+              {k.shareDesc}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -237,10 +249,10 @@ export default function CatalogPanel() {
                   {sharePath}
                 </code>
                 <button onClick={() => void copyShare()} className="rounded-full border border-[var(--wa-accent)]/40 px-3 py-1 text-[11px] font-bold text-[var(--wa-accent-deep)]">
-                  {copied ? "Copied" : "Copy"}
+                  {copied ? k.copied : k.copy}
                 </button>
                 <button onClick={() => void rotateShare()} disabled={busy === "share"} className="rounded-full px-2 py-1 text-[11px] font-semibold text-[var(--wa-text-2)] disabled:opacity-40">
-                  Replace
+                  {k.replace}
                 </button>
               </>
             )}
@@ -253,7 +265,7 @@ export default function CatalogPanel() {
                   : "bg-[var(--wa-accent)] text-white"
               }`}
             >
-              {sharePath ? "Turn off" : "Create link"}
+              {sharePath ? k.turnOff : k.createLink}
             </button>
           </div>
         </div>
@@ -263,17 +275,16 @@ export default function CatalogPanel() {
         <section className={`${CARD} flex items-center justify-between gap-4 p-4`}>
           <div className="min-w-0">
             <h2 className="text-[14px] font-semibold text-[var(--wa-text)]">
-              Ground replies in your Databank
+              {k.groundingTitle}
             </h2>
             <p className={`mt-0.5 ${MUTED}`}>
-              Retrieve the passages that answer each message. Off means the assistant
-              only uses the business profile summary.
+              {k.groundingDesc}
             </p>
           </div>
           <button
             role="switch"
             aria-checked={grounding}
-            aria-label="Ground replies in your Databank"
+            aria-label={k.groundingTitle}
             disabled={groundingBusy}
             onClick={() => void setGroundingForAll(!grounding)}
             className={`relative h-7 w-12 shrink-0 rounded-full transition disabled:opacity-50 ${
@@ -287,13 +298,13 @@ export default function CatalogPanel() {
 
       <section className={CARD}>
         <div className="flex items-center justify-between border-b border-[var(--wa-border)] px-4 py-2.5">
-          <h2 className="text-[14px] font-semibold text-[var(--wa-text)]">Items</h2>
+          <h2 className="text-[14px] font-semibold text-[var(--wa-text)]">{k.items}</h2>
           <div className="flex items-center gap-3">
             <span className="text-[11px] text-[var(--wa-text-3)]">
-              {activeCount} active · {items.length} total
+              {fill(k.activeOf, { a: fmt(activeCount), b: fmt(items.length) })}
             </span>
             <button onClick={() => setAdding((v) => !v)} className="rounded-full bg-[var(--wa-accent)] px-3 py-1 text-[11px] font-bold text-white">
-              {adding ? "Close" : "Add item"}
+              {adding ? k.close : k.addItem}
             </button>
           </div>
         </div>
@@ -302,51 +313,51 @@ export default function CatalogPanel() {
           <div className="border-b border-[var(--wa-border)] bg-[var(--wa-panel-2)] p-4">
             <div className="grid gap-2.5 sm:grid-cols-2">
               <label className="flex flex-col gap-1">
-                <span className={LABEL}>Name</span>
-                <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Ethiopia Guji 1kg" className={INPUT} autoFocus />
+                <span className={LABEL}>{k.name}</span>
+                <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder={k.namePh} className={INPUT} autoFocus />
               </label>
               <div className="grid grid-cols-[1fr_90px] gap-2">
                 <label className="flex flex-col gap-1">
-                  <span className={LABEL}>Price</span>
+                  <span className={LABEL}>{k.price}</span>
                   <input value={draft.price} onChange={(e) => setDraft({ ...draft, price: e.target.value })} inputMode="decimal" placeholder="85.00" className={INPUT} />
                 </label>
                 <label className="flex flex-col gap-1">
-                  <span className={LABEL}>Currency</span>
+                  <span className={LABEL}>{k.currency}</span>
                   <select value={draft.currency} onChange={(e) => setDraft({ ...draft, currency: e.target.value })} className={INPUT}>
                     {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </label>
               </div>
               <label className="flex flex-col gap-1 sm:col-span-2">
-                <span className={LABEL}>Description</span>
-                <input value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} placeholder="Whole bean, roasted weekly" className={INPUT} />
+                <span className={LABEL}>{k.description}</span>
+                <input value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} placeholder={k.descriptionPh} className={INPUT} />
               </label>
               <label className="flex flex-col gap-1">
-                <span className={LABEL}>Image URL</span>
+                <span className={LABEL}>{k.imageUrl}</span>
                 <input value={draft.image_url} onChange={(e) => setDraft({ ...draft, image_url: e.target.value })} placeholder="https://…" className={INPUT} />
               </label>
               <label className="flex flex-col gap-1">
-                <span className={LABEL}>Product link</span>
+                <span className={LABEL}>{k.productLink}</span>
                 <input value={draft.item_url} onChange={(e) => setDraft({ ...draft, item_url: e.target.value })} placeholder="https://…" className={INPUT} />
               </label>
             </div>
             <div className="mt-3 flex items-center justify-between">
               <label className="flex items-center gap-2 text-[12px] text-[var(--wa-text-2)]">
                 <input type="checkbox" checked={draft.in_stock} onChange={(e) => setDraft({ ...draft, in_stock: e.target.checked })} className="h-4 w-4 accent-[var(--wa-accent)]" />
-                In stock
+                {k.inStock}
               </label>
               <button onClick={() => void saveItem()} disabled={!draft.name.trim() || busy === "add"} className="rounded-full bg-[var(--wa-accent)] px-4 py-1.5 text-[11px] font-bold text-white disabled:opacity-40">
-                {busy === "add" ? "Saving…" : "Save item"}
+                {busy === "add" ? k.saving : k.saveItem}
               </button>
             </div>
           </div>
         )}
 
         {loading ? (
-          <p className="px-4 py-8 text-center text-[12px] text-[var(--wa-text-3)]">Loading…</p>
+          <p className="px-4 py-8 text-center text-[12px] text-[var(--wa-text-3)]">{k.loading}</p>
         ) : items.length === 0 ? (
           <p className="px-4 py-8 text-center text-[12px] text-[var(--wa-text-3)]">
-            No items yet. Add the first one and the assistant can start quoting it.
+            {k.noItems}
           </p>
         ) : (
           <ul className="divide-y divide-[var(--wa-border)]">
@@ -363,12 +374,12 @@ export default function CatalogPanel() {
                     {item.name}
                     {!item.active && (
                       <span className="ml-2 rounded-full bg-[var(--wa-panel-2)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[var(--wa-text-3)]">
-                        Hidden
+                        {k.hidden}
                       </span>
                     )}
                   </p>
                   <p className={`truncate ${MUTED}`}>
-                    {item.price_display ?? "No price"}
+                    {item.price_display ?? k.noPrice}
                     {item.description ? ` · ${item.description}` : ""}
                   </p>
                 </div>
@@ -381,13 +392,13 @@ export default function CatalogPanel() {
                       : "bg-[var(--wa-panel-2)] text-[var(--wa-text-3)]"
                   }`}
                 >
-                  {item.in_stock ? "In stock" : "Out"}
+                  {item.in_stock ? k.inStock : k.out}
                 </button>
                 <button onClick={() => void toggle(item, { active: !item.active })} disabled={busy === item.id} className="rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--wa-text-3)] hover:text-[var(--wa-text)] disabled:opacity-40">
-                  {item.active ? "Hide" : "Show"}
+                  {item.active ? k.hide : k.show}
                 </button>
-                <button onClick={() => void remove(item)} disabled={busy === item.id} aria-label={`Delete ${item.name}`} className="rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--wa-text-3)] hover:text-[#c4304b] disabled:opacity-40">
-                  Delete
+                <button onClick={() => void remove(item)} disabled={busy === item.id} aria-label={fill(k.deleteAria, { name: item.name })} className="rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--wa-text-3)] hover:text-[#c4304b] disabled:opacity-40">
+                  {k.delete}
                 </button>
               </li>
             ))}
@@ -396,7 +407,7 @@ export default function CatalogPanel() {
       </section>
 
       <p className="px-1 text-[11px] leading-5 text-[var(--wa-text-3)]">
-        Prices and stock here are what the assistant quotes. It never invents them.
+        {k.footer}
       </p>
     </div>
   );

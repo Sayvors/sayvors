@@ -2,6 +2,14 @@
 
 import { useMemo, useState } from "react";
 import Image from "next/image";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 export interface ScheduledEntry {
   id: string;
@@ -21,12 +29,6 @@ interface Props {
   /** Called with an ISO date string when the user clicks "Schedule a publish" on a day. */
   onScheduleDate?: (dateIso: string) => void;
 }
-
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MONTHS = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
-];
 
 const PLATFORM_COLORS: Record<string, string> = {
   "Google Business Profile": "#4285F4",
@@ -58,15 +60,32 @@ function toIsoDate(year: number, month: number, day: number): string {
 }
 
 export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props) {
-  const scheduled = useMemo(() => items.filter((m) => !!m.scheduledAt), [items]);
+  const { t, locale } = useI18n();
+  const c = t.publish.cal;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
 
   const [open, setOpen] = useState(false);
   const [cursor, setCursor] = useState(() => new Date());
   const [selectedDay, setSelectedDay] = useState<number | null>(null);
   const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null);
 
+  const scheduled = useMemo(() => items.filter((m) => !!m.scheduledAt), [items]);
+
   const year = cursor.getFullYear();
   const month = cursor.getMonth();
+  // Sunday-first grid in both locales; names come from Intl.
+  const weekdays = useMemo(() => {
+    const base = new Date(2024, 0, 7); // a Sunday
+    return Array.from({ length: 7 }, (_, i) =>
+      new Intl.DateTimeFormat(dateLocale, { weekday: "short" }).format(
+        new Date(base.getFullYear(), base.getMonth(), base.getDate() + i),
+      ),
+    );
+  }, [dateLocale]);
+  const monthName = new Intl.DateTimeFormat(dateLocale, { month: "long" }).format(
+    new Date(year, month, 1),
+  );
   const today = new Date();
   const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
 
@@ -127,21 +146,21 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
           </span>
           <div className="min-w-0">
             <p className="text-[14px] font-semibold text-ink dark:text-fog">
-              {scheduled.length} scheduled post{scheduled.length === 1 ? "" : "s"}
+              {scheduled.length === 1 ? c.scheduledOne : fill(c.scheduledN, { n: fmt(scheduled.length) })}
             </p>
             {nextUpcoming ? (
               <p className="truncate text-[12px] text-ink/50 dark:text-fog/50">
-                Next: {new Date(nextUpcoming.scheduledAt).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} — {nextUpcoming.name}
+              {fill(c.next, { when: new Date(nextUpcoming.scheduledAt).toLocaleString(dateLocale, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }), name: nextUpcoming.name })}
               </p>
             ) : (
-              <p className="text-[12px] text-ink/40 dark:text-fog/40">Nothing queued — schedule a photo to get started.</p>
+              <p className="text-[12px] text-ink/40 dark:text-fog/40">{c.empty}</p>
             )}
           </div>
         </div>
         <div className="flex items-center gap-2">
           {scheduled.length > 0 && (
             <span className="rounded-full bg-deep-violet/10 px-2.5 py-0.5 text-[11px] font-semibold text-deep-violet">
-              {scheduled.length}
+              {fmt(scheduled.length)}
             </span>
           )}
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`shrink-0 text-ink/40 dark:text-fog/40 transition-transform duration-200 ${open ? "rotate-180" : ""}`} aria-hidden>
@@ -154,19 +173,19 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
         <div className="border-t border-ink/[0.06] dark:border-fog/[0.06] p-4">
           <div className="mb-4 flex items-center justify-between">
             <div className="flex items-center gap-1">
-              <button type="button" onClick={() => setCursor(new Date(year, month - 1, 1))} className="rounded-lg p-1.5 text-ink/50 dark:text-fog/50 hover:bg-ink/[0.06] dark:hover:bg-fog/[0.06] transition" aria-label="Previous month">
+              <button type="button" onClick={() => setCursor(new Date(year, month - 1, 1))} className="rounded-lg p-1.5 text-ink/50 dark:text-fog/50 hover:bg-ink/[0.06] dark:hover:bg-fog/[0.06] transition" aria-label={c.prevMonth}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
               </button>
-              <button type="button" onClick={() => setCursor(new Date(year, month + 1, 1))} className="rounded-lg p-1.5 text-ink/50 dark:text-fog/50 hover:bg-ink/[0.06] dark:hover:bg-fog/[0.06] transition" aria-label="Next month">
+              <button type="button" onClick={() => setCursor(new Date(year, month + 1, 1))} className="rounded-lg p-1.5 text-ink/50 dark:text-fog/50 hover:bg-ink/[0.06] dark:hover:bg-fog/[0.06] transition" aria-label={c.nextMonth}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
               </button>
             </div>
-            <p className="text-[15px] font-semibold text-ink dark:text-fog">{MONTHS[month]} {year}</p>
-            <button type="button" onClick={() => setCursor(new Date())} className="rounded-lg border border-ink/[0.1] dark:border-fog/[0.1] px-3 py-1 text-[12px] font-medium text-ink/60 dark:text-fog/60 hover:bg-ink/[0.04] dark:hover:bg-fog/[0.04] transition">Today</button>
+            <p className="text-[15px] font-semibold text-ink dark:text-fog">{monthName} {fmt(year)}</p>
+            <button type="button" onClick={() => setCursor(new Date())} className="rounded-lg border border-ink/[0.1] dark:border-fog/[0.1] px-3 py-1 text-[12px] font-medium text-ink/60 dark:text-fog/60 hover:bg-ink/[0.04] dark:hover:bg-fog/[0.04] transition">{c.today}</button>
           </div>
 
           <div className="grid grid-cols-7 gap-px mb-1">
-            {WEEKDAYS.map((w) => (
+            {weekdays.map((w) => (
               <div key={w} className="py-1 text-center text-[10px] font-semibold uppercase tracking-wider text-ink/40 dark:text-fog/40">{w}</div>
             ))}
           </div>
@@ -204,7 +223,7 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
                         </div>
                       ))}
                       {list!.length > 2 && (
-                        <span className="text-[9px] text-ink/40 dark:text-fog/40 font-medium">+{list!.length - 2} more</span>
+                        <span className="text-[9px] text-ink/40 dark:text-fog/40 font-medium">{fill(c.moreN, { n: fmt(list!.length - 2) })}</span>
                       )}
                     </div>
                   )}
@@ -214,7 +233,7 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
           </div>
 
           {scheduled.length === 0 && (
-            <p className="mt-4 text-center text-[13px] text-ink/40 dark:text-fog/40">No scheduled posts yet. Schedule a photo to see it here.</p>
+            <p className="mt-4 text-center text-[13px] text-ink/40 dark:text-fog/40">{c.emptyMonth}</p>
           )}
 
           {scheduled.length > 0 && (
@@ -239,7 +258,7 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
             style={{ left: Math.min(anchor.x - 144, window.innerWidth - 300), top: anchor.y + 8 }}
           >
             <p className="text-[10px] font-bold uppercase tracking-widest text-ink/40 dark:text-fog/40 mb-2">
-              {MONTHS[month]} {selectedDay}, {year}
+              {monthName} {fmt(selectedDay)}, {fmt(year)}
             </p>
             {selectedItems.length > 0 && (
               <div className="space-y-3 mb-3">
@@ -251,12 +270,12 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
                     <div className="min-w-0 flex-1">
                       <p className="text-[13px] font-semibold text-ink dark:text-fog truncate">{item.name}</p>
                       <p className="text-[11px] text-ink/50 dark:text-fog/50">
-                        {new Date(item.scheduledAt).toLocaleString(undefined, { hour: "numeric", minute: "2-digit" })}
-                        {item.endAt ? ` – ${new Date(item.endAt).toLocaleString(undefined, { hour: "numeric", minute: "2-digit" })}` : ""}
+                        {new Date(item.scheduledAt).toLocaleString(dateLocale, { hour: "numeric", minute: "2-digit" })}
+                        {item.endAt ? ` – ${new Date(item.endAt).toLocaleString(dateLocale, { hour: "numeric", minute: "2-digit" })}` : ""}
                       </p>
                       <div className="mt-1 flex items-center gap-1.5">
                         <span className="h-2 w-2 rounded-full" style={{ backgroundColor: platformColor(item.platform, item.color) }} />
-                        <span className="text-[10px] text-ink/40 dark:text-fog/40">{item.platform ?? "Scheduled"}</span>
+                        <span className="text-[10px] text-ink/40 dark:text-fog/40">{item.platform ?? c.scheduledFallback}</span>
                         {item.status && <span className="text-[10px] text-ink/40 dark:text-fog/40">· {item.status}</span>}
                       </div>
                       {item.description && <p className="mt-1 text-[11px] text-ink/50 dark:text-fog/50 line-clamp-2">{item.description}</p>}
@@ -266,7 +285,7 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
               </div>
             )}
             {selectedItems.length === 0 && (
-              <p className="text-[12px] text-ink/40 dark:text-fog/40 mb-3">No posts scheduled for this day.</p>
+              <p className="text-[12px] text-ink/40 dark:text-fog/40 mb-3">{c.emptyDay}</p>
             )}
             {onScheduleDate && (
               <button
@@ -278,7 +297,7 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
                 }}
                 className="w-full rounded-lg bg-deep-violet py-2 text-[12px] font-semibold text-white hover:bg-deep-violet/90 transition"
               >
-                Schedule a publish
+                {c.scheduleBtn}
               </button>
             )}
             <button
@@ -286,7 +305,7 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
               onClick={() => { setSelectedDay(null); setAnchor(null); }}
               className="mt-2 w-full rounded-lg border border-ink/[0.1] dark:border-fog/[0.1] bg-ink/[0.04] dark:bg-fog/[0.04] py-1.5 text-[11px] font-semibold text-ink/60 dark:text-fog/60 hover:bg-ink/[0.06] dark:hover:bg-fog/[0.06] transition"
             >
-              Close
+              {c.close}
             </button>
           </div>
         </>

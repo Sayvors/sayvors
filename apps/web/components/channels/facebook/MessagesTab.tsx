@@ -4,6 +4,14 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api-rag";
 import { INK, INK2 } from "../instagram/ui";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 /*
  * Messenger conversations with the Page, from our own inbox. Facebook
@@ -25,6 +33,10 @@ type Thread = {
 };
 
 export default function MessagesTab() {
+  const { t, locale } = useI18n();
+  const m = t.channelHub.facebook.messages;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
   const [data, setData] = useState<{ threads?: Thread[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -43,7 +55,7 @@ export default function MessagesTab() {
       },
       (e: unknown) => {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Something went wrong.");
+          setError(e instanceof Error ? e.message : m.loadError);
           setLoading(false);
         }
       },
@@ -53,7 +65,7 @@ export default function MessagesTab() {
     };
   }, []);
 
-  if (loading) return <p className={`text-[13px] ${INK2}`}>Loading messages…</p>;
+  if (loading) return <p className={`text-[13px] ${INK2}`}>{m.loading}</p>;
   if (error) {
     return (
       <div role="alert" className={`rounded-[8px] border border-[var(--ui-ink)] bg-[var(--ui-sunken)] p-4 text-[13px] font-bold ${INK}`}>
@@ -65,9 +77,9 @@ export default function MessagesTab() {
   if (threads.length === 0) {
     return (
       <div className={PANEL}>
-        <h3 className={`text-[15px] font-semibold ${INK}`}>Messages</h3>
+        <h3 className={`text-[15px] font-semibold ${INK}`}>{m.title}</h3>
         <p className={`mt-2 text-[13px] ${INK2}`}>
-          No Facebook messages yet. They arrive here the moment someone messages your Page.
+          {m.empty}
         </p>
       </div>
     );
@@ -75,8 +87,8 @@ export default function MessagesTab() {
   return (
     <section className={PANEL}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className={`text-[15px] font-semibold ${INK}`}>Messages</h3>
-        <span className={`text-[12px] ${INK2}`}>{threads.length} conversations</span>
+        <h3 className={`text-[15px] font-semibold ${INK}`}>{m.title}</h3>
+        <span className={`text-[12px] ${INK2}`}>{fill(m.conversations, { count: fmt(threads.length) })}</span>
       </div>
       <ul className="mt-4">
         {threads.map((t) => (
@@ -86,10 +98,10 @@ export default function MessagesTab() {
           >
             <div className="min-w-[10rem] flex-1">
               <p className={`text-[13px] font-semibold ${INK}`}>
-                {t.display_name || "Facebook user"}
+                {t.display_name || m.userFallback}
                 {!!t.unread && t.unread > 0 && (
                   <span className="ml-2 rounded-[8px] bg-[var(--ui-ink)] px-2 py-0.5 text-[11px] font-bold text-[var(--ui-on-ink)]">
-                    {t.unread} new
+                    {fill(m.newN, { count: fmt(t.unread) })}
                   </span>
                 )}
               </p>
@@ -100,7 +112,7 @@ export default function MessagesTab() {
                 dateTime={t.last_message_at}
                 className={`shrink-0 text-[12px] tabular-nums ${INK2}`}
               >
-                {new Date(t.last_message_at).toLocaleDateString(undefined, {
+                {new Date(t.last_message_at).toLocaleDateString(dateLocale, {
                   month: "short",
                   day: "numeric",
                 })}
@@ -112,7 +124,7 @@ export default function MessagesTab() {
                 href={`/dashboard/channels/inbox?channel=${encodeURIComponent(t.channel_id)}&key=${encodeURIComponent(t.key)}`}
                 className="ui-btn rounded-lg bg-[var(--ui-ink)] px-4 py-2.5 text-[12px] font-semibold text-[var(--ui-on-ink)]"
               >
-                Open
+                {m.open}
               </Link>
             </div>
           </li>

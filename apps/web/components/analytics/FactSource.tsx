@@ -1,6 +1,7 @@
 "use client";
 
 import { safeHref } from "@/lib/safe-url";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 
 /**
  * The provenance footer every fact card carries.
@@ -15,7 +16,7 @@ export function FactSource({
   detail,
   note,
   href,
-  linkLabel = "Verify at source",
+  linkLabel,
   className = "",
 }: {
   source: string;
@@ -29,13 +30,16 @@ export function FactSource({
 }) {
   const url = href ? safeHref(href) : null;
   const external = url ? /^https?:\/\//i.test(url) : false;
+  const { t } = useI18n();
+  const fc = t.bench.fact;
+  const label = linkLabel ?? fc.verify;
 
   return (
     <p
       className={`mt-3 flex flex-wrap items-baseline gap-x-1.5 gap-y-1 text-[10px] leading-relaxed text-[var(--ui-ink-2)] ${className}`}
     >
       <span>
-        <span className="font-semibold">Source:</span> {source}
+        <span className="font-semibold">{fc.source}</span> {source}
       </span>
       {detail && (
         <>
@@ -58,9 +62,9 @@ export function FactSource({
             rel={external ? "noopener noreferrer" : undefined}
             className="inline-flex items-center gap-0.5 font-bold text-[var(--ui-ink)] underline decoration-[var(--ui-line-strong)] underline-offset-2 outline-none transition hover:decoration-[var(--ui-ink)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
           >
-            {linkLabel}
+            {label}
             {external && <span aria-hidden>↗</span>}
-            {external && <span className="sr-only"> (opens in a new tab)</span>}
+            {external && <span className="sr-only"> {fc.newTab}</span>}
           </a>
         </>
       )}

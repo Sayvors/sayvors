@@ -41,8 +41,9 @@ Enforcement points:
 - **AI calls:** `check_feature(tenant_id, "ai_replies")` plus the wallet
   reserve/settle gate in `llm/gateway.py`. The gate is fail-closed on an
   unreadable wallet and returns `402` when credit is exhausted.
-- **Messaging:** `_ensure_messaging_quota()` counts human outbound messages
-  against `max_messages_per_month`.
+- **Messaging:** `ensure_messaging_quota()` counts outbound **WhatsApp**
+  messages (human sends, templates and AI replies) against
+  `max_messages_per_month + message_bonus`. Instagram/Facebook are excluded.
 - **Channel/location connects:** the connect path checks the plan's channel
   limits before creating rows.
 
@@ -55,7 +56,7 @@ anything.
 | Key | Enforced at | What it actually blocks |
 |---|---|---|
 | `channels` | `channels/router.py` connect path | Starting a new channel connection |
-| `messaging` | inbox send path | Human outbound messages |
+| `messaging` | inbox, template and WhatsApp AI reply paths | Outbound WhatsApp messages |
 | `ai_replies` | `llm/gateway.py` | Every LLM call through the gateway (review replies, assistant, AI analytics, chat) |
 | `benchmark_external` | analytics external-peer endpoints | Fetching/refreshing external competitor peers |
 

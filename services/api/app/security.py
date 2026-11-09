@@ -46,7 +46,7 @@ def create_access_token(subject: str, version: int = 0) -> str:
 
 
 def create_refresh_token(subject: str) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(days=settings.JWT_REFRESH_EXPIRATION_DAYS)
+    expire = datetime.now(timezone.utc) + timedelta(hours=settings.JWT_REFRESH_EXPIRATION_HOURS)
     jti = secrets.token_hex(16)
     return jwt.encode(
         {"sub": subject, "exp": expire, "jti": jti, "type": "refresh"},
