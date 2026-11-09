@@ -141,7 +141,7 @@ export default function AdsTab({ channelSlug, channelName }: AdsTabProps) {
                   placeholder={tb.messagePh}
                   className="w-full rounded-xl border-2 border-white bg-white px-4 py-3 text-[13px] text-ink outline-none transition placeholder:text-ink/35 focus:border-deep-violet/40 focus:ring-2 focus:ring-deep-violet/10"
                 />
-                <p className="mt-1 text-[10px] text-ink/35">Supports {"{name}"}, {"{company}"}</p>
+                <p className="mt-1 text-[10px] text-ink/35">{fill(tb.supportsTokens, { name: "{name}", company: "{company}" })}</p>
               </div>
             </div>
 

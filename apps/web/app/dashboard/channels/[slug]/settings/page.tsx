@@ -7,19 +7,14 @@ import Breadcrumbs from "@/components/Breadcrumbs";
 import { channels, agents } from "@/lib/channel-data";
 import { getProfile, updateResponseStyle, updateTypingIndicator } from "@/lib/api-profile";
 import { ChannelLogo } from "@/components/dashboard/ChannelLogos";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 
-const RESPONSE_STYLE_OPTIONS = [
-  {
-    value: "concise",
-    label: "Concise",
-    desc: "Send clear, compact responses as a single message.",
-  },
-  {
-    value: "human",
-    label: "Human-like",
-    desc: "Use natural short WhatsApp messages when appropriate.",
-  },
-] as const;
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 function Dropdown({
   label,
@@ -110,9 +105,24 @@ function Toggle({
 }
 
 export default function ChannelSettingsPage() {
+  const { t } = useI18n();
+  const cs = t.channelHub.chanSettings;
   const params = useParams();
   const slug = params.slug as string;
   const channel = channels.find((c) => c.slug === slug);
+
+  const RESPONSE_STYLE_OPTIONS = [
+    {
+      value: "concise",
+      label: cs.styleConciseLabel,
+      desc: cs.styleConciseDesc,
+    },
+    {
+      value: "human",
+      label: cs.styleHumanLabel,
+      desc: cs.styleHumanDesc,
+    },
+  ] as const;
 
   const [selectedAgent, setSelectedAgent] = useState<string>(channel?.connected ? "support-bot" : "");
   const [autoReply, setAutoReply] = useState(true);
@@ -196,9 +206,9 @@ export default function ChannelSettingsPage() {
     return (
       <div className="flex h-full items-center justify-center p-6">
         <div className="text-center">
-          <p className="text-[14px] text-ink/60">Channel not found.</p>
+          <p className="text-[14px] text-ink/60">{cs.notFound}</p>
           <Link href="/dashboard/channels" className="mt-2 text-[12px] text-deep-violet hover:underline">
-            Back to channels
+            {cs.backToChannels}
           </Link>
         </div>
       </div>
@@ -211,9 +221,9 @@ export default function ChannelSettingsPage() {
       <div className="border-b border-deep-violet/10 bg-white px-4 sm:px-6 py-4">
         <Breadcrumbs
           items={[
-            { label: "Channels", href: "/dashboard/channels" },
+            { label: cs.crumbsChannels, href: "/dashboard/channels" },
             { label: channel.name, href: `/dashboard/channels/${slug}` },
-            { label: "Settings" },
+            { label: cs.crumbsSettings },
           ]}
         />
         <div className="mt-3 flex items-center gap-3 sm:gap-4">
@@ -221,9 +231,9 @@ export default function ChannelSettingsPage() {
             <ChannelLogo channel={slug} className="h-7 w-7 sm:h-8 sm:w-8" />
           </div>
           <div>
-            <h1 className="text-[18px] sm:text-[20px] font-bold text-ink">{channel.name} Settings</h1>
+            <h1 className="text-[18px] sm:text-[20px] font-bold text-ink">{fill(cs.titleSuffix, { name: channel.name })}</h1>
             <p className="text-[12px] sm:text-[13px] text-ink/60">
-              {channel.connected ? "Connected" : "Not connected"} &middot; Configure this channel
+              {channel.connected ? cs.connected : cs.notConnected} &middot; {cs.configureChannel}
             </p>
           </div>
         </div>
@@ -235,12 +245,12 @@ export default function ChannelSettingsPage() {
 
           {/* ── Agent Selection ── */}
           <section>
-            <h2 className="mb-1 text-[15px] font-bold text-ink">Agent</h2>
-            <p className="mb-4 text-[13px] text-ink/60">Choose which AI agent handles conversations on this channel.</p>
+            <h2 className="mb-1 text-[15px] font-bold text-ink">{cs.agentTitle}</h2>
+            <p className="mb-4 text-[13px] text-ink/60">{cs.agentSub}</p>
             <Dropdown
-              label="Assigned Agent"
+              label={cs.assignedAgent}
               value={selectedAgent}
-              options={[{ id: "", name: "No Agent", status: "none" }, ...agents]}
+              options={[{ id: "", name: cs.noAgent, status: "none" }, ...agents]}
               onSelect={setSelectedAgent}
               renderOption={(opt) => (
                 <>
@@ -252,8 +262,8 @@ export default function ChannelSettingsPage() {
                     </svg>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <span className="text-[13px] font-semibold text-ink">{String(opt.name || "No Agent")}</span>
-                    {!opt.id && <p className="text-[11px] text-ink/50">Manual mode — you reply yourself</p>}
+                    <span className="text-[13px] font-semibold text-ink">{String(opt.name || cs.noAgent)}</span>
+                    {!opt.id && <p className="text-[11px] text-ink/50">{cs.manualMode}</p>}
                   </div>
                   {opt.id && "status" in opt && typeof opt.status === "string" && (
                     <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${opt.status === "active" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
@@ -272,7 +282,7 @@ export default function ChannelSettingsPage() {
                     </svg>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <span className="text-[13px] font-semibold text-ink">{String(opt.name || "No Agent")}</span>
+                    <span className="text-[13px] font-semibold text-ink">{String(opt.name || cs.noAgent)}</span>
                   </div>
                 </>
               )}
@@ -285,23 +295,23 @@ export default function ChannelSettingsPage() {
               <div className="border-t border-deep-violet/10" />
               <section>
                 <div className="mb-1 flex items-center justify-between">
-                  <h2 className="text-[15px] font-bold text-ink">Response style</h2>
+                  <h2 className="text-[15px] font-bold text-ink">{cs.respStyleTitle}</h2>
                   {styleStatus === "saving" && (
-                    <span className="text-[12px] text-ink/50">Saving&hellip;</span>
+                    <span className="text-[12px] text-ink/50">{cs.saving}</span>
                   )}
                   {styleStatus === "saved" && (
                     <span className="text-[12px] font-semibold text-emerald-600">
-                      Saved &mdash; applies to new messages
+                      {cs.saved}
                     </span>
                   )}
                   {styleStatus === "error" && (
                     <span className="text-[12px] font-semibold text-red-600">
-                      Couldn&rsquo;t save &mdash; try again
+                      {cs.saveError}
                     </span>
                   )}
                 </div>
                 <p className="mb-4 text-[13px] text-ink/60">
-                  How the AI&rsquo;s replies are delivered to your customers on WhatsApp.
+                  {cs.respStyleSub}
                 </p>
                 <div className="space-y-3">
                   {RESPONSE_STYLE_OPTIONS.map((opt) => {
@@ -334,7 +344,7 @@ export default function ChannelSettingsPage() {
                 </div>
                 {responseStyle === "human" && (
                   <div className="mt-3 rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-3 text-[12px] leading-relaxed text-amber-800">
-                    ⚠️ Human-like responses may send multiple WhatsApp messages for a single response, which can increase WhatsApp messaging usage and costs.
+                    ⚠️ {cs.humanWarn}
                   </div>
                 )}
               </section>
@@ -346,11 +356,11 @@ export default function ChannelSettingsPage() {
 
           {/* ── General Settings ── */}
           <section>
-            <h2 className="mb-1 text-[15px] font-bold text-ink">General</h2>
-            <p className="mb-4 text-[13px] text-ink/60">Configure how this channel operates.</p>
+            <h2 className="mb-1 text-[15px] font-bold text-ink">{cs.generalTitle}</h2>
+            <p className="mb-4 text-[13px] text-ink/60">{cs.generalSub}</p>
             <div className="space-y-3">
-              <Toggle label="Auto-Reply" desc="Automatically respond to incoming messages" checked={autoReply} onChange={() => setAutoReply(!autoReply)} />
-              <Toggle label="Typing Indicator" desc='Show "typing..." while the agent processes' checked={typingIndicator} disabled={typingStatus === "saving"} onChange={() => toggleTypingIndicator(!typingIndicator)} />
+              <Toggle label={cs.autoReply} desc={cs.autoReplyDesc} checked={autoReply} onChange={() => setAutoReply(!autoReply)} />
+              <Toggle label={cs.typing} desc={cs.typingDesc} checked={typingIndicator} disabled={typingStatus === "saving"} onChange={() => toggleTypingIndicator(!typingIndicator)} />
             </div>
           </section>
 
@@ -359,24 +369,24 @@ export default function ChannelSettingsPage() {
 
           {/* ── Connection Status ── */}
           <section>
-            <h2 className="mb-1 text-[15px] font-bold text-ink">Connection</h2>
-            <p className="mb-4 text-[13px] text-ink/60">Channel connection status.</p>
+            <h2 className="mb-1 text-[15px] font-bold text-ink">{cs.connTitle}</h2>
+            <p className="mb-4 text-[13px] text-ink/60">{cs.connSub}</p>
             <div className="rounded-xl border-2 border-white bg-white/80 p-4 sm:p-5">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <span className={`h-3 w-3 rounded-full ${channel.connected ? "bg-emerald-500" : "bg-ink/20"}`} />
                   <div>
                     <span className={`text-[14px] font-semibold ${channel.connected ? "text-emerald-600" : "text-ink/50"}`}>
-                      {channel.connected ? "Connected" : "Disconnected"}
+                      {channel.connected ? cs.connected : cs.disconnected}
                     </span>
                     <p className="text-[11px] text-ink/45">
-                      {channel.connected ? "All systems operational" : "Connect this channel to start"}
+                      {channel.connected ? cs.connOk : cs.connNeed}
                     </p>
                   </div>
                 </div>
                 {!channel.connected && (
                   <button className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white shadow-md shadow-deep-violet/25 transition hover:bg-deep-violet/90 active:scale-[0.98]">
-                    Connect
+                    {cs.connectBtn}
                   </button>
                 )}
               </div>
