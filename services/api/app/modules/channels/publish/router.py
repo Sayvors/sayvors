@@ -434,6 +434,34 @@ async def batch_delete_published_posts(
         if not target_platforms:
             continue
 
+        # Terminal rows that never published (or were cancelled) have no
+        # platform artifact — nothing to take down. Delete the row so the
+        # feed stops showing a permanent "Failed" card, especially for
+        # profile/banner, which can never be removed from Google otherwise.
+        if job_row.status in {"failed", "dead", "cancelled"}:
+            await db.delete(job_row)
+            await db.commit()
+            out.append(
+                JobOut(
+                    job_id=job_row.id,
+                    status="cancelled",
+                    lane=job_row.lane,
+                    created_at=job_row.created_at.isoformat(),
+                    platform=platform,
+                    method=payload.get("method"),
+                    external_asset_id=external_asset_id,
+                    scheduled_at=payload.get("scheduled_at"),
+                    delete_at=payload.get("delete_at"),
+                    result=job_row.result,
+                    last_error=job_row.last_error,
+                    updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
+                    batch_id=payload.get("batch_id"),
+                    caption=payload.get("caption"),
+                    media_url=payload.get("media_url"),
+                )
+            )
+            continue
+
         # Cancel if not yet published.
         if job_row.status in {"accepted", "queued", "retrying", "blocked"}:
             job_row.status = "cancelled"
@@ -695,6 +723,30 @@ async def delete_published_post(
         return JobOut(
             job_id=job_row.id,
             status=job_row.status,
+            lane=job_row.lane,
+            created_at=job_row.created_at.isoformat(),
+            platform=payload.get("platform"),
+            method=payload.get("method"),
+            external_asset_id=payload.get("external_asset_id"),
+            scheduled_at=payload.get("scheduled_at"),
+            delete_at=payload.get("delete_at"),
+            result=job_row.result,
+            last_error=job_row.last_error,
+            updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
+            batch_id=payload.get("batch_id"),
+            caption=payload.get("caption"),
+            media_url=payload.get("media_url"),
+        )
+
+    if job_row.status in {"failed", "dead", "cancelled"}:
+        # Nothing went out to the platform; drop the row so a terminal
+        # failure (including a banner) can be dismissed from the feed.
+        await db.delete(job_row)
+        await db.commit()
+        payload = job_row.payload or {}
+        return JobOut(
+            job_id=job_row.id,
+            status="cancelled",
             lane=job_row.lane,
             created_at=job_row.created_at.isoformat(),
             platform=payload.get("platform"),

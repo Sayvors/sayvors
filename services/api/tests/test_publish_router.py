@@ -449,6 +449,43 @@ async def test_batch_delete_cancels_a_queued_job(db, client, user_id):
 
 
 @pytest.mark.asyncio
+async def test_batch_delete_dismisses_a_failed_banner(db, client, user_id):
+    """A failed banner never reached Google, so its feed row must be
+    removable even though banners can't be deleted from the platform."""
+    from sqlalchemy import select
+
+    from app.modules.jobs.models import Job
+
+    job = _job(user_id, status="failed", method="banner",
+               job_id="job-failed-0000-0000-000000000001")
+    db.add(job)
+    await db.commit()
+
+    res = client.post("/api/v1/channels/publish/delete", json={"job_ids": [job.id]})
+    assert res.status_code == 200, res.text
+    assert res.json()[0]["status"] == "cancelled"
+    assert (await db.execute(select(Job).where(Job.id == job.id))).scalar_one_or_none() is None
+
+
+@pytest.mark.asyncio
+async def test_single_delete_dismisses_a_failed_banner(db, client, user_id):
+    """The per-job delete endpoint dismisses terminal failures too."""
+    from sqlalchemy import select
+
+    from app.modules.jobs.models import Job
+
+    job = _job(user_id, status="failed", method="banner",
+               job_id="job-failed-0000-0000-000000000002")
+    db.add(job)
+    await db.commit()
+
+    res = client.post(f"/api/v1/channels/publish/{job.id}/delete")
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "cancelled"
+    assert (await db.execute(select(Job).where(Job.id == job.id))).scalar_one_or_none() is None
+
+
+@pytest.mark.asyncio
 async def test_batch_delete_ignores_other_tenants(db, client, other_user_id):
     theirs = _job(other_user_id, status="queued", job_id="job-theirs-0000-0000-000000000001")
     db.add(theirs)
