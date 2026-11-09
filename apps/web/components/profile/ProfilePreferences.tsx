@@ -2,17 +2,18 @@
 
 import { useState } from "react";
 import { LOCALES } from "@/lib/i18n/locales";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import type { Dict } from "@/lib/i18n/en";
 
-const THEMES = [
-  { id: "light", label: "Light", hint: "Bright workspace" },
-  { id: "dark", label: "Dark", hint: "Low-light friendly" },
-  { id: "system", label: "System", hint: "Follow device" },
-] as const;
+type ProfileDict = Dict["profile"];
+
+const THEME_IDS = ["light", "dark", "system"] as const;
+type ThemeId = (typeof THEME_IDS)[number];
 
 const CARD =
   "rounded-[32px] bg-white p-5 shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)] ring-1 ring-ink/[0.06] dark:bg-[#1b1530] dark:ring-white/[0.08] sm:p-7";
 
-function ThemePreview({ theme }: { theme: (typeof THEMES)[number]["id"] }) {
+function ThemePreview({ theme }: { theme: ThemeId }) {
   if (theme === "system") {
     // Two solid halves read as "follows the device" without a gradient.
     return (
@@ -50,6 +51,13 @@ export default function ProfilePreferences({
   onSave: (theme: string, language: string) => Promise<void>;
 }) {
   const [error, setError] = useState<string | null>(null);
+  const { t } = useI18n();
+  const pf: ProfileDict = t.profile;
+  const THEMES: { id: ThemeId; label: string; hint: string }[] = [
+    { id: "light", label: pf.themeLight, hint: pf.themeLightHint },
+    { id: "dark", label: pf.themeDark, hint: pf.themeDarkHint },
+    { id: "system", label: pf.themeSystem, hint: pf.themeSystemHint },
+  ];
 
   async function pick(nextTheme: string, nextLang: string) {
     if (nextTheme === theme && nextLang === language) return;
@@ -57,7 +65,7 @@ export default function ProfilePreferences({
     try {
       await onSave(nextTheme, nextLang);
     } catch (e) {
-      setError(e instanceof Error && e.message ? e.message : "Could not save preferences.");
+      setError(e instanceof Error && e.message ? e.message : pf.prefsSaveFail);
     }
   }
 
@@ -66,10 +74,10 @@ export default function ProfilePreferences({
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <h2 id="preferences-title" className="text-[17px] font-black tracking-tight text-ink dark:text-fog">
-            Preferences
+            {pf.prefTitle}
           </h2>
           <p className="mt-0.5 text-[11.5px] text-ink/50 dark:text-fog/50">
-            Applies to this account across every device.
+            {pf.prefSub}
           </p>
         </div>
         {saving && (
@@ -78,16 +86,16 @@ export default function ProfilePreferences({
               aria-hidden
               className="h-3 w-3 animate-spin rounded-full border-2 border-deep-violet/25 border-t-deep-violet"
             />
-            Saving…
+            {pf.saving}
           </span>
         )}
       </div>
 
       <fieldset className="mt-5">
         <legend className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink/40 dark:text-fog/40">
-          Theme
+          {pf.themeLabel}
         </legend>
-        <div className="mt-2.5 grid grid-cols-3 gap-2.5" role="group" aria-label="Theme">
+        <div className="mt-2.5 grid grid-cols-3 gap-2.5" role="group" aria-label={pf.themeLabel}>
           {THEMES.map((option) => {
             const active = theme === option.id;
             return (
@@ -117,7 +125,7 @@ export default function ProfilePreferences({
           htmlFor="profile-lang"
           className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink/40 dark:text-fog/40"
         >
-          Language
+          {pf.langLabel}
         </label>
         <select
           id="profile-lang"
@@ -133,7 +141,7 @@ export default function ProfilePreferences({
           ))}
         </select>
         <p className="mt-1.5 text-[10.5px] text-ink/40 dark:text-fog/40">
-          Changes the dashboard language for this account.
+          {pf.langHint}
         </p>
       </div>
 

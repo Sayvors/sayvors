@@ -2,11 +2,25 @@
 
 import type { Profile } from "@/lib/api-profile";
 import { profileChecks } from "@/lib/profile-completion";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import type { Dict } from "@/lib/i18n/en";
+
+type CheckKey = "Name" | "Photo" | "Phone" | "Country" | "Business" | "Bio";
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 const CARD =
   "rounded-[32px] bg-white p-5 shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)] ring-1 ring-ink/[0.06] dark:bg-[#1b1530] dark:ring-white/[0.08] sm:p-7";
 
 export default function ProfileStrength({ profile }: { profile: Profile }) {
+  const { t, locale } = useI18n();
+  const pf = t.profile;
+  const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
   const checks = profileChecks(profile);
   const done = checks.filter((check) => check.done).length;
   const percent = Math.round((done / checks.length) * 100);
@@ -24,14 +38,14 @@ export default function ProfileStrength({ profile }: { profile: Profile }) {
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 id="strength-title" className="text-[17px] font-black tracking-tight text-ink dark:text-fog">
-            Profile strength
+          {pf.strengthTitle}
           </h2>
           <p className="mt-0.5 text-[11.5px] text-ink/50 dark:text-fog/50">
-            {done} of {checks.length} details complete.
+            {fill(pf.strengthSub, { done: fmt(done), total: fmt(checks.length) })}
           </p>
         </div>
         <span className={`text-[24px] font-black tabular-nums leading-none ${tone.text}`}>
-          {percent}%
+          {fill(pf.strengthSr, { n: fmt(percent) })}
         </span>
       </div>
 
@@ -41,8 +55,8 @@ export default function ProfileStrength({ profile }: { profile: Profile }) {
         aria-valuenow={percent}
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-valuetext={`${percent}% complete`}
-        aria-label="Profile strength"
+        aria-valuetext={fill(pf.strengthSr, { n: fmt(percent) })}
+        aria-label={pf.strengthAria}
       >
         <div
           className={`h-full rounded-full transition-[width] duration-500 ${tone.bar}`}
@@ -52,7 +66,7 @@ export default function ProfileStrength({ profile }: { profile: Profile }) {
 
       {missing.length === 0 ? (
         <p className="mt-4 text-[11.5px] font-semibold text-emerald-700 dark:text-emerald-300">
-          Your profile is complete.
+          {pf.completeMsg}
         </p>
       ) : (
         <ul className="mt-4 space-y-2">
@@ -64,7 +78,7 @@ export default function ProfileStrength({ profile }: { profile: Profile }) {
               >
                 +
               </span>
-              {check.hint}
+              {pf.checks[check.label as CheckKey] ?? check.hint}
             </li>
           ))}
         </ul>

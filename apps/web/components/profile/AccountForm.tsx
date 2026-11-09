@@ -4,6 +4,17 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import { BUSINESS_TYPES } from "@/lib/business-types";
 import { COUNTRIES } from "@/lib/countries";
 import type { Profile } from "@/lib/api-profile";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import type { Dict } from "@/lib/i18n/en";
+
+type ProfileDict = Dict["profile"];
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 /** The subset of the profile this form owns. */
 export interface AccountFormPatch {
@@ -64,25 +75,25 @@ function sameValues(a: AccountFormPatch, b: AccountFormPatch): boolean {
   );
 }
 
-function validate(values: AccountFormPatch): Record<string, string> {
+function validate(values: AccountFormPatch, pf: ProfileDict, fmt: (n: number) => string): Record<string, string> {
   const errors: Record<string, string> = {};
   if (values.first_name.length < 2) {
-    errors.first_name = "Use at least 2 characters.";
+    errors.first_name = pf.errShort2;
   }
   if (values.last_name.length < 2) {
-    errors.last_name = "Use at least 2 characters.";
+    errors.last_name = pf.errShort2;
   }
   if (values.phone && !PHONE_PATTERN.test(values.phone)) {
-    errors.phone = "Use digits with an optional + and spaces, 7–25 characters.";
+    errors.phone = pf.errPhoneChars;
   }
   if (values.phone && values.phone.replace(/\D/g, "").length < 7) {
-    errors.phone = "Enter at least 7 digits.";
+    errors.phone = pf.errPhoneDigits;
   }
   if (values.business_name.length > BUSINESS_NAME_MAX) {
-    errors.business_name = `Keep it under ${BUSINESS_NAME_MAX} characters.`;
+    errors.business_name = fill(pf.errLong, { n: fmt(BUSINESS_NAME_MAX) });
   }
   if (values.bio.length > BIO_MAX) {
-    errors.bio = `Keep it under ${BIO_MAX} characters.`;
+    errors.bio = fill(pf.errLong, { n: fmt(BIO_MAX) });
   }
   return errors;
 }
@@ -143,11 +154,14 @@ export default function AccountForm({
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const { t, locale } = useI18n();
+  const pf: ProfileDict = t.profile;
+  const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
 
   const savedValues = valuesFrom(profile);
   const nextValues = trimmed(values);
   const dirty = !sameValues(nextValues, trimmed(savedValues));
-  const errors = validate(nextValues);
+  const errors = validate(nextValues, pf, fmt);
 
   function update<K extends keyof AccountFormPatch>(key: K, value: AccountFormPatch[K]) {
     setValues((previous) => ({ ...previous, [key]: value }));
@@ -188,7 +202,7 @@ export default function AccountForm({
       setServerError(
         error instanceof Error && error.message
           ? error.message
-          : "Could not save your details. Try again.",
+          : pf.saveFail,
       );
     } finally {
       setSubmitting(false);
@@ -207,10 +221,10 @@ export default function AccountForm({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 id="account-form-title" className="text-[17px] font-black tracking-tight text-ink dark:text-fog">
-            Account details
+            {pf.formTitle}
           </h2>
           <p className="mt-0.5 text-[11.5px] text-ink/50 dark:text-fog/50">
-            How your workspace identifies you to your team.
+            {pf.formSub}
           </p>
         </div>
         <span
@@ -224,12 +238,12 @@ export default function AccountForm({
             aria-hidden
             className={`h-1.5 w-1.5 rounded-full ${dirty ? "bg-amber-500" : "bg-emerald-500"}`}
           />
-          {dirty ? "Unsaved changes" : saved ? "Saved" : "Up to date"}
+          {dirty ? pf.dirtyUnsaved : saved ? pf.dirtySaved : pf.dirtyOk}
         </span>
       </div>
 
       <div className="mt-6 grid gap-4 sm:grid-cols-2">
-        <Field id="account-first-name" label="First name" error={showError("first_name")}>
+        <Field id="account-first-name" label={pf.firstName} error={showError("first_name")}>
           <input
             id="account-first-name"
             name="given-name"
@@ -245,7 +259,7 @@ export default function AccountForm({
           />
         </Field>
 
-        <Field id="account-last-name" label="Last name" error={showError("last_name")}>
+        <Field id="account-last-name" label={pf.lastName} error={showError("last_name")}>
           <input
             id="account-last-name"
             name="family-name"
@@ -263,8 +277,8 @@ export default function AccountForm({
 
         <Field
           id="account-email"
-          label="Sign-in email"
-          hint="Used to sign in and receive receipts. Contact support to change it."
+          label={pf.emailLabel}
+          hint={pf.emailHint}
           className="sm:col-span-2"
         >
           <input
@@ -279,8 +293,8 @@ export default function AccountForm({
 
         <Field
           id="account-phone"
-          label="Phone"
-          hint="Optional. Used for account recovery only."
+          label={pf.phoneLabel}
+          hint={pf.phoneHint}
           error={showError("phone")}
         >
           <input
@@ -301,7 +315,7 @@ export default function AccountForm({
           />
         </Field>
 
-        <Field id="account-country" label="Country" hint="Sets the default region for your workspace.">
+        <Field id="account-country" label={pf.countryLabel} hint={pf.countryHint}>
           <select
             id="account-country"
             autoComplete="country"
@@ -309,7 +323,7 @@ export default function AccountForm({
             onChange={(e) => update("country", e.target.value)}
             className={fieldClasses(false)}
           >
-            <option value="">Not set</option>
+            <option value="">{pf.notSet}</option>
             {COUNTRIES.map((country) => (
               <option key={country.code} value={country.code}>
                 {country.name}
@@ -322,16 +336,16 @@ export default function AccountForm({
       <div className="my-6 h-px bg-ink/[0.07] dark:bg-white/[0.08]" />
 
       <div>
-        <h3 className="text-[14px] font-black text-ink dark:text-fog">Business profile</h3>
+        <h3 className="text-[14px] font-black text-ink dark:text-fog">{pf.bizTitle}</h3>
         <p className="mt-0.5 text-[11.5px] text-ink/50 dark:text-fog/50">
-          Grounds the AI in what you actually sell. Used across posts and replies.
+          {pf.bizSub}
         </p>
       </div>
 
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
         <Field
           id="account-business-name"
-          label="Business name"
+          label={pf.bizName}
           error={showError("business_name")}
         >
           <input
@@ -350,14 +364,14 @@ export default function AccountForm({
           />
         </Field>
 
-        <Field id="account-business-type" label="Business type">
+        <Field id="account-business-type" label={pf.bizType}>
           <select
             id="account-business-type"
             value={values.business_type ?? ""}
             onChange={(e) => update("business_type", e.target.value)}
             className={fieldClasses(false)}
           >
-            <option value="">Not set</option>
+            <option value="">{pf.notSet}</option>
             {typeOptions.map((type) => (
               <option key={type} value={type}>
                 {type}
@@ -368,8 +382,8 @@ export default function AccountForm({
 
         <Field
           id="account-bio"
-          label="Bio"
-          hint={`${nextValues.bio.length}/${BIO_MAX} characters`}
+          label={pf.bioLabel}
+          hint={fill(pf.bioCount, { n: fmt(nextValues.bio.length), max: fmt(BIO_MAX) })}
           error={showError("bio")}
           className="sm:col-span-2"
         >
@@ -398,10 +412,10 @@ export default function AccountForm({
         >
           {serverError ??
             (dirty
-              ? "Review your changes, then save."
+              ? pf.reviewSave
               : saved
-                ? "All changes saved."
-                : "Everything is up to date.")}
+                ? pf.allSaved
+                : pf.allUpToDate)}
         </p>
         <div className="flex items-center gap-2">
           <button
@@ -410,7 +424,7 @@ export default function AccountForm({
             disabled={!dirty || submitting}
             className="rounded-[20px] px-4 py-2.5 text-[12px] font-bold text-ink/55 transition hover:bg-ink/[0.05] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet active:translate-y-0.5 active:scale-[0.98] disabled:opacity-40 dark:text-fog/55 dark:hover:bg-white/[0.06]"
           >
-            Discard
+            {pf.discard}
           </button>
           <button
             type="submit"
@@ -423,7 +437,7 @@ export default function AccountForm({
                 className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white"
               />
             )}
-            {submitting ? "Saving…" : "Save changes"}
+            {submitting ? pf.saving : pf.saveChanges}
           </button>
         </div>
       </div>
