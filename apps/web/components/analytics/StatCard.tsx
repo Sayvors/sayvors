@@ -2,10 +2,14 @@
 
 import { ReactNode } from "react";
 import { FactSource } from "@/components/analytics/FactSource";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 
-export function DeltaChip({ delta, suffix = "%", noPriorData = "no prior data" }: { delta: number | null; suffix?: string; noPriorData?: string }) {
+export function DeltaChip({ delta, suffix = "%", noPriorData }: { delta: number | null; suffix?: string; noPriorData?: string }) {
+  const { t, locale } = useI18n();
+  const none = noPriorData ?? t.growth.stat.noPrior;
+  const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
   if (delta === null || delta === undefined) {
-    return <span className="text-[11px] font-medium text-[var(--ui-ink-2)]">{noPriorData}</span>;
+    return <span className="text-[11px] font-medium text-[var(--ui-ink-2)]">{none}</span>;
   }
   const up = delta > 0;
   const flat = delta === 0;
@@ -26,7 +30,7 @@ export function DeltaChip({ delta, suffix = "%", noPriorData = "no prior data" }
           <path d="M6 10V2M2.5 5.5L6 2l3.5 3.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       )}
-      {Math.abs(delta)}{suffix}
+      {fmt(Math.abs(Math.round(delta * 10) / 10))}{suffix}
     </span>
   );
 }

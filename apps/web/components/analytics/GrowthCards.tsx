@@ -4,6 +4,17 @@ import Link from "next/link";
 import type { GrowthCards } from "@/lib/api-analytics";
 import { FactSource } from "@/components/analytics/FactSource";
 import { GBP_DASHBOARD_URL } from "@/lib/google-links";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import type { Dict } from "@/lib/i18n/en";
+
+type CardsDict = Dict["growth"]["cards"];
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 function platformLabel(p: string): string {
   const map: Record<string, string> = {
@@ -15,12 +26,12 @@ function platformLabel(p: string): string {
   return map[p] ?? p.replace(/_/g, " ");
 }
 
-function triggerLabel(t: string): string {
+function triggerLabel(t: string, gc: CardsDict): string {
   const map: Record<string, string> = {
-    manual: "Manual",
-    qr: "In-person QR",
-    after_visit: "After visit",
-    campaign: "Campaign",
+    manual: gc.trigManual,
+    qr: gc.trigQr,
+    after_visit: gc.trigAfterVisit,
+    campaign: gc.trigCampaign,
   };
   return map[t] ?? t.replace(/_/g, " ");
 }
@@ -45,6 +56,11 @@ export default function GrowthCardsSection({
   /** Whether a Google Business Profile is connected; gates the GBP link. */
   googleConnected?: boolean;
 }) {
+  const { t, locale } = useI18n();
+  const gc: CardsDict = t.growth.cards;
+  const gbp = t.bench.fact.gbp;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
   if (loading || !cards) {
     return (
       <div className="grid gap-4 sm:gap-5 lg:grid-cols-2">
@@ -65,78 +81,78 @@ export default function GrowthCardsSection({
   return (
     <div className="space-y-4 sm:space-y-5">
       {/* Funnel */}
-      <section aria-label="Review engine funnel" className="ui-card p-5">
+      <section aria-label={gc.funnelAria} className="ui-card p-5">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
-            <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">Review engine funnel</h3>
+            <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">{gc.funnelTitle}</h3>
             <p className="text-[11px] text-[var(--ui-ink-2)]">
-              Requests sent in the last {cards.days} days, compared with reviews received in the same window.
+              {fill(gc.funnelSub, { n: fmt(cards.days) })}
             </p>
           </div>
           <Link
             href="/dashboard/reviews?ask=1"
             className="ui-btn shrink-0 rounded-[2px] bg-[var(--ui-ink)] px-2.5 py-1.5 text-[10px] font-bold text-[var(--ui-on-ink)]"
           >
-            Ask for reviews
+            {gc.askReviews}
           </Link>
         </div>
 
         <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-          <FunnelStep label="Requests" value={String(f.requests_sent)} sub="sent" />
+          <FunnelStep label={gc.stepRequests} value={fmt(f.requests_sent)} sub={gc.sent} />
           <FunnelStep
-            label="Delivered"
-            value={f.delivery_tracked ? String(f.delivered) : "-"}
-            sub={f.delivery_tracked ? "reported" : "not tracked"}
+            label={gc.stepDelivered}
+            value={f.delivery_tracked ? fmt(f.delivered) : "-"}
+            sub={f.delivery_tracked ? gc.reported : gc.notTracked}
           />
           <FunnelStep
-            label="Clicked"
-            value={f.click_tracked ? String(f.clicked) : "-"}
-            sub={f.click_tracked ? "link opens" : "not tracked"}
+            label={gc.stepClicked}
+            value={f.click_tracked ? fmt(f.clicked) : "-"}
+            sub={f.click_tracked ? gc.linkOpens : gc.notTracked}
           />
-          <FunnelStep label="Reviews" value={String(f.reviews)} sub="received in window" />
+          <FunnelStep label={gc.stepReviews} value={fmt(f.reviews)} sub={gc.received} />
           <FunnelStep
-            label="Attributed"
-            value={String(f.reviews_via_request)}
-            sub={`click → review ≤ ${f.attribution_window_days}d`}
+            label={gc.stepAttributed}
+            value={fmt(f.reviews_via_request)}
+            sub={fill(gc.attrSub, { n: fmt(f.attribution_window_days) })}
           />
           <FunnelStep
-            label="Conversion"
-            value={conv === null ? "-" : `${conv}%`}
-            sub="attributed / requests"
+            label={gc.stepConversion}
+            value={conv === null ? "-" : `${fmt(Math.round(conv * 10) / 10)}%`}
+            sub={gc.convSub}
           />
         </div>
 
         <div className="mt-4 grid gap-4 border-t border-[var(--ui-line)] pt-3 sm:grid-cols-2">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">By channel</p>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">{gc.byChannel}</p>
             {byChannel.length === 0 ? (
-              <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">No requests recorded.</p>
+              <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">{gc.noRequests}</p>
             ) : (
               <ul className="mt-1 space-y-1">
                 {byChannel.map((b) => (
                   <li key={b.channel} className="flex items-center justify-between text-[11px]">
                     <span className="text-[var(--ui-ink)]">{platformLabel(b.channel)}</span>
-                    <span className="tabular-nums text-[var(--ui-ink-2)]">{b.requests}</span>
+                    <span className="tabular-nums text-[var(--ui-ink-2)]">{fmt(b.requests)}</span>
                   </li>
                 ))}
               </ul>
             )}
           </div>
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">Ask timing</p>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">{gc.byTrigger}</p>
             {byTrigger.length === 0 ? (
-              <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">No requests recorded.</p>
+              <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">{gc.noRequests}</p>
             ) : (
               <ul className="mt-1 space-y-1">
                 {byTrigger.map((b) => {
                   const pct = f.requests_sent ? Math.round((b.requests / f.requests_sent) * 100) : 0;
                   return (
                     <li key={b.trigger} className="flex items-center gap-2 text-[11px]">
-                      <span className="w-24 shrink-0 text-[var(--ui-ink)]">{triggerLabel(b.trigger)}</span>
+                      <span className="w-24 shrink-0 text-[var(--ui-ink)]">{triggerLabel(b.trigger, gc)}</span>
                       <span className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--ui-sunken)]">
                         <span className="absolute inset-y-0 left-0 rounded-full bg-[var(--ui-ink)]" style={{ width: `${Math.max(3, pct)}%` }} />
                       </span>
-                      <span className="w-8 shrink-0 text-right tabular-nums text-[var(--ui-ink-2)]">{b.requests}</span>
+                      <span className="w-8 shrink-0 text-right tabular-nums text-[var(--ui-ink-2)]">{fmt(b.requests)}</span>
                     </li>
                   );
                 })}
@@ -145,33 +161,29 @@ export default function GrowthCardsSection({
           </div>
         </div>
         <p className="mt-3 text-[10px] text-[var(--ui-ink-2)]">
-          Attribution is per request: a review is credited only when the customer clicked the tracked link and a review landed within {f.attribution_window_days} days. One review is never credited to two clicks.
-          {f.failed > 0 ? ` ${f.failed} request${f.failed === 1 ? "" : "s"} failed to send — check the provider/contact.` : ""}
-          {!f.delivery_tracked && !f.click_tracked ? " SMS/email delivery and click tracking need provider credentials; missing stages are labelled, never faked." : ""}
+          {fill(gc.attrNote, { n: fmt(f.attribution_window_days) })}
+          {f.failed > 0 ? ` ${f.failed === 1 ? fill(gc.failedOne, {}) : fill(gc.failedN, { n: fmt(f.failed) })}` : ""}
+          {!f.delivery_tracked && !f.click_tracked ? ` ${gc.noTracking}` : ""}
         </p>
         <FactSource
-          source={
-            googleConnected
-              ? "Sayvors request log + Google reviews"
-              : "Sayvors request log"
-          }
-          detail={`last ${cards.days} days · attribution window ${f.attribution_window_days}d`}
+          source={googleConnected ? gc.funnelSource : gc.funnelSourcePlain}
+          detail={fill(gc.funnelDetail, { n: fmt(cards.days), m: fmt(f.attribution_window_days) })}
           href={googleConnected ? GBP_DASHBOARD_URL : null}
-          linkLabel="Open GBP dashboard"
+          linkLabel={gbp}
         />
       </section>
 
       {/* Contacts + retention */}
       <div className="grid gap-4 sm:gap-5 lg:grid-cols-2">
-        <section aria-label="New contacts" className="ui-card p-5">
-          <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">New contacts</h3>
-          <p className="text-[11px] text-[var(--ui-ink-2)]">First-time inbound contacts, from the stored daily rollup.</p>
+        <section aria-label={gc.contactsAria} className="ui-card p-5">
+          <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">{gc.contactsTitle}</h3>
+          <p className="text-[11px] text-[var(--ui-ink-2)]">{gc.contactsSub}</p>
           <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-[30px] font-black leading-none tabular-nums text-[var(--ui-ink)]">{c.new_contacts}</span>
-            <span className="text-[12px] font-semibold text-[var(--ui-ink-2)]">new</span>
+            <span className="text-[30px] font-black leading-none tabular-nums text-[var(--ui-ink)]">{fmt(c.new_contacts)}</span>
+            <span className="text-[12px] font-semibold text-[var(--ui-ink-2)]">{gc.newWord}</span>
             {c.delta_pct !== null && (
               <span className={`rounded-[2px] px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${c.delta_pct > 0 ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]" : "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"}`}>
-                {c.delta_pct > 0 ? "+" : ""}{c.delta_pct}%
+                {c.delta_pct > 0 ? "+" : ""}{fmt(Math.round(c.delta_pct * 10) / 10)}%
               </span>
             )}
           </div>
@@ -180,34 +192,34 @@ export default function GrowthCardsSection({
               {contactPlatforms.map((p) => (
                 <li key={p.platform} className="flex items-center justify-between text-[11px]">
                   <span className="text-[var(--ui-ink)]">{platformLabel(p.platform)}</span>
-                  <span className="tabular-nums text-[var(--ui-ink-2)]">{p.contacts}</span>
+                  <span className="tabular-nums text-[var(--ui-ink-2)]">{fmt(p.contacts)}</span>
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="mt-3 text-[11px] text-[var(--ui-ink-2)]">No new contacts in this period.</p>
+            <p className="mt-3 text-[11px] text-[var(--ui-ink-2)]">{gc.noContacts}</p>
           )}
           <p className="mt-3 text-[10px] text-[var(--ui-ink-2)]">
-            Source attribution is <strong>unknown</strong> until booking/CRM data is connected.
+            {gc.unknownPre} <strong>{gc.unknownWord}</strong> {gc.unknownPost}
           </p>
           <FactSource
-            source="Sayvors message rollup"
-            detail={`last ${cards.days} days`}
+            source={gc.rollupSource}
+            detail={fill(gc.funnelDetailDays, { n: fmt(cards.days) })}
           />
         </section>
 
-        <section aria-label="Retention" className="ui-card p-5">
-          <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">Retention cohort</h3>
+        <section aria-label={gc.retentionAria} className="ui-card p-5">
+          <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">{gc.retentionTitle}</h3>
           {cards.retention.available ? (
-            <p className="mt-3 text-[12px] text-[var(--ui-ink)]">Cohort data available.</p>
+            <p className="mt-3 text-[12px] text-[var(--ui-ink)]">{gc.cohortOk}</p>
           ) : (
             <>
-              <p className="mt-3 text-[12px] font-semibold text-[var(--ui-ink)]">Not connected</p>
+              <p className="mt-3 text-[12px] font-semibold text-[var(--ui-ink)]">{gc.notConnected}</p>
               <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">
                 {cards.retention.reason}
               </p>
               <p className="mt-2 text-[10px] text-[var(--ui-ink-2)]">
-                We will not guess a repeat rate from messages. Connect a POS/CRM to unlock 30/60/90-day cohorts.
+                {gc.retentionNote}
               </p>
             </>
           )}
@@ -215,15 +227,15 @@ export default function GrowthCardsSection({
       </div>
 
       {/* Actions */}
-      <section aria-label="Growth actions" className="ui-card p-5">
+      <section aria-label={gc.actionsAria} className="ui-card p-5">
         <div className="flex items-start justify-between gap-2">
           <div>
-            <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">Growth actions</h3>
-            <p className="text-[11px] text-[var(--ui-ink-2)]">Next steps derived from the numbers above.</p>
+            <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">{gc.actionsTitle}</h3>
+            <p className="text-[11px] text-[var(--ui-ink-2)]">{gc.actionsSub}</p>
           </div>
         </div>
         {actions.length === 0 ? (
-          <p className="py-6 text-center text-[12px] text-[var(--ui-ink-2)]">Nothing to fix right now. Keep asking at the moment of service.</p>
+          <p className="py-6 text-center text-[12px] text-[var(--ui-ink-2)]">{gc.actionsEmpty}</p>
         ) : (
           <ul className="mt-3 space-y-2">
             {actions.map((a, i) => (
@@ -235,7 +247,7 @@ export default function GrowthCardsSection({
                   <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-[var(--ui-ink)]">{a.title}</span>
                   {a.href && (
                     <Link href={a.href} className="shrink-0 text-[11px] font-bold text-[var(--ui-ink)] underline underline-offset-2">
-                      Start
+                      {gc.startAction}
                     </Link>
                   )}
                 </div>
@@ -246,10 +258,10 @@ export default function GrowthCardsSection({
           </ul>
         )}
         <FactSource
-          source="Sayvors funnel analysis"
-          detail="derived from the numbers above, not a new measurement"
+          source={gc.funnelAnalysis}
+          detail={gc.funnelAnalysisDetail}
           href={googleConnected ? GBP_DASHBOARD_URL : null}
-          linkLabel="Open GBP dashboard"
+          linkLabel={gbp}
         />
       </section>
     </div>
