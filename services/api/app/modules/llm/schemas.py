@@ -3,7 +3,8 @@ from pydantic import BaseModel, Field
 
 class ConversationCreate(BaseModel):
     title: str | None = None
-    model: str = "openai:gpt-4o"
+    # Resolved from the tenant's enabled models when omitted — no hardcoded id.
+    model: str | None = None
     system_prompt: str | None = None
 
 
@@ -38,7 +39,8 @@ class MessageListResponse(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    model: str = "openai:gpt-4o"
+    # Resolved from the tenant's enabled models when omitted.
+    model: str | None = None
     conversation_id: str | None = None
     system_prompt: str | None = None
     messages: list[MessageCreate]

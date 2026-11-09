@@ -20,11 +20,14 @@ MAX_HISTORY_MESSAGES = 40
 async def create_conversation(
     body: ConversationCreate, user: User, db: AsyncSession
 ) -> Conversation:
+    # No model named: use the tenant's enabled model. Never a hardcoded id,
+    # so a provider the admin disabled can never be selected by default.
+    model = body.model if body.model else await resolve_tenant_model(db)
     conv = Conversation(
         id=str(uuid.uuid4()),
         user_id=user.id,
         title=body.title,
-        model=body.model,
+        model=model,
         system_prompt=body.system_prompt,
     )
     db.add(conv)

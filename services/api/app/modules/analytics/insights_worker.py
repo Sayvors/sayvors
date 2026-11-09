@@ -149,8 +149,15 @@ async def mine_tenant(db, tenant_id: str) -> dict:
     )
 
     try:
+        # The tenant's enabled model from the admin database — never a
+        # hardcoded provider. This used to call "groq:oss-20b" unconditionally,
+        # so every pass logged "Provider groq is disabled by admin" for every
+        # tenant while a perfectly usable model sat enabled.
+        from ..llm.gateway import resolve_tenant_model
+
+        model_id = await resolve_tenant_model(db)
         resp = await complete(
-            model="groq:oss-20b",
+            model=model_id,
             messages=[LLMMessage(role="user", content=prompt)],
             system_prompt=(
                 "You extract structured insights from customer messages. "
