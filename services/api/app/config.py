@@ -251,7 +251,7 @@ class Settings(BaseSettings):
     # ── Google Business Profile (Reviews) ────────────────
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
-    GOOGLE_REVIEWS_POLL_INTERVAL_SECONDS: int = 300  # 5 min
+    GOOGLE_REVIEWS_POLL_INTERVAL_SECONDS: int = 60  # 1 min
     # Q&A changes much less often than reviews. Poll independently so 1M
     # connected numbers do not make a Q&A request every review cycle.
     GOOGLE_QA_POLL_INTERVAL_SECONDS: int = 3600  # 60 min

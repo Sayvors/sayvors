@@ -426,6 +426,18 @@ def test_generation_salvage_partial_json():
     assert _salvage_response_text("not json at all") == ""
 
 
+def test_generation_salvage_valid_json_with_trailing_prose():
+    """A complete JSON object followed by chatty prose must yield the object,
+    not the prose — the validator rejects trailing text as mid-sentence."""
+    from app.modules.review_engine.generator import _salvage_response_text
+
+    out = _salvage_response_text('{"response_text": "Shukran!"} hope this helps.')
+    assert out == "Shukran!"
+    # Truncated JSON still salvages the partial value.
+    out = _salvage_response_text('{"response_text": "Shukran, we will fix')
+    assert out == "Shukran, we will fix"
+
+
 # ── length tier tests ──────────────────────────────────
 
 def test_tier_complaint():

@@ -17,13 +17,22 @@ logger = logging.getLogger(__name__)
 
 
 def _salvage_response_text(raw: str) -> str:
-    """Extract a partial response_text from a truncated JSON wrapper.
+    """Extract a usable response_text from a non-parseable JSON wrapper.
 
-    Handles: '{"response_text":"Thank you... We' → 'Thank you... We'
+    Handles, in order:
+    1. Truncated JSON ('{"response_text":"Thank... We') — take the partial value.
+    2. Valid JSON with trailing prose ('{...} hope this helps') — raw_decode
+       parses the leading object and ignores the tail.
     Returns "" when nothing usable is present.
     """
     import re
 
+    try:
+        data, _ = json.JSONDecoder().raw_decode(raw)
+        if isinstance(data, dict) and isinstance(data.get("response_text"), str):
+            return data["response_text"].strip()
+    except (json.JSONDecodeError, ValueError):
+        pass
     m = re.search(r'"response_text"\s*:\s*"(.*)', raw, re.DOTALL)
     if not m:
         return ""
@@ -307,11 +316,16 @@ async def generate_response(
         data = json.loads(raw)
         response_text = (data.get("response_text") or "").strip()
     except json.JSONDecodeError:
-        # Truncated JSON wrapper (e.g. '{"response_text":"Thank... We') —
-        # salvage the partial value instead of echoing the raw blob.
+        # Truncated JSON wrapper (e.g. '{"response_text":"Thank... We') or
+        # valid JSON with trailing prose — salvage what parses instead of
+        # echoing the raw blob.
         salvaged = _salvage_response_text(raw)
         if salvaged:
-            logger.warning("Salvaged partial response_text from truncated JSON (%d chars)", len(salvaged))
+            logger.warning(
+                "Salvaged partial response_text from bad JSON "
+                "(finish_reason=%s raw_len=%d salvaged=%d raw_head=%r)",
+                resp.finish_reason, len(raw), len(salvaged), raw[:200],
+            )
             response_text = salvaged
         elif raw and not raw.startswith("{"):
             logger.warning("Failed to parse response JSON, using raw: %s", raw[:200])

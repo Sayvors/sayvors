@@ -278,6 +278,31 @@ async def disconnect_google(
     return {"disconnected": len(channels)}
 
 
+@router.post("/google/sync-now")
+async def sync_google_reviews_now(
+    ctx: TenantContext = Depends(require_perm("channels.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Manually trigger a Google Reviews sync pass immediately.
+
+    Normally reviews are polled every minute by the background worker.
+    This endpoint runs one polling pass right now over all active
+    Google Reviews channels for the tenant, pulling any new or updated
+    reviews from Google.
+
+    Returns the poll totals: channels polled, reviews found, replies
+    posted/queued, skipped, adopted, and errors.
+    """
+    from .reviews_worker import poll_once
+
+    totals = await poll_once()
+    return {
+        "triggered": True,
+        "interval_seconds": settings.GOOGLE_REVIEWS_POLL_INTERVAL_SECONDS,
+        "totals": totals,
+    }
+
+
 @router.delete("/{channel_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def disconnect_channel(
     channel_id: str,

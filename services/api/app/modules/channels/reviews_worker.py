@@ -39,6 +39,15 @@ logger = logging.getLogger(__name__)
 
 LOCK_SECONDS = 120
 
+# Overlap applied to the incremental fetch cursor. Google's reviews.list
+# lags Maps by minutes: a review posted just before a pass may not be in
+# that pass's response yet. Without overlap, last_polled_at marches past it
+# and every later pass filters it out permanently (updateTime is fixed) —
+# a healthy-looking poller that silently misses reviews. Re-fetched rows are
+# deduped by platform_message_id / reply state, so the overlap only replays
+# cheap read paths.
+POLL_OVERLAP = timedelta(minutes=15)
+
 # Channel ids already reported as having no stored Google credentials, so the
 # poll loop warns once instead of on every cycle. Process-local by design: a
 # restart re-surfaces the state, which is what you want after a redeploy.
@@ -189,12 +198,41 @@ async def _claim_channel(db: AsyncSession, config_id: str, last_polled_at) -> bo
 
 
 async def _release_channel(db: AsyncSession, config_id: str) -> None:
+    """Release the poll claim WITHOUT moving the cursor.
+
+    The cursor (last_polled_at) advances only in _mark_polled, after a real
+    fetch. Releasing used to stamp it unconditionally, so a skipped pass
+    (health backoff) or a failed pass moved the cursor past reviews Google
+    had not returned yet — and later passes filtered them out forever.
+    """
     await db.execute(
         update(AutoReplyConfig)
         .where(AutoReplyConfig.id == config_id)
-        .values(polling_locked_until=None, last_polled_at=datetime.now(timezone.utc))
+        .values(polling_locked_until=None)
     )
     await db.commit()
+
+
+async def _mark_polled(db: AsyncSession, config_id: str) -> None:
+    """Advance the incremental cursor after a real provider fetch."""
+    await db.execute(
+        update(AutoReplyConfig)
+        .where(AutoReplyConfig.id == config_id)
+        .values(last_polled_at=datetime.now(timezone.utc))
+    )
+    await db.commit()
+
+
+def _fetch_cursor(last_polled_at: datetime | None) -> datetime | None:
+    """Fetch window start: the stored cursor minus the propagation overlap.
+
+    Returns None (fetch everything) when no cursor was ever stored.
+    """
+    if last_polled_at is None:
+        return None
+    if last_polled_at.tzinfo is None:
+        last_polled_at = last_polled_at.replace(tzinfo=timezone.utc)
+    return last_polled_at - POLL_OVERLAP
 
 
 async def _mark_reviews_seen(db: AsyncSession, channel: Channel, reviews) -> None:
@@ -1187,7 +1225,8 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                         "reply backfill failed for channel %s: %s", channel_id, e
                     )
             reviews = await client.list_reviews(
-                account_id, location_id, updated_after=config.last_polled_at
+                account_id, location_id,
+                updated_after=_fetch_cursor(config.last_polled_at),
             )
         except GoogleReviewsError as e:
             # A permanent rejection is not a transient error: the channel is
@@ -1502,6 +1541,7 @@ async def _poll_one_channel(
                         )
                 else:
                     await _update_channel_health(session, channel, True)
+                    await _mark_polled(session, config.id)
             finally:
                 try:
                     await _release_channel(session, config_id)

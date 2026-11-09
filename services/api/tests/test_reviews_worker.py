@@ -681,3 +681,99 @@ async def test_google_review_name_and_reply_are_mirrored_into_the_inbox(db, chan
     assert outbound.content_type == "review_reply"
     assert outbound.contact_phone_hash == inbound.contact_phone_hash
     assert outbound.contact_name == "Abdulrahman Manea"
+
+
+def test_fetch_cursor_applies_propagation_overlap():
+    """The fetch window must start before the stored cursor.
+
+    Google's list API lags Maps by minutes; fetching strictly after
+    last_polled_at permanently misses reviews that arrived during the lag
+    once the cursor marches past their updateTime.
+    """
+    from datetime import timedelta
+
+    base = datetime(2026, 11, 9, 10, 0, tzinfo=timezone.utc)
+    assert reviews_worker._fetch_cursor(base) == base - timedelta(minutes=15)
+    assert reviews_worker._fetch_cursor(None) is None
+
+
+@pytest.mark.asyncio
+async def test_backoff_skip_leaves_poll_cursor_untouched(db, channel_id, config_id, monkeypatch):
+    """A skipped pass must not move last_polled_at.
+
+    Regression: the release path used to stamp the cursor on every pass, so
+    a health-backoff skip moved the window past reviews Google had not
+    returned yet — later passes filtered them out forever.
+    """
+    import asyncio
+    import json
+    from datetime import timedelta
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    factory = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
+    monkeypatch.setattr("app.database.async_session", factory)
+
+    now = datetime.now(timezone.utc)
+    frozen = now - timedelta(hours=1)
+    config = await db.get(AutoReplyConfig, config_id)
+    config.last_polled_at = frozen
+    channel = await db.get(Channel, channel_id)
+    meta = json.loads(channel.metadata_json or "{}")
+    meta["health"] = {
+        "backoff_until": (now + timedelta(hours=1)).isoformat(),
+        "consecutive_failures": 3,
+    }
+    channel.metadata_json = json.dumps(meta)
+    await db.commit()
+
+    async def _claim(session, config_id_arg, last_polled_at):
+        return True
+
+    monkeypatch.setattr(reviews_worker, "_claim_channel", _claim)
+    # NOTE: _release_channel is deliberately NOT patched — the real one must
+    # only clear the lock, never stamp the cursor.
+
+    stats = await reviews_worker._poll_one_channel(
+        channel_id, config_id, asyncio.Semaphore(1)
+    )
+
+    assert stats["channels"] == 0
+    await db.refresh(config)
+    # SQLite drops tzinfo on round-trip; compare instants, not tz-awareness.
+    assert config.last_polled_at.replace(tzinfo=None) == frozen.replace(tzinfo=None)
+
+
+@pytest.mark.asyncio
+async def test_successful_poll_advances_cursor(db, channel_id, config_id, monkeypatch):
+    """A real fetch must move last_polled_at forward to ~now."""
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    factory = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
+    monkeypatch.setattr("app.database.async_session", factory)
+
+    before = datetime.now(timezone.utc)
+    config = await db.get(AutoReplyConfig, config_id)
+    config.last_polled_at = before
+    await db.commit()
+
+    async def _claim(session, config_id_arg, last_polled_at):
+        return True
+
+    async def _process(session, channel, config):
+        return {"reviews": 1, "replied": 0, "queued": 1, "skipped": 0, "adopted": 0, "errors": 0}
+
+    monkeypatch.setattr(reviews_worker, "_claim_channel", _claim)
+    monkeypatch.setattr(reviews_worker, "_is_in_health_backoff", lambda channel, now: False)
+    monkeypatch.setattr(reviews_worker, "process_channel", _process)
+
+    stats = await reviews_worker._poll_one_channel(
+        channel_id, config_id, asyncio.Semaphore(1)
+    )
+
+    assert stats["channels"] == 1
+    await db.refresh(config)
+    assert config.last_polled_at is not None
+    assert config.last_polled_at.replace(tzinfo=None) >= before.replace(tzinfo=None)
