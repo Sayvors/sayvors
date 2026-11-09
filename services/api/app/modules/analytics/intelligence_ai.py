@@ -37,7 +37,6 @@ from ..team.context import tenant_id_of
 
 logger = logging.getLogger(__name__)
 
-MODELS_CHAIN = ["groq:qwen3.8-27b", "gemini:gemini-3.6-flash", "openai:gpt-4o-mini"]
 MAX_REVIEWS = 50
 MAX_RAG_CHARS = 4000
 ANALYSIS_VERSION = 2
@@ -847,7 +846,19 @@ async def get_review_intelligence(
     competitive = await _competitive_facts(db, tenant_id_of(user), channel_id, days or 90, stats)
     facts["competitive"] = competitive
     last_error = "no LLM provider configured"
-    for model in MODELS_CHAIN:
+    # The tenant's enabled model in the admin database is the only source of
+    # truth. This used to be a hardcoded chain starting with
+    # "groq:qwen3.8-27b", so every pass called a provider the admin had
+    # disabled, logged an error per tenant, and billed a model the tenant
+    # never chose. A model the tenant did not enable must never be attempted.
+    models: list[str] = []
+    try:
+        from ..llm.gateway import resolve_tenant_model
+
+        models = [await resolve_tenant_model(db)]
+    except Exception as e:  # noqa: BLE001 - reported through the fallback path
+        last_error = f"no usable model for this tenant: {str(e)[:160]}"
+    for model in models:
         try:
             raw, used = await _call_llm(facts, rag_text, model, tenant_id_of(user))
             try:

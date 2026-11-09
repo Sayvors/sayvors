@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import uuid
@@ -3270,22 +3271,41 @@ async def verify_posted_replies(
     client = GoogleReviewsClient(access_token or "", refresh_token)
     confirmed = 0
     corrected = 0
+    removed = 0
     try:
         for reply in rows:
+            payload: dict = {}
             try:
-                live = await client.confirm_reply_live(reply.review_id, attempts=1)
+                # Read the review itself first so a deleted review can be told
+                # apart from a reply that never made it live. confirm_reply_live
+                # folds both into False, which is why a review the customer
+                # deleted surfaced as "publishing failed".
+                for attempt in range(2):
+                    payload = await client.get_review(reply.review_id)
+                    if payload or attempt == 1:
+                        break
+                    await asyncio.sleep(2)
             except GoogleReviewsError as e:
                 raise HTTPException(
                     status_code=e.status_code,
                     detail=f"Could not read Google to verify: {e}",
                 )
-            if live:
+            if payload and payload.get("reviewReply"):
                 confirmed += 1
+            elif not payload:
+                # Google no longer has this review (deleted by the reviewer or
+                # removed by Google). There is nothing to reply to: this is not
+                # a publish failure and must never ask for a reconnect.
+                # Withdrawing the draft keeps it out of the failed queue.
+                reply.status = "rejected"
+                reply.error = (
+                    "This review was deleted on Google, so there is nothing to reply to."
+                )
+                removed += 1
             else:
                 reply.status = "failed"
                 reply.error = (
-                    "Not found on Google when verified. "
-                    "Reconnect Google if needed, remake the draft, approve again."
+                    "Google shows no reply on this review. Approve the draft again to republish it."
                 )
                 corrected += 1
     finally:
@@ -3296,6 +3316,7 @@ async def verify_posted_replies(
         "checked": len(rows),
         "confirmed": confirmed,
         "corrected": corrected,
+        "removed": removed,
         "skipped_non_google": skipped_non_google,
     }
 
@@ -3422,6 +3443,19 @@ async def approve_review_reply(
         await db.commit()
         await _notify_reply_posted(db, ctx.user.id, channel, reply)
     except GoogleReviewsError as e:
+        if e.status_code == 404:
+            # The review is gone from Google (deleted by the reviewer, or
+            # removed). Republishing can never succeed, so keep it out of the
+            # failed queue and stop telling the merchant to retry.
+            reply.status = "rejected"
+            reply.error = (
+                "This review was deleted on Google, so there is nothing to reply to."
+            )
+            await db.commit()
+            raise HTTPException(
+                status_code=404,
+                detail="This review no longer exists on Google, so there is nothing to reply to.",
+            ) from e
         reply.status = "failed"
         reply.error = str(e)[:2000]
         await db.commit()
