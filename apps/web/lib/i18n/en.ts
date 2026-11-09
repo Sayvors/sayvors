@@ -1896,6 +1896,7 @@ const en = {
         sent: "Sent",
         delivered: "Delivered",
         opened: "Opened",
+        clicked: "Clicked",
         conversion: "Conversion",
         convShort: "Conv.",
         budgetProgress: "Budget Progress",

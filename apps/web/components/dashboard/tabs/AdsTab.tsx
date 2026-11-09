@@ -1,6 +1,14 @@
 "use client";
 
 import { useState } from "react";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
 
 interface AdsTabProps {
   channelSlug: string;
@@ -29,6 +37,9 @@ const typeColors: Record<string, string> = {
 };
 
 export default function AdsTab({ channelSlug, channelName }: AdsTabProps) {
+  const { t, locale } = useI18n();
+  const tb = t.channelHub.workspace.tab;
+  const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
   const [selectedCampaign, setSelectedCampaign] = useState<string | null>(null);
   const [showNewForm, setShowNewForm] = useState(false);
   const [newType, setNewType] = useState("promotional");
@@ -47,14 +58,14 @@ export default function AdsTab({ channelSlug, channelName }: AdsTabProps) {
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3.5 w-3.5">
                 <path d="M10 3L5 8l5 5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
-              Back to Campaigns
+              {tb.backToCampaigns}
             </button>
 
-            <h2 className="text-[15px] font-bold text-ink">New Campaign</h2>
+            <h2 className="text-[15px] font-bold text-ink">{tb.newCampaignTitle}</h2>
 
             <div className="rounded-xl border-2 border-white bg-white/80 p-4 sm:p-5 space-y-4">
               <div>
-                <label className="mb-1.5 block text-[11px] font-semibold text-ink/50">Campaign Name</label>
+                <label className="mb-1.5 block text-[11px] font-semibold text-ink/50">{tb.campaignName}</label>
                 <input
                   type="text"
                   placeholder="e.g., Summer Sale 2024"
@@ -63,7 +74,7 @@ export default function AdsTab({ channelSlug, channelName }: AdsTabProps) {
               </div>
 
               <div>
-                <label className="mb-1.5 block text-[11px] font-semibold text-ink/50">Type</label>
+                <label className="mb-1.5 block text-[11px] font-semibold text-ink/50">{tb.typeLabel}</label>
                 <div className="flex gap-2">
                   {["promotional", "announcement", "follow-up", "re-engagement"].map((type) => (
                     <button
@@ -82,7 +93,7 @@ export default function AdsTab({ channelSlug, channelName }: AdsTabProps) {
               </div>
 
               <div>
-                <label className="mb-1.5 block text-[11px] font-semibold text-ink/50">Target Audience</label>
+                <label className="mb-1.5 block text-[11px] font-semibold text-ink/50">{tb.targetAudience}</label>
                 <div className="space-y-2">
                   {[
                     { id: "all", label: "All Contacts", desc: "Everyone on this channel" },
@@ -115,7 +126,7 @@ export default function AdsTab({ channelSlug, channelName }: AdsTabProps) {
               </div>
 
               <div>
-                <label className="mb-1.5 block text-[11px] font-semibold text-ink/50">Budget ($)</label>
+                <label className="mb-1.5 block text-[11px] font-semibold text-ink/50">{tb.budget}</label>
                 <input
                   type="number"
                   placeholder="0.00"
@@ -124,10 +135,10 @@ export default function AdsTab({ channelSlug, channelName }: AdsTabProps) {
               </div>
 
               <div>
-                <label className="mb-1.5 block text-[11px] font-semibold text-ink/50">Message</label>
+                <label className="mb-1.5 block text-[11px] font-semibold text-ink/50">{tb.messageLabel}</label>
                 <textarea
                   rows={4}
-                  placeholder="Write your campaign message..."
+                  placeholder={tb.messagePh}
                   className="w-full rounded-xl border-2 border-white bg-white px-4 py-3 text-[13px] text-ink outline-none transition placeholder:text-ink/35 focus:border-deep-violet/40 focus:ring-2 focus:ring-deep-violet/10"
                 />
                 <p className="mt-1 text-[10px] text-ink/35">Supports {"{name}"}, {"{company}"}</p>
@@ -139,10 +150,10 @@ export default function AdsTab({ channelSlug, channelName }: AdsTabProps) {
                 onClick={() => setShowNewForm(false)}
                 className="flex-1 rounded-xl border-2 border-ink/10 px-4 py-2.5 text-[12px] font-semibold text-ink/60 transition hover:bg-ink/[0.03]"
               >
-                Save as Draft
+                {tb.saveDraft}
               </button>
               <button className="flex-1 rounded-xl bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white shadow-md transition hover:bg-deep-violet/90">
-                Launch Campaign
+                {tb.launchCampaign}
               </button>
             </div>
           </div>
@@ -163,7 +174,7 @@ export default function AdsTab({ channelSlug, channelName }: AdsTabProps) {
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3.5 w-3.5">
                 <path d="M10 3L5 8l5 5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
-              Back to Campaigns
+              {tb.backToCampaigns}
             </button>
 
             <div className="flex items-start justify-between">
@@ -177,52 +188,52 @@ export default function AdsTab({ channelSlug, channelName }: AdsTabProps) {
                     {campaign.type}
                   </span>
                 </div>
-                <p className="text-[12px] text-ink/50 mt-0.5">Created {campaign.createdAt} &middot; Target: {campaign.targetAudience}</p>
+                <p className="text-[12px] text-ink/50 mt-0.5">{fill(tb.createdTarget, { date: campaign.createdAt, audience: campaign.targetAudience })}</p>
               </div>
               <div className="flex gap-2">
                 {campaign.status === "draft" && (
-                  <button className="rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white">Launch</button>
+                  <button className="rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white">{tb.launch}</button>
                 )}
                 {campaign.status === "active" && (
-                  <button className="rounded-lg border-2 border-ink/10 px-3 py-1.5 text-[11px] font-semibold text-ink/60">Pause</button>
+                  <button className="rounded-lg border-2 border-ink/10 px-3 py-1.5 text-[11px] font-semibold text-ink/60">{tb.pause}</button>
                 )}
                 {campaign.status === "paused" && (
-                  <button className="rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white">Resume</button>
+                  <button className="rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white">{tb.resume}</button>
                 )}
               </div>
             </div>
 
             {/* Message preview */}
             <div className="rounded-xl border-2 border-white bg-white/80 p-4">
-              <p className="text-[10px] text-ink/40 mb-2">Message</p>
+              <p className="text-[10px] text-ink/40 mb-2">{tb.messageLabel}</p>
               <p className="text-[13px] text-ink/70">{campaign.message}</p>
             </div>
 
             {/* Stats */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="rounded-xl border-2 border-white bg-white/80 p-3 text-center">
-                <p className="text-[20px] font-bold text-ink">{campaign.sent.toLocaleString()}</p>
-                <p className="text-[10px] text-ink/40">Sent</p>
+                <p className="text-[20px] font-bold text-ink">{fmt(campaign.sent)}</p>
+                <p className="text-[10px] text-ink/40">{tb.sent}</p>
               </div>
               <div className="rounded-xl border-2 border-white bg-white/80 p-3 text-center">
-                <p className="text-[20px] font-bold text-ink">{campaign.delivered.toLocaleString()}</p>
-                <p className="text-[10px] text-ink/40">Delivered</p>
+                <p className="text-[20px] font-bold text-ink">{fmt(campaign.delivered)}</p>
+                <p className="text-[10px] text-ink/40">{tb.delivered}</p>
               </div>
               <div className="rounded-xl border-2 border-white bg-white/80 p-3 text-center">
-                <p className="text-[20px] font-bold text-ink">{campaign.opened.toLocaleString()}</p>
-                <p className="text-[10px] text-ink/40">Opened</p>
+                <p className="text-[20px] font-bold text-ink">{fmt(campaign.opened)}</p>
+                <p className="text-[10px] text-ink/40">{tb.opened}</p>
               </div>
               <div className="rounded-xl border-2 border-white bg-white/80 p-3 text-center">
-                <p className="text-[20px] font-bold text-emerald-600">{campaign.conversion}%</p>
-                <p className="text-[10px] text-ink/40">Conversion</p>
+                <p className="text-[20px] font-bold text-emerald-600">{fmt(campaign.conversion)}%</p>
+                <p className="text-[10px] text-ink/40">{tb.conversion}</p>
               </div>
             </div>
 
             {/* Budget */}
             <div className="rounded-xl border-2 border-white bg-white/80 p-4">
               <div className="flex items-center justify-between mb-2">
-                <p className="text-[11px] text-ink/50">Budget Progress</p>
-                <p className="text-[12px] font-semibold text-ink">${campaign.spent.toLocaleString()} / ${campaign.budget.toLocaleString()}</p>
+                <p className="text-[11px] text-ink/50">{tb.budgetProgress}</p>
+                <p className="text-[12px] font-semibold text-ink">${fmt(campaign.spent)} / ${fmt(campaign.budget)}</p>
               </div>
               <div className="h-2 rounded-full bg-ink/10 overflow-hidden">
                 <div
@@ -234,11 +245,11 @@ export default function AdsTab({ channelSlug, channelName }: AdsTabProps) {
 
             {/* Performance breakdown */}
             <div className="rounded-xl border-2 border-white bg-white/80 p-4">
-              <p className="text-[11px] text-ink/50 mb-3">Performance Breakdown</p>
+              <p className="text-[11px] text-ink/50 mb-3">{tb.perfBreakdown}</p>
               <div className="space-y-3">
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-[11px] text-ink/60">Delivery Rate</span>
+                    <span className="text-[11px] text-ink/60">{tb.deliveryRate}</span>
                     <span className="text-[11px] font-semibold text-ink">{campaign.sent > 0 ? ((campaign.delivered / campaign.sent) * 100).toFixed(1) : 0}%</span>
                   </div>
                   <div className="h-1.5 rounded-full bg-ink/10 overflow-hidden">
@@ -247,7 +258,7 @@ export default function AdsTab({ channelSlug, channelName }: AdsTabProps) {
                 </div>
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-[11px] text-ink/60">Open Rate</span>
+                    <span className="text-[11px] text-ink/60">{tb.openRate}</span>
                     <span className="text-[11px] font-semibold text-ink">{campaign.delivered > 0 ? ((campaign.opened / campaign.delivered) * 100).toFixed(1) : 0}%</span>
                   </div>
                   <div className="h-1.5 rounded-full bg-ink/10 overflow-hidden">
@@ -256,7 +267,7 @@ export default function AdsTab({ channelSlug, channelName }: AdsTabProps) {
                 </div>
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-[11px] text-ink/60">Click Rate</span>
+                    <span className="text-[11px] text-ink/60">{tb.clickRate}</span>
                     <span className="text-[11px] font-semibold text-ink">{campaign.opened > 0 ? ((campaign.clicked / campaign.opened) * 100).toFixed(1) : 0}%</span>
                   </div>
                   <div className="h-1.5 rounded-full bg-ink/10 overflow-hidden">
@@ -276,14 +287,14 @@ export default function AdsTab({ channelSlug, channelName }: AdsTabProps) {
       <div className="mx-auto max-w-3xl space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-[15px] font-bold text-ink">Ads & Campaigns</h2>
-            <p className="text-[13px] text-ink/60">Manage campaigns for {channelName}</p>
+            <h2 className="text-[15px] font-bold text-ink">{tb.adsTitle}</h2>
+            <p className="text-[13px] text-ink/60">{fill(tb.adsSub, { name: channelName })}</p>
           </div>
           <button
             onClick={() => setShowNewForm(true)}
             className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white shadow-md transition hover:bg-deep-violet/90"
           >
-            + New Campaign
+            {tb.newCampaign}
           </button>
         </div>
 
@@ -305,29 +316,29 @@ export default function AdsTab({ channelSlug, channelName }: AdsTabProps) {
                       {c.type}
                     </span>
                   </div>
-                  <p className="text-[11px] text-ink/50 mt-0.5">Target: {c.targetAudience} &middot; Created {c.createdAt}</p>
+                  <p className="text-[11px] text-ink/50 mt-0.5">{fill(tb.createdTarget, { date: c.createdAt, audience: c.targetAudience })}</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-[12px] font-semibold text-ink">${c.spent.toLocaleString()} / ${c.budget.toLocaleString()}</p>
+                  <p className="text-[12px] font-semibold text-ink">${fmt(c.spent)} / ${fmt(c.budget)}</p>
                 </div>
               </div>
 
               <div className="mt-3 grid grid-cols-4 gap-2">
                 <div className="text-center">
-                  <p className="text-[14px] font-bold text-ink">{c.sent.toLocaleString()}</p>
-                  <p className="text-[9px] text-ink/40">Sent</p>
+                  <p className="text-[14px] font-bold text-ink">{fmt(c.sent)}</p>
+                  <p className="text-[9px] text-ink/40">{tb.sent}</p>
                 </div>
                 <div className="text-center">
-                  <p className="text-[14px] font-bold text-ink">{c.opened.toLocaleString()}</p>
-                  <p className="text-[9px] text-ink/40">Opened</p>
+                  <p className="text-[14px] font-bold text-ink">{fmt(c.opened)}</p>
+                  <p className="text-[9px] text-ink/40">{tb.opened}</p>
                 </div>
                 <div className="text-center">
-                  <p className="text-[14px] font-bold text-ink">{c.clicked.toLocaleString()}</p>
-                  <p className="text-[9px] text-ink/40">Clicked</p>
+                  <p className="text-[14px] font-bold text-ink">{fmt(c.clicked)}</p>
+                  <p className="text-[9px] text-ink/40">{tb.clicked}</p>
                 </div>
                 <div className="text-center">
-                  <p className="text-[14px] font-bold text-emerald-600">{c.conversion}%</p>
-                  <p className="text-[9px] text-ink/40">Conv.</p>
+                  <p className="text-[14px] font-bold text-emerald-600">{fmt(c.conversion)}%</p>
+                  <p className="text-[9px] text-ink/40">{tb.convShort}</p>
                 </div>
               </div>
 

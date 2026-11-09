@@ -1902,6 +1902,7 @@ const ar: Dict = {
         sent: "أُرسل",
         delivered: "تم التسليم",
         opened: "فُتح",
+        clicked: "نُقر",
         conversion: "التحويل",
         convShort: "تحويل",
         budgetProgress: "تقدم الميزانية",
