@@ -150,20 +150,33 @@ async def _update_channel_health(
     db.add(channel)
 
 
-# Google failures that do not fix themselves: the token was revoked (401
-# after a failed refresh), the location was removed (404), or the account
-# lost access (403). A channel in one of these states stays broken until the
-# merchant reconnects - it is not a transient error to retry.
-PERMANENT_GOOGLE_STATUSES = (401, 403, 404)
+# Google failures are NOT one bucket. Only a 401 (token revoked/rejected after
+# a failed refresh) genuinely needs the merchant to re-authorize.
+#
+# 404 means the location itself is gone from the Business Profile (deleted,
+# merged into another listing, or moved). Reconnecting does not bring it back,
+# so marking the channel "expired" told the merchant to reconnect forever over
+# a listing that no longer exists. Its sibling locations stay perfectly
+# healthy, which is why the tenant saw "connection expired" while reviews kept
+# syncing.
+#
+# 403 is ambiguous by nature: quota exhaustion, an API disabled on the Cloud
+# project, or permission propagation all return it, and none of them need a
+# reconnect. Treating the first 403 as permanent killed working channels, so
+# it takes repeated consecutive failures before we conclude the grant is gone.
+TOKEN_DEAD_STATUSES = (401,)
+LOCATION_GONE_STATUSES = (404,)
+PERMISSION_DENIED_STATUSES = (403,)
+PERMISSION_FAILURES_BEFORE_EXPIRED = 3
 
 
 async def _mark_channel_expired(db: AsyncSession, channel: Channel, reason: str) -> None:
     """Mark a channel expired (once) and tell the merchant to reconnect.
 
-    A revoked token, a removed location or a lost account does not repair
-    itself. Leaving the channel "active" means the worker keeps polling a
-    dead connection every cycle and the merchant is told nothing at all - a
-    silently dead channel, which is what this fixes.
+    Reserved for a dead grant (401, or a sustained 403): the token no longer
+    works and only re-authorizing fixes it. Leaving the channel "active" means
+    the worker keeps polling a dead connection every cycle and the merchant is
+    told nothing at all - a silently dead channel, which is what this fixes.
     """
     if channel.status == "expired":
         return
@@ -175,6 +188,33 @@ async def _mark_channel_expired(db: AsyncSession, channel: Channel, reason: str)
         "channel_expired",
         f"Your {channel.platform} connection expired",
         (reason or "Reconnect to keep receiving reviews.")[:160],
+        data={"channel_id": channel.id, "platform": channel.platform},
+        href="/dashboard/channels",
+    )
+
+
+async def _mark_location_removed(db: AsyncSession, channel: Channel, reason: str) -> None:
+    """Retire a channel whose Google location no longer exists.
+
+    A 404 means the listing was deleted or merged on Google's side. The grant
+    is still valid - the sibling locations on the same account keep syncing -
+    so this is NOT a reconnect problem and must not raise the "connection
+    expired" banner. The channel leaves the poll set and the merchant gets one
+    accurate message instead of a permanent nag to re-authorize.
+    """
+    if channel.status in ("disconnected", "removed"):
+        return
+    channel.status = "disconnected"
+    db.add(channel)
+    await notify(
+        db,
+        channel.user_id,
+        "channel_removed",
+        "A Google location is no longer available",
+        (
+            "Google reports this location was removed, so it stopped syncing. "
+            "Your other locations are unaffected."
+        )[:160],
         data={"channel_id": channel.id, "platform": channel.platform},
         href="/dashboard/channels",
     )
@@ -1229,12 +1269,23 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                 updated_after=_fetch_cursor(config.last_polled_at),
             )
         except GoogleReviewsError as e:
-            # A permanent rejection is not a transient error: the channel is
-            # marked expired so it stops being polled, and the merchant is
-            # told to reconnect.
-            if e.status_code in PERMANENT_GOOGLE_STATUSES:
+            # Classify before condemning the channel. Only a dead grant means
+            # "reconnect"; a removed location means "this listing is gone".
+            if e.status_code in TOKEN_DEAD_STATUSES:
                 await _mark_channel_expired(db, channel, str(e))
                 await db.commit()
+            elif e.status_code in LOCATION_GONE_STATUSES:
+                await _mark_location_removed(db, channel, str(e))
+                await db.commit()
+            elif e.status_code in PERMISSION_DENIED_STATUSES:
+                # Ambiguous: quota, a disabled API or permission propagation
+                # all land here. Only a sustained run of them means the grant
+                # itself is gone, so a single 403 backs off instead of
+                # permanently killing a working channel.
+                prior = int(_channel_health(channel).get("consecutive_failures", 0) or 0)
+                if prior + 1 >= PERMISSION_FAILURES_BEFORE_EXPIRED:
+                    await _mark_channel_expired(db, channel, str(e))
+                    await db.commit()
             raise
 
         await _mark_reviews_seen(db, channel, reviews)

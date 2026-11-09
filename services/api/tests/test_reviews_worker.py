@@ -683,6 +683,52 @@ async def test_google_review_name_and_reply_are_mirrored_into_the_inbox(db, chan
     assert outbound.contact_name == "Abdulrahman Manea"
 
 
+@pytest.mark.asyncio
+async def test_removed_location_is_disconnected_not_expired(db, channel_id, monkeypatch):
+    """A 404 means the listing is gone, not that the grant died.
+
+    Regression: 404 was in the permanent set, so a deleted/merged location
+    marked the whole channel "expired". The token still worked for every
+    sibling location, yet the tenant was told to reconnect forever.
+    """
+    from app.modules.channels.google_reviews import GoogleReviewsError
+
+    notified = []
+
+    async def _notify(db_, user_id, kind, title, body, **kwargs):
+        notified.append((kind, title))
+
+    monkeypatch.setattr(reviews_worker, "notify", _notify)
+
+    channel = await db.get(Channel, channel_id)
+    channel.status = "active"
+    await db.commit()
+
+    await reviews_worker._mark_location_removed(db, channel, "list_reviews failed: 404")
+    await db.commit()
+    await db.refresh(channel)
+
+    assert channel.status == "disconnected"
+    assert notified and notified[0][0] == "channel_removed"
+
+    # Expiry is reserved for a dead grant.
+    channel.status = "active"
+    await db.commit()
+    await reviews_worker._mark_channel_expired(db, channel, "401")
+    await db.commit()
+    await db.refresh(channel)
+    assert channel.status == "expired"
+
+
+def test_permission_status_classification():
+    """Only 401 is immediately terminal; 404 is not a reconnect at all."""
+    assert 401 in reviews_worker.TOKEN_DEAD_STATUSES
+    assert 404 in reviews_worker.LOCATION_GONE_STATUSES
+    assert 403 in reviews_worker.PERMISSION_DENIED_STATUSES
+    assert 403 not in reviews_worker.TOKEN_DEAD_STATUSES
+    assert reviews_worker.PERMISSION_FAILURES_BEFORE_EXPIRED >= 2
+
+
 def test_fetch_cursor_applies_propagation_overlap():
     """The fetch window must start before the stored cursor.
 
