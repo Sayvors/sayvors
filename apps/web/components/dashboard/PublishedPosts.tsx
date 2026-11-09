@@ -14,7 +14,7 @@ import {
 } from "@/lib/use-publish-jobs";
 import { useLocationPosts, type LocationPost } from "@/lib/location-posts";
 import ScheduledPostsCalendar, { type ScheduledEntry } from "@/components/dashboard/ScheduledPostsCalendar";
-import { METHOD_META, PLATFORM_META, type PlatformKey } from "@/components/dashboard/publish/types";
+import { PLATFORM_META, type PlatformKey } from "@/components/dashboard/publish/types";
 
 /*
  * Every post, on every connected network — Instagram, Facebook, WhatsApp

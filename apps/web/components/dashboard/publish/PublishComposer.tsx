@@ -13,7 +13,6 @@ import CropFrame from "./CropFrame";
 import FormatThumb from "./FormatThumb";
 import {
   DEFAULT_CROP,
-  METHOD_META,
   PLATFORM_META,
   cropKeyFor,
   defaultCropFor,
@@ -24,6 +23,18 @@ import {
   type PostMethod,
   type PublishTarget,
 } from "./types";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import type { Dict } from "@/lib/i18n/en";
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
+    s,
+  );
+}
+
+type MethodDict = Dict["publish"]["methods"];
+type ComposerDict = Dict["publish"]["composer"];
 
 /*
  * The unified Publish composer.
@@ -87,6 +98,8 @@ function buildVideoHtml(opts: { business: string; primary: string; accent: strin
 }
 
 function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
+  const { t, locale } = useI18n();
+  const pc = t.publish.composer;
   const businessOptions = useMemo(() => {
     const names = new Set<string>();
     googleTargets.forEach((t) => names.add(t.name));
@@ -118,7 +131,7 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
     <div className="space-y-3">
       {/* business selector */}
       <div>
-        <label className={`block text-[11px] font-semibold ${INK2} mb-1`}>Business</label>
+        <label className={`block text-[11px] font-semibold ${INK2} mb-1`}>{pc.aiBusiness}</label>
         <select
           value={business}
           onChange={(e) => setBusiness(e.target.value)}
@@ -133,7 +146,7 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
             type="text"
             value={business}
             onChange={(e) => setBusiness(e.target.value)}
-            placeholder="Business name"
+            placeholder={pc.aiBusinessPh}
             className="mt-2 w-full rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]"
           />
         )}
@@ -141,20 +154,20 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
 
       {/* color branding */}
       <div>
-        <label className={`block text-[11px] font-semibold ${INK2} mb-1`}>Brand colors</label>
+        <label className={`block text-[11px] font-semibold ${INK2} mb-1`}>{pc.aiColors}</label>
         <div className="grid grid-cols-3 gap-2">
           <div>
-            <span className={`block text-[10px] ${INK2} mb-1`}>Primary</span>
+            <span className={`block text-[10px] ${INK2} mb-1`}>{pc.aiPrimary}</span>
             <input type="color" value={primary} onChange={(e) => setPrimary(e.target.value)}
               className="h-9 w-full cursor-pointer rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
           </div>
           <div>
-            <span className={`block text-[10px] ${INK2} mb-1`}>Accent</span>
+            <span className={`block text-[10px] ${INK2} mb-1`}>{pc.aiAccent}</span>
             <input type="color" value={accent} onChange={(e) => setAccent(e.target.value)}
               className="h-9 w-full cursor-pointer rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
           </div>
           <div>
-            <span className={`block text-[10px] ${INK2} mb-1`}>Background</span>
+            <span className={`block text-[10px] ${INK2} mb-1`}>{pc.aiBg}</span>
             <input type="color" value={bg} onChange={(e) => setBg(e.target.value)}
               className="h-9 w-full cursor-pointer rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
           </div>
@@ -172,7 +185,7 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
               onClick={() => { setPrimary(preset.p); setAccent(preset.a); setBg(preset.b); }}
               className="h-6 w-6 rounded-full border border-[var(--ui-line)]"
               style={{ background: `linear-gradient(135deg, ${preset.p}, ${preset.a})` }}
-              title="Apply preset"
+              title={pc.aiPreset}
             />
           ))}
         </div>
@@ -180,8 +193,8 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
 
       {/* file name */}
       <div className={`rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] px-3 py-2 text-[11px] ${INK2}`}>
-        File name: <span className={`font-bold ${INK}`}>{fileName}</span>
-        <span className="ml-1 opacity-60">(will be saved as {fileName} after render)</span>
+        {fill(pc.aiFile, { name: fileName })}
+        <span className="ml-1 opacity-60">{fill(pc.aiFileSaved, { name: fileName })}</span>
       </div>
 
       {/* actions */}
@@ -191,15 +204,15 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
           onClick={generate}
           className="w-full rounded-[10px] bg-[var(--ui-ink)] px-3 py-2 text-[12px] font-bold text-[var(--ui-on-ink)] transition hover:opacity-90 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
         >
-          Create video
+          {pc.aiCreate}
         </button>
       </div>
 
       {/* video player / preview */}
       <div className="overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-sunken)]">
         <div className="flex items-center gap-2 border-b border-[var(--ui-line)] px-3 py-2">
-          <span className={`text-[11px] font-bold uppercase tracking-widest ${INK2}`}>Preview</span>
-          <span className={`ml-auto text-[10px] ${INK2}`}>{generated ? "ready" : "no video yet"}</span>
+          <span className={`text-[11px] font-bold uppercase tracking-widest ${INK2}`}>{pc.aiPreview}</span>
+          <span className={`ml-auto text-[10px] ${INK2}`}>{generated ? pc.aiReady : pc.aiEmpty}</span>
         </div>
         <div className="relative" style={{ aspectRatio: "16 / 9" }}>
           {html ? (
@@ -216,19 +229,19 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
                 <rect x="3" y="5" width="18" height="14" rx="2" />
                 <path d="M10 9l5 3-5 3V9z" fill="currentColor" stroke="none" />
               </svg>
-              <span className="text-[12px] font-medium">Click &quot;Create video&quot; to generate</span>
+              <span className="text-[12px] font-medium">{pc.aiEmptyCta}</span>
             </div>
           )}
         </div>
         {generated && (
           <div className="flex items-center justify-between border-t border-[var(--ui-line)] px-3 py-2">
-            <span className={`text-[11px] ${INK2}`}>Video preview · loops automatically</span>
+            <span className={`text-[11px] ${INK2}`}>{pc.aiNote}</span>
             <button
               type="button"
               onClick={() => { if (iframeRef.current && html) iframeRef.current.srcdoc = html; }}
               className={`text-[11px] font-semibold ${INK} hover:underline`}
             >
-              Replay
+              {pc.aiReplay}
             </button>
           </div>
         )}
@@ -238,10 +251,10 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
       <button
         type="button"
         disabled
-        title="Coming soon — will publish your video as {business}.mp4"
+        title={fill(pc.aiPublishSoonTitle, { name: business })}
         className="w-full rounded-[10px] border border-dashed border-[var(--ui-line-strong)] bg-[var(--ui-sunken)] px-3 py-2 text-[12px] font-semibold text-[var(--ui-ink-2)] opacity-60 cursor-not-allowed"
       >
-        Publish video (coming soon)
+        {pc.aiPublishSoon}
       </button>
     </div>
   );
@@ -332,6 +345,12 @@ export default function PublishComposer({
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const { t: tr, locale } = useI18n();
+  const pc: ComposerDict = tr.publish.composer;
+  const methods = tr.publish.methods as MethodDict;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
+  const methodLabel = (m: PostMethod) => methods[m].label;
 
   // ── Selection plumbing ──────────────────────────────────────────
   const applyAll = (v: boolean) => {
@@ -463,7 +482,10 @@ export default function PublishComposer({
   const confirmItems = selectedTargets
     .map((t) => ({ target: t, methods: chosenFor(t) }))
     .filter((i) => i.methods.length > 0 && externalAssetIdFor(i.target) !== null);
+  const cf = tr.publish.confirm;
   const formatCount = confirmItems.reduce((n, i) => n + i.methods.length, 0);
+  const destStr = confirmItems.length === 1 ? cf.destOne : fill(cf.destN, { n: fmt(confirmItems.length) });
+  const fmtStr = formatCount === 1 ? cf.fmtOne : fill(cf.fmtN, { n: fmt(formatCount) });
   // The publish endpoint requires a fetchable media URL, and WhatsApp's only
   // format (status) is media-only — a text-only push would fail downstream,
   // so media is required at the gate too.
@@ -471,11 +493,11 @@ export default function PublishComposer({
 
   const openConfirm = () => {
     if (media === null) {
-      setNotice("Attach an image or video — text-only publishing isn't supported yet.");
+      setNotice(pc.needMedia);
       return;
     }
     if (confirmItems.length === 0) {
-      setNotice("Pick a destination with at least one format.");
+      setNotice(pc.needDest);
       return;
     }
     setNotice(null);
@@ -492,11 +514,11 @@ export default function PublishComposer({
       // the tenant gets the reason immediately, not a 422 from the API.
       if (removeOn) {
         if (!removeAt) {
-          throw new Error("Pick the date the post should come down.");
+          throw new Error(pc.removeDateErr);
         }
         if (scheduleOn && scheduleAt) {
           if (new Date(removeAt).getTime() <= new Date(scheduleAt).getTime()) {
-            throw new Error("The removal date must be after the publish date.");
+            throw new Error(pc.removeOrderErr);
           }
         }
       }
@@ -506,13 +528,13 @@ export default function PublishComposer({
       let mediaUrl = media.url;
       let mediaKey = media.key ?? null;
       if (media.url.startsWith("blob:")) {
-        if (!media.file) throw new Error("The picked file is no longer available — attach it again.");
+        if (!media.file) throw new Error(pc.fileGoneErr);
         const form = new FormData();
         form.append("file", media.file);
         const up = await apiFetch("/api/v1/media/upload", { method: "POST", body: form });
         mediaUrl = up.image_url;
         mediaKey = up.key ?? null;
-        if (!mediaUrl) throw new Error("Upload succeeded but no URL came back — try a different file.");
+        if (!mediaUrl) throw new Error(pc.uploadEmptyErr);
       }
 
       const batchId = crypto.randomUUID();
@@ -551,7 +573,7 @@ export default function PublishComposer({
       setFormats({});
       onPublished?.();
     } catch (e) {
-      setPublishError(e instanceof Error ? e.message : "Publishing failed — try again.");
+      setPublishError(e instanceof Error ? e.message : pc.publishFailed);
     } finally {
       setPublishing(false);
     }
@@ -570,7 +592,7 @@ export default function PublishComposer({
       : null;
   const thumbLabel =
     media && mirrorTarget && mirrorMethod
-      ? `${PLATFORM_META[mirrorTarget.platform].label} · ${METHOD_META[mirrorMethod].label}`
+      ? `${PLATFORM_META[mirrorTarget.platform].label} · ${methodLabel(mirrorMethod)}`
       : "";
 
   // ── Caption budget ──────────────────────────────────────────────
@@ -598,14 +620,14 @@ export default function PublishComposer({
             onClick={onCancel}
             className="mb-2 inline-flex items-center gap-1 text-[12px] font-semibold text-[var(--ui-ink-2)] transition hover:text-[var(--ui-ink)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
           >
-            ← Back to posts
+            {pc.back}
           </button>
         )}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h1 className={`text-[20px] font-bold ${INK}`}>Publish a post</h1>
+            <h1 className={`text-[20px] font-bold ${INK}`}>{pc.title}</h1>
             <p className={`mt-0.5 text-[13px] ${INK2}`}>
-              One post, every connected network — pick a format on any destination to configure its crop.
+              {pc.sub}
             </p>
           </div>
         </div>
@@ -618,33 +640,33 @@ export default function PublishComposer({
           <div className="contents lg:col-start-1 lg:block lg:space-y-5">
           <section aria-labelledby="publish-media-h" className="ui-panel order-1 bg-[var(--ui-surface)] p-4 sm:p-5">
             <h2 id="publish-media-h" className={`text-[14px] font-bold ${INK}`}>
-              1 · Media
+              {pc.stepMedia}
             </h2>
             <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
-              An image or video is required — the frame mirrors the format you&apos;re configuring.
+              {pc.mediaSub}
             </p>
             <MediaSink media={media} onPick={pickMedia} onClear={clearMedia} thumb={thumb} thumbLabel={thumbLabel} />
           </section>
 
           <section aria-labelledby="publish-message-h" className="ui-panel order-2 bg-[var(--ui-surface)] p-4 sm:p-5">
             <h2 id="publish-message-h" className={`text-[14px] font-bold ${INK}`}>
-              2 · Message
+              {pc.stepMessage}
             </h2>
             <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
-              Caption is the hook every network shows; description is the longer body.
+              {pc.messageSub}
             </p>
             <div className="space-y-3">
               <div>
                 <div className="flex items-baseline justify-between">
                   <label htmlFor="pub-caption" className={`text-[12px] font-semibold ${INK2}`}>
-                    Caption
+                    {pc.caption}
                   </label>
                   <span
                     className={`text-[11px] ${
                       caption.length > captionLimit ? "font-semibold text-amber-600 dark:text-amber-400" : INK2
                     }`}
                   >
-                    {caption.length} / {captionLimit.toLocaleString("en-US")}
+                    {fmt(caption.length)} / {fmt(captionLimit)}
                   </span>
                 </div>
                 <textarea
@@ -653,7 +675,7 @@ export default function PublishComposer({
                   onChange={(e) => setCaption(e.target.value)}
                   rows={2}
                   maxLength={PLATFORM_META.facebook.captionMax}
-                  placeholder="Say it in one line…"
+                  placeholder={pc.captionPh}
                   className={`${FIELD} mt-1 w-full resize-y`}
                 />
                 {showCaptionWarn && (
@@ -661,19 +683,16 @@ export default function PublishComposer({
                     role="status"
                     className="mt-1.5 rounded-[10px] border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-[12px] font-medium text-amber-700 dark:text-amber-400"
                   >
-                    ⚠ Truncates on:{" "}
-                    {captionOver
-                      .map((t) => `${PLATFORM_META[t.platform].label} (${PLATFORM_META[t.platform].captionMax.toLocaleString("en-US")})`)
-                      .join(" · ")}
+                    {fill(pc.truncates, { names: captionOver.map((t) => fill(pc.truncName, { name: PLATFORM_META[t.platform].label, max: fmt(PLATFORM_META[t.platform].captionMax) })).join(" · ") })}
                   </p>
                 )}
               </div>
               <div>
                 <div className="flex items-baseline justify-between">
                   <label htmlFor="pub-description" className={`text-[12px] font-semibold ${INK2}`}>
-                    Description
+                    {pc.description}
                   </label>
-                  <span className={`text-[11px] ${INK2}`}>{description.length}</span>
+                  <span className={`text-[11px] ${INK2}`}>{fmt(description.length)}</span>
                 </div>
                 <textarea
                   id="pub-description"
@@ -681,7 +700,7 @@ export default function PublishComposer({
                   onChange={(e) => setDescription(e.target.value)}
                   rows={4}
                   maxLength={PLATFORM_META.facebook.captionMax}
-                  placeholder="The full story — offer details, event info, the works."
+                  placeholder={pc.descPh}
                   className={`${FIELD} mt-1 w-full resize-y`}
                 />
               </div>
@@ -690,37 +709,36 @@ export default function PublishComposer({
 
           <section aria-labelledby="publish-schedule-h" className="ui-panel order-5 bg-[var(--ui-surface)] p-4 sm:p-5">
             <h2 id="publish-schedule-h" className={`text-[14px] font-bold ${INK}`}>
-              4 · When
+              {pc.stepWhen}
             </h2>
-            <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>Optional — leave it off to publish immediately.</p>
+            <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>{pc.whenSub}</p>
             <div className="flex flex-wrap items-center gap-3">
-              <ScheduleToggle scheduleOn={scheduleOn} setScheduleOn={setScheduleOn} label="Schedule for later" />
+              <ScheduleToggle scheduleOn={scheduleOn} setScheduleOn={setScheduleOn} label={pc.scheduleLater} />
               {scheduleOn && (
                 <input
                   type="datetime-local"
                   value={scheduleAt}
                   onChange={(e) => setScheduleAt(e.target.value)}
-                  aria-label="Publish at"
+                  aria-label={pc.publishAt}
                   className={`${FIELD} w-full sm:w-64`}
                 />
               )}
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-[var(--ui-line)] pt-3">
-              <ScheduleToggle scheduleOn={removeOn} setScheduleOn={setRemoveOn} label="Remove it later" />
+              <ScheduleToggle scheduleOn={removeOn} setScheduleOn={setRemoveOn} label={pc.removeLater} />
               {removeOn && (
                 <input
                   type="datetime-local"
                   value={removeAt}
                   onChange={(e) => setRemoveAt(e.target.value)}
-                  aria-label="Remove the post at"
+                  aria-label={pc.removeAtAria}
                   className={`${FIELD} w-full sm:w-64`}
                 />
               )}
             </div>
             {removeOn && (
               <p className={`mt-2 text-[11px] ${INK2}`}>
-                The post is taken back down from every destination on that
-                date. Nothing is removed before it is published.
+                {pc.removeNote}
               </p>
             )}
           </section>
@@ -728,15 +746,15 @@ export default function PublishComposer({
           <section aria-labelledby="publish-preview-h" className="ui-panel order-6 bg-[var(--ui-surface)] p-4 sm:p-5">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <h2 id="publish-preview-h" className={`text-[14px] font-bold ${INK}`}>
-                Live preview
+                {pc.stepPreview}
               </h2>
               <p className={`text-[12px] ${INK2}`} role="status">
                 {mirrorTarget && mirrorMethod
-                  ? `Mirroring ${mirrorTarget.name} · ${METHOD_META[mirrorMethod].label}`
+                  ? fill(pc.mirroring, { name: mirrorTarget.name, method: methodLabel(mirrorMethod) })
                   : (
                     <>
-                      <span className="lg:hidden">Pick a format above to configure it</span>
-                      <span className="hidden lg:inline">Pick a format on the right to configure it</span>
+                      <span className="lg:hidden">{pc.mirrorNoneWide}</span>
+                      <span className="hidden lg:inline">{pc.mirrorNoneSide}</span>
                     </>
                   )}
               </p>
@@ -758,10 +776,10 @@ export default function PublishComposer({
           <aside className="contents lg:col-start-2 lg:block lg:space-y-5 lg:sticky lg:top-4 lg:h-fit">
           <section aria-labelledby="publish-dest-h" className="ui-panel order-3 bg-[var(--ui-surface)] p-4 sm:p-5">
             <h2 id="publish-dest-h" className={`text-[14px] font-bold ${INK}`}>
-              3 · Where it goes
+              {pc.stepDest}
             </h2>
             <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
-              Flip the master switch for every network, or hand-pick below.
+              {pc.destSub}
             </p>
             <DestinationSelector
               targets={targets}
@@ -781,18 +799,16 @@ export default function PublishComposer({
           {selectedTargets.length > 0 && (
             <section aria-labelledby="publish-formats-h" className="ui-panel order-4 bg-[var(--ui-surface)] p-4 sm:p-5">
               <h2 id="publish-formats-h" className={`text-[14px] font-bold ${INK}`}>
-                Configure formats
+                {pc.formatsTitle}
               </h2>
               <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
-                Click a format to set its crop and thumbnail.
+                {pc.formatsSub}
               </p>
               {selectedTargets.some((t) =>
                 availableFor(t).some((m) => m === "profile" || m === "banner"),
               ) && (
                 <p className={`mb-3 text-[11px] ${INK2}`}>
-                  A profile picture or banner replaces that image on the
-                  account — it carries no caption, and it can only be
-                  changed by publishing a new one.
+                  {pc.formatsNote}
                 </p>
               )}
               <div className="space-y-3">
@@ -831,7 +847,7 @@ export default function PublishComposer({
                             >
                               <FormatThumb media={media} crop={crop} />
                               {isConfigured && <span aria-hidden>✓</span>}
-                              {METHOD_META[m].label}
+                              {methodLabel(m)}
                             </button>
                           );
                         })}
@@ -839,9 +855,9 @@ export default function PublishComposer({
                           type="button"
                           onClick={() => toggleAllFormats(t)}
                           className="inline-flex items-center gap-1 rounded-full border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2.5 py-1 text-[11px] font-semibold text-[var(--ui-ink-2)] transition hover:bg-[var(--ui-line)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
-                          title="Select every feed format for this destination"
+                          title={pc.allTitle}
                         >
-                          All
+                          {pc.allPill}
                         </button>
                       </div>
                     </div>
@@ -853,10 +869,10 @@ export default function PublishComposer({
 
           <section aria-labelledby="ai-video-h" className="ui-panel order-7 bg-[var(--ui-surface)] p-4 sm:p-5">
             <h2 id="ai-video-h" className={`text-[14px] font-bold ${INK}`}>
-              ✨ Create a video for your business
+              {pc.aiTitle}
             </h2>
             <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
-              One click. Sayvors drafts a launch video from your business — no editing needed.
+              {pc.aiSub}
             </p>
             <AiVideoCreator googleTargets={googleTargets} />
           </section>
@@ -877,7 +893,7 @@ export default function PublishComposer({
                     key={t.id}
                     type="button"
                     onClick={() => openRow(t.id)}
-                    title={ok ? `Review ${t.name}` : `${t.name} has no format yet`}
+                    title={ok ? fill(pc.reviewRow, { name: t.name }) : fill(pc.noFormatRow, { name: t.name })}
                     className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
                       ok
                         ? "border-[var(--ui-line)] bg-[var(--ui-sunken)] text-[var(--ui-ink)] hover:bg-[var(--ui-line)]"
@@ -887,7 +903,7 @@ export default function PublishComposer({
                     <PlatformMark platform={t.platform} size={12} />
                     <span className="max-w-[140px] truncate">{t.name}</span>
                     <span className={ok ? "text-[var(--ui-ink-2)]" : ""}>
-                      {fmt ? `${METHOD_META[fmt].label}` : "no format"}
+                      {fmt ? `${methodLabel(fmt)}` : pc.noFormat}
                     </span>
                   </button>
                 );
@@ -896,9 +912,9 @@ export default function PublishComposer({
           )}
           <p className={`min-w-0 flex-1 truncate text-[12px] font-medium ${INK2}`} role="status" aria-live="polite">
             {confirmItems.length === 0
-              ? "No destination with a format selected yet."
-              : `Ready for ${confirmItems.length} destination${confirmItems.length === 1 ? "" : "s"} · ${formatCount} format${formatCount === 1 ? "" : "s"}.`}
-            {scheduleOn && scheduleAt ? ` · Scheduled ${new Date(scheduleAt).toLocaleString()}` : ""}
+              ? pc.readyNone
+              : `${pc.readyPre}${destStr} · ${fmtStr}`}
+            {scheduleOn && scheduleAt ? fill(pc.scheduledOn, { date: new Date(scheduleAt).toLocaleString(dateLocale) }) : ""}
           </p>
           {notice && <p className="w-full text-[12px] font-semibold text-red-600 dark:text-red-400 sm:w-auto">{notice}</p>}
           <button
@@ -907,7 +923,7 @@ export default function PublishComposer({
             disabled={!canPublish}
             className="rounded-[10px] bg-[var(--ui-ink)] px-5 py-2.5 text-[13px] font-semibold text-[var(--ui-on-ink)] transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
           >
-            {scheduleOn ? "Review schedule" : "Review & publish"}
+            {scheduleOn ? pc.reviewSchedule : pc.reviewPublish}
           </button>
         </div>
       </div>
@@ -917,7 +933,7 @@ export default function PublishComposer({
         <div
           role="dialog"
           aria-modal="true"
-          aria-label={`Configure ${modalTarget.name} · ${METHOD_META[modalCtx.method].label}`}
+          aria-label={fill(pc.modalAria, { name: modalTarget.name, method: methodLabel(modalCtx.method) })}
           onClick={(e) => {
             if (e.target === e.currentTarget) cancelConfig();
           }}
@@ -927,16 +943,16 @@ export default function PublishComposer({
             <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--ui-line)] p-4 sm:border-0 sm:p-5 sm:pb-0">
               <div>
                 <h2 className="text-[15px] font-bold text-[var(--ui-ink)] sm:text-[16px]">
-                  Configure {modalTarget.name} · {METHOD_META[modalCtx.method].label}
+                  {fill(pc.modalTitle, { name: modalTarget.name, method: methodLabel(modalCtx.method) })}
                 </h2>
                 <p className="mt-0.5 text-[12px] text-[var(--ui-ink-2)]">
-                  Crop and frame this format. Saves when you hit Save.
+                  {pc.modalSub}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={cancelConfig}
-                aria-label="Close"
+                aria-label={pc.close}
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[15px] font-bold text-[var(--ui-ink-2)] transition hover:bg-[var(--ui-sunken)] hover:text-[var(--ui-ink)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
               >
                 ×
@@ -977,14 +993,14 @@ export default function PublishComposer({
                 onClick={cancelConfig}
                 className="rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-2.5 text-[13px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:py-2"
               >
-                Cancel
+                {pc.cancel}
               </button>
               <button
                 type="button"
                 onClick={saveConfig}
                 className="rounded-[10px] bg-[var(--ui-ink)] px-5 py-2.5 text-[13px] font-semibold text-[var(--ui-on-ink)] transition hover:opacity-90 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:py-2"
               >
-                Save {METHOD_META[modalCtx.method].label}
+                {fill(pc.saveMethod, { method: methodLabel(modalCtx.method) })}
               </button>
             </div>
           </div>
