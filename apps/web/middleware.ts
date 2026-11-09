@@ -86,6 +86,10 @@ export function middleware(request: NextRequest) {
   // straight from the API instead. Mirrors the image remotePatterns in
   // next.config.ts — keep the two lists in step. img-src cannot execute
   // script, so a host wildcard here is far cheaper than a broken avatar.
+  // `https:` allows any HTTPS image host. Thumbnails can legitimately come
+  // from a URL the merchant pasted (a Bing/Unsplash image, a partner CDN)
+  // rather than our storage; an allowlist silently rendered those blank.
+  // img-src cannot execute script, so a scheme-wide source is cheap here.
   const mediaSrc = [
     apiUrl,
     "https://*.sayvors.com",
@@ -112,7 +116,7 @@ export function middleware(request: NextRequest) {
     // Messenger lookaside) — temporary links by design, refreshed weekly.
     // WhatsApp business profile photos are served from pps.whatsapp.net.
     // Uploaded profile media comes from the object store (see mediaSrc).
-    `img-src 'self' data: blob: ${gsi} ${maps} https://www.gstatic.com https://*.cdninstagram.com https://*.fbcdn.net https://*.fbsbx.com https://*.whatsapp.net ${mediaSrc}`,
+    `img-src 'self' data: blob: https: ${gsi} ${maps} https://www.gstatic.com https://*.cdninstagram.com https://*.fbcdn.net https://*.fbsbx.com https://*.whatsapp.net ${mediaSrc}`,
     "font-src 'self' data:",
     // Meta SDK subresources (graph calls, dialog/popup channel frames)
     // plus the realtime inbox WebSocket (wss:// form of the API host).

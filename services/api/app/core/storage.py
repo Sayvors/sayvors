@@ -22,10 +22,41 @@ a clear error only if actually attempted.
 """
 import logging
 import os
+import sys
 import uuid
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_integrations_importable() -> None:
+    """Make the repo-root ``integrations`` package importable from any cwd.
+
+    The API is normally started as ``uvicorn app.main:app`` from
+    ``services/api``, so the repo root is not on ``sys.path``. This module is
+    the only consumer of ``integrations.storage.s3``; without the bootstrap,
+    ``_media_backend()`` raised ``ModuleNotFoundError: No module named
+    'integrations'`` and *every* storage operation failed — even the
+    local-disk fallback, which does not use S3 at all.
+    """
+    try:
+        import integrations.storage.s3  # noqa: F401
+        return
+    except ModuleNotFoundError:
+        pass
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "integrations" / "storage" / "s3.py").is_file():
+            root = str(parent)
+            if root not in sys.path:
+                # Append, not insert: never shadow an installed package.
+                sys.path.append(root)
+            return
+    logger.warning(
+        "integrations.storage.s3 could not be located; S3 storage is unavailable"
+    )
+
+
+_ensure_integrations_importable()
 
 
 def _settings():
@@ -364,6 +395,46 @@ def get_media(user_id: str, storage_key: str) -> bytes:
     if not target.exists():
         raise FileNotFoundError(storage_key)
     return target.read_bytes()
+
+
+def public_media_base(request_base: str | None = None) -> str:
+    """Origin used for public media URLs handed to providers.
+
+    Google's Local Posts API fetches post images from ``sourceUrl`` itself, so
+    the URL must be reachable from the public internet — it cannot be an
+    internal ``http://`` host that only the API container can see. Prefer the
+    configured PUBLIC_API_URL when it is a real https origin; otherwise fall
+    back to the request's own origin (dev / uncon­figured deployments).
+    """
+    configured = (_settings().PUBLIC_API_URL or "").strip().rstrip("/")
+    if configured.startswith("https://") and "localhost" not in configured:
+        return configured
+    return (request_base or configured or "http://localhost:8000").rstrip("/")
+
+
+def media_bytes_from_url(user_id: str, url: str) -> tuple[bytes, str]:
+    """Resolve a stored media URL to ``(bytes, content_type)``.
+
+    The Google publisher uses this to upload location media (logo / cover /
+    gallery) to Google directly instead of handing over a public URL, so no
+    S3/GCS bucket is required for those surfaces. Sayvors's own
+    ``/media-files`` URLs embed the storage key and are read straight from the
+    backend; anything else (a public bucket object, or an external image) is
+    fetched through the SSRF-guarded fetcher, which also reports the *real*
+    content type — a CDN can serve JPEG bytes under a ``.PNG`` name.
+    """
+    from mimetypes import guess_type
+
+    settings = _settings()
+    marker = f"{settings.MEDIA_PUBLIC_PATH.rstrip('/')}/{user_id}/"
+    if marker in url:
+        key = url.split(marker, 1)[1].split("?", 1)[0]
+        if key:
+            ctype = guess_type(key)[0] or "application/octet-stream"
+            return get_media(user_id, key), ctype
+    from .pinned_http import fetch_pinned_media
+
+    return fetch_pinned_media(url)
 
 
 def list_media_objects(user_id: str) -> dict:

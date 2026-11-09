@@ -19,6 +19,19 @@ from app.modules.jobs.models import Job
 from app.modules.jobs.types import JobType
 
 
+def test_lane_key_column_fits_composite_partition_keys():
+    """Regression: a Google banner produced a 77-char lane_key, overflowing
+    the original VARCHAR(64) and 500-ing POST /channels/publish."""
+    length = Job.__table__.c.lane_key.type.length
+    assert length is not None
+    for key in (
+        f"{'e' * 36}:google_reviews:181507565693476724:banner",
+        f"{'e' * 36}:google_reviews:181507565693476724:profile",
+        f"{'e' * 36}:facebook:1784140001:promotion",
+    ):
+        assert len(key) <= length, key
+
+
 def _job(
     tenant_id: str,
     *,
@@ -436,6 +449,43 @@ async def test_batch_delete_cancels_a_queued_job(db, client, user_id):
 
 
 @pytest.mark.asyncio
+async def test_batch_delete_dismisses_a_failed_banner(db, client, user_id):
+    """A failed banner never reached Google, so its feed row must be
+    removable even though banners can't be deleted from the platform."""
+    from sqlalchemy import select
+
+    from app.modules.jobs.models import Job
+
+    job = _job(user_id, status="failed", method="banner",
+               job_id="job-failed-0000-0000-000000000001")
+    db.add(job)
+    await db.commit()
+
+    res = client.post("/api/v1/channels/publish/delete", json={"job_ids": [job.id]})
+    assert res.status_code == 200, res.text
+    assert res.json()[0]["status"] == "cancelled"
+    assert (await db.execute(select(Job).where(Job.id == job.id))).scalar_one_or_none() is None
+
+
+@pytest.mark.asyncio
+async def test_single_delete_dismisses_a_failed_banner(db, client, user_id):
+    """The per-job delete endpoint dismisses terminal failures too."""
+    from sqlalchemy import select
+
+    from app.modules.jobs.models import Job
+
+    job = _job(user_id, status="failed", method="banner",
+               job_id="job-failed-0000-0000-000000000002")
+    db.add(job)
+    await db.commit()
+
+    res = client.post(f"/api/v1/channels/publish/{job.id}/delete")
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "cancelled"
+    assert (await db.execute(select(Job).where(Job.id == job.id))).scalar_one_or_none() is None
+
+
+@pytest.mark.asyncio
 async def test_batch_delete_ignores_other_tenants(db, client, other_user_id):
     theirs = _job(other_user_id, status="queued", job_id="job-theirs-0000-0000-000000000001")
     db.add(theirs)
@@ -453,9 +503,13 @@ async def test_batch_delete_ignores_other_tenants(db, client, other_user_id):
 
 
 @pytest.mark.asyncio
-async def test_delete_refuses_a_profile_picture(db, client, user_id):
-    """An avatar is not a post — there is nothing on the platform to
-    delete, so the endpoint says so instead of pretending it did."""
+async def test_single_delete_dismisses_a_published_profile_picture(db, client, user_id):
+    """An avatar is not a post — nothing on the platform can be deleted,
+    but the feed row must be dismissible instead of a permanent 409."""
+    from sqlalchemy import select
+
+    from app.modules.jobs.models import Job
+
     job = _job(
         user_id,
         status="succeeded",
@@ -467,14 +521,20 @@ async def test_delete_refuses_a_profile_picture(db, client, user_id):
     await db.commit()
 
     res = client.post(f"/api/v1/channels/publish/{job.id}/delete", json={})
-    assert res.status_code == 409
-    assert "cannot be deleted" in res.json()["detail"]
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "cancelled"
+    assert "cannot be deleted" in res.json()["last_error"]
+    assert (await db.execute(select(Job).where(Job.id == job.id))).scalar_one_or_none() is None
 
 
 @pytest.mark.asyncio
-async def test_batch_delete_closes_a_profile_picture_without_deleting(db, client, user_id):
-    """The row is closed out, and the reason says the surface was left
-    alone — it must not read as "deleted from the platform"."""
+async def test_batch_delete_dismisses_a_published_banner(db, client, user_id):
+    """The feed row is removed, and the reason says plainly that the
+    Google surface was left alone — it must not read as "deleted"."""
+    from sqlalchemy import select
+
+    from app.modules.jobs.models import Job
+
     job = _job(
         user_id,
         status="succeeded",
@@ -493,3 +553,4 @@ async def test_batch_delete_closes_a_profile_picture_without_deleting(db, client
     row = res.json()[0]
     assert row["status"] == "cancelled"
     assert "cannot be deleted" in row["last_error"]
+    assert (await db.execute(select(Job).where(Job.id == job.id))).scalar_one_or_none() is None

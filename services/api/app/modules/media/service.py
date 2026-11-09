@@ -190,13 +190,19 @@ def _require_http_url(url: str) -> str:
 
 
 def _check_method_publishable(method: str | None, action: str) -> None:
-    """Native Google accepts post, gallery, and profile/cover destinations."""
+    """Native Google accepts post, gallery, profile (logo) and banner (cover)."""
     if action in ("publish", "schedule") and (method or "post") not in (
-        "post", "gallery", "profile",
+        "post", "gallery", "profile", "banner",
     ):
         raise ValueError(
-            "publish_method must be 'post', 'gallery' or 'profile'."
+            "publish_method must be 'post', 'gallery', 'profile' or 'banner'."
         )
+
+
+def _content_type_for(url: str) -> str:
+    """Best-effort image content type for a stored media URL."""
+    ext = Path(url.split("?", 1)[0]).suffix.lower()
+    return _CONTENT_TYPES.get(ext, "image/jpeg")
 
 
 async def list_media(
@@ -232,8 +238,8 @@ async def create_media(db: AsyncSession, user_id: str, data: dict) -> dict:
     if media_type not in ("PHOTO", "VIDEO"):
         raise ValueError("type must be PHOTO or VIDEO.")
     publish_method = data.get("publish_method") or "post"
-    if publish_method not in ("post", "gallery", "profile"):
-        raise ValueError("publish_method must be post, gallery or profile.")
+    if publish_method not in ("post", "gallery", "profile", "banner"):
+        raise ValueError("publish_method must be post, gallery, profile or banner.")
     _check_method_publishable(publish_method, action)
 
     item = LocationMedia(
@@ -394,6 +400,12 @@ async def _publish_media_inner(
                 media_urls=[item.image_url],
             )
         else:
+            # Location media (gallery / logo / banner): upload the bytes
+            # straight to Google. Google never fetches a URL, so no public
+            # bucket is needed for these surfaces.
+            from ...core.storage import media_bytes_from_url
+
+            media_data, media_content_type = media_bytes_from_url(user_id, item.image_url)
             response = await publisher.set_location_image(
                 "",
                 listing_id_of(channel),
@@ -401,6 +413,8 @@ async def _publish_media_inner(
                 item.image_url,
                 account_id=channel.platform_user_id,
                 category_override=item.category if method == "gallery" else None,
+                media_data=media_data,
+                content_type=media_content_type or _content_type_for(item.image_url),
             )
     except Exception as e:
         _register_publish_failure(item, str(e)[:500])

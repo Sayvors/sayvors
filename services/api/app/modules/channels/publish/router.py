@@ -434,6 +434,34 @@ async def batch_delete_published_posts(
         if not target_platforms:
             continue
 
+        # Terminal rows that never published (or were cancelled) have no
+        # platform artifact — nothing to take down. Delete the row so the
+        # feed stops showing a permanent "Failed" card, especially for
+        # profile/banner, which can never be removed from Google otherwise.
+        if job_row.status in {"failed", "dead", "cancelled"}:
+            await db.delete(job_row)
+            await db.commit()
+            out.append(
+                JobOut(
+                    job_id=job_row.id,
+                    status="cancelled",
+                    lane=job_row.lane,
+                    created_at=job_row.created_at.isoformat(),
+                    platform=platform,
+                    method=payload.get("method"),
+                    external_asset_id=external_asset_id,
+                    scheduled_at=payload.get("scheduled_at"),
+                    delete_at=payload.get("delete_at"),
+                    result=job_row.result,
+                    last_error=job_row.last_error,
+                    updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
+                    batch_id=payload.get("batch_id"),
+                    caption=payload.get("caption"),
+                    media_url=payload.get("media_url"),
+                )
+            )
+            continue
+
         # Cancel if not yet published.
         if job_row.status in {"accepted", "queued", "retrying", "blocked"}:
             job_row.status = "cancelled"
@@ -497,20 +525,13 @@ async def batch_delete_published_posts(
         post_id = job_result.get("id") or job_result.get("name") or job_result.get("media_id")
 
         if payload.get("method") in {"profile", "banner"}:
-            # An avatar or cover image is not a post — there is nothing to
-            # delete from the platform, only to replace. The job row is
-            # closed out so it stops showing as pending, and the reason
-            # says plainly that the surface was left alone.
-            job_row.status = "cancelled"
-            job_row.last_error = (
-                "closed without changes — a profile picture or banner cannot "
-                "be deleted, only replaced by publishing a new one"
-            )
-            await db.commit()
+            # An avatar/cover cannot be deleted from Google — only replaced
+            # by publishing a new one. Dismiss the feed row (nothing on the
+            # platform is touched) so the card stops cluttering the list.
             out.append(
                 JobOut(
                     job_id=job_row.id,
-                    status=job_row.status,
+                    status="cancelled",
                     lane=job_row.lane,
                     created_at=job_row.created_at.isoformat(),
                     platform=platform,
@@ -519,13 +540,18 @@ async def batch_delete_published_posts(
                     scheduled_at=payload.get("scheduled_at"),
                     delete_at=payload.get("delete_at"),
                     result=job_row.result,
-                    last_error=job_row.last_error,
+                    last_error=(
+                        "dismissed — a profile picture or banner cannot be "
+                        "deleted, only replaced by publishing a new one"
+                    ),
                     updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
                     batch_id=payload.get("batch_id"),
                     caption=payload.get("caption"),
                     media_url=payload.get("media_url"),
                 )
             )
+            await db.delete(job_row)
+            await db.commit()
             continue
 
         if post_id and access_token is not None:
@@ -710,6 +736,30 @@ async def delete_published_post(
             media_url=payload.get("media_url"),
         )
 
+    if job_row.status in {"failed", "dead", "cancelled"}:
+        # Nothing went out to the platform; drop the row so a terminal
+        # failure (including a banner) can be dismissed from the feed.
+        await db.delete(job_row)
+        await db.commit()
+        payload = job_row.payload or {}
+        return JobOut(
+            job_id=job_row.id,
+            status="cancelled",
+            lane=job_row.lane,
+            created_at=job_row.created_at.isoformat(),
+            platform=payload.get("platform"),
+            method=payload.get("method"),
+            external_asset_id=payload.get("external_asset_id"),
+            scheduled_at=payload.get("scheduled_at"),
+            delete_at=payload.get("delete_at"),
+            result=job_row.result,
+            last_error=job_row.last_error,
+            updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
+            batch_id=payload.get("batch_id"),
+            caption=payload.get("caption"),
+            media_url=payload.get("media_url"),
+        )
+
     if job_row.status != "succeeded":
         raise HTTPException(
             status_code=409,
@@ -739,15 +789,33 @@ async def delete_published_post(
     job_result = job_row.result or {}
 
     if method in {"profile", "banner"}:
-        # A profile picture or cover image is not a post — there is
-        # nothing to delete, only to replace by publishing a new one.
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "a profile picture or banner cannot be deleted — publish a "
-                "new one to replace it"
+        # A profile picture or cover cannot be deleted from Google — only
+        # replaced by publishing a new one. Dismiss the feed row without
+        # touching the platform.
+        payload = job_row.payload or {}
+        out = JobOut(
+            job_id=job_row.id,
+            status="cancelled",
+            lane=job_row.lane,
+            created_at=job_row.created_at.isoformat(),
+            platform=platform,
+            method=method,
+            external_asset_id=external_asset_id,
+            scheduled_at=payload.get("scheduled_at"),
+            delete_at=payload.get("delete_at"),
+            result=job_row.result,
+            last_error=(
+                "dismissed — a profile picture or banner cannot be deleted, "
+                "only replaced by publishing a new one"
             ),
+            updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
+            batch_id=payload.get("batch_id"),
+            caption=payload.get("caption"),
+            media_url=payload.get("media_url"),
         )
+        await db.delete(job_row)
+        await db.commit()
+        return out
 
     post_id = job_result.get("id") or job_result.get("name") or job_result.get("media_id")
 

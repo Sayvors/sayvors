@@ -41,16 +41,21 @@ export const DELETABLE_STATUSES = new Set(["succeeded", "accepted", "queued", "r
 /** Rows that have not gone out yet — these get cancelled, never deleted. */
 export const QUEUED_STATUSES = new Set(["accepted", "queued", "retrying", "blocked"]);
 
-/**
- * Rows that publish an account surface instead of a post. A profile picture
- * or banner cannot be removed from the platform — it can only be replaced
- * by publishing a new one — so these never offer a Remove action.
- */
-const ACCOUNT_SURFACE_METHODS = new Set<PostMethod>(["profile", "banner"]);
+/** Terminal rows that never produced a platform artifact. They can be
+ *  dismissed from the feed even for account surfaces (profile/banner),
+ *  because there is nothing on the platform to remove. */
+export const TERMINAL_STATUSES = new Set(["failed", "dead", "cancelled"]);
 
+/**
+ * Only in-flight work is left alone — deleting a post the worker is
+ * uploading right now races the publish call itself. Everything else
+ * (including a published profile picture or banner) can be dismissed from
+ * the feed: account surfaces can't be removed from Google, but their feed
+ * row is just a record, so removing it never touches the platform.
+ */
 export function isRemovableJob(job: Pick<PublishJob, "status" | "method">): boolean {
-  if (job.method && ACCOUNT_SURFACE_METHODS.has(job.method)) return false;
-  return DELETABLE_STATUSES.has(job.status);
+  if (job.status === "running") return false;
+  return DELETABLE_STATUSES.has(job.status) || TERMINAL_STATUSES.has(job.status);
 }
 
 export function usePublishJobs() {
@@ -128,12 +133,9 @@ export function usePublishJobs() {
           method: "POST",
           body: JSON.stringify({ job_ids: jobIds }),
         })) as PublishJob[];
-        setJobs((prev) =>
-          (prev ?? []).map((j) => {
-            const u = updated.find((x) => x.job_id === j.job_id);
-            return u ? { ...j, status: u.status, result: u.result ?? j.result, last_error: u.last_error } : j;
-          }),
-        );
+        // Terminal rows are hard-deleted server-side. Re-read the list
+        // instead of patching in place, so dismissed cards disappear now.
+        await refresh(true);
         return { removed: updated.length, error: null as string | null };
       } catch (e) {
         return { removed: 0, error: e instanceof Error ? e.message : "Removing the posts failed." };
@@ -141,7 +143,7 @@ export function usePublishJobs() {
         setBusy(false);
       }
     },
-    [],
+    [refresh],
   );
 
   /** Cancel a scheduled post before the worker sends it. */
