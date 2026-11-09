@@ -146,9 +146,17 @@ class GoogleBusinessPublisher:
             body["summary"] = summary[:1500]
 
         urls = [u for u in (media_urls or ([media_url] if media_url else [])) if u]
+        original_media = [
+            {
+                "mediaFormat": "PHOTO" if (media_type or "image") == "image" else "VIDEO",
+                "sourceUrl": u,
+            }
+            for u in urls[:10]
+        ]
+        used_staging = False
         if urls:
             media_items: list[dict[str, str]] = []
-            for url in urls[:10]:
+            for original, url in zip(original_media, urls[:10]):
                 source = url
                 if (
                     settings.GOOGLE_POST_MEDIA_STAGING
@@ -165,20 +173,16 @@ class GoogleBusinessPublisher:
                             account, location, data, ctype or "image/jpeg"
                         )
                         source = hosted
+                        used_staging = True
                     except Exception as e:  # noqa: BLE001 — staging is best effort
                         logger.warning(
                             "Could not stage post image on Google (%s); "
                             "falling back to sourceUrl %s",
                             e, url[:120],
                         )
-                media_items.append(
-                    {
-                        "mediaFormat": (
-                            "PHOTO" if (media_type or "image") == "image" else "VIDEO"
-                        ),
-                        "sourceUrl": source,
-                    }
-                )
+                item = dict(original)
+                item["sourceUrl"] = source
+                media_items.append(item)
             body["media"] = media_items
 
         # EVENT posts require an event object with a title and a start date.
@@ -225,7 +229,23 @@ class GoogleBusinessPublisher:
 
         url = f"{GBP_LOCAL_POSTS_API}/{account}/{location}/localPosts"
         resp = await self._client._authed_request("POST", url, json=body)
+        if resp.status_code not in (200, 201) and used_staging:
+            # Google can reject its own googleUrl as a post sourceUrl (we have
+            # seen a deterministic 500 INTERNAL). Staging is an optimisation,
+            # so retry once with the caller's original URL before giving up.
+            logger.warning(
+                "create_local_post with staged Google media failed (%s); "
+                "retrying once with the original sourceUrl",
+                resp.status_code,
+            )
+            fallback = dict(body)
+            fallback["media"] = original_media
+            resp = await self._client._authed_request("POST", url, json=fallback)
         if resp.status_code not in (200, 201):
+            logger.warning(
+                "create_local_post failed (%s): %s | request=%s",
+                resp.status_code, resp.text[:300], str(body)[:800],
+            )
             raise GoogleReviewsError(
                 f"create_local_post failed ({resp.status_code}): {resp.text[:300]}",
                 resp.status_code,

@@ -421,6 +421,65 @@ async def test_post_image_falls_back_when_staging_fails(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_post_retries_with_original_url_when_google_rejects_staged(monkeypatch):
+    """Google returned a deterministic 500 INTERNAL on its own googleUrl.
+    Staging must not sink the publish: retry once with the caller's URL."""
+    from app.config import settings
+    from app.core import storage
+
+    monkeypatch.setattr(settings, "GOOGLE_POST_MEDIA_STAGING", True)
+    monkeypatch.setattr(
+        storage, "media_bytes_from_url",
+        lambda user_id, url: (b"image-bytes", "image/jpeg"),
+    )
+
+    captured: dict = {"calls": []}
+    publisher = GoogleBusinessPublisher("token", "refresh")
+
+    async def fake(method, url, **kwargs):
+        captured["calls"].append({"url": url, "json": kwargs.get("json") or {}})
+        if url.endswith(":startUpload"):
+            return _Resp({"resourceName": "ref-1"})
+        if "/upload/v1/media/" in url:
+            return _Resp({})
+        if url.endswith("/media"):
+            return _Resp({
+                "name": "accounts/1/locations/2/media/staged",
+                "googleUrl": "https://lh3.googleusercontent.com/staged",
+            })
+        n_posts = sum(
+            1 for c in captured["calls"] if c["url"].endswith("/localPosts")
+        )
+        if n_posts == 1:
+            return _Resp(
+                {"error": {"code": 500, "message": "Internal error encountered."}},
+                status_code=500,
+            )
+        return _Resp({"name": "accounts/1/locations/2/localPosts/3"})
+
+    publisher._client._authed_request = fake
+    res = await publisher.publish_post(
+        token="token",
+        asset_id="locations/2",
+        method="update",
+        media_url="https://api.example.com/media-files/u1/p.jpg",
+        media_type="image",
+        caption="Hi",
+        description="Hi",
+        scheduled_at=None,
+        account_id="accounts/1",
+        tenant_id="u1",
+    )
+    assert res["name"] == "accounts/1/locations/2/localPosts/3"
+    posts = [
+        c["json"] for c in captured["calls"] if c["url"].endswith("/localPosts")
+    ]
+    assert len(posts) == 2
+    assert posts[0]["media"][0]["sourceUrl"] == "https://lh3.googleusercontent.com/staged"
+    assert posts[1]["media"][0]["sourceUrl"] == "https://api.example.com/media-files/u1/p.jpg"
+
+
+@pytest.mark.asyncio
 async def test_location_image_refuses_a_method_it_has_no_category_for():
     publisher = GoogleBusinessPublisher("token", "refresh")
 
