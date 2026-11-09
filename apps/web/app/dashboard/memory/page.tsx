@@ -11,6 +11,10 @@ import {
   type Memory,
   type MemoryStatus,
 } from "@/lib/api-memory";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import type { Dict } from "@/lib/i18n/en";
+
+type MemoryDict = Dict["memory"];
 
 /*
  * The review queue for cumulative memory.
@@ -22,20 +26,16 @@ import {
  * an outcome and facts.
  */
 
-const TABS: { key: MemoryStatus | "all"; label: string }[] = [
-  { key: "pending", label: "Waiting for review" },
-  { key: "approved", label: "Live" },
-  { key: "rejected", label: "Rejected" },
-  { key: "all", label: "All" },
+const TABS: { key: MemoryStatus | "all" }[] = [
+  { key: "pending" },
+  { key: "approved" },
+  { key: "rejected" },
+  { key: "all" },
 ];
 
-const STATUS_LABEL: Record<MemoryStatus, string> = {
-  pending: "Waiting for review",
-  approved: "Live",
-  rejected: "Rejected",
-};
-
 function StatusChip({ status }: { status: MemoryStatus }) {
+  const { t } = useI18n();
+  const mm = t.memory;
   const style =
     status === "approved"
       ? "bg-emerald-50 text-emerald-800 border-emerald-200"
@@ -46,7 +46,7 @@ function StatusChip({ status }: { status: MemoryStatus }) {
     <span
       className={`rounded-full border px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${style}`}
     >
-      {STATUS_LABEL[status]}
+      {mm.status[status]}
     </span>
   );
 }
@@ -64,6 +64,9 @@ function MemoryCard({
   const [summary, setSummary] = useState(memory.summary);
   const [outcome, setOutcome] = useState(memory.outcome ?? "");
   const [facts, setFacts] = useState((memory.facts ?? []).join("\n"));
+  const { t, locale } = useI18n();
+  const mm = t.memory;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
 
   useEffect(() => {
     setSummary(memory.summary);
@@ -93,14 +96,14 @@ function MemoryCard({
           </span>
         )}
         <time className="ml-auto text-[11px] text-[var(--ui-ink-2)]">
-          {new Date(memory.created_at).toLocaleString()}
+          {new Date(memory.created_at).toLocaleString(dateLocale)}
         </time>
       </div>
 
       {editing ? (
         <div className="mt-3 space-y-2">
           <label className="block text-[11px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
-            Summary
+            {mm.summaryLabel}
             <textarea
               value={summary}
               onChange={(e) => setSummary(e.target.value)}
@@ -109,7 +112,7 @@ function MemoryCard({
             />
           </label>
           <label className="block text-[11px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
-            Outcome
+            {mm.outcomeLabel}
             <input
               value={outcome}
               onChange={(e) => setOutcome(e.target.value)}
@@ -117,7 +120,7 @@ function MemoryCard({
             />
           </label>
           <label className="block text-[11px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
-            Facts, one per line
+            {mm.factsLabel}
             <textarea
               value={facts}
               onChange={(e) => setFacts(e.target.value)}
@@ -132,18 +135,18 @@ function MemoryCard({
               onClick={save}
               className="rounded-full bg-[var(--ui-ink)] px-4 py-1.5 text-[11px] font-bold text-[var(--ui-on-ink)] disabled:opacity-40"
             >
-              Save changes
+              {mm.saveChanges}
             </button>
             <button
               type="button"
               onClick={() => setEditing(false)}
               className="rounded-full border border-[var(--ui-line)] px-4 py-1.5 text-[11px] font-semibold text-[var(--ui-ink)]"
             >
-              Cancel
+              {mm.cancelBtn}
             </button>
             {memory.status === "approved" && (
               <span className="text-[11px] text-amber-700">
-                Live memory — changes affect the next reply.
+                {mm.liveNote}
               </span>
             )}
           </div>
@@ -156,7 +159,7 @@ function MemoryCard({
           {memory.facts.length > 0 && (
             <div className="mt-3 rounded-xl bg-[var(--ui-sunken)] p-3">
               <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
-                Facts future customers can use
+                {mm.factsTitle}
               </p>
               <ul className="mt-1.5 space-y-1">
                 {memory.facts.map((fact) => (
@@ -185,7 +188,7 @@ function MemoryCard({
               onClick={() => onAct(memory.id, { status: "approved" })}
               className="rounded-full bg-emerald-600 px-4 py-1.5 text-[11px] font-bold text-white disabled:opacity-40"
             >
-              {busy ? "Saving…" : "Approve and use"}
+              {busy ? mm.saving : mm.approve}
             </button>
           )}
           {memory.status !== "rejected" && (
@@ -195,7 +198,7 @@ function MemoryCard({
               onClick={() => onAct(memory.id, { status: "rejected" })}
               className="rounded-full border border-[var(--ui-line)] px-4 py-1.5 text-[11px] font-semibold text-[var(--ui-ink)] disabled:opacity-40"
             >
-              Reject
+              {mm.reject}
             </button>
           )}
           {memory.status !== "pending" && (
@@ -205,7 +208,7 @@ function MemoryCard({
               onClick={() => onAct(memory.id, { status: "pending" })}
               className="rounded-full border border-[var(--ui-line)] px-4 py-1.5 text-[11px] font-semibold text-[var(--ui-ink)] disabled:opacity-40"
             >
-              Reopen
+              {mm.reopen}
             </button>
           )}
           <button
@@ -214,7 +217,7 @@ function MemoryCard({
             onClick={() => setEditing(true)}
             className="rounded-full border border-[var(--ui-line)] px-4 py-1.5 text-[11px] font-semibold text-[var(--ui-ink)] disabled:opacity-40"
           >
-            Edit
+            {mm.editBtn}
           </button>
         </div>
       )}
@@ -227,6 +230,10 @@ export default function MemoryPage() {
   const [tab, setTab] = useState<MemoryStatus | "all">("pending");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { t, locale } = useI18n();
+  const mm: MemoryDict = t.memory;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
 
   const listQuery = useQuery({
     queryKey: ["memory", "list", tab],
@@ -245,7 +252,7 @@ export default function MemoryPage() {
   const loadError = listQuery.isError
     ? listQuery.error instanceof Error
       ? listQuery.error.message
-      : "Could not load memories."
+      : mm.loadFail
     : null;
 
   const act = async (
@@ -259,7 +266,7 @@ export default function MemoryPage() {
       await updateMemory(id, patch);
       await queryClient.invalidateQueries({ queryKey: ["memory"] });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not update this memory.");
+      setError(e instanceof Error ? e.message : mm.updateFail);
     } finally {
       setBusyId(null);
     }
@@ -271,7 +278,7 @@ export default function MemoryPage() {
       await updateMemorySettings(!enabled);
       await queryClient.invalidateQueries({ queryKey: ["memory"] });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not update the setting.");
+      setError(e instanceof Error ? e.message : mm.settingFail);
     }
   };
 
@@ -280,13 +287,9 @@ export default function MemoryPage() {
       <div className="mx-auto max-w-4xl">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="text-[20px] font-bold text-[var(--ui-ink)]">Memory</h1>
+            <h1 className="text-[20px] font-bold text-[var(--ui-ink)]">{mm.title}</h1>
             <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-[var(--ui-ink-2)]">
-              When a conversation is resolved, its scrubbed summary becomes a
-              draft lesson. Approve the ones that are true for your business
-              and future replies can use them. Pending drafts never reach a
-              customer. Phone numbers, emails, links and order numbers are
-              removed before a draft is stored.
+              {mm.sub}
             </p>
           </div>
           <label className="flex cursor-pointer items-center gap-2 rounded-full border border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-ink)]">
@@ -297,7 +300,7 @@ export default function MemoryPage() {
               onChange={() => void toggleEnabled()}
               className="h-3.5 w-3.5 accent-[var(--ui-ink)]"
             />
-            Learn from resolved conversations
+            {mm.learnLabel}
           </label>
         </div>
 
@@ -311,28 +314,27 @@ export default function MemoryPage() {
         )}
 
         <div className="mt-5 flex flex-wrap items-center gap-1 rounded-xl bg-[var(--ui-sunken)] p-1">
-          {TABS.map((t) => (
+          {TABS.map((tb) => (
             <button
-              key={t.key}
+              key={tb.key}
               type="button"
-              onClick={() => setTab(t.key)}
-              aria-pressed={tab === t.key}
+              onClick={() => setTab(tb.key)}
+              aria-pressed={tab === tb.key}
               className={`rounded-lg px-3 py-1.5 text-[12px] font-semibold ${
-                tab === t.key
+                tab === tb.key
                   ? "bg-[var(--ui-surface)] text-[var(--ui-ink)]"
                   : "text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
               }`}
             >
-              {t.label}
-              {t.key === "pending" && pending > 0 ? ` (${pending})` : ""}
+              {mm.tabs[tb.key]}
+              {tb.key === "pending" && pending > 0 ? ` (${fmt(pending)})` : ""}
             </button>
           ))}
         </div>
 
         {!enabled && (
           <p className="mt-4 rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-3 text-[12px] text-[var(--ui-ink-2)]">
-            Memory is off. No new lessons are captured and approved lessons are
-            not retrieved. Existing rows are kept.
+            {mm.offNote}
           </p>
         )}
 
@@ -343,11 +345,10 @@ export default function MemoryPage() {
         ) : memories.length === 0 ? (
           <div className="mt-4 rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-6 py-12 text-center">
             <p className="text-[14px] font-bold text-[var(--ui-ink)]">
-              {tab === "pending" ? "Nothing waiting for review" : "No memories here"}
+              {tab === "pending" ? mm.emptyPending : mm.emptyElse}
             </p>
             <p className="mx-auto mt-1 max-w-md text-[12px] leading-relaxed text-[var(--ui-ink-2)]">
-              Resolve a conversation and its summary will appear here as a
-              draft. Approve it to let future replies use the lesson.
+              {mm.emptyBody}
             </p>
           </div>
         ) : (
