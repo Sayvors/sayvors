@@ -1,14 +1,16 @@
 # Google Reviews Push Setup (Pub/Sub) — Runbook
 
-One-time setup per Google Cloud project + per connected account. After it,
-reviews reach the dashboard in seconds instead of ≤60s (poll) — with the
-poll and the daily sweep still running as the guarantee layers.
+One-time setup per Google Cloud project + per connected Business Profile
+account. After it, reviews reach the dashboard in seconds instead of ≤60s
+(poll) — with the poll and the daily sweep still running as the guarantee
+layers.
 
 ## Prerequisites
 
 - A Google Cloud project with Cloud Pub/Sub enabled.
 - The OAuth client used for Business Profile connections
-  (`GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`).
+  (`GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`) — merchant tokens stored on
+  the channel rows already carry the `business.manage` scope this needs.
 - The deployment's public API base URL (the push subscription must reach
   `POST /api/v1/channels/google/pubsub` over HTTPS).
 
@@ -17,10 +19,9 @@ poll and the daily sweep still running as the guarantee layers.
 ```bash
 gcloud pubsub topics create sayvors-gbp-events
 
-# Google's Business Profile publisher service account needs the
-# publisher role on the topic.
+# Google's Business Profile notification publisher must be able to publish.
 gcloud pubsub topics add-iam-policy-binding sayvors-gbp-events \
-  --member="serviceAccount:mybusiness-api@system.gserviceaccount.com" \
+  --member="serviceAccount:mybusiness-api-pubsub@system.gserviceaccount.com" \
   --role="roles/pubsub.publisher"
 ```
 
@@ -62,29 +63,67 @@ continues unchanged).
 
 ## 5. Register notifications on each connected Business Profile account
 
-Notifications are an account-level setting. Run once per merchant Google
-account, authenticated as that account's OAuth credentials:
+Notifications are an account-level setting, registered through the
+**Notifications API** (`mybusinessnotifications.googleapis.com`, NOT
+accountmanagement). The bundled script uses the merchant tokens already
+stored on the channel rows — no re-auth:
+
+```bash
+cd services/api
+python ../scripts/register_gbp_notifications.py \
+  --topic projects/<project>/topics/sayvors-gbp-events   # dry-run: prints the PATCH
+python ../scripts/register_gbp_notifications.py \
+  --topic projects/<project>/topics/sayvors-gbp-events --apply
+python ../scripts/register_gbp_notifications.py --check   # read current settings
+```
+
+Raw equivalent (one Google account, merchant access token with
+`https://www.googleapis.com/auth/business.manage`):
 
 ```bash
 curl -X PATCH \
-  "https://mybusinessaccountmanagement.googleapis.com/v1/accounts/{accountId}/notificationSetting" \
-  -H "Authorization: Bearer <access token of the merchant>" \
+  "https://mybusinessnotifications.googleapis.com/v1/accounts/{accountId}/notificationSetting?updateMask=notificationTypes,pubsubTopic" \
+  -H "Authorization: Bearer <merchant access token>" \
   -H "Content-Type: application/json" \
-  -d '{"notificationTypes": ["NEW_REVIEW", "UPDATED_REVIEW"], "pubsubTopic": "projects/<project>/topics/sayvors-gbp-events"}'
+  -d '{"name": "accounts/{accountId}/notificationSetting", "notificationTypes": ["NEW_REVIEW", "UPDATED_REVIEW"], "pubsubTopic": "projects/<project>/topics/sayvors-gbp-events"}'
 ```
 
-`GET .../notificationSetting` reads the current setting. New review
-notifications now flow: Google → topic → push → targeted pull → review
+`GET .../notificationSetting` (same URL, no mask/body) reads the current
+setting. Reviews now flow: Google → topic → push → targeted pull →
 stored/drafted/published within seconds.
 
-## Verify end-to-end
+## Test locally in minutes (tunnel + a real review)
 
-1. Post a test review to a connected listing (or ask the merchant to).
-2. API log should show, within seconds:
-   `Google push <messageId> type=NEW_REVIEW locations=<locationId> spawned_pulls=1`
-   followed by the usual poll pipeline logs for that channel.
-3. Dashboard shows the review; with `approval_mode=auto` the reply posts
-   and passes read-back confirmation.
+Local dev gets pushes through the existing cloudflared tunnel
+(`dev-api.sayvors.com` → local API) — Google cannot reach `localhost`.
+
+1. **Run the stack locally** (dev API runs the poll loop in-process):
+   `python -m uvicorn app.main:app` from `services/api`, plus cloudflared
+   with the dev-api tunnel config.
+2. **Set the env** (step 4 values) and restart, so the endpoint is armed.
+3. **Point the subscription at the tunnel**:
+   `--push-endpoint="https://dev-api.sayvors.com/api/v1/channels/google/pubsub"`.
+4. **Register notifications** (step 5 script — works against the local DB).
+5. **Smoke-test the push chain without a review**:
+   ```bash
+   gcloud pubsub topics publish sayvors-gbp-events \
+     --message='{"notificationType": "NEW_REVIEW", "location": "accounts/<acc>/locations/<loc>"}'
+   ```
+   Within seconds the API log must show
+   `Google push … spawned_pulls=1` — that proves tunnel → endpoint →
+   verification → targeted pull all work.
+6. **Set the local channel to auto-publish** so the reply posts without a
+   human click:
+   ```bash
+   curl -X PUT http://localhost:8000/api/v1/channels/<channel_id>/autoreply \
+     -b cookies.txt -H "x-csrf-token: <csrf>" -H "Content-Type: application/json" \
+     -d '{"approval_mode": "auto"}'
+   ```
+   (or the Channels page toggle in the dashboard).
+7. **Real review test**: a customer posts a review on the connected
+   listing → review appears in seconds (push); AI draft generates; with
+   `auto` mode it publishes and passes read-back confirmation. If the
+   push chain ever fails, the 60s poll still lands it ≤1 minute.
 
 ## Troubleshooting
 
@@ -95,6 +134,7 @@ stored/drafted/published within seconds.
 | `spawned_pulls=0` | No active channel has that `listing_key` — the location isn't connected, or the channel is expired/disconnected (reconnect it). |
 | Pushes arrive but reviews lag | The targeted pull lost the claim race to the poll pass — harmless; the review lands on the next poll cycle. |
 | 503 from the endpoint | `GOOGLE_PUBSUB_PUSH_AUDIENCE` unset in that deployment — set it or disable the subscription. |
+| PATCH returns 400/403 on registration | Token lacks `business.manage`, or the publisher grant (step 1) is missing — Google's error text names which. |
 
 ## Related
 
