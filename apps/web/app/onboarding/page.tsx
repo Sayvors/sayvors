@@ -17,9 +17,9 @@ const STORAGE_KEY = "onboarding_step";
 
 const channels = [
   { name: "Google Reviews", slug: "google", icon: "\u2B50", color: "from-amber-400 to-orange-500", soon: false },
-  { name: "Instagram", slug: "instagram", icon: "\u{1F4F7}", color: "from-purple-500 to-pink-500", soon: true },
-  { name: "Facebook Messenger", slug: "facebook", icon: "\u{1F4AC}", color: "from-blue-500 to-blue-600", soon: true },
-  { name: "X / Twitter", slug: "x", icon: "X", color: "from-ink to-ink dark:from-fog dark:to-fog", soon: true },
+  // { name: "Instagram", slug: "instagram", icon: "\u{1F4F7}", color: "from-purple-500 to-pink-500", soon: true },
+  // { name: "Facebook Messenger", slug: "facebook", icon: "\u{1F4AC}", color: "from-blue-500 to-blue-600", soon: true },
+  // { name: "X / Twitter", slug: "x", icon: "X", color: "from-ink to-ink dark:from-fog dark:to-fog", soon: true },
 ];
 
 const CONFETTI_COLORS = ["#7C3AED", "#D946EF", "#F97316", "#10B981", "#3B82F6", "#EAB308"];
