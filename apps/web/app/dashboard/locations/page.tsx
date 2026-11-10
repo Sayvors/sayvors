@@ -359,20 +359,33 @@ export default function LocationsPage() {
     label: string,
     patch: Record<string, unknown>,
     ids?: string[],
-  ): Promise<{ ok: number; failed: BulkFailed[] }> => {
+  ): Promise<{ ok: number; failed: BulkFailed[]; rejected: BulkFailed[] }> => {
     const targets = (ids ?? bulkBranches.map((b) => b.id)).map((id) => ({
       id,
       name: locations.find((l) => l.id === id)?.name ?? id,
     }));
     const failed: BulkFailed[] = [];
+    // Google can refuse a section while the local save still lands: the API
+    // answers 200 with google_skipped populated. Counting that as "saved"
+    // would tell the merchant Google has it when it does not.
+    const rejected: BulkFailed[] = [];
     let ok = 0;
     await Promise.all(
       targets.map(async (t) => {
         try {
-          await apiFetch(`/api/v1/locations/${t.id}`, {
+          const updated = (await apiFetch(`/api/v1/locations/${t.id}`, {
             method: "PUT",
             body: JSON.stringify(patch),
-          });
+          })) as FullProfile;
+          const refused = Object.entries(updated?.google_skipped ?? {});
+          if (refused.length > 0) {
+            rejected.push({
+              id: t.id,
+              name: t.name,
+              error: refused.map(([s, r]) => `${s} (${r})`).join("; "),
+            });
+            return;
+          }
           ok++;
         } catch (e) {
           failed.push({
@@ -401,37 +414,57 @@ export default function LocationsPage() {
       /* non-fatal */
     }
     const total = targets.length;
-    if (failed.length === 0) {
+    if (failed.length === 0 && rejected.length === 0) {
       showBanner("ok", `${label} saved to all ${total} branch${total === 1 ? "" : "es"}.`);
-    } else {
+    } else if (failed.length > 0) {
       showBanner(
         "err",
-        `${label} saved to ${ok} of ${total} — failed: ${failed.map((f) => f.name).join(", ")}.`
+        `${label} saved to ${ok + rejected.length} of ${total} — failed: ${failed.map((f) => f.name).join(", ")}.`
+      );
+    } else {
+      // Everything saved locally, but Google refused a section on some
+      // branches. Say so — the badge on those branches says the same thing.
+      showBanner(
+        "err",
+        `${label} saved to all ${total} branches, but Google rejected it on ${rejected.map((f) => f.name).join(", ")}.`
       );
     }
-    return { ok, failed };
+    return { ok, failed, rejected };
   };
 
   const runBulkDetails = async (
     data: { phone?: string; website?: string },
     ids?: string[],
-  ): Promise<{ ok: number; failed: BulkFailed[] }> => {
+  ): Promise<{ ok: number; failed: BulkFailed[]; rejected: BulkFailed[] }> => {
     const targets = (ids ?? bulkBranches.map((b) => b.id)).map((id) => ({
       id,
       name: locations.find((l) => l.id === id)?.name ?? id,
     }));
     const failed: BulkFailed[] = [];
+    // Google can refuse a section while the local save still lands: the API
+    // answers 200 with google_skipped populated. Counting that as "saved"
+    // would tell the merchant Google has it when it does not.
+    const rejected: BulkFailed[] = [];
     let ok = 0;
     await Promise.all(
       targets.map(async (t) => {
         try {
-          await apiFetch(`/api/v1/locations/${t.id}`, {
+          const updated = (await apiFetch(`/api/v1/locations/${t.id}`, {
             method: "PUT",
             body: JSON.stringify({
               ...(data.phone !== undefined ? { phone: data.phone || undefined } : {}),
               ...(data.website !== undefined ? { website: data.website || undefined } : {}),
             }),
-          });
+          })) as FullProfile;
+          const refused = Object.entries(updated?.google_skipped ?? {});
+          if (refused.length > 0) {
+            rejected.push({
+              id: t.id,
+              name: t.name,
+              error: refused.map(([s, r]) => `${s} (${r})`).join("; "),
+            });
+            return;
+          }
           ok++;
         } catch (e) {
           failed.push({
@@ -451,15 +484,22 @@ export default function LocationsPage() {
       /* non-fatal */
     }
     const total = targets.length;
-    if (failed.length === 0) {
+    if (failed.length === 0 && rejected.length === 0) {
       showBanner("ok", `Details saved to all ${total} branch${total === 1 ? "" : "es"}.`);
-    } else {
+    } else if (failed.length > 0) {
       showBanner(
         "err",
-        `Details saved to ${ok} of ${total} — failed: ${failed.map((f) => f.name).join(", ")}.`
+        `Details saved to ${ok + rejected.length} of ${total} — failed: ${failed.map((f) => f.name).join(", ")}.`
+      );
+    } else {
+      // Everything saved locally, but Google refused a section on some
+      // branches. Say so — the badge on those branches says the same thing.
+      showBanner(
+        "err",
+        `Details saved to all ${total} branches, but Google rejected it on ${rejected.map((f) => f.name).join(", ")}.`
       );
     }
-    return { ok, failed };
+    return { ok, failed, rejected };
   };
 
   // Bulk entry point for LocationProfile tabs: opens the confirm sheet,
@@ -675,7 +715,7 @@ const bulk: BulkScope | null = isBulk
        }
      })();
      return () => { cancelled = true; };
-   }, [selectedId]);
+   }, [selectedId, isBulk]);
 
     // Use fullProfile.name (actual business name) over the list snapshot when available.
     useEffect(() => {
@@ -1288,7 +1328,9 @@ function DetailsTab({
           </span>
           <SectionTitle title={copy.tabDetails} subtitle={copy.detailsSubtitle} />
         </button>
-        <SourceBadge google={detailsSynced} status={detailsStatus} reason={detailsReason} copy={copy} />
+        {!bulk && (
+          <SourceBadge google={detailsSynced} status={detailsStatus} reason={detailsReason} copy={copy} />
+        )}
       </div>
       {open && (
       <>
@@ -1415,7 +1457,9 @@ function CategoriesTab({ initial, onSave, bulk, copy, synced, status, reason, re
     <div className="space-y-5">
       <div className="flex flex-col items-start gap-1.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
         <SectionTitle title={copy.tabCategories} subtitle={copy.categoriesSubtitle} />
-        <SourceBadge google={!!synced} status={status} reason={reason} copy={copy} />
+        {!bulk && (
+          <SourceBadge google={!!synced} status={status} reason={reason} copy={copy} />
+        )}
       </div>
       <Field label={copy.primaryCategory} varies={bulk?.varies.has("primary") ?? false}>
         <CategoryPicker value={primary} region={region} onChange={setPrimary} />
@@ -1510,7 +1554,9 @@ function HoursTab({ initial, onSave, bulk, copy, synced, status, reason }: {
         <SectionTitle title={copy.regularHours} subtitle={copy.regularHoursSubtitle} />
         <div className="flex items-center gap-2">
           {bulk?.varies.has("hours") ? <VariesBadge /> : null}
+          {!bulk && (
           <SourceBadge google={!!synced} status={status} reason={reason} copy={copy} />
+        )}
         </div>
       </div>
       <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.hoursHint}</p>
@@ -1606,7 +1652,9 @@ function SpecialHoursTab({ initial, onSave, bulk, copy, synced, status, reason }
         <SectionTitle title={copy.specialHoursTitle} subtitle={copy.specialHoursSubtitle} />
         <div className="flex items-center gap-2">
           {bulk?.varies.has("special") ? <VariesBadge /> : null}
+          {!bulk && (
           <SourceBadge google={!!synced} status={status} reason={reason} copy={copy} />
+        )}
         </div>
       </div>
       <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.specialHoursHint}</p>
@@ -1695,7 +1743,9 @@ function MoreHoursTab({ initial, onSave, bulk, copy, synced, status, reason }: {
         <SectionTitle title={copy.tabMoreHours} subtitle={copy.moreHoursSubtitle} />
         <div className="flex items-center gap-2">
           {bulk?.varies.has("more") ? <VariesBadge /> : null}
+          {!bulk && (
           <SourceBadge google={!!synced} status={status} reason={reason} copy={copy} />
+        )}
         </div>
       </div>
       <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.moreHoursHint}</p>
@@ -1773,7 +1823,9 @@ function ServiceAreaTab({ initial, onSave, bulk, copy, synced, status, reason }:
         <SectionTitle title={copy.tabServiceArea} subtitle={copy.serviceAreaSubtitle} />
         <div className="flex items-center gap-2">
           {bulk?.varies.has("service_area") ? <VariesBadge /> : null}
+          {!bulk && (
           <SourceBadge google={!!synced} status={status} reason={reason} copy={copy} />
+        )}
         </div>
       </div>
       <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.serviceAreaHint}</p>
@@ -1858,7 +1910,9 @@ function AttributesTab({ initial, onSave, bulk, copy, synced, status, reason }: 
         <SectionTitle title={copy.tabAttributes} subtitle={copy.attributesSubtitle} />
         <div className="flex items-center gap-2">
           {bulk?.varies.has("attributes") ? <VariesBadge /> : null}
+          {!bulk && (
           <SourceBadge google={!!synced} status={status} reason={reason} copy={copy} />
+        )}
         </div>
       </div>
       <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.attributesHint}</p>
@@ -1949,7 +2003,9 @@ function DescriptionTab({ initial, initialOpeningDate, onSave, bulk, copy, synce
         <SectionTitle title={copy.descriptionTitle} subtitle={copy.descriptionSubtitle} />
         <div className="flex items-center gap-2">
           {bulk?.varies.has("description") ? <VariesBadge /> : null}
+          {!bulk && (
           <SourceBadge google={!!synced} status={status} reason={reason} copy={copy} />
+        )}
         </div>
       </div>
       <textarea
