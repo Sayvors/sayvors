@@ -672,8 +672,11 @@ async def batch_delete_published_posts(
                     failure = str(e)[:200]
 
         if failure is not None:
+            # The post is still live. Return the row with the reason so the
+            # caller sees a failure, not a shorter success list.
             job_row.result = {**(job_row.result or {}), "delete_error": failure}
             await db.commit()
+            out.append(_to_out(job_row))
             continue
 
         job_row.status = "cancelled"
