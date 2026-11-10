@@ -221,13 +221,42 @@ async def test_media_is_attached_as_a_photo():
 
 
 @pytest.mark.asyncio
-async def test_no_scheduling_field_is_sent_to_google():
-    """LocalPost has no scheduling field — sending one is rejected with
-    'Unknown name ... at local_post: Cannot find field.' Sayvors schedules
-    the job itself and calls the API only when the post is due."""
+async def test_scheduled_time_is_sent_to_google():
+    """LocalPost schedules natively via scheduledTime (RFC 3339)."""
     captured = await _publish("update", scheduled_at="2026-12-01T09:30:00+00:00")
-    assert "scheduledPublishTime" not in captured["body"]
-    assert "scheduledTime" not in captured["body"]
+    assert captured["body"]["scheduledTime"] == "2026-12-01T09:30:00Z"
+
+
+@pytest.mark.asyncio
+async def test_falls_back_when_google_rejects_scheduled_time():
+    """If the field is rejected, publish immediately instead of losing the post."""
+    bodies: list[dict] = []
+    publisher = GoogleBusinessPublisher("token", "refresh")
+
+    async def fake(method, url, **kwargs):
+        bodies.append(kwargs.get("json") or {})
+        if len(bodies) == 1:
+            return _Resp(
+                {"error": {"message": 'Unknown name "scheduledTime" at \'local_post\''}},
+                status_code=400,
+            )
+        return _Resp({"name": "accounts/1/locations/2/localPosts/3", "topicType": "STANDARD"})
+
+    publisher._client._authed_request = fake
+    await publisher.publish_post(
+        token="token",
+        asset_id="locations/2",
+        method="update",
+        media_url="https://cdn.example/p.jpg",
+        media_type="image",
+        caption="Hi",
+        description="Hi",
+        scheduled_at="2026-12-01T09:30:00+00:00",
+        account_id="accounts/1",
+    )
+    assert len(bodies) == 2
+    assert "scheduledTime" in bodies[0]
+    assert "scheduledTime" not in bodies[1]
 
 
 # ── location images (profile picture / cover) ──────────────────────────

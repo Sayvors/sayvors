@@ -6,9 +6,10 @@ GBP does not have a "feed post" in the Meta sense. The equivalent is a
     POST /v1/accounts/{accountId}/locations/{locationId}/localPosts
 
 A STANDARD local post carries a summary (caption) and optionally a photo
-and a call-to-action. Google has no scheduling field on LocalPost —
-scheduling is Sayvors' own job queue, which calls this only when the post is
-due.
+and a call-to-action. Google schedules natively through ``scheduledTime``
+(RFC 3339): the post is created in a SCHEDULED state and published by Google
+at that moment. Sayvors also defers its own publishing job to the same
+moment, so a late worker cannot delay the post.
 
 This adapter mirrors the shape of the Meta adapters so the job runner can
 treat every destination uniformly: one ``publish_post`` call per
@@ -249,16 +250,32 @@ class GoogleBusinessPublisher:
                 call_to_action["url"] = cta_url[:1000]
             body["callToAction"] = call_to_action
 
-        # NOTE: Google's LocalPost has NO scheduling field (the v4 reference has
-        # no scheduledPublishTime/scheduledTime) — sending one fails with
-        # "Unknown name ... at 'local_post': Cannot find field." Sayvors does
-        # its own scheduling: the publishing job is deferred to ``scheduled_at``
-        # and this call runs only when the post is due, so Google must publish
-        # immediately.
+        # Google schedules natively via `scheduledTime` (LocalPost field, RFC
+        # 3339). Sayvors still defers the job to that moment, so a late or
+        # backed-up worker no longer delays the post — Google publishes it on
+        # time. If this account's API rejects the field, fall back to an
+        # immediate publish rather than losing the post.
+        if scheduled_at:
+            try:
+                dt = datetime.fromisoformat(str(scheduled_at).replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                body["scheduledTime"] = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+            except ValueError:
+                logger.warning("invalid scheduled_at %r - publishing immediately", scheduled_at)
 
         url = f"{GBP_LOCAL_POSTS_API}/{account}/{location}/localPosts"
         post_body = body
         resp = await self._client._authed_request("POST", url, json=body)
+        if resp.status_code == 400 and "scheduledTime" in body and "scheduledTime" in resp.text:
+            # This account's API does not accept the field — publish now
+            # instead of losing the post.
+            logger.warning(
+                "Google rejected scheduledTime (%s); publishing immediately",
+                resp.text[:200],
+            )
+            post_body = {k: v for k, v in body.items() if k != "scheduledTime"}
+            resp = await self._client._authed_request("POST", url, json=post_body)
         if resp.status_code not in (200, 201) and used_staging:
             # Google can reject its own googleUrl as a post sourceUrl (a
             # deterministic 500 INTERNAL — staged media is still PENDING).
