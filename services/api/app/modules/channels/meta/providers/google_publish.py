@@ -429,6 +429,30 @@ class GoogleBusinessPublisher:
             "locationAssociation": {"category": category},
         }
         if media_data is not None:
+            # Validate image dimensions before uploading — Google rejects
+            # images smaller than 250x250 with a cryptic 400 INVALID_ARGUMENT.
+            try:
+                from io import BytesIO
+                from PIL import Image as _PILImage
+                with _PILImage.open(BytesIO(media_data)) as _img:
+                    _w, _h = _img.size
+                if _w < 250 or _h < 250:
+                    raise GoogleReviewsError(
+                        f"Image too small for a Google profile/cover picture: "
+                        f"got {_w}x{_h}px, minimum 250x250. "
+                        f"Please upload a larger image.",
+                        400,
+                    )
+                if len(media_data) > 5 * 1024 * 1024:
+                    raise GoogleReviewsError(
+                        f"Image too large for a Google profile/cover picture: "
+                        f"{len(media_data) // 1024}KB, maximum 5MB.",
+                        400,
+                    )
+            except GoogleReviewsError:
+                raise
+            except Exception as e:  # noqa: BLE001 — validation is best effort
+                logger.warning("Could not validate image dimensions: %s", e)
             try:
                 ref = await self.start_media_upload(account, location)
                 await self.upload_media_bytes(
@@ -453,7 +477,7 @@ class GoogleBusinessPublisher:
         resp = await self._client._authed_request("POST", url, json=body)
         if resp.status_code not in (200, 201):
             raise GoogleReviewsError(
-                f"create_location_media failed ({resp.status_code}): {resp.text[:300]}",
+                f"create_location_media failed ({resp.status_code}): {resp.text[:2000]}",
                 resp.status_code,
             )
         data = resp.json()
