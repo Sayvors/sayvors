@@ -226,7 +226,7 @@ function BulkGoogleCurrentPanel({
         {rows.map((row) => (
           <li key={row.id}>
             <span className="font-semibold text-ink dark:text-fog">{row.name}</span>
-            <span className="text-ink/55 dark:text-fog/55"> \u2014 {row.lines.join(" \u00b7 ")}</span>
+            <span className="text-ink/55 dark:text-fog/55">: {row.lines.join(", ")}</span>
           </li>
         ))}
       </ul>

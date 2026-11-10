@@ -298,7 +298,7 @@ export default function ServicesPage({ embedded = false, listingId, scopeId, goo
                       <li key={row.id}>
                         <span className="font-semibold text-ink dark:text-fog">{row.name}</span>
                         <span className="text-ink/55 dark:text-fog/55">
-                          {" \u2014 "}
+                          {": "}
                           {row.services.length === 0
                             ? copy.googleHasNoServices
                             : row.services.map((s) => s.name).join(", ")}
@@ -369,7 +369,7 @@ export default function ServicesPage({ embedded = false, listingId, scopeId, goo
                       <li key={row.id}>
                         <span className="font-semibold text-ink dark:text-fog">{row.name}</span>
                         <span className="text-ink/55 dark:text-fog/55">
-                          {" \u2014 "}
+                          {": "}
                           {row.services.length === 0
                             ? copy.googleHasNoServices
                             : row.services.map((s) => s.name).join(", ")}
