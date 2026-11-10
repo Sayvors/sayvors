@@ -105,17 +105,86 @@ interface FullProfile {
   google_synced: string[];
   google_pushed?: string[];
   google_skipped?: Record<string, string> | null;
+  google_status?: Record<string, { stage: string; rejection_reason?: string | null; update_time?: string | null; source?: string | null }>;
   updated_at?: string | null;
 }
 
-function SourceBadge({ google, copy }: { google: boolean; copy: LocationsCopy }) {
-  return google ? (
-    <span className="whitespace-nowrap rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
-      {copy.syncedToGoogle}
-    </span>
-  ) : (
-    <span className="whitespace-nowrap rounded-full bg-ink/[0.05] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink/45 dark:bg-fog/[0.06] dark:text-fog/45">
-      {copy.storedInSayvors}
+type BadgeStatus = "accepted" | "pending" | "rejected" | "google_updated" | "draft" | "unspecified";
+
+const BADGE_STYLES: Record<BadgeStatus, string> = {
+  accepted: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300",
+  pending: "bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300",
+  rejected: "bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-300",
+  google_updated: "bg-sky-100 text-sky-700 dark:bg-sky-500/10 dark:text-sky-300",
+  draft: "bg-ink/[0.05] text-ink/45 dark:bg-fog/[0.06] dark:text-fog/45",
+  unspecified: "bg-ink/[0.05] text-ink/45 dark:bg-fog/[0.06] dark:text-fog/45",
+};
+
+function resolveSectionStatus(
+  statuses: (string | null | undefined)[],
+): string | null {
+  const rank: Record<string, number> = {
+    rejected: 0,
+    pending: 1,
+    google_updated: 2,
+    draft: 3,
+    accepted: 4,
+    unspecified: 5,
+  };
+  let best: string | null = null;
+  for (const s of statuses) {
+    if (!s) continue;
+    if (best === null || (rank[s] ?? 9) < (rank[best] ?? 9)) best = s;
+  }
+  return best;
+}
+
+function SourceBadge({
+  google,
+  status,
+  reason,
+  copy,
+}: {
+  google: boolean;
+  status?: string | null;
+  reason?: string | null;
+  copy: LocationsCopy;
+}) {
+  // Prefer Google's live edit lifecycle (from locations.getExtended); fall
+  // back to the stored push report when the alpha API is unavailable.
+  const resolved: BadgeStatus = status
+    ? (status as BadgeStatus)
+    : google
+      ? "accepted"
+      : "unspecified";
+  const label =
+    resolved === "accepted"
+      ? copy.syncedToGoogle
+      : resolved === "pending"
+        ? copy.pendingOnGoogle
+        : resolved === "rejected"
+          ? copy.rejectedByGoogle
+          : resolved === "google_updated"
+            ? copy.updatedByGoogle
+            : resolved === "draft"
+              ? copy.draftOnGoogle
+              : copy.storedInSayvors;
+  const title =
+    resolved === "pending"
+      ? copy.pendingOnGoogleHint
+      : resolved === "rejected"
+        ? reason || null
+        : resolved === "google_updated"
+          ? copy.updatedByGoogleHint
+          : resolved === "draft"
+            ? copy.draftOnGoogleHint
+            : null;
+  return (
+    <span
+      title={title ?? undefined}
+      className={`whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${BADGE_STYLES[resolved]}`}
+    >
+      {label}
     </span>
   );
 }
@@ -951,6 +1020,8 @@ const bulk: BulkScope | null = isBulk
               <CategoriesTab
                 initial={isBulk ? undefined : fullProfile?.categories}
                 synced={!isBulk && !!fullProfile?.google_synced?.includes("categories")}
+                status={!isBulk ? fullProfile?.google_status?.categories?.stage ?? null : null}
+                reason={!isBulk ? fullProfile?.google_status?.categories?.rejection_reason ?? null : null}
                 region={fullProfile?.country ?? ""}
                 bulk={bulk}
                 copy={copy}
@@ -970,6 +1041,8 @@ const bulk: BulkScope | null = isBulk
                 bulk={bulk}
                 copy={copy}
                 synced={!isBulk && !!fullProfile?.google_synced?.includes("hours.regular")}
+                status={!isBulk ? fullProfile?.google_status?.["hours.regular"]?.stage ?? null : null}
+                reason={!isBulk ? fullProfile?.google_status?.["hours.regular"]?.rejection_reason ?? null : null}
                 onSave={(regular) =>
                   isBulk
                     ? bulkSaveProfile(copy.tabHours, { hours: { regular } }, describeHours(regular, copy))
@@ -983,6 +1056,8 @@ const bulk: BulkScope | null = isBulk
                 bulk={bulk}
                 copy={copy}
                 synced={!isBulk && !!fullProfile?.google_synced?.includes("hours.special")}
+                status={!isBulk ? fullProfile?.google_status?.["hours.special"]?.stage ?? null : null}
+                reason={!isBulk ? fullProfile?.google_status?.["hours.special"]?.rejection_reason ?? null : null}
                 onSave={(special) =>
                   isBulk
                     ? bulkSaveProfile(copy.specialHoursTitle, { hours: { special } }, [
@@ -1001,6 +1076,8 @@ const bulk: BulkScope | null = isBulk
                 bulk={bulk}
                 copy={copy}
                 synced={!isBulk && !!fullProfile?.google_synced?.includes("hours.more")}
+                status={!isBulk ? fullProfile?.google_status?.["hours.more"]?.stage ?? null : null}
+                reason={!isBulk ? fullProfile?.google_status?.["hours.more"]?.rejection_reason ?? null : null}
                 onSave={(more) =>
                   isBulk
                     ? bulkSaveProfile(copy.tabMoreHours, { hours: { more } }, [
@@ -1019,6 +1096,9 @@ const bulk: BulkScope | null = isBulk
             {activeTab === "service-area" && (
               <ServiceAreaTab
                 initial={isBulk ? undefined : fullProfile?.service_area}
+                synced={!isBulk && !!fullProfile?.google_synced?.includes("service_area")}
+                status={!isBulk ? fullProfile?.google_status?.service_area?.stage ?? null : null}
+                reason={!isBulk ? fullProfile?.google_status?.service_area?.rejection_reason ?? null : null}
                 bulk={bulk}
                 copy={copy}
                 onSave={(service_area) =>
@@ -1035,6 +1115,9 @@ const bulk: BulkScope | null = isBulk
             {activeTab === "attributes" && (
               <AttributesTab
                 initial={isBulk ? undefined : fullProfile?.attributes}
+                synced={!isBulk && !!fullProfile?.google_synced?.includes("attributes")}
+                status={!isBulk ? fullProfile?.google_status?.attributes?.stage ?? null : null}
+                reason={!isBulk ? fullProfile?.google_status?.attributes?.rejection_reason ?? null : null}
                 bulk={bulk}
                 copy={copy}
                 onSave={(attributes) =>
@@ -1054,6 +1137,9 @@ const bulk: BulkScope | null = isBulk
               <DescriptionTab
                 initial={isBulk ? "" : fullProfile?.description ?? ""}
                 initialOpeningDate={isBulk ? null : fullProfile?.opening_date ?? null}
+                synced={!isBulk && !!fullProfile?.google_synced?.includes("description")}
+                status={!isBulk ? fullProfile?.google_status?.description?.stage ?? null : null}
+                reason={!isBulk ? fullProfile?.google_status?.description?.rejection_reason ?? null : null}
                 bulk={bulk}
                 copy={copy}
                 onSave={(description, openingDate) =>
@@ -1117,6 +1203,17 @@ function DetailsTab({
   // tabs stay reachable without scrolling past every field.
   const [open, setOpen] = useState(false);
   const detailFailures = fullProfile?.google_skipped ?? {};
+  const detailStatuses = fullProfile?.google_status;
+  const detailsStatus = resolveSectionStatus([
+    detailStatuses?.name?.stage,
+    detailStatuses?.phone?.stage,
+    detailStatuses?.website?.stage,
+  ]);
+  const detailsReason =
+    detailStatuses?.name?.rejection_reason ||
+    detailStatuses?.phone?.rejection_reason ||
+    detailStatuses?.website?.rejection_reason ||
+    null;
   const detailsSynced =
     !!profile &&
     !detailFailures.name &&
@@ -1191,7 +1288,7 @@ function DetailsTab({
           </span>
           <SectionTitle title={copy.tabDetails} subtitle={copy.detailsSubtitle} />
         </button>
-        <SourceBadge google={detailsSynced} copy={copy} />
+        <SourceBadge google={detailsSynced} status={detailsStatus} reason={detailsReason} copy={copy} />
       </div>
       {open && (
       <>
@@ -1283,12 +1380,14 @@ function DetailsTab({
   );
 }
 
-function CategoriesTab({ initial, onSave, bulk, copy, synced, region }: {
+function CategoriesTab({ initial, onSave, bulk, copy, synced, status, reason, region }: {
   initial?: { primary?: string; additional?: string[] };
   onSave: (patch: { primary: string; additional: string[] }) => Promise<void>;
   bulk?: BulkScope | null;
   copy: LocationsCopy;
   synced?: boolean;
+  status?: string | null;
+  reason?: string | null;
   region: string;
 }) {
   const [primary, setPrimary] = useState(initial?.primary ?? "");
@@ -1316,7 +1415,7 @@ function CategoriesTab({ initial, onSave, bulk, copy, synced, region }: {
     <div className="space-y-5">
       <div className="flex flex-col items-start gap-1.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
         <SectionTitle title={copy.tabCategories} subtitle={copy.categoriesSubtitle} />
-        <SourceBadge google={!!synced} copy={copy} />
+        <SourceBadge google={!!synced} status={status} reason={reason} copy={copy} />
       </div>
       <Field label={copy.primaryCategory} varies={bulk?.varies.has("primary") ?? false}>
         <CategoryPicker value={primary} region={region} onChange={setPrimary} />
@@ -1364,12 +1463,14 @@ function CategoriesTab({ initial, onSave, bulk, copy, synced, region }: {
   );
 }
 
-function HoursTab({ initial, onSave, bulk, copy, synced }: {
+function HoursTab({ initial, onSave, bulk, copy, synced, status, reason }: {
   initial?: Record<string, { open: string; close: string; closed: boolean; all_day?: boolean }>;
   onSave: (regular: Record<string, { open: string; close: string; closed: boolean; all_day?: boolean }>) => Promise<void>;
   bulk?: BulkScope | null;
   copy: LocationsCopy;
   synced?: boolean;
+  status?: string | null;
+  reason?: string | null;
 }) {
   const blank = () => Object.fromEntries(HOURS_DAYS.map((d) => [d, { open: "", close: "", closed: false }]));
   const [hours, setHours] = useState<Record<string, { open: string; close: string; closed: boolean; all_day?: boolean }>>(
@@ -1409,7 +1510,7 @@ function HoursTab({ initial, onSave, bulk, copy, synced }: {
         <SectionTitle title={copy.regularHours} subtitle={copy.regularHoursSubtitle} />
         <div className="flex items-center gap-2">
           {bulk?.varies.has("hours") ? <VariesBadge /> : null}
-          <SourceBadge google={!!synced} copy={copy} />
+          <SourceBadge google={!!synced} status={status} reason={reason} copy={copy} />
         </div>
       </div>
       <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.hoursHint}</p>
@@ -1465,12 +1566,14 @@ function HoursTab({ initial, onSave, bulk, copy, synced }: {
   );
 }
 
-function SpecialHoursTab({ initial, onSave, bulk, copy, synced }: {
+function SpecialHoursTab({ initial, onSave, bulk, copy, synced, status, reason }: {
   initial?: { date: string; hours: string; reason: string }[];
   onSave: (special: { date: string; hours: string; reason: string }[]) => Promise<void>;
   bulk?: BulkScope | null;
   copy: LocationsCopy;
   synced?: boolean;
+  status?: string | null;
+  reason?: string | null;
 }) {
   const [entries, setEntries] = useState<{ date: string; hours: string; reason: string }[]>(initial ?? []);
   const [saving, setSaving] = useState(false);
@@ -1503,7 +1606,7 @@ function SpecialHoursTab({ initial, onSave, bulk, copy, synced }: {
         <SectionTitle title={copy.specialHoursTitle} subtitle={copy.specialHoursSubtitle} />
         <div className="flex items-center gap-2">
           {bulk?.varies.has("special") ? <VariesBadge /> : null}
-          <SourceBadge google={!!synced} copy={copy} />
+          <SourceBadge google={!!synced} status={status} reason={reason} copy={copy} />
         </div>
       </div>
       <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.specialHoursHint}</p>
@@ -1552,12 +1655,14 @@ const serviceTypeLabel = (type: string, copy: LocationsCopy): string => {
   return key ? copy[key] : type;
 };
 
-function MoreHoursTab({ initial, onSave, bulk, copy, synced }: {
+function MoreHoursTab({ initial, onSave, bulk, copy, synced, status, reason }: {
   initial?: { type: string; open: string; close: string }[];
   onSave: (more: { type: string; open: string; close: string }[]) => Promise<void>;
   bulk?: BulkScope | null;
   copy: LocationsCopy;
   synced?: boolean;
+  status?: string | null;
+  reason?: string | null;
 }) {
   const [entries, setEntries] = useState<{ type: string; open: string; close: string }[]>(initial ?? []);
   const [saving, setSaving] = useState(false);
@@ -1590,7 +1695,7 @@ function MoreHoursTab({ initial, onSave, bulk, copy, synced }: {
         <SectionTitle title={copy.tabMoreHours} subtitle={copy.moreHoursSubtitle} />
         <div className="flex items-center gap-2">
           {bulk?.varies.has("more") ? <VariesBadge /> : null}
-          <SourceBadge google={!!synced} copy={copy} />
+          <SourceBadge google={!!synced} status={status} reason={reason} copy={copy} />
         </div>
       </div>
       <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.moreHoursHint}</p>
@@ -1627,11 +1732,14 @@ function MoreHoursTab({ initial, onSave, bulk, copy, synced }: {
   );
 }
 
-function ServiceAreaTab({ initial, onSave, bulk, copy }: {
+function ServiceAreaTab({ initial, onSave, bulk, copy, synced, status, reason }: {
   initial?: string[];
   onSave: (areas: string[]) => Promise<void>;
   bulk?: BulkScope | null;
   copy: LocationsCopy;
+  synced?: boolean;
+  status?: string | null;
+  reason?: string | null;
 }) {
   const [areas, setAreas] = useState<string[]>(initial ?? []);
   const [newArea, setNewArea] = useState("");
@@ -1665,7 +1773,7 @@ function ServiceAreaTab({ initial, onSave, bulk, copy }: {
         <SectionTitle title={copy.tabServiceArea} subtitle={copy.serviceAreaSubtitle} />
         <div className="flex items-center gap-2">
           {bulk?.varies.has("service_area") ? <VariesBadge /> : null}
-          <SourceBadge google={false} copy={copy} />
+          <SourceBadge google={!!synced} status={status} reason={reason} copy={copy} />
         </div>
       </div>
       <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.serviceAreaHint}</p>
@@ -1706,11 +1814,14 @@ const ATTRIBUTE_VALUE_KEYS = {
   limited: (c: LocationsCopy) => c.attrLimited,
 } as const satisfies Record<string, (c: LocationsCopy) => string>;
 
-function AttributesTab({ initial, onSave, bulk, copy }: {
+function AttributesTab({ initial, onSave, bulk, copy, synced, status, reason }: {
   initial?: Record<string, string>;
   onSave: (attrs: Record<string, string>) => Promise<void>;
   bulk?: BulkScope | null;
   copy: LocationsCopy;
+  synced?: boolean;
+  status?: string | null;
+  reason?: string | null;
 }) {
   const [attrs, setAttrs] = useState<Record<string, string>>(initial ?? {});
   const [newKey, setNewKey] = useState("");
@@ -1747,7 +1858,7 @@ function AttributesTab({ initial, onSave, bulk, copy }: {
         <SectionTitle title={copy.tabAttributes} subtitle={copy.attributesSubtitle} />
         <div className="flex items-center gap-2">
           {bulk?.varies.has("attributes") ? <VariesBadge /> : null}
-          <SourceBadge google={false} copy={copy} />
+          <SourceBadge google={!!synced} status={status} reason={reason} copy={copy} />
         </div>
       </div>
       <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.attributesHint}</p>
@@ -1802,12 +1913,15 @@ function AttributesTab({ initial, onSave, bulk, copy }: {
   );
 }
 
-function DescriptionTab({ initial, initialOpeningDate, onSave, bulk, copy }: {
+function DescriptionTab({ initial, initialOpeningDate, onSave, bulk, copy, synced, status, reason }: {
   initial?: string;
   initialOpeningDate?: string | null;
   onSave: (description: string, openingDate: string | null) => Promise<void>;
   bulk?: BulkScope | null;
   copy: LocationsCopy;
+  synced?: boolean;
+  status?: string | null;
+  reason?: string | null;
 }) {
   const [desc, setDesc] = useState(initial ?? "");
   const [openingDate, setOpeningDate] = useState(initialOpeningDate ?? "");
@@ -1835,7 +1949,7 @@ function DescriptionTab({ initial, initialOpeningDate, onSave, bulk, copy }: {
         <SectionTitle title={copy.descriptionTitle} subtitle={copy.descriptionSubtitle} />
         <div className="flex items-center gap-2">
           {bulk?.varies.has("description") ? <VariesBadge /> : null}
-          <SourceBadge google copy={copy} />
+          <SourceBadge google={!!synced} status={status} reason={reason} copy={copy} />
         </div>
       </div>
       <textarea

@@ -234,6 +234,12 @@ async def get_profile(
     )
     meta = channel_meta(channel) if channel is not None else {}
     stored_skipped = meta.get("google_failed") or meta.get("google_skipped")
+    # Per-section edit lifecycle from Google (PENDING / REJECTED / ACCEPTED).
+    # Best-effort: the alpha endpoint may be disabled; the UI falls back to
+    # the stored push report when this is empty.
+    google_status = (
+        await _google_edit_status(channel, listing_id) if channel is not None else {}
+    )
 
     # The category catalog is region-specific. Prefer the region Google
     # returns for this location's storefront; fall back to the account country
@@ -290,6 +296,7 @@ async def get_profile(
         "opening_date": profile.opening_date.isoformat() if profile.opening_date else None,
         "google_synced": [],
         "google_skipped": {},
+        "google_status": google_status,
         "updated_at": profile.updated_at.isoformat() if profile.updated_at else None,
     }
     if channel is not None:
@@ -376,6 +383,34 @@ async def _push_profile_native(
         logger.warning("Native locations push skipped %s for %s: %s",
                        section, google_id, reason)
     return report.get("pushed", []), skipped
+
+
+async def _google_edit_status(channel: Channel, listing_id: str) -> dict[str, dict]:
+    """Per-section edit status from Google's v1alpha extended endpoint.
+
+    Returns ``{section: {stage, rejection_reason, update_time, source}}``.
+    Empty when the alpha API is unavailable (not enabled, no scope) or the
+    call fails — the UI then falls back to the coarse "synced" report.
+    """
+    from ..channels.google_business import (
+        GoogleBusinessClient,
+        parse_edit_status,
+    )
+    from ..channels.service import decrypt_token
+
+    access = decrypt_token(channel.access_token) if channel.access_token else None
+    refresh = decrypt_token(channel.refresh_token) if channel.refresh_token else None
+    if not access and not refresh:
+        return {}
+    client = GoogleBusinessClient(access or "", refresh)
+    try:
+        extended = await client.get_extended_location(listing_id)
+        return parse_edit_status(extended)
+    except Exception as e:  # noqa: BLE001 — status is best-effort
+        logger.debug("Google edit status unavailable for %s: %s", listing_id, e)
+        return {}
+    finally:
+        await client.close()
 
 
 async def update_profile(

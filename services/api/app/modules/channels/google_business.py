@@ -33,9 +33,64 @@ from .google_reviews import GoogleReviewsClient, GoogleReviewsError
 logger = logging.getLogger(__name__)
 
 GBP_BIZINFO_API = "https://mybusinessbusinessinformation.googleapis.com/v1"
+# v1alpha carries per-field edit lifecycle status (PENDING / REJECTED / ...).
+# It is not always enabled on a project; callers fall back to hasPendingEdits.
+GBP_BIZINFO_API_ALPHA = "https://mybusinessbusinessinformation.googleapis.com/v1alpha"
 
 DAYS = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"]
 _DAY_INDEX = {d: i for i, d in enumerate(DAYS)}
+
+# Google's extendedFieldData keys (snake_case top-level Location fields) →
+# the Sayvors profile section names. Used to translate per-field edit
+# lifecycle status into the sections the Locations UI shows.
+GOOGLE_FIELD_TO_SECTION = {
+    "title": "name",
+    "phone_numbers": "phone",
+    "website_uri": "website",
+    "regular_hours": "hours.regular",
+    "special_hours": "hours.special",
+    "more_hours": "hours.more",
+    "service_area": "service_area",
+    "profile": "description",
+    "categories": "categories",
+    "open_info": "opening_date",
+    "storefront_address": "address",
+}
+
+# EditLifecycleStage → short status key used by the API/UI.
+EDIT_STAGE_TO_STATUS = {
+    "EDIT_LIFECYCLE_STAGE_ACCEPTED": "accepted",
+    "EDIT_LIFECYCLE_STAGE_PENDING": "pending",
+    "EDIT_LIFECYCLE_STAGE_REJECTED": "rejected",
+    "EDIT_LIFECYCLE_STAGE_UPDATED_BY_GOOGLE": "google_updated",
+    "EDIT_LIFECYCLE_STAGE_DRAFT": "draft",
+    "EDIT_LIFECYCLE_STAGE_UNSPECIFIED": "unspecified",
+}
+
+
+def parse_edit_status(extended: dict) -> dict[str, dict]:
+    """Per-section edit status from an ExtendedLocation response.
+
+    Returns ``{section: {stage, rejection_reason, update_time, source}}``.
+    Fields with no recorded edit are absent — the caller treats absence as
+    "never submitted", which is distinct from "pending" or "rejected".
+    """
+    out: dict[str, dict] = {}
+    field_data = (extended or {}).get("extendedFieldData") or {}
+    if not isinstance(field_data, dict):
+        return out
+    for field, data in field_data.items():
+        section = GOOGLE_FIELD_TO_SECTION.get(field)
+        if section is None or not isinstance(data, dict):
+            continue
+        stage_raw = str(data.get("lastEditLifecycleStage") or "")
+        out[section] = {
+            "stage": EDIT_STAGE_TO_STATUS.get(stage_raw, stage_raw.lower() or "unspecified"),
+            "rejection_reason": data.get("rejectionReason"),
+            "update_time": data.get("updateTime"),
+            "source": data.get("source"),
+        }
+    return out
 
 # Frontend More-hours options → GBP MoreHoursType enum. Unknown types are
 # skipped with a warning (Google 400s the whole call otherwise).
@@ -250,6 +305,25 @@ class GoogleBusinessClient(GoogleReviewsClient):
             raise GoogleReviewsError(
                 f"get_location failed ({resp.status_code}): {resp.text[:300]}",
                 resp.status_code)
+        data = resp.json()
+        return data if isinstance(data, dict) else {}
+
+    async def get_extended_location(self, location_id: str) -> dict:
+        """ExtendedLocation: merchant data, consumer data, per-field edit status.
+
+        v1alpha endpoint. Raises GoogleReviewsError when the alpha API is not
+        enabled on the project (404) or not authorized (403), so the caller can
+        fall back to the coarse ``metadata.hasPendingEdits`` flag.
+        """
+        resp = await self._authed_request(
+            "GET",
+            f"{GBP_BIZINFO_API_ALPHA}/{self._location_name(location_id)}:getExtended",
+        )
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"get_extended_location failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
         data = resp.json()
         return data if isinstance(data, dict) else {}
 

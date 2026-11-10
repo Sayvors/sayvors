@@ -281,6 +281,48 @@ async def test_failed_section_is_retried_on_unchanged_save(monkeypatch, db, user
     assert pushed_seen.get("phone") == "+966 55 000 0000"
 
 
+def test_parse_edit_status_maps_google_fields_to_sections():
+    """Google's extendedFieldData keys become Sayvors sections + status."""
+    from app.modules.channels.google_business import parse_edit_status
+
+    extended = {
+        "extendedFieldData": {
+            "title": {
+                "lastEditLifecycleStage": "EDIT_LIFECYCLE_STAGE_PENDING",
+                "updateTime": "2026-11-10T10:00:00Z",
+                "source": "SOURCE_API",
+            },
+            "phone_numbers": {
+                "lastEditLifecycleStage": "EDIT_LIFECYCLE_STAGE_REJECTED",
+                "rejectionReason": "MISREPRESENTATION",
+                "updateTime": "2026-11-09T10:00:00Z",
+                "source": "SOURCE_API",
+            },
+            "regular_hours": {
+                "lastEditLifecycleStage": "EDIT_LIFECYCLE_STAGE_ACCEPTED",
+                "updateTime": "2026-11-08T10:00:00Z",
+                "source": "SOURCE_API",
+            },
+        }
+    }
+    status = parse_edit_status(extended)
+    assert status["name"]["stage"] == "pending"
+    assert status["phone"]["stage"] == "rejected"
+    assert status["phone"]["rejection_reason"] == "MISREPRESENTATION"
+    assert status["hours.regular"]["stage"] == "accepted"
+    assert status["name"]["update_time"] == "2026-11-10T10:00:00Z"
+
+
+def test_parse_edit_status_handles_empty_and_unknown():
+    from app.modules.channels.google_business import parse_edit_status
+
+    assert parse_edit_status({}) == {}
+    assert parse_edit_status({"extendedFieldData": None}) == {}
+    # Unknown field names are ignored.
+    out = parse_edit_status({"extendedFieldData": {"mystery_field": {}}})
+    assert out == {}
+
+
 @pytest.mark.asyncio
 async def test_expired_channel_is_readable_but_not_writable(db, user_id):
     """A 403 marks a channel expired; the page must still show its data and
