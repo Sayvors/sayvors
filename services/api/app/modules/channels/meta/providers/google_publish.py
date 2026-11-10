@@ -185,23 +185,43 @@ class GoogleBusinessPublisher:
                 media_items.append(item)
             body["media"] = media_items
 
-        # EVENT posts require an event object with a title and a start date.
+        # EVENT posts require an event object. Google's LocalPostEvent is
+        # {title, schedule:{startDate, startTime, endDate, endTime}} where
+        # Date/TimeOfDay are JSON objects — ISO strings are not accepted.
         if topic_type == "EVENT":
             from datetime import timedelta
 
             now = datetime.now(timezone.utc)
             start = _parse_google_dt(start_date) or now
             end = _parse_google_dt(end_date) or (start + timedelta(days=7))
+
+            def _date_part(dt: datetime) -> dict[str, int]:
+                return {"year": dt.year, "month": dt.month, "day": dt.day}
+
+            def _time_part(dt: datetime) -> dict[str, int]:
+                return {
+                    "hours": dt.hour,
+                    "minutes": dt.minute,
+                    "seconds": dt.second,
+                    "nanos": dt.microsecond * 1000,
+                }
+
             body["event"] = {
                 "title": (summary[:60] if summary else "Event"),
-                "startDate": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "endDate": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "schedule": {
+                    "startDate": _date_part(start),
+                    "startTime": _time_part(start),
+                    "endDate": _date_part(end),
+                    "endTime": _time_part(end),
+                },
             }
 
-        # OFFER posts carry a coupon / redeem link and terms.
+        # OFFER posts. Google's LocalPostOffer has exactly three fields —
+        # couponCode, redeemOnlineUrl, termsConditions. The post's summary
+        # already carries the copy; a "description" field is rejected with
+        # "Unknown name ... at 'local_post.offer'".
         if topic_type == "OFFER":
             offer: dict[str, Any] = {
-                "description": (summary[:300] if summary else ""),
                 "termsConditions": (terms_conditions or "Terms apply")[:300],
             }
             if coupon_code:
@@ -210,13 +230,22 @@ class GoogleBusinessPublisher:
                 offer["redeemOnlineUrl"] = cta_url[:1000]
             body["offer"] = offer
 
+        # Google's CallToAction. Ignored for OFFER posts — those carry the link
+        # in offer.redeemOnlineUrl — and CALL never carries a URL.
         cta_map = {
             "book": "BOOK", "order": "ORDER", "shop": "SHOP",
             "learn_more": "LEARN_MORE", "sign_up": "SIGN_UP", "call": "CALL",
         }
         action = cta_map.get((cta_type or "").strip().lower())
-        if action and cta_url and topic_type != "OFFER":
-            body["callToAction"] = {"actionType": action, "url": cta_url[:1000]}
+        if action and topic_type != "OFFER":
+            call_to_action: dict[str, str] = {"actionType": action}
+            if action != "CALL":
+                if not cta_url:
+                    raise GoogleReviewsError(
+                        f"{action} call-to-action requires a URL", 400
+                    )
+                call_to_action["url"] = cta_url[:1000]
+            body["callToAction"] = call_to_action
 
         if scheduled_at:
             try:

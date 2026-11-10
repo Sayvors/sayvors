@@ -147,6 +147,31 @@ async def test_text_only_google_post_is_allowed(db, client, user_id):
 
 
 @pytest.mark.asyncio
+async def test_call_to_action_reaches_the_job_payload(db, client, user_id):
+    """The composer's button type and link must survive into the job."""
+    from sqlalchemy import select
+
+    from app.modules.jobs.models import Job
+
+    res = client.post(
+        "/api/v1/channels/publish",
+        json={
+            "caption": "Ready to grow your business and save time?",
+            "cta_type": "learn_more",
+            "cta_url": "https://sayvors.com",
+            "destinations": [
+                {"platform": "google_reviews", "external_asset_id": "loc-1",
+                 "methods": ["update"]},
+            ],
+        },
+    )
+    assert res.status_code == 200, res.text
+    job = (await db.execute(select(Job).where(Job.tenant_id == user_id))).scalar_one()
+    assert job.payload["cta_type"] == "learn_more"
+    assert job.payload["cta_url"] == "https://sayvors.com"
+
+
+@pytest.mark.asyncio
 async def test_media_only_format_without_image_is_rejected(client):
     """A banner/story/status job with no media would only fail downstream."""
     res = client.post(

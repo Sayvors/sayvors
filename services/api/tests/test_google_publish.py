@@ -93,13 +93,22 @@ async def test_legacy_post_method_still_publishes():
 
 @pytest.mark.asyncio
 async def test_event_carries_the_date_google_requires():
-    """Google rejects an EVENT post with no event object."""
-    captured = await _publish("event")
+    """Google rejects an EVENT post with no event object, and its
+    LocalPostEvent is {title, schedule:{startDate, startTime, ...}} with
+    Date/TimeOfDay objects — not ISO strings."""
+    captured = await _publish(
+        "event",
+        start_date="2026-11-09T09:00:00+00:00",
+        end_date="2026-11-10T09:00:00+00:00",
+    )
     body = captured["body"]
     assert body["topicType"] == "EVENT"
     assert body["event"]["title"] == "Grand opening"
-    assert body["event"]["startDate"]
-    assert body["event"]["endDate"]
+    schedule = body["event"]["schedule"]
+    assert schedule["startDate"] == {"year": 2026, "month": 11, "day": 9}
+    assert schedule["endDate"] == {"year": 2026, "month": 11, "day": 10}
+    assert schedule["startTime"]["hours"] == 9
+    assert schedule["endTime"]["minutes"] == 0
 
 
 @pytest.mark.asyncio
@@ -114,13 +123,53 @@ async def test_call_to_action_maps_to_google_action_type():
 
 
 @pytest.mark.asyncio
-async def test_offer_carries_terms_google_requires():
-    """An OFFER post needs at least one of the offer fields."""
+async def test_offer_only_uses_fields_google_accepts():
+    """LocalPostOffer accepts only couponCode / redeemOnlineUrl /
+    termsConditions. A "description" key is rejected with
+    'Unknown name "description" at local_post.offer'."""
     captured = await _publish("offer", terms_conditions="Come say hello")
     body = captured["body"]
     assert body["topicType"] == "OFFER"
-    assert body["offer"]["description"] == "Grand opening"
     assert body["offer"]["termsConditions"] == "Come say hello"
+    assert set(body["offer"]) <= {"couponCode", "redeemOnlineUrl", "termsConditions"}
+
+
+@pytest.mark.asyncio
+async def test_standard_post_carries_a_call_to_action():
+    """Google renders a button from callToAction {actionType, url}."""
+    captured = await _publish(
+        "update", cta_type="learn_more", cta_url="https://sayvors.com"
+    )
+    assert captured["body"]["callToAction"] == {
+        "actionType": "LEARN_MORE",
+        "url": "https://sayvors.com",
+    }
+
+
+@pytest.mark.asyncio
+async def test_call_action_never_carries_a_url():
+    """CALL is the phone number, not a link — a URL is rejected."""
+    captured = await _publish("update", cta_type="call", cta_url="https://sayvors.com")
+    assert captured["body"]["callToAction"] == {"actionType": "CALL"}
+
+
+@pytest.mark.asyncio
+async def test_action_without_a_url_is_refused():
+    """A button type with no link would silently do nothing — fail loudly."""
+    with pytest.raises(GoogleReviewsError):
+        await _publish("update", cta_type="book", cta_url="")
+
+
+@pytest.mark.asyncio
+async def test_offer_link_goes_to_redeem_url_not_a_button():
+    """callToAction is ignored for OFFER posts; the offer carries the link."""
+    captured = await _publish(
+        "offer", cta_type="shop", cta_url="https://sayvors.com/redeem"
+    )
+    body = captured["body"]
+    assert "callToAction" not in body
+    assert body["offer"]["redeemOnlineUrl"] == "https://sayvors.com/redeem"
+    assert "description" not in body["offer"]
 
 
 @pytest.mark.asyncio

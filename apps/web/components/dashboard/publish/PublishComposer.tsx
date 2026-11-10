@@ -42,6 +42,11 @@ const MEDIA_ONLY_METHODS = new Set<string>([
   "story", "reel", "status", "profile", "banner",
 ]);
 
+type CtaValue = "book" | "order" | "shop" | "learn_more" | "sign_up" | "call";
+const CTA_VALUES: CtaValue[] = [
+  "book", "order", "shop", "learn_more", "sign_up", "call",
+];
+
 /*
  * The unified Publish composer.
  *
@@ -309,6 +314,8 @@ export default function PublishComposer({
   const [media, setMedia] = useState<MediaState | null>(null);
   const [caption, setCaption] = useState("");
   const [description, setDescription] = useState("");
+  const [ctaType, setCtaType] = useState("");
+  const [ctaUrl, setCtaUrl] = useState("");
 
   const blobRef = useRef<string | null>(null);
 
@@ -573,6 +580,9 @@ export default function PublishComposer({
           media_type: mediaType,
           caption,
           description,
+          cta_type: ctaType || null,
+          cta_url:
+            ctaType && ctaType !== "call" ? ctaUrl.trim() || null : null,
           scheduled_at: scheduleOn && scheduleAt ? new Date(scheduleAt).toISOString() : null,
           delete_at: removeOn && removeAt ? new Date(removeAt).toISOString() : null,
           destinations,
@@ -589,6 +599,8 @@ export default function PublishComposer({
       setScheduleAt("");
       setRemoveOn(false);
       setRemoveAt("");
+      setCtaType("");
+      setCtaUrl("");
       setFormats({});
       onPublished?.();
     } catch (e) {
@@ -722,6 +734,38 @@ export default function PublishComposer({
                   placeholder={pc.descPh}
                   className={`${FIELD} mt-1 w-full resize-y`}
                 />
+              </div>
+              <div className="mt-4 border-t border-[var(--ui-line)] pt-3">
+                <label htmlFor="pub-cta-type" className={`text-[12px] font-semibold ${INK2}`}>
+                  {pc.ctaType}
+                </label>
+                <select
+                  id="pub-cta-type"
+                  value={ctaType}
+                  onChange={(e) => {
+                    setCtaType(e.target.value);
+                    if (e.target.value === "call") setCtaUrl("");
+                  }}
+                  className={`${FIELD} mt-1 w-full sm:w-64`}
+                >
+                  <option value="">{pc.ctaTypePh}</option>
+                  {CTA_VALUES.map((value) => (
+                    <option key={value} value={value}>
+                      {pc.ctaTypes[value]}
+                    </option>
+                  ))}
+                </select>
+                {ctaType && ctaType !== "call" && (
+                  <input
+                    type="url"
+                    value={ctaUrl}
+                    onChange={(e) => setCtaUrl(e.target.value)}
+                    placeholder={pc.ctaUrlPh}
+                    aria-label={pc.ctaUrlPh}
+                    className={`${FIELD} mt-1.5 w-full`}
+                  />
+                )}
+                <p className={`mt-1.5 text-[11px] ${INK2}`}>{pc.ctaHint}</p>
               </div>
             </div>
           </section>

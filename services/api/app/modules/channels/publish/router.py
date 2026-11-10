@@ -104,6 +104,12 @@ class PublishBody(BaseModel):
     media_key: str | None = None
     caption: str = Field("", max_length=5000)
     description: str = Field("", max_length=5000)
+    # Call-to-action button. `cta_type` is one of the composer's keys
+    # (book/order/shop/learn_more/sign_up/call); Google maps it to a
+    # CallToAction.actionType. Ignored for OFFER posts, which carry the link
+    # in offer.redeemOnlineUrl instead.
+    cta_type: str | None = Field(None, max_length=32)
+    cta_url: str | None = Field(None, max_length=1000)
     scheduled_at: str | None = None
     delete_at: str | None = None
     idempotency_key: str | None = Field(None, max_length=200)
@@ -247,6 +253,8 @@ async def publish_post(
                     "media_key": body.media_key,
                     "caption": body.caption,
                     "description": body.description,
+                    "cta_type": body.cta_type,
+                    "cta_url": body.cta_url,
                     "platform": platform,
                     "external_asset_id": asset_id,
                     "method": method,
