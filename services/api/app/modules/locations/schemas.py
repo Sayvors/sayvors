@@ -150,4 +150,8 @@ class LocationProfileOut(BaseModel):
     google_synced: list[str] = []
     google_pushed: list[str] = []
     google_skipped: dict[str, str] = {}
+    # Per-section edit lifecycle from Google's locations.getExtended:
+    # stage (pending/accepted/rejected/google_updated/draft), the rejection
+    # reason when Google refused, and when the edit was submitted.
+    google_status: dict[str, dict] = {}
     updated_at: str | None = None

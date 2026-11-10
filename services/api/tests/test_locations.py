@@ -281,6 +281,19 @@ async def test_failed_section_is_retried_on_unchanged_save(monkeypatch, db, user
     assert pushed_seen.get("phone") == "+966 55 000 0000"
 
 
+def test_profile_response_carries_google_status():
+    """The response model must expose google_status — a missing field here
+    silently drops Google's per-field edit lifecycle from the API response."""
+    from app.modules.locations.schemas import LocationProfileOut
+
+    assert "google_status" in LocationProfileOut.model_fields
+    out = LocationProfileOut(
+        listing_id="loc-1", name="Test Place", status="active",
+        google_status={"hours.regular": {"stage": "pending"}},
+    )
+    assert out.google_status["hours.regular"]["stage"] == "pending"
+
+
 def test_parse_edit_status_maps_google_fields_to_sections():
     """Google's extendedFieldData keys become Sayvors sections + status."""
     from app.modules.channels.google_business import parse_edit_status
