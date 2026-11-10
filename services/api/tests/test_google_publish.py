@@ -76,7 +76,8 @@ async def test_update_maps_to_the_standard_topic():
     """Google's "What's New" is a STANDARD post."""
     captured = await _publish("update")
     assert captured["body"]["topicType"] == "STANDARD"
-    assert captured["body"]["summary"] == "Grand opening"
+    # Caption and description are both shown: Google has one body field.
+    assert captured["body"]["summary"] == "Grand opening\n\nCome say hello"
     assert "event" not in captured["body"]
     assert "offer" not in captured["body"]
     # localPosts exists on v4; v1 returns Google's HTML 404.
@@ -95,11 +96,15 @@ async def test_legacy_post_method_still_publishes():
 async def test_event_carries_the_date_google_requires():
     """Google rejects an EVENT post with no event object, and its
     LocalPostEvent is {title, schedule:{startDate, startTime, ...}} with
-    Date/TimeOfDay objects — not ISO strings."""
+    Date/TimeOfDay objects — not ISO strings.
+
+    The instants are 06:00 UTC, which is 09:00 at a Saudi business. Google
+    reads the schedule as the business's local time, so 09:00 must be sent,
+    not 06:00."""
     captured = await _publish(
         "event",
-        start_date="2026-11-09T09:00:00+00:00",
-        end_date="2026-11-10T09:00:00+00:00",
+        start_date="2026-11-09T06:00:00+00:00",
+        end_date="2026-11-10T06:00:00+00:00",
     )
     body = captured["body"]
     assert body["topicType"] == "EVENT"
@@ -108,6 +113,7 @@ async def test_event_carries_the_date_google_requires():
     assert schedule["startDate"] == {"year": 2026, "month": 11, "day": 9}
     assert schedule["endDate"] == {"year": 2026, "month": 11, "day": 10}
     assert schedule["startTime"]["hours"] == 9
+    assert schedule["endTime"]["hours"] == 9
     assert schedule["endTime"]["minutes"] == 0
 
 
@@ -249,35 +255,43 @@ async def test_scheduled_time_is_sent_to_google():
 
 
 @pytest.mark.asyncio
-async def test_falls_back_when_google_rejects_scheduled_time():
-    """If the field is rejected, publish immediately instead of losing the post."""
+async def test_a_rejected_schedule_fails_instead_of_publishing_early():
+    """If Google refuses the schedule, the post must not go out now: that would
+    publish it before the time the tenant chose. The job fails with the reason."""
     bodies: list[dict] = []
     publisher = GoogleBusinessPublisher("token", "refresh")
 
     async def fake(method, url, **kwargs):
         bodies.append(kwargs.get("json") or {})
-        if len(bodies) == 1:
-            return _Resp(
-                {"error": {"message": 'Unknown name "scheduledTime" at \'local_post\''}},
-                status_code=400,
-            )
-        return _Resp({"name": "accounts/1/locations/2/localPosts/3", "topicType": "STANDARD"})
+        return _Resp(
+            {"error": {"message": 'Unknown name "scheduledTime" at \'local_post\''}},
+            status_code=400,
+        )
 
     publisher._client._authed_request = fake
-    await publisher.publish_post(
-        token="token",
-        asset_id="locations/2",
-        method="update",
-        media_url="https://cdn.example/p.jpg",
-        media_type="image",
-        caption="Hi",
-        description="Hi",
-        scheduled_at="2026-12-01T09:30:00+00:00",
-        account_id="accounts/1",
-    )
-    assert len(bodies) == 2
+    with pytest.raises(GoogleReviewsError) as err:
+        await publisher.publish_post(
+            token="token",
+            asset_id="locations/2",
+            method="update",
+            media_url="https://cdn.example/p.jpg",
+            media_type="image",
+            caption="Hi",
+            description="Hi",
+            scheduled_at="2026-12-01T09:30:00+00:00",
+            account_id="accounts/1",
+        )
+    assert err.value.status_code == 400
+    assert len(bodies) == 1
     assert "scheduledTime" in bodies[0]
-    assert "scheduledTime" not in bodies[1]
+
+
+@pytest.mark.asyncio
+async def test_a_schedule_that_has_already_passed_publishes_now():
+    """A worker that runs late must not send a past scheduledTime, which Google
+    refuses. The post goes out at once: the time has already come."""
+    captured = await _publish("update", scheduled_at="2020-01-01T09:30:00+00:00")
+    assert "scheduledTime" not in captured["body"]
 
 
 # ── location images (profile picture / cover) ──────────────────────────

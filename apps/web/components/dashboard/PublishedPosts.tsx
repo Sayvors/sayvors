@@ -15,6 +15,7 @@ import {
 import { useLocationPosts, type LocationPost } from "@/lib/location-posts";
 import ScheduledPostsCalendar, { type ScheduledEntry } from "@/components/dashboard/ScheduledPostsCalendar";
 import { PLATFORM_META, type PlatformKey } from "@/components/dashboard/publish/types";
+import PostDetailDialog from "@/components/dashboard/publish/PostDetailDialog";
 
 /*
  * Every post, on every connected network — Instagram, Facebook, WhatsApp
@@ -23,9 +24,9 @@ import { PLATFORM_META, type PlatformKey } from "@/components/dashboard/publish/
  *
  * Two sources feed the list: publishing jobs (the cross-platform composer)
  * and legacy Google location posts (the old per-branch flow). Composer posts
- * can be removed from the platform they went out on (checked, then delete) or
- * cancelled before they go out; legacy posts are display-only because the
- * Google-side copy keeps its own lifecycle.
+ * can be opened for details and edits, removed from the platform they went out
+ * on (checked, then delete) or cancelled before they go out; legacy posts are
+ * display-only because the Google-side copy keeps its own lifecycle.
  */
 
 /** One feed row: a composer job or a legacy Google location post. */
@@ -37,6 +38,11 @@ type Chip = { label: string; cls: string };
 
 type StatusDict = Dict["publish"]["status"];
 
+const AMBER = "bg-amber-500/15 text-amber-700 dark:text-amber-400";
+const GREEN = "bg-[#e7f8ef] text-[#0c7a43]";
+const RED = "bg-red-500/10 text-red-700 dark:text-red-400";
+const GREY = "bg-ink/[0.05] text-ink/45 dark:bg-fog/[0.07] dark:text-fog/45";
+
 function fill(s: string, vars: Record<string, string | number>): string {
   return Object.entries(vars).reduce(
     (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
@@ -44,21 +50,42 @@ function fill(s: string, vars: Record<string, string | number>): string {
   );
 }
 
+/** The state Google reports for a Google post, as recorded on the job. */
+function googleState(job: PublishJob): string | null {
+  const state = job.result?.state;
+  return typeof state === "string" ? state : null;
+}
+
 function statusChip(job: PublishJob, c: StatusDict): Chip {
-  if (job.status === "succeeded") return { label: c.published, cls: "bg-[#e7f8ef] text-[#0c7a43]" };
-  if (job.status === "running") return { label: c.publishing, cls: "bg-amber-500/15 text-amber-700 dark:text-amber-400" };
-  if (job.status === "failed" || job.status === "dead") return { label: c.failed, cls: "bg-red-500/10 text-red-700 dark:text-red-400" };
+  if (job.status === "succeeded") {
+    // A Google post is only "published" when Google says it is live. Its own
+    // state (scheduled, processing, rejected, gone) is what the merchant needs.
+    switch (googleState(job)) {
+      case "SCHEDULED":
+        return { label: c.scheduledOnGoogle, cls: AMBER };
+      case "PROCESSING":
+        return { label: c.reviewing, cls: AMBER };
+      case "REJECTED":
+        return { label: c.rejectedByGoogle, cls: RED };
+      case "GONE":
+        return { label: c.goneFromGoogle, cls: GREY };
+      default:
+        return { label: c.published, cls: GREEN };
+    }
+  }
+  if (job.status === "running") return { label: c.publishing, cls: AMBER };
+  if (job.status === "failed" || job.status === "dead") return { label: c.failed, cls: RED };
   if (job.status === "cancelled") {
     // A deleted post was removed from its platform; a cancelled one never
     // went out. Saying "deleted" for both would hide the difference.
     return job.result?.deleted === true
-      ? { label: c.deleted, cls: "bg-ink/[0.05] text-ink/45 dark:bg-fog/[0.07] dark:text-fog/45" }
-      : { label: c.cancelled, cls: "bg-ink/[0.05] text-ink/45 dark:bg-fog/[0.07] dark:text-fog/45" };
+      ? { label: c.deleted, cls: GREY }
+      : { label: c.cancelled, cls: GREY };
   }
   if (QUEUED_STATUSES.has(job.status)) {
-    return { label: job.scheduled_at ? c.scheduled : c.queued, cls: "bg-amber-500/15 text-amber-700 dark:text-amber-400" };
+    return { label: job.scheduled_at ? c.scheduled : c.queued, cls: AMBER };
   }
-  return { label: job.status, cls: "bg-ink/[0.05] text-ink/45 dark:bg-fog/[0.07] dark:text-fog/45" };
+  return { label: job.status, cls: GREY };
 }
 
 export default function PublishedPosts({ onPublish }: { onPublish: (date?: string) => void }) {
@@ -71,8 +98,10 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [armDelete, setArmDelete] = useState(false);
   const [notice, setNotice] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
 
   const feedError = error ?? legacyError;
+  const openJob = openId ? (jobs ?? []).find((j) => j.job_id === openId) ?? null : null;
 
   const scheduledEntries = useMemo<ScheduledEntry[]>(() => {
     return (jobs ?? [])
@@ -111,9 +140,8 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
 
   const selectedDeletable = deletableIds.filter((id) => checked.has(id));
 
-  const bulkDelete = async () => {
-    if (selectedDeletable.length === 0) return;
-    const res = await removeJobs(selectedDeletable);
+  const removeIds = async (ids: string[]) => {
+    const res = await removeJobs(ids);
     setNotice(
       res.error
         ? { kind: "err", text: res.error }
@@ -121,9 +149,14 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
           ? { kind: "err", text: p.removedNone }
           : { kind: "ok", text: res.removed === 1 ? p.removedOne : fill(p.removedN, { n: fmt(res.removed) }) },
     );
+    setTimeout(() => setNotice(null), 6000);
+  };
+
+  const bulkDelete = async () => {
+    if (selectedDeletable.length === 0) return;
+    await removeIds(selectedDeletable);
     setChecked(new Set());
     setArmDelete(false);
-    setTimeout(() => setNotice(null), 6000);
   };
 
   const doCancel = async (job: PublishJob) => {
@@ -238,6 +271,7 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
                     checked={checked.has(entry.job.job_id)}
                     onToggle={() => toggle(entry.job.job_id)}
                     onCancel={() => void doCancel(entry.job)}
+                    onOpen={() => setOpenId(entry.job.job_id)}
                     busy={busy}
                   />
                 ) : (
@@ -288,16 +322,31 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
           </div>
         </div>
       )}
+
+      {openJob && (
+        <PostDetailDialog
+          key={openJob.job_id}
+          job={openJob}
+          destination={displayName(openJob)}
+          chip={statusChip(openJob, p.status)}
+          onClose={() => setOpenId(null)}
+          onChanged={() => void refresh(true)}
+          onRemove={(id) => {
+            setOpenId(null);
+            void removeIds([id]);
+          }}
+        />
+      )}
     </div>
   );
 }
 
 function legacyChip(post: LocationPost, c: StatusDict): Chip {
-  if (post.status === "published") return { label: c.published, cls: "bg-[#e7f8ef] text-[#0c7a43]" };
-  if (post.status === "scheduled") return { label: c.scheduled, cls: "bg-amber-500/15 text-amber-700 dark:text-amber-400" };
-  if (post.status === "failed") return { label: c.failed, cls: "bg-red-500/10 text-red-700 dark:text-red-400" };
-  if (post.status === "archived") return { label: c.archived, cls: "bg-ink/[0.05] text-ink/45 dark:bg-fog/[0.07] dark:text-fog/45" };
-  return { label: c.draft, cls: "bg-ink/[0.05] text-ink/45 dark:bg-fog/[0.07] dark:text-fog/45" };
+  if (post.status === "published") return { label: c.published, cls: GREEN };
+  if (post.status === "scheduled") return { label: c.scheduled, cls: AMBER };
+  if (post.status === "failed") return { label: c.failed, cls: RED };
+  if (post.status === "archived") return { label: c.archived, cls: GREY };
+  return { label: c.draft, cls: GREY };
 }
 
 /** A Google post from the old per-branch flow. It never passed through the
@@ -362,6 +411,7 @@ function PostCard({
   checked,
   onToggle,
   onCancel,
+  onOpen,
   busy,
 }: {
   job: PublishJob;
@@ -369,6 +419,7 @@ function PostCard({
   checked: boolean;
   onToggle: () => void;
   onCancel: () => void;
+  onOpen: () => void;
   busy: boolean;
 }) {
   const { t, locale } = useI18n();
@@ -386,7 +437,12 @@ function PostCard({
 
   return (
     <div className="group flex w-full flex-col overflow-hidden rounded-[2px] border border-ink/[0.06] bg-white text-left dark:border-fog/[0.07] dark:bg-ink">
-      <div className="relative block aspect-video overflow-hidden bg-ink/[0.04] dark:bg-fog/[0.06]">
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={`${c.detail.title}: ${destination}`}
+        className="relative block aspect-video w-full overflow-hidden bg-ink/[0.04] text-left focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:bg-fog/[0.06]"
+      >
         <JobThumb url={job.media_url} platform={platform} />
         <span className="absolute left-2 top-2 rounded-[2px] bg-white/90 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-deep-violet dark:bg-ink/85">
           {meta?.label ?? c.postFallback}
@@ -401,7 +457,7 @@ function PostCard({
             </span>
           )}
         </span>
-      </div>
+      </button>
       <div className="flex flex-1 flex-col p-3.5">
         <span className="truncate text-[13px] font-bold text-ink dark:text-fog">{destination}</span>
         <span className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/55 dark:text-fog/55">
@@ -412,7 +468,22 @@ function PostCard({
             {job.last_error}
           </span>
         )}
+        {typeof job.result?.delete_error === "string" && (
+          <span
+            className="mt-1 line-clamp-2 text-[11px] font-medium text-red-600 dark:text-red-400"
+            title={job.result.delete_error}
+          >
+            {c.deleteFailed}
+          </span>
+        )}
         <span className="mt-auto flex flex-wrap items-center gap-1.5 pt-3">
+          <button
+            type="button"
+            onClick={onOpen}
+            className="rounded-[2px] border border-ink/[0.1] px-2 py-0.5 text-[10px] font-semibold text-ink/60 transition hover:bg-ink/[0.04] dark:border-fog/[0.12] dark:text-fog/60"
+          >
+            {c.detail.open}
+          </button>
           {removable && (
             <label className="flex cursor-pointer items-center gap-1.5 rounded-[2px] bg-ink/[0.05] px-2 py-1 text-[10px] font-semibold text-ink/60 dark:bg-fog/[0.07] dark:text-fog/60">
               <input

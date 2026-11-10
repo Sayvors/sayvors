@@ -28,7 +28,12 @@ export interface PublishJob {
   result: Record<string, unknown> | null;
   batch_id?: string | null;
   caption?: string | null;
+  description?: string | null;
   media_url?: string | null;
+  cta_type?: string | null;
+  cta_url?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
   /** When the post is due to be taken down again (a promotional post
    * with an end date). */
   delete_at?: string | null;
@@ -104,8 +109,15 @@ export function usePublishJobs() {
       if (cancelled) return;
       const byAsset = new Map<string, string>();
       [...set.social, ...set.google].forEach((t) => {
-        const idx = t.id.indexOf(":");
-        if (idx !== -1) byAsset.set(`${t.platform}:${t.id.slice(idx + 1)}`, t.name);
+        // A Google job names its branch by location id. The target row is
+        // keyed by the channel id, so Google targets are indexed by location.
+        const raw =
+          t.platform === "google_reviews"
+            ? (t.locationId ?? null)
+            : t.id.includes(":")
+              ? t.id.slice(t.id.indexOf(":") + 1)
+              : null;
+        if (raw) byAsset.set(`${t.platform}:${raw}`, t.name);
       });
       setNames(byAsset);
     })();

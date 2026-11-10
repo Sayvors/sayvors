@@ -34,9 +34,12 @@ from ...jobs.models import Job, JobStatus
 from ...jobs.service import submit_job
 from ...jobs.types import JobType
 from ...team.context import tenant_id_of
+from ..google_reviews import GoogleReviewsError
+from ..meta.providers.google_post_fields import build_post_fields, parse_instant, topic_type_for
 from ..meta.providers.google_publish import GoogleBusinessPublisher
 from ..models import Channel
 from ..service import channel_location_ids, encrypt_token, decrypt_token
+from .service import schedule_removal
 
 logger = logging.getLogger(__name__)
 
@@ -221,6 +224,44 @@ class JobOut(BaseModel):
     # second round trip to the provider.
     caption: str | None = None
     media_url: str | None = None
+    # The rest of what the post was asked to be, so the details view and the
+    # edit form show the same values the job was created with.
+    description: str | None = None
+    cta_type: str | None = None
+    cta_url: str | None = None
+    start_date: str | None = None
+    end_date: str | None = None
+
+
+def _to_out(job_row: Job) -> JobOut:
+    """Every JobOut field, read from the job row and its payload.
+
+    The feed, the status poll and the edit endpoints all build the response
+    the same way, so a field added to JobOut appears everywhere at once.
+    """
+    payload = job_row.payload or {}
+    return JobOut(
+        job_id=job_row.id,
+        status=job_row.status,
+        lane=job_row.lane,
+        created_at=job_row.created_at.isoformat(),
+        platform=payload.get("platform"),
+        method=payload.get("method"),
+        external_asset_id=payload.get("external_asset_id"),
+        scheduled_at=payload.get("scheduled_at"),
+        delete_at=payload.get("delete_at"),
+        result=job_row.result,
+        last_error=job_row.last_error,
+        updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
+        batch_id=payload.get("batch_id"),
+        caption=payload.get("caption"),
+        description=payload.get("description"),
+        media_url=payload.get("media_url"),
+        cta_type=payload.get("cta_type"),
+        cta_url=payload.get("cta_url"),
+        start_date=payload.get("start_date"),
+        end_date=payload.get("end_date"),
+    )
 
 
 @router.post("/publish", response_model=list[JobOut])
@@ -259,6 +300,18 @@ async def publish_post(
                             "remove it or attach an image"
                         ),
                     )
+
+    # A Google post is text, an image, or both. A post with neither is refused
+    # by Google after the job has run, so it is turned away here instead.
+    if body.media_url is None and not (body.caption.strip() or body.description.strip()):
+        for dest in body.destinations:
+            if dest.platform == "google_reviews" and any(
+                m in {"update", "event", "offer"} for m in dest.methods
+            ):
+                raise HTTPException(
+                    status_code=422,
+                    detail="a Google post needs a caption, a description or an image",
+                )
 
     # Create every job in a single transaction. A partial failure (e.g. a
     # duplicate idempotency key, or a constraint violation) rolls back the
@@ -310,22 +363,7 @@ async def publish_post(
                     subject_id=str(uuid.uuid4()),
                     lane_key=f"{tenant_id}:{platform}:{asset_id}:{method}",
                 )
-                jobs_out.append(
-                    JobOut(
-                        job_id=job.id,
-                        status=job.status,
-                        lane=job.lane,
-                        created_at=job.created_at.isoformat(),
-                        platform=platform,
-                        method=method,
-                        external_asset_id=asset_id,
-                        scheduled_at=body.scheduled_at,
-                        delete_at=body.delete_at,
-                        batch_id=body.batch_id,
-                        caption=body.caption or None,
-                        media_url=body.media_url,
-                    )
-                )
+                jobs_out.append(_to_out(job))
         await db.commit()
     except ValueError as e:
         await db.rollback()
@@ -407,23 +445,7 @@ async def list_publish_jobs(
         payload = job_row.payload or {}
         if platform and payload.get("platform") != platform:
             continue
-        out.append(
-            JobOut(
-                job_id=job_row.id,
-                status=job_row.status,
-                lane=job_row.lane,
-                created_at=job_row.created_at.isoformat(),
-                platform=payload.get("platform"),
-                method=payload.get("method"),
-                external_asset_id=payload.get("external_asset_id"),
-                result=job_row.result,
-                last_error=job_row.last_error,
-                updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
-                batch_id=payload.get("batch_id"),
-                caption=payload.get("caption"),
-                media_url=payload.get("media_url"),
-            )
-        )
+        out.append(_to_out(job_row))
     return out
 
 
@@ -613,47 +635,51 @@ async def batch_delete_published_posts(
             await db.commit()
             continue
 
-        if post_id and access_token is not None:
-            # Call provider delete.
-            if platform == "google_reviews":
-                publisher = GoogleBusinessPublisher(access_token or "", refresh_token)
-                try:
-                    r = await publisher.delete_post(access_token or "", post_id)
-                    job_row.result = {**(job_row.result or {}), "deleted": True, "delete_results": [r]}
-                except Exception as e:
-                    job_row.result = {**(job_row.result or {}), "delete_error": str(e)[:200]}
+        # Delete on the platform. Only a real deletion may mark the row as
+        # deleted: when Google refuses, the post is still live, and the feed
+        # must keep saying so instead of reporting a removal that did not happen.
+        failure: str | None = None
+        if not post_id:
+            failure = "the job has no recorded platform post id"
+        elif access_token is None:
+            failure = "the channel for this post is not connected"
+        elif platform == "google_reviews":
+            publisher = GoogleBusinessPublisher(access_token, refresh_token)
+            try:
+                r = await publisher.delete_post(access_token, post_id)
+                job_row.result = {
+                    **(job_row.result or {}),
+                    "deleted": True,
+                    "delete_results": [r],
+                }
+            except Exception as e:
+                failure = str(e)[:200]
+            finally:
+                await publisher.close()
+        else:
+            provider = _provider_for(platform)
+            if provider is None:
+                failure = f"delete is not supported for {platform}"
             else:
-                provider = _provider_for(platform)
-                if provider is not None:
-                    try:
-                        r = await provider.delete_post(access_token or "", post_id)
-                        job_row.result = {**(job_row.result or {}), "deleted": True, "delete_results": [r]}
-                    except Exception as e:
-                        job_row.result = {**(job_row.result or {}), "delete_error": str(e)[:200]}
+                try:
+                    r = await provider.delete_post(access_token, post_id)
+                    job_row.result = {
+                        **(job_row.result or {}),
+                        "deleted": True,
+                        "delete_results": [r],
+                    }
+                except Exception as e:
+                    failure = str(e)[:200]
+
+        if failure is not None:
+            job_row.result = {**(job_row.result or {}), "delete_error": failure}
+            await db.commit()
+            continue
 
         job_row.status = "cancelled"
-        job_row.last_error = "deleted by user"
+        job_row.last_error = "deleted from the platform by user"
         await db.commit()
-
-        out.append(
-            JobOut(
-                job_id=job_row.id,
-                status=job_row.status,
-                lane=job_row.lane,
-                created_at=job_row.created_at.isoformat(),
-                platform=platform,
-                method=payload.get("method"),
-                external_asset_id=external_asset_id,
-                scheduled_at=payload.get("scheduled_at"),
-                delete_at=payload.get("delete_at"),
-                result=job_row.result,
-                last_error=job_row.last_error,
-                updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
-                batch_id=payload.get("batch_id"),
-                caption=payload.get("caption"),
-                media_url=payload.get("media_url"),
-            )
-        )
+        out.append(_to_out(job_row))
 
     if not out:
         raise HTTPException(status_code=409, detail="no jobs could be deleted or cancelled")
@@ -902,6 +928,7 @@ async def delete_published_post(
         )
 
     delete_results: list[dict] = []
+    failure: str | None = None
     if platform == "google_reviews":
         publisher = GoogleBusinessPublisher(access_token or "", refresh_token)
         if channel is not None:
@@ -918,39 +945,38 @@ async def delete_published_post(
             publisher.set_token_persister(_persist)
             publisher.set_known_expiry(channel.token_expires_at)
         try:
-            r = await publisher.delete_post(access_token or "", post_id)
-            delete_results.append(r)
+            delete_results.append(await publisher.delete_post(access_token or "", post_id))
         except Exception as e:
-            delete_results.append({"error": str(e)[:200], "platform": platform})
+            failure = str(e)[:200]
+        finally:
+            await publisher.close()
     else:
         try:
-            r = await provider.delete_post(access_token or "", post_id)
-            delete_results.append(r)
+            delete_results.append(await provider.delete_post(access_token or "", post_id))
         except Exception as e:
-            delete_results.append({"error": str(e)[:200], "platform": platform})
+            failure = str(e)[:200]
+
+    if failure is not None:
+        # Google still has the post, so it stays published in the feed. The
+        # reason is recorded and returned instead of a fake "Cancelled".
+        job_row.result = {**(job_row.result or {}), "delete_error": failure}
+        await db.commit()
+        raise HTTPException(
+            status_code=502,
+            detail=f"the platform did not delete the post: {failure}",
+        )
 
     # Record the deletion in the job result.
-    job_row.result = {**(job_row.result or {}), "deleted": True, "delete_results": delete_results}
+    job_row.result = {
+        **(job_row.result or {}),
+        "deleted": True,
+        "delete_results": delete_results,
+    }
     job_row.status = "cancelled"
-    job_row.last_error = "deleted by user"
+    job_row.last_error = "deleted from the platform by user"
     await db.commit()
 
-    payload = job_row.payload or {}
-    return JobOut(
-        job_id=job_row.id,
-        status=job_row.status,
-        lane=job_row.lane,
-        created_at=job_row.created_at.isoformat(),
-        platform=payload.get("platform"),
-        method=payload.get("method"),
-        external_asset_id=payload.get("external_asset_id"),
-        result=job_row.result,
-        last_error=job_row.last_error,
-        updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
-        batch_id=payload.get("batch_id"),
-        caption=payload.get("caption"),
-        media_url=payload.get("media_url"),
-    )
+    return _to_out(job_row)
 
 
 @router.post("/publish/{job_id}/cancel", response_model=JobOut)
@@ -1001,6 +1027,315 @@ async def cancel_publish_job(
     )
 
 
+class PublishEditBody(BaseModel):
+    """Changes to one publish job. Only the fields sent are changed, and an
+    explicit null clears an optional field (a removal date, a button)."""
+
+    caption: str | None = Field(None, max_length=5000)
+    description: str | None = Field(None, max_length=5000)
+    cta_type: str | None = Field(None, max_length=32)
+    cta_url: str | None = Field(None, max_length=1000)
+    start_date: str | None = None
+    end_date: str | None = None
+    scheduled_at: str | None = None
+    delete_at: str | None = None
+
+
+_EDITABLE_KEYS = (
+    "caption", "description", "cta_type", "cta_url",
+    "start_date", "end_date", "scheduled_at", "delete_at",
+)
+_DATE_KEYS = ("start_date", "end_date", "scheduled_at", "delete_at")
+# Edits that change what Google shows: text, button or the event/offer window.
+_GOOGLE_CONTENT_KEYS = {
+    "caption", "description", "cta_type", "cta_url", "start_date", "end_date",
+}
+# Google formats an edit can push. "post" is the legacy name for What's New.
+_GOOGLE_EDITABLE_METHODS = {"update", "post", "event", "offer"}
+# Jobs that have not reached the platform yet: every field can change.
+_NOT_YET_PUBLISHED = {"accepted", "queued", "retrying", "blocked"}
+# A removal that can still be moved or cancelled. A running one is in flight.
+_REMOVAL_OPEN = {"accepted", "queued", "retrying", "blocked"}
+
+
+async def _load_publish_job(db: AsyncSession, tenant_id: str, job_id: str) -> Job:
+    """The tenant's publish job, row-locked so two edits cannot interleave."""
+    job_row = (
+        await db.execute(
+            select(Job)
+            .where(Job.id == job_id, Job.tenant_id == tenant_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if job_row is None:
+        raise HTTPException(status_code=404, detail="Publish job not found")
+    return job_row
+
+
+def _merge_edit(payload: dict, changes: dict) -> dict:
+    """The payload with the changes applied.
+
+    Blank text becomes None and dates are stored as normalised UTC ISO text,
+    so an edited job reads the same as one created with those values.
+    """
+    merged = dict(payload)
+    for key in _EDITABLE_KEYS:
+        if key not in changes:
+            continue
+        value = changes[key]
+        if isinstance(value, str):
+            value = value.strip() or None
+        if value is not None and key in _DATE_KEYS:
+            value = parse_instant(value).isoformat()
+        if key == "cta_type" and value is not None:
+            value = value.lower()
+        merged[key] = value
+    return merged
+
+
+def _check_edit_dates(
+    merged: dict, changes: dict, now: datetime, queued: bool
+) -> None:
+    """A removal must be in the future and after the post goes out, a schedule
+    must be in the future, and an event must end after it starts."""
+    scheduled = parse_instant(merged.get("scheduled_at"))
+    delete = parse_instant(merged.get("delete_at"))
+    if queued and "scheduled_at" in changes and scheduled is not None and scheduled <= now:
+        raise ValueError("scheduled_at must be in the future")
+    if "delete_at" in changes and delete is not None and delete <= now:
+        raise ValueError("delete_at must be in the future")
+    if delete is not None and ("delete_at" in changes or "scheduled_at" in changes):
+        # The moment the post is actually out: a future schedule, or now when
+        # it goes immediately (or its scheduled time has already passed).
+        publish_at = scheduled if scheduled is not None and scheduled > now else now
+        if delete <= publish_at:
+            raise ValueError("delete_at must be after the time the post goes out")
+    start = parse_instant(merged.get("start_date"))
+    end = parse_instant(merged.get("end_date"))
+    if start is not None and end is not None and end <= start:
+        raise ValueError("end_date must be after start_date")
+
+
+async def _removal_job_for(
+    db: AsyncSession, tenant_id: str, publish_job_id: str
+) -> Job | None:
+    """The removal job scheduled for a publish job, if there is one."""
+    return (
+        await db.execute(
+            select(Job).where(
+                Job.tenant_id == tenant_id,
+                Job.idempotency_key == f"post-delete:{publish_job_id}",
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def _google_publisher_for(
+    db: AsyncSession, tenant_id: str, job_row: Job
+) -> tuple[GoogleBusinessPublisher, str]:
+    """A publisher for the job's Google location, and the post's resource name."""
+    payload = job_row.payload or {}
+    asset = str(payload.get("external_asset_id") or "")
+    post_name = str((job_row.result or {}).get("name") or (job_row.result or {}).get("id") or "")
+    if "/localPosts/" not in post_name:
+        raise HTTPException(
+            status_code=409, detail="this post has no Google post id on record"
+        )
+    rows = (
+        await db.execute(
+            select(Channel).where(
+                Channel.user_id == tenant_id,
+                Channel.platform == "google_reviews",
+                Channel.status == "active",
+            )
+        )
+    ).scalars().all()
+    channel = next((ch for ch in rows if asset in channel_location_ids(ch)), None)
+    if channel is None:
+        raise HTTPException(
+            status_code=409, detail="the Google location for this post is not connected"
+        )
+    publisher = GoogleBusinessPublisher(
+        decrypt_token(channel.access_token) if channel.access_token else "",
+        decrypt_token(channel.refresh_token) if channel.refresh_token else None,
+    )
+    publisher.set_known_expiry(channel.token_expires_at)
+
+    async def _persist(new_access_token: str, new_expires_at) -> None:
+        channel.access_token = encrypt_token(new_access_token)
+        channel.token_expires_at = new_expires_at
+        db.add(channel)
+        try:
+            await db.commit()
+        except Exception as e:
+            logger.error("Failed to persist refreshed Google token: %s", e)
+            await db.rollback()
+
+    publisher.set_token_persister(_persist)
+    return publisher, post_name
+
+
+@router.patch("/publish/{job_id}", response_model=JobOut)
+async def edit_publish_job(
+    job_id: str,
+    body: PublishEditBody,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Edit one publish job.
+
+    Before it goes out, every field can change. Once a Google post is live,
+    its text, button and event/offer window are pushed to Google and its
+    removal date can move. Anything that cannot change on the platform is
+    refused with the reason, and a Google failure leaves the job unchanged.
+    """
+    tenant_id = tenant_id_of(user)
+    job_row = await _load_publish_job(db, tenant_id, job_id)
+    changes = body.model_dump(exclude_unset=True)
+    if not changes:
+        return _to_out(job_row)
+    payload = dict(job_row.payload or {})
+    platform = payload.get("platform")
+    method = payload.get("method", "post")
+    now = datetime.now(timezone.utc)
+    queued = job_row.status in _NOT_YET_PUBLISHED
+    if not queued and job_row.status != "succeeded":
+        raise HTTPException(
+            status_code=409,
+            detail=f"job is in '{job_row.status}' state; nothing can be edited",
+        )
+    if not queued and "scheduled_at" in changes:
+        # It is already on the platform; a new schedule would only change the
+        # stored payload while Google keeps publishing (or already published)
+        # the post at the old time.
+        raise HTTPException(
+            status_code=409,
+            detail="a published post cannot be scheduled again",
+        )
+    try:
+        merged = _merge_edit(payload, changes)
+        _check_edit_dates(merged, changes, now, queued)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+    if queued:
+        job_row.payload = merged
+        await db.commit()
+        return _to_out(job_row)
+
+    # A published post: its text, button and window are on the platform, and
+    # its removal is Sayvors' own job. Checks run before anything is changed.
+    removal = None
+    if "delete_at" in changes:
+        removal = await _removal_job_for(db, tenant_id, job_row.id)
+        if removal is not None and removal.status not in _REMOVAL_OPEN:
+            raise HTTPException(
+                status_code=409,
+                detail=f"the removal is already {removal.status}; it cannot be moved",
+            )
+
+    if _GOOGLE_CONTENT_KEYS & set(changes):
+        if platform != "google_reviews" or method not in _GOOGLE_EDITABLE_METHODS:
+            raise HTTPException(
+                status_code=409,
+                detail=f"published {platform} posts cannot be edited here; only the removal date can change",
+            )
+        if not (merged.get("caption") or merged.get("description") or payload.get("media_url")):
+            raise HTTPException(
+                status_code=422,
+                detail="a Google post needs a caption, a description or an image",
+            )
+        publisher, post_name = await _google_publisher_for(db, tenant_id, job_row)
+        window_src = (job_row.result or {}).get("window") or {}
+        try:
+            built = build_post_fields(
+                topic=topic_type_for(method),
+                caption=merged.get("caption"),
+                description=merged.get("description"),
+                cta_type=merged.get("cta_type"),
+                cta_url=merged.get("cta_url"),
+                start=parse_instant(merged.get("start_date") or window_src.get("start")),
+                end=parse_instant(merged.get("end_date") or window_src.get("end")),
+                coupon_code=None,
+                terms=None,
+                now=now,
+            )
+            # A cleared caption must clear the text on Google too; without the
+            # explicit null, Google keeps the old summary.
+            fields = dict(built.fields)
+            fields.setdefault("summary", None)
+            updated = await publisher.update_post(post_name, fields)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
+        except GoogleReviewsError as e:
+            raise HTTPException(
+                status_code=502, detail=f"Google did not accept the change: {e}"
+            ) from e
+        finally:
+            await publisher.close()
+        result = dict(job_row.result or {})
+        result.update(updated)
+        if built.window:
+            result["window"] = {
+                "start": built.window[0].isoformat(),
+                "end": built.window[1].isoformat(),
+            }
+        job_row.result = result
+
+    if "delete_at" in changes:
+        when = parse_instant(merged.get("delete_at"))
+        if when is None:
+            if removal is not None:
+                removal.status = "cancelled"
+                removal.last_error = "removal date cleared by user"
+        elif removal is None:
+            await schedule_removal(
+                db, tenant_id=tenant_id, publish_job=job_row, delete_at=when
+            )
+        else:
+            removal.next_run_at = when
+
+    job_row.payload = merged
+    await db.commit()
+    return _to_out(job_row)
+
+
+@router.post("/publish/{job_id}/refresh", response_model=JobOut)
+async def refresh_publish_job(
+    job_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Read a published Google post back and record what Google reports now.
+
+    A post Google no longer holds (removed, or expired) is recorded as GONE so
+    the feed stops calling it live. Any other Google failure is raised, not
+    recorded as a state.
+    """
+    tenant_id = tenant_id_of(user)
+    job_row = await _load_publish_job(db, tenant_id, job_id)
+    payload = job_row.payload or {}
+    if job_row.status != "succeeded" or payload.get("platform") != "google_reviews":
+        raise HTTPException(
+            status_code=409,
+            detail="only a published Google post can be checked on Google",
+        )
+    publisher, post_name = await _google_publisher_for(db, tenant_id, job_row)
+    try:
+        current = await publisher.get_post(post_name)
+    except GoogleReviewsError as e:
+        if e.status_code != 404:
+            raise HTTPException(
+                status_code=502, detail=f"Google could not be reached: {e}"
+            ) from e
+        current = {"state": "GONE"}
+    finally:
+        await publisher.close()
+    job_row.result = {**(job_row.result or {}), **current}
+    await db.commit()
+    return _to_out(job_row)
+
+
 @router.get("/publish/{job_id}", response_model=JobOut)
 async def publish_status(
     job_id: str,
@@ -1015,16 +1350,4 @@ async def publish_status(
     job_row = job.scalar_one_or_none()
     if not job_row:
         raise HTTPException(status_code=404, detail="Publish job not found")
-    payload = job_row.payload or {}
-    return JobOut(
-        job_id=job_row.id,
-        status=job_row.status,
-        lane=job_row.lane,
-        created_at=job_row.created_at.isoformat(),
-        platform=payload.get("platform"),
-        method=payload.get("method"),
-        external_asset_id=payload.get("external_asset_id"),
-        result=job_row.result,
-        last_error=job_row.last_error,
-        updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
-    )
+    return _to_out(job_row)
