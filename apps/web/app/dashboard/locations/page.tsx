@@ -170,115 +170,136 @@ function GoogleCurrentPanel({
 }) {
   const value = current ? (current as Record<string, unknown>)[section] : undefined;
   if (value === undefined || value === null) return null;
-  const body = renderGoogleCurrent(section, value, copy);
-  if (!body) return null;
+  const lines = googleCurrentLines(section, value, copy);
+  if (!lines.length) return null;
   return (
     <div className="rounded-[2px] border border-sky-500/20 bg-sky-500/[0.05] p-3">
       <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-sky-700 dark:text-sky-300">
         {copy.currentOnGoogle}
       </p>
-      <div className="mt-1.5 space-y-1 text-[12px] text-ink/70 dark:text-fog/70">{body}</div>
+      <ul className="mt-1.5 space-y-0.5 text-[12px] text-ink/70 dark:text-fog/70">
+        {lines.map((line, i) => (
+          <li key={i} className="whitespace-pre-wrap break-words">{line}</li>
+        ))}
+      </ul>
     </div>
   );
 }
 
-function renderGoogleCurrent(
-  section: string,
-  value: unknown,
-  copy: LocationsCopy,
-): React.ReactNode {
-  if (typeof value === "string") {
-    return <p className="whitespace-pre-wrap break-words">{value}</p>;
+/** Picks the single-branch or the bulk panel for one section. */
+function CurrentPanel({
+  section,
+  current,
+  bulkRows,
+  copy,
+}: {
+  section: string;
+  current?: GoogleCurrent;
+  bulkRows?: Record<string, { id: string; name: string; lines: string[] }[]>;
+  copy: LocationsCopy;
+}) {
+  // An empty map means "not a bulk scope" — it must not win over the
+  // single-branch panel.
+  if (bulkRows && Object.keys(bulkRows).length > 0) {
+    return <BulkGoogleCurrentPanel section={section} rows={bulkRows[section]} copy={copy} />;
   }
-  if (section === "categories") {
-    const cats = value as { primary?: string; additional?: string[] };
-    return (
-      <ul className="space-y-0.5">
-        {cats.primary ? <li>{cats.primary}</li> : null}
-        {(cats.additional ?? []).map((c) => (
-          <li key={c} className="text-ink/55 dark:text-fog/55">{c}</li>
-        ))}
-      </ul>
-    );
-  }
-  if (section === "hours.regular") {
-    const hours = value as Record<string, { open: string; close: string; closed: boolean; all_day?: boolean }>;
-    return (
-      <ul className="space-y-0.5">
-        {HOURS_DAYS.map((day) => {
-          const entry = hours[day];
-          if (!entry) return null;
-          return (
-            <li key={day} className="flex gap-2">
-              <span className="w-24 shrink-0">{dayLabel(day, copy)}</span>
-              <span className="text-ink/60 dark:text-fog/60">
-                {entry.closed ? copy.closedOnGoogle : entry.all_day ? copy.open24h : `${entry.open}�${entry.close}`}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
-    );
-  }
-  if (section === "hours.special" || section === "hours.more") {
-    const rows = value as { date?: string; hours?: string; type?: string; open?: string; close?: string }[];
-    if (!Array.isArray(rows) || rows.length === 0) return null;
-    return (
-      <ul className="space-y-0.5">
-        {rows.map((row, i) => (
-          <li key={i}>
-            {row.date ? `${row.date} � ` : ""}
-            {row.type ? `${row.type} � ` : ""}
-            {row.hours ?? (row.open ? `${row.open}�${row.close}` : "")}
+  return <GoogleCurrentPanel section={section} current={current} copy={copy} />;
+}
+
+/** The same panel for a bulk scope: every branch's live value, in one box. */
+function BulkGoogleCurrentPanel({
+  section,
+  rows,
+  copy,
+}: {
+  section: string;
+  rows?: { id: string; name: string; lines: string[] }[];
+  copy: LocationsCopy;
+}) {
+  if (!rows || rows.length === 0) return null;
+  return (
+    <div className="rounded-[2px] border border-sky-500/20 bg-sky-500/[0.05] p-3">
+      <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-sky-700 dark:text-sky-300">
+        {copy.currentOnGoogle}
+      </p>
+      <ul className="mt-1.5 space-y-1 text-[12px] text-ink/70 dark:text-fog/70">
+        {rows.map((row) => (
+          <li key={row.id}>
+            <span className="font-semibold text-ink dark:text-fog">{row.name}</span>
+            <span className="text-ink/55 dark:text-fog/55"> \u2014 {row.lines.join(" \u00b7 ")}</span>
           </li>
         ))}
       </ul>
-    );
+    </div>
+  );
+}
+
+function googleCurrentLines(
+  section: string,
+  value: unknown,
+  copy: LocationsCopy,
+): string[] {
+  if (typeof value === "string") {
+    return value.trim() ? [value] : [];
+  }
+  if (section === "categories") {
+    const cats = value as { primary?: string; additional?: string[] };
+    return [
+      ...(cats.primary ? [cats.primary] : []),
+      ...(cats.additional ?? []).filter(Boolean),
+    ];
+  }
+  if (section === "hours.regular") {
+    const hours = value as Record<string, { open: string; close: string; closed: boolean; all_day?: boolean }>;
+    return HOURS_DAYS.map((day) => {
+      const entry = hours[day];
+      if (!entry) return "";
+      const span = entry.closed
+        ? copy.closedOnGoogle
+        : entry.all_day
+          ? copy.open24h
+          : `${entry.open}-${entry.close}`;
+      return `${dayLabel(day, copy)}: ${span}`;
+    }).filter(Boolean);
+  }
+  if (section === "hours.special" || section === "hours.more") {
+    const rows = value as { date?: string; hours?: string; type?: string; open?: string; close?: string }[];
+    if (!Array.isArray(rows)) return [];
+    return rows.map((row) => {
+      const parts = [
+        row.date ? row.date : "",
+        row.type ? row.type : "",
+        row.hours ?? (row.open ? `${row.open}-${row.close}` : ""),
+      ].filter(Boolean);
+      return parts.join(" \u00b7 ");
+    }).filter(Boolean);
   }
   if (section === "service_area") {
     const area = value as { places?: { placeInfos?: { name?: string }[] }; regions?: { regionCode?: string }[] };
-    const names = [
+    return [
       ...(area.places?.placeInfos ?? []).map((p) => p.name ?? ""),
       ...(area.regions ?? []).map((r) => r.regionCode ?? ""),
     ].filter(Boolean);
-    if (names.length === 0) return null;
-    return <p>{names.join(", ")}</p>;
   }
   if (section === "attributes") {
     const attrs = value as Record<string, string>;
-    const entries = Object.entries(attrs ?? {});
-    if (entries.length === 0) return null;
-    return (
-      <ul className="space-y-0.5">
-        {entries.map(([k, v]) => (
-          <li key={k}>{k}: {v}</li>
-        ))}
-      </ul>
-    );
+    return Object.entries(attrs ?? {}).map(([k, v]) => `${k}: ${v}`);
   }
   if (section === "services") {
     const items = value as { name: string }[];
-    if (!Array.isArray(items) || items.length === 0) return null;
-    return (
-      <ul className="space-y-0.5">
-        {items.map((item, i) => (
-          <li key={`${item.name}-${i}`}>{item.name}</li>
-        ))}
-      </ul>
-    );
+    if (!Array.isArray(items)) return [];
+    return items.map((item) => item.name).filter(Boolean);
   }
   if (section === "address") {
     const addr = value as { addressLines?: string[]; locality?: string; regionCode?: string };
-    const parts = [...(addr.addressLines ?? []), addr.locality, addr.regionCode].filter(Boolean);
-    if (parts.length === 0) return null;
-    return <p>{parts.join(", ")}</p>;
+    return [[...(addr.addressLines ?? []), addr.locality, addr.regionCode].filter(Boolean).join(", ")];
   }
   if (section === "opening_date") {
     const date = value as { year?: number; month?: number; day?: number };
-    if (!date?.year) return null;
-    return <p>{`${date.year}-${String(date.month ?? 0).padStart(2, "0")}-${String(date.day ?? 0).padStart(2, "0")}`}</p>;
+    if (!date?.year) return [];
+    return [`${date.year}-${String(date.month ?? 0).padStart(2, "0")}-${String(date.day ?? 0).padStart(2, "0")}`];
   }
-  return null;
+  return [];
 }
 
 function SourceBadge({
@@ -882,6 +903,35 @@ const bulk: BulkScope | null = isBulk
     { key: "services", label: copy.tabServices },
   ];
 
+  // What Google shows today, per branch, for the whole bulk scope. A bulk
+  // save changes every branch at once, so the merchant needs to see each
+  // branch's live value before they change it.
+  const bulkCurrent = useMemo(() => {
+    const out: Record<string, { id: string; name: string; lines: string[] }[]> = {};
+    if (!isBulk) return out;
+    for (const branch of bulkBranches) {
+      const current = bulkProfiles[branch.id]?.google_current;
+      if (!current) continue;
+      for (const [section, value] of Object.entries(current as Record<string, unknown>)) {
+        const lines = googleCurrentLines(section, value, copy);
+        if (!lines.length) continue;
+        (out[section] ??= []).push({ id: branch.id, name: branch.name, lines });
+      }
+    }
+    return out;
+  }, [isBulk, bulkBranches, bulkProfiles, copy]);
+
+  // The live service list per branch, for the bulk scope.
+  const bulkServices = useMemo(
+    () =>
+      (bulkCurrent["services"] ?? []).map((row) => ({
+        id: row.id,
+        name: row.name,
+        services: row.lines.map((name) => ({ name })),
+      })),
+    [bulkCurrent],
+  );
+
   // Groups are shared across pages, so fetch once on mount and refresh from
   // the modal. A failure here must not block the page � groups are optional.
   useEffect(() => {
@@ -1197,7 +1247,8 @@ const bulk: BulkScope | null = isBulk
                       }
                     : null
                 }
-              />
+              
+                bulkCurrent={bulkCurrent}/>
             )}
             {activeTab === "categories" && (
               <CategoriesTab
@@ -1217,7 +1268,8 @@ const bulk: BulkScope | null = isBulk
                       ])
                     : saveProfile({ categories: patch }, copy.categoriesSaved)
                 }
-              />
+              
+                bulkCurrent={bulkCurrent}/>
             )}
             {activeTab === "hours" && (
               <HoursTab
@@ -1233,7 +1285,8 @@ const bulk: BulkScope | null = isBulk
                     ? bulkSaveProfile(copy.tabHours, { hours: { regular } }, describeHours(regular, copy))
                     : saveProfile({ hours: { regular } }, copy.hoursSaved)
                 }
-              />
+              
+                bulkCurrent={bulkCurrent}/>
             )}
             {activeTab === "special-hours" && (
               <SpecialHoursTab
@@ -1254,7 +1307,8 @@ const bulk: BulkScope | null = isBulk
                       ])
                     : saveProfile({ hours: { special } }, copy.specialHoursSaved)
                 }
-              />
+              
+                bulkCurrent={bulkCurrent}/>
             )}
             {activeTab === "more-hours" && (
               <MoreHoursTab
@@ -1278,7 +1332,8 @@ const bulk: BulkScope | null = isBulk
                       ])
                     : saveProfile({ hours: { more } }, copy.moreHoursSaved)
                 }
-              />
+              
+                bulkCurrent={bulkCurrent}/>
             )}
             {activeTab === "service-area" && (
               <ServiceAreaTab
@@ -1298,7 +1353,8 @@ const bulk: BulkScope | null = isBulk
                       ])
                     : saveProfile({ service_area }, copy.serviceAreaSaved)
                 }
-              />
+              
+                bulkCurrent={bulkCurrent}/>
             )}
             {activeTab === "attributes" && (
               <AttributesTab
@@ -1320,7 +1376,8 @@ const bulk: BulkScope | null = isBulk
                       )
                     : saveProfile({ attributes }, copy.attributesSaved)
                 }
-              />
+              
+                bulkCurrent={bulkCurrent}/>
             )}
             {activeTab === "description" && (
               <DescriptionTab
@@ -1342,7 +1399,8 @@ const bulk: BulkScope | null = isBulk
                       ])
                     : saveProfile({ description, opening_date: openingDate }, copy.descriptionSaved)
                 }
-              />
+              
+                bulkCurrent={bulkCurrent}/>
             )}
             {activeTab === "services" && (
               <ServicesPanel
@@ -1350,6 +1408,7 @@ const bulk: BulkScope | null = isBulk
                 listingId={isBulk ? undefined : snapshot?.listing_id}
                 scopeId={isBulk ? (selectedId ?? undefined) : undefined}
                 googleCurrent={!isBulk ? fullProfile?.google_current?.services : undefined}
+                bulkGoogleCurrent={isBulk ? bulkServices : undefined}
               />
             )}
           </div>
@@ -1378,6 +1437,7 @@ function DetailsTab({
   bulk,
   onBulkSave,
   copy,
+  bulkCurrent,
 }: {
   location: LocationOption | null;
   profile: LocationSnapshot | null;
@@ -1387,6 +1447,8 @@ function DetailsTab({
   bulk?: BulkScope | null;
   onBulkSave?: ((data: { phone: string; website: string }) => void) | null;
   copy: LocationsCopy;
+  bulkCurrent?: Record<string, { id: string; name: string; lines: string[] }[]>;
+
 }) {
   const displayName = fullProfile?.name ?? location?.name ?? "";
   const [name, setName] = useState(displayName);
@@ -1487,12 +1549,17 @@ function DetailsTab({
           <SourceBadge google={detailsSynced} status={detailsStatus} reason={detailsReason} copy={copy} />
         )}
       </div>
-      {!bulk && fullProfile?.google_current && (
+      {(bulk || fullProfile?.google_current) && (
         <div className="space-y-2">
-          <GoogleCurrentPanel section="name" current={fullProfile.google_current} copy={copy} />
-          <GoogleCurrentPanel section="phone" current={fullProfile.google_current} copy={copy} />
-          <GoogleCurrentPanel section="website" current={fullProfile.google_current} copy={copy} />
-          <GoogleCurrentPanel section="address" current={fullProfile.google_current} copy={copy} />
+          {(["name", "phone", "website", "address"] as const).map((section) => (
+            <CurrentPanel
+              key={section}
+              section={section}
+              current={fullProfile?.google_current}
+              bulkRows={bulkCurrent}
+              copy={copy}
+            />
+          ))}
         </div>
       )}
       {open && (
@@ -1585,7 +1652,7 @@ function DetailsTab({
   );
 }
 
-function CategoriesTab({ initial, onSave, bulk, copy, synced, status, reason, current, region }: {
+function CategoriesTab({ initial, onSave, bulk, copy, synced, status, reason, current, region, bulkCurrent}: {
   initial?: { primary?: string; additional?: string[] };
   onSave: (patch: { primary: string; additional: string[] }) => Promise<void>;
   bulk?: BulkScope | null;
@@ -1595,6 +1662,8 @@ function CategoriesTab({ initial, onSave, bulk, copy, synced, status, reason, cu
   reason?: string | null;
   current?: GoogleCurrent;
   region: string;
+  bulkCurrent?: Record<string, { id: string; name: string; lines: string[] }[]>;
+
 }) {
   const [primary, setPrimary] = useState(initial?.primary ?? "");
   const [additional, setAdditional] = useState<string[]>(initial?.additional ?? []);
@@ -1625,8 +1694,8 @@ function CategoriesTab({ initial, onSave, bulk, copy, synced, status, reason, cu
           <SourceBadge google={!!synced} status={status} reason={reason} copy={copy} />
         )}
       </div>
-      {!bulk && current && (
-        <GoogleCurrentPanel section="categories" current={current} copy={copy} />
+      {(bulk || current) && (
+        <CurrentPanel section="categories" current={current} bulkRows={bulkCurrent} copy={copy} />
       )}
       <Field label={copy.primaryCategory} varies={bulk?.varies.has("primary") ?? false}>
         <CategoryPicker value={primary} region={region} onChange={setPrimary} />
@@ -1674,7 +1743,7 @@ function CategoriesTab({ initial, onSave, bulk, copy, synced, status, reason, cu
   );
 }
 
-function HoursTab({ initial, onSave, bulk, copy, synced, status, reason, current }: {
+function HoursTab({ initial, onSave, bulk, copy, synced, status, reason, current, bulkCurrent}: {
   initial?: Record<string, { open: string; close: string; closed: boolean; all_day?: boolean }>;
   onSave: (regular: Record<string, { open: string; close: string; closed: boolean; all_day?: boolean }>) => Promise<void>;
   bulk?: BulkScope | null;
@@ -1683,6 +1752,8 @@ function HoursTab({ initial, onSave, bulk, copy, synced, status, reason, current
   status?: string | null;
   reason?: string | null;
   current?: GoogleCurrent;
+  bulkCurrent?: Record<string, { id: string; name: string; lines: string[] }[]>;
+
 }) {
   const blank = () => Object.fromEntries(HOURS_DAYS.map((d) => [d, { open: "", close: "", closed: false }]));
   const [hours, setHours] = useState<Record<string, { open: string; close: string; closed: boolean; all_day?: boolean }>>(
@@ -1728,8 +1799,8 @@ function HoursTab({ initial, onSave, bulk, copy, synced, status, reason, current
         </div>
       </div>
       <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.hoursHint}</p>
-      {!bulk && current && (
-        <GoogleCurrentPanel section="hours.regular" current={current} copy={copy} />
+      {(bulk || current) && (
+        <CurrentPanel section="hours.regular" current={current} bulkRows={bulkCurrent} copy={copy} />
       )}
       <div className="space-y-2">
         {HOURS_DAYS.map((day) => (
@@ -1783,7 +1854,7 @@ function HoursTab({ initial, onSave, bulk, copy, synced, status, reason, current
   );
 }
 
-function SpecialHoursTab({ initial, onSave, bulk, copy, synced, status, reason, current }: {
+function SpecialHoursTab({ initial, onSave, bulk, copy, synced, status, reason, current, bulkCurrent}: {
   initial?: { date: string; hours: string; reason: string }[];
   onSave: (special: { date: string; hours: string; reason: string }[]) => Promise<void>;
   bulk?: BulkScope | null;
@@ -1792,6 +1863,8 @@ function SpecialHoursTab({ initial, onSave, bulk, copy, synced, status, reason, 
   status?: string | null;
   reason?: string | null;
   current?: GoogleCurrent;
+  bulkCurrent?: Record<string, { id: string; name: string; lines: string[] }[]>;
+
 }) {
   const [entries, setEntries] = useState<{ date: string; hours: string; reason: string }[]>(initial ?? []);
   const [saving, setSaving] = useState(false);
@@ -1830,8 +1903,8 @@ function SpecialHoursTab({ initial, onSave, bulk, copy, synced, status, reason, 
         </div>
       </div>
       <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.specialHoursHint}</p>
-      {!bulk && current && (
-        <GoogleCurrentPanel section="hours.special" current={current} copy={copy} />
+      {(bulk || current) && (
+        <CurrentPanel section="hours.special" current={current} bulkRows={bulkCurrent} copy={copy} />
       )}
       {entries.map((entry, i) => (
         <div key={i} className="grid grid-cols-1 items-start gap-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 sm:grid-cols-[150px_150px_1fr_auto] dark:border-fog/[0.06] dark:bg-fog/[0.02]">
@@ -1878,7 +1951,7 @@ const serviceTypeLabel = (type: string, copy: LocationsCopy): string => {
   return key ? copy[key] : type;
 };
 
-function MoreHoursTab({ initial, onSave, bulk, copy, synced, status, reason, current }: {
+function MoreHoursTab({ initial, onSave, bulk, copy, synced, status, reason, current, bulkCurrent}: {
   initial?: { type: string; open: string; close: string }[];
   onSave: (more: { type: string; open: string; close: string }[]) => Promise<void>;
   bulk?: BulkScope | null;
@@ -1887,6 +1960,8 @@ function MoreHoursTab({ initial, onSave, bulk, copy, synced, status, reason, cur
   status?: string | null;
   reason?: string | null;
   current?: GoogleCurrent;
+  bulkCurrent?: Record<string, { id: string; name: string; lines: string[] }[]>;
+
 }) {
   const [entries, setEntries] = useState<{ type: string; open: string; close: string }[]>(initial ?? []);
   const [saving, setSaving] = useState(false);
@@ -1925,8 +2000,8 @@ function MoreHoursTab({ initial, onSave, bulk, copy, synced, status, reason, cur
         </div>
       </div>
       <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.moreHoursHint}</p>
-      {!bulk && current && (
-        <GoogleCurrentPanel section="hours.more" current={current} copy={copy} />
+      {(bulk || current) && (
+        <CurrentPanel section="hours.more" current={current} bulkRows={bulkCurrent} copy={copy} />
       )}
       {entries.length === 0 && (
         <p className="text-[12px] text-ink/35 dark:text-fog/35">{copy.moreHoursEmpty}</p>
@@ -1961,7 +2036,7 @@ function MoreHoursTab({ initial, onSave, bulk, copy, synced, status, reason, cur
   );
 }
 
-function ServiceAreaTab({ initial, onSave, bulk, copy, synced, status, reason, current }: {
+function ServiceAreaTab({ initial, onSave, bulk, copy, synced, status, reason, current, bulkCurrent}: {
   initial?: string[];
   onSave: (areas: string[]) => Promise<void>;
   bulk?: BulkScope | null;
@@ -1970,6 +2045,8 @@ function ServiceAreaTab({ initial, onSave, bulk, copy, synced, status, reason, c
   status?: string | null;
   reason?: string | null;
   current?: GoogleCurrent;
+  bulkCurrent?: Record<string, { id: string; name: string; lines: string[] }[]>;
+
 }) {
   const [areas, setAreas] = useState<string[]>(initial ?? []);
   const [newArea, setNewArea] = useState("");
@@ -2009,8 +2086,8 @@ function ServiceAreaTab({ initial, onSave, bulk, copy, synced, status, reason, c
         </div>
       </div>
       <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.serviceAreaHint}</p>
-      {!bulk && current && (
-        <GoogleCurrentPanel section="service_area" current={current} copy={copy} />
+      {(bulk || current) && (
+        <CurrentPanel section="service_area" current={current} bulkRows={bulkCurrent} copy={copy} />
       )}
       <div className="flex flex-wrap gap-2 mb-3">
         {areas.map((area) => (
@@ -2049,7 +2126,7 @@ const ATTRIBUTE_VALUE_KEYS = {
   limited: (c: LocationsCopy) => c.attrLimited,
 } as const satisfies Record<string, (c: LocationsCopy) => string>;
 
-function AttributesTab({ initial, onSave, bulk, copy, synced, status, reason, current }: {
+function AttributesTab({ initial, onSave, bulk, copy, synced, status, reason, current, bulkCurrent}: {
   initial?: Record<string, string>;
   onSave: (attrs: Record<string, string>) => Promise<void>;
   bulk?: BulkScope | null;
@@ -2058,6 +2135,8 @@ function AttributesTab({ initial, onSave, bulk, copy, synced, status, reason, cu
   status?: string | null;
   reason?: string | null;
   current?: GoogleCurrent;
+  bulkCurrent?: Record<string, { id: string; name: string; lines: string[] }[]>;
+
 }) {
   const [attrs, setAttrs] = useState<Record<string, string>>(initial ?? {});
   const [newKey, setNewKey] = useState("");
@@ -2100,8 +2179,8 @@ function AttributesTab({ initial, onSave, bulk, copy, synced, status, reason, cu
         </div>
       </div>
       <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.attributesHint}</p>
-      {!bulk && current && (
-        <GoogleCurrentPanel section="attributes" current={current} copy={copy} />
+      {(bulk || current) && (
+        <CurrentPanel section="attributes" current={current} bulkRows={bulkCurrent} copy={copy} />
       )}
       <div className="flex flex-wrap gap-1.5">
         {[["Wheelchair accessible entrance", "yes"], ["Free WiFi", "yes"], ["Outdoor seating", "yes"], ["Accepts credit cards", "yes"]].filter(([k]) => !(k in attrs)).map(([k, v]) => (
@@ -2154,7 +2233,7 @@ function AttributesTab({ initial, onSave, bulk, copy, synced, status, reason, cu
   );
 }
 
-function DescriptionTab({ initial, initialOpeningDate, onSave, bulk, copy, synced, status, reason, current }: {
+function DescriptionTab({ initial, initialOpeningDate, onSave, bulk, copy, synced, status, reason, current, bulkCurrent}: {
   initial?: string;
   initialOpeningDate?: string | null;
   onSave: (description: string, openingDate: string | null) => Promise<void>;
@@ -2164,6 +2243,8 @@ function DescriptionTab({ initial, initialOpeningDate, onSave, bulk, copy, synce
   status?: string | null;
   reason?: string | null;
   current?: GoogleCurrent;
+  bulkCurrent?: Record<string, { id: string; name: string; lines: string[] }[]>;
+
 }) {
   const [desc, setDesc] = useState(initial ?? "");
   const [openingDate, setOpeningDate] = useState(initialOpeningDate ?? "");
@@ -2219,10 +2300,10 @@ function DescriptionTab({ initial, initialOpeningDate, onSave, bulk, copy, synce
           className="w-full max-w-xs rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[13px] text-ink outline-none transition focus:border-deep-violet/30 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
         />
       </div>
-      {!bulk && current && (
+      {(bulk || current) && (
         <div className="space-y-2">
-          <GoogleCurrentPanel section="description" current={current} copy={copy} />
-          <GoogleCurrentPanel section="opening_date" current={current} copy={copy} />
+          <CurrentPanel section="description" current={current} bulkRows={bulkCurrent} copy={copy} />
+          <CurrentPanel section="opening_date" current={current} bulkRows={bulkCurrent} copy={copy} />
         </div>
       )}
       <div className="pt-2 sm:flex sm:justify-end">

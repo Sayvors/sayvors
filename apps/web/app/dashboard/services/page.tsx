@@ -23,7 +23,7 @@ type Service = { id: string; channel_id: string; name: string; category: string;
 
 type ServicesCopy = ReturnType<typeof useI18n>["t"]["dashboard"]["services"];
 
-export default function ServicesPage({ embedded = false, listingId, scopeId, googleCurrent }: { embedded?: boolean; listingId?: string; scopeId?: string; googleCurrent?: { name: string; offered?: boolean }[] }) {
+export default function ServicesPage({ embedded = false, listingId, scopeId, googleCurrent, bulkGoogleCurrent }: { embedded?: boolean; listingId?: string; scopeId?: string; googleCurrent?: { name: string; offered?: boolean }[]; bulkGoogleCurrent?: { id: string; name: string; services: { name: string }[] }[] }) {
   const { t } = useI18n();
   const copy = t.dashboard.services;
   const queryClient = useQueryClient();
@@ -288,6 +288,26 @@ export default function ServicesPage({ embedded = false, listingId, scopeId, goo
                   )}
                 </div>
               ) : null}
+              {bulkGoogleCurrent ? (
+                <div className="rounded-[2px] border border-sky-500/20 bg-sky-500/[0.05] p-3">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-sky-700 dark:text-sky-300">
+                    {copy.currentOnGoogle}
+                  </p>
+                  <ul className="mt-1.5 space-y-1 text-[12px] text-ink/70 dark:text-fog/70">
+                    {bulkGoogleCurrent.map((row) => (
+                      <li key={row.id}>
+                        <span className="font-semibold text-ink dark:text-fog">{row.name}</span>
+                        <span className="text-ink/55 dark:text-fog/55">
+                          {" \u2014 "}
+                          {row.services.length === 0
+                            ? copy.googleHasNoServices
+                            : row.services.map((s) => s.name).join(", ")}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
               <AddServiceForm
                 name={name} category={category} description={description}
                 onName={setName} onCategory={setCategory} onDescription={setDescription}
@@ -337,6 +357,26 @@ export default function ServicesPage({ embedded = false, listingId, scopeId, goo
                       ))}
                     </ul>
                   )}
+                </div>
+              ) : null}
+              {bulkGoogleCurrent ? (
+                <div className="rounded-[2px] border border-sky-500/20 bg-sky-500/[0.05] p-3">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-sky-700 dark:text-sky-300">
+                    {copy.currentOnGoogle}
+                  </p>
+                  <ul className="mt-1.5 space-y-1 text-[12px] text-ink/70 dark:text-fog/70">
+                    {bulkGoogleCurrent.map((row) => (
+                      <li key={row.id}>
+                        <span className="font-semibold text-ink dark:text-fog">{row.name}</span>
+                        <span className="text-ink/55 dark:text-fog/55">
+                          {" \u2014 "}
+                          {row.services.length === 0
+                            ? copy.googleHasNoServices
+                            : row.services.map((s) => s.name).join(", ")}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               ) : null}
               <AddServiceForm
