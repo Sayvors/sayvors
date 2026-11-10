@@ -130,6 +130,25 @@ async def test_a_post_that_never_went_out_is_skipped(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a_removal_while_the_publish_is_still_queued_is_retried(monkeypatch):
+    """A removal that fires before the publish lands must be retried, not
+    dropped — otherwise the post goes out late and never comes down."""
+    publish_job = await _insert_job(status=JobStatus.queued.value, result=None)
+
+    async def _never(**kwargs):  # pragma: no cover - must not be reached
+        raise AssertionError("the provider must not be called")
+
+    monkeypatch.setattr(
+        "app.modules.jobs.handlers.post_delete.delete_published_from_platform",
+        _never,
+    )
+    removal = await _make_removal(publish_job)
+    async with TEST_SESSION() as db:
+        with pytest.raises(ValueError):
+            await handle_post_delete(removal, db)
+
+
+@pytest.mark.asyncio
 async def test_an_account_surface_is_skipped(monkeypatch):
     """A profile picture is not a post — it can only be replaced."""
     publish_job = await _insert_job(payload={"method": "profile"})
