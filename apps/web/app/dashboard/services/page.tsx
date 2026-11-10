@@ -23,7 +23,7 @@ type Service = { id: string; channel_id: string; name: string; category: string;
 
 type ServicesCopy = ReturnType<typeof useI18n>["t"]["dashboard"]["services"];
 
-export default function ServicesPage({ embedded = false, listingId }: { embedded?: boolean; listingId?: string }) {
+export default function ServicesPage({ embedded = false, listingId, scopeId, googleCurrent }: { embedded?: boolean; listingId?: string; scopeId?: string; googleCurrent?: { name: string; offered?: boolean }[] }) {
   const { t } = useI18n();
   const copy = t.dashboard.services;
   const queryClient = useQueryClient();
@@ -39,12 +39,17 @@ export default function ServicesPage({ embedded = false, listingId }: { embedded
   });
   const channels = channelsQuery.data ?? [];
   const [selectedId, setSelectedId] = useState("");
-  // Embedded on the Locations page: preselect that branch once channels load.
+  // Embedded on the Locations page: preselect that branch, or the scope the
+  // Locations page is on (all branches, or one group), once channels load.
   useEffect(() => {
+    if (scopeId) {
+      setSelectedId(scopeId);
+      return;
+    }
     if (!listingId) return;
     const match = channels.find((c) => c.listing_id === listingId);
     if (match) setSelectedId(match.id);
-  }, [listingId, channels]);
+  }, [listingId, scopeId, channels]);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -267,6 +272,22 @@ export default function ServicesPage({ embedded = false, listingId }: { embedded
           ) : (
             <>
               <StatsRow services={services} copy={copy} />
+              {googleCurrent ? (
+                <div className="rounded-[2px] border border-sky-500/20 bg-sky-500/[0.05] p-3">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-sky-700 dark:text-sky-300">
+                    {copy.currentOnGoogle}
+                  </p>
+                  {googleCurrent.length === 0 ? (
+                    <p className="mt-1.5 text-[12px] text-ink/60 dark:text-fog/60">{copy.googleHasNoServices}</p>
+                  ) : (
+                    <ul className="mt-1.5 space-y-0.5 text-[12px] text-ink/70 dark:text-fog/70">
+                      {googleCurrent.map((item, i) => (
+                        <li key={`${item.name}-${i}`}>{item.name}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ) : null}
               <AddServiceForm
                 name={name} category={category} description={description}
                 onName={setName} onCategory={setCategory} onDescription={setDescription}
@@ -302,6 +323,22 @@ export default function ServicesPage({ embedded = false, listingId }: { embedded
                 listingMap={listingMap}
               />
               <StatsRow services={services} copy={copy} />
+              {googleCurrent ? (
+                <div className="rounded-[2px] border border-sky-500/20 bg-sky-500/[0.05] p-3">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-sky-700 dark:text-sky-300">
+                    {copy.currentOnGoogle}
+                  </p>
+                  {googleCurrent.length === 0 ? (
+                    <p className="mt-1.5 text-[12px] text-ink/60 dark:text-fog/60">{copy.googleHasNoServices}</p>
+                  ) : (
+                    <ul className="mt-1.5 space-y-0.5 text-[12px] text-ink/70 dark:text-fog/70">
+                      {googleCurrent.map((item, i) => (
+                        <li key={`${item.name}-${i}`}>{item.name}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ) : null}
               <AddServiceForm
                 name={name} category={category} description={description}
                 onName={setName} onCategory={setCategory} onDescription={setDescription}

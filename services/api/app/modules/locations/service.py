@@ -246,12 +246,13 @@ async def get_profile(
     )
     meta = channel_meta(channel) if channel is not None else {}
     stored_skipped = meta.get("google_failed") or meta.get("google_skipped")
-    # Per-section edit lifecycle from Google (PENDING / REJECTED / ACCEPTED).
-    # Best-effort: the alpha endpoint may be disabled; the UI falls back to
-    # the stored push report when this is empty.
-    google_status = (
-        await _google_edit_status(channel, listing_id) if channel is not None else {}
-    )
+    # Per-section edit lifecycle from Google (PENDING / REJECTED / ACCEPTED) and
+    # the values Google shows today. Best-effort: the alpha endpoint may be
+    # disabled; the UI falls back to the stored push report when it is empty.
+    google_status: dict[str, dict] = {}
+    google_current: dict = {}
+    if channel is not None:
+        google_status, google_current = await _google_live_snapshot(channel, listing_id)
 
     # The category catalog is region-specific. Prefer the region Google
     # returns for this location's storefront; fall back to the account country
@@ -309,6 +310,7 @@ async def get_profile(
         "google_synced": [],
         "google_skipped": {},
         "google_status": google_status,
+        "google_current": google_current,
         "updated_at": profile.updated_at.isoformat() if profile.updated_at else None,
     }
     if channel is not None:
@@ -397,16 +399,23 @@ async def _push_profile_native(
     return report.get("pushed", []), skipped
 
 
-async def _google_edit_status(channel: Channel, listing_id: str) -> dict[str, dict]:
-    """Per-section edit status from Google's v1alpha extended endpoint.
+async def _google_live_snapshot(
+    channel: Channel, listing_id: str
+) -> tuple[dict[str, dict], dict]:
+    """Google's live view of a listing: edit status and the values shown.
 
-    Returns ``{section: {stage, rejection_reason, update_time, source}}``.
-    Empty when the alpha API is unavailable (not enabled, no scope) or the
-    call fails — the UI then falls back to the coarse "synced" report.
+    Returns ``(status, current)``:
+    - ``status``: per-section edit lifecycle (pending / accepted / rejected).
+    - ``current``: what a customer sees on Google right now, per section.
+
+    Both are best-effort: the alpha endpoint may not be enabled, and every
+    failure leaves the caller with the stored push report instead.
     """
     from ..channels.google_business import (
         GoogleBusinessClient,
         parse_attribute_edit_status,
+        parse_attribute_values,
+        parse_consumer_values,
         parse_edit_status,
     )
     from ..channels.service import decrypt_token
@@ -414,20 +423,21 @@ async def _google_edit_status(channel: Channel, listing_id: str) -> dict[str, di
     access = decrypt_token(channel.access_token) if channel.access_token else None
     refresh = decrypt_token(channel.refresh_token) if channel.refresh_token else None
     if not access and not refresh:
-        return {}
+        return {}, {}
     client = GoogleBusinessClient(access or "", refresh)
     try:
         extended = await client.get_extended_location(listing_id)
         status = parse_edit_status(extended)
+        current = parse_consumer_values(extended)
         # Attributes have their own endpoint; fold them into one section
-        # status (the worst lifecycle across the attributes wins).
+        # status (the worst lifecycle across the attributes wins) and report
+        # the values Google shows today.
         try:
-            attrs = parse_attribute_edit_status(
-                await client.get_extended_attributes(listing_id)
-            )
+            attributes_extended = await client.get_extended_attributes(listing_id)
         except Exception as e:  # noqa: BLE001 — attributes are optional
             logger.debug("Google attribute status unavailable for %s: %s", listing_id, e)
-            attrs = {}
+            attributes_extended = {}
+        attrs = parse_attribute_edit_status(attributes_extended)
         if attrs:
             stages = [a.get("stage") for a in attrs.values() if a.get("stage")]
             if stages:
@@ -441,12 +451,42 @@ async def _google_edit_status(channel: Channel, listing_id: str) -> dict[str, di
                     "update_time": entry.get("update_time"),
                     "source": entry.get("source"),
                 }
-        return status
+        attribute_values = parse_attribute_values(attributes_extended)
+        if attribute_values:
+            current["attributes"] = attribute_values
+        # The service list Google holds today — empty is an answer too: it
+        # means the profile declares no services.
+        try:
+            service_items = await client.get_service_items(listing_id)
+        except Exception as e:  # noqa: BLE001 — services are optional
+            logger.debug("Google service items unavailable for %s: %s", listing_id, e)
+            service_items = []
+        current["services"] = _service_items_summary(service_items)
+        return status, current
     except Exception as e:  # noqa: BLE001 — status is best-effort
         logger.debug("Google edit status unavailable for %s: %s", listing_id, e)
-        return {}
+        return {}, {}
     finally:
         await client.close()
+
+
+def _service_items_summary(items: list[dict]) -> list[dict]:
+    """Google's service items as {name, offered} for the UI."""
+    out: list[dict] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        free = (item.get("freeFormServiceItem") or {})
+        label = (free.get("label") or {})
+        name = str(label.get("displayName") or "").strip()
+        if name:
+            out.append({"name": name, "offered": True})
+            continue
+        structured = item.get("structuredServiceItem") or {}
+        service_id = str(structured.get("serviceTypeId") or "").strip()
+        if service_id:
+            out.append({"name": service_id.split(":")[-1].replace("_", " "), "offered": True})
+    return out
 
 
 async def update_profile(
