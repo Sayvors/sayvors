@@ -51,6 +51,22 @@ def _known_synced(meta: dict) -> set[str]:
     return set(stored) | (set(GOOGLE_SYNCED_FIELDS) - failed)
 
 
+def _has_failed(meta: dict, section: str) -> bool:
+    """Whether a push section has a recorded Google failure to retry.
+
+    `google_failed` keys are the section keys `push_profile` reports (e.g.
+    "categories.additional", "hours.regular"). A sub-section failure must
+    re-push the whole section, so match on the section prefix.
+    """
+    failed = meta.get("google_failed") or {}
+    if not isinstance(failed, dict):
+        return False
+    return any(
+        key == section or key.startswith(section + ".")
+        for key in failed
+    )
+
+
 def channel_meta(channel: Channel) -> dict:
     """The channel's stored Google listing metadata."""
     try:
@@ -398,24 +414,29 @@ async def update_profile(
 
     # Only changed values are pushed. A bulk save sends every column for every
     # row; without this, an unchanged branch would cost four Google patches.
+    # A section the last push rejected is always retried: the value is already
+    # stored locally, so "unchanged" must not mean "never try again".
     push_name = push_phone = push_website = None
+    failed_meta = channel_meta(channel) if channel is not None else {}
     if channel is not None:
-        meta = channel_meta(channel)
+        meta = failed_meta
         meta_changed = False
         if name is not None:
             clean_name = name.strip()[:255]
-            if clean_name and clean_name != (channel.display_name or ""):
+            if clean_name and (
+                clean_name != (channel.display_name or "") or _has_failed(meta, "name")
+            ):
                 channel.display_name = clean_name
                 push_name = clean_name
         if phone is not None:
             clean_phone = phone.strip() or None
-            if clean_phone != meta.get("phone"):
+            if clean_phone != meta.get("phone") or _has_failed(meta, "phone"):
                 meta["phone"] = clean_phone
                 push_phone = clean_phone
                 meta_changed = True
         if website is not None:
             clean_website = website.strip() or None
-            if clean_website != meta.get("website"):
+            if clean_website != meta.get("website") or _has_failed(meta, "website"):
                 meta["website"] = clean_website
                 push_website = clean_website
                 meta_changed = True
@@ -425,7 +446,7 @@ async def update_profile(
     push_description = None
     if description is not None:
         new_description = description[:750]
-        if new_description != profile.description:
+        if new_description != profile.description or _has_failed(failed_meta, "description"):
             profile.description = new_description
             push_description = new_description
     push_categories = None
@@ -441,7 +462,7 @@ async def update_profile(
             merged_cats["primary"] = str(categories.get("primary", ""))[:255]
         if categories.get("additional") is not None:
             merged_cats["additional"] = [str(c)[:255] for c in categories.get("additional", [])][:50]
-        if merged_cats != old_categories:
+        if merged_cats != old_categories or _has_failed(failed_meta, "categories"):
             profile.categories = merged_cats
             push_categories = merged_cats
     push_hours = None
@@ -454,13 +475,15 @@ async def update_profile(
             merged_hours["special"] = list(hours.get("special", []))[:100]
         if hours.get("more") is not None:
             merged_hours["more"] = list(hours.get("more", []))[:100]
-        if merged_hours != old_hours:
+        if merged_hours != old_hours or _has_failed(failed_meta, "hours"):
             profile.hours = merged_hours
             push_hours = merged_hours
     push_service_area = None
     if service_area is not None:
         cleaned_areas = [str(a).strip()[:255] for a in service_area if str(a).strip()][:100]
-        if cleaned_areas != list(profile.service_area or []):
+        if cleaned_areas != list(profile.service_area or []) or _has_failed(
+            failed_meta, "service_area"
+        ):
             profile.service_area = cleaned_areas
             push_service_area = cleaned_areas
     push_attributes = None
@@ -469,7 +492,7 @@ async def update_profile(
         merged_attributes = {
             str(k)[:120]: str(v)[:500] for k, v in list(attributes.items())[:100]
         }
-        if merged_attributes != old_attributes:
+        if merged_attributes != old_attributes or _has_failed(failed_meta, "attributes"):
             profile.attributes = merged_attributes
             push_attributes = merged_attributes
     push_opening_date = None
@@ -478,7 +501,7 @@ async def update_profile(
             parsed_date = _dt.date.fromisoformat(str(opening_date))
         except ValueError:
             raise ValueError(f"Invalid opening_date {opening_date!r}, use YYYY-MM-DD")
-        if parsed_date != profile.opening_date:
+        if parsed_date != profile.opening_date or _has_failed(failed_meta, "opening_date"):
             profile.opening_date = parsed_date
             push_opening_date = parsed_date.isoformat()
     profile.updated_at = datetime.now(timezone.utc)

@@ -248,6 +248,40 @@ async def test_unchanged_save_does_not_call_google(monkeypatch, db, user_id):
 
 
 @pytest.mark.asyncio
+async def test_failed_section_is_retried_on_unchanged_save(monkeypatch, db, user_id):
+    """A section Google rejected is retried on the next save even when the
+    local value is unchanged — otherwise the merchant can never recover."""
+    await _connection(db, user_id)
+    from app.modules.channels.service import encrypt_token
+
+    channel = await locations.channel_for_listing(db, user_id, "loc-1")
+    channel.access_token = encrypt_token("at")
+    channel.refresh_token = encrypt_token("rt")
+    meta = locations.channel_meta(channel)
+    meta["google_failed"] = {"phone": "rejected earlier"}
+    channel.metadata_json = json.dumps(meta)
+    await db.commit()
+
+    pushed_seen: dict = {}
+
+    async def _fake_push(self, location_id, **kw):
+        pushed_seen.update(kw)
+        return {"pushed": ["phone"], "skipped": {}}
+
+    monkeypatch.setattr(
+        "app.modules.channels.google_business.GoogleBusinessClient.push_profile",
+        _fake_push,
+    )
+    out = await locations.update_profile(
+        db, user_id, "loc-1", description=None, categories=None, hours=None,
+        service_area=None, attributes=None,
+        name="Test Place", phone="+966 55 000 0000", website="http://x.test",
+    )
+    assert out["google_pushed"] == ["phone"]
+    assert pushed_seen.get("phone") == "+966 55 000 0000"
+
+
+@pytest.mark.asyncio
 async def test_expired_channel_is_readable_but_not_writable(db, user_id):
     """A 403 marks a channel expired; the page must still show its data and
     refuse edits with a reconnect message instead of pretending it vanished."""
