@@ -7,9 +7,9 @@ GBP does not have a "feed post" in the Meta sense. The equivalent is a
 
 A STANDARD local post carries a summary (caption) and optionally a photo
 and a call-to-action. Google schedules natively through ``scheduledTime``
-(RFC 3339): the post is created in a SCHEDULED state and published by Google
-at that moment. Sayvors also defers its own publishing job to the same
-moment, so a late worker cannot delay the post.
+(RFC 3339): Sayvors creates the post immediately in Google's SCHEDULED
+state and Google publishes it at that moment, so a late or backed-up worker
+cannot delay the post.
 
 This adapter mirrors the shape of the Meta adapters so the job runner can
 treat every destination uniformly: one ``publish_post`` call per
@@ -187,11 +187,13 @@ class GoogleBusinessPublisher:
                 media_items.append(item)
             body["media"] = media_items
 
-        # The event object is required for topic types EVENT **and** OFFER.
-        # Google's LocalPostEvent is
+        # The event object is REQUIRED for topic types EVENT **and** OFFER
+        # ("Required for topic types EVENT and OFFER"). Omitting it fails with
+        # a validation error, so it is always sent — defaulting the window
+        # when the caller gave no dates. Google's LocalPostEvent is
         # {title, schedule:{startDate, startTime, endDate, endTime}} where
         # Date/TimeOfDay are JSON objects — ISO strings are not accepted.
-        if topic_type in ("EVENT", "OFFER") and (start_date or end_date):
+        if topic_type in ("EVENT", "OFFER"):
             from datetime import timedelta
 
             now = datetime.now(timezone.utc)
@@ -251,9 +253,9 @@ class GoogleBusinessPublisher:
             body["callToAction"] = call_to_action
 
         # Google schedules natively via `scheduledTime` (LocalPost field, RFC
-        # 3339). Sayvors still defers the job to that moment, so a late or
-        # backed-up worker no longer delays the post — Google publishes it on
-        # time. If this account's API rejects the field, fall back to an
+        # 3339). The job runs immediately and Google holds the post in
+        # SCHEDULED until that moment, so a late or backed-up worker cannot
+        # delay it. If this account's API rejects the field, fall back to an
         # immediate publish rather than losing the post.
         if scheduled_at:
             try:

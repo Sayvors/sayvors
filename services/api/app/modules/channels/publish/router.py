@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -112,6 +112,11 @@ class PublishBody(BaseModel):
     cta_url: str | None = Field(None, max_length=1000)
     scheduled_at: str | None = None
     delete_at: str | None = None
+    # Event/offer window. Google requires an `event` object for EVENT and
+    # OFFER topics, so these carry the schedule; when omitted the publisher
+    # defaults the window (now → +7 days).
+    start_date: str | None = None
+    end_date: str | None = None
     idempotency_key: str | None = Field(None, max_length=200)
     destinations: list[PublishDestination]
     batch_id: str | None = Field(None, max_length=64)
@@ -170,6 +175,22 @@ class PublishBody(BaseModel):
         if dt <= datetime.now(timezone.utc):
             raise ValueError("delete_at must be in the future")
         return dt.isoformat()
+
+    @model_validator(mode="after")
+    def _validate_event_window(self) -> "PublishBody":
+        """An event/offer window must run forward, and parse as ISO-8601."""
+        if not (self.start_date and self.end_date):
+            return self
+        from datetime import datetime
+
+        try:
+            start = datetime.fromisoformat(str(self.start_date).replace("Z", "+00:00"))
+            end = datetime.fromisoformat(str(self.end_date).replace("Z", "+00:00"))
+        except ValueError as e:
+            raise ValueError(f"invalid event date: {e}") from e
+        if end <= start:
+            raise ValueError("end_date must be after start_date")
+        return self
 
     def check_delete_after_publish(self) -> None:
         """The removal must land after the publish, not before it."""
@@ -260,6 +281,8 @@ async def publish_post(
                     "method": method,
                     "scheduled_at": body.scheduled_at,
                     "delete_at": body.delete_at,
+                    "start_date": body.start_date,
+                    "end_date": body.end_date,
                     "batch_id": body.batch_id,
                 }
 

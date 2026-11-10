@@ -172,6 +172,49 @@ async def test_call_to_action_reaches_the_job_payload(db, client, user_id):
 
 
 @pytest.mark.asyncio
+async def test_event_window_reaches_the_job_payload(db, client, user_id):
+    """The composer's event dates must survive into the job for Google."""
+    from sqlalchemy import select
+
+    from app.modules.jobs.models import Job
+
+    res = client.post(
+        "/api/v1/channels/publish",
+        json={
+            "caption": "Join us",
+            "start_date": "2026-11-20T09:00:00+00:00",
+            "end_date": "2026-11-22T18:00:00+00:00",
+            "destinations": [
+                {"platform": "google_reviews", "external_asset_id": "loc-1",
+                 "methods": ["event"]},
+            ],
+        },
+    )
+    assert res.status_code == 200, res.text
+    job = (await db.execute(select(Job).where(Job.tenant_id == user_id))).scalar_one()
+    assert job.payload["start_date"] == "2026-11-20T09:00:00+00:00"
+    assert job.payload["end_date"] == "2026-11-22T18:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_event_window_must_run_forward(client):
+    """An end before the start would create an invalid Google event."""
+    res = client.post(
+        "/api/v1/channels/publish",
+        json={
+            "caption": "Join us",
+            "start_date": "2026-11-22T09:00:00+00:00",
+            "end_date": "2026-11-20T18:00:00+00:00",
+            "destinations": [
+                {"platform": "google_reviews", "external_asset_id": "loc-1",
+                 "methods": ["event"]},
+            ],
+        },
+    )
+    assert res.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_media_only_format_without_image_is_rejected(client):
     """A banner/story/status job with no media would only fail downstream."""
     res = client.post(

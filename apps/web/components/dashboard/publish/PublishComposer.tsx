@@ -344,6 +344,12 @@ export default function PublishComposer({
   const [removeOn, setRemoveOn] = useState(false);
   const [removeAt, setRemoveAt] = useState("");
 
+  // Event/offer window. Google requires an `event` object for EVENT and
+  // OFFER topics, so the composer collects the schedule here; when left
+  // blank the publisher defaults it (now → +7 days).
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+
   // ── Per-format previews + saved crops ───────────────────────────
   const [crops, setCrops] = useState<Record<string, CropState>>({});
   /** destination+format currently being edited in the modal */
@@ -495,6 +501,11 @@ export default function PublishComposer({
   const confirmItems = selectedTargets
     .map((t) => ({ target: t, methods: chosenFor(t) }))
     .filter((i) => i.methods.length > 0 && externalAssetIdFor(i.target) !== null);
+  // Google requires an event window for EVENT and OFFER topics, so the
+  // composer only asks for the dates when one of those is actually chosen.
+  const needsEventWindow = confirmItems.some(({ methods }) =>
+    methods.some((m) => m === "event" || m === "offer"),
+  );
   const cf = tr.publish.confirm;
   const formatCount = confirmItems.reduce((n, i) => n + i.methods.length, 0);
   const destStr = confirmItems.length === 1 ? cf.destOne : fill(cf.destN, { n: fmt(confirmItems.length) });
@@ -585,6 +596,8 @@ export default function PublishComposer({
             ctaType && ctaType !== "call" ? ctaUrl.trim() || null : null,
           scheduled_at: scheduleOn && scheduleAt ? new Date(scheduleAt).toISOString() : null,
           delete_at: removeOn && removeAt ? new Date(removeAt).toISOString() : null,
+          start_date: startDate ? new Date(startDate).toISOString() : null,
+          end_date: endDate ? new Date(endDate).toISOString() : null,
           destinations,
           batch_id: batchId,
           idempotency_key: `${batchId}:${Date.now()}`,
@@ -601,6 +614,8 @@ export default function PublishComposer({
       setRemoveAt("");
       setCtaType("");
       setCtaUrl("");
+      setStartDate("");
+      setEndDate("");
       setFormats({});
       onPublished?.();
     } catch (e) {
@@ -803,6 +818,36 @@ export default function PublishComposer({
               <p className={`mt-2 text-[11px] ${INK2}`}>
                 {pc.removeNote}
               </p>
+            )}
+            {needsEventWindow && (
+              <div className="mt-3 border-t border-[var(--ui-line)] pt-3">
+                <p className={`mb-2 text-[12px] font-semibold ${INK2}`}>
+                  {pc.eventWindow}
+                </p>
+                <div className="flex flex-wrap items-center gap-3">
+                  <label className={`flex items-center gap-2 text-[12px] ${INK2}`}>
+                    {pc.eventStart}
+                    <input
+                      type="datetime-local"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      aria-label={pc.eventStart}
+                      className={`${FIELD} w-full sm:w-56`}
+                    />
+                  </label>
+                  <label className={`flex items-center gap-2 text-[12px] ${INK2}`}>
+                    {pc.eventEnd}
+                    <input
+                      type="datetime-local"
+                      value={endDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      aria-label={pc.eventEnd}
+                      className={`${FIELD} w-full sm:w-56`}
+                    />
+                  </label>
+                </div>
+                <p className={`mt-1.5 text-[11px] ${INK2}`}>{pc.eventWindowHint}</p>
+              </div>
             )}
           </section>
 

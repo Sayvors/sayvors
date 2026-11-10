@@ -112,6 +112,27 @@ async def test_event_carries_the_date_google_requires():
 
 
 @pytest.mark.asyncio
+async def test_event_without_dates_still_carries_an_event_object():
+    """`event` is required for EVENT even when no dates are given — the
+    publisher defaults the window instead of omitting the object, which
+    Google would reject."""
+    captured = await _publish("event")
+    schedule = captured["body"]["event"]["schedule"]
+    assert set(schedule) == {"startDate", "startTime", "endDate", "endTime"}
+    assert schedule["endDate"]["year"] >= schedule["startDate"]["year"]
+
+
+@pytest.mark.asyncio
+async def test_offer_without_dates_still_carries_an_event_object():
+    """`event` is required for OFFER too, not just EVENT."""
+    captured = await _publish("offer")
+    assert "event" in captured["body"]
+    assert set(captured["body"]["event"]["schedule"]) == {
+        "startDate", "startTime", "endDate", "endTime",
+    }
+
+
+@pytest.mark.asyncio
 async def test_call_to_action_maps_to_google_action_type():
     captured = await _publish(
         "update", cta_type="shop", cta_url="https://shop.example.com"
