@@ -6,8 +6,10 @@ GBP does not have a "feed post" in the Meta sense. The equivalent is a
     POST /v1/accounts/{accountId}/locations/{locationId}/localPosts
 
 A STANDARD local post carries a summary (caption) and optionally a photo
-and a call-to-action. Scheduled publishing is done by setting
-``scheduledPublishTime`` in the payload (RFC3339 timestamp).
+and a call-to-action. Google schedules natively through ``scheduledTime``
+(RFC 3339): Sayvors creates the post immediately in Google's SCHEDULED
+state and Google publishes it at that moment, so a late or backed-up worker
+cannot delay the post.
 
 This adapter mirrors the shape of the Meta adapters so the job runner can
 treat every destination uniformly: one ``publish_post`` call per
@@ -185,23 +187,46 @@ class GoogleBusinessPublisher:
                 media_items.append(item)
             body["media"] = media_items
 
-        # EVENT posts require an event object with a title and a start date.
-        if topic_type == "EVENT":
+        # The event object is REQUIRED for topic types EVENT **and** OFFER
+        # ("Required for topic types EVENT and OFFER"). Omitting it fails with
+        # a validation error, so it is always sent — defaulting the window
+        # when the caller gave no dates. Google's LocalPostEvent is
+        # {title, schedule:{startDate, startTime, endDate, endTime}} where
+        # Date/TimeOfDay are JSON objects — ISO strings are not accepted.
+        if topic_type in ("EVENT", "OFFER"):
             from datetime import timedelta
 
             now = datetime.now(timezone.utc)
             start = _parse_google_dt(start_date) or now
             end = _parse_google_dt(end_date) or (start + timedelta(days=7))
+
+            def _date_part(dt: datetime) -> dict[str, int]:
+                return {"year": dt.year, "month": dt.month, "day": dt.day}
+
+            def _time_part(dt: datetime) -> dict[str, int]:
+                return {
+                    "hours": dt.hour,
+                    "minutes": dt.minute,
+                    "seconds": dt.second,
+                    "nanos": dt.microsecond * 1000,
+                }
+
             body["event"] = {
                 "title": (summary[:60] if summary else "Event"),
-                "startDate": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "endDate": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "schedule": {
+                    "startDate": _date_part(start),
+                    "startTime": _time_part(start),
+                    "endDate": _date_part(end),
+                    "endTime": _time_part(end),
+                },
             }
 
-        # OFFER posts carry a coupon / redeem link and terms.
+        # OFFER posts. Google's LocalPostOffer has exactly three fields —
+        # couponCode, redeemOnlineUrl, termsConditions. The post's summary
+        # already carries the copy; a "description" field is rejected with
+        # "Unknown name ... at 'local_post.offer'".
         if topic_type == "OFFER":
             offer: dict[str, Any] = {
-                "description": (summary[:300] if summary else ""),
                 "termsConditions": (terms_conditions or "Terms apply")[:300],
             }
             if coupon_code:
@@ -210,26 +235,49 @@ class GoogleBusinessPublisher:
                 offer["redeemOnlineUrl"] = cta_url[:1000]
             body["offer"] = offer
 
+        # Google's CallToAction. Ignored for OFFER posts — those carry the link
+        # in offer.redeemOnlineUrl — and CALL never carries a URL.
         cta_map = {
             "book": "BOOK", "order": "ORDER", "shop": "SHOP",
             "learn_more": "LEARN_MORE", "sign_up": "SIGN_UP", "call": "CALL",
         }
         action = cta_map.get((cta_type or "").strip().lower())
-        if action and cta_url and topic_type != "OFFER":
-            body["callToAction"] = {"actionType": action, "url": cta_url[:1000]}
+        if action and topic_type != "OFFER":
+            call_to_action: dict[str, str] = {"actionType": action}
+            if action != "CALL":
+                if not cta_url:
+                    raise GoogleReviewsError(
+                        f"{action} call-to-action requires a URL", 400
+                    )
+                call_to_action["url"] = cta_url[:1000]
+            body["callToAction"] = call_to_action
 
+        # Google schedules natively via `scheduledTime` (LocalPost field, RFC
+        # 3339). The job runs immediately and Google holds the post in
+        # SCHEDULED until that moment, so a late or backed-up worker cannot
+        # delay it. If this account's API rejects the field, fall back to an
+        # immediate publish rather than losing the post.
         if scheduled_at:
             try:
                 dt = datetime.fromisoformat(str(scheduled_at).replace("Z", "+00:00"))
                 if dt.tzinfo is None:
                     dt = dt.replace(tzinfo=timezone.utc)
-                body["scheduledPublishTime"] = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+                body["scheduledTime"] = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
             except ValueError:
                 logger.warning("invalid scheduled_at %r - publishing immediately", scheduled_at)
 
         url = f"{GBP_LOCAL_POSTS_API}/{account}/{location}/localPosts"
         post_body = body
         resp = await self._client._authed_request("POST", url, json=body)
+        if resp.status_code == 400 and "scheduledTime" in body and "scheduledTime" in resp.text:
+            # This account's API does not accept the field — publish now
+            # instead of losing the post.
+            logger.warning(
+                "Google rejected scheduledTime (%s); publishing immediately",
+                resp.text[:200],
+            )
+            post_body = {k: v for k, v in body.items() if k != "scheduledTime"}
+            resp = await self._client._authed_request("POST", url, json=post_body)
         if resp.status_code not in (200, 201) and used_staging:
             # Google can reject its own googleUrl as a post sourceUrl (a
             # deterministic 500 INTERNAL — staged media is still PENDING).

@@ -122,6 +122,116 @@ async def test_list_filters_by_status(db, client, user_id):
 
 
 @pytest.mark.asyncio
+async def test_text_only_google_post_is_allowed(db, client, user_id):
+    """Google STANDARD (What's New) posts are valid without an image."""
+    from sqlalchemy import select
+
+    from app.modules.jobs.models import Job
+
+    res = client.post(
+        "/api/v1/channels/publish",
+        json={
+            "caption": "Manage Your Google Business Profile Smarter",
+            "description": "Boost your local visibility.",
+            "destinations": [
+                {"platform": "google_reviews", "external_asset_id": "loc-1", "methods": ["update"]},
+            ],
+        },
+    )
+    assert res.status_code == 200, res.text
+    rows = res.json()
+    assert len(rows) == 1
+    assert rows[0]["media_url"] is None
+    job = (await db.execute(select(Job).where(Job.tenant_id == user_id))).scalar_one()
+    assert job.payload["media_url"] is None
+
+
+@pytest.mark.asyncio
+async def test_call_to_action_reaches_the_job_payload(db, client, user_id):
+    """The composer's button type and link must survive into the job."""
+    from sqlalchemy import select
+
+    from app.modules.jobs.models import Job
+
+    res = client.post(
+        "/api/v1/channels/publish",
+        json={
+            "caption": "Ready to grow your business and save time?",
+            "cta_type": "learn_more",
+            "cta_url": "https://sayvors.com",
+            "destinations": [
+                {"platform": "google_reviews", "external_asset_id": "loc-1",
+                 "methods": ["update"]},
+            ],
+        },
+    )
+    assert res.status_code == 200, res.text
+    job = (await db.execute(select(Job).where(Job.tenant_id == user_id))).scalar_one()
+    assert job.payload["cta_type"] == "learn_more"
+    assert job.payload["cta_url"] == "https://sayvors.com"
+
+
+@pytest.mark.asyncio
+async def test_event_window_reaches_the_job_payload(db, client, user_id):
+    """The composer's event dates must survive into the job for Google."""
+    from sqlalchemy import select
+
+    from app.modules.jobs.models import Job
+
+    res = client.post(
+        "/api/v1/channels/publish",
+        json={
+            "caption": "Join us",
+            "start_date": "2026-11-20T09:00:00+00:00",
+            "end_date": "2026-11-22T18:00:00+00:00",
+            "destinations": [
+                {"platform": "google_reviews", "external_asset_id": "loc-1",
+                 "methods": ["event"]},
+            ],
+        },
+    )
+    assert res.status_code == 200, res.text
+    job = (await db.execute(select(Job).where(Job.tenant_id == user_id))).scalar_one()
+    assert job.payload["start_date"] == "2026-11-20T09:00:00+00:00"
+    assert job.payload["end_date"] == "2026-11-22T18:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_event_window_must_run_forward(client):
+    """An end before the start would create an invalid Google event."""
+    res = client.post(
+        "/api/v1/channels/publish",
+        json={
+            "caption": "Join us",
+            "start_date": "2026-11-22T09:00:00+00:00",
+            "end_date": "2026-11-20T18:00:00+00:00",
+            "destinations": [
+                {"platform": "google_reviews", "external_asset_id": "loc-1",
+                 "methods": ["event"]},
+            ],
+        },
+    )
+    assert res.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_media_only_format_without_image_is_rejected(client):
+    """A banner/story/status job with no media would only fail downstream."""
+    res = client.post(
+        "/api/v1/channels/publish",
+        json={
+            "caption": "Hello",
+            "destinations": [
+                {"platform": "google_reviews", "external_asset_id": "loc-1", "methods": ["banner"]},
+                {"platform": "instagram", "external_asset_id": "ig-1", "methods": ["post"]},
+            ],
+        },
+    )
+    assert res.status_code == 422
+    assert "requires an image" in res.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_publish_creates_one_job_per_destination_and_method(db, client, user_id):
     from sqlalchemy import select
 
@@ -149,6 +259,42 @@ async def test_publish_creates_one_job_per_destination_and_method(db, client, us
     # The jobs are persisted for the worker to pick up.
     jobs = (await db.execute(select(Job).where(Job.tenant_id == user_id))).scalars().all()
     assert len(jobs) == 3
+
+
+@pytest.mark.asyncio
+async def test_bulk_publish_same_format_to_two_branches_creates_two_jobs(db, client, user_id):
+    """The composer sends ONE idempotency_key for the whole batch.
+
+    Keying the job on platform+method alone collapses every branch that
+    shares a format into the first branch's job, so the other branches are
+    silently never created — the bulk publish looks like it worked but only
+    one location ever receives the post.
+    """
+    from sqlalchemy import select
+
+    res = client.post(
+        "/api/v1/channels/publish",
+        json={
+            "media_url": "https://cdn.example/post.jpg",
+            "media_type": "image",
+            "caption": "Hello",
+            "idempotency_key": "batch-123:1700000000000",
+            "destinations": [
+                {"platform": "google_reviews", "external_asset_id": "loc-makkah",
+                 "methods": ["banner"]},
+                {"platform": "google_reviews", "external_asset_id": "loc-malqa",
+                 "methods": ["banner"]},
+            ],
+        },
+    )
+    assert res.status_code == 200, res.text
+    rows = res.json()
+    assert len(rows) == 2
+    assert {r["external_asset_id"] for r in rows} == {"loc-makkah", "loc-malqa"}
+
+    jobs = (await db.execute(select(Job).where(Job.tenant_id == user_id))).scalars().all()
+    assert len(jobs) == 2
+    assert {j.payload["external_asset_id"] for j in jobs} == {"loc-makkah", "loc-malqa"}
 
 
 def test_publish_rejects_unsupported_platform(client):

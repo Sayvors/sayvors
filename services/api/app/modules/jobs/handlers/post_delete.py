@@ -53,9 +53,15 @@ async def handle_post_delete(job: Job, db: AsyncSession) -> dict | None:
         return {"skipped": f"the {method!r} format is not a removable post"}
 
     if publish_job.status != "succeeded":
-        # The post never went out (or failed), so there is nothing on
-        # the platform to remove.
-        return {"skipped": f"the publish job is {publish_job.status!r}"}
+        # Terminal failure: the post never went out, so nothing to remove.
+        if publish_job.status in ("failed", "dead", "cancelled"):
+            return {"skipped": f"the publish job is {publish_job.status!r}"}
+        # Still in flight (queued/running/retrying/blocked/accepted). Returning
+        # "skipped" here would drop the removal forever — the post would go out
+        # late and never come down. Raise so the runner retries after it lands.
+        raise ValueError(
+            f"publish job is {publish_job.status!r}; retry removal after it lands"
+        )
 
     job_result = publish_job.result or {}
     post_id = (

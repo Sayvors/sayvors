@@ -64,6 +64,8 @@ async def handle_post_publish(job: Job, db: AsyncSession) -> dict | None:
     external_asset_id = payload.get("external_asset_id")
     method = payload.get("method", "post")
     scheduled_at = payload.get("scheduled_at")
+    start_date = payload.get("start_date")
+    end_date = payload.get("end_date")
 
     if not platform:
         raise ValueError("platform missing from payload")
@@ -136,6 +138,8 @@ async def handle_post_publish(job: Job, db: AsyncSession) -> dict | None:
             scheduled_at=scheduled_at,
             account_id=account_id,
             tenant_id=job.tenant_id,
+            start_date=start_date,
+            end_date=end_date,
         )
     else:
         provider = _provider_for(platform)

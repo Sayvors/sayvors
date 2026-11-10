@@ -93,13 +93,43 @@ async def test_legacy_post_method_still_publishes():
 
 @pytest.mark.asyncio
 async def test_event_carries_the_date_google_requires():
-    """Google rejects an EVENT post with no event object."""
-    captured = await _publish("event")
+    """Google rejects an EVENT post with no event object, and its
+    LocalPostEvent is {title, schedule:{startDate, startTime, ...}} with
+    Date/TimeOfDay objects — not ISO strings."""
+    captured = await _publish(
+        "event",
+        start_date="2026-11-09T09:00:00+00:00",
+        end_date="2026-11-10T09:00:00+00:00",
+    )
     body = captured["body"]
     assert body["topicType"] == "EVENT"
     assert body["event"]["title"] == "Grand opening"
-    assert body["event"]["startDate"]
-    assert body["event"]["endDate"]
+    schedule = body["event"]["schedule"]
+    assert schedule["startDate"] == {"year": 2026, "month": 11, "day": 9}
+    assert schedule["endDate"] == {"year": 2026, "month": 11, "day": 10}
+    assert schedule["startTime"]["hours"] == 9
+    assert schedule["endTime"]["minutes"] == 0
+
+
+@pytest.mark.asyncio
+async def test_event_without_dates_still_carries_an_event_object():
+    """`event` is required for EVENT even when no dates are given — the
+    publisher defaults the window instead of omitting the object, which
+    Google would reject."""
+    captured = await _publish("event")
+    schedule = captured["body"]["event"]["schedule"]
+    assert set(schedule) == {"startDate", "startTime", "endDate", "endTime"}
+    assert schedule["endDate"]["year"] >= schedule["startDate"]["year"]
+
+
+@pytest.mark.asyncio
+async def test_offer_without_dates_still_carries_an_event_object():
+    """`event` is required for OFFER too, not just EVENT."""
+    captured = await _publish("offer")
+    assert "event" in captured["body"]
+    assert set(captured["body"]["event"]["schedule"]) == {
+        "startDate", "startTime", "endDate", "endTime",
+    }
 
 
 @pytest.mark.asyncio
@@ -114,13 +144,69 @@ async def test_call_to_action_maps_to_google_action_type():
 
 
 @pytest.mark.asyncio
-async def test_offer_carries_terms_google_requires():
-    """An OFFER post needs at least one of the offer fields."""
+async def test_offer_only_uses_fields_google_accepts():
+    """LocalPostOffer accepts only couponCode / redeemOnlineUrl /
+    termsConditions. A "description" key is rejected with
+    'Unknown name "description" at local_post.offer'."""
     captured = await _publish("offer", terms_conditions="Come say hello")
     body = captured["body"]
     assert body["topicType"] == "OFFER"
-    assert body["offer"]["description"] == "Grand opening"
     assert body["offer"]["termsConditions"] == "Come say hello"
+    assert set(body["offer"]) <= {"couponCode", "redeemOnlineUrl", "termsConditions"}
+    assert "description" not in body["offer"]
+
+
+@pytest.mark.asyncio
+async def test_standard_post_carries_a_call_to_action():
+    """Google renders a button from callToAction {actionType, url}."""
+    captured = await _publish(
+        "update", cta_type="learn_more", cta_url="https://sayvors.com"
+    )
+    assert captured["body"]["callToAction"] == {
+        "actionType": "LEARN_MORE",
+        "url": "https://sayvors.com",
+    }
+
+
+@pytest.mark.asyncio
+async def test_call_action_never_carries_a_url():
+    """CALL is the phone number, not a link — a URL is rejected."""
+    captured = await _publish("update", cta_type="call", cta_url="https://sayvors.com")
+    assert captured["body"]["callToAction"] == {"actionType": "CALL"}
+
+
+@pytest.mark.asyncio
+async def test_action_without_a_url_is_refused():
+    """A button type with no link would silently do nothing — fail loudly."""
+    with pytest.raises(GoogleReviewsError):
+        await _publish("update", cta_type="book", cta_url="")
+
+
+@pytest.mark.asyncio
+async def test_offer_link_goes_to_redeem_url_not_a_button():
+    """callToAction is ignored for OFFER posts; the offer carries the link."""
+    captured = await _publish(
+        "offer", cta_type="shop", cta_url="https://sayvors.com/redeem"
+    )
+    body = captured["body"]
+    assert "callToAction" not in body
+    assert body["offer"]["redeemOnlineUrl"] == "https://sayvors.com/redeem"
+
+
+@pytest.mark.asyncio
+async def test_offer_carries_the_event_window_when_dates_exist():
+    """The event object is required for EVENT and OFFER topics."""
+    captured = await _publish(
+        "offer",
+        start_date="2026-11-11T09:00:00+00:00",
+        end_date="2026-11-18T09:00:00+00:00",
+    )
+    assert captured["body"]["event"]["schedule"]["startDate"] == {
+        "year": 2026, "month": 11, "day": 11,
+    }
+    assert captured["body"]["event"]["schedule"]["endDate"] == {
+        "year": 2026, "month": 11, "day": 18,
+    }
 
 
 @pytest.mark.asyncio
@@ -156,9 +242,42 @@ async def test_media_is_attached_as_a_photo():
 
 
 @pytest.mark.asyncio
-async def test_scheduled_time_is_sent_as_rfc3339():
+async def test_scheduled_time_is_sent_to_google():
+    """LocalPost schedules natively via scheduledTime (RFC 3339)."""
     captured = await _publish("update", scheduled_at="2026-12-01T09:30:00+00:00")
-    assert captured["body"]["scheduledPublishTime"] == "2026-12-01T09:30:00Z"
+    assert captured["body"]["scheduledTime"] == "2026-12-01T09:30:00Z"
+
+
+@pytest.mark.asyncio
+async def test_falls_back_when_google_rejects_scheduled_time():
+    """If the field is rejected, publish immediately instead of losing the post."""
+    bodies: list[dict] = []
+    publisher = GoogleBusinessPublisher("token", "refresh")
+
+    async def fake(method, url, **kwargs):
+        bodies.append(kwargs.get("json") or {})
+        if len(bodies) == 1:
+            return _Resp(
+                {"error": {"message": 'Unknown name "scheduledTime" at \'local_post\''}},
+                status_code=400,
+            )
+        return _Resp({"name": "accounts/1/locations/2/localPosts/3", "topicType": "STANDARD"})
+
+    publisher._client._authed_request = fake
+    await publisher.publish_post(
+        token="token",
+        asset_id="locations/2",
+        method="update",
+        media_url="https://cdn.example/p.jpg",
+        media_type="image",
+        caption="Hi",
+        description="Hi",
+        scheduled_at="2026-12-01T09:30:00+00:00",
+        account_id="accounts/1",
+    )
+    assert len(bodies) == 2
+    assert "scheduledTime" in bodies[0]
+    assert "scheduledTime" not in bodies[1]
 
 
 # ── location images (profile picture / cover) ──────────────────────────

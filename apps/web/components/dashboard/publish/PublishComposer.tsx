@@ -36,6 +36,17 @@ function fill(s: string, vars: Record<string, string | number>): string {
 type MethodDict = Dict["publish"]["methods"];
 type ComposerDict = Dict["publish"]["composer"];
 
+/** Formats that cannot be published without an image. Google's What's New /
+ * Event / Offer and Meta feed posts allow a text-only post. */
+const MEDIA_ONLY_METHODS = new Set<string>([
+  "story", "reel", "status", "profile", "banner",
+]);
+
+type CtaValue = "book" | "order" | "shop" | "learn_more" | "sign_up" | "call";
+const CTA_VALUES: CtaValue[] = [
+  "book", "order", "shop", "learn_more", "sign_up", "call",
+];
+
 /*
  * The unified Publish composer.
  *
@@ -303,6 +314,8 @@ export default function PublishComposer({
   const [media, setMedia] = useState<MediaState | null>(null);
   const [caption, setCaption] = useState("");
   const [description, setDescription] = useState("");
+  const [ctaType, setCtaType] = useState("");
+  const [ctaUrl, setCtaUrl] = useState("");
 
   const blobRef = useRef<string | null>(null);
 
@@ -330,6 +343,12 @@ export default function PublishComposer({
   // on the day the offer lapses.
   const [removeOn, setRemoveOn] = useState(false);
   const [removeAt, setRemoveAt] = useState("");
+
+  // Event/offer window. Google requires an `event` object for EVENT and
+  // OFFER topics, so the composer collects the schedule here; when left
+  // blank the publisher defaults it (now → +7 days).
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
 
   // ── Per-format previews + saved crops ───────────────────────────
   const [crops, setCrops] = useState<Record<string, CropState>>({});
@@ -482,17 +501,28 @@ export default function PublishComposer({
   const confirmItems = selectedTargets
     .map((t) => ({ target: t, methods: chosenFor(t) }))
     .filter((i) => i.methods.length > 0 && externalAssetIdFor(i.target) !== null);
+  // Google requires an event window for EVENT and OFFER topics, so the
+  // composer only asks for the dates when one of those is actually chosen.
+  const needsEventWindow = confirmItems.some(({ methods }) =>
+    methods.some((m) => m === "event" || m === "offer"),
+  );
   const cf = tr.publish.confirm;
   const formatCount = confirmItems.reduce((n, i) => n + i.methods.length, 0);
   const destStr = confirmItems.length === 1 ? cf.destOne : fill(cf.destN, { n: fmt(confirmItems.length) });
   const fmtStr = formatCount === 1 ? cf.fmtOne : fill(cf.fmtN, { n: fmt(formatCount) });
-  // The publish endpoint requires a fetchable media URL, and WhatsApp's only
-  // format (status) is media-only — a text-only push would fail downstream,
-  // so media is required at the gate too.
-  const canPublish = confirmItems.length > 0 && media !== null;
+  // A text-only post is valid for Google What's New / Event / Offer and Meta
+  // feed posts. Everything else (and every Instagram post) needs an image.
+  const needsMedia = confirmItems.some(({ target, methods }) =>
+    methods.some(
+      (m) =>
+        MEDIA_ONLY_METHODS.has(m) ||
+        (target.platform === "instagram" && m === "post"),
+    ),
+  );
+  const canPublish = confirmItems.length > 0 && (media !== null || !needsMedia);
 
   const openConfirm = () => {
-    if (media === null) {
+    if (needsMedia && media === null) {
       setNotice(pc.needMedia);
       return;
     }
@@ -524,17 +554,24 @@ export default function PublishComposer({
       }
       // Locally-picked files must go to our storage first: providers (and
       // the Google Business uploader) fetch the media from a public URL at
-      // publish time, so a blob: URL can never be delivered.
-      let mediaUrl = media.url;
-      let mediaKey = media.key ?? null;
-      if (media.url.startsWith("blob:")) {
-        if (!media.file) throw new Error(pc.fileGoneErr);
-        const form = new FormData();
-        form.append("file", media.file);
-        const up = await apiFetch("/api/v1/media/upload", { method: "POST", body: form });
-        mediaUrl = up.image_url;
-        mediaKey = up.key ?? null;
-        if (!mediaUrl) throw new Error(pc.uploadEmptyErr);
+      // publish time, so a blob: URL can never be delivered. With no media
+      // at all, the payload carries null and Google creates a text-only post.
+      let mediaUrl: string | null = null;
+      let mediaKey: string | null = null;
+      let mediaType = "image";
+      if (media) {
+        mediaUrl = media.url;
+        mediaKey = media.key ?? null;
+        mediaType = media.type ?? "image";
+        if (media.url.startsWith("blob:")) {
+          if (!media.file) throw new Error(pc.fileGoneErr);
+          const form = new FormData();
+          form.append("file", media.file);
+          const up = await apiFetch("/api/v1/media/upload", { method: "POST", body: form });
+          mediaUrl = up.image_url;
+          mediaKey = up.key ?? null;
+          if (!mediaUrl) throw new Error(pc.uploadEmptyErr);
+        }
       }
 
       const batchId = crypto.randomUUID();
@@ -551,11 +588,16 @@ export default function PublishComposer({
         body: JSON.stringify({
           media_url: mediaUrl,
           media_key: mediaKey,
-          media_type: media.type,
+          media_type: mediaType,
           caption,
           description,
+          cta_type: ctaType || null,
+          cta_url:
+            ctaType && ctaType !== "call" ? ctaUrl.trim() || null : null,
           scheduled_at: scheduleOn && scheduleAt ? new Date(scheduleAt).toISOString() : null,
           delete_at: removeOn && removeAt ? new Date(removeAt).toISOString() : null,
+          start_date: startDate ? new Date(startDate).toISOString() : null,
+          end_date: endDate ? new Date(endDate).toISOString() : null,
           destinations,
           batch_id: batchId,
           idempotency_key: `${batchId}:${Date.now()}`,
@@ -570,6 +612,10 @@ export default function PublishComposer({
       setScheduleAt("");
       setRemoveOn(false);
       setRemoveAt("");
+      setCtaType("");
+      setCtaUrl("");
+      setStartDate("");
+      setEndDate("");
       setFormats({});
       onPublished?.();
     } catch (e) {
@@ -704,6 +750,38 @@ export default function PublishComposer({
                   className={`${FIELD} mt-1 w-full resize-y`}
                 />
               </div>
+              <div className="mt-4 border-t border-[var(--ui-line)] pt-3">
+                <label htmlFor="pub-cta-type" className={`text-[12px] font-semibold ${INK2}`}>
+                  {pc.ctaType}
+                </label>
+                <select
+                  id="pub-cta-type"
+                  value={ctaType}
+                  onChange={(e) => {
+                    setCtaType(e.target.value);
+                    if (e.target.value === "call") setCtaUrl("");
+                  }}
+                  className={`${FIELD} mt-1 w-full sm:w-64`}
+                >
+                  <option value="">{pc.ctaTypePh}</option>
+                  {CTA_VALUES.map((value) => (
+                    <option key={value} value={value}>
+                      {pc.ctaTypes[value]}
+                    </option>
+                  ))}
+                </select>
+                {ctaType && ctaType !== "call" && (
+                  <input
+                    type="url"
+                    value={ctaUrl}
+                    onChange={(e) => setCtaUrl(e.target.value)}
+                    placeholder={pc.ctaUrlPh}
+                    aria-label={pc.ctaUrlPh}
+                    className={`${FIELD} mt-1.5 w-full`}
+                  />
+                )}
+                <p className={`mt-1.5 text-[11px] ${INK2}`}>{pc.ctaHint}</p>
+              </div>
             </div>
           </section>
 
@@ -740,6 +818,36 @@ export default function PublishComposer({
               <p className={`mt-2 text-[11px] ${INK2}`}>
                 {pc.removeNote}
               </p>
+            )}
+            {needsEventWindow && (
+              <div className="mt-3 border-t border-[var(--ui-line)] pt-3">
+                <p className={`mb-2 text-[12px] font-semibold ${INK2}`}>
+                  {pc.eventWindow}
+                </p>
+                <div className="flex flex-wrap items-center gap-3">
+                  <label className={`flex items-center gap-2 text-[12px] ${INK2}`}>
+                    {pc.eventStart}
+                    <input
+                      type="datetime-local"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      aria-label={pc.eventStart}
+                      className={`${FIELD} w-full sm:w-56`}
+                    />
+                  </label>
+                  <label className={`flex items-center gap-2 text-[12px] ${INK2}`}>
+                    {pc.eventEnd}
+                    <input
+                      type="datetime-local"
+                      value={endDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      aria-label={pc.eventEnd}
+                      className={`${FIELD} w-full sm:w-56`}
+                    />
+                  </label>
+                </div>
+                <p className={`mt-1.5 text-[11px] ${INK2}`}>{pc.eventWindowHint}</p>
+              </div>
             )}
           </section>
 

@@ -373,8 +373,7 @@ async def _publish_post_inner(
             _google_caption(post.description, post.terms_conditions),
             post.description or "",
             # Our scheduler owns timing: the worker calls this only when the
-            # post is due, so Google must publish immediately. A future
-            # scheduledPublishTime here can be rejected once it is in the past.
+            # post is due, so Google must publish immediately.
             None,
             account_id=channel.platform_user_id,
             media_urls=sent,
@@ -565,9 +564,14 @@ async def publish_due(db: AsyncSession) -> dict:
 
 
 async def delete_due(db: AsyncSession) -> dict:
-    """Delete rows whose delete_at has passed (any status — the schedule
-    wins). Local rows only: Google follows its own lifecycle (end_date).
-    Deletes are naturally idempotent, so no locking needed."""
+    """Delete rows whose delete_at has passed.
+
+    A published post is taken down on Google first: Google expires EVENT and
+    OFFER posts on their own end_date, but a STANDARD (What's New) post never
+    does, so a "remove it on this date" request has to call the API. If the
+    platform delete fails the row is kept and the next pass retries — a promo
+    that must come down should not be silently forgotten.
+    """
     now = datetime.now(timezone.utc)
     rows = (
         await db.execute(
@@ -577,8 +581,36 @@ async def delete_due(db: AsyncSession) -> dict:
             )
         )
     ).scalars().all()
-    totals = {"checked": len(rows), "deleted": 0}
+    totals = {"checked": len(rows), "deleted": 0, "platform_deleted": 0}
     for post in rows:
+        if post.status == "published" and post.google_post_id:
+            try:
+                from ..channels.publish.service import delete_published_from_platform
+                from ..locations.service import channel_for_listing
+
+                channel = await channel_for_listing(
+                    db, post.user_id, post.listing_id, statuses=("active",)
+                )
+                if channel is None:
+                    raise ValueError("no active Google channel for the listing")
+                await delete_published_from_platform(
+                    platform="google_reviews",
+                    post_id=post.google_post_id,
+                    channel=channel,
+                    db=db,
+                )
+                totals["platform_deleted"] += 1
+            except Exception as e:
+                logger.warning(
+                    "Scheduled Google deletion failed for post %s (%s) — row kept, "
+                    "next pass retries",
+                    post.id, e,
+                )
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
+                continue
         try:
             await db.delete(post)
             await db.flush()
