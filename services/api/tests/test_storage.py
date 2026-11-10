@@ -55,6 +55,18 @@ def test_public_media_base_falls_back_to_request_origin(monkeypatch):
     assert storage.public_media_base("https://dev-api.sayvors.com/") == "https://dev-api.sayvors.com"
 
 
+def test_public_media_base_uses_frontend_origin_when_api_is_local(monkeypatch):
+    """Dev: the browser is on the web origin, which proxies /media-files to
+    the API. The API's own origin is unreachable from the page, so media URLs
+    must be built from FRONTEND_URL or the feed thumbnail cannot load."""
+    monkeypatch.setattr(settings, "PUBLIC_API_URL", "http://localhost:8000")
+    monkeypatch.setattr(settings, "FRONTEND_URL", "https://dev-web.sayvors.com")
+    assert (
+        storage.public_media_base("https://localhost:8000/")
+        == "https://dev-web.sayvors.com"
+    )
+
+
 def test_integrations_bootstrap_restores_repo_root_path(monkeypatch):
     """Regression: starting the API from services/api left the repo-root
     `integrations` package off sys.path, so even local-disk media uploads

@@ -398,7 +398,7 @@ def get_media(user_id: str, storage_key: str) -> bytes:
 
 
 def public_media_base(request_base: str | None = None) -> str:
-    """Origin used for public media URLs handed to providers.
+    """Origin used for public media URLs handed to providers and the feed.
 
     Google's Local Posts API fetches post images from ``sourceUrl`` itself, so
     the URL must be reachable from the public internet — it cannot be an
@@ -409,6 +409,18 @@ def public_media_base(request_base: str | None = None) -> str:
     configured = (_settings().PUBLIC_API_URL or "").strip().rstrip("/")
     if configured.startswith("https://") and "localhost" not in configured:
         return configured
+    # A public request origin (a tunnel, a deployed API behind a proxy) is
+    # already reachable from both the browser and the provider.
+    base = (request_base or "").strip().rstrip("/")
+    if base.startswith("https://") and "localhost" not in base:
+        return base
+    # Dev: the API origin is not reachable from the browser — the page is on
+    # the web origin, which proxies /media-files to the API. Use FRONTEND_URL,
+    # the origin the browser actually loads media from. In production
+    # PUBLIC_API_URL is always a public https origin, so this is dev-only.
+    frontend = (_settings().FRONTEND_URL or "").strip().rstrip("/")
+    if frontend.startswith("https://") and "localhost" not in frontend:
+        return frontend
     return (request_base or configured or "http://localhost:8000").rstrip("/")
 
 
