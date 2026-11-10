@@ -253,10 +253,45 @@ async def test_delete_due_removes_only_due(db, user_id):
     due_id = await _row(now - timedelta(minutes=1))
     future_id = await _row(now + timedelta(days=1))
     totals = await posts.delete_due(db)
-    assert totals == {"checked": 1, "deleted": 1}
+    assert totals == {"checked": 1, "deleted": 1, "platform_deleted": 0}
     remaining = await posts.list_posts(db, user_id, "loc-1")
     assert [r["id"] for r in remaining] == [future_id]
     assert due_id not in [r["id"] for r in remaining]
+
+
+@pytest.mark.asyncio
+async def test_delete_due_takes_the_google_post_down(db, user_id, monkeypatch):
+    """A scheduled removal must also remove the post from Google — a STANDARD
+    (What's New) post never expires on its own, so forgetting the local row
+    would leave it live forever."""
+    from datetime import datetime as _dt
+    from app.modules.posts.models import LocationPost
+
+    await _connection(db, user_id, "loc-del")
+    db.add(LocationPost(
+        id="p-del", user_id=user_id, listing_id="loc-del", status="published",
+        google_post_id="accounts/1/locations/2/localPosts/3",
+        delete_at=_dt.now(timezone.utc) - timedelta(minutes=1),
+    ))
+    await db.commit()
+
+    captured = {}
+
+    async def _fake_delete(*, platform, post_id, channel, db):
+        captured["platform"] = platform
+        captured["post_id"] = post_id
+        return {"deleted": True}
+
+    monkeypatch.setattr(
+        "app.modules.channels.publish.service.delete_published_from_platform",
+        _fake_delete,
+    )
+
+    totals = await posts.delete_due(db)
+    assert totals["platform_deleted"] == 1
+    assert captured["post_id"] == "accounts/1/locations/2/localPosts/3"
+    remaining = await posts.list_posts(db, user_id, "loc-del")
+    assert [r["id"] for r in remaining] == []
 
 
 async def _notif_types(db, user_id):

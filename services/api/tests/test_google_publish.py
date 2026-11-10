@@ -132,6 +132,7 @@ async def test_offer_only_uses_fields_google_accepts():
     assert body["topicType"] == "OFFER"
     assert body["offer"]["termsConditions"] == "Come say hello"
     assert set(body["offer"]) <= {"couponCode", "redeemOnlineUrl", "termsConditions"}
+    assert "description" not in body["offer"]
 
 
 @pytest.mark.asyncio
@@ -169,7 +170,22 @@ async def test_offer_link_goes_to_redeem_url_not_a_button():
     body = captured["body"]
     assert "callToAction" not in body
     assert body["offer"]["redeemOnlineUrl"] == "https://sayvors.com/redeem"
-    assert "description" not in body["offer"]
+
+
+@pytest.mark.asyncio
+async def test_offer_carries_the_event_window_when_dates_exist():
+    """The event object is required for EVENT and OFFER topics."""
+    captured = await _publish(
+        "offer",
+        start_date="2026-11-11T09:00:00+00:00",
+        end_date="2026-11-18T09:00:00+00:00",
+    )
+    assert captured["body"]["event"]["schedule"]["startDate"] == {
+        "year": 2026, "month": 11, "day": 11,
+    }
+    assert captured["body"]["event"]["schedule"]["endDate"] == {
+        "year": 2026, "month": 11, "day": 18,
+    }
 
 
 @pytest.mark.asyncio
@@ -205,9 +221,13 @@ async def test_media_is_attached_as_a_photo():
 
 
 @pytest.mark.asyncio
-async def test_scheduled_time_is_sent_as_rfc3339():
+async def test_no_scheduling_field_is_sent_to_google():
+    """LocalPost has no scheduling field — sending one is rejected with
+    'Unknown name ... at local_post: Cannot find field.' Sayvors schedules
+    the job itself and calls the API only when the post is due."""
     captured = await _publish("update", scheduled_at="2026-12-01T09:30:00+00:00")
-    assert captured["body"]["scheduledPublishTime"] == "2026-12-01T09:30:00Z"
+    assert "scheduledPublishTime" not in captured["body"]
+    assert "scheduledTime" not in captured["body"]
 
 
 # ── location images (profile picture / cover) ──────────────────────────

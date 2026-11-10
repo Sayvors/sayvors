@@ -6,8 +6,9 @@ GBP does not have a "feed post" in the Meta sense. The equivalent is a
     POST /v1/accounts/{accountId}/locations/{locationId}/localPosts
 
 A STANDARD local post carries a summary (caption) and optionally a photo
-and a call-to-action. Scheduled publishing is done by setting
-``scheduledPublishTime`` in the payload (RFC3339 timestamp).
+and a call-to-action. Google has no scheduling field on LocalPost —
+scheduling is Sayvors' own job queue, which calls this only when the post is
+due.
 
 This adapter mirrors the shape of the Meta adapters so the job runner can
 treat every destination uniformly: one ``publish_post`` call per
@@ -185,10 +186,11 @@ class GoogleBusinessPublisher:
                 media_items.append(item)
             body["media"] = media_items
 
-        # EVENT posts require an event object. Google's LocalPostEvent is
+        # The event object is required for topic types EVENT **and** OFFER.
+        # Google's LocalPostEvent is
         # {title, schedule:{startDate, startTime, endDate, endTime}} where
         # Date/TimeOfDay are JSON objects — ISO strings are not accepted.
-        if topic_type == "EVENT":
+        if topic_type in ("EVENT", "OFFER") and (start_date or end_date):
             from datetime import timedelta
 
             now = datetime.now(timezone.utc)
@@ -247,14 +249,12 @@ class GoogleBusinessPublisher:
                 call_to_action["url"] = cta_url[:1000]
             body["callToAction"] = call_to_action
 
-        if scheduled_at:
-            try:
-                dt = datetime.fromisoformat(str(scheduled_at).replace("Z", "+00:00"))
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
-                body["scheduledPublishTime"] = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-            except ValueError:
-                logger.warning("invalid scheduled_at %r - publishing immediately", scheduled_at)
+        # NOTE: Google's LocalPost has NO scheduling field (the v4 reference has
+        # no scheduledPublishTime/scheduledTime) — sending one fails with
+        # "Unknown name ... at 'local_post': Cannot find field." Sayvors does
+        # its own scheduling: the publishing job is deferred to ``scheduled_at``
+        # and this call runs only when the post is due, so Google must publish
+        # immediately.
 
         url = f"{GBP_LOCAL_POSTS_API}/{account}/{location}/localPosts"
         post_body = body
