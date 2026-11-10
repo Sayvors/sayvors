@@ -3949,6 +3949,9 @@ const en = {
       detail: "added in {ok} of {total} branches",
       detailSkipped: "{count} already had it",
       detailFailed: "{count} failed",
+      notOnGoogle: "Saved in Sayvors, but Google rejected it.",
+      googleRejected: "Google rejected the service list: {err}",
+      detailNotPushed: "{count} not published to Google",
     },
     plans: {
       eyebrow: "Plans & billing",

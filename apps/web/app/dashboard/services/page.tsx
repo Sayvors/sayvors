@@ -19,7 +19,7 @@ import {
 } from "@/lib/location-groups";
 
 type Channel = { id: string; display_name: string | null; listing_id?: string | null };
-type Service = { id: string; channel_id: string; name: string; category: string; description: string | null; is_offered: boolean; source: string };
+type Service = { id: string; channel_id: string; name: string; category: string; description: string | null; is_offered: boolean; source: string; google_pushed?: boolean | null; google_error?: string | null };
 
 type ServicesCopy = ReturnType<typeof useI18n>["t"]["dashboard"]["services"];
 
@@ -129,7 +129,9 @@ export default function ServicesPage({ embedded = false, listingId }: { embedded
     let ok = 0;
     let skipped = 0;
     let failed = 0;
+    let notPushed = 0;
     let firstErr = "";
+    let googleErr = "";
     for (const chId of targets) {
       try {
         // Skip branches that already have this service (name, case-insensitive)
@@ -143,11 +145,17 @@ export default function ServicesPage({ embedded = false, listingId }: { embedded
           skipped += 1;
           continue;
         }
-        await apiFetch(`/api/v1/channels/${chId}/services`, {
+        const created = (await apiFetch(`/api/v1/channels/${chId}/services`, {
           method: "POST",
           body: JSON.stringify({ name: name.trim(), category: category.trim() || "Custom", description: description.trim() || null, source: "custom", is_offered: true }),
-        });
+        })) as Service;
         ok += 1;
+        // Google can refuse the whole service list. The row is saved either
+        // way, so say what actually reached Google.
+        if (created?.google_pushed === false) {
+          notPushed += 1;
+          if (!googleErr) googleErr = created?.google_error ?? "";
+        }
       } catch (error) {
         failed += 1;
         if (!firstErr) firstErr = error instanceof Error ? error.message.slice(0, 140) : copy.errRequest;
@@ -160,9 +168,10 @@ export default function ServicesPage({ embedded = false, listingId }: { embedded
     if (n > 1) {
       const parts = [copy.detail.replace("{ok}", String(ok)).replace("{total}", String(n))];
       if (skipped) parts.push(copy.detailSkipped.replace("{count}", String(skipped)));
+      if (notPushed) parts.push(copy.detailNotPushed.replace("{count}", String(notPushed)));
       if (failed) parts.push(copy.detailFailed.replace("{count}", String(failed)));
       setMessage(
-        failed === 0 && skipped === 0
+        failed === 0 && skipped === 0 && notPushed === 0
           ? copy.savedAll.replace("{count}", String(n))
           : copy.savedPartial
               .replace("{detail}", parts.join(copy.listSeparator))
@@ -172,6 +181,12 @@ export default function ServicesPage({ embedded = false, listingId }: { embedded
       setMessage(copy.alreadyThere);
     } else if (failed) {
       setMessage(`${copy.errSave} ${firstErr}`);
+    } else if (notPushed) {
+      setMessage(
+        googleErr
+          ? `${copy.googleRejected.replace("{err}", googleErr)} ${copy.notOnGoogle}`
+          : copy.notOnGoogle,
+      );
     } else {
       setMessage(copy.savedOne);
     }
@@ -180,10 +195,17 @@ export default function ServicesPage({ embedded = false, listingId }: { embedded
 
   async function toggleService(service: Service) {
     try {
-      const updated = await apiFetch(`/api/v1/channels/${service.channel_id}/services/${service.id}`, { method: "PUT", body: JSON.stringify({ is_offered: !service.is_offered }) });
+      const updated = (await apiFetch(`/api/v1/channels/${service.channel_id}/services/${service.id}`, { method: "PUT", body: JSON.stringify({ is_offered: !service.is_offered }) })) as Service;
       queryClient.setQueryData(["services", "list", selectedId, groupChannelKey], (old: Service[] | undefined) =>
         (old ?? []).map((item) => (item.id === updated.id ? updated : item)),
       );
+      if (updated?.google_pushed === false) {
+        setMessage(
+          updated?.google_error
+            ? `${copy.googleRejected.replace("{err}", updated.google_error)} ${copy.notOnGoogle}`
+            : copy.notOnGoogle,
+        );
+      }
     } catch (error) { setMessage(error instanceof Error ? error.message : copy.errUpdate); }
   }
 

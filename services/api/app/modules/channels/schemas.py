@@ -171,6 +171,10 @@ class ServiceResponse(BaseModel):
     description: str | None
     is_offered: bool
     source: str
+    # Whether the service list reached Google, and why it did not when it
+    # did not. The local row is kept either way.
+    google_pushed: bool | None = None
+    google_error: str | None = None
 
 
 class ChannelMessageSend(BaseModel):

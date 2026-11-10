@@ -1003,7 +1003,12 @@ async def complete_verification(
         await client.close()
 
 
-def _service_response(service: BusinessService) -> ServiceResponse:
+def _service_response(
+    service: BusinessService,
+    *,
+    google_pushed: bool | None = None,
+    google_error: str | None = None,
+) -> ServiceResponse:
     return ServiceResponse(
         id=service.id,
         channel_id=service.channel_id,
@@ -1012,7 +1017,24 @@ def _service_response(service: BusinessService) -> ServiceResponse:
         description=service.description,
         is_offered=service.is_offered,
         source=service.source,
+        google_pushed=google_pushed,
+        google_error=google_error,
     )
+
+
+async def _push_services(db, channel_id: str) -> dict:
+    """Push the channel's service list to Google and report the outcome.
+
+    Best-effort: the local rows stay either way, so a rejected push never
+    loses the merchant's work.
+    """
+    from .google_services import push_services
+    from .models import Channel
+
+    channel = await db.get(Channel, channel_id)
+    if channel is None:
+        return {"pushed": False, "error": "channel not found", "skipped": []}
+    return await push_services(db, channel)
 
 
 @router.get("/{channel_id}/services")
@@ -1050,7 +1072,12 @@ async def create_service(
     from ..profile.facts_store import rebuild_facts_safe
 
     await rebuild_facts_safe(db, tenant_id_of(ctx.user))
-    return _service_response(service)
+    push = await _push_services(db, channel_id)
+    return _service_response(
+        service,
+        google_pushed=push.get("pushed"),
+        google_error=push.get("error"),
+    )
 
 
 @router.put("/{channel_id}/services/{service_id}", response_model=ServiceResponse)
@@ -1078,7 +1105,12 @@ async def update_service(
     from ..profile.facts_store import rebuild_facts_safe
 
     await rebuild_facts_safe(db, tenant_id_of(ctx.user))
-    return _service_response(service)
+    push = await _push_services(db, channel_id)
+    return _service_response(
+        service,
+        google_pushed=push.get("pushed"),
+        google_error=push.get("error"),
+    )
 
 
 @router.delete("/{channel_id}/services/{service_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1103,6 +1135,9 @@ async def delete_service(
     from ..profile.facts_store import rebuild_facts_safe
 
     await rebuild_facts_safe(db, tenant_id_of(ctx.user))
+    # Rebuild Google's list so the deleted service leaves it too. The row is
+    # already gone, so the rebuild drops the entry.
+    await _push_services(db, channel_id)
 
 
 @router.post("/{channel_id}/messages", response_model=ChannelMessageResponse, status_code=status.HTTP_201_CREATED)

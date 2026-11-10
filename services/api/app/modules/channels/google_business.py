@@ -328,10 +328,17 @@ class GoogleBusinessClient(GoogleReviewsClient):
             lid = lid.split("/")[-1]
         return f"locations/{lid}"
 
-    async def get_location(self, location_id: str) -> dict:
-        """Full BusinessLocation resource (read-only probe of scopes/shape)."""
+    async def get_location(self, location_id: str, read_mask: str | None = None) -> dict:
+        """Full BusinessLocation resource (read-only probe of scopes/shape).
+
+        The v1 API requires a readMask; ``read_mask`` is a comma-separated
+        field list. Without one the call is refused with 400.
+        """
+        params = {"readMask": read_mask} if read_mask else None
         resp = await self._authed_request(
-            "GET", f"{GBP_BIZINFO_API}/{self._location_name(location_id)}")
+            "GET", f"{GBP_BIZINFO_API}/{self._location_name(location_id)}",
+            params=params,
+        )
         if resp.status_code != 200:
             raise GoogleReviewsError(
                 f"get_location failed ({resp.status_code}): {resp.text[:300]}",
@@ -391,6 +398,32 @@ class GoogleBusinessClient(GoogleReviewsClient):
             )
         data = resp.json()
         return (data.get("phoneNumbers") or {}) if isinstance(data, dict) else {}
+
+    async def get_service_items(self, location_id: str) -> list[dict]:
+        """Google's current service list for the location."""
+        resp = await self._authed_request(
+            "GET",
+            f"{GBP_BIZINFO_API}/{self._location_name(location_id)}",
+            params={"readMask": "serviceItems"},
+        )
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"get_service_items failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        data = resp.json() or {}
+        return list(data.get("serviceItems") or [])
+
+    async def push_service_items(self, location_id: str, items: list[dict]) -> dict:
+        """Replace the location's whole service list.
+
+        Google treats ``serviceItems`` as a complete object — "updating
+        individual services is not supported" — so the caller must send the
+        full list, including the entries it wants to keep.
+        """
+        return await self.patch_location(
+            location_id, {"serviceItems": items}, "serviceItems"
+        )
 
     async def patch_location(self, location_id: str, body: dict,
                              update_mask: str) -> dict:

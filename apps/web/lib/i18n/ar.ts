@@ -3957,6 +3957,9 @@ const ar: Dict = {
       detail: "أُضيفت في {ok} من {total} فروع",
       detailSkipped: "{count} منها مكررة",
       detailFailed: "{count} فشلت",
+      notOnGoogle: "حُفظت في سيفورس، لكن Google رفضها.",
+      googleRejected: "رفض Google قائمة الخدمات: {err}",
+      detailNotPushed: "{count} لم تُنشر على Google",
     },
     plans: {
       eyebrow: "الخطط والفوترة",
