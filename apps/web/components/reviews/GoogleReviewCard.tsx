@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import type { Dict } from "@/lib/i18n/en";
@@ -110,7 +109,11 @@ export function ReviewAvatar({ name, photoUrl }: { name: string; photoUrl?: stri
   const [imgFailed, setImgFailed] = useState(false);
   if (photoUrl && !imgFailed) {
     return (
-      <Image
+      // Plain img: Google serves reviewer photos from arbitrary hosts
+      // (googleusercontent, wikimedia, ...). next/image would reject any
+      // host that is not on a fixed allowlist.
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
         src={photoUrl}
         alt=""
         aria-hidden

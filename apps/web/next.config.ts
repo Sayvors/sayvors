@@ -45,6 +45,13 @@ const nextConfig: NextConfig = {
       { protocol: "https", hostname: "**.amazonaws.com" },
       { protocol: "https", hostname: "**.storage.googleapis.com" },
       { protocol: "https", hostname: "**.googleapis.com" },
+      // Google serves some Business Profile photos from Wikimedia.
+      { protocol: "https", hostname: "**.wikimedia.org" },
+      { protocol: "https", hostname: "**.wikipedia.org" },
+      { protocol: "https", hostname: "**.ggpht.com" },
+      // Meta's media CDN.
+      { protocol: "https", hostname: "**.fbcdn.net" },
+      { protocol: "https", hostname: "**.cdninstagram.com" },
     ],
   },
   async headers() {
