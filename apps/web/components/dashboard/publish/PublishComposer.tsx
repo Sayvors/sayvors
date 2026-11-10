@@ -5,6 +5,7 @@ import PlatformMark from "@/components/channels/PlatformMark";
 import { INK, INK2 } from "@/components/channels/instagram/ui";
 import { apiFetch } from "@/lib/api-rag";
 import { externalAssetIdFor } from "@/lib/publish-targets";
+import { checkWindow, minLocalInput } from "@/lib/publish-schedule";
 import MediaSink from "./MediaSink";
 import DestinationSelector from "./DestinationSelector";
 import DestinationPreview from "./DestinationPreview";
@@ -536,21 +537,29 @@ export default function PublishComposer({
   };
 
   const publishNow = async () => {
-    if (!media || publishing) return;
+    // Text-only posts are valid for Google and Meta feeds, so a missing image
+    // is not a reason to stop here: the API enforces which formats need one.
+    if (publishing) return;
     setPublishing(true);
     setPublishError(null);
     try {
-      // A post cannot be taken down before it goes up. Checked here so
-      // the tenant gets the reason immediately, not a 422 from the API.
-      if (removeOn) {
-        if (!removeAt) {
-          throw new Error(pc.removeDateErr);
-        }
-        if (scheduleOn && scheduleAt) {
-          if (new Date(removeAt).getTime() <= new Date(scheduleAt).getTime()) {
-            throw new Error(pc.removeOrderErr);
-          }
-        }
+      // Dates are checked here, with the reason, so the tenant is not met by a
+      // 422 from the API: a schedule must be set and in the future, a removal
+      // must come after the post goes out, and an event must end after it starts.
+      if (scheduleOn && !scheduleAt) {
+        throw new Error(tr.publish.dates.scheduleMissing);
+      }
+      if (removeOn && !removeAt) {
+        throw new Error(pc.removeDateErr);
+      }
+      const dateProblem = checkWindow({
+        scheduleAt: scheduleOn ? scheduleAt : "",
+        removeAt: removeOn ? removeAt : "",
+        startDate: needsEventWindow ? startDate : "",
+        endDate: needsEventWindow ? endDate : "",
+      });
+      if (dateProblem) {
+        throw new Error(tr.publish.dates[dateProblem]);
       }
       // Locally-picked files must go to our storage first: providers (and
       // the Google Business uploader) fetch the media from a public URL at
@@ -798,6 +807,7 @@ export default function PublishComposer({
                   value={scheduleAt}
                   onChange={(e) => setScheduleAt(e.target.value)}
                   aria-label={pc.publishAt}
+                  min={minLocalInput()}
                   className={`${FIELD} w-full sm:w-64`}
                 />
               )}
@@ -810,6 +820,7 @@ export default function PublishComposer({
                   value={removeAt}
                   onChange={(e) => setRemoveAt(e.target.value)}
                   aria-label={pc.removeAtAria}
+                  min={minLocalInput()}
                   className={`${FIELD} w-full sm:w-64`}
                 />
               )}
@@ -832,6 +843,7 @@ export default function PublishComposer({
                       value={startDate}
                       onChange={(e) => setStartDate(e.target.value)}
                       aria-label={pc.eventStart}
+                      min={minLocalInput()}
                       className={`${FIELD} w-full sm:w-56`}
                     />
                   </label>
@@ -842,6 +854,7 @@ export default function PublishComposer({
                       value={endDate}
                       onChange={(e) => setEndDate(e.target.value)}
                       aria-label={pc.eventEnd}
+                      min={startDate || minLocalInput()}
                       className={`${FIELD} w-full sm:w-56`}
                     />
                   </label>

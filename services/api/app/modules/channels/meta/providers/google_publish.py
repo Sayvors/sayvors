@@ -6,10 +6,9 @@ GBP does not have a "feed post" in the Meta sense. The equivalent is a
     POST /v1/accounts/{accountId}/locations/{locationId}/localPosts
 
 A STANDARD local post carries a summary (caption) and optionally a photo
-and a call-to-action. Google schedules natively through ``scheduledTime``
-(RFC 3339): Sayvors creates the post immediately in Google's SCHEDULED
-state and Google publishes it at that moment, so a late or backed-up worker
-cannot delay the post.
+and a call-to-action. A future ``scheduledTime`` makes Google hold the post in
+SCHEDULED and publish it at that moment. The field rules live in
+``google_post_fields``; this module only sends and reads them.
 
 This adapter mirrors the shape of the Meta adapters so the job runner can
 treat every destination uniformly: one ``publish_post`` call per
@@ -23,10 +22,23 @@ from typing import Any
 
 from .....config import settings
 from ...google_reviews import GoogleReviewsClient, GoogleReviewsError
+from .google_post_fields import (
+    build_post_fields,
+    parse_instant,
+    scheduled_time_rfc3339,
+    topic_type_for,
+)
 
 logger = logging.getLogger(__name__)
 
 GBP_LOCAL_POSTS_API = "https://mybusiness.googleapis.com/v4"
+
+# Listing a location's posts is how a "gone" post is confirmed: Google's
+# localPosts.get answers 500 INTERNAL (not 404) for a post it no longer holds.
+LOCAL_POST_LIST_PAGE_SIZE = 100
+# A location with more posts than this is not worth paging through to prove a
+# deletion; the caller reports the original failure instead of guessing.
+LOCAL_POST_LIST_MAX_PAGES = 50
 
 # Location photos live in the v4.9 Business Profile API — v1 has no media
 # resource. Both versions are served from the same host and take the same
@@ -48,14 +60,27 @@ _LOCATION_IMAGE_CATEGORY = {
 }
 
 
-def _parse_google_dt(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+def _require_post_name(post_name: str) -> None:
+    if not post_name or "/localPosts/" not in post_name:
+        raise GoogleReviewsError(
+            "post name must be a full localPost resource name", 400
+        )
+
+
+def _post_summary(data: dict) -> dict:
+    """What Sayvors keeps about a local post, from Google's LocalPost JSON."""
+    return {
+        "id": data.get("name", ""),
+        "name": data.get("name", ""),
+        "topicType": data.get("topicType"),
+        "state": data.get("state"),
+        "searchUrl": data.get("searchUrl"),
+        "summary": data.get("summary"),
+        "event": data.get("event"),
+        "offer": data.get("offer"),
+        "callToAction": data.get("callToAction"),
+        "mediaCount": len(data.get("media") or []),
+    }
 
 
 class GoogleBusinessPublisher:
@@ -109,22 +134,17 @@ class GoogleBusinessPublisher:
             "event"  → EVENT
             "offer"  → OFFER
 
-        Returns a dict with at least ``{"id": ..., "name": ...}`` on success.
-        Raises ``GoogleReviewsError`` on failure.
+        ``scheduled_at`` is sent as ``scheduledTime``: Google holds the post in
+        SCHEDULED and publishes it at that moment. A time already past is
+        published now.
+
+        Returns the post summary plus the resolved event ``window`` and the
+        ``scheduledTime`` that was sent. Raises ``GoogleReviewsError`` on failure.
         """
-        _METHOD_TO_TOPIC = {
-            "update": "STANDARD",
-            "event": "EVENT",
-            "offer": "OFFER",
-            # "post" is the legacy alias for What's New, kept so jobs
-            # created before the method split still publish.
-            "post": "STANDARD",
-        }
-        topic_type = _METHOD_TO_TOPIC.get(method)
-        if topic_type is None:
-            raise GoogleReviewsError(
-                f"GBP supports 'update', 'event' or 'offer', got {method!r}", 400
-            )
+        try:
+            topic_type = topic_type_for(method)
+        except ValueError as e:
+            raise GoogleReviewsError(str(e), 400) from e
 
         account = (account_id or "").strip()
         location = (asset_id or "").strip()
@@ -139,13 +159,31 @@ class GoogleBusinessPublisher:
         if "/" not in location:
             location = f"locations/{location}"
 
+        now = datetime.now(timezone.utc)
+        try:
+            built = build_post_fields(
+                topic=topic_type,
+                caption=caption,
+                description=description,
+                cta_type=cta_type,
+                cta_url=cta_url,
+                start=parse_instant(start_date),
+                end=parse_instant(end_date),
+                coupon_code=coupon_code,
+                terms=terms_conditions,
+                now=now,
+            )
+            scheduled_time = scheduled_time_rfc3339(scheduled_at, now)
+        except ValueError as e:
+            raise GoogleReviewsError(str(e), 400) from e
+
         body: dict[str, Any] = {
             "topicType": topic_type,
             "languageCode": "en",
+            **{k: v for k, v in built.fields.items() if v is not None},
         }
-        summary = (caption or description or "").strip()
-        if summary:
-            body["summary"] = summary[:1500]
+        if scheduled_time:
+            body["scheduledTime"] = scheduled_time
 
         urls = [u for u in (media_urls or ([media_url] if media_url else [])) if u]
         original_media = [
@@ -187,97 +225,9 @@ class GoogleBusinessPublisher:
                 media_items.append(item)
             body["media"] = media_items
 
-        # The event object is REQUIRED for topic types EVENT **and** OFFER
-        # ("Required for topic types EVENT and OFFER"). Omitting it fails with
-        # a validation error, so it is always sent — defaulting the window
-        # when the caller gave no dates. Google's LocalPostEvent is
-        # {title, schedule:{startDate, startTime, endDate, endTime}} where
-        # Date/TimeOfDay are JSON objects — ISO strings are not accepted.
-        if topic_type in ("EVENT", "OFFER"):
-            from datetime import timedelta
-
-            now = datetime.now(timezone.utc)
-            start = _parse_google_dt(start_date) or now
-            end = _parse_google_dt(end_date) or (start + timedelta(days=7))
-
-            def _date_part(dt: datetime) -> dict[str, int]:
-                return {"year": dt.year, "month": dt.month, "day": dt.day}
-
-            def _time_part(dt: datetime) -> dict[str, int]:
-                return {
-                    "hours": dt.hour,
-                    "minutes": dt.minute,
-                    "seconds": dt.second,
-                    "nanos": dt.microsecond * 1000,
-                }
-
-            body["event"] = {
-                "title": (summary[:60] if summary else "Event"),
-                "schedule": {
-                    "startDate": _date_part(start),
-                    "startTime": _time_part(start),
-                    "endDate": _date_part(end),
-                    "endTime": _time_part(end),
-                },
-            }
-
-        # OFFER posts. Google's LocalPostOffer has exactly three fields —
-        # couponCode, redeemOnlineUrl, termsConditions. The post's summary
-        # already carries the copy; a "description" field is rejected with
-        # "Unknown name ... at 'local_post.offer'".
-        if topic_type == "OFFER":
-            offer: dict[str, Any] = {
-                "termsConditions": (terms_conditions or "Terms apply")[:300],
-            }
-            if coupon_code:
-                offer["couponCode"] = coupon_code[:64]
-            if cta_url:
-                offer["redeemOnlineUrl"] = cta_url[:1000]
-            body["offer"] = offer
-
-        # Google's CallToAction. Ignored for OFFER posts — those carry the link
-        # in offer.redeemOnlineUrl — and CALL never carries a URL.
-        cta_map = {
-            "book": "BOOK", "order": "ORDER", "shop": "SHOP",
-            "learn_more": "LEARN_MORE", "sign_up": "SIGN_UP", "call": "CALL",
-        }
-        action = cta_map.get((cta_type or "").strip().lower())
-        if action and topic_type != "OFFER":
-            call_to_action: dict[str, str] = {"actionType": action}
-            if action != "CALL":
-                if not cta_url:
-                    raise GoogleReviewsError(
-                        f"{action} call-to-action requires a URL", 400
-                    )
-                call_to_action["url"] = cta_url[:1000]
-            body["callToAction"] = call_to_action
-
-        # Google schedules natively via `scheduledTime` (LocalPost field, RFC
-        # 3339). The job runs immediately and Google holds the post in
-        # SCHEDULED until that moment, so a late or backed-up worker cannot
-        # delay it. If this account's API rejects the field, fall back to an
-        # immediate publish rather than losing the post.
-        if scheduled_at:
-            try:
-                dt = datetime.fromisoformat(str(scheduled_at).replace("Z", "+00:00"))
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
-                body["scheduledTime"] = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-            except ValueError:
-                logger.warning("invalid scheduled_at %r - publishing immediately", scheduled_at)
-
         url = f"{GBP_LOCAL_POSTS_API}/{account}/{location}/localPosts"
         post_body = body
         resp = await self._client._authed_request("POST", url, json=body)
-        if resp.status_code == 400 and "scheduledTime" in body and "scheduledTime" in resp.text:
-            # This account's API does not accept the field — publish now
-            # instead of losing the post.
-            logger.warning(
-                "Google rejected scheduledTime (%s); publishing immediately",
-                resp.text[:200],
-            )
-            post_body = {k: v for k, v in body.items() if k != "scheduledTime"}
-            resp = await self._client._authed_request("POST", url, json=post_body)
         if resp.status_code not in (200, 201) and used_staging:
             # Google can reject its own googleUrl as a post sourceUrl (a
             # deterministic 500 INTERNAL — staged media is still PENDING).
@@ -305,13 +255,16 @@ class GoogleBusinessPublisher:
                 f"create_local_post failed ({resp.status_code}): {detail}",
                 resp.status_code,
             )
-        data = resp.json()
+        window = None
+        if built.window:
+            window = {
+                "start": built.window[0].isoformat(),
+                "end": built.window[1].isoformat(),
+            }
         return {
-            "id": data.get("name", ""),
-            "name": data.get("name", ""),
-            "topicType": data.get("topicType"),
-            "state": data.get("state"),
-            "searchUrl": data.get("searchUrl"),
+            **_post_summary(resp.json()),
+            "window": window,
+            "scheduledTime": scheduled_time,
         }
 
     async def start_media_upload(self, account_id: str, location_id: str) -> str:
@@ -511,6 +464,96 @@ class GoogleBusinessPublisher:
             "googleUrl": data.get("googleUrl", ""),
         }
 
+    async def get_post(self, post_name: str) -> dict:
+        """Read a local post as Google holds it now (``localPosts.get``).
+
+        A post Google no longer has raises ``GoogleReviewsError`` with status
+        404, which callers record as gone rather than as a failure.
+        """
+        _require_post_name(post_name)
+        url = f"{GBP_LOCAL_POSTS_API}/{post_name}"
+        resp = await self._client._authed_request("GET", url)
+        if resp.status_code != 200:
+            status = await self._missing_status(resp.status_code, post_name)
+            raise GoogleReviewsError(
+                f"get_local_post failed ({resp.status_code}): {resp.text[:300]}",
+                status,
+            )
+        return _post_summary(resp.json())
+
+    async def post_exists(self, post_name: str) -> bool:
+        """Whether the location's post list still holds this post.
+
+        Google answers a get for a post it no longer holds with 500 INTERNAL
+        rather than 404, so a 5xx alone cannot be read as "deleted". The list
+        is authoritative. A list failure propagates: an outage must never be
+        mistaken for a deletion.
+        """
+        _require_post_name(post_name)
+        parent = post_name.rsplit("/localPosts/", 1)[0]
+        url = f"{GBP_LOCAL_POSTS_API}/{parent}/localPosts"
+        page_token = ""
+        for _ in range(LOCAL_POST_LIST_MAX_PAGES):
+            params: dict[str, Any] = {"pageSize": LOCAL_POST_LIST_PAGE_SIZE}
+            if page_token:
+                params["pageToken"] = page_token
+            resp = await self._client._authed_request("GET", url, params=params)
+            if resp.status_code != 200:
+                raise GoogleReviewsError(
+                    f"list_local_posts failed ({resp.status_code}): {resp.text[:300]}",
+                    resp.status_code,
+                )
+            data = resp.json() or {}
+            for item in data.get("localPosts") or []:
+                if item.get("name") == post_name:
+                    return True
+            page_token = str(data.get("nextPageToken") or "").strip()
+            if not page_token:
+                return False
+        # More pages than the cap: neither existence nor absence is proven.
+        raise GoogleReviewsError(
+            "could not confirm whether the local post still exists", 500
+        )
+
+    async def _missing_status(self, status_code: int, post_name: str) -> int:
+        """The status to report for a failed read: 404 only if the post is gone.
+
+        Only a 5xx is ambiguous (Google uses 500 for "no such post"); anything
+        else keeps its own status. A failed list check keeps the 5xx.
+        """
+        if status_code < 500:
+            return status_code
+        try:
+            exists = await self.post_exists(post_name)
+        except GoogleReviewsError:
+            return status_code
+        return status_code if exists else 404
+
+    async def update_post(self, post_name: str, fields: dict[str, Any]) -> dict:
+        """Change fields of a local post in place (``localPosts.patch``).
+
+        Google requires the updateMask to name every field being changed, so
+        the mask is built from the keys of ``fields``. A ``None`` value is sent
+        as JSON null, which clears that field (used to remove a button).
+        """
+        _require_post_name(post_name)
+        if not fields:
+            raise GoogleReviewsError("nothing to change on the local post", 400)
+        mask = ",".join(sorted(fields))
+        url = f"{GBP_LOCAL_POSTS_API}/{post_name}?updateMask={mask}"
+        resp = await self._client._authed_request("PATCH", url, json=fields)
+        if resp.status_code not in (200, 201):
+            detail = resp.text[:2000]
+            logger.warning(
+                "update_local_post failed (%s): %s | mask=%s",
+                resp.status_code, detail, mask,
+            )
+            raise GoogleReviewsError(
+                f"update_local_post failed ({resp.status_code}): {detail}",
+                resp.status_code,
+            )
+        return _post_summary(resp.json())
+
     async def delete_post(self, token: str, post_id: str) -> dict:
         """Delete a Google Business Profile local post.
 
@@ -529,6 +572,15 @@ class GoogleBusinessPublisher:
         url = f"{GBP_LOCAL_POSTS_API}/{post_id}"
         resp = await self._client._authed_request("DELETE", url)
         if resp.status_code not in (200, 204):
+            # A post that is already gone is the state the caller wanted.
+            # Google reports it as 500 INTERNAL, not 404, so the list decides.
+            if await self._missing_status(resp.status_code, post_id) == 404:
+                return {
+                    "deleted": True,
+                    "already_gone": True,
+                    "platform": "google_reviews",
+                    "post_id": post_id,
+                }
             raise GoogleReviewsError(
                 f"delete_local_post failed ({resp.status_code}): {resp.text[:300]}",
                 resp.status_code,

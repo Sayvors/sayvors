@@ -127,6 +127,8 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
 
   const selectedItems = selectedDay !== null ? byDate.get(`${year}-${month}-${selectedDay}`) ?? [] : [];
   const selectedDateIso = selectedDay !== null ? toIsoDate(year, month, selectedDay) : "";
+  // A past day cannot take a new post: the schedule action is withheld for it.
+  const selectedIsPast = selectedDay !== null && new Date(year, month, selectedDay) < todayStart;
   const isSelectedPast = selectedDay !== null && new Date(year, month, selectedDay) < todayStart;
 
   return (
@@ -287,7 +289,7 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
             {selectedItems.length === 0 && (
               <p className="text-[12px] text-ink/40 dark:text-fog/40 mb-3">{c.emptyDay}</p>
             )}
-            {onScheduleDate && (
+            {onScheduleDate && !selectedIsPast && (
               <button
                 type="button"
                 onClick={() => {

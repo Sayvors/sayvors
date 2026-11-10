@@ -700,3 +700,34 @@ async def test_batch_delete_dismisses_a_published_banner(db, client, user_id):
     assert row["status"] == "cancelled"
     assert "cannot be deleted" in row["last_error"]
     assert (await db.execute(select(Job).where(Job.id == job.id))).scalar_one_or_none() is None
+
+
+@pytest.mark.asyncio
+async def test_batch_delete_reports_a_refused_delete_instead_of_hiding_it(db, client, user_id):
+    """A post the platform refused to remove is still live: the row must come
+    back carrying the reason, not vanish from the response as if it were gone."""
+    from sqlalchemy import select
+
+    from app.modules.jobs.models import Job
+
+    job = _job(
+        user_id,
+        platform="google_reviews",
+        asset="181507565693476724",
+        job_id="job-google-0000-0000-000000000001",
+    )
+    db.add(job)
+    await db.commit()
+
+    res = client.post("/api/v1/channels/publish/delete", json={"job_ids": [job.id]})
+    assert res.status_code == 200, res.text
+    rows = res.json()
+    assert len(rows) == 1
+    assert rows[0]["status"] == "succeeded"
+    assert "not connected" in rows[0]["result"]["delete_error"]
+    assert rows[0]["result"].get("deleted") is None
+    # Nothing was taken down and nothing was dismissed.
+    still_there = (
+        await db.execute(select(Job).where(Job.id == job.id))
+    ).scalar_one_or_none()
+    assert still_there is not None

@@ -66,6 +66,12 @@ async def handle_post_publish(job: Job, db: AsyncSession) -> dict | None:
     scheduled_at = payload.get("scheduled_at")
     start_date = payload.get("start_date")
     end_date = payload.get("end_date")
+    cta_type = payload.get("cta_type")
+    cta_url = payload.get("cta_url")
+    # An OFFER carries its own coupon and terms. They default in the publisher
+    # when absent, but a job that has them must not lose them here.
+    coupon_code = payload.get("coupon_code")
+    terms_conditions = payload.get("terms_conditions")
 
     if not platform:
         raise ValueError("platform missing from payload")
@@ -138,8 +144,12 @@ async def handle_post_publish(job: Job, db: AsyncSession) -> dict | None:
             scheduled_at=scheduled_at,
             account_id=account_id,
             tenant_id=job.tenant_id,
+            cta_type=cta_type,
+            cta_url=cta_url,
             start_date=start_date,
             end_date=end_date,
+            coupon_code=coupon_code,
+            terms_conditions=terms_conditions,
         )
     else:
         provider = _provider_for(platform)

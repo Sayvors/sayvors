@@ -275,6 +275,9 @@ def test_generic_storage_routes_upload_get_list_update_delete(monkeypatch, tmp_p
     monkeypatch.setattr(settings, "AWS_S3_BUCKET", "")
     monkeypatch.setattr(settings, "S3_MEDIA_BUCKET", "")
     monkeypatch.setattr(settings, "S3_DOCS_BUCKET", "")
+    # Keep the media base on the request origin: a public FRONTEND_URL would
+    # take precedence and this test is about the storage routes, not that.
+    monkeypatch.setattr(settings, "FRONTEND_URL", "http://localhost:3000")
     headers = {"host": "localhost"}
 
     uploaded = client.post(
