@@ -189,7 +189,13 @@ async def _services(db, tenant_id: str) -> dict:
             await db.execute(
                 select(BusinessService)
                 .join(Channel, Channel.id == BusinessService.channel_id)
-                .where(Channel.user_id == tenant_id)
+                .where(
+                    Channel.user_id == tenant_id,
+                    # Only the services the merchant declared are facts. The
+                    # category catalogue is a suggestion list, not something
+                    # the business offers.
+                    BusinessService.declared.is_(True),
+                )
                 .order_by(BusinessService.name)
             )
         ).scalars().all()

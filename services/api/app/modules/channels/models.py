@@ -953,6 +953,14 @@ class BusinessService(Base):
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     is_offered: Mapped[bool] = mapped_column(Boolean, default=True)
     source: Mapped[str] = mapped_column(String(30), default="custom")
+    # Whether the merchant chose this service for their profile.
+    #
+    # Google-declared rows (source="google") are the CATEGORY's service types
+    # — every software company could offer "Data center management", but
+    # Google does not list it for this business until the merchant declares
+    # it. Undeclared rows are suggestions; declared rows are published to
+    # Google as serviceItems and are what the AI may quote as ground truth.
+    declared: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

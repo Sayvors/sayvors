@@ -1,9 +1,9 @@
 """Google service-list push: what reaches Google and what does not.
 
 No network: the Google client is monkeypatched. The tests pin the rules the
-rebuild follows — Google's own entries survive, a custom service the merchant
-deleted leaves Google's list, and the v1 payload shape is the one the API
-accepts.
+rebuild follows — only the services the merchant declared are published, a
+service they undeclared leaves the list, and the v1 payload shape is the one
+the API accepts.
 """
 import sys
 from pathlib import Path
@@ -20,21 +20,37 @@ from app.modules.channels.google_services import (
     location_category_info,
 )
 
+CATEGORY = "categories/gcid:software_company"
+
+# The category's service types, as the location reports them.
+SERVICE_TYPES = {
+    "data center management": "job_type_id:data_center_management",
+    "software development": "job_type_id:software_development",
+}
+
 
 class _Row:
     """A stand-in for a BusinessService row."""
 
-    def __init__(self, name, source="custom", description=None, is_offered=True):
+    def __init__(
+        self,
+        name,
+        source="custom",
+        description=None,
+        is_offered=True,
+        declared=True,
+    ):
         self.name = name
         self.source = source
         self.description = description
         self.is_offered = is_offered
+        self.declared = declared
 
 
 def _free_form(name, description=None):
     item = {
         "freeFormServiceItem": {
-            "category": "categories/gcid:software_company",
+            "category": CATEGORY,
             "label": {"displayName": name, "languageCode": "en"},
         }
     }
@@ -43,33 +59,41 @@ def _free_form(name, description=None):
     return item
 
 
+def _structured(service_id):
+    return {"structuredServiceItem": {"serviceTypeId": service_id}}
+
+
 def test_location_category_info_reads_the_primary_category():
     location = {
         "categories": {
             "primaryCategory": {
-                "name": "categories/gcid:software_company",
+                "name": CATEGORY,
                 "serviceTypes": [
-                    {"serviceTypeId": "job_type_id:app_dev", "displayName": "App development"},
+                    {
+                        "serviceTypeId": "job_type_id:data_center_management",
+                        "displayName": "Data center management",
+                    },
                 ],
             }
         }
     }
     category_id, service_ids = location_category_info(location)
-    assert category_id == "categories/gcid:software_company"
-    assert service_ids["app development"] == "job_type_id:app_dev"
+    assert category_id == CATEGORY
+    assert service_ids["data center management"] == "job_type_id:data_center_management"
 
 
-def test_build_publishes_custom_services_in_the_v1_shape():
+def test_build_publishes_a_declared_custom_service():
     items, skipped = build_service_items(
         google_items=[],
         local_rows=[_Row("Consulting", description="We advise")],
-        category_id="categories/gcid:software_company",
+        category_id=CATEGORY,
+        service_type_ids=SERVICE_TYPES,
     )
     assert skipped == []
     assert items == [
         {
             "freeFormServiceItem": {
-                "category": "categories/gcid:software_company",
+                "category": CATEGORY,
                 "label": {
                     "displayName": "Consulting",
                     "languageCode": "en",
@@ -82,23 +106,65 @@ def test_build_publishes_custom_services_in_the_v1_shape():
     assert "isOffered" not in str(items)
 
 
-def test_build_keeps_google_structured_services_untouched():
-    google_item = {
-        "structuredServiceItem": {"serviceTypeId": "job_type_id:app_dev"}
-    }
+def test_build_publishes_a_declared_catalogue_service_as_a_structured_item():
     items, _ = build_service_items(
-        google_items=[google_item],
-        local_rows=[_Row("App development", source="google")],
-        category_id="categories/gcid:software_company",
+        google_items=[],
+        local_rows=[
+            _Row("Data center management", source="google", declared=True),
+        ],
+        category_id=CATEGORY,
+        service_type_ids=SERVICE_TYPES,
     )
-    assert items == [google_item]
+    assert items == [
+        {"structuredServiceItem": {"serviceTypeId": "job_type_id:data_center_management"}}
+    ]
+
+
+def test_build_does_not_publish_an_undeclared_catalogue_service():
+    """The category catalogue is a suggestion, not the merchant's list."""
+    items, _ = build_service_items(
+        google_items=[],
+        local_rows=[
+            _Row("Data center management", source="google", declared=False),
+        ],
+        category_id=CATEGORY,
+        service_type_ids=SERVICE_TYPES,
+    )
+    assert items == []
+
+
+def test_build_removes_a_service_the_merchant_undeclared():
+    items, _ = build_service_items(
+        google_items=[_structured("job_type_id:data_center_management")],
+        local_rows=[
+            _Row("Data center management", source="google", declared=False),
+        ],
+        category_id=CATEGORY,
+        service_type_ids=SERVICE_TYPES,
+    )
+    assert items == []
+
+
+def test_build_keeps_a_declared_service_google_already_holds():
+    items, _ = build_service_items(
+        google_items=[_structured("job_type_id:data_center_management")],
+        local_rows=[
+            _Row("Data center management", source="google", declared=True),
+        ],
+        category_id=CATEGORY,
+        service_type_ids=SERVICE_TYPES,
+    )
+    assert items == [
+        {"structuredServiceItem": {"serviceTypeId": "job_type_id:data_center_management"}}
+    ]
 
 
 def test_build_drops_a_custom_service_the_merchant_deleted():
     items, _ = build_service_items(
         google_items=[_free_form("Old service")],
         local_rows=[],
-        category_id="categories/gcid:software_company",
+        category_id=CATEGORY,
+        service_type_ids=SERVICE_TYPES,
     )
     assert items == []
 
@@ -107,7 +173,8 @@ def test_build_refreshes_a_custom_service_that_is_still_local():
     items, _ = build_service_items(
         google_items=[_free_form("Consulting")],
         local_rows=[_Row("Consulting", description="Now with details")],
-        category_id="categories/gcid:software_company",
+        category_id=CATEGORY,
+        service_type_ids=SERVICE_TYPES,
     )
     assert len(items) == 1
     label = items[0]["freeFormServiceItem"]["label"]
@@ -115,24 +182,27 @@ def test_build_refreshes_a_custom_service_that_is_still_local():
     assert label["description"] == "Now with details"
 
 
+def test_build_keeps_a_structured_service_it_cannot_map():
+    """A service set directly in Google's own UI is not ours to remove."""
+    google_item = _structured("job_type_id:hair_styling")
+    items, _ = build_service_items(
+        google_items=[google_item],
+        local_rows=[],
+        category_id=CATEGORY,
+        service_type_ids=SERVICE_TYPES,
+    )
+    assert items == [google_item]
+
+
 def test_build_skips_a_custom_service_without_a_category():
     items, skipped = build_service_items(
         google_items=[],
         local_rows=[_Row("Consulting")],
         category_id="",
+        service_type_ids=SERVICE_TYPES,
     )
     assert items == []
     assert skipped == ["Consulting"]
-
-
-def test_build_does_not_publish_google_declared_services():
-    """Google's category catalogue is not the merchant's service list."""
-    items, _ = build_service_items(
-        google_items=[],
-        local_rows=[_Row("App development", source="google")],
-        category_id="categories/gcid:software_company",
-    )
-    assert items == []
 
 
 def test_location_id_of_prefers_the_google_location_id():

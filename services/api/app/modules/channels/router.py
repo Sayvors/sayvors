@@ -1017,6 +1017,7 @@ def _service_response(
         description=service.description,
         is_offered=service.is_offered,
         source=service.source,
+        declared=service.declared,
         google_pushed=google_pushed,
         google_error=google_error,
     )
@@ -1097,6 +1098,9 @@ async def update_service(
         raise HTTPException(status_code=404, detail="Service not found")
     for key, value in body.model_dump(exclude_unset=True).items():
         setattr(service, key, value)
+    if body.declared is True:
+        # Declaring a service means the business offers it.
+        service.is_offered = True
     from ..outbox.service import enqueue_event_in
 
     await enqueue_event_in(db, "google.service.updated", {"channel_id": channel_id, "service_id": service.id}, "google-business-events")

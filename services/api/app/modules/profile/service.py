@@ -688,6 +688,9 @@ async def get_offered_services(
             .where(
                 Channel.user_id == user_id,
                 BusinessService.is_offered.is_(True),
+                # The merchant's declared services only: the category
+                # catalogue is a suggestion list, not ground truth.
+                BusinessService.declared.is_(True),
             )
             .order_by(BusinessService.name)
             .limit(limit)

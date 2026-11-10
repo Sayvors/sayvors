@@ -19,7 +19,7 @@ import {
 } from "@/lib/location-groups";
 
 type Channel = { id: string; display_name: string | null; listing_id?: string | null };
-type Service = { id: string; channel_id: string; name: string; category: string; description: string | null; is_offered: boolean; source: string; google_pushed?: boolean | null; google_error?: string | null };
+type Service = { id: string; channel_id: string; name: string; category: string; description: string | null; is_offered: boolean; source: string; declared?: boolean; google_pushed?: boolean | null; google_error?: string | null };
 
 type ServicesCopy = ReturnType<typeof useI18n>["t"]["dashboard"]["services"];
 
@@ -218,6 +218,46 @@ export default function ServicesPage({ embedded = false, listingId }: { embedded
     } catch (error) { setMessage(error instanceof Error ? error.message : copy.errDelete); }
   }
 
+  /** Declare a catalogue service: it joins the profile and syncs to Google. */
+  async function declareService(service: Service) {
+    try {
+      const updated = (await apiFetch(`/api/v1/channels/${service.channel_id}/services/${service.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ declared: true, is_offered: true }),
+      })) as Service;
+      queryClient.setQueryData(["services", "list", selectedId, groupChannelKey], (old: Service[] | undefined) =>
+        (old ?? []).map((item) => (item.id === updated.id ? updated : item)),
+      );
+      if (updated?.google_pushed === false) {
+        setMessage(
+          updated?.google_error
+            ? `${copy.googleRejected.replace("{err}", updated.google_error)} ${copy.notOnGoogle}`
+            : copy.notOnGoogle,
+        );
+      }
+    } catch (error) { setMessage(error instanceof Error ? error.message : copy.errUpdate); }
+  }
+
+  /** Undeclare a service: it leaves the profile and is removed from Google. */
+  async function undeclareService(service: Service) {
+    try {
+      const updated = (await apiFetch(`/api/v1/channels/${service.channel_id}/services/${service.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ declared: false }),
+      })) as Service;
+      queryClient.setQueryData(["services", "list", selectedId, groupChannelKey], (old: Service[] | undefined) =>
+        (old ?? []).map((item) => (item.id === updated.id ? updated : item)),
+      );
+      if (updated?.google_pushed === false) {
+        setMessage(
+          updated?.google_error
+            ? `${copy.googleRejected.replace("{err}", updated.google_error)} ${copy.notOnGoogle}`
+            : copy.notOnGoogle,
+        );
+      }
+    } catch (error) { setMessage(error instanceof Error ? error.message : copy.errUpdate); }
+  }
+
   return (
     <div className={embedded ? "space-y-4" : "h-full overflow-y-auto bg-[#f4f1ff] p-4 sm:p-6 dark:bg-[#14101f]"}>
       {embedded ? (
@@ -240,8 +280,8 @@ export default function ServicesPage({ embedded = false, listingId }: { embedded
                 copy={copy}
                 multiSelectCopy={t.dashboard.multiSelect}
               />
-              <ServiceGroup title={copy.googleGroup} source="google" services={services.filter((service) => service.source === "google")} onToggle={toggleService} onDelete={removeService} branchNames={isAll ? branchNames : undefined} copy={copy} />
-              <ServiceGroup title={copy.customGroup} source="custom" services={services.filter((service) => service.source !== "google")} onToggle={toggleService} onDelete={removeService} branchNames={isAll ? branchNames : undefined} copy={copy} />
+              <ServiceGroup title={copy.yourServices} subtitle={copy.yourServicesSub} services={services.filter((service) => service.declared)} onToggle={toggleService} onDelete={removeService} onUndeclare={undeclareService} branchNames={isAll ? branchNames : undefined} copy={copy} />
+              <SuggestedServices services={services.filter((service) => !service.declared)} onDeclare={declareService} branchNames={isAll ? branchNames : undefined} copy={copy} />
             </>
           )}
           {message && <div className="rounded-[2px] border border-deep-violet/15 bg-white px-4 py-3 text-[12px] text-ink/70 dark:border-violet-soft/20 dark:bg-[#1d1636] dark:text-fog/70">{message}</div>}
@@ -275,8 +315,8 @@ export default function ServicesPage({ embedded = false, listingId }: { embedded
                 copy={copy}
                 multiSelectCopy={t.dashboard.multiSelect}
               />
-              <ServiceGroup title={copy.googleGroup} source="google" services={services.filter((service) => service.source === "google")} onToggle={toggleService} onDelete={removeService} branchNames={isAll ? branchNames : undefined} copy={copy} />
-              <ServiceGroup title={copy.customGroup} source="custom" services={services.filter((service) => service.source !== "google")} onToggle={toggleService} onDelete={removeService} branchNames={isAll ? branchNames : undefined} copy={copy} />
+              <ServiceGroup title={copy.yourServices} subtitle={copy.yourServicesSub} services={services.filter((service) => service.declared)} onToggle={toggleService} onDelete={removeService} onUndeclare={undeclareService} branchNames={isAll ? branchNames : undefined} copy={copy} />
+              <SuggestedServices services={services.filter((service) => !service.declared)} onDeclare={declareService} branchNames={isAll ? branchNames : undefined} copy={copy} />
             </>
           )}
           {message && <div className="rounded-[2px] border border-deep-violet/15 bg-white px-4 py-3 text-[12px] text-ink/70 dark:border-violet-soft/20 dark:bg-[#1d1636] dark:text-fog/70">{message}</div>}
@@ -335,11 +375,12 @@ function LocationPicker({ selectedId, channels, onChange, copy, groups, listingM
 }
 
 function StatsRow({ services, copy }: { services: Service[]; copy: ServicesCopy }) {
+  const declared = services.filter((service) => service.declared);
   return (
     <div className="grid gap-3 sm:grid-cols-3">
-      <Stat label={copy.statTotal} value={services.length} />
-      <Stat label={copy.statOffered} value={services.filter((service) => service.is_offered).length} />
-      <Stat label={copy.statCustom} value={services.filter((service) => service.source === "custom").length} />
+      <Stat label={copy.statTotal} value={declared.length} />
+      <Stat label={copy.statOffered} value={declared.filter((service) => service.is_offered).length} />
+      <Stat label={copy.statCustom} value={declared.filter((service) => service.source === "custom").length} />
     </div>
   );
 }
@@ -399,6 +440,14 @@ function Stat({ label, value }: { label: string; value: number }) {
   return <div className="rounded-[2px] border border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636] p-4"><div className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40 dark:text-fog/40">{label}</div><div className="mt-2 text-[22px] font-bold text-ink dark:text-fog">{value}</div></div>;
 }
 
-function ServiceGroup({ title, source, services, onToggle, onDelete, branchNames, copy }: { title: string; source: "google" | "custom"; services: Service[]; onToggle: (service: Service) => Promise<void>; onDelete: (service: Service) => Promise<void>; branchNames?: Record<string, string>; copy: ServicesCopy }) {
-  return <section className="overflow-hidden rounded-[2px] border border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636]"><header className="flex items-center justify-between border-b border-ink/[0.05] dark:border-fog/[0.05] px-4 py-3"><div><h2 className="text-[14px] font-bold text-ink dark:text-fog">{title}</h2><p className="mt-0.5 text-[11px] text-ink/40 dark:text-fog/40">{source === "google" ? copy.googleGroupSub : copy.customGroupSub}</p></div><span className="rounded-[2px] bg-ink/[0.04] dark:bg-fog/[0.04] px-2.5 py-1 text-[10px] font-semibold text-ink/45 dark:text-fog/45">{services.length}</span></header>{services.length === 0 ? <div className="border-dashed px-4 py-8 text-center text-[12px] text-ink/35 dark:text-fog/35">{copy.noServiceData}</div> : <div className="divide-y divide-ink/[0.04] dark:divide-fog/[0.04]">{services.map((service) => <div key={service.id} className="flex items-center gap-3 px-4 py-3"><button onClick={() => void onToggle(service)} className={`h-5 w-5 shrink-0 rounded-[2px] border-2 ${service.is_offered ? "border-deep-violet bg-deep-violet" : "border-ink/20 dark:border-fog/20"}`} aria-label={copy.toggleOffered}>{service.is_offered && <span className="text-[11px] text-white">✓</span>}</button><div className="min-w-0 flex-1"><div className="text-[13px] font-bold text-ink dark:text-fog">{service.name}</div><div className="text-[11px] text-ink/45 dark:text-fog/45">{branchNames?.[service.channel_id] ? `${branchNames[service.channel_id]} · ` : ""}{service.category} · {service.is_offered ? copy.offered : copy.notOffered}{service.description ? ` · ${service.description}` : ""}</div></div><button onClick={() => void onDelete(service)} className="shrink-0 text-[11px] font-semibold text-red-500">{copy.delete}</button></div>)}</div>}</section>;
+function ServiceGroup({ title, subtitle, services, onToggle, onDelete, onUndeclare, branchNames, copy }: { title: string; subtitle: string; services: Service[]; onToggle: (service: Service) => Promise<void>; onDelete: (service: Service) => Promise<void>; onUndeclare: (service: Service) => Promise<void>; branchNames?: Record<string, string>; copy: ServicesCopy }) {
+  return <section className="overflow-hidden rounded-[2px] border border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636]"><header className="flex items-center justify-between border-b border-ink/[0.05] dark:border-fog/[0.05] px-4 py-3"><div><h2 className="text-[14px] font-bold text-ink dark:text-fog">{title}</h2><p className="mt-0.5 text-[11px] text-ink/40 dark:text-fog/40">{subtitle}</p></div><span className="rounded-[2px] bg-ink/[0.04] dark:bg-fog/[0.04] px-2.5 py-1 text-[10px] font-semibold text-ink/45 dark:text-fog/45">{services.length}</span></header>{services.length === 0 ? <div className="border-dashed px-4 py-8 text-center text-[12px] text-ink/35 dark:text-fog/35">{copy.noServiceData}</div> : <div className="divide-y divide-ink/[0.04] dark:divide-fog/[0.04]">{services.map((service) => <div key={service.id} className="flex items-center gap-3 px-4 py-3"><button onClick={() => void onToggle(service)} className={`h-5 w-5 shrink-0 rounded-[2px] border-2 ${service.is_offered ? "border-deep-violet bg-deep-violet" : "border-ink/20 dark:border-fog/20"}`} aria-label={copy.toggleOffered}>{service.is_offered && <span className="text-[11px] text-white">✓</span>}</button><div className="min-w-0 flex-1"><div className="text-[13px] font-bold text-ink dark:text-fog">{service.name}</div><div className="text-[11px] text-ink/45 dark:text-fog/45">{branchNames?.[service.channel_id] ? `${branchNames[service.channel_id]} · ` : ""}{service.category} · {service.is_offered ? copy.offered : copy.notOffered}{service.description ? ` · ${service.description}` : ""}</div></div><button onClick={() => void onUndeclare(service)} className="shrink-0 text-[11px] font-semibold text-ink/45 hover:text-ink dark:text-fog/45 dark:hover:text-fog">{copy.removeFromProfile}</button><button onClick={() => void onDelete(service)} className="shrink-0 text-[11px] font-semibold text-red-500">{copy.delete}</button></div>)}</div>}</section>;
+}
+
+/** Google's category service types the merchant has not declared yet.
+ *
+ *  They are suggestions, not services the business offers: clicking one
+ *  declares it, which publishes it to Google as a service item. */
+function SuggestedServices({ services, onDeclare, branchNames, copy }: { services: Service[]; onDeclare: (service: Service) => Promise<void>; branchNames?: Record<string, string>; copy: ServicesCopy }) {
+  return <section className="overflow-hidden rounded-[2px] border border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636]"><header className="flex items-center justify-between border-b border-ink/[0.05] dark:border-fog/[0.05] px-4 py-3"><div><h2 className="text-[14px] font-bold text-ink dark:text-fog">{copy.suggestedGroup}</h2><p className="mt-0.5 text-[11px] text-ink/40 dark:text-fog/40">{copy.suggestedGroupSub}</p></div><span className="rounded-[2px] bg-ink/[0.04] dark:bg-fog/[0.04] px-2.5 py-1 text-[10px] font-semibold text-ink/45 dark:text-fog/45">{services.length}</span></header>{services.length === 0 ? <div className="border-dashed px-4 py-8 text-center text-[12px] text-ink/35 dark:text-fog/35">{copy.noSuggestions}</div> : <div className="flex flex-wrap gap-2 p-4">{services.map((service) => <button key={service.id} onClick={() => void onDeclare(service)} className="inline-flex items-center gap-1.5 rounded-full border border-ink/[0.12] bg-white px-3 py-1.5 text-[12px] font-semibold text-ink/70 transition hover:border-deep-violet hover:text-deep-violet focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:border-fog/[0.12] dark:bg-[#1d1636] dark:text-fog/70 dark:hover:border-violet-soft dark:hover:text-violet-soft"><span aria-hidden>+</span>{service.name}{branchNames?.[service.channel_id] ? <span className="font-normal text-ink/40 dark:text-fog/40">· {branchNames[service.channel_id]}</span> : null}</button>)}</div>}</section>;
 }

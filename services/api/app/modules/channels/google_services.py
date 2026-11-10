@@ -56,6 +56,10 @@ def _free_form_name(item: dict) -> str:
     return str(label.get("displayName") or "").strip()
 
 
+def _structured_id(item: dict) -> str:
+    return str((item.get("structuredServiceItem") or {}).get("serviceTypeId") or "")
+
+
 def location_category_info(location: dict) -> tuple[str, dict[str, str]]:
     """The location's primary category id and its service types.
 
@@ -99,49 +103,104 @@ def build_service_items(
     google_items: list[dict],
     local_rows: list[BusinessService],
     category_id: str,
+    service_type_ids: dict[str, str],
 ) -> tuple[list[dict], list[str]]:
     """The complete ``serviceItems`` list Google should hold.
+
+    Only the services the merchant declared are published. A Google-declared
+    row becomes a structured item (Google's own ``serviceTypeId``); a custom
+    row becomes a free-form item under the location's category. Anything
+    Google still holds that is no longer declared leaves the list, so
+    removing a service removes it from the profile too.
+
+    ``service_type_ids`` maps a service display name (lower-cased) to Google's
+    ``serviceTypeId``.
 
     Returns ``(items, skipped)`` — skipped names could not be sent because
     the location has no category to file a free-form service under.
     """
-    local_custom = {
-        str(r.name or "").strip().lower(): r
-        for r in local_rows
-        if str(r.source or "") != "google" and str(r.name or "").strip()
+    local_by_name = {
+        str(r.name or "").strip().lower(): r for r in local_rows
+    }
+    declared = {
+        key: row for key, row in local_by_name.items() if row.declared
     }
     items: list[dict] = []
     skipped: list[str] = []
-    seen_free: set[str] = set()
+    published: set[str] = set()
 
     # Start from Google's current list so nothing the merchant set on
     # Google's side is lost by a rebuild.
     for item in google_items:
         if not isinstance(item, dict):
             continue
+        service_id = _structured_id(item)
+        if service_id:
+            name = _name_for_service_type(service_id, service_type_ids)
+            if name is None:
+                # A structured service we do not know: leave Google's entry.
+                items.append(item)
+                continue
+            row = declared.get(name)
+            if row is None:
+                # The merchant undeclared it: it leaves the profile.
+                continue
+            published.add(name)
+            items.append(_structured_item(row, service_id))
+            continue
         free_name = _free_form_name(item)
         if not free_name:
-            # A structured service: keep Google's entry untouched.
             items.append(item)
             continue
         key = free_name.lower()
-        row = local_custom.get(key)
+        row = declared.get(key)
         if row is None:
             # A custom service the merchant removed in Sayvors.
             continue
-        seen_free.add(key)
+        published.add(key)
         items.append(_free_form_item(row, category_id))
 
-    # Custom services Google does not hold yet.
-    for key, row in local_custom.items():
-        if key in seen_free:
+    # Everything the merchant declared that Google does not hold yet.
+    for key, row in declared.items():
+        if key in published:
+            continue
+        name = str(row.name or "").strip()
+        if not name:
+            continue
+        if str(row.source or "") == "google":
+            service_id = service_type_ids.get(key)
+            if not service_id:
+                # The category no longer offers this service type.
+                skipped.append(name)
+                continue
+            items.append(_structured_item(row, service_id))
+            published.add(key)
             continue
         if not category_id:
-            skipped.append(str(row.name))
+            skipped.append(name)
             continue
         items.append(_free_form_item(row, category_id))
-        seen_free.add(key)
+        published.add(key)
     return items[:MAX_SERVICES], skipped
+
+
+def _name_for_service_type(
+    service_id: str, service_type_ids: dict[str, str]
+) -> str | None:
+    """The lower-cased service name for a Google serviceTypeId."""
+    for name, sid in service_type_ids.items():
+        if sid == service_id:
+            return name
+    return None
+
+
+def _structured_item(row: BusinessService, service_id: str) -> dict:
+    """One structured ServiceItem in the shape the v1 API accepts."""
+    item: dict = {"structuredServiceItem": {"serviceTypeId": service_id}}
+    description = str(row.description or "").strip()
+    if description:
+        item["structuredServiceItem"]["description"] = description[:DESCRIPTION_MAX_CHARS]
+    return item
 
 
 async def push_services(db: AsyncSession, channel: Channel) -> dict:
@@ -173,12 +232,13 @@ async def push_services(db: AsyncSession, channel: Channel) -> dict:
             )
         ).scalars().all()
         location = await client.get_location(location_id, read_mask="categories")
-        category_id, _service_ids = location_category_info(location)
+        category_id, service_type_ids = location_category_info(location)
         google_items = await client.get_service_items(location_id)
         items, skipped = build_service_items(
             google_items=google_items,
             local_rows=list(rows),
             category_id=category_id,
+            service_type_ids=service_type_ids,
         )
         if not items and not google_items:
             # Nothing on either side: no call to make.

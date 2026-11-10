@@ -376,6 +376,8 @@ async def sync_google_services(
             category=(category or "Google")[:120],
             source="google",
             is_offered=True,
+            # A catalogue entry, not a choice: the merchant declares it.
+            declared=False,
         ))
         have.add(name.lower())
         inserted += 1
