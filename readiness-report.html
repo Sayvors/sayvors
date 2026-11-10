@@ -2207,6 +2207,119 @@ from review_replies
 where reply_text like '%wa.me/%'
 order by created_at desc limit 5;</code></pre>
   <p class="note">Expect two link shapes in <code>review_replies</code>: <code>?text=%23XXXXXX</code> for complaints and a bare <code>wa.me/&lt;number&gt;</code> for sales questions. Both are the designed behaviour, not a leak.</p>
+
+  <h3>Plan - how to stop publishing the number (and the link)</h3>
+  <p>Three honest facts decide the shape of this, and one of them kills the obvious answer before it is written down.</p>
+  <div class="scroll"><table>
+    <tr><th>Fact</th><th>Consequence</th></tr>
+    <tr><td><strong>The WhatsApp deep link cannot carry an encrypted recipient.</strong> <code>wa.me/&lt;number&gt;</code> and <code>api.whatsapp.com/send?phone=&lt;number&gt;</code> require the raw number in the URL. There is no opaque-recipient form and no token form.</td><td>"Encrypt the number" is not implementable. The only lever is to <strong>remove the number from the public URL</strong> - a Sayvors-hosted hop - or not to publish a WhatsApp link at all.</td></tr>
+    <tr><td><strong>A hop only hides the number from a reader who does not click.</strong> The hop must eventually hand the customer a <code>wa.me</code> URL; anything that follows the redirect gets the number.</td><td>The hop is a <strong>privacy layer against casual readers</strong>, not a secrecy boundary. That has to be stated to tenants, or it becomes a false promise.</td></tr>
+    <tr><td><strong>The number is usually not the secret.</strong> Businesses publish their own WhatsApp number on their own site; the genuinely sensitive thing in the reply is the <strong>code</strong>.</td><td>Two independent problems, two independent fixes. §17b A+B harden the code; the plan below hides the number.</td></tr>
+    <tr><td><strong>Reviews already published cannot be un-published.</strong> Every complaint reply that went out carries a raw <code>wa.me/&lt;number&gt;</code> link today.</td><td>Any change must be <strong>additive</strong>. Old links must keep resolving, and the old shape must keep working - a tenant cannot un-print what is on Google.</td></tr>
+  </table></div>
+
+  <h3>The plan - five layers, each independently shippable</h3>
+  <div class="cards2">
+    <div class="card">
+      <h3>Layer 1 - split the toggle (no number at all)</h3>
+      <p><strong>What:</strong> today one flag, <code>auto_reply_configs.handoff_link_enabled</code>, gates <em>both</em> paths. Split it:</p>
+      <ul>
+        <li><code>handoff_link_enabled</code> - complaint path (keep, default on)</li>
+        <li><code>sales_link_enabled</code> - pricing/sales path (default <strong>off</strong>)</li>
+      </ul>
+      <p><strong>Why the sales path defaults off:</strong> publishing a contact number for a pricing question is the higher-exposure, lower-need case. A tenant who does not want their number on Google reviews turns it off and is done - no hop, no token, no risk.</p>
+      <p class="note"><strong>Effort:</strong> ~0.5 day. <strong>Files:</strong> <code>review_reply.py</code> (two independent gates), <code>schemas.py</code>, the auto-reply settings UI, one migration.</p>
+    </div>
+    <div class="card">
+      <h3>Layer 2 - Sayvors-hosted hop</h3>
+      <p><strong>What:</strong> the published link becomes <code>https://sayvors.com/w/&lt;token&gt;</code> instead of <code>wa.me/&lt;number&gt;</code>. The public listing then shows only a Sayvors token.</p>
+      <p><strong>Token:</strong> 32 characters (<code>secrets.token_urlsafe(24)</code>, ~192 bits) - never a phone number, never a code.</p>
+      <p><strong>Row:</strong> <code>token &rarr; (tenant, channel, issue, phone, code, expires_at, used_at, used_by_wamid, click_count)</code>.</p>
+      <p><strong>Behaviour:</strong> resolve &rarr; mark used &rarr; 302 to <code>wa.me/&lt;number&gt;?text=%23&lt;CODE&gt;</code>. A second resolution returns a friendly "this link has expired" page and <strong>never</strong> the number.</p>
+      <p><strong>TTL:</strong> the code TTL (1 day default), so the hop and the code die together.</p>
+      <p class="note"><strong>Effort:</strong> ~1 day + one migration. <strong>Pattern to copy:</strong> the public catalog already does exactly this - <code>GET /api/v1/catalog/public/{token}</code> is unauthenticated and the token <em>is</em> the credential, and <code>/catalog/[token]</code> is a public page with no session. The WhatsApp hop is the same shape.</p>
+    </div>
+    <div class="card">
+      <h3>Layer 3 - the code (from the proposal above)</h3>
+      <p><strong>8 characters</strong> (2<sup>30</sup> &rarr; 2<sup>40</sup>, one constant, no migration) and <strong>single-use redemption</strong> with a <code>wamid</code> carve-out so a Meta webhook redelivery never drops a real customer.</p>
+      <p><strong>Why both:</strong> the hop being single-use makes the <em>link</em> one-shot; the code needs its own single-use because a customer may type it manually days later.</p>
+      <p class="note"><strong>Effort:</strong> ~1.5 days. <strong>Detail:</strong> the proposal table above.</p>
+    </div>
+    <div class="card">
+      <h3>Layer 4 - a button page instead of a 302</h3>
+      <p><strong>What:</strong> <code>/w/&lt;token&gt;</code> serves a small page - "Continue to WhatsApp" - instead of redirecting automatically. The number is fetched only when the button is pressed.</p>
+      <p><strong>Buys:</strong> a plain fetcher or scraper that only fetches the URL never sees the number. A scraper that clicks still does, but it now has to behave like a phone.</p>
+      <p class="note"><strong>Effort:</strong> ~0.5 day, on top of Layer 2. Strictly better than the 302; the 302 stays as a fallback for tenants who prefer a single tap.</p>
+    </div>
+    <div class="card">
+      <h3>Layer 5 - tenant-facing honesty</h3>
+      <ul>
+        <li>Show the tenant <strong>the exact link that will be published</strong>, masked, and say plainly that it is public on the listing.</li>
+        <li>Show <strong>click counts</strong> per ticket - "3 reviewers tapped this" (a free signal the merchant wants, and proof the flow works).</li>
+        <li>Show <strong>redemption log</strong> - who redeemed a code and when (WAH-5).</li>
+        <li>Say what the hop does and does not hide, in one sentence, in the settings copy. A privacy feature that over-promises is worse than none.</li>
+      </ul>
+      <p class="note"><strong>Effort:</strong> ~0.5 day. <strong>Not security - trust.</strong></p>
+    </div>
+    <div class="card">
+      <h3>Not changing, on purpose</h3>
+      <ul>
+        <li><strong>The code stays in the message</strong> - it is how the customer identifies their ticket. The hop resolves it server-side; the customer only ever sends it.</li>
+        <li><strong>The sales link stays code-free.</strong> A pricing question is a lead, not a ticket.</li>
+        <li><strong>Old raw <code>wa.me</code> links keep working.</strong> They are already printed on Google listings and cannot be recalled.</li>
+        <li><strong>No encryption of the number.</strong> Impossible in a <code>wa.me</code> URL, and pretending otherwise would be worse than the current honest behaviour.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>What each layer buys, against a threat model</h3>
+  <div class="scroll"><table>
+    <tr><th>Who</th><th>Today</th><th>After Layers 1 + 2 + 3</th></tr>
+    <tr><td>A random reader of the review</td><td>Sees the business number <em>and</em> a live code.</td><td>Sees a Sayvors token. Tapping it opens the chat and spends the token; the number is only visible to whoever taps.</td></tr>
+    <tr><td>A screenshot taken today</td><td>Number and code stay good for the full TTL (up to 30 days).</td><td>The link is spent on first tap; the code is single-use; 8 characters.</td></tr>
+    <tr><td>A scraper that follows redirects</td><td>Reads the number straight out of the URL.</td><td>Unchanged - the number was never the secret. The code is one-shot and 2<sup>40</sup>.</td></tr>
+    <tr><td>Someone who already has the number</td><td>Can craft <code>wa.me/&lt;number&gt;</code> and impersonate a customer.</td><td>Unchanged - out of scope for any link design; the ticket still requires the code.</td></tr>
+    <tr><td>The real customer</td><td>Taps, sends, gets the ticket context.</td><td>Identical, with one extra tap if the button page is on.</td></tr>
+  </table></div>
+  <p class="note"><strong>The honest summary:</strong> Layers 1 and 2 answer "I do not want my number on my Google reviews". Layers 3 and the code work answer "I do not want a stranger walking into a customer's ticket". They are different problems and only one of them is about encryption.</p>
+
+  <h3>Data model and the code it touches</h3>
+  <div class="scroll"><table>
+    <tr><th>Where</th><th>Change</th></tr>
+    <tr><td>migration</td><td>New table <code>whatsapp_links</code>: <code>id</code>, <code>tenant_id</code>, <code>channel_id</code>, <code>issue_id</code>, <code>token</code> (unique), <code>phone</code>, <code>code</code>, <code>expires_at</code>, <code>used_at</code>, <code>used_by_wamid</code>, <code>click_count</code>, <code>created_at</code>. Plus <code>auto_reply_configs.sales_link_enabled</code> and <code>auto_reply_configs.publish_link_via_hop</code>.</td></tr>
+    <tr><td><code>channels/whatsapp_links.py</code> (new)</td><td><code>mint_link()</code>, <code>resolve_link()</code>, <code>record_click()</code>. Same shape as <code>catalog/router.py:public_catalog</code> - unauthenticated, the token is the credential, the payload is deliberately narrow.</td></tr>
+    <tr><td><code>channels/review_reply.py</code></td><td><code>_append_handoff_link</code> and <code>_append_sales_link</code> gain independent gates and build the Sayvors hop when the tenant opted in.</td></tr>
+    <tr><td><code>review_engine/handoff.py</code></td><td><code>wa_me_link()</code> keeps the raw form for legacy; a new builder returns the hop URL and mints its row.</td></tr>
+    <tr><td>public route</td><td><code>GET /w/{token}</code> - 302 to <code>wa.me</code>, or a button page. Unauthenticated, rate-limited per IP and per token, <code>Referrer-Policy: no-referrer</code> so the number never leaks into a referrer.</td></tr>
+    <tr><td><code>apps/web/app/w/[token]/page.tsx</code> (new)</td><td>The button page (Layer 4), styled like the public catalog page - no session, no dashboard chrome.</td></tr>
+    <tr><td>auto-reply settings UI</td><td>The split toggles, the masked link preview, click counts, and the redemption log (Layer 5).</td></tr>
+  </table></div>
+
+  <h3>Acceptance criteria</h3>
+  <ol>
+    <li>With <code>sales_link_enabled=false</code>, no WhatsApp link appears in any published reply - and the complaint path is unaffected.</li>
+    <li>With the hop enabled, the published reply contains <strong>no digits of the phone number</strong> - only a Sayvors URL.</li>
+    <li>The hop is single-use: a second request returns a friendly page and never the number.</li>
+    <li>An expired hop returns a friendly page and never the number.</li>
+    <li>The customer's first message still resolves the ticket (the code is delivered by the hop's redirect target).</li>
+    <li>A raw <code>wa.me/&lt;number&gt;</code> link that was published before the change still opens WhatsApp, and a legacy 6-character code still resolves.</li>
+    <li>The hop endpoint leaks nothing on a wrong token: same status, same body, no timing difference that reveals existence.</li>
+    <li>Click counts and the redemption log are visible to the tenant.</li>
+    <li>Tests pin: the toggle split, the hop being single-use, expiry, legacy link and legacy code compatibility, tenant isolation (a token from tenant A never resolves for tenant B), and that no published reply contains the phone digits when the hop is on.</li>
+  </ol>
+
+  <h3>Effort and order</h3>
+  <div class="scroll"><table>
+    <tr><th>Step</th><th>Effort</th><th>Depends on</th></tr>
+    <tr><td>Layer 1 - split the toggle</td><td class="num">~0.5 day</td><td>nothing - ship first, it is the cheapest way for a tenant to opt out today</td></tr>
+    <tr><td>Layer 3 - 8-character + single-use code</td><td class="num">~1.5 days</td><td>nothing - independent of the hop</td></tr>
+    <tr><td>Layer 2 - the hop</td><td class="num">~1 day + 1 migration</td><td>Layer 1 (the tenant needs a way to choose)</td></tr>
+    <tr><td>Layer 4 - button page</td><td class="num">~0.5 day</td><td>Layer 2</td></tr>
+    <tr><td>Layer 5 - tenant-facing honesty</td><td class="num">~0.5 day</td><td>Layers 2 and 3 (the counts and the log need them)</td></tr>
+    <tr><td><strong>Total</strong></td><td class="num"><strong>~4 days</strong></td><td>Two migrations (table + two columns), no customer-journey change</td></tr>
+  </table></div>
+  <p class="note">Nothing here changes what the customer sees, except one extra tap if the button page is enabled. Layers 1 and 3 can ship on their own and already remove most of the exposure - the hop is what hides the number, and it is the most expensive layer because it is the only one that adds a moving part.</p>
+
 </section>
 
 <section id="wa-solution-partner-credit">
