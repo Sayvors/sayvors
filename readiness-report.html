@@ -199,6 +199,7 @@
     <a href="#sec-audit-2026-10-26">Sec audit</a>
     <a href="#gcp-mvp">GCP</a>
     <a href="#handoff">Handoff</a>
+    <a href="#wa-handoff-code">WA handoff code</a>
     <a href="#plan">15-day plan</a>
     <a href="#buybuild">Buy vs build</a>
     <a href="#queue">Queue</a>
@@ -218,6 +219,7 @@
   <p><strong>2026-11-01 pass — full-stack Phase 1 launch re-audit (WhatsApp + GBP).</strong> Five parallel verification passes re-verified every open claim from 2026-10-31 against commit <code>3f57276</code>, plus lead passes over the billing ledger, backend admin auth, retention and the migration chain (single head <code>f6a2d9c4e713805b</code> confirmed, 146 revisions, no broken links). Two prior claims corrected in the codebase's favor: the SSE stream endpoints close their DB connection before LLM generation (the "streams pin the pool" claim is dead — <code>llm/service.py:206</code>, <code>review_engine/service.py:759</code>), and the admin console no longer stores tokens in JS (httpOnly path-scoped cookie — the old E-path finding is dead). Billing ledger, webhook signature verification, OAuth state handling, tenant isolation, fail-closed auth on Redis outage, and the WA-4/WA-5 message-actions work all verified production-grade. But four new launch blockers were found, all small: <code>meta_webhook_events</code> retention deletes statuses no code ever writes (SCALE-4 reopened — the table grows forever), a lost AI reply is permanently lost (the dedupe check launders crashes into success), sends toward Meta have zero retry and no DLQ, and the frontend loads and renders an entire thread history in one response. Seventeen majors: SSRF in the WhatsApp status media fetch (the correct guard exists one module away, unused), <code>/docs</code> + <code>/redoc</code> + <code>/openapi.json</code> publicly browsable (extends INS-3), <code>message.status</code> dedupe collapse (delivered/read/failed silently dropped forever), a <code>javascript:</code>-URL hole in the chat markdown renderer, no outbound pacing toward Meta's 80 msg/s, the customers page loading the entire Lead table per request, and more. Backup blocker folded into OPS-1 (new evidence); Prometheus binding already tracked as INS-4. Full ledger: <a href="#pass-2026-11-01">§ Nov 1 audit</a> · source: <code>docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</code>.</p>
   <p><strong>2026-11-02 pass — "actual facts" product audit (Review Intelligence + Analytics).</strong> Strategy pass over <code>apps/web/app/dashboard/reviews</code> and the analytics tree (overview / insights / growth / benchmark tabs) asking one question: can a tenant verify every number the dashboard shows against Google Maps or a named source? Mostly yes — two corrections in the codebase's favor: the Business Profile Performance API is <em>already wired end-to-end</em> (daily sync worker → <code>/visibility</code>, <code>/acquisition</code>, <code>/growth/keywords</code> → rendered on the Growth tab), with a documented never-persist-mock-data policy; and response rate + average response seconds already exist, feeding reputation/health scores that are explicit published formulas. Also already factual: the review-request funnel is click-tracked, Places-API competitor snapshots refresh on demand, and review edit/removal tracking (<code>previousRating</code>/<code>previousText</code>) is a fact almost no competitor product shows. Eight gaps logged in <a href="#pass-2026-11-02">§ Nov 2 facts</a> — the big ones: listing Q&amp;A unsynced, competitor trend deltas computed but never rendered, geo-grid rank and AI-answer visibility absent, and the Saudi benchmark cohort (the only one in existence — every published benchmark is US/UK) not packaged. Product-track, not launch-track.</p>
   <p><strong>2026-11-10 pass — Google posts told the truth.</strong> Driven by a merchant report that scheduled Event posts showed "Published", had no detail view, and could not be edited. Verified against the live Business Profile API, not mocks: Google keeps a future <code>scheduledTime</code> post in <code>SCHEDULED</code> and publishes it itself; a scheduled Event read back as <code>SCHEDULED</code> while the job row said <code>succeeded</code>, so the feed was reading the job, not Google. The feed now renders Google's own <code>state</code> — <code>SCHEDULED</code>, <code>PROCESSING</code>, <code>REJECTED</code>, <code>GONE</code> — and a new details dialog opens from every card with an edit path that PATCHes <code>localPosts</code> using <code>updateMask</code>, moves or cancels the removal date, and reads the post back from Google on demand. Six live cases were published and inspected end-to-end (update with image + CTA, text-only update, image-only update, scheduled event, event with defaulted window, scheduled offer with removal): all succeeded, event times landed at 09:00 Saudi rather than 06:00 UTC, the offer carried <code>event</code> plus <code>redeemOnlineUrl</code> and no button, and an edit changed both the summary and the button on the live post. Removal deleted the post; Google answers a get for a deleted local post with <code>500 INTERNAL</code>, never <code>404</code>, so "gone" is now confirmed against the location's post list (a list failure stays an error, not a false deletion) and a refused delete keeps the post published with the reason instead of reporting "Cancelled". The CTA was also being dropped between the job payload and the publisher, so buttons never reached Google; it is passed now. Past dates are blocked in the composer and the calendar, and the server still validates schedule, removal order and event window. The merchant HTTP layer was then driven end-to-end against the same real profile: one bulk <code>POST /publish</code> creating an update and an event on two branches, status polling, <code>POST /publish/{id}/refresh</code> reading Google back, a <code>PATCH</code> that changed the text and button on the live post, a removal date set then cleared, and <code>POST /publish/delete</code> taking both posts down — all passed. Google reports <code>PROCESSING</code> for a few seconds after a scheduled create before settling to <code>SCHEDULED</code>; the feed shows exactly that rather than inventing "Published". Backend scoped suite and web <code>tsc</code>/build pass; the media/descriptions matrix is covered by the same tests and by the live run.</p>
+  <p><strong>2026-11-10 pass - WhatsApp review handoff link &amp; code rated (no code changed).</strong> Asked whether the link the AI puts in a public review reply is encrypted or carries a special code: it is <strong>not encrypted</strong> (it is a plain <code>wa.me</code> URL in a public listing, and cannot be - the customer has to tap it), and it carries a code <strong>only on the complaint path</strong>; the pricing/sales path publishes a bare <code>wa.me/&lt;number&gt;</code> on purpose, because a pricing question is a lead, not a ticket. The complaint code is 6 characters from a hand-typed alphabet (no <code>0/O</code>, no <code>1/I</code>), minted with <code>secrets</code>, globally unique, expiring in 1 day by default, scoped to its tenant and thread, and required to carry a leading <code>#</code> so <code>THANKS</code> cannot be mistaken for a ticket code. Rated <strong>8.5/10</strong>: the design decisions are the work of someone who thought about the adversarial case. The residual exposure is arithmetic, not carelessness - a 6-character token is ~2<sup>30</sup> and it is published, so it is never consumed and a screenshot works for its full TTL. Proposal in <a href="#wa-handoff-code">&sect;17b</a>: <strong>8-character codes</strong> (one constant, ~2<sup>40</sup>, no migration - old codes keep working) plus <strong>single-use redemption</strong> (consumed on first use, with a <code>wamid</code> carve-out so a Meta webhook redelivery does not drop a real customer), plus tenant-facing hygiene (show the literal published link, log every redemption). ~1.5 days, one migration, no change to the customer journey.</p>
 </div>
 
 <div class="stats">
@@ -2087,6 +2089,124 @@ from users where id = '&lt;tenant id&gt;';</code></pre>
     <li><strong>Build on a CPaaS media stream</strong> (Twilio, Telnyx, Vonage) plus streaming STT/TTS (Deepgram, AssemblyAI, Azure, Google; ElevenLabs, Cartesia). More control, more work.</li>
   </ul>
   <p class="note">Availability, call-permission rules and opt-in vary by country and are changing; verify against Meta's current Calling API docs before scoping. Budget 3-6 weeks of integration even when buying, plus per-minute cost. Not in this ledger's critical path.</p>
+</section>
+
+<section id="wa-handoff-code">
+  <div class="eyebrow">&sect;&sect; 17b - WhatsApp review handoff link &amp; code - 2026-11-10</div>
+  <h2>The WhatsApp link in a review reply: what it is, what it proves, and how to harden it</h2>
+  <p>A rating request against the live code, not a new build. The question asked was blunt: <em>when the AI recommends contacting us and puts a link in the review, is that encrypted, or does it hand out a special code?</em> The honest answer is: <strong>neither encrypted nor unencrypted in the usual sense - it is a public capability token written into a public listing.</strong> That is by design and it is defensible, but it should be stated plainly rather than described as "encrypted".</p>
+
+  <h3>What actually goes into the reply</h3>
+  <p>One tenant toggle (<code>auto_reply_configs.handoff_link_enabled</code>, default <strong>on</strong>) drives <strong>two different links</strong>, and the difference matters:</p>
+  <div class="scroll"><table>
+    <tr><th>Path</th><th>When it fires</th><th>Link published</th><th>Code?</th></tr>
+    <tr><td><strong>Handoff</strong> (complaint)</td><td>The review is classified <code>needs_attention</code>.</td><td><code>https://wa.me/&lt;number&gt;?text=%23&lt;CODE&gt;</code></td><td><span class="chip ok">Yes</span> - 6 characters</td></tr>
+    <tr><td><strong>Sales</strong> (pricing question)</td><td>Category <code>pricing_promotions</code> and intent <code>ask_question</code> / <code>information_request</code> (or <code>looks_like_question</code> when no ticket exists yet).</td><td><code>https://wa.me/&lt;number&gt;</code></td><td><span class="chip low">No</span> - plain number</td></tr>
+  </table></div>
+  <p class="note">The split is correct and deliberate (<code>review_reply.py:_append_sales_link</code>): a complaint carries ticket context, so it gets a code; a pricing question is a lead, so it gets the business number and the assistant answers from the databank. A needs-attention review never falls through to the sales link - <code>_append_handoff_link</code> runs first and the sales path returns early when <code>issue.needs_attention</code> is set, so exactly one link is ever published.</p>
+
+  <h3>Not encrypted - and it cannot be</h3>
+  <p>The link is a plain <code>https://wa.me/...</code> URL written into a <strong>public Google review reply</strong>. Sayvors does not encrypt it, because the customer has to be able to tap it and have WhatsApp open. WhatsApp's own end-to-end encryption (the Signal protocol) protects the <em>messages</em> that follow; it says nothing about the URL that started the conversation. So the accurate description of the <code>#CODE</code> is: <strong>a capability token published on a public listing</strong>, scoped and time-limited. Calling it "encrypted" would be wrong; calling it "a code" is right, and the rest of this section is about whether that code is strong enough.</p>
+
+  <h3>What the code already guarantees</h3>
+  <div class="scroll"><table>
+    <tr><th>Property</th><th>Implementation</th><th>Effect</th></tr>
+    <tr><td>Hand-typed alphabet</td><td><code>core/short_codes.py</code> - <code>ABCDEFGHJKLMNPQRSTUVWXYZ23456789</code> (no <code>0/O</code>, no <code>1/I</code>)</td><td>The customer can retype it from a phone screen without guessing <code>O</code> for <code>0</code>.</td></tr>
+    <tr><td>Entropy</td><td>6 chars from a 32-symbol alphabet</td><td>32<sup>6</sup> &asymp; 2<sup>30</sup> &asymp; 1.07e9 combinations.</td></tr>
+    <tr><td>Unpredictable</td><td><code>secrets.choice</code> in <code>review_engine/handoff.py:_random_code</code></td><td>A predictable code would let one tenant enumerate another's tickets; <code>random</code> is explicitly rejected for this.</td></tr>
+    <tr><td>Globally unique</td><td>Unique index on <code>review_issues.handoff_code</code></td><td>The published link carries no tenant id, so uniqueness must be global, not per tenant.</td></tr>
+    <tr><td>Short-lived</td><td><code>auto_reply_configs.handoff_code_ttl_days</code>, default <strong>1 day</strong>, clamped 1..30</td><td>The exposure window is a day, not forever.</td></tr>
+    <tr><td>Scoped</td><td>Resolution is tenant + channel + thread scoped</td><td>A code read off one listing cannot reach another tenant's ticket.</td></tr>
+    <tr><td>Marked</td><td><code>_CODE_TOKEN_RE</code> requires a leading <code>#</code></td><td>Load-bearing: <code>THANKS</code> and <code>PLEASE</code> are both valid 6-letter codes from that alphabet, so a bare-code match would attach a stranger to whichever ticket owned that word. A bare code falls through to the ordinary enquiry flow.</td></tr>
+    <tr><td>Fails open</td><td><code>_append_handoff_link</code> catches everything and returns the reply unchanged</td><td>A missing link must never cost the merchant their reply; a failed lookup degrades to the normal inbound flow.</td></tr>
+    <tr><td>Read-only in the reply path</td><td>No commit inside the append</td><td>Committing would expire the caller's ORM objects mid-flow - the <code>MissingGreenlet</code> hazard <code>scheduling.take_lock</code> documents.</td></tr>
+    <tr><td>Length-guarded</td><td>4000-char Google reply cap</td><td>The append is dropped rather than truncating the reply.</td></tr>
+  </table></div>
+
+  <h3>Rating: 8.5 / 10 - the engineering is strong, the exposure is inherent</h3>
+  <p>The choices above are the work of someone who thought about the adversarial case: a shared public alphabet, a CSPRNG, a uniqueness constraint, an expiry, tenant scoping, a marker that closes a false-positive hole, and a fail-open rule. If you are asking "did someone think about this?", the answer is yes. The 1.5 that is missing is not carelessness - it is the arithmetic of publishing a secret in public.</p>
+  <div class="scroll"><table>
+    <tr><th>ID</th><th>Sev</th><th>Gap</th><th>Why it matters</th></tr>
+    <tr><td class="num">WAH-1</td><td><span class="chip high">High</span></td><td><strong>The code is public.</strong> It sits in a Google review reply anyone can read. Within the TTL, an attacker who knows the tenant can present it and reach a real ticket context.</td><td>Bounded by expiry + tenant/thread scoping + the fact that a wrong code reveals nothing (no oracle), but the window is real and it is the one thing the current design cannot remove.</td></tr>
+    <tr><td class="num">WAH-2</td><td><span class="chip med">Med</span></td><td><strong>~30 bits for a published token is thin.</strong></td><td>An offline guesser who harvests one code learns the alphabet; going to 8 characters moves the search space from ~1.07e9 to ~1.1e12 for a one-constant change.</td></tr>
+    <tr><td class="num">WAH-3</td><td><span class="chip med">Med</span></td><td><strong>A code is never consumed.</strong> It stays valid for its full TTL after the customer used it.</td><td>A screenshot taken today works tomorrow. Single use removes that window outright.</td></tr>
+    <tr><td class="num">WAH-4</td><td><span class="chip low">Low</span></td><td><strong>The sales path publishes the WhatsApp number on the listing.</strong></td><td>Disclosed in the API doc string and the settings UI, but a tenant may not internalise "public on the listing".</td></tr>
+    <tr><td class="num">WAH-5</td><td><span class="chip low">Low</span></td><td><strong>No redemption audit.</strong> Nothing records who redeemed a code.</td><td>A tenant cannot answer "a stranger used my customer's code".</td></tr>
+  </table></div>
+
+  <h3>Proposal - three options, one recommendation</h3>
+  <div class="cards2">
+    <div class="card">
+      <h3>Option A - 8-character codes</h3>
+      <p><strong>What:</strong> <code>CODE_LENGTH</code> 6 &rarr; 8. The alphabet is unchanged, so the hand-typing cost is two more unambiguous characters.</p>
+      <p><strong>Buys:</strong> 2<sup>30</sup> &rarr; 2<sup>40</sup> (~1.1e12). An offline guesser needs a billion-fold more work for the same lifetime.</p>
+      <p><strong>Cost:</strong> one constant, the resolver regex widened to accept 6 <em>or</em> 8, and the tests. <strong>No migration</strong> - codes already published on Google listings keep working, because the resolver accepts both lengths.</p>
+      <p class="note"><strong>Effort:</strong> ~0.5 day. <strong>Risk:</strong> none - additive and backward compatible.</p>
+    </div>
+    <div class="card">
+      <h3>Option B - single-use codes</h3>
+      <p><strong>What:</strong> add <code>handoff_code_used_at</code>; a matched code is consumed on first redemption.</p>
+      <p><strong>Buys:</strong> the replay window closes. A screenshot taken today is worthless tomorrow, because it was already spent.</p>
+      <p><strong>Needs:</strong> a nullable timestamp column plus the replay carve-out - a Meta webhook retry of the same <code>wamid</code> must still resolve, otherwise a duplicate delivery would drop a real customer. The redeemed row records the <code>wamid</code> that spent it.</p>
+      <p class="note"><strong>Effort:</strong> ~1 day + one migration. <strong>Risk:</strong> low, provided the replay carve-out is keyed on <code>wamid</code>.</p>
+    </div>
+    <div class="card">
+      <h3>Option C - signed, self-expiring link</h3>
+      <p><strong>What:</strong> replace the bare <code>#CODE</code> prefill with <code>#&lt;code&gt;.&lt;hmac&gt;</code>, where the HMAC covers code + expiry + tenant id and is verified on resolution.</p>
+      <p><strong>Buys:</strong> the token cannot be forged, and the expiry lives <em>inside</em> the token - no stored expiry to compare clocks against.</p>
+      <p><strong>Cost:</strong> a longer public string in the reply, and the customer sees more than six characters. The customer still only has to send it - they never read it.</p>
+      <p class="note"><strong>Effort:</strong> ~1.5 days. <strong>Risk:</strong> low, but it is the most machinery for the least marginal gain once A and B are in.</p>
+    </div>
+    <div class="card">
+      <h3>Recommended - A + B, then hygiene</h3>
+      <p><strong>Do A and B.</strong> A is a one-constant change that buys ten more bits of entropy for free and breaks nothing already published. B removes the replay window. Together they move the exposure from <em>"a stranger has one day and 2<sup>30</sup> guesses"</em> to <em>"a stranger has one shot at a 2<sup>40</sup> token, spent on use"</em>. C is deferred - it is the right answer only if a token ever has to leave the tenant's own listing.</p>
+      <p><strong>Then the cheap hygiene, which is not security but is trust:</strong></p>
+      <ul>
+        <li>Show the tenant the literal link that will be published, and that it is public on the listing (WAH-4).</li>
+        <li>Log every redemption - code, ticket, <code>wamid</code> - so a tenant can answer "who used this?" (WAH-5).</li>
+        <li>Count redemptions per code; a code redeemed twice is a signal, not a bug.</li>
+      </ul>
+      <p class="note"><strong>Total:</strong> ~1.5 days, one migration, no change to the customer journey.</p>
+    </div>
+  </div>
+
+  <h3>Acceptance criteria for the change</h3>
+  <ol>
+    <li>A newly minted code is 8 characters from <code>CODE_ALPHABET</code>; the public prefill is <code>#XXXXXXXX</code>.</li>
+    <li>A code minted before the change still resolves (6 characters accepted) - links already published on Google listings must not break.</li>
+    <li>A code resolves once. A second redemption from a different <code>wamid</code> is rejected and logged; the same <code>wamid</code> replaying (Meta webhook redelivery) still resolves.</li>
+    <li>Resolution stays tenant + channel scoped, and a wrong code still reveals nothing - no "that code exists" response, no ticket number, no timing oracle.</li>
+    <li>Expiry is unchanged at <code>handoff_code_ttl_days</code> (default 1 day); an expired code is treated as absent, and the reply never publishes a link whose code has already expired.</li>
+    <li>Every redemption writes one audit row visible to the tenant.</li>
+    <li>Tests pin: length and alphabet of a new code, a legacy 6-character code still resolving, single-use enforcement, the webhook-replay carve-out, expiry, and tenant isolation (a code from tenant A never resolves in tenant B).</li>
+  </ol>
+
+  <h3>What is deliberately not changing</h3>
+  <ul>
+    <li><strong>The sales link stays code-free.</strong> A pricing question is a lead, not a ticket; adding a code there would buy nothing and cost the merchant a lead capture.</li>
+    <li><strong>The <code>#</code> marker stays.</strong> It is the thing that stops <code>THANKS</code> attaching a stranger to a real ticket.</li>
+    <li><strong>The alphabet stays hand-typed.</strong> No <code>0/O</code>, no <code>1/I</code>, no separators.</li>
+    <li><strong>The link stays public.</strong> The customer has to be able to tap it. Encrypting it would defeat the flow; the answer is a stronger, shorter-lived token, not secrecy.</li>
+  </ul>
+
+  <h3>How to verify the current behaviour on a live tenant</h3>
+  <pre><code>-- The code and its expiry, per ticket
+select ticket_number, handoff_code, handoff_code_expires_at, status
+from review_issues
+where handoff_code is not null
+order by created_at desc limit 10;
+
+-- The toggle that publishes the link
+select handoff_link_enabled, handoff_code_ttl_days
+from auto_reply_configs
+where user_id = '&lt;tenant id&gt;';
+
+-- A published reply, to see the link shape
+select review_id, left(reply_text, 200) as reply
+from review_replies
+where reply_text like '%wa.me/%'
+order by created_at desc limit 5;</code></pre>
+  <p class="note">Expect two link shapes in <code>review_replies</code>: <code>?text=%23XXXXXX</code> for complaints and a bare <code>wa.me/&lt;number&gt;</code> for sales questions. Both are the designed behaviour, not a leak.</p>
 </section>
 
 <section id="wa-solution-partner-credit">
