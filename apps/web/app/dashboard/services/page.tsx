@@ -23,7 +23,7 @@ type Service = { id: string; channel_id: string; name: string; category: string;
 
 type ServicesCopy = ReturnType<typeof useI18n>["t"]["dashboard"]["services"];
 
-export default function ServicesPage({ embedded = false, listingId, scopeId, googleCurrent, bulkGoogleCurrent }: { embedded?: boolean; listingId?: string; scopeId?: string; googleCurrent?: { name: string; offered?: boolean }[]; bulkGoogleCurrent?: { id: string; name: string; services: { name: string }[] }[] }) {
+export default function ServicesPage({ embedded = false, listingId, scopeId, googleCurrent, bulkGoogleCurrent, onChanged }: { embedded?: boolean; listingId?: string; scopeId?: string; googleCurrent?: { name: string; offered?: boolean }[]; bulkGoogleCurrent?: { id: string; name: string; services: { name: string }[] }[]; onChanged?: () => void }) {
   const { t } = useI18n();
   const copy = t.dashboard.services;
   const queryClient = useQueryClient();
@@ -52,6 +52,11 @@ export default function ServicesPage({ embedded = false, listingId, scopeId, goo
   }, [listingId, scopeId, channels]);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  // Declaring a service publishes it to Google, so the choice is staged and
+  // applied with one Save - the same pattern the rest of the Locations page
+  // uses. Keyed by service id: true = declare, false = take off the profile.
+  const [pending, setPending] = useState<Record<string, boolean>>({});
+  const [savingPending, setSavingPending] = useState(false);
   const [name, setName] = useState("");
   // "Custom" is stored data (models.py default), and source "custom" is the
   // wire value the API filters on — both stay English regardless of locale.
@@ -223,45 +228,51 @@ export default function ServicesPage({ embedded = false, listingId, scopeId, goo
     } catch (error) { setMessage(error instanceof Error ? error.message : copy.errDelete); }
   }
 
-  /** Declare a catalogue service: it joins the profile and syncs to Google. */
-  async function declareService(service: Service) {
-    try {
-      const updated = (await apiFetch(`/api/v1/channels/${service.channel_id}/services/${service.id}`, {
-        method: "PUT",
-        body: JSON.stringify({ declared: true, is_offered: true }),
-      })) as Service;
-      queryClient.setQueryData(["services", "list", selectedId, groupChannelKey], (old: Service[] | undefined) =>
-        (old ?? []).map((item) => (item.id === updated.id ? updated : item)),
-      );
-      if (updated?.google_pushed === false) {
-        setMessage(
-          updated?.google_error
-            ? `${copy.googleRejected.replace("{err}", updated.google_error)} ${copy.notOnGoogle}`
-            : copy.notOnGoogle,
-        );
-      }
-    } catch (error) { setMessage(error instanceof Error ? error.message : copy.errUpdate); }
-  }
+  /** Stage a declaration change. Nothing is sent until Save. */
+  const stageService = (service: Service, declared: boolean) =>
+    setPending((prev) => ({ ...prev, [service.id]: declared }));
 
-  /** Undeclare a service: it leaves the profile and is removed from Google. */
-  async function undeclareService(service: Service) {
-    try {
-      const updated = (await apiFetch(`/api/v1/channels/${service.channel_id}/services/${service.id}`, {
-        method: "PUT",
-        body: JSON.stringify({ declared: false }),
-      })) as Service;
-      queryClient.setQueryData(["services", "list", selectedId, groupChannelKey], (old: Service[] | undefined) =>
-        (old ?? []).map((item) => (item.id === updated.id ? updated : item)),
-      );
-      if (updated?.google_pushed === false) {
-        setMessage(
-          updated?.google_error
-            ? `${copy.googleRejected.replace("{err}", updated.google_error)} ${copy.notOnGoogle}`
-            : copy.notOnGoogle,
+  /** Apply every staged change, one branch at a time. */
+  const saveStaged = async () => {
+    const ids = Object.keys(pending);
+    if (ids.length === 0) return;
+    setSavingPending(true);
+    let failed = 0;
+    let notPushed = 0;
+    let firstErr = "";
+    let googleErr = "";
+    for (const id of ids) {
+      const service = services.find((s) => s.id === id);
+      if (!service) continue;
+      const declared = pending[id];
+      try {
+        const updated = (await apiFetch(`/api/v1/channels/${service.channel_id}/services/${service.id}`, {
+          method: "PUT",
+          body: JSON.stringify(declared ? { declared: true, is_offered: true } : { declared: false }),
+        })) as Service;
+        queryClient.setQueryData(["services", "list", selectedId, groupChannelKey], (old: Service[] | undefined) =>
+          (old ?? []).map((item) => (item.id === updated.id ? updated : item)),
         );
+        if (updated?.google_pushed === false) {
+          notPushed += 1;
+          if (!googleErr) googleErr = updated?.google_error ?? "";
+        }
+      } catch (e) {
+        failed += 1;
+        if (!firstErr) firstErr = e instanceof Error ? e.message.slice(0, 140) : copy.errRequest;
       }
-    } catch (error) { setMessage(error instanceof Error ? error.message : copy.errUpdate); }
-  }
+    }
+    setPending({});
+    setSavingPending(false);
+    if (failed) setMessage(`${copy.errSave} ${firstErr}`);
+    else if (notPushed) {
+      setMessage(googleErr ? `${copy.googleRejected.replace("{err}", googleErr)} ${copy.notOnGoogle}` : copy.notOnGoogle);
+    } else {
+      setMessage(copy.savedOne);
+    }
+    // The live Google values moved - let the host page refresh them.
+    onChanged?.();
+  };
 
   return (
     <div className={embedded ? "space-y-4" : "h-full overflow-y-auto bg-[#f4f1ff] p-4 sm:p-6 dark:bg-[#14101f]"}>
@@ -321,8 +332,22 @@ export default function ServicesPage({ embedded = false, listingId, scopeId, goo
                 copy={copy}
                 multiSelectCopy={t.dashboard.multiSelect}
               />
-              <ServiceGroup title={copy.yourServices} subtitle={copy.yourServicesSub} services={services.filter((service) => service.declared)} onToggle={toggleService} onDelete={removeService} onUndeclare={undeclareService} branchNames={isAll ? branchNames : undefined} copy={copy} />
-              <SuggestedServices services={services.filter((service) => !service.declared)} onDeclare={declareService} branchNames={isAll ? branchNames : undefined} copy={copy} />
+              <ServiceGroup title={copy.yourServices} subtitle={copy.yourServicesSub} services={services.filter((service) => service.declared)} onToggle={toggleService} onDelete={removeService} onStage={stageService} pending={pending} branchNames={isAll ? branchNames : undefined} copy={copy} />
+              <SuggestedServices services={services.filter((service) => !service.declared)} onStage={stageService} pending={pending} branchNames={isAll ? branchNames : undefined} copy={copy} />
+              {Object.keys(pending).length > 0 ? (
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-[2px] border border-deep-violet/25 bg-deep-violet/[0.06] px-4 py-3">
+                  <p className="text-[12px] font-medium text-ink/75 dark:text-fog/75">
+                    {copy.pendingServices.replace("{count}", String(Object.keys(pending).length))}
+                  </p>
+                  <button
+                    onClick={() => void saveStaged()}
+                    disabled={savingPending}
+                    className="btn-primary justify-center disabled:opacity-50"
+                  >
+                    {savingPending ? copy.saving : copy.saveServices}
+                  </button>
+                </div>
+              ) : null}
             </>
           )}
           {message && <div className="rounded-[2px] border border-deep-violet/15 bg-white px-4 py-3 text-[12px] text-ink/70 dark:border-violet-soft/20 dark:bg-[#1d1636] dark:text-fog/70">{message}</div>}
@@ -392,8 +417,22 @@ export default function ServicesPage({ embedded = false, listingId, scopeId, goo
                 copy={copy}
                 multiSelectCopy={t.dashboard.multiSelect}
               />
-              <ServiceGroup title={copy.yourServices} subtitle={copy.yourServicesSub} services={services.filter((service) => service.declared)} onToggle={toggleService} onDelete={removeService} onUndeclare={undeclareService} branchNames={isAll ? branchNames : undefined} copy={copy} />
-              <SuggestedServices services={services.filter((service) => !service.declared)} onDeclare={declareService} branchNames={isAll ? branchNames : undefined} copy={copy} />
+              <ServiceGroup title={copy.yourServices} subtitle={copy.yourServicesSub} services={services.filter((service) => service.declared)} onToggle={toggleService} onDelete={removeService} onStage={stageService} pending={pending} branchNames={isAll ? branchNames : undefined} copy={copy} />
+              <SuggestedServices services={services.filter((service) => !service.declared)} onStage={stageService} pending={pending} branchNames={isAll ? branchNames : undefined} copy={copy} />
+              {Object.keys(pending).length > 0 ? (
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-[2px] border border-deep-violet/25 bg-deep-violet/[0.06] px-4 py-3">
+                  <p className="text-[12px] font-medium text-ink/75 dark:text-fog/75">
+                    {copy.pendingServices.replace("{count}", String(Object.keys(pending).length))}
+                  </p>
+                  <button
+                    onClick={() => void saveStaged()}
+                    disabled={savingPending}
+                    className="btn-primary justify-center disabled:opacity-50"
+                  >
+                    {savingPending ? copy.saving : copy.saveServices}
+                  </button>
+                </div>
+              ) : null}
             </>
           )}
           {message && <div className="rounded-[2px] border border-deep-violet/15 bg-white px-4 py-3 text-[12px] text-ink/70 dark:border-violet-soft/20 dark:bg-[#1d1636] dark:text-fog/70">{message}</div>}
@@ -517,14 +556,14 @@ function Stat({ label, value }: { label: string; value: number }) {
   return <div className="rounded-[2px] border border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636] p-4"><div className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40 dark:text-fog/40">{label}</div><div className="mt-2 text-[22px] font-bold text-ink dark:text-fog">{value}</div></div>;
 }
 
-function ServiceGroup({ title, subtitle, services, onToggle, onDelete, onUndeclare, branchNames, copy }: { title: string; subtitle: string; services: Service[]; onToggle: (service: Service) => Promise<void>; onDelete: (service: Service) => Promise<void>; onUndeclare: (service: Service) => Promise<void>; branchNames?: Record<string, string>; copy: ServicesCopy }) {
-  return <section className="overflow-hidden rounded-[2px] border border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636]"><header className="flex items-center justify-between border-b border-ink/[0.05] dark:border-fog/[0.05] px-4 py-3"><div><h2 className="text-[14px] font-bold text-ink dark:text-fog">{title}</h2><p className="mt-0.5 text-[11px] text-ink/40 dark:text-fog/40">{subtitle}</p></div><span className="rounded-[2px] bg-ink/[0.04] dark:bg-fog/[0.04] px-2.5 py-1 text-[10px] font-semibold text-ink/45 dark:text-fog/45">{services.length}</span></header>{services.length === 0 ? <div className="border-dashed px-4 py-8 text-center text-[12px] text-ink/35 dark:text-fog/35">{copy.noServiceData}</div> : <div className="divide-y divide-ink/[0.04] dark:divide-fog/[0.04]">{services.map((service) => <div key={service.id} className="flex items-center gap-3 px-4 py-3"><button onClick={() => void onToggle(service)} className={`h-5 w-5 shrink-0 rounded-[2px] border-2 ${service.is_offered ? "border-deep-violet bg-deep-violet" : "border-ink/20 dark:border-fog/20"}`} aria-label={copy.toggleOffered}>{service.is_offered && <span className="text-[11px] text-white">✓</span>}</button><div className="min-w-0 flex-1"><div className="text-[13px] font-bold text-ink dark:text-fog">{service.name}</div><div className="text-[11px] text-ink/45 dark:text-fog/45">{branchNames?.[service.channel_id] ? `${branchNames[service.channel_id]} · ` : ""}{service.category} · {service.is_offered ? copy.offered : copy.notOffered}{service.description ? ` · ${service.description}` : ""}</div></div><button onClick={() => void onUndeclare(service)} className="shrink-0 text-[11px] font-semibold text-ink/45 hover:text-ink dark:text-fog/45 dark:hover:text-fog">{copy.removeFromProfile}</button><button onClick={() => void onDelete(service)} className="shrink-0 text-[11px] font-semibold text-red-500">{copy.delete}</button></div>)}</div>}</section>;
+function ServiceGroup({ title, subtitle, services, onToggle, onDelete, onStage, pending, branchNames, copy }: { title: string; subtitle: string; services: Service[]; onToggle: (service: Service) => Promise<void>; onDelete: (service: Service) => Promise<void>; onStage: (service: Service, declared: boolean) => void; pending?: Record<string, boolean>; branchNames?: Record<string, string>; copy: ServicesCopy }) {
+  return <section className="overflow-hidden rounded-[2px] border border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636]"><header className="flex items-center justify-between border-b border-ink/[0.05] dark:border-fog/[0.05] px-4 py-3"><div><h2 className="text-[14px] font-bold text-ink dark:text-fog">{title}</h2><p className="mt-0.5 text-[11px] text-ink/40 dark:text-fog/40">{subtitle}</p></div><span className="rounded-[2px] bg-ink/[0.04] dark:bg-fog/[0.04] px-2.5 py-1 text-[10px] font-semibold text-ink/45 dark:text-fog/45">{services.length}</span></header>{services.length === 0 ? <div className="border-dashed px-4 py-8 text-center text-[12px] text-ink/35 dark:text-fog/35">{copy.noServiceData}</div> : <div className="divide-y divide-ink/[0.04] dark:divide-fog/[0.04]">{services.map((service) => <div key={service.id} className="flex items-center gap-3 px-4 py-3"><button onClick={() => void onToggle(service)} className={`h-5 w-5 shrink-0 rounded-[2px] border-2 ${service.is_offered ? "border-deep-violet bg-deep-violet" : "border-ink/20 dark:border-fog/20"}`} aria-label={copy.toggleOffered}>{service.is_offered && <span className="text-[11px] text-white">✓</span>}</button><div className="min-w-0 flex-1"><div className="text-[13px] font-bold text-ink dark:text-fog">{service.name}</div><div className="text-[11px] text-ink/45 dark:text-fog/45">{branchNames?.[service.channel_id] ? `${branchNames[service.channel_id]} · ` : ""}{service.category} · {service.is_offered ? copy.offered : copy.notOffered}{service.description ? ` · ${service.description}` : ""}</div></div><button onClick={() => onStage(service, false)} className={`shrink-0 text-[11px] font-semibold ${pending?.[service.id] === false ? "text-red-500" : "text-ink/45 hover:text-ink dark:text-fog/45 dark:hover:text-fog"}`}>{pending?.[service.id] === false ? copy.willBeRemoved : copy.removeFromProfile}</button><button onClick={() => void onDelete(service)} className="shrink-0 text-[11px] font-semibold text-red-500">{copy.delete}</button></div>)}</div>}</section>;
 }
 
 /** Google's category service types the merchant has not declared yet.
  *
  *  They are suggestions, not services the business offers: clicking one
  *  declares it, which publishes it to Google as a service item. */
-function SuggestedServices({ services, onDeclare, branchNames, copy }: { services: Service[]; onDeclare: (service: Service) => Promise<void>; branchNames?: Record<string, string>; copy: ServicesCopy }) {
-  return <section className="overflow-hidden rounded-[2px] border border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636]"><header className="flex items-center justify-between border-b border-ink/[0.05] dark:border-fog/[0.05] px-4 py-3"><div><h2 className="text-[14px] font-bold text-ink dark:text-fog">{copy.suggestedGroup}</h2><p className="mt-0.5 text-[11px] text-ink/40 dark:text-fog/40">{copy.suggestedGroupSub}</p></div><span className="rounded-[2px] bg-ink/[0.04] dark:bg-fog/[0.04] px-2.5 py-1 text-[10px] font-semibold text-ink/45 dark:text-fog/45">{services.length}</span></header>{services.length === 0 ? <div className="border-dashed px-4 py-8 text-center text-[12px] text-ink/35 dark:text-fog/35">{copy.noSuggestions}</div> : <div className="flex flex-wrap gap-2 p-4">{services.map((service) => <button key={service.id} onClick={() => void onDeclare(service)} className="inline-flex items-center gap-1.5 rounded-full border border-ink/[0.12] bg-white px-3 py-1.5 text-[12px] font-semibold text-ink/70 transition hover:border-deep-violet hover:text-deep-violet focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:border-fog/[0.12] dark:bg-[#1d1636] dark:text-fog/70 dark:hover:border-violet-soft dark:hover:text-violet-soft"><span aria-hidden>+</span>{service.name}{branchNames?.[service.channel_id] ? <span className="font-normal text-ink/40 dark:text-fog/40">· {branchNames[service.channel_id]}</span> : null}</button>)}</div>}</section>;
+function SuggestedServices({ services, onStage, pending, branchNames, copy }: { services: Service[]; onStage: (service: Service, declared: boolean) => void; pending?: Record<string, boolean>; branchNames?: Record<string, string>; copy: ServicesCopy }) {
+  return <section className="overflow-hidden rounded-[2px] border border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636]"><header className="flex items-center justify-between border-b border-ink/[0.05] dark:border-fog/[0.05] px-4 py-3"><div><h2 className="text-[14px] font-bold text-ink dark:text-fog">{copy.suggestedGroup}</h2><p className="mt-0.5 text-[11px] text-ink/40 dark:text-fog/40">{copy.suggestedGroupSub}</p></div><span className="rounded-[2px] bg-ink/[0.04] dark:bg-fog/[0.04] px-2.5 py-1 text-[10px] font-semibold text-ink/45 dark:text-fog/45">{services.length}</span></header>{services.length === 0 ? <div className="border-dashed px-4 py-8 text-center text-[12px] text-ink/35 dark:text-fog/35">{copy.noSuggestions}</div> : <div className="flex flex-wrap gap-2 p-4">{services.map((service) => <button key={service.id} onClick={() => onStage(service, true)} aria-pressed={pending?.[service.id] === true} className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 ${pending?.[service.id] === true ? "border-deep-violet bg-deep-violet text-white" : "border-ink/[0.12] bg-white text-ink/70 hover:border-deep-violet hover:text-deep-violet dark:border-fog/[0.12] dark:bg-[#1d1636] dark:text-fog/70 dark:hover:border-violet-soft dark:hover:text-violet-soft"}`}><span aria-hidden>{pending?.[service.id] === true ? "✓" : "+"}</span>{service.name}{branchNames?.[service.channel_id] ? <span className="font-normal opacity-70">· {branchNames[service.channel_id]}</span> : null}</button>)}</div>}</section>;
 }

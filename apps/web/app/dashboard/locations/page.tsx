@@ -1409,6 +1409,14 @@ const bulk: BulkScope | null = isBulk
                 scopeId={isBulk ? (selectedId ?? undefined) : undefined}
                 googleCurrent={!isBulk ? fullProfile?.google_current?.services : undefined}
                 bulkGoogleCurrent={isBulk ? bulkServices : undefined}
+                onChanged={() => {
+                  if (!selectedId || isBulk) return;
+                  apiFetch(`/api/v1/locations/${selectedId}`)
+                    .then((refreshed) => setFullProfile(refreshed as FullProfile))
+                    .catch(() => {
+                      /* ignore - the save already landed */
+                    });
+                }}
               />
             )}
           </div>
