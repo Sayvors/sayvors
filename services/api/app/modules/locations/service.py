@@ -51,6 +51,18 @@ def _known_synced(meta: dict) -> set[str]:
     return set(stored) | (set(GOOGLE_SYNCED_FIELDS) - failed)
 
 
+# Edit lifecycle stages, worst first. A section that mixes stages (the
+# attributes section holds one stage per attribute) reports the worst.
+_STAGE_RANK = {
+    "rejected": 0,
+    "pending": 1,
+    "google_updated": 2,
+    "draft": 3,
+    "accepted": 4,
+    "unspecified": 5,
+}
+
+
 def _has_failed(meta: dict, section: str) -> bool:
     """Whether a push section has a recorded Google failure to retry.
 
@@ -394,6 +406,7 @@ async def _google_edit_status(channel: Channel, listing_id: str) -> dict[str, di
     """
     from ..channels.google_business import (
         GoogleBusinessClient,
+        parse_attribute_edit_status,
         parse_edit_status,
     )
     from ..channels.service import decrypt_token
@@ -405,7 +418,30 @@ async def _google_edit_status(channel: Channel, listing_id: str) -> dict[str, di
     client = GoogleBusinessClient(access or "", refresh)
     try:
         extended = await client.get_extended_location(listing_id)
-        return parse_edit_status(extended)
+        status = parse_edit_status(extended)
+        # Attributes have their own endpoint; fold them into one section
+        # status (the worst lifecycle across the attributes wins).
+        try:
+            attrs = parse_attribute_edit_status(
+                await client.get_extended_attributes(listing_id)
+            )
+        except Exception as e:  # noqa: BLE001 — attributes are optional
+            logger.debug("Google attribute status unavailable for %s: %s", listing_id, e)
+            attrs = {}
+        if attrs:
+            stages = [a.get("stage") for a in attrs.values() if a.get("stage")]
+            if stages:
+                worst = min(stages, key=lambda s: _STAGE_RANK.get(s, 9))
+                entry = next(
+                    (a for a in attrs.values() if a.get("stage") == worst), {}
+                )
+                status["attributes"] = {
+                    "stage": worst,
+                    "rejection_reason": entry.get("rejection_reason"),
+                    "update_time": entry.get("update_time"),
+                    "source": entry.get("source"),
+                }
+        return status
     except Exception as e:  # noqa: BLE001 — status is best-effort
         logger.debug("Google edit status unavailable for %s: %s", listing_id, e)
         return {}

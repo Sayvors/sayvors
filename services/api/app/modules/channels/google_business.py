@@ -83,14 +83,45 @@ def parse_edit_status(extended: dict) -> dict[str, dict]:
         section = GOOGLE_FIELD_TO_SECTION.get(field)
         if section is None or not isinstance(data, dict):
             continue
-        stage_raw = str(data.get("lastEditLifecycleStage") or "")
-        out[section] = {
-            "stage": EDIT_STAGE_TO_STATUS.get(stage_raw, stage_raw.lower() or "unspecified"),
-            "rejection_reason": data.get("rejectionReason"),
-            "update_time": data.get("updateTime"),
-            "source": data.get("source"),
-        }
+        out[section] = _edit_entry(data)
     return out
+
+
+def parse_attribute_edit_status(extended: dict) -> dict[str, dict]:
+    """Per-attribute edit status from an ExtendedAttributes response.
+
+    Attributes have their own endpoint, so they never appear in the
+    location's extendedFieldData. The response carries one entry per
+    attribute in ``extendedAttributes``, each with its own field metadata.
+    Returns ``{attribute: {...}}``.
+    """
+    out: dict[str, dict] = {}
+    entries = (extended or {}).get("extendedAttributes") or []
+    if not isinstance(entries, list):
+        return out
+    for item in entries:
+        if not isinstance(item, dict):
+            continue
+        data = item.get("extendedFieldData")
+        if not isinstance(data, dict):
+            continue
+        merchant = item.get("attributeProvidedByMerchant") or {}
+        name = str(merchant.get("name") or item.get("name") or "")
+        if not name:
+            continue
+        out[name] = _edit_entry(data)
+    return out
+
+
+def _edit_entry(data: dict) -> dict:
+    """One ExtendedFieldData object as Sayvors' status shape."""
+    stage_raw = str(data.get("lastEditLifecycleStage") or "")
+    return {
+        "stage": EDIT_STAGE_TO_STATUS.get(stage_raw, stage_raw.lower() or "unspecified"),
+        "rejection_reason": data.get("rejectionReason"),
+        "update_time": data.get("updateTime"),
+        "source": data.get("source"),
+    }
 
 # Frontend More-hours options → GBP MoreHoursType enum. Unknown types are
 # skipped with a warning (Google 400s the whole call otherwise).
@@ -322,6 +353,25 @@ class GoogleBusinessClient(GoogleReviewsClient):
         if resp.status_code != 200:
             raise GoogleReviewsError(
                 f"get_extended_location failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        data = resp.json()
+        return data if isinstance(data, dict) else {}
+
+    async def get_extended_attributes(self, location_id: str) -> dict:
+        """ExtendedAttributes: per-attribute edit status.
+
+        Attributes live on their own endpoint, so ``locations.getExtended``
+        never reports their lifecycle. Returns {} when the alpha API is off.
+        """
+        resp = await self._authed_request(
+            "GET",
+            f"{GBP_BIZINFO_API_ALPHA}/{self._location_name(location_id)}"
+            f"/attributes:getExtended",
+        )
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"get_extended_attributes failed ({resp.status_code}): {resp.text[:300]}",
                 resp.status_code,
             )
         data = resp.json()

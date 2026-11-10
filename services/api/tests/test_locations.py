@@ -281,6 +281,41 @@ async def test_failed_section_is_retried_on_unchanged_save(monkeypatch, db, user
     assert pushed_seen.get("phone") == "+966 55 000 0000"
 
 
+def test_parse_attribute_edit_status_reads_the_extended_list():
+    """Attributes arrive as a list of entries, each with its own field data."""
+    from app.modules.channels.google_business import parse_attribute_edit_status
+
+    extended = {
+        "name": "locations/123/attributes",
+        "extendedAttributes": [
+            {
+                "attributeProvidedByMerchant": {"name": "attributes/url_twitter"},
+                "extendedFieldData": {
+                    "lastEditLifecycleStage": "EDIT_LIFECYCLE_STAGE_ACCEPTED",
+                    "updateTime": "2026-09-14T11:11:22Z",
+                    "source": "SOURCE_UI",
+                },
+            },
+            {
+                "attributeProvidedByMerchant": {"name": "attributes/wheelchair_accessible"},
+                "extendedFieldData": {
+                    "lastEditLifecycleStage": "EDIT_LIFECYCLE_STAGE_PENDING",
+                },
+            },
+        ],
+    }
+    status = parse_attribute_edit_status(extended)
+    assert status["attributes/url_twitter"]["stage"] == "accepted"
+    assert status["attributes/wheelchair_accessible"]["stage"] == "pending"
+
+
+def test_parse_attribute_edit_status_handles_empty():
+    from app.modules.channels.google_business import parse_attribute_edit_status
+
+    assert parse_attribute_edit_status({}) == {}
+    assert parse_attribute_edit_status({"extendedAttributes": None}) == {}
+
+
 def test_profile_response_carries_google_status():
     """The response model must expose google_status — a missing field here
     silently drops Google's per-field edit lifecycle from the API response."""
