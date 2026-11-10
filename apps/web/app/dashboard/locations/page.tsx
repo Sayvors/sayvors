@@ -6,6 +6,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import { useI18n } from "@/lib/i18n/I18nProvider";
+import {
+  HOURS_TEMPLATES,
+  MORE_HOURS_TEMPLATES,
+  SPECIAL_HOURS_TEMPLATES,
+  applyHoursTemplate,
+  applyMoreHoursTemplate,
+  applySpecialHoursTemplate,
+} from "@/lib/hours-templates";
 import BulkEditSheet from "@/components/locations/BulkEditSheet";
 import CategoryPicker from "@/components/locations/CategoryPicker";
 import LocationsMap from "@/components/locations/LocationsMap";
@@ -155,6 +163,85 @@ function resolveSectionStatus(
     if (best === null || (rank[s] ?? 9) < (rank[best] ?? 9)) best = s;
   }
   return best;
+}
+
+/** A dropdown of ready-made hours presets.
+ *
+ * Applying a template only fills the form â€” the merchant still presses Save,
+ * so a template can never change Google on its own.
+ */
+function TemplatePicker({
+  templates,
+  copy,
+  onApply,
+  range,
+}: {
+  templates: { id: string; nameKey: string }[];
+  copy: LocationsCopy;
+  onApply: (id: string) => void;
+  range?: {
+    startDate: string;
+    days: number;
+    onStartDate: (value: string) => void;
+    onDays: (value: number) => void;
+  };
+}) {
+  const [selected, setSelected] = useState("");
+  const nameOf = (key: string) =>
+    (copy as unknown as Record<string, string>)[key] ?? key;
+  return (
+    <div className="flex flex-wrap items-end gap-2 rounded-[2px] border border-ink/[0.08] bg-ink/[0.02] p-3 dark:border-fog/[0.08] dark:bg-fog/[0.02]">
+      <label className="min-w-[200px] flex-1">
+        <span className="mb-1 block text-[10px] font-bold uppercase tracking-[0.12em] text-ink/45 dark:text-fog/45">
+          {copy.templatesLabel}
+        </span>
+        <select
+          value={selected}
+          onChange={(event) => {
+            const value = event.target.value;
+            setSelected("");
+            if (value) onApply(value);
+          }}
+          className="input-field"
+        >
+          <option value="">{copy.templatesLabel}</option>
+          {templates.map((template) => (
+            <option key={template.id} value={template.id}>
+              {nameOf(template.nameKey)}
+            </option>
+          ))}
+        </select>
+      </label>
+      {range ? (
+        <>
+          <label>
+            <span className="mb-1 block text-[10px] font-bold uppercase tracking-[0.12em] text-ink/45 dark:text-fog/45">
+              {copy.templateStartDate}
+            </span>
+            <input
+              type="date"
+              value={range.startDate}
+              onChange={(event) => range.onStartDate(event.target.value)}
+              className="input-field"
+            />
+          </label>
+          <label>
+            <span className="mb-1 block text-[10px] font-bold uppercase tracking-[0.12em] text-ink/45 dark:text-fog/45">
+              {copy.templateDays}
+            </span>
+            <input
+              type="number"
+              min={1}
+              max={60}
+              value={range.days}
+              onChange={(event) => range.onDays(Number(event.target.value))}
+              className="input-field w-24"
+            />
+          </label>
+        </>
+      ) : null}
+    </div>
+  );
 }
 
 /** The values Google shows today, so the merchant can see the live listing
@@ -1807,6 +1894,14 @@ function HoursTab({ initial, onSave, bulk, copy, synced, status, reason, current
         </div>
       </div>
       <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.hoursHint}</p>
+      <TemplatePicker
+        templates={HOURS_TEMPLATES}
+        copy={copy}
+        onApply={(id) => {
+          const template = HOURS_TEMPLATES.find((t) => t.id === id);
+          if (template) setHours(applyHoursTemplate(hours, template));
+        }}
+      />
       {(bulk || current) && (
         <CurrentPanel section="hours.regular" current={current} bulkRows={bulkCurrent} copy={copy} />
       )}
@@ -1876,6 +1971,9 @@ function SpecialHoursTab({ initial, onSave, bulk, copy, synced, status, reason, 
 }) {
   const [entries, setEntries] = useState<{ date: string; hours: string; reason: string }[]>(initial ?? []);
   const [saving, setSaving] = useState(false);
+  // Where a special-hours template starts and how many days it spans.
+  const [templateStart, setTemplateStart] = useState(() => new Date().toISOString().slice(0, 10));
+  const [templateDays, setTemplateDays] = useState(1);
   const addEntry = () => setEntries([...entries, { date: "", hours: "09:00 - 17:00", reason: "" }]);
   const removeEntry = (i: number) => setEntries(entries.filter((_, idx) => idx !== i));
   const updateEntry = (i: number, field: string, value: string) => {
@@ -1911,6 +2009,21 @@ function SpecialHoursTab({ initial, onSave, bulk, copy, synced, status, reason, 
         </div>
       </div>
       <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.specialHoursHint}</p>
+      <TemplatePicker
+        templates={SPECIAL_HOURS_TEMPLATES}
+        copy={copy}
+        range={{
+          startDate: templateStart,
+          days: templateDays,
+          onStartDate: setTemplateStart,
+          onDays: setTemplateDays,
+        }}
+        onApply={(id) => {
+          const template = SPECIAL_HOURS_TEMPLATES.find((t) => t.id === id);
+          if (!template) return;
+          setEntries(applySpecialHoursTemplate(entries, template, templateStart, templateDays));
+        }}
+      />
       {(bulk || current) && (
         <CurrentPanel section="hours.special" current={current} bulkRows={bulkCurrent} copy={copy} />
       )}
@@ -2008,6 +2121,14 @@ function MoreHoursTab({ initial, onSave, bulk, copy, synced, status, reason, cur
         </div>
       </div>
       <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.moreHoursHint}</p>
+      <TemplatePicker
+        templates={MORE_HOURS_TEMPLATES}
+        copy={copy}
+        onApply={(id) => {
+          const template = MORE_HOURS_TEMPLATES.find((t) => t.id === id);
+          if (template) setEntries(applyMoreHoursTemplate(entries, template));
+        }}
+      />
       {(bulk || current) && (
         <CurrentPanel section="hours.more" current={current} bulkRows={bulkCurrent} copy={copy} />
       )}
