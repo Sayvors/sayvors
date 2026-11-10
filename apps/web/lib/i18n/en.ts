@@ -234,7 +234,7 @@ const en = {
       tabDetails: "Business Details",
       detailsSubtitle: "Edit your location's core information.",
       syncedToGoogle: "Synced to Google",
-      storedInSayvors: "Stored in Sayvors",
+      storedInSayvors: "Not on Google",
       syncedViaGoogle: "Synced from your Google Business Profile",
       viewOnMaps: "View on Maps",
       addressReadOnlyTitle: "Address is synced from Google — edit it in your Google Business dashboard",

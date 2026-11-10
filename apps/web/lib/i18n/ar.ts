@@ -236,7 +236,7 @@ const ar: Dict = {
       tabDetails: "بيانات النشاط",
       detailsSubtitle: "عدّل المعلومات الأساسية لفرعك.",
       syncedToGoogle: "متزامن مع Google",
-      storedInSayvors: "مخزّن في سيفورس",
+      storedInSayvors: "غير متزامن مع Google",
       syncedViaGoogle: "متزامن من Google Business Profile",
       viewOnMaps: "عرض على الخرائط",
       addressReadOnlyTitle: "العنوان متزامن من Google — عدّله من لوحة Google Business",
