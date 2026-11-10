@@ -287,7 +287,14 @@ async def publish_post(
                 }
 
                 idem_key = (
-                    f"{idempotency_key}:{platform}:{method}" if idempotency_key else None
+                    # The destination must be part of the key: a bulk publish
+                    # sends one idempotency_key for the whole batch, so keying
+                    # on platform+method alone collapses every branch that
+                    # shares a format into the first one's job — the other
+                    # destinations are silently never created.
+                    f"{idempotency_key}:{platform}:{asset_id}:{method}"
+                    if idempotency_key
+                    else None
                 )
 
                 job = await submit_job(

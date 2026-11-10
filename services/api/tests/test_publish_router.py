@@ -261,6 +261,42 @@ async def test_publish_creates_one_job_per_destination_and_method(db, client, us
     assert len(jobs) == 3
 
 
+@pytest.mark.asyncio
+async def test_bulk_publish_same_format_to_two_branches_creates_two_jobs(db, client, user_id):
+    """The composer sends ONE idempotency_key for the whole batch.
+
+    Keying the job on platform+method alone collapses every branch that
+    shares a format into the first branch's job, so the other branches are
+    silently never created — the bulk publish looks like it worked but only
+    one location ever receives the post.
+    """
+    from sqlalchemy import select
+
+    res = client.post(
+        "/api/v1/channels/publish",
+        json={
+            "media_url": "https://cdn.example/post.jpg",
+            "media_type": "image",
+            "caption": "Hello",
+            "idempotency_key": "batch-123:1700000000000",
+            "destinations": [
+                {"platform": "google_reviews", "external_asset_id": "loc-makkah",
+                 "methods": ["banner"]},
+                {"platform": "google_reviews", "external_asset_id": "loc-malqa",
+                 "methods": ["banner"]},
+            ],
+        },
+    )
+    assert res.status_code == 200, res.text
+    rows = res.json()
+    assert len(rows) == 2
+    assert {r["external_asset_id"] for r in rows} == {"loc-makkah", "loc-malqa"}
+
+    jobs = (await db.execute(select(Job).where(Job.tenant_id == user_id))).scalars().all()
+    assert len(jobs) == 2
+    assert {j.payload["external_asset_id"] for j in jobs} == {"loc-makkah", "loc-malqa"}
+
+
 def test_publish_rejects_unsupported_platform(client):
     res = client.post(
         "/api/v1/channels/publish",
