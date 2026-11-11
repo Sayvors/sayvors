@@ -244,7 +244,7 @@ export default function MetaConnections({
 
   return (
     <>
-      {PROVIDERS.map((p) => {
+      {PROVIDERS.filter((p) => p.enabled).map((p) => {
         const conn = connections[p.key];
         const list = assets[p.key] ?? [];
         const visible = p.key === "whatsapp" ? list.filter((a) => a.asset_type === "phone_number") : list;
