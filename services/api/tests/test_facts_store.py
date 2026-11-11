@@ -59,8 +59,8 @@ async def _seed(db, *, late_branch: bool = True, locations: bool = True, legacy:
     )
     db.add(channel)
     db.add_all([
-        BusinessService(id="facts-svc-1", channel_id=channel.id, name="Websites", is_offered=True),
-        BusinessService(id="facts-svc-2", channel_id=channel.id, name="SEO", is_offered=False),
+        BusinessService(id="facts-svc-1", channel_id=channel.id, name="Websites", is_offered=True, declared=True),
+        BusinessService(id="facts-svc-2", channel_id=channel.id, name="SEO", is_offered=False, declared=True),
     ])
     role = TeamRole(id="facts-role", tenant_id=TENANT, name="Founder", is_system=True, permissions=[])
     member = User(
