@@ -208,6 +208,8 @@
     <a href="#kafka">Kafka</a>
     <a href="#arabic-dashboard">Arabic</a>
     <a href="#roadmap">Roadmap</a>
+    <a href="#connect-import-extend">Connect import</a>
+    <a href="#connect-import-extend">Connect import</a>
   </nav>
 </div>
 
@@ -2833,6 +2835,99 @@ order by created_at desc limit 5;</code></pre>
   <p><strong>Google post payloads corrected; event window collected (2026-11-10):</strong> three fields Google rejects were sent on every post — <code>offer.description</code> (<code>LocalPostOffer</code> has only <code>couponCode</code>/<code>redeemOnlineUrl</code>/<code>termsConditions</code>), <code>event.startDate</code> as an ISO string at the top level (<code>LocalPostEvent</code> needs <code>{title, schedule:{startDate,startTime,endDate,endTime}}</code> with Date/TimeOfDay objects), and <code>scheduledPublishTime</code> (<code>LocalPost</code> has no such field; the native scheduler is <code>scheduledTime</code>, RFC 3339, which holds the post in <code>SCHEDULED</code> and publishes it at that moment). Separately, <code>event</code> is <em>required</em> for EVENT <em>and</em> OFFER, so it is now always sent — defaulting the window when no dates are given — and the composer collects start/end dates for event/offer posts (validated end-after-start) instead of silently omitting the object. The publisher falls back to an immediate publish if an account's API rejects <code>scheduledTime</code>. 112 scoped API tests pass; web tsc + build green. <strong>Staging note:</strong> the staging image was built 2026-11-09 21:13 UTC from <code>staging@15bc23b2</code>, before these fixes — the Makkah branch's 2026-11-10 05:56 publish failed with <code>Unknown name "scheduledPublishTime"</code> while the Malqa branch's earlier post succeeded, which is exactly the "visible on one branch only" report. Merge <code>development</code> → <code>staging</code> and redeploy to clear it.</p>
   <p><strong>Bulk publish silently dropped every branch after the first (2026-11-10):</strong> the composer sends one <code>idempotency_key</code> for the whole batch (<code>batchId:timestamp</code>), and the publish router keyed the job as <code>key:platform:method</code>. <code>submit_job</code> returns the existing job when the key matches, so a bulk publish that used the same format on two locations produced <em>one</em> job — the first destination in the list — and every other branch was silently never created. That is the "posted to Makkah and Malqa but only Malqa shows it" report, reproduced locally: the banner job for <code>181507565693476724</code> (Malqa) exists with no Makkah sibling. The key now includes the destination (<code>key:platform:asset_id:method</code>), so each branch gets its own job while a client retry of the same batch still dedupes. Regression test <code>test_bulk_publish_same_format_to_two_branches_creates_two_jobs</code>; 113 scoped API tests pass.</p>
 </section>
+<section id="connect-import-extend">
+  <div class="eyebrow">&sect;&sect; 27 - Connect-time import extension - 2026-11-11</div>
+  <h2>Fetch Google posts, logo and banner during connect (planned, not built)</h2>
+  <p><strong>Context:</strong> the OAuth callback already fetches the location profile (address, category, phone, website, description, hours, categories, attributes, service area, services) and the connect-import modal fetches reviews. Three things are <strong>never</strong> imported: Google local posts, the profile picture (logo) and the cover image (banner). This section is the plan; it is recorded so the CEO and the team can see the scope before any code is written. Nothing here is implemented yet.</p>
+
+  <h3>What is already available (no new API work)</h3>
+  <div class="scroll"><table>
+    <tr><th>Asset</th><th>Existing primitive</th><th>Where</th></tr>
+    <tr><td>Local posts (list)</td><td><code>GoogleReviewsClient.list_local_posts(account_id, location_id)</code></td><td><code>channels/google_reviews.py:641</code> (v4) - returns raw <code>LocalPost</code> dicts with <code>name</code>, <code>summary</code>, <code>createTime</code>, <code>state</code>, <code>media</code>, <code>event</code>, <code>offer</code>, <code>callToAction</code></td></tr>
+    <tr><td>Location media (list)</td><td><code>GET /v4/{account}/locations/{location}/media</code> - verified live on Malqa, returns <code>mediaItems[]</code> with <code>locationAssociation.category</code> (<code>PROFILE</code>, <code>COVER</code>, <code>EXTERIOR</code>, <code>INTERIOR</code>, <code>ADDITIONAL</code>, ...), <code>googleUrl</code>, <code>thumbnailUrl</code>, <code>dimensions</code></td><td>no read method yet - to be added next to <code>list_local_posts</code></td></tr>
+    <tr><td>Media write (upload)</td><td><code>GoogleBusinessPublisher.set_location_image()</code></td><td><code>channels/meta/providers/google_publish.py:372</code> - already used for profile/cover publish</td></tr>
+    <tr><td>Post storage</td><td><code>Job</code> rows with <code>job_type = post_publish</code></td><td>the Posts &amp; Media feed (<code>PublishBody</code> / <code>JobOut</code>) already reads from this table - imported posts appear in the feed for free</td></tr>
+  </table></div>
+
+  <h3>Phase 1 - connect-time profile media (small, no migration)</h3>
+  <p>In <code>google_callback</code>, right after the location metadata is assembled (the block that populates <code>existing_meta</code> / <code>loc_meta</code>):</p>
+  <ol>
+    <li>Call <code>client.list_location_media(account_id, location_id)</code>.</li>
+    <li>Pick the <code>PROFILE</code> and <code>COVER</code> items; store their <code>googleUrl</code> (and <code>thumbnailUrl</code>) into <code>meta["profile_image_url"]</code> and <code>meta["cover_image_url"]</code>.</li>
+    <li>Store all media items under <code>meta["location_media"]</code> for the gallery (or keep only the two surfaces).</li>
+    <li>Store in <code>metadata_json</code> - no migration, same pattern as <code>hours</code> / <code>attributes</code>.</li>
+  </ol>
+  <p>Then expose them in <code>locations/service.py:get_profile</code> (a new <code>profile_image_url</code> / <code>cover_image_url</code> field, or under <code>google_current</code>) and render them on the Locations page card.</p>
+
+  <h3>Phase 2 - connect-time local posts import (medium)</h3>
+  <p>Same callback, right after the media fetch:</p>
+  <ol>
+    <li>Call <code>client.list_local_posts(account_id, location_id)</code> - bounded at <strong>50 posts</strong> (the feed's first page) so a 10-year-old location with thousands of posts does not block OAuth.</li>
+    <li>For each returned <code>LocalPost</code>, create a <code>Job</code> row:
+      <ul>
+        <li><code>job_type = post_publish</code>, <code>status = succeeded</code>, <code>lane = publishing</code></li>
+        <li><code>tenant_id</code>, <code>created_at = createTime</code></li>
+        <li><code>payload = {platform: "google_reviews", external_asset_id: location_id, method: topicType, caption: summary, media_url: media[0].sourceUrl or media[0].googleUrl, cta_type, cta_url, start_date, end_date, external_post_name: post.name, google_state: post.state}</code></li>
+        <li><code>idempotency_key = "import:google:{post.name}"</code> so a re-connect never twins the row</li>
+        <li><code>result = {"state": post.state}</code> so the feed shows Google's real state immediately</li>
+      </ul>
+    </li>
+    <li>Set <code>external_post_name</code> in the payload so future edits/deletes target the right Google resource.</li>
+    <li>Log <code>imported N posts for location X</code>.</li>
+  </ol>
+  <p>The feed already renders <code>JobOut</code> rows, so the imported posts show up in Posts &amp; Media immediately, with their real Google state (<code>LIVE</code> / <code>PROCESSING</code> / <code>SCHEDULED</code> / <code>REJECTED</code> / <code>GONE</code>).</p>
+
+  <h3>Phase 3 - "view on Google" for imported posts (frontend)</h3>
+  <ul>
+    <li>Imported posts have <code>external_post_name</code> (e.g. <code>accounts/.../locations/.../localPosts/...</code>). The details dialog already has a "View on Google" link pattern (line 1022 of <code>PostDetailDialog.tsx</code>).</li>
+    <li>For imported posts, the edit path is <strong>disabled</strong> (the original composer payload is incomplete - no caption/description stored, no account id). Only "View on Google" and "Remove from platform" are offered.</li>
+    <li>Alternatively: fetch the full post back from Google on demand (<code>get_post(post_name)</code>) and populate the dialog - more work, more fidelity.</li>
+  </ul>
+
+  <h3>Phase 4 - logo/banner in the UI</h3>
+  <ul>
+    <li>Show the profile picture and cover on each branch card in the Locations page (the <code>profile_image_url</code> / <code>cover_image_url</code> from Phase 1).</li>
+    <li>Clicking opens the same upload flow that already exists (<code>set_location_image</code>), so re-uploading works.</li>
+    <li>Stale URLs: Google's <code>googleUrl</code> is stable but the <code>thumbnailUrl</code> (300px) is the right one for a card.</li>
+  </ul>
+
+  <h3>Files to edit</h3>
+  <div class="scroll"><table>
+    <tr><th>File</th><th>Change</th></tr>
+    <tr><td class="path">services/api/app/modules/channels/google_reviews.py</td><td>Add <code>list_location_media(account_id, location_id)</code> next to <code>list_local_posts</code> (line 641).</td></tr>
+    <tr><td class="path">services/api/app/modules/channels/router.py</td><td>In <code>google_callback</code>, after the location metadata block (line ~3000): fetch media + posts, store profile/cover URLs in meta, create <code>Job</code> rows for posts.</td></tr>
+    <tr><td class="path">services/api/app/modules/channels/connect_import.py</td><td>Optional: add a "posts" phase to the import session so the merchant sees progress instead of a silent import.</td></tr>
+    <tr><td class="path">services/api/app/modules/locations/service.py</td><td>Expose <code>profile_image_url</code> / <code>cover_image_url</code> / <code>google_posts_count</code> in <code>get_profile</code>.</td></tr>
+    <tr><td class="path">services/api/app/modules/locations/schemas.py</td><td>Add the fields to <code>LocationProfileOut</code>.</td></tr>
+    <tr><td class="path">services/api/app/modules/channels/publish/router.py</td><td>Handle imported posts in <code>_to_out</code> and the edit/delete paths (no account id in payload).</td></tr>
+    <tr><td class="path">apps/web/app/dashboard/locations/page.tsx</td><td>Render the profile picture and cover on each branch card.</td></tr>
+    <tr><td class="path">apps/web/components/dashboard/publish/PostDetailDialog.tsx</td><td>"View on Google" + "Remove" for imported posts; disable edit.</td></tr>
+    <tr><td class="path">apps/web/components/dashboard/PostsPage.tsx / PublishedPosts.tsx</td><td>Render imported posts with their Google state; no job-polling for imported rows.</td></tr>
+  </table></div>
+
+  <h3>Design decisions to settle before building</h3>
+  <ol>
+    <li><strong>Connect vs. import session.</strong> Posts and media can be fetched in the OAuth callback (silent, fast for small locations) or as a new phase in the connect-import modal (visible progress, bounded by a cap). Recommend: media at connect (two URLs, instant); posts in the import session (bounded, visible) so a 10-year-old location with thousands of posts does not block OAuth.</li>
+    <li><strong>Idempotency.</strong> Re-connecting the same account must not duplicate posts. Use <code>idempotency_key = "import:google:{post.name}"</code> and let <code>submit_job</code>'s dedupe handle it.</li>
+    <li><strong>Imported-post edits.</strong> Sayvors imported posts have no caption/description stored. Editing them would need a fetch-back from Google. Options: (a) disable edit for imported posts (safest), (b) fetch the full post on dialog open (more work, more fidelity). Recommend (a) for v1.</li>
+    <li><strong>Removal.</strong> Imported posts can be removed from Google via the existing delete path (<code>post_exists</code> + list confirmation). The row is then marked cancelled locally.</li>
+    <li><strong>Scope of media.</strong> Store only PROFILE and COVER (the two surfaces the UI uses) to keep <code>metadata_json</code> small, or store all items under <code>meta["location_media"]</code> for a gallery. Recommend: profile + cover + a count of the rest.</li>
+    <li><strong>Migration.</strong> If logo/banner go into <code>metadata_json</code>, no migration. If they go into <code>location_profiles</code>, a migration is needed. Recommend <code>metadata_json</code> for consistency with address/phone/website.</li>
+  </ol>
+
+  <h3>Effort and order</h3>
+  <div class="scroll"><table>
+    <tr><th>Step</th><th>Effort</th><th>Depends on</th></tr>
+    <tr><td>Phase 1 - profile + cover at connect</td><td class="num">~0.5 day</td><td>nothing</td></tr>
+    <tr><td>Phase 4 - show logo/cover in the Locations UI</td><td class="num">~0.5 day</td><td>Phase 1</td></tr>
+    <tr><td>Phase 2 - post import (bounded, in the import session)</td><td class="num">~1.5 days</td><td>nothing</td></tr>
+    <tr><td>Phase 3 - details dialog for imported posts</td><td class="num">~0.5 day</td><td>Phase 2</td></tr>
+    <tr><td>Tests + live verification against the real profile</td><td class="num">~1 day</td><td>all above</td></tr>
+    <tr><td><strong>Total</strong></td><td class="num"><strong>~3-4 days</strong></td><td>no migration (metadata_json only)</td></tr>
+  </table></div>
+  <p class="note">Posts are the higher-value import (a merchant who connects Sayvors after running their profile for a year should see their existing posts, not an empty feed). Logo and banner are cheap and visible immediately. Recommend doing Phase 1 + 4 first, then Phase 2 + 3.</p>
+</section>
+
 <footer>
   Sayvors production-readiness audit - originally compiled 2026-10-11 (read-only), kept current since. The actionable ledger is <strong>34 original findings</strong> (SEC 11, SCALE 6, OPS 5, ANL 12: 32 resolved, 2 open), the <strong>7-finding INS pass</strong> (4 fixed, 3 open), and the <strong>55-alert dependency ledger</strong> (all closed); CVE-1/CVE-2 (Next.js/sharp) are fixed, CVE-3 (Redis 7) and CVE-4 (Kafka 3.8) remain open on the server images; sections 5-7 are the strategy answers. Per-item status reflects the working tree as of 2026-11-01; implementation details live in <code>docs/security/</code>. The 2026-10-25 pass added the INS ledger and the ordered code/infra/buy fix queue (§§11) and re-verified the resolved findings against the working tree. The 2026-10-26 pass added the dependency ledger (§§15) and closed all 55 Dependabot alerts the same day; the default branch was moved from <code>main</code> to <code>development</code> so Dependabot scans the branch where fixes land. The 2026-10-29 pass added the conversation-control and Instagram &rarr; WhatsApp ledger (&sect;17, 16 items plus a deferred calling decision), including the silent-thread root cause (BUG-1 to BUG-4) and the outbox/publisher race that silently dropped inbound messages (BUG-5) found on staging. BUG-1/2/3, BUG-4, BUG-5, HAND-1 (the wa.me bridge), HAND-2 (templates + consent), HAND-3 (identity merge + carried context), HAND-4, HAND-5 (canonical lead labels), HAND-6 (catalog + public page), HAND-7 (databank grounding), HAND-8 (conversation mode), HAND-9 (stored context), HAND-10 (conversation/review assignment) and HAND-11 (cumulative memory) were fixed; all 16 are closed. The 2026-10-31 pass added the voice-note/ASR ledger (&sect;19): inbound voice notes are transcribed by the admin-managed engine and answered end to end, with billing for hosted minutes and moving the reply onto the job lanes still open. It also moved escalation from a per-message counter to urgency + a confused-return counter, and stopped information-only chats from creating CRM leads. It closed BUG-4: the inbox now shows the escalation clock, reminder state and auto-resume countdown, and an agent can hand the thread back with "Resume AI now" — including live over the realtime channel for an already-open thread. It also closed HAND-5: one stored lead category (wholesale/retail/booking/quote/support/info) is classified by the engine and rendered verbatim by the inbox, lead card, customer profile, digest and escalation email; <code>qualified</code> now requires a sellable category, with the auto-qualify set configurable per tenant. The same pass added the WhatsApp surface ledger (&sect;20): text and voice are verified end to end, with interactive messages, inbound media, QR codes and the remaining account surface listed as the next build order. The 2026-11-01 pass closed HAND-10: conversations, leads and review tickets now store an owner; <code>channels/assignment.py</code> validates tenant and channel access, sends one notification to the assignee and broadcasts the change, the inbox has an owner picker, and the inbox, leads board and review-ticket queue each have a "Mine" filter. Automatic round-robin and live presence were not built. It also closed HAND-11: a resolve drafts one scrubbed memory (summary, outcome, facts) into <code>/dashboard/memory</code>; only human-approved rows are retrieved into future replies, by bounded keyword overlap and always tenant-scoped. WA-4 shipped the API-supported half: quoted replies and reactions. Meta's Cloud API has no edit or delete-for-everyone endpoint, so a sent message can be corrected with a quoted follow-up and removed from this inbox locally — the UI never presents that as a customer-side retraction. The scoped audit (&sect;22) scores Google Reviews at ~90% and the WhatsApp conversation loop at ~90%, names the WhatsApp gaps with effort, and states the one thing that outranks all of them: an unproven backup on 152 migrations.
 </footer>
