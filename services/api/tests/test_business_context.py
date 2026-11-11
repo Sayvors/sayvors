@@ -275,7 +275,7 @@ async def _make_service(db, channel_id, name, category="Custom", offered=True):
     from app.modules.channels.models import BusinessService
 
     db.add(BusinessService(channel_id=channel_id, name=name,
-                           category=category, is_offered=offered))
+                           category=category, is_offered=offered, declared=offered))
     await db.commit()
 
 
