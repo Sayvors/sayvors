@@ -51,6 +51,34 @@ def _known_synced(meta: dict) -> set[str]:
     return set(stored) | (set(GOOGLE_SYNCED_FIELDS) - failed)
 
 
+# Edit lifecycle stages, worst first. A section that mixes stages (the
+# attributes section holds one stage per attribute) reports the worst.
+_STAGE_RANK = {
+    "rejected": 0,
+    "pending": 1,
+    "google_updated": 2,
+    "draft": 3,
+    "accepted": 4,
+    "unspecified": 5,
+}
+
+
+def _has_failed(meta: dict, section: str) -> bool:
+    """Whether a push section has a recorded Google failure to retry.
+
+    `google_failed` keys are the section keys `push_profile` reports (e.g.
+    "categories.additional", "hours.regular"). A sub-section failure must
+    re-push the whole section, so match on the section prefix.
+    """
+    failed = meta.get("google_failed") or {}
+    if not isinstance(failed, dict):
+        return False
+    return any(
+        key == section or key.startswith(section + ".")
+        for key in failed
+    )
+
+
 def channel_meta(channel: Channel) -> dict:
     """The channel's stored Google listing metadata."""
     try:
@@ -218,6 +246,13 @@ async def get_profile(
     )
     meta = channel_meta(channel) if channel is not None else {}
     stored_skipped = meta.get("google_failed") or meta.get("google_skipped")
+    # Per-section edit lifecycle from Google (PENDING / REJECTED / ACCEPTED) and
+    # the values Google shows today. Best-effort: the alpha endpoint may be
+    # disabled; the UI falls back to the stored push report when it is empty.
+    google_status: dict[str, dict] = {}
+    google_current: dict = {}
+    if channel is not None:
+        google_status, google_current = await _google_live_snapshot(channel, listing_id)
 
     # The category catalog is region-specific. Prefer the region Google
     # returns for this location's storefront; fall back to the account country
@@ -274,6 +309,8 @@ async def get_profile(
         "opening_date": profile.opening_date.isoformat() if profile.opening_date else None,
         "google_synced": [],
         "google_skipped": {},
+        "google_status": google_status,
+        "google_current": google_current,
         "updated_at": profile.updated_at.isoformat() if profile.updated_at else None,
     }
     if channel is not None:
@@ -362,6 +399,96 @@ async def _push_profile_native(
     return report.get("pushed", []), skipped
 
 
+async def _google_live_snapshot(
+    channel: Channel, listing_id: str
+) -> tuple[dict[str, dict], dict]:
+    """Google's live view of a listing: edit status and the values shown.
+
+    Returns ``(status, current)``:
+    - ``status``: per-section edit lifecycle (pending / accepted / rejected).
+    - ``current``: what a customer sees on Google right now, per section.
+
+    Both are best-effort: the alpha endpoint may not be enabled, and every
+    failure leaves the caller with the stored push report instead.
+    """
+    from ..channels.google_business import (
+        GoogleBusinessClient,
+        parse_attribute_edit_status,
+        parse_attribute_values,
+        parse_consumer_values,
+        parse_edit_status,
+    )
+    from ..channels.service import decrypt_token
+
+    access = decrypt_token(channel.access_token) if channel.access_token else None
+    refresh = decrypt_token(channel.refresh_token) if channel.refresh_token else None
+    if not access and not refresh:
+        return {}, {}
+    client = GoogleBusinessClient(access or "", refresh)
+    try:
+        extended = await client.get_extended_location(listing_id)
+        status = parse_edit_status(extended)
+        current = parse_consumer_values(extended)
+        # Attributes have their own endpoint; fold them into one section
+        # status (the worst lifecycle across the attributes wins) and report
+        # the values Google shows today.
+        try:
+            attributes_extended = await client.get_extended_attributes(listing_id)
+        except Exception as e:  # noqa: BLE001 — attributes are optional
+            logger.debug("Google attribute status unavailable for %s: %s", listing_id, e)
+            attributes_extended = {}
+        attrs = parse_attribute_edit_status(attributes_extended)
+        if attrs:
+            stages = [a.get("stage") for a in attrs.values() if a.get("stage")]
+            if stages:
+                worst = min(stages, key=lambda s: _STAGE_RANK.get(s, 9))
+                entry = next(
+                    (a for a in attrs.values() if a.get("stage") == worst), {}
+                )
+                status["attributes"] = {
+                    "stage": worst,
+                    "rejection_reason": entry.get("rejection_reason"),
+                    "update_time": entry.get("update_time"),
+                    "source": entry.get("source"),
+                }
+        attribute_values = parse_attribute_values(attributes_extended)
+        if attribute_values:
+            current["attributes"] = attribute_values
+        # The service list Google holds today — empty is an answer too: it
+        # means the profile declares no services.
+        try:
+            service_items = await client.get_service_items(listing_id)
+        except Exception as e:  # noqa: BLE001 — services are optional
+            logger.debug("Google service items unavailable for %s: %s", listing_id, e)
+            service_items = []
+        current["services"] = _service_items_summary(service_items)
+        return status, current
+    except Exception as e:  # noqa: BLE001 — status is best-effort
+        logger.debug("Google edit status unavailable for %s: %s", listing_id, e)
+        return {}, {}
+    finally:
+        await client.close()
+
+
+def _service_items_summary(items: list[dict]) -> list[dict]:
+    """Google's service items as {name, offered} for the UI."""
+    out: list[dict] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        free = (item.get("freeFormServiceItem") or {})
+        label = (free.get("label") or {})
+        name = str(label.get("displayName") or "").strip()
+        if name:
+            out.append({"name": name, "offered": True})
+            continue
+        structured = item.get("structuredServiceItem") or {}
+        service_id = str(structured.get("serviceTypeId") or "").strip()
+        if service_id:
+            out.append({"name": service_id.split(":")[-1].replace("_", " "), "offered": True})
+    return out
+
+
 async def update_profile(
     db: AsyncSession,
     user_id: str,
@@ -398,24 +525,29 @@ async def update_profile(
 
     # Only changed values are pushed. A bulk save sends every column for every
     # row; without this, an unchanged branch would cost four Google patches.
+    # A section the last push rejected is always retried: the value is already
+    # stored locally, so "unchanged" must not mean "never try again".
     push_name = push_phone = push_website = None
+    failed_meta = channel_meta(channel) if channel is not None else {}
     if channel is not None:
-        meta = channel_meta(channel)
+        meta = failed_meta
         meta_changed = False
         if name is not None:
             clean_name = name.strip()[:255]
-            if clean_name and clean_name != (channel.display_name or ""):
+            if clean_name and (
+                clean_name != (channel.display_name or "") or _has_failed(meta, "name")
+            ):
                 channel.display_name = clean_name
                 push_name = clean_name
         if phone is not None:
             clean_phone = phone.strip() or None
-            if clean_phone != meta.get("phone"):
+            if clean_phone != meta.get("phone") or _has_failed(meta, "phone"):
                 meta["phone"] = clean_phone
                 push_phone = clean_phone
                 meta_changed = True
         if website is not None:
             clean_website = website.strip() or None
-            if clean_website != meta.get("website"):
+            if clean_website != meta.get("website") or _has_failed(meta, "website"):
                 meta["website"] = clean_website
                 push_website = clean_website
                 meta_changed = True
@@ -425,7 +557,7 @@ async def update_profile(
     push_description = None
     if description is not None:
         new_description = description[:750]
-        if new_description != profile.description:
+        if new_description != profile.description or _has_failed(failed_meta, "description"):
             profile.description = new_description
             push_description = new_description
     push_categories = None
@@ -441,7 +573,7 @@ async def update_profile(
             merged_cats["primary"] = str(categories.get("primary", ""))[:255]
         if categories.get("additional") is not None:
             merged_cats["additional"] = [str(c)[:255] for c in categories.get("additional", [])][:50]
-        if merged_cats != old_categories:
+        if merged_cats != old_categories or _has_failed(failed_meta, "categories"):
             profile.categories = merged_cats
             push_categories = merged_cats
     push_hours = None
@@ -454,13 +586,15 @@ async def update_profile(
             merged_hours["special"] = list(hours.get("special", []))[:100]
         if hours.get("more") is not None:
             merged_hours["more"] = list(hours.get("more", []))[:100]
-        if merged_hours != old_hours:
+        if merged_hours != old_hours or _has_failed(failed_meta, "hours"):
             profile.hours = merged_hours
             push_hours = merged_hours
     push_service_area = None
     if service_area is not None:
         cleaned_areas = [str(a).strip()[:255] for a in service_area if str(a).strip()][:100]
-        if cleaned_areas != list(profile.service_area or []):
+        if cleaned_areas != list(profile.service_area or []) or _has_failed(
+            failed_meta, "service_area"
+        ):
             profile.service_area = cleaned_areas
             push_service_area = cleaned_areas
     push_attributes = None
@@ -469,7 +603,7 @@ async def update_profile(
         merged_attributes = {
             str(k)[:120]: str(v)[:500] for k, v in list(attributes.items())[:100]
         }
-        if merged_attributes != old_attributes:
+        if merged_attributes != old_attributes or _has_failed(failed_meta, "attributes"):
             profile.attributes = merged_attributes
             push_attributes = merged_attributes
     push_opening_date = None
@@ -478,7 +612,7 @@ async def update_profile(
             parsed_date = _dt.date.fromisoformat(str(opening_date))
         except ValueError:
             raise ValueError(f"Invalid opening_date {opening_date!r}, use YYYY-MM-DD")
-        if parsed_date != profile.opening_date:
+        if parsed_date != profile.opening_date or _has_failed(failed_meta, "opening_date"):
             profile.opening_date = parsed_date
             push_opening_date = parsed_date.isoformat()
     profile.updated_at = datetime.now(timezone.utc)

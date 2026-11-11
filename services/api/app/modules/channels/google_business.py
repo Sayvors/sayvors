@@ -33,9 +33,265 @@ from .google_reviews import GoogleReviewsClient, GoogleReviewsError
 logger = logging.getLogger(__name__)
 
 GBP_BIZINFO_API = "https://mybusinessbusinessinformation.googleapis.com/v1"
+# v1alpha carries per-field edit lifecycle status (PENDING / REJECTED / ...).
+# It is not always enabled on a project; callers fall back to hasPendingEdits.
+GBP_BIZINFO_API_ALPHA = "https://mybusinessbusinessinformation.googleapis.com/v1alpha"
 
 DAYS = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"]
 _DAY_INDEX = {d: i for i, d in enumerate(DAYS)}
+
+# Google's extendedFieldData keys (snake_case top-level Location fields) →
+# the Sayvors profile section names. Used to translate per-field edit
+# lifecycle status into the sections the Locations UI shows.
+GOOGLE_FIELD_TO_SECTION = {
+    "title": "name",
+    "phone_numbers": "phone",
+    "website_uri": "website",
+    "regular_hours": "hours.regular",
+    "special_hours": "hours.special",
+    "more_hours": "hours.more",
+    "service_area": "service_area",
+    "profile": "description",
+    "categories": "categories",
+    "open_info": "opening_date",
+    "storefront_address": "address",
+}
+
+# EditLifecycleStage → short status key used by the API/UI.
+EDIT_STAGE_TO_STATUS = {
+    "EDIT_LIFECYCLE_STAGE_ACCEPTED": "accepted",
+    "EDIT_LIFECYCLE_STAGE_PENDING": "pending",
+    "EDIT_LIFECYCLE_STAGE_REJECTED": "rejected",
+    "EDIT_LIFECYCLE_STAGE_UPDATED_BY_GOOGLE": "google_updated",
+    "EDIT_LIFECYCLE_STAGE_DRAFT": "draft",
+    "EDIT_LIFECYCLE_STAGE_UNSPECIFIED": "unspecified",
+}
+
+
+def parse_edit_status(extended: dict) -> dict[str, dict]:
+    """Per-section edit status from an ExtendedLocation response.
+
+    Returns ``{section: {stage, rejection_reason, update_time, source}}``.
+    Fields with no recorded edit are absent — the caller treats absence as
+    "never submitted", which is distinct from "pending" or "rejected".
+    """
+    out: dict[str, dict] = {}
+    field_data = (extended or {}).get("extendedFieldData") or {}
+    if not isinstance(field_data, dict):
+        return out
+    for field, data in field_data.items():
+        section = GOOGLE_FIELD_TO_SECTION.get(field)
+        if section is None or not isinstance(data, dict):
+            continue
+        out[section] = _edit_entry(data)
+    return out
+
+
+def parse_attribute_edit_status(extended: dict) -> dict[str, dict]:
+    """Per-attribute edit status from an ExtendedAttributes response.
+
+    Attributes have their own endpoint, so they never appear in the
+    location's extendedFieldData. The response carries one entry per
+    attribute in ``extendedAttributes``, each with its own field metadata.
+    Returns ``{attribute: {...}}``.
+    """
+    out: dict[str, dict] = {}
+    entries = (extended or {}).get("extendedAttributes") or []
+    if not isinstance(entries, list):
+        return out
+    for item in entries:
+        if not isinstance(item, dict):
+            continue
+        data = item.get("extendedFieldData")
+        if not isinstance(data, dict):
+            continue
+        merchant = item.get("attributeProvidedByMerchant") or {}
+        name = str(merchant.get("name") or item.get("name") or "")
+        if not name:
+            continue
+        out[name] = _edit_entry(data)
+    return out
+
+
+def parse_attribute_values(extended: dict) -> dict[str, str]:
+    """The attribute values Google shows today, per attribute.
+
+    Reads ``attributeSeenByConsumers`` from an ExtendedAttributes response and
+    returns ``{attribute name: value}`` in Sayvors' own shape.
+    """
+    out: dict[str, str] = {}
+    entries = (extended or {}).get("extendedAttributes") or []
+    if not isinstance(entries, list):
+        return out
+    for item in entries:
+        if not isinstance(item, dict):
+            continue
+        seen = item.get("attributeSeenByConsumers") or {}
+        if not isinstance(seen, dict):
+            continue
+        name = str(seen.get("name") or "").strip()
+        if not name:
+            continue
+        key = name.split("/")[-1]
+        value = ""
+        if "booleanValue" in seen:
+            value = "yes" if seen.get("booleanValue") else "no"
+        elif seen.get("stringValue"):
+            value = str(seen.get("stringValue"))
+        elif seen.get("uriValues"):
+            uris = [
+                str(u.get("uri") or "").strip()
+                for u in seen.get("uriValues") or []
+                if isinstance(u, dict)
+            ]
+            value = ", ".join(u for u in uris if u)
+        elif seen.get("enumValue"):
+            value = str(seen.get("enumValue"))
+        if value:
+            out[key] = value
+    return out
+
+
+def _edit_entry(data: dict) -> dict:
+    """One ExtendedFieldData object as Sayvors' status shape."""
+    stage_raw = str(data.get("lastEditLifecycleStage") or "")
+    return {
+        "stage": EDIT_STAGE_TO_STATUS.get(stage_raw, stage_raw.lower() or "unspecified"),
+        "rejection_reason": data.get("rejectionReason"),
+        "update_time": data.get("updateTime"),
+        "source": data.get("source"),
+    }
+
+
+# The day keys Sayvors stores hours under (the frontend's HOURS_DAYS).
+_HOUR_DAYS = [
+    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+]
+
+
+def _time_of_day_to_hhmm(tod: dict | None) -> str:
+    """A Google TimeOfDay as "HH:MM" ("24:00" is the end of the day)."""
+    if not isinstance(tod, dict):
+        return "00:00"
+    hours = int(tod.get("hours") or 0)
+    minutes = int(tod.get("minutes") or 0)
+    if hours >= 24:
+        return "24:00"
+    return f"{hours:02d}:{minutes:02d}"
+
+
+def google_periods_to_hours(periods: list[dict] | None) -> dict[str, dict]:
+    """Google's ``regularHours.periods`` → Sayvors' ``{day: {open, close}}``.
+
+    A day Google lists as 00:00–24:00 is an all-day opening; a day Google
+    leaves out is closed.
+    """
+    out: dict[str, dict] = {
+        day: {"open": "", "close": "", "closed": True, "all_day": False}
+        for day in _HOUR_DAYS
+    }
+    for period in periods or []:
+        if not isinstance(period, dict):
+            continue
+        open_day = str(period.get("openDay") or "").strip().capitalize()
+        if open_day not in out:
+            continue
+        close_day = str(period.get("closeDay") or open_day).strip().capitalize()
+        opened = _time_of_day_to_hhmm(period.get("openTime"))
+        closed = _time_of_day_to_hhmm(period.get("closeTime"))
+        entry = out[open_day]
+        entry["closed"] = False
+        entry["open"] = opened
+        entry["close"] = closed
+        entry["all_day"] = opened == "00:00" and closed == "24:00"
+        # An overnight range belongs to the next day's entry in Sayvors.
+        if close_day != open_day and close_day in out:
+            out[close_day]["closed"] = False
+            out[close_day]["open"] = closed
+            out[close_day]["close"] = opened
+    return out
+
+
+def google_special_hours_to_entries(periods: list[dict] | None) -> list[dict]:
+    """Google's ``specialHours.specialHourPeriods`` → Sayvors' entries."""
+    out: list[dict] = []
+    for period in periods or []:
+        if not isinstance(period, dict):
+            continue
+        start = period.get("startDate") or {}
+        end = period.get("endDate") or {}
+        if not start:
+            continue
+        date = f"{int(start.get('year') or 0):04d}-{int(start.get('month') or 0):02d}-{int(start.get('day') or 0):02d}"
+        if period.get("closed"):
+            out.append({"date": date, "hours": "Closed", "reason": ""})
+            continue
+        opened = _time_of_day_to_hhmm(period.get("openTime"))
+        closed = _time_of_day_to_hhmm(period.get("closeTime"))
+        out.append(
+            {
+                "date": date,
+                "hours": f"{opened} - {closed}",
+                "reason": "",
+            }
+        )
+    return out
+
+
+def parse_consumer_values(extended: dict) -> dict:
+    """What Google shows today, per Sayvors section.
+
+    ``locationSeenByConsumers`` is the live, customer-facing listing: the
+    values a visitor sees right now, which can lag the merchant's own
+    submission while Google reviews it.
+    """
+    consumer = (extended or {}).get("locationSeenByConsumers") or {}
+    if not isinstance(consumer, dict):
+        return {}
+    out: dict = {}
+
+    def put(key: str, value) -> None:
+        if value not in (None, "", [], {}):
+            out[key] = value
+
+    put("name", consumer.get("title"))
+    put("phone", (consumer.get("phoneNumbers") or {}).get("primaryPhone"))
+    put("website", consumer.get("websiteUri"))
+    put("description", (consumer.get("profile") or {}).get("description"))
+    put("address", consumer.get("storefrontAddress"))
+
+    categories = consumer.get("categories") or {}
+    primary = categories.get("primaryCategory") or {}
+    additional = [
+        str((c or {}).get("displayName") or "").strip()
+        for c in categories.get("additionalCategories") or []
+    ]
+    if primary or additional:
+        out["categories"] = {
+            "primary": str(primary.get("displayName") or "").strip(),
+            "additional": [a for a in additional if a],
+        }
+
+    regular = consumer.get("regularHours") or {}
+    if regular.get("periods"):
+        out["hours.regular"] = google_periods_to_hours(regular.get("periods"))
+    special = consumer.get("specialHours") or {}
+    if special.get("specialHourPeriods"):
+        out["hours.special"] = google_special_hours_to_entries(
+            special.get("specialHourPeriods")
+        )
+    more = consumer.get("moreHours")
+    if more:
+        out["hours.more"] = more
+
+    area = consumer.get("serviceArea")
+    if area:
+        out["service_area"] = area
+
+    opening = (consumer.get("openInfo") or {}).get("openingDate")
+    if opening:
+        out["opening_date"] = opening
+    return out
 
 # Frontend More-hours options → GBP MoreHoursType enum. Unknown types are
 # skipped with a warning (Google 400s the whole call otherwise).
@@ -242,14 +498,59 @@ class GoogleBusinessClient(GoogleReviewsClient):
             lid = lid.split("/")[-1]
         return f"locations/{lid}"
 
-    async def get_location(self, location_id: str) -> dict:
-        """Full BusinessLocation resource (read-only probe of scopes/shape)."""
+    async def get_location(self, location_id: str, read_mask: str | None = None) -> dict:
+        """Full BusinessLocation resource (read-only probe of scopes/shape).
+
+        The v1 API requires a readMask; ``read_mask`` is a comma-separated
+        field list. Without one the call is refused with 400.
+        """
+        params = {"readMask": read_mask} if read_mask else None
         resp = await self._authed_request(
-            "GET", f"{GBP_BIZINFO_API}/{self._location_name(location_id)}")
+            "GET", f"{GBP_BIZINFO_API}/{self._location_name(location_id)}",
+            params=params,
+        )
         if resp.status_code != 200:
             raise GoogleReviewsError(
                 f"get_location failed ({resp.status_code}): {resp.text[:300]}",
                 resp.status_code)
+        data = resp.json()
+        return data if isinstance(data, dict) else {}
+
+    async def get_extended_location(self, location_id: str) -> dict:
+        """ExtendedLocation: merchant data, consumer data, per-field edit status.
+
+        v1alpha endpoint. Raises GoogleReviewsError when the alpha API is not
+        enabled on the project (404) or not authorized (403), so the caller can
+        fall back to the coarse ``metadata.hasPendingEdits`` flag.
+        """
+        resp = await self._authed_request(
+            "GET",
+            f"{GBP_BIZINFO_API_ALPHA}/{self._location_name(location_id)}:getExtended",
+        )
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"get_extended_location failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        data = resp.json()
+        return data if isinstance(data, dict) else {}
+
+    async def get_extended_attributes(self, location_id: str) -> dict:
+        """ExtendedAttributes: per-attribute edit status.
+
+        Attributes live on their own endpoint, so ``locations.getExtended``
+        never reports their lifecycle. Returns {} when the alpha API is off.
+        """
+        resp = await self._authed_request(
+            "GET",
+            f"{GBP_BIZINFO_API_ALPHA}/{self._location_name(location_id)}"
+            f"/attributes:getExtended",
+        )
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"get_extended_attributes failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
         data = resp.json()
         return data if isinstance(data, dict) else {}
 
@@ -267,6 +568,32 @@ class GoogleBusinessClient(GoogleReviewsClient):
             )
         data = resp.json()
         return (data.get("phoneNumbers") or {}) if isinstance(data, dict) else {}
+
+    async def get_service_items(self, location_id: str) -> list[dict]:
+        """Google's current service list for the location."""
+        resp = await self._authed_request(
+            "GET",
+            f"{GBP_BIZINFO_API}/{self._location_name(location_id)}",
+            params={"readMask": "serviceItems"},
+        )
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"get_service_items failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        data = resp.json() or {}
+        return list(data.get("serviceItems") or [])
+
+    async def push_service_items(self, location_id: str, items: list[dict]) -> dict:
+        """Replace the location's whole service list.
+
+        Google treats ``serviceItems`` as a complete object — "updating
+        individual services is not supported" — so the caller must send the
+        full list, including the entries it wants to keep.
+        """
+        return await self.patch_location(
+            location_id, {"serviceItems": items}, "serviceItems"
+        )
 
     async def patch_location(self, location_id: str, body: dict,
                              update_mask: str) -> dict:

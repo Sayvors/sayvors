@@ -563,22 +563,6 @@ function ConnectHub() {
         </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <MetaConnections onNotice={(kind, text) => setBanner({ kind, text })} />
-          <article className="flex flex-col rounded-xl border border-ink/[0.06] bg-white p-4 opacity-70 dark:border-fog/[0.06] dark:bg-ink">
-            <div className="flex items-start gap-3">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-ink/[0.04] dark:bg-fog/[0.06]">
-                <PlatformMark platform="x" size={20} />
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <p className="text-[13.5px] font-semibold text-ink dark:text-fog">X / Twitter</p>
-                  <span className="rounded-full bg-ink/[0.05] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink/45 dark:bg-fog/[0.07] dark:text-fog/45">
-                    {ch.hub.soon}
-                  </span>
-                </div>
-                <p className="mt-0.5 truncate text-[11.5px] text-ink/45 dark:text-fog/45">{ch.hub.autoReplyDm}</p>
-              </div>
-            </div>
-          </article>
         </div>
       </section>
 

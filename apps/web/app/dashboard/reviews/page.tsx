@@ -2136,7 +2136,11 @@ function ReviewMedia({ media }: { media: ReviewItem["media"] }) {
         const src = String(m.url).startsWith("http") ? String(m.url) : `${API_ORIGIN}${m.url}`;
         return (
           <a key={i} href={src} target="_blank" rel="noreferrer" className="group relative block">
-            <Image
+            {/* Plain img: Google serves review photos from arbitrary hosts
+                (googleusercontent, wikimedia, ...). next/image would reject
+                any host that is not on a fixed allowlist. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
               src={src}
               alt={m.label || fill(dt.mediaPhoto, { i: num(i + 1) })}
               width={96}

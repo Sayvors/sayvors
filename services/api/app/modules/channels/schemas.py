@@ -154,6 +154,9 @@ class ServiceCreate(BaseModel):
     description: str | None = Field(None, max_length=500)
     is_offered: bool = True
     source: str = Field("custom", pattern="^(custom|google)$")
+    # A service the merchant typed is a choice by definition. A catalogue
+    # entry starts undeclared and is published when the merchant picks it.
+    declared: bool = True
 
 
 class ServiceUpdate(BaseModel):
@@ -161,6 +164,9 @@ class ServiceUpdate(BaseModel):
     category: str | None = Field(None, min_length=1, max_length=120)
     description: str | None = Field(None, max_length=500)
     is_offered: bool | None = None
+    # Declaring a catalogue entry publishes it to Google; undeclaring it
+    # removes it from the profile on the next push.
+    declared: bool | None = None
 
 
 class ServiceResponse(BaseModel):
@@ -171,6 +177,11 @@ class ServiceResponse(BaseModel):
     description: str | None
     is_offered: bool
     source: str
+    declared: bool = False
+    # Whether the service list reached Google, and why it did not when it
+    # did not. The local row is kept either way.
+    google_pushed: bool | None = None
+    google_error: str | None = None
 
 
 class ChannelMessageSend(BaseModel):
