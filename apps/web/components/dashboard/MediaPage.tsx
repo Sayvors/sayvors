@@ -295,7 +295,7 @@ function MediaInner({ initialLocationId, autoUpload, focusMediaId, onExit }: Med
         imageUrl = up.image_url as string;
         if (up.type === "VIDEO" || up.type === "PHOTO") mediaType = up.type;
       }
-      await apiFetch("/api/v1/media", {
+      await apiFetch("/api/v1/media/", {
         method: "POST",
         body: JSON.stringify({
           listing_id: selectedId,
