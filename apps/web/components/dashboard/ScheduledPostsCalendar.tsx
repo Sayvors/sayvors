@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 
@@ -109,12 +109,22 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
     return map;
   }, [scheduled]);
 
+  // "Now" must live in state: Date.now() inside a render/useMemo is impure
+  // (react-hooks/purity). Initialized lazily on first render, then ticked
+  // once a minute by the interval so the "next upcoming" line does not go
+  // stale on a long-open page. The effect body never calls setState directly
+  // (react-hooks/set-state-in-effect).
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+
   const nextUpcoming = useMemo(() => {
-    const now = Date.now();
     return [...scheduled]
       .filter((m) => m.scheduledAt && new Date(m.scheduledAt).getTime() > now)
       .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())[0];
-  }, [scheduled]);
+  }, [scheduled, now]);
 
   const handleDayClick = (day: number, e: React.MouseEvent) => {
     const dateObj = new Date(year, month, day);

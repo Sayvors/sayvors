@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import Modal from "@/components/dashboard/media/Modal";
@@ -167,7 +168,7 @@ export default function GoogleLiveGallery() {
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-deep-violet/10 text-[24px]">📍</div>
         <h3 className="mt-4 text-[17px] font-bold text-ink">No Google locations connected</h3>
         <p className="mt-1 text-[13px] text-ink/55">Connect a Google Business Profile location to see live photos.</p>
-        <a href="/dashboard/channels" className="mt-5 inline-flex rounded-[20px] bg-deep-violet px-5 py-2.5 text-[13px] font-bold text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)] transition hover:bg-deep-violet/90">Connect Google</a>
+        <Link href="/dashboard/channels" className="mt-5 inline-flex rounded-[20px] bg-deep-violet px-5 py-2.5 text-[13px] font-bold text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)] transition hover:bg-deep-violet/90">Connect Google</Link>
       </div>
     );
   }
