@@ -1418,10 +1418,15 @@ class GoogleReviewsClient:
     async def upload_media_bytes(
         self, resource_name: str, data: bytes, content_type: str = "image/jpeg"
     ) -> None:
-        """Upload raw bytes to a previously started GBP media upload."""
+        """Upload raw bytes to a previously started GBP media upload.
+
+        Google documents ``?upload_type=media`` on the upload endpoint; the
+        camelCase spelling is kept as a fallback because the same service
+        accepts both.
+        """
         base = f"https://mybusiness.googleapis.com/upload/v1/media/{resource_name}"
         last: tuple[int, str] = (502, "")
-        for param in ("uploadType=media", "upload_type=media"):
+        for param in ("upload_type=media", "uploadType=media"):
             resp = await self._authed_request(
                 "POST",
                 f"{base}?{param}",
