@@ -32,6 +32,11 @@ import random
 
 import httpx
 import pytest
+
+# Pillow is a live-path dependency (the publisher validates image dimensions
+# with it) but not a CI test dependency; skip the whole module when absent.
+pytest.importorskip("PIL")
+
 from PIL import Image
 
 from app.modules.channels.google_reviews import GoogleReviewsClient
