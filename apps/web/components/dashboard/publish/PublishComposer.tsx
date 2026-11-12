@@ -377,6 +377,12 @@ export default function PublishComposer({
   /** draft crop being edited in the modal (committed on Save) */
   const [draftCrop, setDraftCrop] = useState<CropState>(DEFAULT_CROP);
   const [draftGalleryCategory, setDraftGalleryCategory] = useState<string>("EXTERIOR");
+  /** Coupon code + terms of a Promotion (offer) post, per destination. */
+  const [offerDetails, setOfferDetails] = useState<
+    Record<string, { coupon: string; terms: string }>
+  >({});
+  const [draftCoupon, setDraftCoupon] = useState("");
+  const [draftTerms, setDraftTerms] = useState("");
   /** formats that have been explicitly saved */
   const [configured, setConfigured] = useState<Set<string>>(new Set());
   /** Gallery category per destination+format (gallery only). */
@@ -509,6 +515,8 @@ export default function PublishComposer({
     const key = cropKeyFor(t.id, m);
     setDraftCrop(crops[key] ?? defaultCropFor(t.platform, m));
     setDraftGalleryCategory(galleryCategories[key] ?? "EXTERIOR");
+    setDraftCoupon(offerDetails[key]?.coupon ?? "");
+    setDraftTerms(offerDetails[key]?.terms ?? "");
     setModalCtx({ targetId: t.id, method: m });
   };
 
@@ -520,6 +528,12 @@ export default function PublishComposer({
     setCrops((prev) => ({ ...prev, [key]: draftCrop }));
     if (modalCtx.method === "gallery") {
       setGalleryCategories((prev) => ({ ...prev, [key]: draftGalleryCategory }));
+    }
+    if (modalCtx.method === "offer") {
+      setOfferDetails((prev) => ({
+        ...prev,
+        [key]: { coupon: draftCoupon.trim(), terms: draftTerms.trim() },
+      }));
     }
     setConfigured((prev) => new Set(prev).add(key));
     setModalCtx(null);
@@ -635,17 +649,51 @@ export default function PublishComposer({
           : []
       );
 
-      if (postDestinations.length > 0) {
-        // One idempotency key per draft, reused across retries: the backend
-        // keys jobs as key:platform:asset:method, so a retry after a partial
-        // failure must not queue a second copy of the same post.
-        if (!publishAttemptRef.current) {
-          publishAttemptRef.current = {
-            key: crypto.randomUUID(),
-            galleryDone: new Set<string>(),
-          };
-        }
-        const attempt = publishAttemptRef.current;
+      // One idempotency key per draft, reused across retries: the backend
+      // keys jobs as key:platform:asset:method, so a retry after a partial
+      // failure must not queue a second copy of the same post.
+      if (!publishAttemptRef.current) {
+        publishAttemptRef.current = {
+          key: crypto.randomUUID(),
+          galleryDone: new Set<string>(),
+        };
+      }
+      const attempt = publishAttemptRef.current;
+
+      // A promotion carries its own coupon code and terms, so destinations
+      // with different promotions cannot share one request: Google reads
+      // those from the post body, which is per request.
+      const offerKey = (targetId: string) =>
+        `${offerDetails[cropKeyFor(targetId, "offer")]?.coupon ?? ""}|${
+          offerDetails[cropKeyFor(targetId, "offer")]?.terms ?? ""
+        }`;
+      const groups = new Map<
+        string,
+        { destinations: typeof postDestinations; coupon: string; terms: string }
+      >();
+      for (const item of confirmItems) {
+        const methods = item.methods.filter((m) => m !== "gallery");
+        if (methods.length === 0) continue;
+        const dest = {
+          platform: item.target.platform,
+          external_asset_id: externalAssetIdFor(item.target) as string,
+          methods,
+        };
+        const details = offerDetails[cropKeyFor(item.target.id, "offer")];
+        const key = methods.includes("offer")
+          ? `${details?.coupon ?? ""}|${details?.terms ?? ""}`
+          : "";
+        const group = groups.get(key);
+        if (group) group.destinations.push(dest);
+        else
+          groups.set(key, {
+            destinations: [dest],
+            coupon: details?.coupon ?? "",
+            terms: details?.terms ?? "",
+          });
+      }
+
+      for (const [groupKey, group] of groups) {
         await apiFetch("/api/v1/channels/publish", {
           method: "POST",
           body: JSON.stringify({
@@ -661,12 +709,14 @@ export default function PublishComposer({
             delete_at: removeOn && removeAt ? new Date(removeAt).toISOString() : null,
             start_date: startDate ? new Date(startDate).toISOString() : null,
             end_date: endDate ? new Date(endDate).toISOString() : null,
+            coupon_code: group.coupon || null,
+            terms_conditions: group.terms || null,
             // Google labels the post with the language the merchant wrote
             // it in, so an Arabic post is not published as English.
             language_code: GOOGLE_POST_LANGUAGE[locale] ?? "en-US",
-            destinations: postDestinations,
+            destinations: group.destinations,
             batch_id: attempt.key,
-            idempotency_key: attempt.key,
+            idempotency_key: `${attempt.key}:${groupKey}`,
           }),
         });
       }
@@ -674,13 +724,6 @@ export default function PublishComposer({
       // A gallery photo that fails must not roll back the posts that already
       // went out, and must not stop the other locations: each destination is
       // reported on its own.
-      if (!publishAttemptRef.current) {
-        publishAttemptRef.current = {
-          key: crypto.randomUUID(),
-          galleryDone: new Set<string>(),
-        };
-      }
-      const attempt = publishAttemptRef.current;
       const galleryErrors: string[] = [];
       const fallbacks: string[] = [];
       for (const g of gallerySelections) {
@@ -746,6 +789,7 @@ export default function PublishComposer({
       setEndDate("");
       setFormats({});
       setGalleryCategories({});
+      setOfferDetails({});
       // The draft is done: a new publish starts a new attempt.
       publishAttemptRef.current = null;
       onPublished?.();
@@ -1229,6 +1273,37 @@ export default function PublishComposer({
                   />
                 </div>
                 <div className="w-full max-w-[320px] shrink-0 space-y-3">
+                  {modalCtx.method === "offer" && (
+                    <div className="space-y-3">
+                      <div>
+                        <label className="mb-1 block text-[12px] font-semibold text-[var(--ui-ink)]">
+                          {pc.couponLabel}
+                        </label>
+                        <input
+                          type="text"
+                          value={draftCoupon}
+                          onChange={(e) => setDraftCoupon(e.target.value)}
+                          placeholder={pc.couponPh}
+                          maxLength={64}
+                          className="w-full rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus:border-deep-violet/40"
+                        />
+                        <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">{pc.couponHint}</p>
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[12px] font-semibold text-[var(--ui-ink)]">
+                          {pc.termsLabel}
+                        </label>
+                        <textarea
+                          value={draftTerms}
+                          onChange={(e) => setDraftTerms(e.target.value)}
+                          placeholder={pc.termsPh}
+                          maxLength={300}
+                          rows={3}
+                          className="w-full rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus:border-deep-violet/40"
+                        />
+                      </div>
+                    </div>
+                  )}
                   {modalCtx.method === "gallery" && (
                     <div>
                       <label className="mb-1 block text-[12px] font-semibold text-[var(--ui-ink)]">Gallery category</label>

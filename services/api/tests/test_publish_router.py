@@ -197,6 +197,58 @@ async def test_event_window_reaches_the_job_payload(db, client, user_id):
 
 
 @pytest.mark.asyncio
+async def test_offer_coupon_and_terms_reach_the_job_payload(db, client, user_id):
+    """A promotion's coupon code and terms must survive into the job.
+
+    Google reads them from the post body (LocalPostOffer), so a composer
+    that drops them publishes a promotion with no code.
+    """
+    from sqlalchemy import select
+
+    from app.modules.jobs.models import Job
+
+    res = client.post(
+        "/api/v1/channels/publish",
+        json={
+            "caption": "Get 20% off all services this week!",
+            "coupon_code": "SAVE20",
+            "terms_conditions": "Offer valid for new customers only.",
+            "destinations": [
+                {"platform": "google_reviews", "external_asset_id": "loc-1",
+                 "methods": ["offer"]},
+            ],
+        },
+    )
+    assert res.status_code == 200, res.text
+    job = (await db.execute(select(Job).where(Job.tenant_id == user_id))).scalar_one()
+    assert job.payload["coupon_code"] == "SAVE20"
+    assert job.payload["terms_conditions"] == "Offer valid for new customers only."
+
+
+@pytest.mark.asyncio
+async def test_post_language_reaches_the_job_payload(db, client, user_id):
+    """The language of the post must survive into the job for Google."""
+    from sqlalchemy import select
+
+    from app.modules.jobs.models import Job
+
+    res = client.post(
+        "/api/v1/channels/publish",
+        json={
+            "caption": "مرحبا",
+            "language_code": "ar",
+            "destinations": [
+                {"platform": "google_reviews", "external_asset_id": "loc-1",
+                 "methods": ["update"]},
+            ],
+        },
+    )
+    assert res.status_code == 200, res.text
+    job = (await db.execute(select(Job).where(Job.tenant_id == user_id))).scalar_one()
+    assert job.payload["language_code"] == "ar"
+
+
+@pytest.mark.asyncio
 async def test_event_window_must_run_forward(client):
     """An end before the start would create an invalid Google event."""
     res = client.post(

@@ -2498,6 +2498,11 @@ const en = {
       ctaTypePh: "No button",
       ctaUrlPh: "https://…",
       ctaHint: "Shown on Google posts. Offers use this link instead of a button, and Call never needs a link.",
+      couponLabel: "Coupon code",
+      couponPh: "SAVE20",
+      couponHint: "Optional. Customers type this code to get the discount.",
+      termsLabel: "Terms and conditions",
+      termsPh: "Valid for new customers only. Cannot be combined with other discounts.",
       ctaTypes: {
         book: "Book",
         order: "Order",
