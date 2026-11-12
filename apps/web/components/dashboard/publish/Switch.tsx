@@ -47,7 +47,7 @@ export function Switch({
         <span
           className={`absolute top-[2px] left-[2px] h-5 w-5 rounded-full bg-white shadow-[0_1px_2px_rgba(0,0,0,0.15)] transition-transform duration-200 ease-out ${
             checked
-              ? "translate-x-[22px] shadow-[0_2px_5px_rgba(0,0,0,0.25)]"
+              ? "translate-x-[18px] shadow-[0_2px_5px_rgba(0,0,0,0.25)]"
               : "shadow-[0_1px_2px_rgba(0,0,0,0.10)]"
           }`}
         />

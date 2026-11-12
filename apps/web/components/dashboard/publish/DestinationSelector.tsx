@@ -79,16 +79,16 @@ export default function DestinationSelector({
   if (status === "loading") {
     return (
       <div className="space-y-1.5" aria-hidden>
-        <div className="h-9 animate-pulse rounded-[10px] bg-[var(--ui-sunken)]" />
-        <div className="h-9 animate-pulse rounded-[10px] bg-[var(--ui-sunken)]" />
-        <div className="h-9 animate-pulse rounded-[10px] bg-[var(--ui-sunken)]" />
+        <div className="h-9 animate-pulse rounded-[16px] bg-[var(--ui-sunken)]" />
+        <div className="h-9 animate-pulse rounded-[16px] bg-[var(--ui-sunken)]" />
+        <div className="h-9 animate-pulse rounded-[16px] bg-[var(--ui-sunken)]" />
       </div>
     );
   }
 
   if (usable.length === 0 && googleTargets.length === 0) {
     return (
-      <div className="rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-5">
+      <div className="rounded-[20px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-5">
         <div className="flex flex-col items-center gap-2">
           <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--ui-ink-2)]">
             {d.emptyTitle}
@@ -100,7 +100,7 @@ export default function DestinationSelector({
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <Link
             href="/dashboard/channels"
-            className="rounded-[10px] bg-[var(--ui-ink)] px-3.5 py-1.5 text-[12px] font-semibold text-[var(--ui-on-ink)] transition hover:opacity-90 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+            className="clay-btn-primary px-3.5 py-1.5 text-[12px] font-semibold text-[var(--ui-on-ink)] transition hover:opacity-90 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
           >
             {d.connectBtn}
           </Link>
@@ -113,8 +113,8 @@ export default function DestinationSelector({
     <div className="space-y-3">
       {/* ── Meta social destinations ── */}
       {usable.length > 0 && (
-        <section className="rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-3.5">
-          <div className={SECTION_STYLE.social + " rounded-[10px] px-3 py-2.5 flex items-center justify-between"}>
+        <section className="rounded-[20px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-3.5">
+          <div className={SECTION_STYLE.social + " rounded-[16px] px-3 py-2.5 flex items-center justify-between"}>
             <div>
               <p className="text-[11px] font-bold uppercase tracking-widest text-[#1a0dab]">
                 {d.socialTitle}
@@ -133,7 +133,7 @@ export default function DestinationSelector({
               return (
                 <li key={t.id}>
                   <label
-                    className={`flex min-w-0 cursor-pointer items-center gap-2.5 rounded-[10px] border px-3 py-2 transition ${
+                    className={`flex min-w-0 cursor-pointer items-center gap-2.5 rounded-[16px] border px-3 py-2 transition ${
                       checked
                         ? "border-[var(--ui-ink)] bg-[var(--ui-ink)]/[0.06]"
                         : "border-[var(--ui-line)] bg-[var(--ui-surface)] hover:bg-[var(--ui-sunken)]"
@@ -167,8 +167,8 @@ export default function DestinationSelector({
 
       {/* ── Google Business Profile locations ── */}
       {googleTargets.length > 0 && (
-        <section className="rounded-[12px] border border-[#d8cbf5] bg-[#eef3ff] p-3.5">
-          <div className="rounded-[10px] border border-[#d8cbf5] bg-[#ffffff] px-3 py-2.5 flex items-center justify-between">
+        <section className="rounded-[20px] border border-[#d8cbf5] bg-[#eef3ff] p-3.5">
+          <div className="rounded-[16px] border border-[#d8cbf5] bg-[#ffffff] px-3 py-2.5 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <GoogleBusinessLogo size={16} />
               <span className="text-[11px] font-bold uppercase tracking-widest text-[#1a0dab]">
@@ -184,7 +184,7 @@ export default function DestinationSelector({
               return (
                 <li key={t.id}>
                   <label
-                    className={`flex min-w-0 cursor-pointer items-center gap-2.5 rounded-[10px] border px-3 py-2 transition ${
+                    className={`flex min-w-0 cursor-pointer items-center gap-2.5 rounded-[16px] border px-3 py-2 transition ${
                       checked
                         ? "border-[#1a0dab] bg-[#eef3ff]"
                         : "border-[var(--ui-line)] bg-[var(--ui-surface)] hover:bg-[#eef3ff]"
@@ -214,7 +214,7 @@ export default function DestinationSelector({
       )}
 
       {comingSoon.length > 0 && (
-        <section className="rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-3">
+        <section className="rounded-[20px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-3">
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--ui-ink-2)]">
               {d.comingSoon}

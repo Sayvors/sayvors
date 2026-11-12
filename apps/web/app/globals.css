@@ -382,6 +382,10 @@ html[lang="ar"] {
  * press feedback as a transform — never an animated shadow. Colors come
  * from the team-ui variables so dark mode keeps working. */
 .clay-panel {
+  /* min-width: 0 lets a panel shrink below its content's min-content inside
+   * the composer grid — without it, truncate() rows force the column wide
+   * and the whole panel overflows the viewport on phones. */
+  min-width: 0;
   border-radius: 32px;
   background: var(--ui-surface);
   border: 1px solid rgba(20, 16, 31, 0.06);

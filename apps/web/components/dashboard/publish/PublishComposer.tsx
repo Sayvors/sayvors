@@ -1538,10 +1538,10 @@ function ScheduleToggle({
         }`}
       >
         <span
-          className={`absolute top-0.5 h-5 w-5 rounded-full transition-transform ${
+          className={`absolute left-0 top-0.5 h-5 w-5 rounded-full transition-transform ${
             scheduleOn
               ? "translate-x-[18px] bg-white shadow-[0_1px_2px_rgba(0,0,0,0.35)]"
-              : "translate-x-0.5 border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] shadow-[0_1px_2px_rgba(0,0,0,0.12)]"
+              : "translate-x-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] shadow-[0_1px_2px_rgba(0,0,0,0.12)]"
           }`}
         />
       </span>
