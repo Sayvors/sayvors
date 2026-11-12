@@ -14,6 +14,7 @@ import CropFrame from "./CropFrame";
 import FormatThumb from "./FormatThumb";
 import {
   DEFAULT_CROP,
+  GALLERY_CATEGORIES,
   PLATFORM_META,
   cropKeyFor,
   defaultCropFor,
@@ -38,9 +39,10 @@ type MethodDict = Dict["publish"]["methods"];
 type ComposerDict = Dict["publish"]["composer"];
 
 /** Formats that cannot be published without an image. Google's What's New /
- * Event / Offer and Meta feed posts allow a text-only post. */
+ * Event / Offer and Meta feed posts allow a text-only post. Gallery,
+ * profile and banner are image surfaces. */
 const MEDIA_ONLY_METHODS = new Set<string>([
-  "story", "reel", "status", "profile", "banner",
+  "story", "reel", "status", "gallery", "profile", "banner",
 ]);
 
 type CtaValue = "book" | "order" | "shop" | "learn_more" | "sign_up" | "call";
@@ -357,8 +359,11 @@ export default function PublishComposer({
   const [modalCtx, setModalCtx] = useState<{ targetId: string; method: PostMethod } | null>(null);
   /** draft crop being edited in the modal (committed on Save) */
   const [draftCrop, setDraftCrop] = useState<CropState>(DEFAULT_CROP);
+  const [draftGalleryCategory, setDraftGalleryCategory] = useState<string>("EXTERIOR");
   /** formats that have been explicitly saved */
   const [configured, setConfigured] = useState<Set<string>>(new Set());
+  /** Gallery category per destination+format (gallery only). */
+  const [galleryCategories, setGalleryCategories] = useState<Record<string, string>>({});
 
   /** Per-destination chosen formats */
   const [formats, setFormats] = useState<Record<string, PostMethod[]>>({});
@@ -426,9 +431,12 @@ export default function PublishComposer({
     const nextList = wasOn ? cur.filter((x) => x !== m) : [...cur, m];
     setFormats((prev) => ({ ...prev, [t.id]: nextList }));
     if (!wasOn) {
-      // seed crop default if not present
+      // seed crop/defaults if not present
       const key = cropKeyFor(t.id, m);
       setCrops((prev) => (prev[key] ? prev : { ...prev, [key]: defaultCropFor(t.platform, m) }));
+      if (m === "gallery") {
+        setGalleryCategories((prev) => (prev[key] ? prev : { ...prev, [key]: "EXTERIOR" }));
+      }
     }
   };
 
@@ -447,6 +455,9 @@ export default function PublishComposer({
       feed.forEach((m) => {
         const key = cropKeyFor(t.id, m);
         setCrops((prev) => (prev[key] ? prev : { ...prev, [key]: defaultCropFor(t.platform, m) }));
+        if (m === "gallery") {
+          setGalleryCategories((prev) => (prev[key] ? prev : { ...prev, [key]: "EXTERIOR" }));
+        }
       });
     }
   };
@@ -474,18 +485,25 @@ export default function PublishComposer({
   }, []);
 
   // ── Modal open/close ────────────────────────────────────────────
+  const findTargetById = (id: string) =>
+    targets.find((x) => x.id === id) ?? googleTargets.find((x) => x.id === id) ?? null;
+
   const openConfig = (t: PublishTarget, m: PostMethod) => {
     const key = cropKeyFor(t.id, m);
     setDraftCrop(crops[key] ?? defaultCropFor(t.platform, m));
+    setDraftGalleryCategory(galleryCategories[key] ?? "EXTERIOR");
     setModalCtx({ targetId: t.id, method: m });
   };
 
   const saveConfig = () => {
     if (!modalCtx) return;
-    const t = targets.find((x) => x.id === modalCtx.targetId);
+    const t = findTargetById(modalCtx.targetId);
     if (!t) return;
     const key = cropKeyFor(modalCtx.targetId, modalCtx.method);
     setCrops((prev) => ({ ...prev, [key]: draftCrop }));
+    if (modalCtx.method === "gallery") {
+      setGalleryCategories((prev) => ({ ...prev, [key]: draftGalleryCategory }));
+    }
     setConfigured((prev) => new Set(prev).add(key));
     setModalCtx(null);
   };
@@ -583,35 +601,63 @@ export default function PublishComposer({
         }
       }
 
-      const batchId = crypto.randomUUID();
-      // One idempotency key per attempt so a retry (network drop, 500) never
-      // double-posts: the backend keys jobs as key:platform:method.
-      const destinations = confirmItems.map(({ target: t, methods }) => ({
-        platform: t.platform,
-        external_asset_id: externalAssetIdFor(t) as string,
-        methods,
-      }));
+      // Gallery is published through the location-media API (photos added to
+      // the GBP gallery with a chosen category). Everything else stays on the
+      // unified publish jobs pipeline.
+      const postDestinations = confirmItems
+        .map(({ target: t, methods }) => ({
+          platform: t.platform,
+          external_asset_id: externalAssetIdFor(t) as string,
+          methods: methods.filter((m) => m !== "gallery"),
+        }))
+        .filter((d) => d.methods.length > 0);
 
-      await apiFetch("/api/v1/channels/publish", {
-        method: "POST",
-        body: JSON.stringify({
-          media_url: mediaUrl,
-          media_key: mediaKey,
-          media_type: mediaType,
-          caption,
-          description,
-          cta_type: ctaType || null,
-          cta_url:
-            ctaType && ctaType !== "call" ? ctaUrl.trim() || null : null,
-          scheduled_at: scheduleOn && scheduleAt ? new Date(scheduleAt).toISOString() : null,
-          delete_at: removeOn && removeAt ? new Date(removeAt).toISOString() : null,
-          start_date: startDate ? new Date(startDate).toISOString() : null,
-          end_date: endDate ? new Date(endDate).toISOString() : null,
-          destinations,
-          batch_id: batchId,
-          idempotency_key: `${batchId}:${Date.now()}`,
-        }),
-      });
+      const gallerySelections = confirmItems.flatMap(({ target, methods }) =>
+        methods.includes("gallery")
+          ? [{ target, category: galleryCategories[cropKeyFor(target.id, "gallery")] || "EXTERIOR" }]
+          : []
+      );
+
+      if (postDestinations.length > 0) {
+        const batchId = crypto.randomUUID();
+        await apiFetch("/api/v1/channels/publish", {
+          method: "POST",
+          body: JSON.stringify({
+            media_url: mediaUrl,
+            media_key: mediaKey,
+            media_type: mediaType,
+            caption,
+            description,
+            cta_type: ctaType || null,
+            cta_url:
+              ctaType && ctaType !== "call" ? ctaUrl.trim() || null : null,
+            scheduled_at: scheduleOn && scheduleAt ? new Date(scheduleAt).toISOString() : null,
+            delete_at: removeOn && removeAt ? new Date(removeAt).toISOString() : null,
+            start_date: startDate ? new Date(startDate).toISOString() : null,
+            end_date: endDate ? new Date(endDate).toISOString() : null,
+            destinations: postDestinations,
+            batch_id: batchId,
+            idempotency_key: `${batchId}:${Date.now()}`,
+          }),
+        });
+      }
+
+      for (const g of gallerySelections) {
+        if (!mediaUrl) throw new Error(pc.needMedia);
+        await apiFetch("/api/v1/media", {
+          method: "POST",
+          body: JSON.stringify({
+            listing_id: (g.target.locationId ?? g.target.id) as string,
+            image_url: mediaUrl,
+            type: mediaType === "video" ? "VIDEO" : "PHOTO",
+            category: g.category,
+            caption: caption || "",
+            action: scheduleOn ? "schedule" : "publish",
+            scheduled_on: scheduleOn && scheduleAt ? new Date(scheduleAt).toISOString() : null,
+            publish_method: "gallery",
+          }),
+        });
+      }
 
       setConfirmOpen(false);
       clearMedia();
@@ -626,6 +672,7 @@ export default function PublishComposer({
       setStartDate("");
       setEndDate("");
       setFormats({});
+      setGalleryCategories({});
       onPublished?.();
     } catch (e) {
       setPublishError(e instanceof Error ? e.message : pc.publishFailed);
@@ -635,7 +682,7 @@ export default function PublishComposer({
   };
 
   // ── What's being edited (mirrors) ───────────────────────────────
-  const activeTarget = modalCtx ? targets.find((t) => t.id === modalCtx.targetId) ?? null : null;
+  const activeTarget = modalCtx ? findTargetById(modalCtx.targetId) : null;
   // While modal is open, mirror the draft; otherwise last configured
   const mirrorTarget = modalCtx ? activeTarget : null;
   const mirrorMethod = modalCtx ? modalCtx.method : null;
@@ -663,7 +710,7 @@ export default function PublishComposer({
   };
 
   // The modal target + method
-  const modalTarget = modalCtx ? targets.find((t) => t.id === modalCtx.targetId) ?? null : null;
+  const modalTarget = modalCtx ? findTargetById(modalCtx.targetId) : null;
 
   return (
     <div className="flex h-full flex-col">
@@ -926,10 +973,10 @@ export default function PublishComposer({
                 {pc.formatsSub}
               </p>
               {selectedTargets.some((t) =>
-                availableFor(t).some((m) => m === "profile" || m === "banner"),
+                availableFor(t).some((m) => m === "profile" || m === "banner" || m === "gallery"),
               ) && (
                 <p className={`mb-3 text-[11px] ${INK2}`}>
-                  {pc.formatsNote}
+                  {pc.formatsNote} Gallery photos are added to the location&apos;s photo gallery — pick a category when you configure it.
                 </p>
               )}
               <div className="space-y-3">
@@ -1097,7 +1144,22 @@ export default function PublishComposer({
                     crop={draftCrop}
                   />
                 </div>
-                <div className="w-full max-w-[320px] shrink-0">
+                <div className="w-full max-w-[320px] shrink-0 space-y-3">
+                  {modalCtx.method === "gallery" && (
+                    <div>
+                      <label className="mb-1 block text-[12px] font-semibold text-[var(--ui-ink)]">Gallery category</label>
+                      <select
+                        value={draftGalleryCategory}
+                        onChange={(e) => setDraftGalleryCategory(e.target.value)}
+                        className="w-full rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus:border-deep-violet/40"
+                      >
+                        {GALLERY_CATEGORIES.map((c) => (
+                          <option key={c} value={c}>{c.replace(/_/g, " ")}</option>
+                        ))}
+                      </select>
+                      <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">Choose where this photo appears in the location gallery on Google.</p>
+                    </div>
+                  )}
                   <CropFrame
                     key={`${modalCtx.targetId}-${modalCtx.method}`}
                     url={media?.url ?? null}

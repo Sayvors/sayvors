@@ -2417,6 +2417,7 @@ const en = {
       update: { label: "Update", hint: "announcement on your business profile" },
       event: { label: "Event", hint: "dated event with a schedule" },
       offer: { label: "Promotion", hint: "offer, discount or coupon" },
+      gallery: { label: "Gallery", hint: "add a photo to location photos" },
       profile: { label: "Profile picture", hint: "1:1 · your avatar" },
       banner: { label: "Banner", hint: "16:9 · cover image" },
     },

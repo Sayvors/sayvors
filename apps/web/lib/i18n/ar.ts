@@ -2423,6 +2423,7 @@ const ar: Dict = {
       update: { label: "تحديث", hint: "إعلان على ملف نشاطك" },
       event: { label: "فعالية", hint: "فعالية مؤرخة بجدول" },
       offer: { label: "عرض", hint: "عرض أو خصم أو قسيمة" },
+      gallery: { label: "??????", hint: "??? ???? ??? ??? ??????" },
       profile: { label: "الصورة الشخصية", hint: "1:1 · صورتك الرمزية" },
       banner: { label: "الغلاف", hint: "16:9 · صورة الغلاف" },
     },

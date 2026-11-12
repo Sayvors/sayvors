@@ -419,6 +419,32 @@ function BannerPreview({
   );
 }
 
+/* Gallery photo — added to the location's photo gallery on Google. */
+function GalleryPreview({
+  target,
+  media,
+  crop,
+}: {
+  target: PublishTarget;
+  media: MediaState;
+  crop: CropState;
+}) {
+  const { t } = useI18n();
+  const pv = t.publish.preview;
+  const aspect = aspectFor(crop, 4 / 3);
+  return (
+    <div className="mx-auto overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-white shadow-sm" style={{ width: PREVIEW_W }}>
+      <div className="relative w-full overflow-hidden bg-[#e9eaee]" style={{ aspectRatio: String(aspect), height: Math.round(PREVIEW_W / aspect) }}>
+        <CroppedMedia media={media} cropKey={crop.key} zoom={crop.zoom} offset={{ x: crop.x, y: crop.y }} boxW={PREVIEW_W} aspect={aspect} />
+      </div>
+      <div className="px-3.5 py-2.5">
+        <span className="block truncate text-[13px] font-bold text-[#111]">{target.name}</span>
+        <span className="block text-[11px] text-[#65676b]">Adds this photo to the location gallery on Google.</span>
+      </div>
+    </div>
+  );
+}
+
 /* ── Registry ─────────────────────────────────────────────────────── */
 
 export default function DestinationPreview({
@@ -440,13 +466,15 @@ export default function DestinationPreview({
   const methods = t.publish.methods;
   const pv = t.publish.preview;
   if (target) {
-    // Profile surfaces look the same wherever they live — a round avatar
-    // and a wide cover — so they resolve before the platform switch.
+    // Profile/gallery surfaces resolve before the platform switch.
     if (method === "profile") {
       return <ProfilePicturePreview target={target} media={media} crop={crop} />;
     }
     if (method === "banner") {
       return <BannerPreview target={target} media={media} crop={crop} />;
+    }
+    if (method === "gallery") {
+      return <GalleryPreview target={target} media={media} crop={crop} />;
     }
     switch (target.platform) {
       case "instagram":
