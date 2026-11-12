@@ -120,6 +120,10 @@ class PublishBody(BaseModel):
     # defaults the window (now → +7 days).
     start_date: str | None = None
     end_date: str | None = None
+    # The language of the post (BCP-47), e.g. "en-US" or "ar". Google's
+    # LocalPost reference documents languageCode on the post body; it
+    # defaults to en-US when absent.
+    language_code: str | None = Field(None, max_length=16)
     idempotency_key: str | None = Field(None, max_length=200)
     destinations: list[PublishDestination]
     batch_id: str | None = Field(None, max_length=64)
@@ -336,6 +340,7 @@ async def publish_post(
                     "delete_at": body.delete_at,
                     "start_date": body.start_date,
                     "end_date": body.end_date,
+                    "language_code": body.language_code,
                     "batch_id": body.batch_id,
                 }
 

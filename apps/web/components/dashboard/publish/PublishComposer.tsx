@@ -15,6 +15,7 @@ import FormatThumb from "./FormatThumb";
 import {
   DEFAULT_CROP,
   GALLERY_CATEGORIES,
+  GOOGLE_POST_LANGUAGE,
   PLATFORM_META,
   cropKeyFor,
   defaultCropFor,
@@ -660,6 +661,9 @@ export default function PublishComposer({
             delete_at: removeOn && removeAt ? new Date(removeAt).toISOString() : null,
             start_date: startDate ? new Date(startDate).toISOString() : null,
             end_date: endDate ? new Date(endDate).toISOString() : null,
+            // Google labels the post with the language the merchant wrote
+            // it in, so an Arabic post is not published as English.
+            language_code: GOOGLE_POST_LANGUAGE[locale] ?? "en-US",
             destinations: postDestinations,
             batch_id: attempt.key,
             idempotency_key: attempt.key,

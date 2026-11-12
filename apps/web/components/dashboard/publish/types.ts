@@ -114,6 +114,23 @@ export const GALLERY_CATEGORIES = [
 ] as const;
 
 /**
+ * The language of a Google post, as the BCP-47 code Google expects on a
+ * LocalPost, keyed by the app locale the merchant is writing in.
+ *
+ * Google documents `languageCode` on the post body and defaults it to
+ * "en-US"; a plain "en" would mark an Arabic or Urdu post as English.
+ */
+export const GOOGLE_POST_LANGUAGE: Record<string, string> = {
+  en: "en-US",
+  es: "es",
+  fr: "fr",
+  de: "de",
+  ar: "ar",
+  ur: "ur",
+  ch: "zh-CN",
+};
+
+/**
  * Which formats each platform can actually deliver.
  *
  * This is the fail-closed list: a format that is not here is never

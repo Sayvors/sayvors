@@ -3,12 +3,16 @@
 GBP does not have a "feed post" in the Meta sense. The equivalent is a
 ``localPost`` created via:
 
-    POST /v1/accounts/{accountId}/locations/{locationId}/localPosts
+    POST https://mybusiness.googleapis.com/v4/accounts/{accountId}/locations/{locationId}/localPosts
 
 A STANDARD local post carries a summary (caption) and optionally a photo
 and a call-to-action. A future ``scheduledTime`` makes Google hold the post in
 SCHEDULED and publish it at that moment. The field rules live in
 ``google_post_fields``; this module only sends and reads them.
+
+A post's photo must be a publicly reachable ``sourceUrl``: unlike location
+media (the gallery, the profile picture, the cover), a local post cannot take
+raw bytes.
 
 This adapter mirrors the shape of the Meta adapters so the job runner can
 treat every destination uniformly: one ``publish_post`` call per
@@ -123,6 +127,7 @@ class GoogleBusinessPublisher:
         end_date: str | None = None,
         coupon_code: str | None = None,
         terms_conditions: str | None = None,
+        language_code: str | None = None,
         tenant_id: str | None = None,
     ) -> dict:
         """Publish one post to one GBP location.
@@ -179,7 +184,10 @@ class GoogleBusinessPublisher:
 
         body: dict[str, Any] = {
             "topicType": topic_type,
-            "languageCode": "en",
+            # Google's LocalPost reference documents languageCode on the post
+            # body and defaults it to en-US. The composer sends the locale the
+            # merchant wrote the post in.
+            "languageCode": (language_code or "en-US").strip()[:16],
             **{k: v for k, v in built.fields.items() if v is not None},
         }
         if scheduled_time:
