@@ -230,7 +230,6 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
       {/* file name */}
       <div className={`rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] px-3 py-2 text-[11px] ${INK2}`}>
         {fill(pc.aiFile, { name: fileName })}
-        <span className="ml-1 opacity-60">{fill(pc.aiFileSaved, { name: fileName })}</span>
       </div>
 
       {/* actions */}
@@ -414,6 +413,7 @@ export default function PublishComposer({
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [aiOpen, setAiOpen] = useState(false);
   const { t: tr, locale } = useI18n();
   const pc: ComposerDict = tr.publish.composer;
   const methods = tr.publish.methods as MethodDict;
@@ -990,6 +990,11 @@ export default function PublishComposer({
               {pc.mediaSub}
             </p>
             <MediaSink media={media} onPick={pickMedia} onClear={clearMedia} thumb={thumb} thumbLabel={thumbLabel} />
+            {needsMedia && media === null && (
+              <p className="mt-3 text-[12px] font-semibold text-amber-700 dark:text-amber-400">
+                An image or video is required for the selected destinations.
+              </p>
+            )}
           </section>
 
           <section aria-labelledby="publish-message-h" className="ui-panel order-2 bg-[var(--ui-surface)] p-4 sm:p-5">
@@ -1283,13 +1288,24 @@ export default function PublishComposer({
           )}
 
           <section aria-labelledby="ai-video-h" className="ui-panel order-7 bg-[var(--ui-surface)] p-4 sm:p-5">
-            <h2 id="ai-video-h" className={`text-[14px] font-bold ${INK}`}>
-              {pc.aiTitle}
-            </h2>
-            <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
-              {pc.aiSub}
-            </p>
-            <AiVideoCreator googleTargets={googleTargets} />
+            <button
+              type="button"
+              id="ai-video-h"
+              onClick={() => setAiOpen((v) => !v)}
+              aria-expanded={aiOpen}
+              className={`flex w-full items-center justify-between gap-2 text-left ${INK}`}
+            >
+              <span className="text-[14px] font-bold">{pc.aiTitle}</span>
+              <span className={`text-[12px] font-semibold ${INK2}`}>{aiOpen ? "Hide" : "Show"}</span>
+            </button>
+            {aiOpen && (
+              <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
+                {pc.aiSub}
+              </p>
+            )}
+            <div className={aiOpen ? "" : "hidden"}>
+              <AiVideoCreator googleTargets={googleTargets} />
+            </div>
           </section>
           </aside>
         </div>
@@ -1345,6 +1361,7 @@ export default function PublishComposer({
             type="button"
             onClick={openConfirm}
             disabled={!canPublish}
+            title={!canPublish ? (confirmItems.length === 0 ? "Select at least one destination." : needsMedia ? "Add an image or video first." : undefined) : undefined}
             className="rounded-[10px] bg-[var(--ui-ink)] px-5 py-2.5 text-[13px] font-semibold text-[var(--ui-on-ink)] transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
           >
             {scheduleOn ? pc.reviewSchedule : pc.reviewPublish}
