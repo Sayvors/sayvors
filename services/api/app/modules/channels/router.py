@@ -4275,11 +4275,33 @@ async def upload_google_media(
                 description=description,
             )
         else:
+            # Direct byte upload to Google: fetch source bytes and upload via
+            # startUpload/dataRef instead of passing sourceUrl to GBP.
+            url = (source_url or "").strip()
+            if not url.lower().startswith(("http://", "https://")):
+                raise HTTPException(status_code=400, detail="source_url must be an http(s) URL.")
+            import httpx
+            try:
+                async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as hc:
+                    resp = await hc.get(url)
+                    resp.raise_for_status()
+                    data = resp.content
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"Could not fetch source_url: {exc}") from None
+            if not data:
+                raise HTTPException(status_code=400, detail="Fetched image is empty.")
+            if len(data) > 5 * 1024 * 1024:
+                raise HTTPException(status_code=400, detail="Image is too large (max 5MB).")
+            ctype = (resp.headers.get("content-type") or "image/jpeg").split(";", 1)[0].strip()
+            if not ctype.startswith("image/"):
+                ctype = "image/jpeg"
+            ref = await client.start_media_upload(channel.platform_user_id or "", location_id)
+            await client.upload_media_bytes(ref, data, ctype)
             created = await client.create_location_media(
                 channel.platform_user_id or "",
                 location_id,
                 category=cat,
-                source_url=(source_url or "").strip(),
+                data_ref=ref,
                 description=description,
             )
         assoc = created.get("locationAssociation") or {}

@@ -643,19 +643,24 @@ export default function PublishComposer({
       }
 
       for (const g of gallerySelections) {
-        if (!mediaUrl) throw new Error(pc.needMedia);
-        await apiFetch("/api/v1/media/", {
+        if (!media && !mediaUrl) throw new Error(pc.needMedia);
+        const channelId = g.target.id.startsWith("google:") ? g.target.id.slice(7) : g.target.id;
+        const form = new FormData();
+        form.append("category", g.category);
+        if (caption) form.append("description", caption);
+        if (media?.file) {
+          form.append("file", media.file);
+        } else if (media?.url && media.url.startsWith("blob:")) {
+          throw new Error(pc.fileGoneErr);
+        } else if (mediaUrl) {
+          // Direct byte upload path: backend fetches and uploads bytes to Google.
+          form.append("source_url", mediaUrl);
+        } else {
+          throw new Error(pc.needMedia);
+        }
+        await apiFetch(`/api/v1/channels/${encodeURIComponent(channelId)}/google-media`, {
           method: "POST",
-          body: JSON.stringify({
-            listing_id: (g.target.locationId ?? g.target.id) as string,
-            image_url: mediaUrl,
-            type: mediaType === "video" ? "VIDEO" : "PHOTO",
-            category: g.category,
-            caption: caption || "",
-            action: scheduleOn ? "schedule" : "publish",
-            scheduled_on: scheduleOn && scheduleAt ? new Date(scheduleAt).toISOString() : null,
-            publish_method: "gallery",
-          }),
+          body: form,
         });
       }
 
