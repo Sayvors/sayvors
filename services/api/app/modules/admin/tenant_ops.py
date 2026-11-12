@@ -86,7 +86,65 @@ async def _tenant_channel_ids(db: AsyncSession, tenant_id: str) -> list[str]:
     )
 
 
-def _scope_clause(table, tenant_id: str, user_ids: list[str], channel_ids: list[str]):
+async def _tenant_conversation_ids(db: AsyncSession, user_ids: list[str]) -> list[str]:
+    from ..llm.models import Conversation
+
+    if not user_ids:
+        return []
+    return list(
+        (
+            await db.execute(
+                select(Conversation.id).where(Conversation.user_id.in_(user_ids))
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+async def _tenant_outbox_ids(db: AsyncSession, tenant_id: str) -> list[str]:
+    _ensure_models_registered()
+    from ..email.models import EmailOutbox
+
+    return list(
+        (
+            await db.execute(
+                select(EmailOutbox.id).where(EmailOutbox.tenant_id == tenant_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+def _ensure_models_registered() -> None:
+    """Import every module's models so Base.metadata is complete.
+
+    purge/export iterate Base.metadata.sorted_tables; a table whose model
+    module has never been imported is silently skipped, leaving orphaned
+    rows behind. Importing lazily here (rather than at module load) keeps
+    this module free of heavy import-time side effects.
+    """
+    import importlib
+    import pkgutil
+
+    import app.modules
+
+    for module_info in pkgutil.walk_packages(
+        app.modules.__path__, app.modules.__name__ + "."
+    ):
+        if module_info.name.endswith(".models"):
+            try:
+                importlib.import_module(module_info.name)
+            except Exception:  # pragma: no cover - best effort
+                continue
+
+
+def _scope_clause(
+    table, tenant_id: str, user_ids: list[str], channel_ids: list[str],
+    conversation_ids: list[str] | None = None,
+    outbox_ids: list[str] | None = None,
+):
     """The WHERE clause that selects this table's rows for a tenant, or None.
 
     Precedence matters: `tenant_id` is the authoritative workspace marker,
@@ -102,6 +160,10 @@ def _scope_clause(table, tenant_id: str, user_ids: list[str], channel_ids: list[
         return table.c.user_id.in_(user_ids)
     if "channel_id" in table.c and channel_ids:
         return table.c.channel_id.in_(channel_ids)
+    if "conversation_id" in table.c and conversation_ids:
+        return table.c.conversation_id.in_(conversation_ids)
+    if "outbox_id" in table.c and outbox_ids:
+        return table.c.outbox_id.in_(outbox_ids)
     return None
 
 
@@ -109,16 +171,19 @@ async def export_tenant(db: AsyncSession, tenant_id: str) -> dict:
     """Every tenant-scoped row as plain JSON-ready data."""
     from ..users.models import User
 
+    _ensure_models_registered()
     user = await db.get(User, tenant_id)
     if user is None:
         raise ValueError("Tenant not found")
     user_ids = await _tenant_user_ids(db, tenant_id)
     channel_ids = await _tenant_channel_ids(db, tenant_id)
+    conversation_ids = await _tenant_conversation_ids(db, user_ids)
+    outbox_ids = await _tenant_outbox_ids(db, tenant_id)
 
     tables: dict[str, list[dict]] = {}
     counts: dict[str, int] = {}
     for table in Base.metadata.sorted_tables:
-        clause = _scope_clause(table, tenant_id, user_ids, channel_ids)
+        clause = _scope_clause(table, tenant_id, user_ids, channel_ids, conversation_ids, outbox_ids)
         if clause is None:
             continue
         rows = (await db.execute(select(table).where(clause))).all()
@@ -161,11 +226,14 @@ async def purge_tenant(db: AsyncSession, tenant_id: str) -> dict:
     """
     from ..users.models import User
 
+    _ensure_models_registered()
     user = await db.get(User, tenant_id)
     if user is None:
         raise ValueError("Tenant not found")
     user_ids = await _tenant_user_ids(db, tenant_id)
     channel_ids = await _tenant_channel_ids(db, tenant_id)
+    conversation_ids = await _tenant_conversation_ids(db, user_ids)
+    outbox_ids = await _tenant_outbox_ids(db, tenant_id)
 
     # Storage keys are collected before the rows disappear; the objects are
     # removed best-effort afterwards so a bucket outage cannot abort the purge.
@@ -180,7 +248,7 @@ async def purge_tenant(db: AsyncSession, tenant_id: str) -> dict:
         ]
         if not key_columns:
             continue
-        clause = _scope_clause(table, tenant_id, user_ids, channel_ids)
+        clause = _scope_clause(table, tenant_id, user_ids, channel_ids, conversation_ids, outbox_ids)
         if clause is None:
             continue
         for column_name in key_columns:
@@ -191,7 +259,7 @@ async def purge_tenant(db: AsyncSession, tenant_id: str) -> dict:
 
     deleted: dict[str, int] = {}
     for table in reversed(Base.metadata.sorted_tables):
-        clause = _scope_clause(table, tenant_id, user_ids, channel_ids)
+        clause = _scope_clause(table, tenant_id, user_ids, channel_ids, conversation_ids, outbox_ids)
         if clause is None:
             continue
         result = await db.execute(delete(table).where(clause))

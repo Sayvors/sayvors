@@ -1371,7 +1371,7 @@ export default function DashboardPage() {
                     <p className={`text-[13px] font-semibold ${isDone ? "text-ink/40 dark:text-fog/40 line-through" : "text-ink dark:text-fog"}`}>
                       {item.label}
                       {isNext && !isDone && (
-                        <span className="ml-2 rounded-[2px] bg-deep-violet px-2 py-0.5 align-middle text-[9px] font-bold uppercase tracking-wide text-white">
+                        <span className="ml-2 rounded-[2px] bg-deep-violet px-2 py-0.5 align-middle text-[8px] font-bold uppercase tracking-wide text-white">
                           {t.dashboard.start.upNext}
                         </span>
                       )}
