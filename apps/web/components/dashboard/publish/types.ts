@@ -48,6 +48,8 @@ export interface MediaState {
   url: string;
   fileName?: string;
   sizeBytes?: number;
+  width?: number;
+  height?: number;
   /** The original file when the media was picked locally — needed so the
    * composer can upload it to /api/v1/media/upload for a public URL. */
   file?: File | null;
@@ -65,7 +67,7 @@ export interface CropState {
   y: number;
 }
 
-export const MAX_MEDIA_MB = 200;
+export const MAX_MEDIA_MB = 25;
 
 export const DEFAULT_CROP: CropState = { key: "orig", zoom: 1, x: 0, y: 0 };
 

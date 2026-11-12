@@ -267,7 +267,7 @@ async def create_media(db: AsyncSession, user_id: str, data: dict) -> dict:
             f"Photo scheduled — {item.caption or item.category.replace('_', ' ').title()}",
             f"Publishes {when}.",
             data={"media_id": item.id, "listing_id": item.listing_id},
-            href="/dashboard/media",
+            href="/dashboard/posts-media?tab=media",
         )
     await db.commit()
     await db.refresh(item)
@@ -292,6 +292,16 @@ async def update_media(
     # (router passes exclude_unset).
     if "delete_at" in data:
         item.delete_at = _parse_dt(data.get("delete_at"))
+
+    # Re-targeting a draft/scheduled photo is allowed; a published one is
+    # already on Google and cannot change surface.
+    if "publish_method" in data and data["publish_method"] is not None:
+        pm = data["publish_method"]
+        if pm not in ("post", "gallery", "profile", "banner"):
+            raise ValueError("publish_method must be 'post', 'gallery', 'profile' or 'banner'.")
+        if item.status == "published":
+            raise ValueError("Published photos live on Google now — archive the post instead of editing.")
+        item.publish_method = pm
 
     new_status = data.get("status")
     if new_status is not None and new_status != item.status:
@@ -426,7 +436,7 @@ async def _publish_media_inner(
                 f"Photo failed to publish — {item.caption or item.category.replace('_', ' ').title()}",
                 (item.error or "")[:160],
                 data={"media_id": item.id, "listing_id": item.listing_id},
-                href="/dashboard/media",
+                href="/dashboard/posts-media?tab=media",
             )
         await db.commit()
         raise RuntimeError(f"Google media publish failed: {e}")
@@ -448,7 +458,7 @@ async def _publish_media_inner(
             f"Photo published to Google — {item.caption or item.category.replace('_', ' ').title()}",
             None,
             data={"media_id": item.id, "listing_id": item.listing_id},
-            href="/dashboard/media",
+            href="/dashboard/posts-media?tab=media",
         )
     await db.commit()
     await db.refresh(item)
@@ -527,7 +537,7 @@ async def publish_due(db: AsyncSession) -> dict:
             f"Scheduled photos: {', '.join(parts)}",
             None,
             data={"published": counts["published"], "failed": counts["failed"]},
-            href="/dashboard/media",
+            href="/dashboard/posts-media?tab=media",
         )
     try:
         await db.commit()

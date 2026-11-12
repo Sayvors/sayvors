@@ -507,13 +507,13 @@ export default function PublishComposer({
   };
 
   // ── Media blob lifecycle ────────────────────────────────────────
-  const pickMedia = (type: "image" | "video", url: string, fileName?: string, sizeBytes?: number, file?: File) => {
+  const pickMedia = (type: "image" | "video", url: string, fileName?: string, sizeBytes?: number, file?: File, width?: number, height?: number) => {
     if (blobRef.current && blobRef.current !== url) {
       URL.revokeObjectURL(blobRef.current);
     }
     if (url.startsWith("blob:")) blobRef.current = url;
     else blobRef.current = null;
-    setMedia({ type, url, fileName, sizeBytes, file: file ?? null });
+    setMedia({ type, url, fileName, sizeBytes, width, height, file: file ?? null });
   };
 
   const clearMedia = () => {
@@ -600,6 +600,17 @@ export default function PublishComposer({
     if (confirmItems.length === 0) {
       setNotice(pc.needDest);
       return;
+    }
+    if (media && media.type === "image" && media.width && media.height) {
+      const googleSelected = confirmItems.some(({ target }) => target.platform === "google_reviews");
+      if (googleSelected && (media.width < 250 || media.height < 250)) {
+        setNotice("That image is below Google's 250×250px minimum. Pick a larger photo.");
+        return;
+      }
+      if (googleSelected && media.sizeBytes && media.sizeBytes > 5 * 1024 * 1024) {
+        setNotice("Google accepts photos up to 5MB. Pick a smaller file or compress it.");
+        return;
+      }
     }
     setNotice(null);
     setPublishError(null);

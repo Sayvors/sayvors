@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { CROP_ASPECT } from "./CropFrame";
 import { MAX_MEDIA_MB, type CropState } from "./types";
+import { inspectImageFile, probeImageUrl, ALLOWED_IMAGE_EXT, ALLOWED_VIDEO_EXT } from "@/lib/media-validation";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 
 function fill(s: string, vars: Record<string, string | number>): string {
@@ -40,7 +41,7 @@ export default function MediaSink({
   thumbLabel = "",
 }: {
   media: { type: "image" | "video" | null; url: string; fileName?: string; sizeBytes?: number } | null;
-  onPick: (type: "image" | "video", url: string, fileName?: string, sizeBytes?: number, file?: File) => void;
+  onPick: (type: "image" | "video", url: string, fileName?: string, sizeBytes?: number, file?: File, width?: number, height?: number) => void;
   onClear: () => void;
   thumb?: ThumbCrop | null;
   thumbLabel?: string;
@@ -57,7 +58,7 @@ export default function MediaSink({
   const aspect = thumb && thumb.cropKey !== "orig" ? CROP_ASPECT[thumb.cropKey as Exclude<CropState["key"], "orig">] : null;
   const box = thumbBox(thumb?.cropKey ?? "orig");
 
-  const acceptFiles = (files: FileList | null) => {
+  const acceptFiles = async (files: FileList | null) => {
     setError(null);
     const file = files?.[0];
     if (!file) return;
@@ -65,30 +66,79 @@ export default function MediaSink({
       setError(fill(md.tooBig, { n: fmt(MAX_MEDIA_MB) }));
       return;
     }
-    const kind = file.type.startsWith("video/") ? "video" : file.type.startsWith("image/") ? "image" : null;
-    if (!kind) {
+    const ext = (file.name.split(".").pop() || "").toLowerCase();
+    const isImageExt = ALLOWED_IMAGE_EXT.includes(ext);
+    const isVideoExt = ALLOWED_VIDEO_EXT.includes(ext);
+    const kind: "image" | "video" | null =
+      isVideoExt || file.type.startsWith("video/") ? "video" :
+      isImageExt || file.type.startsWith("image/") ? "image" : null;
+    if (!kind || (!isImageExt && !isVideoExt && !file.type.startsWith("image/") && !file.type.startsWith("video/"))) {
       setError(md.badType);
       return;
     }
-    onPick(kind, URL.createObjectURL(file), file.name, file.size, file);
+    // Reject types the server would reject, even if the MIME looks right.
+    if (kind === "image" && !isImageExt && !ALLOWED_IMAGE_EXT.includes(ext)) {
+      setError(md.badType);
+      return;
+    }
+    if (kind === "video" && !isVideoExt) {
+      setError(md.badType);
+      return;
+    }
+    let width: number | undefined;
+    let height: number | undefined;
+    if (kind === "image") {
+      try {
+        const d = await inspectImageFile(file);
+        width = d.width; height = d.height;
+        if (width < 250 || height < 250) {
+          setError("That image is below Google's 250×250px minimum — Google may reject it.");
+          return;
+        }
+      } catch {
+        // keep going; server will validate
+      }
+    }
+    onPick(kind, URL.createObjectURL(file), file.name, file.size, file, width, height);
   };
 
-  const addUrl = () => {
+  const addUrl = async () => {
     const value = urlDraft.trim();
     if (!value) return;
     setError(null);
+    let parsed: URL;
     try {
-      const parsed = new URL(value);
-      if (parsed.protocol !== "https:") {
-        setError(md.badUrl);
-        return;
-      }
-      const kind = /\.(mp4|webm|mov|m4v)(\?|$)/i.test(parsed.pathname) ? "video" : "image";
-      onPick(kind, value);
-      setUrlDraft("");
+      parsed = new URL(value);
     } catch {
       setError(md.notUrl);
+      return;
     }
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      setError(md.badUrl);
+      return;
+    }
+    if (parsed.protocol === "http:") {
+      setError("Use an https link — Google and some networks refuse plain http.");
+      return;
+    }
+    const kind = /\.(mp4|mov|m4v)(\?|$)/i.test(parsed.pathname) ? "video" : "image";
+    let width: number | undefined;
+    let height: number | undefined;
+    if (kind === "image") {
+      try {
+        const d = await probeImageUrl(value);
+        width = d.width; height = d.height;
+        if (width < 250 || height < 250) {
+          setError("That image is below Google's 250×250px minimum — Google may reject it.");
+          return;
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not load that image.");
+        return;
+      }
+    }
+    onPick(kind, value, undefined, undefined, undefined, width, height);
+    setUrlDraft("");
   };
 
   return (
@@ -242,7 +292,7 @@ export default function MediaSink({
         accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime"
         hidden
         onChange={(e) => {
-          acceptFiles(e.target.files);
+          void acceptFiles(e.target.files);
           e.target.value = "";
         }}
       />
