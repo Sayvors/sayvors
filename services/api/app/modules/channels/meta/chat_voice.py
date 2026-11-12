@@ -128,3 +128,34 @@ def opener_key(text: str | None) -> str:
         return ""
     words = re.findall(r"[A-Za-z\u0600-\u06FF]+", text.lower())[:_OPENER_WORDS]
     return " ".join(words)
+
+
+# Safe bounds for the per-tenant temperature knob. The prompt was tuned at
+# 0.5; tenants may warm or cool within a band that never turns replies into
+# gibberish (top) or a frozen template (bottom).
+_TEMPERATURE_MIN = 0.2
+_TEMPERATURE_MAX = 1.0
+_DEFAULT_TEMPERATURE = 0.5
+
+
+def normalize_chat_settings(value: object) -> dict:
+    """Clamp a raw ``users.chat_settings`` JSON value to safe defaults.
+
+    NULL, junk, or unknown keys all resolve to the safe defaults — a bad
+    hand-edit can at worst keep today's behaviour, never break a reply.
+    """
+    if not isinstance(value, dict):
+        return {
+            "temperature": _DEFAULT_TEMPERATURE,
+            "lint_enabled": True,
+        }
+    try:
+        temperature = float(value.get("temperature", _DEFAULT_TEMPERATURE))
+    except (TypeError, ValueError):
+        temperature = _DEFAULT_TEMPERATURE
+    temperature = min(max(temperature, _TEMPERATURE_MIN), _TEMPERATURE_MAX)
+    lint_enabled = bool(value.get("lint_enabled", True))
+    return {
+        "temperature": temperature,
+        "lint_enabled": lint_enabled,
+    }

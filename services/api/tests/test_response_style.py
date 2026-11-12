@@ -47,6 +47,15 @@ def test_concise_renderer_sends_exactly_one_message():
     assert rs.concise_renderer(None) == []
 
 
+def test_concise_renderer_respects_lint_rollout_flag():
+    # Lint enabled (default): machine tells are cleaned.
+    assert rs.concise_renderer("Hi — we are open.") == ["Hi, we are open."]
+    # Rollout flag off: raw text passes through untouched.
+    assert rs.concise_renderer("Hi — we are open.", lint_enabled=False) == [
+        "Hi — we are open."
+    ]
+
+
 @pytest.mark.asyncio
 async def test_human_renderer_splits_into_natural_parts(db, user_id, monkeypatch):
     async def _fake_split(tenant_id, db_, text):

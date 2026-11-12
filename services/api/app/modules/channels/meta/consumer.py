@@ -664,6 +664,7 @@ async def _generate_reply(
     contact: str | None = None,
     attachment_note: str | None = None,
     ticket=None,
+    temperature: float | None = None,
 ) -> str:
     """Generate an AI reply from THIS CONTACT's conversation + business profile.
 
@@ -943,7 +944,7 @@ async def _generate_reply(
         model=model_id,
         messages=history,
         system_prompt=system_prompt,
-        temperature=_REPLY_TEMPERATURE,
+        temperature=temperature if temperature is not None else _REPLY_TEMPERATURE,
         max_tokens=_REPLY_MAX_TOKENS,
         tools=[FACTS_TOOL],
         tenant_id=tenant_id,
@@ -987,7 +988,7 @@ async def _generate_reply(
                     ),
                 ],
                 system_prompt=system_prompt,
-                temperature=_REPLY_TEMPERATURE,
+                temperature=temperature if temperature is not None else _REPLY_TEMPERATURE,
                 max_tokens=_REPLY_MAX_TOKENS,
                 tenant_id=tenant_id,
                 purpose=f"{platform.lower()}.auto_reply",
@@ -995,6 +996,30 @@ async def _generate_reply(
             )
 
     return (resp.content or "").strip()
+
+
+async def _load_chat_settings(db, tenant_id: str) -> dict:
+    """Normalized per-tenant chat-voice knobs (temperature, linter flag).
+
+    One indexed PK read; NULL/missing/junk resolve to safe defaults so a
+    bad hand-edit can never break a reply.
+    """
+    from ...users.models import User
+    from .chat_voice import normalize_chat_settings
+
+    try:
+        value = (
+            await db.execute(
+                select(User.chat_settings).where(User.id == tenant_id)
+            )
+        ).scalar_one_or_none()
+    except Exception as e:  # noqa: BLE001 — defaults are safe
+        logger.warning(
+            "chat settings read failed tenant=%s: %s: %s",
+            tenant_id, type(e).__name__, str(e)[:150],
+        )
+        return normalize_chat_settings(None)
+    return normalize_chat_settings(value)
 
 
 async def _last_outbound_opener(
@@ -2461,10 +2486,12 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
             return
 
         try:
+            chat_settings = await _load_chat_settings(db, tenant_id)
             reply_kwargs: dict = {
                 "context": _handoff_context(handoff_match),
                 "contact": from_wa or None,
                 "ticket": inbound_lead,
+                "temperature": chat_settings["temperature"],
             }
             if msg_type in ("image", "document"):
                 reply_kwargs["attachment_note"] = ATTACHMENT_PROMPT_NOTE
@@ -2712,7 +2739,8 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                         from_wa[-6:], wamid[:32], previous_opener[:40],
                     )
             messages = await render_response(
-                response_style, reply, tenant_id, db
+                response_style, reply, tenant_id, db,
+                lint_enabled=chat_settings["lint_enabled"],
             )
             if not messages:
                 logger.warning(
@@ -3767,10 +3795,12 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
             await db.commit()
 
         try:
+            chat_settings = await _load_chat_settings(db, tenant_id)
             raw_reply = await _generate_reply(
                 db, channel, tenant_id, text or "", platform="Instagram",
                 contact=igsid or None,
                 ticket=lead,
+                temperature=chat_settings["temperature"],
             )
         except Exception as e:
             logger.warning(
@@ -3849,7 +3879,10 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
             style_row.response_style if style_row else None
         )
         lead_settings = style_row.lead_settings if style_row else None
-        messages = await render_response(response_style, reply, tenant_id, db)
+        messages = await render_response(
+            response_style, reply, tenant_id, db,
+            lint_enabled=chat_settings["lint_enabled"],
+        )
         if not messages:
             logger.warning(
                 "Instagram AI reply rendered to zero messages — skipping "

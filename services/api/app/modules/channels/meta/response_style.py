@@ -61,19 +61,23 @@ def normalize_response_style(value: str | None) -> str:
     return value if value in RESPONSE_STYLES else DEFAULT_RESPONSE_STYLE
 
 
-def concise_renderer(response: str) -> list[str]:
+def concise_renderer(response: str, lint_enabled: bool = True) -> list[str]:
     """One clear message per response — the historical behaviour.
 
     The deterministic linter runs here too, so every style gets the same
-    machine-tell cleanup before it reaches the customer.
+    machine-tell cleanup before it reaches the customer. ``lint_enabled``
+    is the per-tenant rollout flag (false = raw text, for controlled
+    rollback).
     """
-    text = clean_reply(response)
+    text = clean_reply(response) if lint_enabled else (response or "").strip()
     return [text] if text else []
 
 
-async def human_renderer(response: str, tenant_id: str, db) -> list[str]:
+async def human_renderer(
+    response: str, tenant_id: str, db, lint_enabled: bool = True
+) -> list[str]:
     """Split into 1..N natural messages; ALWAYS falls back to [response]."""
-    text = clean_reply(response)
+    text = clean_reply(response) if lint_enabled else (response or "").strip()
     if not text:
         return []
     try:
@@ -91,13 +95,18 @@ async def human_renderer(response: str, tenant_id: str, db) -> list[str]:
 
 
 async def render_response(
-    style: str, response: str, tenant_id: str, db
+    style: str, response: str, tenant_id: str, db,
+    lint_enabled: bool = True,
 ) -> list[str]:
     """The spec's router: style in, sendable messages out. The only place
-    the tenant style is consulted — agent reasoning never sees it."""
+    the tenant style is consulted — agent reasoning never sees it.
+
+    ``lint_enabled`` is the per-tenant rollout knob for the deterministic
+    linter (Phase 2); false bypasses it entirely.
+    """
     if normalize_response_style(style) == "human":
-        return await human_renderer(response, tenant_id, db)
-    return concise_renderer(response)
+        return await human_renderer(response, tenant_id, db, lint_enabled)
+    return concise_renderer(response, lint_enabled)
 
 
 async def _ask_split(tenant_id: str, db, response_text: str) -> str:

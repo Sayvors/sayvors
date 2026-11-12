@@ -9,6 +9,7 @@ import pytest
 from app.modules.channels.meta.chat_voice import (
     _BANNED_PHRASE_MAP,
     clean_reply,
+    normalize_chat_settings,
     opener_key,
 )
 
@@ -73,6 +74,22 @@ def test_fail_open_returns_original_on_error(monkeypatch):
 def test_non_string_input_is_handled():
     assert clean_reply(None) == ""
     assert clean_reply("") == ""
+
+
+def test_chat_settings_normalize_to_safe_defaults():
+    assert normalize_chat_settings(None) == {"temperature": 0.5, "lint_enabled": True}
+    assert normalize_chat_settings("junk") == {"temperature": 0.5, "lint_enabled": True}
+    assert normalize_chat_settings({}) == {"temperature": 0.5, "lint_enabled": True}
+    assert normalize_chat_settings({"temperature": "hot", "lint_enabled": "no"}) == {
+        "temperature": 0.5, "lint_enabled": True,
+    }
+
+
+def test_chat_settings_clamp_temperature_and_flags():
+    assert normalize_chat_settings({"temperature": 2.0})["temperature"] == 1.0
+    assert normalize_chat_settings({"temperature": 0.0})["temperature"] == 0.2
+    assert normalize_chat_settings({"temperature": 0.7})["temperature"] == 0.7
+    assert normalize_chat_settings({"lint_enabled": False})["lint_enabled"] is False
 
 
 def test_opener_key_is_stable_and_discriminating():

@@ -116,7 +116,7 @@ async def _patch_consumer(
     async def _fake_classify(*args, **kwargs):
         return {"language": "en", "confused": False, "awaiting_user": False}
 
-    async def _fake_render(style, reply, tenant_id, db_):
+    async def _fake_render(style, reply, tenant_id, db_, lint_enabled=True):
         return [reply]
 
     async def _no_match(*args, **kwargs):
