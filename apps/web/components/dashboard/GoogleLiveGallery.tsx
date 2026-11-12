@@ -214,7 +214,15 @@ export default function GoogleLiveGallery() {
                   {m.category === "COVER" ? "Banner (Cover)" : m.category === "PROFILE" ? "Profile picture" : (m.category || "Media").replace(/_/g, " ")}
                 </p>
                 <p className="truncate text-[10px] text-ink/35 dark:text-fog/35">
-                  {m.createTime ? new Date(m.createTime).toLocaleString() : (m.mediaFormat || "PHOTO")}
+                  {m.category === "PROFILE"
+                    ? // Google returns the Unix epoch for a profile photo's
+                      // createTime and leaves its dimensions empty, so the
+                      // date is not the upload date - rendering it printed
+                      // "1/1/1970" under every profile picture.
+                      (m.mediaFormat || "PHOTO")
+                    : m.createTime
+                      ? new Date(m.createTime).toLocaleString()
+                      : (m.mediaFormat || "PHOTO")}
                 </p>
                 <button
                   onClick={() => removeItem(m.name)}

@@ -1350,7 +1350,10 @@ class GoogleReviewsClient:
             "mediaFormat": str(media_format or "PHOTO").upper(),
             "locationAssociation": {"category": str(category or "ADDITIONAL").upper()},
         }
-        if description:
+        # Google's MediaItem reference: a description can be set on a new
+        # media item "that is not a cover photo", so a COVER upload must not
+        # carry one. Profile and gallery photos accept it.
+        if description and str(category or "").strip().upper() != "COVER":
             body["description"] = str(description)[:1000]
         if data_ref:
             body["dataRef"] = {"resourceName": data_ref}
