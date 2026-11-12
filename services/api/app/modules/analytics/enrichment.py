@@ -25,7 +25,7 @@ from ..llm.gateway import LLMMessage, ProviderError, complete
 
 logger = logging.getLogger(__name__)
 
-MEANING_VERSION = 2
+MEANING_VERSION = 3
 
 
 async def _resolve_tenant_model(db=None) -> str:
@@ -238,7 +238,7 @@ Return STRICT JSON only (no markdown fences, no commentary):
   "subject": "<ONE value from the list below>",
   "problem": "<the complaint in the customer's own framing, or null>",
   "asks": ["<what the customer is asking for, verbatim where possible>"],
-  "entities": {"product": [], "location": [], "staff": [], "dates": []},
+  "entities": {"product": [], "location": [], "staff": [{"name": "", "sentiment": "positive|neutral|negative"}], "dates": []},
   "negated": <true if the review DENIES something it would otherwise imply, e.g. no problems>,
   "sentiment": "positive" | "neutral" | "negative",
   "intensity": <float 0.0..1.0, strength of feeling>,
@@ -269,6 +269,11 @@ Rules:
 - "negated" is true when the customer denies something, e.g. "no problems",
   "nothing to complain about", "not fresh". Read it carefully; the difference
   is a few characters.
+- staff entities: every EMPLOYEE the review names (first name alone counts,
+  e.g. "Ahmad" or "الأستاذ أحمد"), each with the sentiment TOWARD THAT PERSON
+  ("great service, especially Albakhair who solved my issue" -> one staff
+  entry, positive). Only real people, not the business or a department.
+  Keep the name exactly as written; do not guess surnames.
 
 Return an empty object if the review has no text at all."""
 
