@@ -169,6 +169,98 @@ async def unmatched_names(
     ]
 
 
+async def backfill_staff_mentions(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    days: int = 90,
+    limit: int = 300,
+    reextract: bool = False,
+) -> dict:
+    """One-time pass: build mentions from reviews already enriched.
+
+    Walks the tenant's non-removed insights inside the window, newest first,
+    and derives mentions from the stored meaning's staff entities — no LLM
+    calls when ``reextract`` is False, so this is cheap and safe to re-run.
+    Old v2 meanings carry staff as plain strings; the matcher treats them as
+    neutral, which is honest (the sentiment model was not run on them).
+
+    ``reextract=True`` additionally re-runs meaning extraction (LLM) for rows
+    whose meaning is stale (version < current, never human-corrected). The
+    row cap bounds the cost; re-running the endpoint continues where this
+    pass stopped because completed rows no longer qualify.
+    """
+    from sqlalchemy import select
+
+    from .enrichment import MEANING_VERSION, extract_meaning, is_human_corrected
+    from .models import ReviewInsight
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    rows = (
+        await db.execute(
+            select(ReviewInsight)
+            .where(
+                ReviewInsight.user_id == user_id,
+                ReviewInsight.removed_at.is_(None),
+                ReviewInsight.review_text.isnot(None),
+                func.coalesce(
+                    ReviewInsight.review_updated_at, ReviewInsight.created_at
+                )
+                >= cutoff,
+            )
+            .order_by(
+                func.coalesce(
+                    ReviewInsight.review_updated_at, ReviewInsight.created_at
+                ).desc()
+            )
+            .limit(limit)
+        )
+    ).scalars().all()
+
+    scanned = 0
+    mentions = 0
+    reextracted = 0
+    for insight in rows:
+        scanned += 1
+        meaning = insight.meaning if isinstance(insight.meaning, dict) else {}
+        stale = int(meaning.get("version") or 0) < MEANING_VERSION
+        if reextract and stale and not is_human_corrected(meaning):
+            try:
+                insight.meaning = await extract_meaning(
+                    text=insight.review_text,
+                    rating=insight.rating,
+                    reviewer_name=insight.reviewer_name,
+                    tenant_id=insight.user_id,
+                )
+                reextracted += 1
+            except Exception as e:  # noqa: BLE001 — use whatever we already had
+                logger.warning(
+                    "backfill meaning re-extract failed for %s: %s",
+                    insight.review_id, e,
+                )
+        meaning = insight.meaning if isinstance(insight.meaning, dict) else {}
+        staff_entities = (meaning.get("entities") or {}).get("staff") or []
+        if not staff_entities:
+            continue
+        mentions += await record_mentions(
+            db,
+            user_id=user_id,
+            channel_id=insight.channel_id,
+            review_id=insight.review_id,
+            rating=insight.rating,
+            review_created_at=(
+                insight.review_updated_at or insight.created_at
+            ),
+            staff_entities=staff_entities,
+        )
+    await db.commit()
+    return {
+        "scanned": scanned,
+        "mentions": mentions,
+        "reextracted": reextracted,
+    }
+
+
 async def staff_summary(
     db: AsyncSession,
     *,

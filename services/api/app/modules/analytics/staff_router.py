@@ -186,6 +186,39 @@ class AssignIn(BaseModel):
     staff_member_id: str = Field(..., min_length=1, max_length=36)
 
 
+class BackfillIn(BaseModel):
+    days: int = Field(90, ge=7, le=365)
+    limit: int = Field(300, ge=1, le=1000)
+    # Re-run meaning extraction (LLM) on stale rows — costs money, so it is
+    # opt-in; the default backfill uses whatever meaning is already stored.
+    reextract: bool = False
+
+
+@router.post("/backfill")
+async def run_backfill(
+    body: BackfillIn,
+    ctx: TenantContext = Depends(require_perm("team.manage")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Derive mentions from already-enriched reviews (last N days).
+
+    Owner-triggered and bounded: idempotent, so re-running continues where
+    the previous pass stopped (completed rows no longer qualify when
+    reextract is on; with it off, rows are simply re-derived, which is
+    idempotent by the unique constraint).
+    """
+    from .staff_mentions import backfill_staff_mentions
+
+    result = await backfill_staff_mentions(
+        db,
+        user_id=ctx.tenant_id,
+        days=body.days,
+        limit=body.limit,
+        reextract=body.reextract,
+    )
+    return result
+
+
 @router.post("/unmatched/assign")
 async def assign_unmatched(
     body: AssignIn,
