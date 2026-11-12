@@ -44,6 +44,7 @@ MAX_REQUEST_ATTEMPTS = 6          # 1 initial attempt + 5 retries
 INITIAL_BACKOFF_SECONDS = 1.0     # starting backoff for 429 retries
 MAX_BACKOFF_SECONDS = 60.0        # ceiling on computed backoff
 MAX_REVIEW_PAGES = 10             # safety cap: 10 x 50 = 500 reviews per poll
+MAX_MEDIA_PAGES = 20              # safety cap: gallery pages followed per list call
 
 
 def build_auth_url(state: str, redirect_uri: str) -> str:
@@ -1198,29 +1199,46 @@ class GoogleReviewsClient:
         Google's list endpoint only understands ``pageSize``/``pageToken`` -
         it rejects any other query parameter, so a category filter is applied
         here on the returned items instead of being sent upstream.
+
+        Pages are followed (bounded) because Google caps a page far below the
+        requested size: a location with 19 photos returns 10 and a
+        ``nextPageToken``, so a single page would silently hide half the
+        gallery from the merchant.
         """
         _, _, parent = self._normalize_parent(account_id, location_id)
-        params: dict[str, object] = {"pageSize": max(1, min(int(page_size or 100), 2500))}
-        if page_token:
-            params["pageToken"] = page_token
-        resp = await self._authed_request(
-            "GET", f"{GBP_REVIEWS_API}/{parent}/media", params=params,
-        )
-        if resp.status_code != 200:
-            raise GoogleReviewsError(
-                f"list_media failed ({resp.status_code}): {resp.text[:300]}",
-                resp.status_code,
+        size = max(1, min(int(page_size or 100), 2500))
+        items: list[dict] = []
+        next_token = page_token
+        total: int | None = None
+        for _ in range(MAX_MEDIA_PAGES):
+            params: dict[str, object] = {"pageSize": size}
+            if next_token:
+                params["pageToken"] = next_token
+            resp = await self._authed_request(
+                "GET", f"{GBP_REVIEWS_API}/{parent}/media", params=params,
             )
-        data = resp.json() or {}
+            if resp.status_code != 200:
+                raise GoogleReviewsError(
+                    f"list_media failed ({resp.status_code}): {resp.text[:300]}",
+                    resp.status_code,
+                )
+            page = resp.json() or {}
+            items.extend(m for m in (page.get("mediaItems") or []) if isinstance(m, dict))
+            if isinstance(page.get("totalMediaItemCount"), int):
+                total = page["totalMediaItemCount"]
+            next_token = page.get("nextPageToken") or None
+            if not next_token:
+                break
+        out: dict = {"mediaItems": items, "totalMediaItemCount": total if total is not None else len(items)}
+        if next_token:
+            out["nextPageToken"] = next_token
         if category:
             wanted = str(category).strip().upper()
-            items = [
-                m for m in (data.get("mediaItems") or [])
-                if isinstance(m, dict)
-                and str((m.get("locationAssociation") or {}).get("category") or "").upper() == wanted
+            out["mediaItems"] = [
+                m for m in items
+                if str((m.get("locationAssociation") or {}).get("category") or "").upper() == wanted
             ]
-            data = {**data, "mediaItems": items}
-        return data
+        return out
 
     async def get_media(self, name: str) -> dict:
         """Get one media item by full resource name."""
