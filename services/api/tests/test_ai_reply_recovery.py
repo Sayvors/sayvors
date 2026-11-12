@@ -207,7 +207,7 @@ async def test_llm_failure_leaves_pending_and_the_retry_sends_once(
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("LLM is down")
-        return "Thanks for waiting — I'm back."
+        return "Thanks for waiting — I'm back."  # linter converts em dash
 
     monkeypatch.setattr(consumer, "_generate_reply", _gen)
 
@@ -226,7 +226,7 @@ async def test_llm_failure_leaves_pending_and_the_retry_sends_once(
     row = await _stored_row()
     assert row.ai_reply_status == "sent"
     assert row.ai_reply_attempts >= 2
-    assert adapter.sent == ["Thanks for waiting — I'm back."]
+    assert adapter.sent == ["Thanks for waiting, I'm back."]
     assert adapter.contexts == [WAMID]
     outbound = await _outbound()
     assert len(outbound) == 1
@@ -518,7 +518,7 @@ async def test_open_ticket_marker_creates_a_ticket(
     _wire(monkeypatch, adapter)
 
     async def _gen(*a, **k):
-        return "Done — I've opened a ticket.\nOPEN_TICKET"
+        return "Done — I've opened a ticket.\nOPEN_TICKET"  # linter converts em dash
 
     monkeypatch.setattr(consumer, "_generate_reply", _gen)
 
@@ -533,7 +533,7 @@ async def test_open_ticket_marker_creates_a_ticket(
     assert lead.ticket_number.startswith("WA-")
     assert lead.ticket_status == "open"
     assert lead.ticket_kind in ("whatsapp_info", "whatsapp_general")
-    assert adapter.sent == ["Done — I've opened a ticket."]
+    assert adapter.sent == ["Done, I've opened a ticket."]
 
 
 @pytest.mark.asyncio
