@@ -52,6 +52,9 @@ _TRAILING_SPACES = re.compile(r"[ \t]+$", re.MULTILINE)
 _LEADING_INDENT = re.compile(r"^[ \t]+", re.MULTILINE)
 _MULTI_SPACES = re.compile(r"[ \t]{2,}")
 _SPACE_BEFORE_COMMA = re.compile(r"\s+,")
+# Phrase-map + dash replacements can leave ". ," ("Sorry about that., Let me…")
+# — a comma after a full stop is a typo a customer would notice.
+_SENTENCE_COMMA = re.compile(r"\.\s*,\s*")
 
 # Something is an "AI-ism" if it appears verbatim in the map; the opener
 # measure uses the first 5 words for comparison.
@@ -76,6 +79,7 @@ def _replace_dashes(text: str) -> str:
     text = re.sub(r"\s*--\s*", ", ", text)
     # "Hi , how" -> "Hi, how"; ", ," -> ",".
     text = _SPACE_BEFORE_COMMA.sub(",", text)
+    text = _SENTENCE_COMMA.sub(". ", text)
     return text.replace(", ,", ",").replace(",,", ",")
 
 

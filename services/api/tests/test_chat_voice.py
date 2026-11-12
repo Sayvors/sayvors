@@ -41,6 +41,14 @@ def test_applies_phrase_map_case_insensitively():
     assert clean_reply("Please be informed that prices rose.") == "prices rose."
 
 
+def test_phrase_map_followed_by_dash_does_not_leave_period_comma():
+    # The phrase map ends with a period, then the dash becomes a comma — the
+    # combined result must read as one clean sentence, never ". ,".
+    assert clean_reply(
+        "I apologize for the inconvenience. — Kindly allow me to verify the details."
+    ) == "Sorry about that. Let me check the details."
+
+
 def test_phrase_map_is_data_not_code():
     # Every mapping must be a real replace (source != target or empty target),
     # and keys must be lowercase-comparable without surprises.
