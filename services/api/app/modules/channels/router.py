@@ -4217,6 +4217,19 @@ async def list_google_media(
             "totalMediaItemCount": data.get("totalMediaItemCount"),
         }
     except Exception as e:  # noqa: BLE001
+        from .google_reviews import GoogleReviewsError
+        import logging
+
+        if isinstance(e, GoogleReviewsError):
+            logging.getLogger(__name__).error(
+                "Google media list failed for %s: %s", channel_id, e, exc_info=True
+            )
+            msg = str(e)
+            google_raw = msg[msg.index("{") :] if "{" in msg else msg
+            status = int(getattr(e, "status_code", 502) or 502)
+            if status < 400 or status > 599:
+                status = 502
+            raise HTTPException(status_code=status, detail=google_raw) from None
         raise upstream_http_error(
             e,
             context=f"Google media list failed for {channel_id}",
@@ -4324,46 +4337,25 @@ async def upload_google_media(
         raise
     except Exception as e:  # noqa: BLE001
         from .google_reviews import GoogleReviewsError
-        import json
+        import logging
 
         if isinstance(e, GoogleReviewsError):
+            # Surface original Google status/body to the user as requested.
+            logging.getLogger(__name__).error(
+                "Google media upload failed for %s: %s", channel_id, e, exc_info=True
+            )
             msg = str(e)
-            # Extract Google validation details when present.
-            if "Photo tag" in msg or "does not apply" in msg or '"INVALID_ARGUMENT"' in msg:
+            if "{" in msg:
                 try:
-                    # Message looks like: "create_media failed (400): {json}"
-                    if "{" in msg:
-                        j = msg[msg.index("{") :]
-                        data = json.loads(j)
-                        err = data.get("error") or {}
-                        details = err.get("details") or []
-                        for d in details:
-                            if isinstance(d, dict):
-                                for ed in d.get("errorDetails") or []:
-                                    if isinstance(ed, dict) and ed.get("message"):
-                                        raise HTTPException(
-                                            status_code=400,
-                                            detail=f"Google rejected this category for this location: {ed['message']}. Try 'Additional' or another category.",
-                                        )
-                        if err.get("message"):
-                            raise HTTPException(
-                                status_code=400,
-                                detail=f"Google rejected this upload: {err['message']}. Try category 'Additional'.",
-                            )
-                except HTTPException:
-                    raise
+                    google_raw = msg[msg.index("{") :]
                 except Exception:
-                    pass
-                raise HTTPException(
-                    status_code=400,
-                    detail="Google rejected this photo category for this location. Try category 'Additional' instead.",
-                )
-            # If Google returned 400, surface a sanitized message.
-            if getattr(e, "status_code", None) in (400,):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Google could not add the photo with this category. Try category 'Additional' or check Google Business Profile for allowed photo types.",
-                )
+                    google_raw = msg
+            else:
+                google_raw = msg
+            status = int(getattr(e, "status_code", 502) or 502)
+            if status < 400 or status > 599:
+                status = 502
+            raise HTTPException(status_code=status, detail=google_raw) from None
         raise upstream_http_error(
             e,
             context=f"Google media upload failed for {channel_id}",
@@ -4395,6 +4387,19 @@ async def delete_google_media(
     except HTTPException:
         raise
     except Exception as e:  # noqa: BLE001
+        from .google_reviews import GoogleReviewsError
+        import logging
+
+        if isinstance(e, GoogleReviewsError):
+            logging.getLogger(__name__).error(
+                "Google media delete failed for %s: %s", channel_id, e, exc_info=True
+            )
+            msg = str(e)
+            google_raw = msg[msg.index("{") :] if "{" in msg else msg
+            status = int(getattr(e, "status_code", 502) or 502)
+            if status < 400 or status > 599:
+                status = 502
+            raise HTTPException(status_code=status, detail=google_raw) from None
         raise upstream_http_error(
             e,
             context=f"Google media delete failed for {channel_id}",
