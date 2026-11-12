@@ -30,7 +30,7 @@ const STATUS_TONE: Record<string, string> = {
   FAILED: "bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300",
 };
 
-export default function MediaLibrary({ initialLocationId }: { initialLocationId?: string | null }) {
+export default function MediaLibrary({ initialLocationId, onOpenGoogle }: { initialLocationId?: string | null; onOpenGoogle?: () => void }) {
   const [loading, setLoading] = useState(true);
   const [locations, setLocations] = useState<LocationOption[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -396,7 +396,12 @@ export default function MediaLibrary({ initialLocationId }: { initialLocationId?
               <div className="flex h-14 w-14 items-center justify-center rounded-full bg-deep-violet/10 text-[24px]">🖼</div>
               <h3 className="mt-4 text-[17px] font-bold text-ink">No media yet</h3>
               <p className="mt-1 max-w-sm text-[13px] text-ink/55">Upload your first photo to publish it to Google as a post, gallery image, profile or cover.</p>
-              <button type="button" onClick={() => setUploadOpen(true)} className="mt-5 rounded-[20px] bg-deep-violet px-5 py-2.5 text-[13px] font-bold text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)] transition hover:bg-deep-violet/90">+ Upload media</button>
+              <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+                <button type="button" onClick={() => setUploadOpen(true)} className="rounded-[20px] bg-deep-violet px-5 py-2.5 text-[13px] font-bold text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)] transition hover:bg-deep-violet/90">+ Upload media</button>
+                {onOpenGoogle && (
+                  <button type="button" onClick={onOpenGoogle} className="rounded-[20px] border border-ink/10 bg-white px-5 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05]">See photos already on Google</button>
+                )}
+              </div>
             </>
           ) : (
             <>

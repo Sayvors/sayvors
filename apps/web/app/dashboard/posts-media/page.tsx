@@ -81,7 +81,7 @@ function PostsMediaInner() {
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-6xl px-6 py-5">
           {tab === "posts" && <PublishedPosts onPublish={(date) => { setScheduleDate(date ?? null); setView("compose"); }} />}
-          {tab === "media" && <MediaLibrary />}
+          {tab === "media" && <MediaLibrary onOpenGoogle={() => changeTab("google")} />}
           {tab === "google" && <GoogleLiveGallery />}
         </div>
       </div>

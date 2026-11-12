@@ -52,12 +52,13 @@ export function normalizeMedia(raw: unknown): MediaItem[] {
 
 export interface MediaPageProps {
   initialLocationId?: string | null;
+  onOpenGoogle?: () => void;
 }
 
 export default function MediaPage(props: MediaPageProps) {
   return (
     <Suspense>
-      <MediaLibrary initialLocationId={props.initialLocationId ?? null} />
+      <MediaLibrary initialLocationId={props.initialLocationId ?? null} onOpenGoogle={props.onOpenGoogle} />
     </Suspense>
   );
 }
