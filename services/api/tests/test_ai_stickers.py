@@ -233,7 +233,7 @@ async def test_ok_after_a_question_is_answered_by_the_ai(db, monkeypatch):
     adapter = _Adapter()
 
     async def _generate(*args, **kwargs):
-        return "Yes — booked for 5pm."
+        return "Yes — booked for 5pm."  # linter converts em dash
 
     await _patch_consumer(monkeypatch, adapter, generate=_generate)
 
@@ -247,7 +247,7 @@ async def test_ok_after_a_question_is_answered_by_the_ai(db, monkeypatch):
     )
 
     assert adapter.reacted == []
-    assert adapter.texts == ["Yes — booked for 5pm."]
+    assert adapter.texts == ["Yes, booked for 5pm."]
 
 
 @pytest.mark.asyncio

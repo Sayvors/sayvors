@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import random
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
@@ -44,6 +45,13 @@ MAX_REQUEST_ATTEMPTS = 6          # 1 initial attempt + 5 retries
 INITIAL_BACKOFF_SECONDS = 1.0     # starting backoff for 429 retries
 MAX_BACKOFF_SECONDS = 60.0        # ceiling on computed backoff
 MAX_REVIEW_PAGES = 10             # safety cap: 10 x 50 = 500 reviews per poll
+MAX_MEDIA_PAGES = 20              # safety cap: gallery pages followed per list call
+
+# Categories that describe a specific slot on the listing. Google never
+# accepts them as a plain gallery photo, so a rejected tag must NOT be
+# silently re-filed under ADDITIONAL - that would put an avatar in the
+# gallery. Only the plain photo tags fall back.
+_GALLERY_ONLY_CATEGORIES = {"COVER", "PROFILE", "LOGO"}
 
 
 def build_auth_url(state: str, redirect_uri: str) -> str:
@@ -104,9 +112,59 @@ async def list_accounts(access_token: str) -> list[dict]:
 
 
 class GoogleReviewsError(Exception):
-    def __init__(self, message: str, status_code: int = 502):
+    def __init__(self, message: str, status_code: int = 502, body: str | None = None):
         self.status_code = status_code
+        # The raw Google error body, kept so callers can report what Google
+        # actually said instead of inventing a message.
+        self.body = body
         super().__init__(message)
+
+
+def google_error_details(body: str | None) -> tuple[str | None, list[str]]:
+    """Split a Google JSON error body into (status message, detail messages).
+
+    Google nests the human-readable reason under
+    ``error.details[].errorDetails[].message`` (for example "Photo tag
+    'product' does not apply to this location"), which is the part a
+    merchant can act on. Returns (None, []) when the body is not a Google
+    error envelope.
+    """
+    if not body:
+        return None, []
+    start = body.find("{")
+    if start == -1:
+        return None, []
+    try:
+        parsed = json.loads(body[start:])
+    except (ValueError, TypeError):
+        return None, []
+    if not isinstance(parsed, dict):
+        return None, []
+    error = parsed.get("error")
+    if not isinstance(error, dict):
+        return None, []
+    status_message = error.get("message") if isinstance(error.get("message"), str) else None
+    details: list[str] = []
+    for detail in error.get("details") or []:
+        if not isinstance(detail, dict):
+            continue
+        for item in detail.get("errorDetails") or []:
+            if isinstance(item, dict) and isinstance(item.get("message"), str):
+                details.append(item["message"])
+    if not details and status_message:
+        details.append(status_message)
+    return status_message, details
+
+
+def is_category_not_applicable(body: str | None) -> bool:
+    """Whether Google refused a photo tag because it does not apply here.
+
+    Google allows only the tags that make sense for a location's business
+    type ("Photo tag 'product' does not apply to this location"), so a tag
+    can be valid for one location and rejected for another.
+    """
+    _, details = google_error_details(body)
+    return any("does not apply to this location" in d for d in details)
 
 
 @dataclass
@@ -1166,6 +1224,224 @@ class GoogleReviewsClient:
                 resp.status_code,
             )
         return (resp.json() or {}).get("verification") or {}
+
+
+    # ── Location media (gallery, profile, cover) ─────────────────
+
+    @staticmethod
+    def _normalize_parent(account_id: str, location_id: str) -> tuple[str, str, str]:
+        account = (account_id or "").strip()
+        location = (location_id or "").strip()
+        if not account:
+            raise GoogleReviewsError("account_id is required for GBP media", 400)
+        if not location:
+            raise GoogleReviewsError("location_id is required for GBP media", 400)
+        if "/" not in account:
+            account = f"accounts/{account}"
+        if "/" not in location:
+            location = f"locations/{location}"
+        return account, location, f"{account}/{location}"
+
+    async def list_media(
+        self,
+        account_id: str,
+        location_id: str,
+        *,
+        page_size: int = 100,
+        page_token: str | None = None,
+        category: str | None = None,
+    ) -> dict:
+        """List media items in a location's GBP gallery (v4).
+
+        Google's list endpoint only understands ``pageSize``/``pageToken`` -
+        it rejects any other query parameter, so a category filter is applied
+        here on the returned items instead of being sent upstream.
+
+        Pages are followed (bounded) because Google caps a page far below the
+        requested size: a location with 19 photos returns 10 and a
+        ``nextPageToken``, so a single page would silently hide half the
+        gallery from the merchant.
+        """
+        _, _, parent = self._normalize_parent(account_id, location_id)
+        size = max(1, min(int(page_size or 100), 2500))
+        items: list[dict] = []
+        next_token = page_token
+        total: int | None = None
+        for _ in range(MAX_MEDIA_PAGES):
+            params: dict[str, object] = {"pageSize": size}
+            if next_token:
+                params["pageToken"] = next_token
+            resp = await self._authed_request(
+                "GET", f"{GBP_REVIEWS_API}/{parent}/media", params=params,
+            )
+            if resp.status_code != 200:
+                raise GoogleReviewsError(
+                    f"list_media failed ({resp.status_code}): {resp.text[:300]}",
+                    resp.status_code,
+                )
+            page = resp.json() or {}
+            items.extend(m for m in (page.get("mediaItems") or []) if isinstance(m, dict))
+            if isinstance(page.get("totalMediaItemCount"), int):
+                total = page["totalMediaItemCount"]
+            next_token = page.get("nextPageToken") or None
+            if not next_token:
+                break
+        out: dict = {"mediaItems": items, "totalMediaItemCount": total if total is not None else len(items)}
+        if next_token:
+            out["nextPageToken"] = next_token
+        if category:
+            wanted = str(category).strip().upper()
+            out["mediaItems"] = [
+                m for m in items
+                if str((m.get("locationAssociation") or {}).get("category") or "").upper() == wanted
+            ]
+        return out
+
+    async def get_media(self, name: str) -> dict:
+        """Get one media item by full resource name."""
+        if not name or "/media/" not in str(name):
+            raise GoogleReviewsError("A full media resource name is required", 400)
+        resp = await self._authed_request("GET", f"{GBP_REVIEWS_API}/{name}")
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"get_media failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        return resp.json() or {}
+
+    async def delete_media(self, name: str) -> None:
+        """Delete one media item from the location's GBP gallery."""
+        if not name or "/media/" not in str(name):
+            raise GoogleReviewsError("A full media resource name is required", 400)
+        resp = await self._authed_request("DELETE", f"{GBP_REVIEWS_API}/{name}")
+        if resp.status_code not in (200, 204):
+            raise GoogleReviewsError(
+                f"delete_media failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+
+    async def create_location_media(
+        self,
+        account_id: str,
+        location_id: str,
+        *,
+        category: str = "ADDITIONAL",
+        source_url: str | None = None,
+        data_ref: str | None = None,
+        media_format: str = "PHOTO",
+        description: str | None = None,
+        fresh_data_ref: Callable[[], Awaitable[str]] | None = None,
+    ) -> dict:
+        """Create a GBP location media item. Provide source_url or data_ref.
+
+        Google only accepts the photo tags that apply to a location's
+        business type ("Photo tag 'product' does not apply to this
+        location"). When it refuses the tag, the photo is re-created under
+        ``ADDITIONAL`` - Google's catch-all bucket - instead of failing the
+        whole publish, and the response carries ``categoryFallback`` so the
+        caller can tell the merchant what happened.
+
+        ``fresh_data_ref`` uploads the bytes again when Google has already
+        consumed the first upload (a failed create can invalidate the
+        resource name).
+        """
+        _, _, parent = self._normalize_parent(account_id, location_id)
+        body: dict[str, object] = {
+            "mediaFormat": str(media_format or "PHOTO").upper(),
+            "locationAssociation": {"category": str(category or "ADDITIONAL").upper()},
+        }
+        # Google's MediaItem reference: a description can be set on a new
+        # media item "that is not a cover photo", so a COVER upload must not
+        # carry one. Profile and gallery photos accept it.
+        if description and str(category or "").strip().upper() != "COVER":
+            body["description"] = str(description)[:1000]
+        if data_ref:
+            body["dataRef"] = {"resourceName": data_ref}
+        elif source_url:
+            body["sourceUrl"] = source_url
+        else:
+            raise GoogleReviewsError(
+                "Either source_url or data_ref is required to create media", 400
+            )
+        resp = await self._authed_request(
+            "POST", f"{GBP_REVIEWS_API}/{parent}/media", json=body,
+        )
+        if resp.status_code not in (200, 201):
+            requested = str(body["locationAssociation"]["category"])
+            fallback_ok = requested not in _GALLERY_ONLY_CATEGORIES
+            if is_category_not_applicable(resp.text) and fallback_ok:
+                body["locationAssociation"] = {"category": "ADDITIONAL"}
+                resp = await self._authed_request(
+                    "POST", f"{GBP_REVIEWS_API}/{parent}/media", json=body,
+                )
+                if resp.status_code not in (200, 201) and fresh_data_ref is not None:
+                    # The rejected attempt may have consumed the uploaded
+                    # bytes; upload again and retry once with a fresh ref.
+                    body.pop("sourceUrl", None)
+                    body["dataRef"] = {"resourceName": await fresh_data_ref()}
+                    resp = await self._authed_request(
+                        "POST", f"{GBP_REVIEWS_API}/{parent}/media", json=body,
+                    )
+                if resp.status_code in (200, 201):
+                    data = resp.json() or {}
+                    data["categoryFallback"] = {
+                        "requested": requested,
+                        "used": "ADDITIONAL",
+                        "reason": "Google does not allow this photo tag for this location.",
+                    }
+                    return data
+            raise GoogleReviewsError(
+                f"create_media failed ({resp.status_code}): {resp.text[:2000]}",
+                resp.status_code,
+                body=resp.text,
+            )
+        return resp.json() or {}
+
+    async def start_media_upload(self, account_id: str, location_id: str) -> str:
+        """Start a media upload and return the resourceName for byte upload."""
+        _, _, parent = self._normalize_parent(account_id, location_id)
+        resp = await self._authed_request(
+            "POST", f"{GBP_REVIEWS_API}/{parent}/media:startUpload",
+        )
+        if resp.status_code not in (200, 201):
+            raise GoogleReviewsError(
+                f"start_media_upload failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        data = resp.json() or {}
+        ref = str(
+            data.get("resourceName")
+            or ((data.get("dataRef") or {}) if isinstance(data.get("dataRef"), dict) else {}).get("resourceName")
+            or ""
+        ).strip()
+        if not ref:
+            raise GoogleReviewsError("start_media_upload returned no resourceName", 502)
+        return ref
+
+    async def upload_media_bytes(
+        self, resource_name: str, data: bytes, content_type: str = "image/jpeg"
+    ) -> None:
+        """Upload raw bytes to a previously started GBP media upload.
+
+        Google documents ``?upload_type=media`` on the upload endpoint; the
+        camelCase spelling is kept as a fallback because the same service
+        accepts both.
+        """
+        base = f"https://mybusiness.googleapis.com/upload/v1/media/{resource_name}"
+        last: tuple[int, str] = (502, "")
+        for param in ("upload_type=media", "uploadType=media"):
+            resp = await self._authed_request(
+                "POST",
+                f"{base}?{param}",
+                extra_headers={"Content-Type": content_type or "application/octet-stream"},
+                content=data,
+            )
+            if resp.status_code in (200, 201):
+                return
+            last = (resp.status_code, resp.text[:300])
+        raise GoogleReviewsError(
+            f"upload_media_bytes failed ({last[0]}): {last[1]}", last[0]
+        )
 
 
 def parse_review_resource(review_id: str) -> tuple[str, str] | None:

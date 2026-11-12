@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
+import { CROP_EDITOR_BOX } from "@/lib/crop-image";
 import type { Dict } from "@/lib/i18n/en";
 
 type CropsDict = Dict["publish"]["crops"];
@@ -10,14 +11,14 @@ type CropsDict = Dict["publish"]["crops"];
  * Visual crop frame for the unified Publish previews.
  *
  * Same interaction grammar as the Instagram CropEditor (drag to pan,
- * slider to zoom, chips to pick the ratio) but preview-only: nothing is
- * exported, the final pixels get cut at publish time. Kept separate from
- * channels/instagram/CropEditor so the dashboard page never drags that
- * module's canvas/upload contract into a surface that deliberately has
- * none yet.
+ * slider to zoom, chips to pick the ratio). The frame only stores the crop
+ * state; lib/crop-image.ts bakes it into pixels at publish time, so the
+ * file a provider receives is the framing shown here. Kept separate from
+ * channels/instagram/CropEditor because that module pairs its editor with
+ * an upload contract this surface does not use.
  */
 
-const BOX = 200; // on-screen editor width, css px
+const BOX = CROP_EDITOR_BOX; // on-screen editor width, css px
 
 /**
  * The editor's on-screen box width. Previews render at a different size,

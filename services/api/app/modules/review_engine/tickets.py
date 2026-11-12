@@ -46,9 +46,16 @@ _TICKET_RE = re.compile(r"\bTK-(\d{1,9})\b", re.IGNORECASE)
 # Handoff codes are what a customer actually types on WhatsApp, read off a
 # screenshot by hand -- so no 0/O or 1/I, and no separators to mistype.
 # The alphabet itself is shared with the WhatsApp bridge (core.short_codes).
+#
+# New codes are minted at 8 characters (2^40). The resolvers accept 6 or 8:
+# codes already published on Google listings from before the hardening are
+# 6 characters and must keep resolving until their TTL rotates them.
 CODE_ALPHABET = _SHARED_ALPHABET
-CODE_LENGTH = 6
-_CODE_RE = re.compile(rf"^[A-HJ-NP-Z2-9]{{{CODE_LENGTH}}}$")
+CODE_LENGTH = 8
+_LEN_6 = 6
+_CODE_RE = re.compile(
+    rf"^(?:[A-HJ-NP-Z2-9]{{{_LEN_6}}}|[A-HJ-NP-Z2-9]{{{CODE_LENGTH}}})$"
+)
 
 
 def _normalize_code(raw: str | None) -> Optional[str]:
@@ -83,14 +90,60 @@ def handoff_code_expired(
     return expires_at <= (now or datetime.now(timezone.utc))
 
 
-# The wa.me prefill is "#K7M2QX", not the bare six characters. The marker is
-# load-bearing: "THANKS" and "PLEASE" are both six letters from the code
-# alphabet, so a bare-code match would attach a customer to whichever ticket
-# happened to own that word. At a million tenants that stops being theoretical.
-# A customer who types the bare code falls through to the ordinary new-enquiry
-# flow; the dashboard and the link both show the marked form, so that path is
-# for someone retyping from memory, not the normal journey.
-_CODE_TOKEN_RE = re.compile(rf"^#\s*([A-HJ-NP-Z2-9]{{{CODE_LENGTH}}})$")
+# The wa.me prefill is "#K7M2QX" (or "#ABCDEFGH2" for new codes), not the
+# bare characters. The marker is load-bearing: "THANKS" and "PLEASE" are both
+# six letters from the code alphabet, so a bare-code match would attach a
+# customer to whichever ticket happened to own that word. At a million tenants
+# that stops being theoretical. A customer who types the bare code falls
+# through to the ordinary new-enquiry flow; the dashboard and the link both
+# show the marked form, so that path is for someone retyping from memory, not
+# the normal journey. Both lengths are accepted so older published codes keep
+# resolving.
+_CODE_TOKEN_RE = re.compile(
+    rf"^#\s*([A-HJ-NP-Z2-9]{{{_LEN_6}}}|[A-HJ-NP-Z2-9]{{{CODE_LENGTH}}})$"
+)
+
+
+async def classify_handoff_code(
+    db: AsyncSession,
+    *,
+    tenant_id: str,
+    text: str | None = None,
+    handoff_codes: list[str] | None = None,
+) -> Optional[str]:
+    """Why a quoted code did NOT resolve: "expired", "used", or None.
+
+    Call this only after ``resolve_inbound`` returned None — a valid code
+    would have matched. It lets the reply tell the customer the link is no
+    longer active AND keep their complaint, instead of the generic "you
+    shared a code" dead-end.
+
+    Returns the first reason in code order; None when the code is unknown
+    (never minted, or another tenant's) or still valid.
+    """
+    from ..channels.models import ReviewIssue
+
+    candidates = handoff_codes if handoff_codes is not None else extract_handoff_codes(text)
+    now = datetime.now(timezone.utc)
+    for code in candidates:
+        canon = _normalize_code(code)
+        if canon is None:
+            continue
+        row = (
+            await db.execute(
+                select(ReviewIssue).where(
+                    ReviewIssue.tenant_id == tenant_id,
+                    ReviewIssue.handoff_code == canon,
+                )
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            continue
+        if handoff_code_expired(row.handoff_code_expires_at, now=now):
+            return "expired"
+        if row.handoff_code_used_at is not None:
+            return "used"
+    return None
 
 
 def extract_handoff_codes(text: str | None) -> list[str]:
@@ -356,6 +409,7 @@ async def resolve_inbound(
     tenant_id: str,
     text: str | None = None,
     handoff_codes: list[str] | None = None,
+    replay_key: str | None = None,
 ) -> Optional[InboundMatch]:
     """Find the issue an inbound message refers to, walking strongest-first.
 
@@ -377,6 +431,12 @@ async def resolve_inbound(
     marked-code extraction below is what makes the wa.me prefill actually
     resolve -- without it the customer taps the link, sends the code, and is
     re-interviewed from zero, which was the bug this rung existed to prevent.
+
+    Single-use redemption: a matched code is consumed on first use. A replay
+    of the SAME message (same ``replay_key`` — the WhatsApp wamid) still
+    resolves, so a Meta webhook redelivery never drops a real customer; a
+    different key (or no key) after consumption falls through to the ticket
+    rung.
     """
     from ..channels.models import ReviewIssue
 
@@ -403,6 +463,28 @@ async def resolve_inbound(
                 canon, tenant_id,
             )
             continue
+        if row.handoff_code_used_at is not None:
+            if replay_key and row.handoff_code_used_by_wamid == replay_key:
+                # Same message redelivered by the platform: allow the retry
+                # through without re-consuming. This is the replay carve-out.
+                return InboundMatch(issue=row, matched_by="handoff_code", raw=code)
+            logger.info(
+                "inbound quoted used handoff code %s (tenant=%s) -- "
+                "falling through to ticket number",
+                canon, tenant_id,
+            )
+            continue
+        # First redemption: consume the code. Marked with the spending message
+        # key when the platform gave us one (WhatsApp wamid).
+        row.handoff_code_used_at = now
+        if replay_key:
+            row.handoff_code_used_by_wamid = replay_key[:64]
+        db.add(row)
+        await db.flush()
+        logger.info(
+            "handoff code %s redeemed (tenant=%s) by %s — issue %s",
+            canon, tenant_id, replay_key or "<no-key>", row.id,
+        )
         return InboundMatch(issue=row, matched_by="handoff_code", raw=code)
 
     refs = extract_ticket_refs(text)

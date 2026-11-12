@@ -15,10 +15,9 @@ export type PlatformKey =
  * A publish "format" — one surface a post lands on.
  *
  * Meta: post / story / reel / status.
- * Google Business Profile: update / event / offer (the three post types
- * Google itself offers — an announcement, a dated event, a promotion).
- * Profile surfaces: profile / banner — changing the avatar or cover image
- * of an account rather than publishing into its feed.
+ * Google Business Profile: update / event / offer (local posts), gallery
+ * (add a photo to the location gallery in a chosen category), and the
+ * profile surfaces profile / banner (avatar / cover image).
  */
 export type PostMethod =
   | "post"
@@ -28,6 +27,7 @@ export type PostMethod =
   | "update"
   | "event"
   | "offer"
+  | "gallery"
   | "profile"
   | "banner";
 
@@ -48,6 +48,8 @@ export interface MediaState {
   url: string;
   fileName?: string;
   sizeBytes?: number;
+  width?: number;
+  height?: number;
   /** The original file when the media was picked locally — needed so the
    * composer can upload it to /api/v1/media/upload for a public URL. */
   file?: File | null;
@@ -65,7 +67,7 @@ export interface CropState {
   y: number;
 }
 
-export const MAX_MEDIA_MB = 200;
+export const MAX_MEDIA_MB = 25;
 
 export const DEFAULT_CROP: CropState = { key: "orig", zoom: 1, x: 0, y: 0 };
 
@@ -95,8 +97,39 @@ export const METHOD_META: Record<PostMethod, MethodMeta> = {
   update: { label: "Update", hint: "announcement on your business profile" },
   event: { label: "Event", hint: "dated event with a schedule" },
   offer: { label: "Promotion", hint: "offer, discount or coupon" },
+  gallery: { label: "Gallery", hint: "add a photo to location photos" },
   profile: { label: "Profile picture", hint: "1:1 · your avatar" },
   banner: { label: "Banner", hint: "16:9 · cover image" },
+};
+
+export const GALLERY_CATEGORIES = [
+  "EXTERIOR",
+  "INTERIOR",
+  "PRODUCT",
+  "AT_WORK",
+  "FOOD_AND_DRINK",
+  "MENU",
+  "COMMON_AREA",
+  "ROOMS",
+  "TEAMS",
+  "ADDITIONAL",
+] as const;
+
+/**
+ * The language of a Google post, as the BCP-47 code Google expects on a
+ * LocalPost, keyed by the app locale the merchant is writing in.
+ *
+ * Google documents `languageCode` on the post body and defaults it to
+ * "en-US"; a plain "en" would mark an Arabic or Urdu post as English.
+ */
+export const GOOGLE_POST_LANGUAGE: Record<string, string> = {
+  en: "en-US",
+  es: "es",
+  fr: "fr",
+  de: "de",
+  ar: "ar",
+  ur: "ur",
+  ch: "zh-CN",
 };
 
 /**
@@ -111,7 +144,7 @@ export const PLATFORM_METHODS: Record<PlatformKey, PostMethod[]> = {
   facebook: ["post", "story", "reel", "profile", "banner"],
   instagram: ["post", "story", "reel"],
   whatsapp: ["status", "profile"],
-  google_reviews: ["update", "event", "offer", "profile", "banner"],
+  google_reviews: ["update", "event", "offer", "gallery", "profile", "banner"],
   x: ["post"],
   tiktok: ["reel"],
   linkedin: ["post"],
@@ -147,6 +180,7 @@ const FEED_METHODS = new Set<PostMethod>([
   "update",
   "event",
   "offer",
+  "gallery",
 ]);
 
 export function isFeedMethod(method: PostMethod): boolean {
@@ -156,9 +190,9 @@ export function isFeedMethod(method: PostMethod): boolean {
 export function methodsFor(platform: PlatformKey, mediaType: MediaKind): PostMethod[] {
   const base = PLATFORM_METHODS[platform] ?? [];
   if (mediaType === "video") {
-    // An avatar or a cover image is still an image — offering them for a
+    // An avatar/cover/gallery item is an image — offering them for a
     // video would queue a job the provider must reject.
-    return base.filter((m) => m !== "profile" && m !== "banner");
+    return base.filter((m) => m !== "profile" && m !== "banner" && m !== "gallery");
   }
   // A reel needs a video to be a reel.
   return base.filter((m) => m !== "reel");
@@ -169,6 +203,7 @@ export function defaultCropFor(platform: PlatformKey, method: PostMethod): CropS
   // fixed ratio rather than the platform's feed crop.
   if (method === "profile") return { key: "1:1", zoom: 1, x: 0, y: 0 };
   if (method === "banner") return { key: "16:9", zoom: 1, x: 0, y: 0 };
+  if (method === "gallery") return { key: "orig", zoom: 1, x: 0, y: 0 };
   // Meta story/reel/status formats are 9:16; every other method uses the
   // platform's post crop (Google "Update"/"Event"/"Promotion" all use the
   // same landscape frame).

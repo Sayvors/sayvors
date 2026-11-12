@@ -2417,6 +2417,7 @@ const en = {
       update: { label: "Update", hint: "announcement on your business profile" },
       event: { label: "Event", hint: "dated event with a schedule" },
       offer: { label: "Promotion", hint: "offer, discount or coupon" },
+      gallery: { label: "Gallery", hint: "add a photo to location photos" },
       profile: { label: "Profile picture", hint: "1:1 · your avatar" },
       banner: { label: "Banner", hint: "16:9 · cover image" },
     },
@@ -2497,6 +2498,11 @@ const en = {
       ctaTypePh: "No button",
       ctaUrlPh: "https://…",
       ctaHint: "Shown on Google posts. Offers use this link instead of a button, and Call never needs a link.",
+      couponLabel: "Coupon code",
+      couponPh: "SAVE20",
+      couponHint: "Optional. Customers type this code to get the discount.",
+      termsLabel: "Terms and conditions",
+      termsPh: "Valid for new customers only. Cannot be combined with other discounts.",
       ctaTypes: {
         book: "Book",
         order: "Order",
@@ -2567,11 +2573,15 @@ const en = {
       removeOrderErr: "The removal date must be after the publish date.",
       fileGoneErr: "The picked file is no longer available — attach it again.",
       uploadEmptyErr: "Upload succeeded but no URL came back — try a different file.",
+      // Shown when the browser cannot rasterise the crop (a pasted image on
+      // another origin can refuse to be read into a canvas).
+      cropFallback: "This image could not be cropped in the browser — it was published uncropped.",
+      cropVideoFallback: "Video is published uncropped — the crop frame is a preview.",
       publishFailed: "Publishing failed — try again.",
     },
     confirm: {
       title: "Review before publishing",
-      dialogAria: "Review before publishing dialog",      scheduledSub: "This is a scheduled post.",
+      dialogAria: "Review before publishing dialog",      scheduledSub: "Will go live {date}.",
       nowSub: "One push to every destination listed.",
       closeAria: "Close review",
       mediaVideo: "Video",

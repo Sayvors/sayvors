@@ -16,6 +16,8 @@ tenant style:
 import json
 import logging
 
+from .chat_voice import clean_reply
+
 logger = logging.getLogger(__name__)
 
 # Extensible string enum: new styles join the tuple (and the API pattern)
@@ -37,8 +39,12 @@ _SPLIT_SYSTEM_PROMPT = (
     "- Split only where a person naturally would: a greeting, a new thought, "
     "a question, a short list. Most replies are fine as ONE message — return "
     "one element when so.\n"
-    "- Reuse the reply's exact wording. Never rewrite, add, translate or "
-    "reorder content — only move the message boundaries.\n"
+    "- You may LIGHTLY tighten the wording for chat: use contractions "
+    "('it's', 'we'll'), drop formal openers ('Dear customer', 'Hello "
+    "there') and filler ('kindly', 'please note'). This is touch-up only.\n"
+    "- Never change facts, numbers, names, prices, promises, dates or the "
+    "meaning. Never add information that is not in the reply. When in "
+    "doubt, keep the original wording.\n"
     "- No message may be a bare fragment like 'ok' or a single word unless "
     "the reply itself contains it.\n"
     "- Plain text only (WhatsApp): no markdown, no numbering the split.\n"
@@ -55,15 +61,23 @@ def normalize_response_style(value: str | None) -> str:
     return value if value in RESPONSE_STYLES else DEFAULT_RESPONSE_STYLE
 
 
-def concise_renderer(response: str) -> list[str]:
-    """One clear message per response — the historical behaviour."""
-    text = (response or "").strip()
+def concise_renderer(response: str, lint_enabled: bool = True) -> list[str]:
+    """One clear message per response — the historical behaviour.
+
+    The deterministic linter runs here too, so every style gets the same
+    machine-tell cleanup before it reaches the customer. ``lint_enabled``
+    is the per-tenant rollout flag (false = raw text, for controlled
+    rollback).
+    """
+    text = clean_reply(response) if lint_enabled else (response or "").strip()
     return [text] if text else []
 
 
-async def human_renderer(response: str, tenant_id: str, db) -> list[str]:
+async def human_renderer(
+    response: str, tenant_id: str, db, lint_enabled: bool = True
+) -> list[str]:
     """Split into 1..N natural messages; ALWAYS falls back to [response]."""
-    text = (response or "").strip()
+    text = clean_reply(response) if lint_enabled else (response or "").strip()
     if not text:
         return []
     try:
@@ -81,13 +95,18 @@ async def human_renderer(response: str, tenant_id: str, db) -> list[str]:
 
 
 async def render_response(
-    style: str, response: str, tenant_id: str, db
+    style: str, response: str, tenant_id: str, db,
+    lint_enabled: bool = True,
 ) -> list[str]:
     """The spec's router: style in, sendable messages out. The only place
-    the tenant style is consulted — agent reasoning never sees it."""
+    the tenant style is consulted — agent reasoning never sees it.
+
+    ``lint_enabled`` is the per-tenant rollout knob for the deterministic
+    linter (Phase 2); false bypasses it entirely.
+    """
     if normalize_response_style(style) == "human":
-        return await human_renderer(response, tenant_id, db)
-    return concise_renderer(response)
+        return await human_renderer(response, tenant_id, db, lint_enabled)
+    return concise_renderer(response, lint_enabled)
 
 
 async def _ask_split(tenant_id: str, db, response_text: str) -> str:
@@ -129,6 +148,13 @@ def _parse_message_list(raw: str | None) -> list[str]:
 def _looks_lossy(original: str, messages: list[str]) -> bool:
     """True when the split dropped most of the reply's text — the model
     summarized instead of only moving boundaries, so we send the original
-    instead of a shortened answer."""
+    instead of a shortened answer.
+
+    Also flags suspicious growth (combined length far above the original):
+    the edit tier may tighten, never expand — expansion means the model
+    added content, which is a hallucination risk we refuse to send.
+    """
     kept = sum(len(m) for m in messages)
-    return kept < len(original) // 3
+    if kept < len(original) // 3:
+        return True
+    return kept > len(original) * 3 // 2

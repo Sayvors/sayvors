@@ -135,7 +135,7 @@ export default function CustomizeLocationPage() {
         body: form,
       })) as { image_url?: string };
       if (!uploadedFile.image_url) throw new Error("The upload did not return an image URL.");
-      await apiFetch("/api/v1/media", {
+      await apiFetch("/api/v1/media/", {
         method: "POST",
         body: JSON.stringify({
           listing_id: listing,

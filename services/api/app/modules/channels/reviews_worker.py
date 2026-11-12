@@ -22,7 +22,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1255,6 +1255,16 @@ async def _handle_fetched_review(
         from ..review_engine.graph import run_review_pipeline
         from ..channels.meta.lead_engine import normalize_lead_settings
 
+        # Serialize per-review processing across worker replicas so only one
+        # pays for the classification LLM call. Transaction-scoped advisory
+        # lock; releases on commit at the end of _handle_fetched_review. Only
+        # available on PostgreSQL; SQLite (tests) has no advisory locks and
+        # processes reviews single-threaded, so skip there.
+        if db.get_bind().dialect.name == "postgresql":
+            await db.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:k)::bigint)"),
+                {"k": f"review:{channel.id}:{review.review_id}"},
+            )
         existing = await db.execute(
             select(ReviewIssue).where(
                 ReviewIssue.channel_id == channel.id,
@@ -1311,6 +1321,16 @@ async def _handle_fetched_review(
                 await _announce_new_issue(
                     db, tenant_id=channel.user_id, outcome=outcome,
                 )
+    except IntegrityError:
+        # Another replica won the unique (channel_id, review_id) index.
+        # Treat as "already handled": rollback our (empty) transaction slice
+        # and skip. No LLM spend was duplicated because the advisory lock
+        # above serializes, but the index is the defence-in-depth backstop.
+        await db.rollback()
+        logger.info(
+            "review issue for %s already created by another worker; skipping",
+            review.review_id,
+        )
     except Exception as e:
         logger.warning("review issue classification failed for %s: %s", review.review_id, e)
     if await _adopt_existing_reply(db, channel, review):

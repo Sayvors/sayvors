@@ -6,6 +6,7 @@ import { INK, INK2 } from "@/components/channels/instagram/ui";
 import { apiFetch } from "@/lib/api-rag";
 import { externalAssetIdFor } from "@/lib/publish-targets";
 import { checkWindow, minLocalInput } from "@/lib/publish-schedule";
+import { cropSignature, exportCroppedImage } from "@/lib/crop-image";
 import MediaSink from "./MediaSink";
 import DestinationSelector from "./DestinationSelector";
 import DestinationPreview from "./DestinationPreview";
@@ -14,6 +15,8 @@ import CropFrame from "./CropFrame";
 import FormatThumb from "./FormatThumb";
 import {
   DEFAULT_CROP,
+  GALLERY_CATEGORIES,
+  GOOGLE_POST_LANGUAGE,
   PLATFORM_META,
   cropKeyFor,
   defaultCropFor,
@@ -34,13 +37,34 @@ function fill(s: string, vars: Record<string, string | number>): string {
   );
 }
 
+/**
+ * A short stable token for a request group, used as the idempotency suffix.
+ *
+ * The group is identified by its crop plus, for a promotion, the coupon and
+ * terms. Those fields alone can reach 364 characters while the publish API
+ * caps `idempotency_key` at 200, so the raw group key cannot be sent. FNV-1a
+ * is deterministic, so a retry of the same draft produces the same token and
+ * the backend still collapses it onto the earlier job. Two different groups
+ * can only collide on the same platform/asset/method if they are the same
+ * request, so a collision cannot drop a destination.
+ */
+function groupToken(key: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < key.length; i += 1) {
+    hash ^= key.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+}
+
 type MethodDict = Dict["publish"]["methods"];
 type ComposerDict = Dict["publish"]["composer"];
 
 /** Formats that cannot be published without an image. Google's What's New /
- * Event / Offer and Meta feed posts allow a text-only post. */
+ * Event / Offer and Meta feed posts allow a text-only post. Gallery,
+ * profile and banner are image surfaces. */
 const MEDIA_ONLY_METHODS = new Set<string>([
-  "story", "reel", "status", "profile", "banner",
+  "story", "reel", "status", "gallery", "profile", "banner",
 ]);
 
 type CtaValue = "book" | "order" | "shop" | "learn_more" | "sign_up" | "call";
@@ -67,7 +91,7 @@ const CTA_VALUES: CtaValue[] = [
  */
 
 const FIELD =
-  "rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]";
+  "clay-input px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]";
 
 // ── AI video creator (UI-only, HTML-based, no backend) ─────────────────
 function sanitizeName(s: string): string {
@@ -147,7 +171,7 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
         <select
           value={business}
           onChange={(e) => setBusiness(e.target.value)}
-          className="w-full rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]"
+          className="w-full clay-input px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]"
         >
           {businessOptions.map((b) => (
             <option key={b} value={b}>{b}</option>
@@ -159,7 +183,7 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
             value={business}
             onChange={(e) => setBusiness(e.target.value)}
             placeholder={pc.aiBusinessPh}
-            className="mt-2 w-full rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]"
+            className="mt-2 w-full clay-input px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]"
           />
         )}
       </div>
@@ -171,17 +195,17 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
           <div>
             <span className={`block text-[10px] ${INK2} mb-1`}>{pc.aiPrimary}</span>
             <input type="color" value={primary} onChange={(e) => setPrimary(e.target.value)}
-              className="h-9 w-full cursor-pointer rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
+              className="h-9 w-full cursor-pointer rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
           </div>
           <div>
             <span className={`block text-[10px] ${INK2} mb-1`}>{pc.aiAccent}</span>
             <input type="color" value={accent} onChange={(e) => setAccent(e.target.value)}
-              className="h-9 w-full cursor-pointer rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
+              className="h-9 w-full cursor-pointer rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
           </div>
           <div>
             <span className={`block text-[10px] ${INK2} mb-1`}>{pc.aiBg}</span>
             <input type="color" value={bg} onChange={(e) => setBg(e.target.value)}
-              className="h-9 w-full cursor-pointer rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
+              className="h-9 w-full cursor-pointer rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
           </div>
         </div>
         <div className="mt-2 flex flex-wrap gap-1.5">
@@ -204,9 +228,8 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
       </div>
 
       {/* file name */}
-      <div className={`rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] px-3 py-2 text-[11px] ${INK2}`}>
+      <div className={`rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] px-3 py-2 text-[11px] ${INK2}`}>
         {fill(pc.aiFile, { name: fileName })}
-        <span className="ml-1 opacity-60">{fill(pc.aiFileSaved, { name: fileName })}</span>
       </div>
 
       {/* actions */}
@@ -214,14 +237,14 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
         <button
           type="button"
           onClick={generate}
-          className="w-full rounded-[10px] bg-[var(--ui-ink)] px-3 py-2 text-[12px] font-bold text-[var(--ui-on-ink)] transition hover:opacity-90 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+          className="w-full clay-btn-primary px-3 py-2 text-[12px] font-bold text-[var(--ui-on-ink)] transition hover:opacity-90 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
         >
           {pc.aiCreate}
         </button>
       </div>
 
       {/* video player / preview */}
-      <div className="overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-sunken)]">
+      <div className="overflow-hidden rounded-[24px] border border-[var(--ui-line)] bg-[var(--ui-sunken)]">
         <div className="flex items-center gap-2 border-b border-[var(--ui-line)] px-3 py-2">
           <span className={`text-[11px] font-bold uppercase tracking-widest ${INK2}`}>{pc.aiPreview}</span>
           <span className={`ml-auto text-[10px] ${INK2}`}>{generated ? pc.aiReady : pc.aiEmpty}</span>
@@ -264,7 +287,7 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
         type="button"
         disabled
         title={fill(pc.aiPublishSoonTitle, { name: business })}
-        className="w-full rounded-[10px] border border-dashed border-[var(--ui-line-strong)] bg-[var(--ui-sunken)] px-3 py-2 text-[12px] font-semibold text-[var(--ui-ink-2)] opacity-60 cursor-not-allowed"
+        className="w-full rounded-[16px] border border-dashed border-[var(--ui-line-strong)] bg-[var(--ui-sunken)] px-3 py-2 text-[12px] font-semibold text-[var(--ui-ink-2)] opacity-60 cursor-not-allowed"
       >
         {pc.aiPublishSoon}
       </button>
@@ -275,10 +298,18 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
 export default function PublishComposer({
   onPublished,
   onCancel,
+  onNotice,
   initialScheduleDate,
 }: {
   onPublished?: () => void;
   onCancel?: () => void;
+  /**
+   * Told about anything the merchant must know after a successful publish -
+   * today, that Google filed a photo under a different category. The composer
+   * closes on success, so the message has to travel to the page that opened
+   * it, otherwise it is never seen.
+   */
+  onNotice?: (text: string) => void;
   initialScheduleDate?: string | null;
 }) {
   // ── Destinations ─────────────────────────────────────────────────
@@ -323,6 +354,14 @@ export default function PublishComposer({
   // ── Publishing ──────────────────────────────────────────────────
   const [publishing, setPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
+  /**
+   * The current publish attempt of this draft. The key stays the same
+   * across retries so a partial failure cannot publish the same post twice;
+   * galleryDone records the locations that already received the photo.
+   */
+  const publishAttemptRef = useRef<{ key: string; galleryDone: Set<string> } | null>(null);
+  /** Notices about photos Google filed under a different category. */
+  const [galleryFallbacks, setGalleryFallbacks] = useState<string[]>([]);
 
   // ── Schedule ────────────────────────────────────────────────────
   const [scheduleOn, setScheduleOn] = useState(false);
@@ -357,14 +396,24 @@ export default function PublishComposer({
   const [modalCtx, setModalCtx] = useState<{ targetId: string; method: PostMethod } | null>(null);
   /** draft crop being edited in the modal (committed on Save) */
   const [draftCrop, setDraftCrop] = useState<CropState>(DEFAULT_CROP);
+  const [draftGalleryCategory, setDraftGalleryCategory] = useState<string>("EXTERIOR");
+  /** Coupon code + terms of a Promotion (offer) post, per destination. */
+  const [offerDetails, setOfferDetails] = useState<
+    Record<string, { coupon: string; terms: string }>
+  >({});
+  const [draftCoupon, setDraftCoupon] = useState("");
+  const [draftTerms, setDraftTerms] = useState("");
   /** formats that have been explicitly saved */
   const [configured, setConfigured] = useState<Set<string>>(new Set());
+  /** Gallery category per destination+format (gallery only). */
+  const [galleryCategories, setGalleryCategories] = useState<Record<string, string>>({});
 
   /** Per-destination chosen formats */
   const [formats, setFormats] = useState<Record<string, PostMethod[]>>({});
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [aiOpen, setAiOpen] = useState(false);
   const { t: tr, locale } = useI18n();
   const pc: ComposerDict = tr.publish.composer;
   const methods = tr.publish.methods as MethodDict;
@@ -426,9 +475,12 @@ export default function PublishComposer({
     const nextList = wasOn ? cur.filter((x) => x !== m) : [...cur, m];
     setFormats((prev) => ({ ...prev, [t.id]: nextList }));
     if (!wasOn) {
-      // seed crop default if not present
+      // seed crop/defaults if not present
       const key = cropKeyFor(t.id, m);
       setCrops((prev) => (prev[key] ? prev : { ...prev, [key]: defaultCropFor(t.platform, m) }));
+      if (m === "gallery") {
+        setGalleryCategories((prev) => (prev[key] ? prev : { ...prev, [key]: "EXTERIOR" }));
+      }
     }
   };
 
@@ -447,18 +499,21 @@ export default function PublishComposer({
       feed.forEach((m) => {
         const key = cropKeyFor(t.id, m);
         setCrops((prev) => (prev[key] ? prev : { ...prev, [key]: defaultCropFor(t.platform, m) }));
+        if (m === "gallery") {
+          setGalleryCategories((prev) => (prev[key] ? prev : { ...prev, [key]: "EXTERIOR" }));
+        }
       });
     }
   };
 
   // ── Media blob lifecycle ────────────────────────────────────────
-  const pickMedia = (type: "image" | "video", url: string, fileName?: string, sizeBytes?: number, file?: File) => {
+  const pickMedia = (type: "image" | "video", url: string, fileName?: string, sizeBytes?: number, file?: File, width?: number, height?: number) => {
     if (blobRef.current && blobRef.current !== url) {
       URL.revokeObjectURL(blobRef.current);
     }
     if (url.startsWith("blob:")) blobRef.current = url;
     else blobRef.current = null;
-    setMedia({ type, url, fileName, sizeBytes, file: file ?? null });
+    setMedia({ type, url, fileName, sizeBytes, width, height, file: file ?? null });
   };
 
   const clearMedia = () => {
@@ -474,18 +529,33 @@ export default function PublishComposer({
   }, []);
 
   // ── Modal open/close ────────────────────────────────────────────
+  const findTargetById = (id: string) =>
+    targets.find((x) => x.id === id) ?? googleTargets.find((x) => x.id === id) ?? null;
+
   const openConfig = (t: PublishTarget, m: PostMethod) => {
     const key = cropKeyFor(t.id, m);
     setDraftCrop(crops[key] ?? defaultCropFor(t.platform, m));
+    setDraftGalleryCategory(galleryCategories[key] ?? "EXTERIOR");
+    setDraftCoupon(offerDetails[key]?.coupon ?? "");
+    setDraftTerms(offerDetails[key]?.terms ?? "");
     setModalCtx({ targetId: t.id, method: m });
   };
 
   const saveConfig = () => {
     if (!modalCtx) return;
-    const t = targets.find((x) => x.id === modalCtx.targetId);
+    const t = findTargetById(modalCtx.targetId);
     if (!t) return;
     const key = cropKeyFor(modalCtx.targetId, modalCtx.method);
     setCrops((prev) => ({ ...prev, [key]: draftCrop }));
+    if (modalCtx.method === "gallery") {
+      setGalleryCategories((prev) => ({ ...prev, [key]: draftGalleryCategory }));
+    }
+    if (modalCtx.method === "offer") {
+      setOfferDetails((prev) => ({
+        ...prev,
+        [key]: { coupon: draftCoupon.trim(), terms: draftTerms.trim() },
+      }));
+    }
     setConfigured((prev) => new Set(prev).add(key));
     setModalCtx(null);
   };
@@ -530,6 +600,17 @@ export default function PublishComposer({
     if (confirmItems.length === 0) {
       setNotice(pc.needDest);
       return;
+    }
+    if (media && media.type === "image" && media.width && media.height) {
+      const googleSelected = confirmItems.some(({ target }) => target.platform === "google_reviews");
+      if (googleSelected && (media.width < 250 || media.height < 250)) {
+        setNotice("That image is below Google's 250×250px minimum. Pick a larger photo.");
+        return;
+      }
+      if (googleSelected && media.sizeBytes && media.sizeBytes > 5 * 1024 * 1024) {
+        setNotice("Google accepts photos up to 5MB. Pick a smaller file or compress it.");
+        return;
+      }
     }
     setNotice(null);
     setPublishError(null);
@@ -583,35 +664,239 @@ export default function PublishComposer({
         }
       }
 
-      const batchId = crypto.randomUUID();
-      // One idempotency key per attempt so a retry (network drop, 500) never
-      // double-posts: the backend keys jobs as key:platform:method.
-      const destinations = confirmItems.map(({ target: t, methods }) => ({
-        platform: t.platform,
-        external_asset_id: externalAssetIdFor(t) as string,
-        methods,
-      }));
+      // Gallery is published through the location-media API (photos added to
+      // the GBP gallery with a chosen category). Everything else stays on the
+      // unified publish jobs pipeline.
+      const gallerySelections = confirmItems.flatMap(({ target, methods }) =>
+        methods.includes("gallery")
+          ? [
+              {
+                target,
+                category:
+                  galleryCategories[cropKeyFor(target.id, "gallery")] || "EXTERIOR",
+                crop:
+                  crops[cropKeyFor(target.id, "gallery")] ??
+                  defaultCropFor(target.platform, "gallery"),
+              },
+            ]
+          : []
+      );
 
-      await apiFetch("/api/v1/channels/publish", {
-        method: "POST",
-        body: JSON.stringify({
-          media_url: mediaUrl,
-          media_key: mediaKey,
-          media_type: mediaType,
-          caption,
-          description,
-          cta_type: ctaType || null,
-          cta_url:
-            ctaType && ctaType !== "call" ? ctaUrl.trim() || null : null,
-          scheduled_at: scheduleOn && scheduleAt ? new Date(scheduleAt).toISOString() : null,
-          delete_at: removeOn && removeAt ? new Date(removeAt).toISOString() : null,
-          start_date: startDate ? new Date(startDate).toISOString() : null,
-          end_date: endDate ? new Date(endDate).toISOString() : null,
-          destinations,
-          batch_id: batchId,
-          idempotency_key: `${batchId}:${Date.now()}`,
-        }),
-      });
+      // The crop editor is a CSS transform, so the file must be rasterised
+      // before it is uploaded or the publisher ships the whole original.
+      // One upload per distinct crop, reused by every format that shares it.
+      const notices = new Set<string>();
+      const cropUploads = new Map<string, { url: string | null; key: string | null }>();
+      const mediaForCrop = async (crop: CropState) => {
+        if (!media || crop.key === "orig") {
+          return { url: mediaUrl, key: mediaKey };
+        }
+        if (mediaType === "video") {
+          // A canvas cannot cut a video without dropping its audio track.
+          notices.add(pc.cropVideoFallback);
+          return { url: mediaUrl, key: mediaKey };
+        }
+        const sig = cropSignature(crop);
+        const cached = cropUploads.get(sig);
+        if (cached) return cached;
+
+        let out = { url: mediaUrl, key: mediaKey };
+        try {
+          const file = await exportCroppedImage(
+            { url: mediaUrl ?? media.url, file: media.file, type: mediaType },
+            crop,
+          );
+          if (file) {
+            const form = new FormData();
+            form.append("file", file);
+            const up = await apiFetch("/api/v1/media/upload", { method: "POST", body: form });
+            if (!up.image_url) throw new Error(pc.uploadEmptyErr);
+            out = { url: up.image_url, key: up.key ?? null };
+          }
+        } catch {
+          // A pasted image on another origin can refuse to be read into a
+          // canvas. Publishing the original beats failing the whole draft,
+          // but the merchant is told the crop was not applied.
+          notices.add(pc.cropFallback);
+        }
+        cropUploads.set(sig, out);
+        return out;
+      };
+
+      // One idempotency key per draft, reused across retries: the backend
+      // keys jobs as key:platform:asset:method, so a retry after a partial
+      // failure must not queue a second copy of the same post.
+      if (!publishAttemptRef.current) {
+        publishAttemptRef.current = {
+          key: crypto.randomUUID(),
+          galleryDone: new Set<string>(),
+        };
+      }
+      const attempt = publishAttemptRef.current;
+
+      // Two things vary per request: the crop (each format bakes its own
+      // file) and, for a promotion, the coupon/terms (they live in the post
+      // body). Grouping by both is what lets one draft publish a 1:1 avatar,
+      // a 16:9 cover and an uncropped update without shipping one file to
+      // all of them.
+      type PostDestination = {
+        platform: string;
+        external_asset_id: string;
+        methods: PostMethod[];
+      };
+      const groups = new Map<
+        string,
+        {
+          destinations: PostDestination[];
+          coupon: string;
+          terms: string;
+          crop: CropState;
+        }
+      >();
+      for (const item of confirmItems) {
+        const methods = item.methods.filter((m) => m !== "gallery");
+        if (methods.length === 0) continue;
+        const details = offerDetails[cropKeyFor(item.target.id, "offer")];
+        const assetId = externalAssetIdFor(item.target) as string;
+        for (const method of methods) {
+          const crop =
+            crops[cropKeyFor(item.target.id, method)] ??
+            defaultCropFor(item.target.platform, method);
+          const offerSig =
+            method === "offer"
+              ? `${details?.coupon ?? ""}|${details?.terms ?? ""}`
+              : "";
+          const groupKey = `${cropSignature(crop)}::${offerSig}`;
+          let group = groups.get(groupKey);
+          if (!group) {
+            group = {
+              destinations: [],
+              coupon: details?.coupon ?? "",
+              terms: details?.terms ?? "",
+              crop,
+            };
+            groups.set(groupKey, group);
+          }
+          const existing = group.destinations.find(
+            (d) => d.platform === item.target.platform && d.external_asset_id === assetId,
+          );
+          if (existing) existing.methods.push(method);
+          else
+            group.destinations.push({
+              platform: item.target.platform,
+              external_asset_id: assetId,
+              methods: [method],
+            });
+        }
+      }
+
+      for (const [groupKey, group] of groups) {
+        const variant = await mediaForCrop(group.crop);
+        await apiFetch("/api/v1/channels/publish", {
+          method: "POST",
+          body: JSON.stringify({
+            media_url: variant.url,
+            media_key: variant.key,
+            media_type: mediaType,
+            caption,
+            description,
+            cta_type: ctaType || null,
+            cta_url:
+              ctaType && ctaType !== "call" ? ctaUrl.trim() || null : null,
+            scheduled_at: scheduleOn && scheduleAt ? new Date(scheduleAt).toISOString() : null,
+            delete_at: removeOn && removeAt ? new Date(removeAt).toISOString() : null,
+            start_date: startDate ? new Date(startDate).toISOString() : null,
+            end_date: endDate ? new Date(endDate).toISOString() : null,
+            coupon_code: group.coupon || null,
+            terms_conditions: group.terms || null,
+            // Google labels the post with the language the merchant wrote
+            // it in, so an Arabic post is not published as English.
+            language_code: GOOGLE_POST_LANGUAGE[locale] ?? "en-US",
+            destinations: group.destinations,
+            batch_id: attempt.key,
+            idempotency_key: `${attempt.key}:${groupToken(groupKey)}`,
+          }),
+        });
+      }
+
+      // A gallery photo that fails must not roll back the posts that already
+      // went out, and must not stop the other locations: each destination is
+      // reported on its own.
+      // A gallery photo can carry a crop too (a square product shot, say).
+      const galleryCrops = new Map<string, File | null>();
+      const croppedGalleryFile = async (crop: CropState): Promise<File | null> => {
+        if (!media || crop.key === "orig" || mediaType === "video") return null;
+        const sig = cropSignature(crop);
+        if (galleryCrops.has(sig)) return galleryCrops.get(sig) ?? null;
+        let file: File | null = null;
+        try {
+          file = await exportCroppedImage(
+            { url: mediaUrl ?? media.url, file: media.file, type: mediaType },
+            crop,
+          );
+        } catch {
+          notices.add(pc.cropFallback);
+        }
+        galleryCrops.set(sig, file);
+        return file;
+      };
+
+      const galleryErrors: string[] = [];
+      const fallbacks: string[] = [];
+      for (const g of gallerySelections) {
+        if (!media && !mediaUrl) throw new Error(pc.needMedia);
+        const channelId = g.target.id.startsWith("google:") ? g.target.id.slice(7) : g.target.id;
+        // Already published on an earlier attempt of this same draft.
+        if (attempt.galleryDone.has(channelId)) continue;
+        const form = new FormData();
+        form.append("category", g.category);
+        if (caption) form.append("description", caption);
+        const cropped = await croppedGalleryFile(g.crop);
+        if (cropped) {
+          form.append("file", cropped);
+        } else if (media?.file) {
+          form.append("file", media.file);
+        } else if (media?.url && media.url.startsWith("blob:")) {
+          throw new Error(pc.fileGoneErr);
+        } else if (mediaUrl) {
+          // Direct byte upload path: backend fetches and uploads bytes to Google.
+          form.append("source_url", mediaUrl);
+        } else {
+          throw new Error(pc.needMedia);
+        }
+        try {
+          const res = await apiFetch(`/api/v1/channels/${encodeURIComponent(channelId)}/google-media`, {
+            method: "POST",
+            body: form,
+          });
+          attempt.galleryDone.add(channelId);
+          const fb = res?.categoryFallback;
+          if (fb?.requested && fb.requested !== fb.used) {
+            fallbacks.push(
+              `${g.target.name}: Google does not allow the ${String(fb.requested).replace(/_/g, " ")} photo tag for this location — published as ${String(fb.used).replace(/_/g, " ")} instead.`,
+            );
+          }
+        } catch (e) {
+          galleryErrors.push(
+            `${g.target.name}: ${e instanceof Error ? e.message : pc.publishFailed}`,
+          );
+        }
+      }
+
+      // Crop fallbacks and category fallbacks are both things the merchant
+      // must hear about, so they share one banner.
+      const allNotices = [...notices, ...fallbacks];
+      if (galleryErrors.length) {
+        // The draft stays open so the merchant can pick another category and
+        // retry; the posts are not re-queued (same idempotency key).
+        setPublishError(galleryErrors.join(" · "));
+        setGalleryFallbacks(allNotices);
+        return;
+      }
+      if (allNotices.length) {
+        setGalleryFallbacks(allNotices);
+        onNotice?.(allNotices.join(" "));
+      }
 
       setConfirmOpen(false);
       clearMedia();
@@ -626,6 +911,10 @@ export default function PublishComposer({
       setStartDate("");
       setEndDate("");
       setFormats({});
+      setGalleryCategories({});
+      setOfferDetails({});
+      // The draft is done: a new publish starts a new attempt.
+      publishAttemptRef.current = null;
       onPublished?.();
     } catch (e) {
       setPublishError(e instanceof Error ? e.message : pc.publishFailed);
@@ -635,7 +924,7 @@ export default function PublishComposer({
   };
 
   // ── What's being edited (mirrors) ───────────────────────────────
-  const activeTarget = modalCtx ? targets.find((t) => t.id === modalCtx.targetId) ?? null : null;
+  const activeTarget = modalCtx ? findTargetById(modalCtx.targetId) : null;
   // While modal is open, mirror the draft; otherwise last configured
   const mirrorTarget = modalCtx ? activeTarget : null;
   const mirrorMethod = modalCtx ? modalCtx.method : null;
@@ -663,7 +952,7 @@ export default function PublishComposer({
   };
 
   // The modal target + method
-  const modalTarget = modalCtx ? targets.find((t) => t.id === modalCtx.targetId) ?? null : null;
+  const modalTarget = modalCtx ? findTargetById(modalCtx.targetId) : null;
 
   return (
     <div className="flex h-full flex-col">
@@ -693,7 +982,7 @@ export default function PublishComposer({
           {/* Below lg the wrappers are display:contents, so the sections
               become one ordered column: 1 → 2 → 3 → formats → 4 → preview. */}
           <div className="contents lg:col-start-1 lg:block lg:space-y-5">
-          <section aria-labelledby="publish-media-h" className="ui-panel order-1 bg-[var(--ui-surface)] p-4 sm:p-5">
+          <section aria-labelledby="publish-media-h" className="clay-panel order-1 bg-[var(--ui-surface)] p-4 sm:p-5">
             <h2 id="publish-media-h" className={`text-[14px] font-bold ${INK}`}>
               {pc.stepMedia}
             </h2>
@@ -701,9 +990,14 @@ export default function PublishComposer({
               {pc.mediaSub}
             </p>
             <MediaSink media={media} onPick={pickMedia} onClear={clearMedia} thumb={thumb} thumbLabel={thumbLabel} />
+            {needsMedia && media === null && (
+              <p className="mt-3 text-[12px] font-semibold text-amber-700 dark:text-amber-400">
+                An image or video is required for the selected destinations.
+              </p>
+            )}
           </section>
 
-          <section aria-labelledby="publish-message-h" className="ui-panel order-2 bg-[var(--ui-surface)] p-4 sm:p-5">
+          <section aria-labelledby="publish-message-h" className="clay-panel order-2 bg-[var(--ui-surface)] p-4 sm:p-5">
             <h2 id="publish-message-h" className={`text-[14px] font-bold ${INK}`}>
               {pc.stepMessage}
             </h2>
@@ -736,7 +1030,7 @@ export default function PublishComposer({
                 {showCaptionWarn && (
                   <p
                     role="status"
-                    className="mt-1.5 rounded-[10px] border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-[12px] font-medium text-amber-700 dark:text-amber-400"
+                    className="mt-1.5 rounded-[16px] border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-[12px] font-medium text-amber-700 dark:text-amber-400"
                   >
                     {fill(pc.truncates, { names: captionOver.map((t) => fill(pc.truncName, { name: PLATFORM_META[t.platform].label, max: fmt(PLATFORM_META[t.platform].captionMax) })).join(" · ") })}
                   </p>
@@ -794,7 +1088,7 @@ export default function PublishComposer({
             </div>
           </section>
 
-          <section aria-labelledby="publish-schedule-h" className="ui-panel order-5 bg-[var(--ui-surface)] p-4 sm:p-5">
+          <section aria-labelledby="publish-schedule-h" className="clay-panel order-5 bg-[var(--ui-surface)] p-4 sm:p-5">
             <h2 id="publish-schedule-h" className={`text-[14px] font-bold ${INK}`}>
               {pc.stepWhen}
             </h2>
@@ -864,7 +1158,7 @@ export default function PublishComposer({
             )}
           </section>
 
-          <section aria-labelledby="publish-preview-h" className="ui-panel order-6 bg-[var(--ui-surface)] p-4 sm:p-5">
+          <section aria-labelledby="publish-preview-h" className="clay-panel order-6 bg-[var(--ui-surface)] p-4 sm:p-5">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <h2 id="publish-preview-h" className={`text-[14px] font-bold ${INK}`}>
                 {pc.stepPreview}
@@ -895,7 +1189,7 @@ export default function PublishComposer({
           </div>
 
           <aside className="contents lg:col-start-2 lg:block lg:space-y-5 lg:sticky lg:top-4 lg:h-fit">
-          <section aria-labelledby="publish-dest-h" className="ui-panel order-3 bg-[var(--ui-surface)] p-4 sm:p-5">
+          <section aria-labelledby="publish-dest-h" className="clay-panel order-3 bg-[var(--ui-surface)] p-4 sm:p-5">
             <h2 id="publish-dest-h" className={`text-[14px] font-bold ${INK}`}>
               {pc.stepDest}
             </h2>
@@ -918,7 +1212,7 @@ export default function PublishComposer({
 
           {/* Configure formats — method pills per selected destination */}
           {selectedTargets.length > 0 && (
-            <section aria-labelledby="publish-formats-h" className="ui-panel order-4 bg-[var(--ui-surface)] p-4 sm:p-5">
+            <section aria-labelledby="publish-formats-h" className="clay-panel order-4 bg-[var(--ui-surface)] p-4 sm:p-5">
               <h2 id="publish-formats-h" className={`text-[14px] font-bold ${INK}`}>
                 {pc.formatsTitle}
               </h2>
@@ -926,10 +1220,10 @@ export default function PublishComposer({
                 {pc.formatsSub}
               </p>
               {selectedTargets.some((t) =>
-                availableFor(t).some((m) => m === "profile" || m === "banner"),
+                availableFor(t).some((m) => m === "profile" || m === "banner" || m === "gallery"),
               ) && (
                 <p className={`mb-3 text-[11px] ${INK2}`}>
-                  {pc.formatsNote}
+                  {pc.formatsNote} Gallery photos are added to the location&apos;s photo gallery — pick a category when you configure it.
                 </p>
               )}
               <div className="space-y-3">
@@ -937,7 +1231,7 @@ export default function PublishComposer({
                   const avail = availableFor(t);
                   const chosen = chosenFor(t);
                   return (
-                    <div key={t.id} id={`dest-row-${t.id}`} className="rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3">
+                    <div key={t.id} id={`dest-row-${t.id}`} className="rounded-[20px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3">
                       <div className="flex items-center gap-2">
                         <PlatformMark platform={t.platform} size={14} />
                         <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-[var(--ui-ink)]">{t.name}</span>
@@ -993,14 +1287,25 @@ export default function PublishComposer({
             </section>
           )}
 
-          <section aria-labelledby="ai-video-h" className="ui-panel order-7 bg-[var(--ui-surface)] p-4 sm:p-5">
-            <h2 id="ai-video-h" className={`text-[14px] font-bold ${INK}`}>
-              {pc.aiTitle}
-            </h2>
-            <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
-              {pc.aiSub}
-            </p>
-            <AiVideoCreator googleTargets={googleTargets} />
+          <section aria-labelledby="ai-video-h" className="clay-panel order-7 bg-[var(--ui-surface)] p-4 sm:p-5">
+            <button
+              type="button"
+              id="ai-video-h"
+              onClick={() => setAiOpen((v) => !v)}
+              aria-expanded={aiOpen}
+              className={`flex w-full items-center justify-between gap-2 text-left ${INK}`}
+            >
+              <span className="text-[14px] font-bold">{pc.aiTitle}</span>
+              <span className={`text-[12px] font-semibold ${INK2}`}>{aiOpen ? "Hide" : "Show"}</span>
+            </button>
+            {aiOpen && (
+              <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
+                {pc.aiSub}
+              </p>
+            )}
+            <div className={aiOpen ? "" : "hidden"}>
+              <AiVideoCreator googleTargets={googleTargets} />
+            </div>
           </section>
           </aside>
         </div>
@@ -1040,14 +1345,24 @@ export default function PublishComposer({
             {confirmItems.length === 0
               ? pc.readyNone
               : `${pc.readyPre}${destStr} · ${fmtStr}`}
-            {scheduleOn && scheduleAt ? fill(pc.scheduledOn, { date: new Date(scheduleAt).toLocaleString(dateLocale) }) : ""}
+            {scheduleOn && scheduleAt ? fill(pc.scheduledOn, { date: new Date(scheduleAt).toLocaleString(dateLocale, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) }) : ""}
           </p>
           {notice && <p className="w-full text-[12px] font-semibold text-red-600 dark:text-red-400 sm:w-auto">{notice}</p>}
+          {galleryFallbacks.length > 0 && (
+            <div className="w-full sm:w-auto" role="status">
+              {galleryFallbacks.map((f) => (
+                <p key={f} className="text-[12px] font-medium text-amber-700 dark:text-amber-400">
+                  {f}
+                </p>
+              ))}
+            </div>
+          )}
           <button
             type="button"
             onClick={openConfirm}
             disabled={!canPublish}
-            className="rounded-[10px] bg-[var(--ui-ink)] px-5 py-2.5 text-[13px] font-semibold text-[var(--ui-on-ink)] transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+            title={!canPublish ? (confirmItems.length === 0 ? "Select at least one destination." : needsMedia ? "Add an image or video first." : undefined) : undefined}
+            className="clay-btn-primary px-5 py-2.5 text-[13px] font-semibold text-[var(--ui-on-ink)] transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
           >
             {scheduleOn ? pc.reviewSchedule : pc.reviewPublish}
           </button>
@@ -1065,7 +1380,7 @@ export default function PublishComposer({
           }}
           className="fixed inset-0 z-50 bg-[rgba(0,0,0,0.45)] sm:flex sm:items-center sm:justify-center sm:p-4"
         >
-          <div className="flex h-[100dvh] w-full flex-col overflow-hidden bg-[var(--ui-surface)] sm:h-auto sm:max-h-[90dvh] sm:max-w-5xl sm:rounded-[16px] sm:border sm:border-[var(--ui-line)] sm:shadow-2xl">
+          <div className="flex h-[100dvh] w-full flex-col overflow-hidden bg-[var(--ui-surface)] sm:h-auto sm:max-h-[90dvh] sm:max-w-5xl sm:rounded-[32px] sm:border sm:border-[var(--ui-line)] sm:shadow-2xl">
             <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--ui-line)] p-4 sm:border-0 sm:p-5 sm:pb-0">
               <div>
                 <h2 className="text-[15px] font-bold text-[var(--ui-ink)] sm:text-[16px]">
@@ -1097,7 +1412,55 @@ export default function PublishComposer({
                     crop={draftCrop}
                   />
                 </div>
-                <div className="w-full max-w-[320px] shrink-0">
+                <div className="w-full max-w-[320px] shrink-0 space-y-3">
+                  {modalCtx.method === "offer" && (
+                    <div className="space-y-3">
+                      <div>
+                        <label htmlFor="offer-coupon" className="mb-1 block text-[12px] font-semibold text-[var(--ui-ink)]">
+                          {pc.couponLabel}
+                        </label>
+                        <input
+                          id="offer-coupon"
+                          type="text"
+                          value={draftCoupon}
+                          onChange={(e) => setDraftCoupon(e.target.value)}
+                          placeholder={pc.couponPh}
+                          maxLength={64}
+                          className="w-full clay-input px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus:border-deep-violet/40"
+                        />
+                        <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">{pc.couponHint}</p>
+                      </div>
+                      <div>
+                        <label htmlFor="offer-terms" className="mb-1 block text-[12px] font-semibold text-[var(--ui-ink)]">
+                          {pc.termsLabel}
+                        </label>
+                        <textarea
+                          id="offer-terms"
+                          value={draftTerms}
+                          onChange={(e) => setDraftTerms(e.target.value)}
+                          placeholder={pc.termsPh}
+                          maxLength={300}
+                          rows={3}
+                          className="w-full clay-input px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus:border-deep-violet/40"
+                        />
+                      </div>
+                    </div>
+                  )}
+                  {modalCtx.method === "gallery" && (
+                    <div>
+                      <label className="mb-1 block text-[12px] font-semibold text-[var(--ui-ink)]">Gallery category</label>
+                      <select
+                        value={draftGalleryCategory}
+                        onChange={(e) => setDraftGalleryCategory(e.target.value)}
+                        className="w-full clay-input px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus:border-deep-violet/40"
+                      >
+                        {GALLERY_CATEGORIES.map((c) => (
+                          <option key={c} value={c}>{c.replace(/_/g, " ")}</option>
+                        ))}
+                      </select>
+                      <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">Choose where this photo appears in the location gallery on Google.</p>
+                    </div>
+                  )}
                   <CropFrame
                     key={`${modalCtx.targetId}-${modalCtx.method}`}
                     url={media?.url ?? null}
@@ -1117,14 +1480,14 @@ export default function PublishComposer({
               <button
                 type="button"
                 onClick={cancelConfig}
-                className="rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-2.5 text-[13px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:py-2"
+                className="clay-input px-4 py-2.5 text-[13px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:py-2"
               >
                 {pc.cancel}
               </button>
               <button
                 type="button"
                 onClick={saveConfig}
-                className="rounded-[10px] bg-[var(--ui-ink)] px-5 py-2.5 text-[13px] font-semibold text-[var(--ui-on-ink)] transition hover:opacity-90 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:py-2"
+                className="clay-btn-primary px-5 py-2.5 text-[13px] font-semibold text-[var(--ui-on-ink)] transition hover:opacity-90 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:py-2"
               >
                 {fill(pc.saveMethod, { method: methodLabel(modalCtx.method) })}
               </button>
@@ -1175,10 +1538,10 @@ function ScheduleToggle({
         }`}
       >
         <span
-          className={`absolute top-0.5 h-5 w-5 rounded-full transition-transform ${
+          className={`absolute left-0 top-0.5 h-5 w-5 rounded-full transition-transform ${
             scheduleOn
               ? "translate-x-[18px] bg-white shadow-[0_1px_2px_rgba(0,0,0,0.35)]"
-              : "translate-x-0.5 border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] shadow-[0_1px_2px_rgba(0,0,0,0.12)]"
+              : "translate-x-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] shadow-[0_1px_2px_rgba(0,0,0,0.12)]"
           }`}
         />
       </span>

@@ -64,6 +64,10 @@ class User(Base):
     # Same JSON pattern as lead_settings: a new toggle must not need a
     # migration, and never free-form content.
     notification_settings: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Chat-voice knobs (reply temperature, linter rollout flag), validated/
+    # clamped by chat_voice.normalize_chat_settings (NULL = safe defaults).
+    # Same JSON pattern as lead_settings — migration-free per-knob growth.
+    chat_settings: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # "Start here — launch step by step" checklist state: which steps are
     # done, collapsed/expanded, dismissed. NULL = client-side defaults.
     onboarding_state: Mapped[dict | None] = mapped_column(JSON, nullable=True)

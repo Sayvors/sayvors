@@ -79,12 +79,14 @@ export default function ConfirmModal({
       }}
       className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(0,0,0,0.45)] p-4"
     >
-      <div className="w-full max-w-[420px] rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-5 shadow-2xl">
+      <div className="clay-panel w-full max-w-[420px] p-5">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-[16px] font-bold text-[var(--ui-ink)]">{cf.title}</h2>
             <p className="mt-0.5 text-[12px] text-[var(--ui-ink-2)]">
-              {scheduled ? cf.scheduledSub : cf.nowSub}
+              {scheduled
+                ? fill(cf.scheduledSub, { date: new Date(scheduled).toLocaleString(dateLocale, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) })
+                : cf.nowSub}
             </p>
           </div>
           <button
@@ -99,7 +101,7 @@ export default function ConfirmModal({
           </button>
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-[10px] bg-[var(--ui-sunken)] px-3 py-2.5">
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-[16px] bg-[var(--ui-sunken)] px-3 py-2.5">
           {media.type && (
             <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">
               {media.type === "video" ? cf.mediaVideo : cf.mediaImage}
@@ -120,7 +122,7 @@ export default function ConfirmModal({
         </p>
         <ul className="mt-1.5 space-y-1">
           {items.map(({ target: t, methods }) => (
-            <li key={t.id} className="flex items-center gap-2.5 rounded-[10px] border border-[var(--ui-line)] px-3 py-2">
+            <li key={t.id} className="flex items-center gap-2.5 rounded-[16px] border border-[var(--ui-line)] px-3 py-2">
               <PlatformMark platform={t.platform} size={16} />
               <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--ui-ink)]">{t.name}</span>
               <span className="shrink-0 text-right text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
@@ -137,7 +139,7 @@ export default function ConfirmModal({
 
         <p aria-live="polite">
           {error && (
-            <span role="alert" className="mt-3 block rounded-[10px] border border-red-500/50 bg-red-500/10 px-3 py-2 text-[12px] font-medium text-red-700 dark:text-red-400">
+            <span role="alert" className="mt-3 block rounded-[16px] border border-red-500/50 bg-red-500/10 px-3 py-2 text-[12px] font-medium text-red-700 dark:text-red-400">
               {error}
             </span>
           )}
@@ -153,7 +155,7 @@ export default function ConfirmModal({
             type="button"
             onClick={onClose}
             disabled={busy}
-            className="rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-2 text-[13px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+            className="clay-btn-secondary px-4 py-2 text-[13px] font-semibold disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
           >
             {cf.keepEditing}
           </button>
@@ -161,7 +163,7 @@ export default function ConfirmModal({
             type="button"
             onClick={onConfirm}
             disabled={busy || items.length === 0}
-            className="rounded-[10px] bg-[var(--ui-ink)] px-5 py-2.5 text-[13px] font-semibold text-[var(--ui-on-ink)] transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+            className="clay-btn-primary px-5 py-2.5 text-[13px] font-semibold disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
           >
             {busy ? cf.publishing : scheduled ? cf.scheduleBtn : cf.publishBtn}
           </button>

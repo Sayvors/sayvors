@@ -402,12 +402,16 @@ async def test_stored_rows_always_satisfy_validate(db, channel_id, user_id):
 def test_normalize_code_rejects_ambiguous_and_misshapen():
     from app.modules.review_engine.tickets import CODE_LENGTH, _normalize_code
 
+    # Legacy 6-char codes (already published on Google) still resolve.
     assert _normalize_code("abc234") == "ABC234"
     assert _normalize_code(" abc-234 ") == "ABC234"
+    # New codes are minted at 8 characters and resolve too.
+    assert _normalize_code("abcdefgh") == "ABCDEFGH"
+    assert _normalize_code(" ABCDEFGH ") == "ABCDEFGH"
+    assert CODE_LENGTH == 8
     # 0/O/1/I are excluded from the alphabet, so a misread must not resolve.
-    for bad in ("abc0o1", "0OI0OI", "ABC23", "ABCDEFGH", "", None):
+    for bad in ("abc0o1", "0OI0OI", "ABC23", "ABCDEFG", "ABCDEFGH2", "", None):
         assert _normalize_code(bad) is None
-    assert len("ABC234") == CODE_LENGTH
 
 
 async def _ticket_row(db, channel_id, tenant, rid="r"):
@@ -504,7 +508,7 @@ async def test_mint_is_idempotent_while_the_code_is_valid(db, channel_id, user_i
 
     issue = await _issue(db, channel_id, user_id)
     first = await ensure_handoff_code(db, tenant_id=user_id, issue=issue)
-    assert first and len(first) == 6
+    assert first and len(first) == 8
     assert (await ensure_handoff_code(db, tenant_id=user_id, issue=issue)) == first
 
 
@@ -525,7 +529,7 @@ async def test_mint_sets_expiry_from_tenant_config(
     issue = await _issue(db, channel_id, user_id)
     code = await ensure_handoff_code(db, tenant_id=user_id, issue=issue)
     await db.refresh(issue)
-    assert code and len(code) == 6
+    assert code and len(code) == 8
     expires = issue.handoff_code_expires_at
     assert expires is not None
     if expires.tzinfo is None:
@@ -605,10 +609,95 @@ def test_extract_handoff_codes_requires_the_marker():
     assert extract_handoff_codes("#K7M2QX") == ["K7M2QX"]
     assert extract_handoff_codes("  # k7m2qx \n") == ["K7M2QX"]
     assert extract_handoff_codes("#K7M2QX.") == ["K7M2QX"]
+    # New 8-character codes resolve the same way.
+    assert extract_handoff_codes("#ABCDEFGH") == ["ABCDEFGH"]
+    assert extract_handoff_codes("# abcdefgh \n") == ["ABCDEFGH"]
     assert extract_handoff_codes("K7M2QX") == []
     assert extract_handoff_codes("THANKS") == []
     assert extract_handoff_codes("hi #K7M2QX") == []
     assert extract_handoff_codes(None) == []
+
+
+async def test_handoff_code_is_single_use(db, channel_id, user_id):
+    """A consumed code stops resolving for everyone but the same message replay."""
+    from app.modules.review_engine.handoff import ensure_handoff_code
+    from app.modules.review_engine.tickets import resolve_inbound
+
+    issue = await _issue(db, channel_id, user_id)
+    code = await ensure_handoff_code(db, tenant_id=user_id, issue=issue)
+    assert code
+
+    # First redemption consumes the code.
+    first = await resolve_inbound(
+        db, tenant_id=user_id, text=f"#{code}", replay_key="wamid-1"
+    )
+    assert first is not None
+    assert first.issue.id == issue.id
+    await db.refresh(issue)
+    assert issue.handoff_code_used_at is not None
+    assert issue.handoff_code_used_by_wamid == "wamid-1"
+
+    # A different message (different wamid) can no longer use it.
+    second = await resolve_inbound(
+        db, tenant_id=user_id, text=f"#{code}", replay_key="wamid-2"
+    )
+    assert second is None
+
+    # The SAME message redelivered (Meta webhook retry) still resolves.
+    replay = await resolve_inbound(
+        db, tenant_id=user_id, text=f"#{code}", replay_key="wamid-1"
+    )
+    assert replay is not None
+    assert replay.issue.id == issue.id
+
+
+async def test_handoff_code_consumed_without_replay_key_not_reusable(db, channel_id, user_id):
+    """A code spent by a message with no key is still spent for later messages."""
+    from app.modules.review_engine.handoff import ensure_handoff_code
+    from app.modules.review_engine.tickets import resolve_inbound
+
+    issue = await _issue(db, channel_id, user_id)
+    code = await ensure_handoff_code(db, tenant_id=user_id, issue=issue)
+    assert code
+
+    first = await resolve_inbound(db, tenant_id=user_id, text=f"#{code}")
+    assert first is not None
+    assert await resolve_inbound(db, tenant_id=user_id, text=f"#{code}") is None
+
+
+async def test_classify_handoff_code_expired_and_used(db, channel_id, user_id):
+    from app.modules.review_engine.handoff import ensure_handoff_code
+    from app.modules.review_engine.tickets import classify_handoff_code, resolve_inbound
+
+    issue = await _issue(db, channel_id, user_id)
+    code = await ensure_handoff_code(db, tenant_id=user_id, issue=issue)
+    assert code
+
+    # Valid, unused code: classifier says nothing (it would have matched).
+    assert await classify_handoff_code(db, tenant_id=user_id, text=f"#{code}") is None
+
+    # Consume it, then classifier reports "used".
+    await resolve_inbound(db, tenant_id=user_id, text=f"#{code}", replay_key="wamid-1")
+    assert await classify_handoff_code(db, tenant_id=user_id, text=f"#{code}") == "used"
+
+    # Unknown code: no state.
+    assert await classify_handoff_code(db, tenant_id=user_id, text="#ZZZZZZ") is None
+    assert await classify_handoff_code(db, tenant_id=user_id, text="no code here") is None
+
+
+async def test_classify_handoff_code_expired(db, channel_id, user_id):
+    from datetime import timedelta
+
+    from app.modules.review_engine.handoff import ensure_handoff_code
+    from app.modules.review_engine.tickets import classify_handoff_code
+
+    issue = await _issue(db, channel_id, user_id)
+    code = await ensure_handoff_code(db, tenant_id=user_id, issue=issue)
+    issue.handoff_code_expires_at = issue.handoff_code_expires_at - timedelta(days=2)
+    db.add(issue)
+    await db.commit()
+
+    assert await classify_handoff_code(db, tenant_id=user_id, text=f"#{code}") == "expired"
 
 
 async def test_no_code_for_praise(db, channel_id, user_id):

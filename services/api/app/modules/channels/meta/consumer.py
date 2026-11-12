@@ -303,6 +303,39 @@ _HISTORY_MESSAGES = 10
 # like a person typing, without noticeably delaying the reply.
 _MESSAGE_GAP_SECONDS = 0.8
 
+# Style reference exchanges appended to the system prompt. They anchor the
+# tone (fact first, feeling second; one idea per line; question last) the
+# way a few-shot bank should — they are never scripts to paste verbatim.
+# The Arabic sample is deliberately conservative (conversational MSA-leaning)
+# and must be validated by a native speaker before expanding the bank further.
+_VOICE_SAMPLE_BANK = """
+SAMPLE EXCHANGES — style references only, never paste them verbatim.
+
+Happy inquiry:
+Customer: Hi! Do you still have the cold brew?
+You: We do — the iced cold brew is on today. Want a size recommendation?
+
+Complaint:
+Customer: My order arrived late and the box was torn.
+You: Sorry about that — that's not the experience you should have had. Let me get the details and sort it out.
+
+Price question:
+Customer: How much is the deluxe package?
+You: The deluxe package is $149, setup and first-month support included. Want me to walk you through it?
+
+Ambiguous request:
+Customer: I need the Makkah one.
+You: Happy to help! Do you mean the Azziziya branch or Al Malqa?
+
+Goodbye:
+Customer: Thanks, that's all.
+You: Anytime — glad I could help. Have a great day!
+
+Arabic style reference:
+Customer: السلام عليكم، كم سعر القهوة؟
+You: وعليكم السلام، اللاتيه بـ١٥ ريال. أي مقاس تفضل؟
+"""
+
 
 async def _resolve_asset(
     db, external_asset_id: str, provider: str = "whatsapp"
@@ -365,6 +398,7 @@ def _system_prompt(
     persona_name = (getattr(persona, "name", None) or "Sarah").strip()[:80]
     gender = (getattr(persona, "gender", None) or "female").strip().lower()
     lines = [
+        # ── Layer 1: identity (short) ──
         f"You are {persona_name}, a customer support team member at {name}, "
         f"replying on {platform}.",
     ]
@@ -375,9 +409,32 @@ def _system_prompt(
     if user.business_doesnt_sell:
         lines.append(f"We do NOT sell: {user.business_doesnt_sell}")
     lines += [
-        f"Style: you are a real human agent chatting on {platform} — warm, "
-        "brief, 1 to 3 short sentences, plain text, no markdown. Vary your "
-        "wording; never repeat the same explanation twice.",
+        # ── Layer 2: "how we talk" — positive voice block ──
+        # Research-backed (see research-whatsapp-chatbot-human-tone-2026-11-11.md):
+        # a wall of "never" style prohibitions makes replies stiff; positive,
+        # testable guidance makes them read human. Hard product rails (no
+        # markdown, no dashes, honesty) stay in layer 3/4.
+        f"Well, human, plain: you are a real agent chatting on {platform}. "
+        "Write the way a thoughtful teammate texts — contractions are fine "
+        "('it's', 'we'll', 'I'm'). One idea per line, 15 to 35 words "
+        "typical. Never write paragraphs of formal boilerplate.",
+        "Mirror the customer's register and dialect: if they type casually, "
+        "reply casually; if they write in a dialect (Gulf, Egyptian, "
+        "Levantine), match that register instead of textbook Arabic. Answer "
+        "in their language, never in formal news-anchor style.",
+        "Lead with the fact, then the feeling — e.g. 'We do have the dark "
+        "roast in stock — good thing you asked.' When something the customer "
+        "said matters, name it; but one short acknowledgment is enough.",
+        "Vary your openings and wording. Read the recent messages and open "
+        "like a person who read the thread. If the customer opened with a "
+        "question, just answer it without a greeting. Never reuse the same "
+        "opener twice for the same contact.",
+        "Prefer short, plain alternatives to stiff phrases: 'sorry about "
+        "that' instead of 'I apologize for the inconvenience'; 'let me "
+        "check' instead of 'Kindly allow me to verify'; 'got it' instead of "
+        "'Noted with thanks'. Never fake typos or forced casualness; stay "
+        "correct but easy.",
+        # ── Layer 3: honesty & product rails (kept, compacted) ──
         # Product-wide punctuation rule: the em-dash is a machine tell that
         # reads as template prose. Use commas, periods or reword instead.
         "Never use an em dash or an en dash anywhere in a reply. Use a comma, "
@@ -421,16 +478,19 @@ def _system_prompt(
         "it genuinely moves the request forward (a missing detail, an "
         "either/or choice, or a next step). A factual answer with no "
         "question is a good reply, not a bot failure.",
-        # Openings: short, human, and ticket-aware. The LATEST TICKET block
-        # below tells the model whether a request is already open or resolved.
-        "Opening a new conversation: 'Hi — how can I help?' (use their name "
-        "when known) — or just answer their question if they opened with "
-        "one. Don't introduce yourself with a paragraph.",
-        "Returning customer with a resolved ticket: welcome them back, name "
-        "the topic, and ask if it is all good or something new. Returning "
-        "with an open ticket: say the team is still on it and ask if they "
-        "want to add anything. Returning with no ticket: 'Welcome back — "
-        "what can I do for you?'",
+        # Openings: short, human, and ticket-aware — never a scripted line.
+        # The LATEST TICKET block below tells the model whether a request is
+        # already open or resolved.
+        "Opening a new conversation: open like a person who read the thread "
+        "— vary your opener, use their name when known, and skip the "
+        "greeting entirely if they opened with a question. Never paste a "
+        "canned first line.",
+        "Returning customer with a resolved ticket: acknowledge what they "
+        "were working on, name the topic, and ask if it is all good or "
+        "something new. Returning with an open ticket: say the team is "
+        "still on it and ask if they want to add anything. Returning with "
+        "no ticket: keep it natural — 'Great to hear from you again — what "
+        "can I do for you?' in your own words.",
         # Human detail: a name occasionally, never every message.
         "Use the customer's name occasionally — not in every message, and "
         "never as a substitute for answering.",
@@ -446,11 +506,11 @@ def _system_prompt(
         "Never promise a time frame ('soon', 'within an hour', 'today') "
         "unless a ticket block or a business fact states it. Say what will "
         "happen, not when.",
-        # Requirements gathering: structured, so nothing is missed.
-        "When a customer describes a project, collect their requirements "
-        "as a clear list: ask them to write what they need separated by "
-        "commas (e.g. 'products page, cart, online payments, reviews'), "
-        "then fill gaps with one short question at a time.",
+        # Requirements gathering: conversational, never form-like.
+        "When a customer describes a project, collect their needs naturally "
+        "— one short question at a time, in their own words. Do not ask "
+        "them to format anything (no lists, commas or templates): this is "
+        "a chat, not a form.",
         # The close: restate what was actually saved, then stop talking.
         "Closing: once you have their name and what they need (plus "
         "budget if they offered one), send ONE short confirmation that "
@@ -488,9 +548,9 @@ def _system_prompt(
         "If the customer is clearly saying goodbye, a short warm sign-off "
         "is fine without a question.",
         "Language: reply in the language the customer wrote in, matching "
-        "their script. English, Arabic and Urdu are all supported; if they "
-        "switch language, follow them. Never answer an Arabic or Urdu "
-        "message in English.",
+        "their script and register. English, Arabic and Urdu are all "
+        "supported; if they switch language, follow them. Never answer an "
+        "Arabic or Urdu message in English.",
         # Answer first, defer last. The old wording told the model to say
         # "I'll confirm with the team" whenever a fact was missing, so it
         # deflected questions the facts block already answered (hours,
@@ -506,6 +566,7 @@ def _system_prompt(
         "here, then offer to have the team follow up in this chat. Do not "
         "repeat the same apology or deflection, and do not promise a "
         "callback elsewhere.",
+        # ── Layer 4: tool/marker contracts (unchanged) ──
         # Tool contract. The router pre-loads hours/address/website/etc., but
         # anything it missed is one tool call away.
         "Business facts tool: for opening hours, branches or address, website, "
@@ -587,6 +648,7 @@ def _system_prompt(
                 "promise a WhatsApp link or a move to WhatsApp — help them "
                 "here instead."
             )
+    lines.append(_VOICE_SAMPLE_BANK)
     notes = (getattr(persona, "instructions", None) or "").strip()
     if notes:
         lines.append(
@@ -602,6 +664,7 @@ async def _generate_reply(
     contact: str | None = None,
     attachment_note: str | None = None,
     ticket=None,
+    temperature: float | None = None,
 ) -> str:
     """Generate an AI reply from THIS CONTACT's conversation + business profile.
 
@@ -881,7 +944,7 @@ async def _generate_reply(
         model=model_id,
         messages=history,
         system_prompt=system_prompt,
-        temperature=_REPLY_TEMPERATURE,
+        temperature=temperature if temperature is not None else _REPLY_TEMPERATURE,
         max_tokens=_REPLY_MAX_TOKENS,
         tools=[FACTS_TOOL],
         tenant_id=tenant_id,
@@ -925,7 +988,7 @@ async def _generate_reply(
                     ),
                 ],
                 system_prompt=system_prompt,
-                temperature=_REPLY_TEMPERATURE,
+                temperature=temperature if temperature is not None else _REPLY_TEMPERATURE,
                 max_tokens=_REPLY_MAX_TOKENS,
                 tenant_id=tenant_id,
                 purpose=f"{platform.lower()}.auto_reply",
@@ -933,6 +996,72 @@ async def _generate_reply(
             )
 
     return (resp.content or "").strip()
+
+
+async def _load_chat_settings(db, tenant_id: str) -> dict:
+    """Normalized per-tenant chat-voice knobs (temperature, linter flag).
+
+    One indexed PK read; NULL/missing/junk resolve to safe defaults so a
+    bad hand-edit can never break a reply.
+    """
+    from ...users.models import User
+    from .chat_voice import normalize_chat_settings
+
+    try:
+        value = (
+            await db.execute(
+                select(User.chat_settings).where(User.id == tenant_id)
+            )
+        ).scalar_one_or_none()
+    except Exception as e:  # noqa: BLE001 — defaults are safe
+        logger.warning(
+            "chat settings read failed tenant=%s: %s: %s",
+            tenant_id, type(e).__name__, str(e)[:150],
+        )
+        return normalize_chat_settings(None)
+    return normalize_chat_settings(value)
+
+
+async def _last_outbound_opener(
+    db, channel_id: str, contact: str | None
+) -> str:
+    """The opener of the most recent AI outbound message to this contact.
+
+    Measure-only input for the opener-variation guard: if the same opener
+    keeps repeating to the same customer, that is the scripted-machine tell
+    Phase 1 asks the model to avoid. This is a bounded, indexed read (one
+    newest row per contact) and the result is only ever logged.
+    """
+    from .chat_voice import opener_key
+
+    if not contact:
+        return ""
+    try:
+        from ..models import ChannelMessage
+
+        row = (
+            await db.execute(
+                select(ChannelMessage)
+                .where(
+                    ChannelMessage.channel_id == channel_id,
+                    ChannelMessage.contact_phone_hash == hash_contact_phone(contact),
+                    ChannelMessage.direction == "outbound",
+                    ChannelMessage.is_ai.is_(True),
+                    ChannelMessage.deleted_at.is_(None),
+                )
+                .order_by(ChannelMessage.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+    except Exception as e:  # noqa: BLE001 — measure-only, never cost the reply
+        logger.warning(
+            "opener measure read failed channel=%s: %s: %s",
+            channel_id, type(e).__name__, str(e)[:150],
+        )
+        return ""
+    if row is None:
+        return ""
+    return opener_key(decrypt_message_content(row.content))
 
 
 async def _channel_for(
@@ -2200,6 +2329,7 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
             async with db.begin_nested():
                 handoff_match = await resolve_and_advance(
                     db, tenant_id=tenant_id, channel_id=channel.id, text=text,
+                    replay_key=wamid,
                 )
             if handoff_match is not None:
                 logger.info(
@@ -2357,11 +2487,42 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
             return
 
         try:
+            chat_settings = await _load_chat_settings(db, tenant_id)
+            # A quoted handoff code that did not resolve (expired, or already
+            # used by another message) must not dead-end in the generic "you
+            # shared a code" drift. Tell the AI to acknowledge the link is
+            # inactive and invite the customer to restate the complaint, so
+            # the thread continues as a real enquiry.
+            code_status = None
+            if handoff_match is None and text:
+                from ...review_engine.tickets import classify_handoff_code
+
+                try:
+                    code_status = await classify_handoff_code(
+                        db, tenant_id=tenant_id, text=text
+                    )
+                except Exception as e:  # noqa: BLE001 — never cost the reply
+                    logger.warning(
+                        "handoff code classification failed wamid=%s: %s: %s",
+                        wamid[:32], type(e).__name__, str(e)[:150],
+                    )
             reply_kwargs: dict = {
                 "context": _handoff_context(handoff_match),
                 "contact": from_wa or None,
                 "ticket": inbound_lead,
+                "temperature": chat_settings["temperature"],
             }
+            if code_status in ("expired", "used"):
+                reply_kwargs["context"] = (
+                    reply_kwargs["context"] or ""
+                ) + "\n\n" + (
+                    "The customer quoted a handoff link whose code is "
+                    + ("expired." if code_status == "expired" else "already used.")
+                    + " Tell them kindly that the link is no longer active, "
+                    "assure them their message is still received, and ask "
+                    "them to describe the issue in their own words. Then "
+                    "help them normally. Do not keep asking about the code."
+                )
             if msg_type in ("image", "document"):
                 reply_kwargs["attachment_note"] = ATTACHMENT_PROMPT_NOTE
             raw_reply = await _generate_reply(
@@ -2596,8 +2757,20 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
             # Tenant response style decides text delivery — one message, or
             # a short natural sequence. Rendering happens after reasoning
             # and never touches it: same agent, same reply, different shape.
+            if reply:
+                from .chat_voice import opener_key
+
+                previous_opener = await _last_outbound_opener(db, channel.id, from_wa)
+                if previous_opener and opener_key(reply) == previous_opener:
+                    # Measure-only: repeated openers to the same customer are
+                    # the scripted-machine tell; log frequency, act later.
+                    logger.warning(
+                        "WhatsApp AI repeated opener from=+%s wamid=%s opener=%r",
+                        from_wa[-6:], wamid[:32], previous_opener[:40],
+                    )
             messages = await render_response(
-                response_style, reply, tenant_id, db
+                response_style, reply, tenant_id, db,
+                lint_enabled=chat_settings["lint_enabled"],
             )
             if not messages:
                 logger.warning(
@@ -3652,10 +3825,12 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
             await db.commit()
 
         try:
+            chat_settings = await _load_chat_settings(db, tenant_id)
             raw_reply = await _generate_reply(
                 db, channel, tenant_id, text or "", platform="Instagram",
                 contact=igsid or None,
                 ticket=lead,
+                temperature=chat_settings["temperature"],
             )
         except Exception as e:
             logger.warning(
@@ -3734,7 +3909,10 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
             style_row.response_style if style_row else None
         )
         lead_settings = style_row.lead_settings if style_row else None
-        messages = await render_response(response_style, reply, tenant_id, db)
+        messages = await render_response(
+            response_style, reply, tenant_id, db,
+            lint_enabled=chat_settings["lint_enabled"],
+        )
         if not messages:
             logger.warning(
                 "Instagram AI reply rendered to zero messages — skipping "

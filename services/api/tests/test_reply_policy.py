@@ -50,6 +50,41 @@ def test_prompt_has_the_conversation_flow_rules():
     assert "Never promise a time frame" in prompt
 
 
+def test_prompt_kills_scripted_openers_and_form_style_requirements():
+    prompt = _system_prompt(_user())
+    # No canned first line / welcome-back script to paste.
+    assert "Hi — how can I help?" not in prompt
+    assert "Welcome back — what can I do for you?" not in prompt
+    # The old comma-separated requirements demand is gone (form-like).
+    assert "separated by commas" not in prompt
+    assert "products page, cart, online payments, reviews" not in prompt
+    # Positive voice block present.
+    assert "how we talk" in prompt or "Mirror the customer's register" in prompt
+    assert "open like a person who read the thread" in prompt
+
+
+def test_prompt_has_the_few_shot_voice_bank():
+    prompt = _system_prompt(_user())
+    assert "SAMPLE EXCHANGES" in prompt
+    assert "Happy inquiry:" in prompt
+    assert "Complaint:" in prompt
+    assert "Price question:" in prompt
+    assert "Ambiguous request:" in prompt
+    assert "Goodbye:" in prompt
+    assert "Arabic style reference:" in prompt
+
+
+def test_prompt_keeps_honesty_and_tool_contracts_with_voice_bank():
+    prompt = _system_prompt(_user(), platform="WhatsApp")
+    # Honesty rails still intact alongside the new voice layer.
+    assert "Never invent prices, stock, opening hours" in prompt
+    assert "Never promise a time frame" in prompt
+    assert "You answer 24/7" in prompt
+    assert "Business facts tool" in prompt
+    assert "Never use an em dash or an en dash" in prompt
+    assert "Never describe yourself as a bot" in prompt
+
+
 def test_sticker_markers_are_offered_only_where_the_pipeline_can_send_them():
     whatsapp = _system_prompt(_user(), platform="WhatsApp")
     assert "[[sticker:ok]]" in whatsapp

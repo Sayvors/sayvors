@@ -69,6 +69,7 @@ async def list_media(
     return [MediaOut(**r) for r in rows]
 
 
+@router.post("", response_model=MediaPublishResult, status_code=201)
 @router.post("/", response_model=MediaPublishResult, status_code=201)
 async def create_media(
     body: MediaCreate,

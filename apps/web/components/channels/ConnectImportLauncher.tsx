@@ -77,7 +77,7 @@ export default function ConnectImportLauncher() {
     // the 20s poll must not resurrect either.
     if (
       latest &&
-      ["queued", "fetching", "generating", "publishing"].includes(latest.status) &&
+      ["queued", "fetching", "awaiting_scope", "generating", "publishing"].includes(latest.status) &&
       !isConnectImportDismissed(latest.id)
     ) {
       setSessionId(latest.id);

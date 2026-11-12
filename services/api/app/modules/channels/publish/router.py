@@ -120,6 +120,16 @@ class PublishBody(BaseModel):
     # defaults the window (now → +7 days).
     start_date: str | None = None
     end_date: str | None = None
+    # Offer (promotion) fields. Google's LocalPostOffer carries exactly
+    # three: couponCode, redeemOnlineUrl and termsConditions. The redeem URL
+    # is the post's CTA link for an OFFER, so only the coupon and the terms
+    # are set here.
+    coupon_code: str | None = Field(None, max_length=64)
+    terms_conditions: str | None = Field(None, max_length=300)
+    # The language of the post (BCP-47), e.g. "en-US" or "ar". Google's
+    # LocalPost reference documents languageCode on the post body; it
+    # defaults to en-US when absent.
+    language_code: str | None = Field(None, max_length=16)
     idempotency_key: str | None = Field(None, max_length=200)
     destinations: list[PublishDestination]
     batch_id: str | None = Field(None, max_length=64)
@@ -336,6 +346,9 @@ async def publish_post(
                     "delete_at": body.delete_at,
                     "start_date": body.start_date,
                     "end_date": body.end_date,
+                    "coupon_code": body.coupon_code,
+                    "terms_conditions": body.terms_conditions,
+                    "language_code": body.language_code,
                     "batch_id": body.batch_id,
                 }
 
