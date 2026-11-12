@@ -2581,7 +2581,7 @@ const en = {
     },
     confirm: {
       title: "Review before publishing",
-      dialogAria: "Review before publishing dialog",      scheduledSub: "This is a scheduled post.",
+      dialogAria: "Review before publishing dialog",      scheduledSub: "Will go live {date}.",
       nowSub: "One push to every destination listed.",
       closeAria: "Close review",
       mediaVideo: "Video",

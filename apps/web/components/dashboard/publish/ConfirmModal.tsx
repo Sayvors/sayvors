@@ -84,7 +84,9 @@ export default function ConfirmModal({
           <div>
             <h2 className="text-[16px] font-bold text-[var(--ui-ink)]">{cf.title}</h2>
             <p className="mt-0.5 text-[12px] text-[var(--ui-ink-2)]">
-              {scheduled ? cf.scheduledSub : cf.nowSub}
+              {scheduled
+                ? fill(cf.scheduledSub, { date: new Date(scheduled).toLocaleString(dateLocale, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) })
+                : cf.nowSub}
             </p>
           </div>
           <button

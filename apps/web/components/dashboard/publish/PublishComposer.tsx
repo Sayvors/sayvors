@@ -1345,7 +1345,7 @@ export default function PublishComposer({
             {confirmItems.length === 0
               ? pc.readyNone
               : `${pc.readyPre}${destStr} · ${fmtStr}`}
-            {scheduleOn && scheduleAt ? fill(pc.scheduledOn, { date: new Date(scheduleAt).toLocaleString(dateLocale) }) : ""}
+            {scheduleOn && scheduleAt ? fill(pc.scheduledOn, { date: new Date(scheduleAt).toLocaleString(dateLocale, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) }) : ""}
           </p>
           {notice && <p className="w-full text-[12px] font-semibold text-red-600 dark:text-red-400 sm:w-auto">{notice}</p>}
           {galleryFallbacks.length > 0 && (

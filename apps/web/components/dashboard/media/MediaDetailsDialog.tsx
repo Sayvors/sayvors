@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import Modal from "./Modal";
+import { mediaStatusLabel, goesLiveWithinMinuteText, autoRemovesText, isNoticeablyLate } from "@/lib/schedule-copy";
 import type { MediaItem } from "../MediaPage";
 
 interface Props {
@@ -100,7 +101,7 @@ export default function MediaDetailsDialog({ item, onClose, onDelete, onPublish,
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${STATUS_TONE[item.status ?? "DRAFT"] ?? "bg-ink/10 text-ink/60"}`}>{item.status ?? "DRAFT"}</span>
+          <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${STATUS_TONE[item.status ?? "DRAFT"] ?? "bg-ink/10 text-ink/60"}`}>{mediaStatusLabel(item.status)}</span>
           {item.isProfile && <span className="rounded-full bg-deep-violet px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white">Profile</span>}
           {item.isCover && <span className="rounded-full bg-emerald-600 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white">Cover</span>}
           <span className="text-[11.5px] text-ink/50">{item.type === "VIDEO" ? "Video" : "Photo"}</span>
@@ -109,13 +110,18 @@ export default function MediaDetailsDialog({ item, onClose, onDelete, onPublish,
         <dl className="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-2 text-[13px]">
           <dt className="text-ink/50">Uploaded</dt><dd className="text-ink">{item.createdAt}</dd>
           <dt className="text-ink/50">Method</dt><dd className="text-ink">{(item.method ?? "post").replace(/_/g, " ")}</dd>
-          {item.scheduledAt && (<><dt className="text-ink/50">Scheduled</dt><dd className="text-ink">{new Date(item.scheduledAt).toLocaleString()}</dd></>)}
-          {item.error && (<><dt className="text-ink/50">Error</dt><dd className="text-red-600">{item.error}</dd></>)}
+          {item.scheduledAt && (<><dt className="text-ink/50">Scheduled</dt><dd className="text-ink">{goesLiveWithinMinuteText(item.scheduledAt)}</dd></>)}
+          {item.scheduledAt && isNoticeablyLate(item.scheduledAt) && item.status === "SCHEDULED" && (
+            <div className="rounded-[16px] border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-[12.5px] text-amber-700">
+              This should have gone live by now — it's still being processed. Check again in a minute, or publish now.
+            </div>
+          )}
+          {item.error && (<><dt className="text-ink/50">Details</dt><dd className="text-red-600">{item.error}</dd></>)}
         </dl>
 
         {published && (
-          <p className="rounded-[16px] border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-[12.5px] text-amber-700">
-            This photo is live on Google. You can delete it from your library here, but to remove it from Google use the Live on Google tab.
+          <p className="rounded-[16px] border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-[12.5px] text-emerald-700">
+            Live on Google. You can delete it from your library here; to remove it from Google use the Live on Google tab.
           </p>
         )}
 

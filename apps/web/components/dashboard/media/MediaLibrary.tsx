@@ -6,6 +6,7 @@ import LogoLoader from "@/components/LogoLoader";
 import Modal from "./Modal";
 import MediaUploadDialog from "./MediaUploadDialog";
 import MediaDetailsDialog from "./MediaDetailsDialog";
+import { mediaStatusLabel, goesLiveWithinMinuteText } from "@/lib/schedule-copy";
 import type { MediaItem } from "../MediaPage";
 
 interface LocationOption {
@@ -444,14 +445,15 @@ export default function MediaLibrary({ initialLocationId, onOpenGoogle }: { init
                     {m.isCover && <span className="absolute left-2 top-2 rounded-full bg-emerald-600 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">Cover</span>}
                     {m.type === "VIDEO" && <span className="absolute right-2 bottom-2 rounded-full bg-black/60 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">Video</span>}
                     <span className={`absolute ${m.isProfile || m.isCover ? "left-2 top-9" : "left-2 top-2"} rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide ${STATUS_TONE[status] ?? "bg-ink/10 text-ink/60"}`}>
-                      {status}
+                      {mediaStatusLabel(status)}
                     </span>
                   </div>
                   <div className="space-y-1 p-3">
                     <p className="truncate text-[12.5px] font-bold text-ink dark:text-fog">{m.category.replace(/_/g, " ")}</p>
                     <p className="truncate text-[11px] text-ink/50 dark:text-fog/50">
-                      {m.method ? m.method.replace(/_/g, " ") : "Google post"}
-                      {m.scheduledAt && status === "SCHEDULED" ? ` · ${new Date(m.scheduledAt).toLocaleString()}` : ""}
+                      {status === "SCHEDULED" && m.scheduledAt
+                        ? goesLiveWithinMinuteText(m.scheduledAt)
+                        : m.method ? m.method.replace(/_/g, " ") : "Google post"}
                     </p>
                   </div>
                 </button>
