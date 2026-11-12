@@ -108,6 +108,42 @@ async def test_human_renderer_caps_and_drops_empties(db, user_id, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_human_renderer_allows_light_tightening(db, user_id, monkeypatch):
+    """Phase 3: the split pass may lightly edit (contractions, dropping a
+    formal opener) — but must stay within the lossy/expansion bounds."""
+    async def _tightened(tenant_id, db_, text):
+        return json.dumps([
+            "Hey! We've got that in stock.",  # contraction added by splitter
+            "Want me to hold one?",
+        ])
+
+    monkeypatch.setattr(rs, "_ask_split", _tightened)
+    messages = await rs.human_renderer(
+        "Hey! We have got that in stock. Want me to hold one?", user_id, db
+    )
+    assert messages == ["Hey! We've got that in stock.", "Want me to hold one?"]
+
+
+@pytest.mark.asyncio
+async def test_human_renderer_falls_back_when_split_expands(db, user_id, monkeypatch):
+    """Expansion is hallucination risk: a split that adds far more text than
+    the original must fall back to the single cleaned message."""
+    async def _expansion(tenant_id, db_, text):
+        # Adds a price and a promise that were never in the reply.
+        return json.dumps([
+            "We have the deluxe package in stock for $149 with free support.",
+            "This offer is valid all month long, and we guarantee delivery.",
+            "Call us anytime and we will be happy to assist you further.",
+        ])
+
+    monkeypatch.setattr(rs, "_ask_split", _expansion)
+    reply = "We have the deluxe package."
+    messages = await rs.human_renderer(reply, user_id, db)
+    assert len(messages) == 1
+    assert messages[0] == reply
+
+
+@pytest.mark.asyncio
 async def test_human_renderer_falls_back_when_split_is_lossy(db, user_id, monkeypatch):
     """A split that drops most of the text is a summary, not a repackaging.
 

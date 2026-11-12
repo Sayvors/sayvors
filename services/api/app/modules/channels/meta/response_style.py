@@ -39,8 +39,12 @@ _SPLIT_SYSTEM_PROMPT = (
     "- Split only where a person naturally would: a greeting, a new thought, "
     "a question, a short list. Most replies are fine as ONE message — return "
     "one element when so.\n"
-    "- Reuse the reply's exact wording. Never rewrite, add, translate or "
-    "reorder content — only move the message boundaries.\n"
+    "- You may LIGHTLY tighten the wording for chat: use contractions "
+    "('it's', 'we'll'), drop formal openers ('Dear customer', 'Hello "
+    "there') and filler ('kindly', 'please note'). This is touch-up only.\n"
+    "- Never change facts, numbers, names, prices, promises, dates or the "
+    "meaning. Never add information that is not in the reply. When in "
+    "doubt, keep the original wording.\n"
     "- No message may be a bare fragment like 'ok' or a single word unless "
     "the reply itself contains it.\n"
     "- Plain text only (WhatsApp): no markdown, no numbering the split.\n"
@@ -135,6 +139,13 @@ def _parse_message_list(raw: str | None) -> list[str]:
 def _looks_lossy(original: str, messages: list[str]) -> bool:
     """True when the split dropped most of the reply's text — the model
     summarized instead of only moving boundaries, so we send the original
-    instead of a shortened answer."""
+    instead of a shortened answer.
+
+    Also flags suspicious growth (combined length far above the original):
+    the edit tier may tighten, never expand — expansion means the model
+    added content, which is a hallucination risk we refuse to send.
+    """
     kept = sum(len(m) for m in messages)
-    return kept < len(original) // 3
+    if kept < len(original) // 3:
+        return True
+    return kept > len(original) * 3 // 2
