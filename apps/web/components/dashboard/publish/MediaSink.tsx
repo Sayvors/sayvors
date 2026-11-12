@@ -113,7 +113,7 @@ export default function MediaSink({
     if (libraryItems.length > 0 || libraryLoading) return;
     setLibraryLoading(true);
     try {
-      const data = await apiFetch("/api/v1/media/?limit=60");
+      const data = await apiFetch("/api/v1/media?limit=60");
       const list = Array.isArray(data) ? data : ((data as { media?: unknown[] })?.media ?? []);
       setLibraryItems(
         list.map((m) => {
