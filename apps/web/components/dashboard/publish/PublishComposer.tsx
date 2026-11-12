@@ -91,7 +91,7 @@ const CTA_VALUES: CtaValue[] = [
  */
 
 const FIELD =
-  "rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]";
+  "clay-input px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]";
 
 // ── AI video creator (UI-only, HTML-based, no backend) ─────────────────
 function sanitizeName(s: string): string {
@@ -171,7 +171,7 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
         <select
           value={business}
           onChange={(e) => setBusiness(e.target.value)}
-          className="w-full rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]"
+          className="w-full clay-input px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]"
         >
           {businessOptions.map((b) => (
             <option key={b} value={b}>{b}</option>
@@ -183,7 +183,7 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
             value={business}
             onChange={(e) => setBusiness(e.target.value)}
             placeholder={pc.aiBusinessPh}
-            className="mt-2 w-full rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]"
+            className="mt-2 w-full clay-input px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]"
           />
         )}
       </div>
@@ -195,17 +195,17 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
           <div>
             <span className={`block text-[10px] ${INK2} mb-1`}>{pc.aiPrimary}</span>
             <input type="color" value={primary} onChange={(e) => setPrimary(e.target.value)}
-              className="h-9 w-full cursor-pointer rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
+              className="h-9 w-full cursor-pointer rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
           </div>
           <div>
             <span className={`block text-[10px] ${INK2} mb-1`}>{pc.aiAccent}</span>
             <input type="color" value={accent} onChange={(e) => setAccent(e.target.value)}
-              className="h-9 w-full cursor-pointer rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
+              className="h-9 w-full cursor-pointer rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
           </div>
           <div>
             <span className={`block text-[10px] ${INK2} mb-1`}>{pc.aiBg}</span>
             <input type="color" value={bg} onChange={(e) => setBg(e.target.value)}
-              className="h-9 w-full cursor-pointer rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
+              className="h-9 w-full cursor-pointer rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
           </div>
         </div>
         <div className="mt-2 flex flex-wrap gap-1.5">
@@ -228,7 +228,7 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
       </div>
 
       {/* file name */}
-      <div className={`rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] px-3 py-2 text-[11px] ${INK2}`}>
+      <div className={`rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] px-3 py-2 text-[11px] ${INK2}`}>
         {fill(pc.aiFile, { name: fileName })}
       </div>
 
@@ -237,14 +237,14 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
         <button
           type="button"
           onClick={generate}
-          className="w-full rounded-[10px] bg-[var(--ui-ink)] px-3 py-2 text-[12px] font-bold text-[var(--ui-on-ink)] transition hover:opacity-90 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+          className="w-full clay-btn-primary px-3 py-2 text-[12px] font-bold text-[var(--ui-on-ink)] transition hover:opacity-90 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
         >
           {pc.aiCreate}
         </button>
       </div>
 
       {/* video player / preview */}
-      <div className="overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-sunken)]">
+      <div className="overflow-hidden rounded-[24px] border border-[var(--ui-line)] bg-[var(--ui-sunken)]">
         <div className="flex items-center gap-2 border-b border-[var(--ui-line)] px-3 py-2">
           <span className={`text-[11px] font-bold uppercase tracking-widest ${INK2}`}>{pc.aiPreview}</span>
           <span className={`ml-auto text-[10px] ${INK2}`}>{generated ? pc.aiReady : pc.aiEmpty}</span>
@@ -287,7 +287,7 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
         type="button"
         disabled
         title={fill(pc.aiPublishSoonTitle, { name: business })}
-        className="w-full rounded-[10px] border border-dashed border-[var(--ui-line-strong)] bg-[var(--ui-sunken)] px-3 py-2 text-[12px] font-semibold text-[var(--ui-ink-2)] opacity-60 cursor-not-allowed"
+        className="w-full rounded-[16px] border border-dashed border-[var(--ui-line-strong)] bg-[var(--ui-sunken)] px-3 py-2 text-[12px] font-semibold text-[var(--ui-ink-2)] opacity-60 cursor-not-allowed"
       >
         {pc.aiPublishSoon}
       </button>
@@ -982,7 +982,7 @@ export default function PublishComposer({
           {/* Below lg the wrappers are display:contents, so the sections
               become one ordered column: 1 → 2 → 3 → formats → 4 → preview. */}
           <div className="contents lg:col-start-1 lg:block lg:space-y-5">
-          <section aria-labelledby="publish-media-h" className="ui-panel order-1 bg-[var(--ui-surface)] p-4 sm:p-5">
+          <section aria-labelledby="publish-media-h" className="clay-panel order-1 bg-[var(--ui-surface)] p-4 sm:p-5">
             <h2 id="publish-media-h" className={`text-[14px] font-bold ${INK}`}>
               {pc.stepMedia}
             </h2>
@@ -997,7 +997,7 @@ export default function PublishComposer({
             )}
           </section>
 
-          <section aria-labelledby="publish-message-h" className="ui-panel order-2 bg-[var(--ui-surface)] p-4 sm:p-5">
+          <section aria-labelledby="publish-message-h" className="clay-panel order-2 bg-[var(--ui-surface)] p-4 sm:p-5">
             <h2 id="publish-message-h" className={`text-[14px] font-bold ${INK}`}>
               {pc.stepMessage}
             </h2>
@@ -1030,7 +1030,7 @@ export default function PublishComposer({
                 {showCaptionWarn && (
                   <p
                     role="status"
-                    className="mt-1.5 rounded-[10px] border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-[12px] font-medium text-amber-700 dark:text-amber-400"
+                    className="mt-1.5 rounded-[16px] border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-[12px] font-medium text-amber-700 dark:text-amber-400"
                   >
                     {fill(pc.truncates, { names: captionOver.map((t) => fill(pc.truncName, { name: PLATFORM_META[t.platform].label, max: fmt(PLATFORM_META[t.platform].captionMax) })).join(" · ") })}
                   </p>
@@ -1088,7 +1088,7 @@ export default function PublishComposer({
             </div>
           </section>
 
-          <section aria-labelledby="publish-schedule-h" className="ui-panel order-5 bg-[var(--ui-surface)] p-4 sm:p-5">
+          <section aria-labelledby="publish-schedule-h" className="clay-panel order-5 bg-[var(--ui-surface)] p-4 sm:p-5">
             <h2 id="publish-schedule-h" className={`text-[14px] font-bold ${INK}`}>
               {pc.stepWhen}
             </h2>
@@ -1158,7 +1158,7 @@ export default function PublishComposer({
             )}
           </section>
 
-          <section aria-labelledby="publish-preview-h" className="ui-panel order-6 bg-[var(--ui-surface)] p-4 sm:p-5">
+          <section aria-labelledby="publish-preview-h" className="clay-panel order-6 bg-[var(--ui-surface)] p-4 sm:p-5">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <h2 id="publish-preview-h" className={`text-[14px] font-bold ${INK}`}>
                 {pc.stepPreview}
@@ -1189,7 +1189,7 @@ export default function PublishComposer({
           </div>
 
           <aside className="contents lg:col-start-2 lg:block lg:space-y-5 lg:sticky lg:top-4 lg:h-fit">
-          <section aria-labelledby="publish-dest-h" className="ui-panel order-3 bg-[var(--ui-surface)] p-4 sm:p-5">
+          <section aria-labelledby="publish-dest-h" className="clay-panel order-3 bg-[var(--ui-surface)] p-4 sm:p-5">
             <h2 id="publish-dest-h" className={`text-[14px] font-bold ${INK}`}>
               {pc.stepDest}
             </h2>
@@ -1212,7 +1212,7 @@ export default function PublishComposer({
 
           {/* Configure formats — method pills per selected destination */}
           {selectedTargets.length > 0 && (
-            <section aria-labelledby="publish-formats-h" className="ui-panel order-4 bg-[var(--ui-surface)] p-4 sm:p-5">
+            <section aria-labelledby="publish-formats-h" className="clay-panel order-4 bg-[var(--ui-surface)] p-4 sm:p-5">
               <h2 id="publish-formats-h" className={`text-[14px] font-bold ${INK}`}>
                 {pc.formatsTitle}
               </h2>
@@ -1231,7 +1231,7 @@ export default function PublishComposer({
                   const avail = availableFor(t);
                   const chosen = chosenFor(t);
                   return (
-                    <div key={t.id} id={`dest-row-${t.id}`} className="rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3">
+                    <div key={t.id} id={`dest-row-${t.id}`} className="rounded-[20px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3">
                       <div className="flex items-center gap-2">
                         <PlatformMark platform={t.platform} size={14} />
                         <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-[var(--ui-ink)]">{t.name}</span>
@@ -1287,7 +1287,7 @@ export default function PublishComposer({
             </section>
           )}
 
-          <section aria-labelledby="ai-video-h" className="ui-panel order-7 bg-[var(--ui-surface)] p-4 sm:p-5">
+          <section aria-labelledby="ai-video-h" className="clay-panel order-7 bg-[var(--ui-surface)] p-4 sm:p-5">
             <button
               type="button"
               id="ai-video-h"
@@ -1362,7 +1362,7 @@ export default function PublishComposer({
             onClick={openConfirm}
             disabled={!canPublish}
             title={!canPublish ? (confirmItems.length === 0 ? "Select at least one destination." : needsMedia ? "Add an image or video first." : undefined) : undefined}
-            className="rounded-[10px] bg-[var(--ui-ink)] px-5 py-2.5 text-[13px] font-semibold text-[var(--ui-on-ink)] transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+            className="clay-btn-primary px-5 py-2.5 text-[13px] font-semibold text-[var(--ui-on-ink)] transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
           >
             {scheduleOn ? pc.reviewSchedule : pc.reviewPublish}
           </button>
@@ -1380,7 +1380,7 @@ export default function PublishComposer({
           }}
           className="fixed inset-0 z-50 bg-[rgba(0,0,0,0.45)] sm:flex sm:items-center sm:justify-center sm:p-4"
         >
-          <div className="flex h-[100dvh] w-full flex-col overflow-hidden bg-[var(--ui-surface)] sm:h-auto sm:max-h-[90dvh] sm:max-w-5xl sm:rounded-[16px] sm:border sm:border-[var(--ui-line)] sm:shadow-2xl">
+          <div className="flex h-[100dvh] w-full flex-col overflow-hidden bg-[var(--ui-surface)] sm:h-auto sm:max-h-[90dvh] sm:max-w-5xl sm:rounded-[32px] sm:border sm:border-[var(--ui-line)] sm:shadow-2xl">
             <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--ui-line)] p-4 sm:border-0 sm:p-5 sm:pb-0">
               <div>
                 <h2 className="text-[15px] font-bold text-[var(--ui-ink)] sm:text-[16px]">
@@ -1416,30 +1416,32 @@ export default function PublishComposer({
                   {modalCtx.method === "offer" && (
                     <div className="space-y-3">
                       <div>
-                        <label className="mb-1 block text-[12px] font-semibold text-[var(--ui-ink)]">
+                        <label htmlFor="offer-coupon" className="mb-1 block text-[12px] font-semibold text-[var(--ui-ink)]">
                           {pc.couponLabel}
                         </label>
                         <input
+                          id="offer-coupon"
                           type="text"
                           value={draftCoupon}
                           onChange={(e) => setDraftCoupon(e.target.value)}
                           placeholder={pc.couponPh}
                           maxLength={64}
-                          className="w-full rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus:border-deep-violet/40"
+                          className="w-full clay-input px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus:border-deep-violet/40"
                         />
                         <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">{pc.couponHint}</p>
                       </div>
                       <div>
-                        <label className="mb-1 block text-[12px] font-semibold text-[var(--ui-ink)]">
+                        <label htmlFor="offer-terms" className="mb-1 block text-[12px] font-semibold text-[var(--ui-ink)]">
                           {pc.termsLabel}
                         </label>
                         <textarea
+                          id="offer-terms"
                           value={draftTerms}
                           onChange={(e) => setDraftTerms(e.target.value)}
                           placeholder={pc.termsPh}
                           maxLength={300}
                           rows={3}
-                          className="w-full rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus:border-deep-violet/40"
+                          className="w-full clay-input px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus:border-deep-violet/40"
                         />
                       </div>
                     </div>
@@ -1450,7 +1452,7 @@ export default function PublishComposer({
                       <select
                         value={draftGalleryCategory}
                         onChange={(e) => setDraftGalleryCategory(e.target.value)}
-                        className="w-full rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus:border-deep-violet/40"
+                        className="w-full clay-input px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus:border-deep-violet/40"
                       >
                         {GALLERY_CATEGORIES.map((c) => (
                           <option key={c} value={c}>{c.replace(/_/g, " ")}</option>
@@ -1478,14 +1480,14 @@ export default function PublishComposer({
               <button
                 type="button"
                 onClick={cancelConfig}
-                className="rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-2.5 text-[13px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:py-2"
+                className="clay-input px-4 py-2.5 text-[13px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:py-2"
               >
                 {pc.cancel}
               </button>
               <button
                 type="button"
                 onClick={saveConfig}
-                className="rounded-[10px] bg-[var(--ui-ink)] px-5 py-2.5 text-[13px] font-semibold text-[var(--ui-on-ink)] transition hover:opacity-90 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:py-2"
+                className="clay-btn-primary px-5 py-2.5 text-[13px] font-semibold text-[var(--ui-on-ink)] transition hover:opacity-90 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:py-2"
               >
                 {fill(pc.saveMethod, { method: methodLabel(modalCtx.method) })}
               </button>

@@ -146,7 +146,7 @@ export default function MediaSink({
       {media ? (
         <div className="flex flex-wrap items-start gap-3">
           <div
-            className="relative shrink-0 overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] transition-[width,height] duration-200"
+            className="relative shrink-0 overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] transition-[width,height] duration-200"
             style={{ width: box.w, height: box.h }}
           >
             {media.type === "video" ? (
@@ -203,7 +203,7 @@ export default function MediaSink({
             <button
               type="button"
               onClick={() => fileInput.current?.click()}
-              className="mt-2 rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-1.5 text-[11px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-line)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+              className="clay-btn-secondary mt-2 px-3 py-1.5 text-[11px] font-semibold focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
             >
               {md.replace}
             </button>
@@ -228,7 +228,7 @@ export default function MediaSink({
             setDropping(false);
             acceptFiles(e.dataTransfer.files);
           }}
-          className={`flex flex-col items-center rounded-[12px] border-2 border-dashed px-4 py-7 text-center transition ${
+          className={`flex flex-col items-center rounded-[24px] border-2 border-dashed px-4 py-7 text-center transition ${
             dropping
               ? "border-[var(--ui-ink)] bg-[var(--ui-ink)]/[0.04]"
               : "border-[var(--ui-line)]"
@@ -248,7 +248,7 @@ export default function MediaSink({
           <button
             type="button"
             onClick={() => fileInput.current?.click()}
-            className="mt-3 rounded-[10px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-4 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-line)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+            className="clay-btn-secondary mt-3 px-4 py-1.5 text-[12px] font-semibold focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
           >
             {md.browse}
           </button>
@@ -268,13 +268,13 @@ export default function MediaSink({
           }}
           placeholder={md.pastePh}
           aria-label={md.pasteAria}
-          className="min-w-[12rem] flex-1 rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[12px] text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]"
+          className="clay-input min-w-[12rem] flex-1 px-3 py-2 text-[12px] text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]"
         />
         <button
           type="button"
           onClick={addUrl}
           disabled={!urlDraft.trim()}
-          className="rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[12px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-line)] disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+          className="clay-btn-secondary px-3 py-2 text-[12px] font-semibold disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
         >
 {md.add}
         </button>
