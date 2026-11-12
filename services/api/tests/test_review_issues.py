@@ -402,12 +402,16 @@ async def test_stored_rows_always_satisfy_validate(db, channel_id, user_id):
 def test_normalize_code_rejects_ambiguous_and_misshapen():
     from app.modules.review_engine.tickets import CODE_LENGTH, _normalize_code
 
+    # Legacy 6-char codes (already published on Google) still resolve.
     assert _normalize_code("abc234") == "ABC234"
     assert _normalize_code(" abc-234 ") == "ABC234"
+    # New codes are minted at 8 characters and resolve too.
+    assert _normalize_code("abcdefgh") == "ABCDEFGH"
+    assert _normalize_code(" ABCDEFGH ") == "ABCDEFGH"
+    assert CODE_LENGTH == 8
     # 0/O/1/I are excluded from the alphabet, so a misread must not resolve.
-    for bad in ("abc0o1", "0OI0OI", "ABC23", "ABCDEFGH", "", None):
+    for bad in ("abc0o1", "0OI0OI", "ABC23", "ABCDEFG", "ABCDEFGH2", "", None):
         assert _normalize_code(bad) is None
-    assert len("ABC234") == CODE_LENGTH
 
 
 async def _ticket_row(db, channel_id, tenant, rid="r"):
@@ -504,7 +508,7 @@ async def test_mint_is_idempotent_while_the_code_is_valid(db, channel_id, user_i
 
     issue = await _issue(db, channel_id, user_id)
     first = await ensure_handoff_code(db, tenant_id=user_id, issue=issue)
-    assert first and len(first) == 6
+    assert first and len(first) == 8
     assert (await ensure_handoff_code(db, tenant_id=user_id, issue=issue)) == first
 
 
@@ -525,7 +529,7 @@ async def test_mint_sets_expiry_from_tenant_config(
     issue = await _issue(db, channel_id, user_id)
     code = await ensure_handoff_code(db, tenant_id=user_id, issue=issue)
     await db.refresh(issue)
-    assert code and len(code) == 6
+    assert code and len(code) == 8
     expires = issue.handoff_code_expires_at
     assert expires is not None
     if expires.tzinfo is None:
@@ -605,6 +609,9 @@ def test_extract_handoff_codes_requires_the_marker():
     assert extract_handoff_codes("#K7M2QX") == ["K7M2QX"]
     assert extract_handoff_codes("  # k7m2qx \n") == ["K7M2QX"]
     assert extract_handoff_codes("#K7M2QX.") == ["K7M2QX"]
+    # New 8-character codes resolve the same way.
+    assert extract_handoff_codes("#ABCDEFGH") == ["ABCDEFGH"]
+    assert extract_handoff_codes("# abcdefgh \n") == ["ABCDEFGH"]
     assert extract_handoff_codes("K7M2QX") == []
     assert extract_handoff_codes("THANKS") == []
     assert extract_handoff_codes("hi #K7M2QX") == []

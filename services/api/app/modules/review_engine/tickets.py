@@ -46,9 +46,16 @@ _TICKET_RE = re.compile(r"\bTK-(\d{1,9})\b", re.IGNORECASE)
 # Handoff codes are what a customer actually types on WhatsApp, read off a
 # screenshot by hand -- so no 0/O or 1/I, and no separators to mistype.
 # The alphabet itself is shared with the WhatsApp bridge (core.short_codes).
+#
+# New codes are minted at 8 characters (2^40). The resolvers accept 6 or 8:
+# codes already published on Google listings from before the hardening are
+# 6 characters and must keep resolving until their TTL rotates them.
 CODE_ALPHABET = _SHARED_ALPHABET
-CODE_LENGTH = 6
-_CODE_RE = re.compile(rf"^[A-HJ-NP-Z2-9]{{{CODE_LENGTH}}}$")
+CODE_LENGTH = 8
+_LEN_6 = 6
+_CODE_RE = re.compile(
+    rf"^(?:[A-HJ-NP-Z2-9]{{{_LEN_6}}}|[A-HJ-NP-Z2-9]{{{CODE_LENGTH}}})$"
+)
 
 
 def _normalize_code(raw: str | None) -> Optional[str]:
@@ -83,14 +90,18 @@ def handoff_code_expired(
     return expires_at <= (now or datetime.now(timezone.utc))
 
 
-# The wa.me prefill is "#K7M2QX", not the bare six characters. The marker is
-# load-bearing: "THANKS" and "PLEASE" are both six letters from the code
-# alphabet, so a bare-code match would attach a customer to whichever ticket
-# happened to own that word. At a million tenants that stops being theoretical.
-# A customer who types the bare code falls through to the ordinary new-enquiry
-# flow; the dashboard and the link both show the marked form, so that path is
-# for someone retyping from memory, not the normal journey.
-_CODE_TOKEN_RE = re.compile(rf"^#\s*([A-HJ-NP-Z2-9]{{{CODE_LENGTH}}})$")
+# The wa.me prefill is "#K7M2QX" (or "#ABCDEFGH2" for new codes), not the
+# bare characters. The marker is load-bearing: "THANKS" and "PLEASE" are both
+# six letters from the code alphabet, so a bare-code match would attach a
+# customer to whichever ticket happened to own that word. At a million tenants
+# that stops being theoretical. A customer who types the bare code falls
+# through to the ordinary new-enquiry flow; the dashboard and the link both
+# show the marked form, so that path is for someone retyping from memory, not
+# the normal journey. Both lengths are accepted so older published codes keep
+# resolving.
+_CODE_TOKEN_RE = re.compile(
+    rf"^#\s*([A-HJ-NP-Z2-9]{{{_LEN_6}}}|[A-HJ-NP-Z2-9]{{{CODE_LENGTH}}})$"
+)
 
 
 def extract_handoff_codes(text: str | None) -> list[str]:
