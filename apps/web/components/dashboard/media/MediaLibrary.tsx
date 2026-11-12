@@ -254,13 +254,11 @@ export default function MediaLibrary({ initialLocationId }: { initialLocationId?
     try {
       await apiFetch(`/api/v1/media/${id}`, { method: "PUT", body: JSON.stringify(patch) });
       await refreshItems();
-      const updated = (await apiFetch(`/api/v1/media/${id}`)) as unknown;
-      if (updated && typeof updated === "object") {
-        // refresh viewing
-      }
       setNotice({ kind: "ok", text: "Changes saved." });
     } catch (e) {
-      setNotice({ kind: "err", text: e instanceof Error ? e.message.slice(0, 200) : "Save failed." });
+      const msg = e instanceof Error ? e.message.slice(0, 200) : "Save failed.";
+      setNotice({ kind: "err", text: msg });
+      throw new Error(msg);
     }
   };
 
