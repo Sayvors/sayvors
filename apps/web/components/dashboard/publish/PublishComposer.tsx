@@ -644,7 +644,7 @@ export default function PublishComposer({
 
       for (const g of gallerySelections) {
         if (!mediaUrl) throw new Error(pc.needMedia);
-        await apiFetch("/api/v1/media", {
+        await apiFetch("/api/v1/media/", {
           method: "POST",
           body: JSON.stringify({
             listing_id: (g.target.locationId ?? g.target.id) as string,
