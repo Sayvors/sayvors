@@ -1193,13 +1193,16 @@ class GoogleReviewsClient:
         page_token: str | None = None,
         category: str | None = None,
     ) -> dict:
-        """List media items in a location's GBP gallery (v4)."""
+        """List media items in a location's GBP gallery (v4).
+
+        Google's list endpoint only understands ``pageSize``/``pageToken`` -
+        it rejects any other query parameter, so a category filter is applied
+        here on the returned items instead of being sent upstream.
+        """
         _, _, parent = self._normalize_parent(account_id, location_id)
-        params: dict[str, object] = {"pageSize": max(1, min(int(page_size or 100), 100))}
+        params: dict[str, object] = {"pageSize": max(1, min(int(page_size or 100), 2500))}
         if page_token:
             params["pageToken"] = page_token
-        if category:
-            params["filter"] = f"category = {str(category).upper()}"
         resp = await self._authed_request(
             "GET", f"{GBP_REVIEWS_API}/{parent}/media", params=params,
         )
@@ -1208,7 +1211,16 @@ class GoogleReviewsClient:
                 f"list_media failed ({resp.status_code}): {resp.text[:300]}",
                 resp.status_code,
             )
-        return resp.json() or {}
+        data = resp.json() or {}
+        if category:
+            wanted = str(category).strip().upper()
+            items = [
+                m for m in (data.get("mediaItems") or [])
+                if isinstance(m, dict)
+                and str((m.get("locationAssociation") or {}).get("category") or "").upper() == wanted
+            ]
+            data = {**data, "mediaItems": items}
+        return data
 
     async def get_media(self, name: str) -> dict:
         """Get one media item by full resource name."""

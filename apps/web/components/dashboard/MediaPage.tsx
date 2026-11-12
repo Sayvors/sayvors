@@ -180,7 +180,7 @@ function MediaInner({ initialLocationId, autoUpload, focusMediaId, onExit }: Med
     setGoogleLoading(true);
     setGoogleError(null);
     try {
-      const data = await apiFetch(`/api/v1/channels/${encodeURIComponent(channelId)}/google-media?page_size=100`);
+      const data = await apiFetch(`/api/v1/channels/${encodeURIComponent(channelId)}/google-media?page_size=2500`);
       const list = Array.isArray(data?.media) ? data.media : [];
       setGoogleItems(list as GoogleGalleryItem[]);
     } catch (e) {

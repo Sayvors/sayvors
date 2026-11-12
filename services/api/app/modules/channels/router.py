@@ -4173,7 +4173,7 @@ async def test_review_pipeline(
 @router.get("/{channel_id}/google-media")
 async def list_google_media(
     channel_id: str,
-    page_size: int = Query(50, ge=1, le=100),
+    page_size: int = Query(2500, ge=1, le=2500),
     page_token: str | None = Query(None, max_length=2000),
     category: str | None = Query(None, max_length=40),
     ctx: TenantContext = Depends(require_perm("channels.view")),
@@ -4182,6 +4182,15 @@ async def list_google_media(
     """List photos/videos in the connected Google Business Profile gallery."""
     if ctx.channel_level(channel_id) == "none":
         raise HTTPException(status_code=404, detail="Channel not found")
+    if category:
+        allowed = {
+            "COVER", "PROFILE", "LOGO", "EXTERIOR", "INTERIOR", "PRODUCT",
+            "AT_WORK", "FOOD_AND_DRINK", "MENU", "COMMON_AREA", "ROOMS", "TEAMS", "ADDITIONAL",
+        }
+        cat = category.strip().upper()
+        if cat not in allowed:
+            raise HTTPException(status_code=400, detail=f"Invalid category: {category}")
+        category = cat
     channel = await _google_channel(channel_id, ctx.user, db)
     client, location_id = await _verification_client(channel, db)
     try:

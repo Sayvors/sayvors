@@ -82,7 +82,7 @@ export default function GoogleLiveGallery() {
     setGalleryLoading(true);
     setError(null);
     try {
-      const q = new URLSearchParams({ page_size: "100" });
+      const q = new URLSearchParams({ page_size: "2500" });
       if (cat) q.set("category", cat);
       const data = await apiFetch(`/api/v1/channels/${encodeURIComponent(channelId)}/google-media?${q.toString()}`);
       const list = Array.isArray(data?.media) ? data.media : [];
