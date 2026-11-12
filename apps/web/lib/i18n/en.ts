@@ -2573,6 +2573,10 @@ const en = {
       removeOrderErr: "The removal date must be after the publish date.",
       fileGoneErr: "The picked file is no longer available — attach it again.",
       uploadEmptyErr: "Upload succeeded but no URL came back — try a different file.",
+      // Shown when the browser cannot rasterise the crop (a pasted image on
+      // another origin can refuse to be read into a canvas).
+      cropFallback: "This image could not be cropped in the browser — it was published uncropped.",
+      cropVideoFallback: "Video is published uncropped — the crop frame is a preview.",
       publishFailed: "Publishing failed — try again.",
     },
     confirm: {

@@ -6,6 +6,7 @@ import { INK, INK2 } from "@/components/channels/instagram/ui";
 import { apiFetch } from "@/lib/api-rag";
 import { externalAssetIdFor } from "@/lib/publish-targets";
 import { checkWindow, minLocalInput } from "@/lib/publish-schedule";
+import { cropSignature, exportCroppedImage } from "@/lib/crop-image";
 import MediaSink from "./MediaSink";
 import DestinationSelector from "./DestinationSelector";
 import DestinationPreview from "./DestinationPreview";
@@ -34,6 +35,26 @@ function fill(s: string, vars: Record<string, string | number>): string {
     (out, [key, value]) => out.replaceAll(`{${key}}`, String(value)),
     s,
   );
+}
+
+/**
+ * A short stable token for a request group, used as the idempotency suffix.
+ *
+ * The group is identified by its crop plus, for a promotion, the coupon and
+ * terms. Those fields alone can reach 364 characters while the publish API
+ * caps `idempotency_key` at 200, so the raw group key cannot be sent. FNV-1a
+ * is deterministic, so a retry of the same draft produces the same token and
+ * the backend still collapses it onto the earlier job. Two different groups
+ * can only collide on the same platform/asset/method if they are the same
+ * request, so a collision cannot drop a destination.
+ */
+function groupToken(key: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < key.length; i += 1) {
+    hash ^= key.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
 }
 
 type MethodDict = Dict["publish"]["methods"];
@@ -635,19 +656,61 @@ export default function PublishComposer({
       // Gallery is published through the location-media API (photos added to
       // the GBP gallery with a chosen category). Everything else stays on the
       // unified publish jobs pipeline.
-      const postDestinations = confirmItems
-        .map(({ target: t, methods }) => ({
-          platform: t.platform,
-          external_asset_id: externalAssetIdFor(t) as string,
-          methods: methods.filter((m) => m !== "gallery"),
-        }))
-        .filter((d) => d.methods.length > 0);
-
       const gallerySelections = confirmItems.flatMap(({ target, methods }) =>
         methods.includes("gallery")
-          ? [{ target, category: galleryCategories[cropKeyFor(target.id, "gallery")] || "EXTERIOR" }]
+          ? [
+              {
+                target,
+                category:
+                  galleryCategories[cropKeyFor(target.id, "gallery")] || "EXTERIOR",
+                crop:
+                  crops[cropKeyFor(target.id, "gallery")] ??
+                  defaultCropFor(target.platform, "gallery"),
+              },
+            ]
           : []
       );
+
+      // The crop editor is a CSS transform, so the file must be rasterised
+      // before it is uploaded or the publisher ships the whole original.
+      // One upload per distinct crop, reused by every format that shares it.
+      const notices = new Set<string>();
+      const cropUploads = new Map<string, { url: string | null; key: string | null }>();
+      const mediaForCrop = async (crop: CropState) => {
+        if (!media || crop.key === "orig") {
+          return { url: mediaUrl, key: mediaKey };
+        }
+        if (mediaType === "video") {
+          // A canvas cannot cut a video without dropping its audio track.
+          notices.add(pc.cropVideoFallback);
+          return { url: mediaUrl, key: mediaKey };
+        }
+        const sig = cropSignature(crop);
+        const cached = cropUploads.get(sig);
+        if (cached) return cached;
+
+        let out = { url: mediaUrl, key: mediaKey };
+        try {
+          const file = await exportCroppedImage(
+            { url: mediaUrl ?? media.url, file: media.file, type: mediaType },
+            crop,
+          );
+          if (file) {
+            const form = new FormData();
+            form.append("file", file);
+            const up = await apiFetch("/api/v1/media/upload", { method: "POST", body: form });
+            if (!up.image_url) throw new Error(pc.uploadEmptyErr);
+            out = { url: up.image_url, key: up.key ?? null };
+          }
+        } catch {
+          // A pasted image on another origin can refuse to be read into a
+          // canvas. Publishing the original beats failing the whole draft,
+          // but the merchant is told the crop was not applied.
+          notices.add(pc.cropFallback);
+        }
+        cropUploads.set(sig, out);
+        return out;
+      };
 
       // One idempotency key per draft, reused across retries: the backend
       // keys jobs as key:platform:asset:method, so a retry after a partial
@@ -660,45 +723,69 @@ export default function PublishComposer({
       }
       const attempt = publishAttemptRef.current;
 
-      // A promotion carries its own coupon code and terms, so destinations
-      // with different promotions cannot share one request: Google reads
-      // those from the post body, which is per request.
-      const offerKey = (targetId: string) =>
-        `${offerDetails[cropKeyFor(targetId, "offer")]?.coupon ?? ""}|${
-          offerDetails[cropKeyFor(targetId, "offer")]?.terms ?? ""
-        }`;
+      // Two things vary per request: the crop (each format bakes its own
+      // file) and, for a promotion, the coupon/terms (they live in the post
+      // body). Grouping by both is what lets one draft publish a 1:1 avatar,
+      // a 16:9 cover and an uncropped update without shipping one file to
+      // all of them.
+      type PostDestination = {
+        platform: string;
+        external_asset_id: string;
+        methods: PostMethod[];
+      };
       const groups = new Map<
         string,
-        { destinations: typeof postDestinations; coupon: string; terms: string }
+        {
+          destinations: PostDestination[];
+          coupon: string;
+          terms: string;
+          crop: CropState;
+        }
       >();
       for (const item of confirmItems) {
         const methods = item.methods.filter((m) => m !== "gallery");
         if (methods.length === 0) continue;
-        const dest = {
-          platform: item.target.platform,
-          external_asset_id: externalAssetIdFor(item.target) as string,
-          methods,
-        };
         const details = offerDetails[cropKeyFor(item.target.id, "offer")];
-        const key = methods.includes("offer")
-          ? `${details?.coupon ?? ""}|${details?.terms ?? ""}`
-          : "";
-        const group = groups.get(key);
-        if (group) group.destinations.push(dest);
-        else
-          groups.set(key, {
-            destinations: [dest],
-            coupon: details?.coupon ?? "",
-            terms: details?.terms ?? "",
-          });
+        const assetId = externalAssetIdFor(item.target) as string;
+        for (const method of methods) {
+          const crop =
+            crops[cropKeyFor(item.target.id, method)] ??
+            defaultCropFor(item.target.platform, method);
+          const offerSig =
+            method === "offer"
+              ? `${details?.coupon ?? ""}|${details?.terms ?? ""}`
+              : "";
+          const groupKey = `${cropSignature(crop)}::${offerSig}`;
+          let group = groups.get(groupKey);
+          if (!group) {
+            group = {
+              destinations: [],
+              coupon: details?.coupon ?? "",
+              terms: details?.terms ?? "",
+              crop,
+            };
+            groups.set(groupKey, group);
+          }
+          const existing = group.destinations.find(
+            (d) => d.platform === item.target.platform && d.external_asset_id === assetId,
+          );
+          if (existing) existing.methods.push(method);
+          else
+            group.destinations.push({
+              platform: item.target.platform,
+              external_asset_id: assetId,
+              methods: [method],
+            });
+        }
       }
 
       for (const [groupKey, group] of groups) {
+        const variant = await mediaForCrop(group.crop);
         await apiFetch("/api/v1/channels/publish", {
           method: "POST",
           body: JSON.stringify({
-            media_url: mediaUrl,
-            media_key: mediaKey,
+            media_url: variant.url,
+            media_key: variant.key,
             media_type: mediaType,
             caption,
             description,
@@ -716,7 +803,7 @@ export default function PublishComposer({
             language_code: GOOGLE_POST_LANGUAGE[locale] ?? "en-US",
             destinations: group.destinations,
             batch_id: attempt.key,
-            idempotency_key: `${attempt.key}:${groupKey}`,
+            idempotency_key: `${attempt.key}:${groupToken(groupKey)}`,
           }),
         });
       }
@@ -724,6 +811,25 @@ export default function PublishComposer({
       // A gallery photo that fails must not roll back the posts that already
       // went out, and must not stop the other locations: each destination is
       // reported on its own.
+      // A gallery photo can carry a crop too (a square product shot, say).
+      const galleryCrops = new Map<string, File | null>();
+      const croppedGalleryFile = async (crop: CropState): Promise<File | null> => {
+        if (!media || crop.key === "orig" || mediaType === "video") return null;
+        const sig = cropSignature(crop);
+        if (galleryCrops.has(sig)) return galleryCrops.get(sig) ?? null;
+        let file: File | null = null;
+        try {
+          file = await exportCroppedImage(
+            { url: mediaUrl ?? media.url, file: media.file, type: mediaType },
+            crop,
+          );
+        } catch {
+          notices.add(pc.cropFallback);
+        }
+        galleryCrops.set(sig, file);
+        return file;
+      };
+
       const galleryErrors: string[] = [];
       const fallbacks: string[] = [];
       for (const g of gallerySelections) {
@@ -734,7 +840,10 @@ export default function PublishComposer({
         const form = new FormData();
         form.append("category", g.category);
         if (caption) form.append("description", caption);
-        if (media?.file) {
+        const cropped = await croppedGalleryFile(g.crop);
+        if (cropped) {
+          form.append("file", cropped);
+        } else if (media?.file) {
           form.append("file", media.file);
         } else if (media?.url && media.url.startsWith("blob:")) {
           throw new Error(pc.fileGoneErr);
@@ -763,16 +872,19 @@ export default function PublishComposer({
         }
       }
 
+      // Crop fallbacks and category fallbacks are both things the merchant
+      // must hear about, so they share one banner.
+      const allNotices = [...notices, ...fallbacks];
       if (galleryErrors.length) {
         // The draft stays open so the merchant can pick another category and
         // retry; the posts are not re-queued (same idempotency key).
         setPublishError(galleryErrors.join(" · "));
-        setGalleryFallbacks(fallbacks);
+        setGalleryFallbacks(allNotices);
         return;
       }
-      if (fallbacks.length) {
-        setGalleryFallbacks(fallbacks);
-        onNotice?.(fallbacks.join(" "));
+      if (allNotices.length) {
+        setGalleryFallbacks(allNotices);
+        onNotice?.(allNotices.join(" "));
       }
 
       setConfirmOpen(false);
