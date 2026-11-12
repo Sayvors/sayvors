@@ -181,6 +181,54 @@ async def get_unmatched(
     return {"names": await unmatched_names(db, user_id=ctx.tenant_id)}
 
 
+@router.get("/{member_id}/mentions")
+async def list_mentions(
+    member_id: str,
+    days: int = Query(90, ge=7, le=365),
+    ctx: TenantContext = Depends(require_perm("media.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """The reviews naming one employee — the details-page timeline."""
+    member = (
+        await db.execute(
+            select(StaffMember).where(
+                StaffMember.id == member_id, StaffMember.user_id == ctx.tenant_id
+            )
+        )
+    ).scalar_one_or_none()
+    if member is None:
+        raise HTTPException(status_code=404, detail="Employee not found.")
+    from datetime import datetime, timedelta, timezone
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    rows = (
+        await db.execute(
+            select(ReviewStaffMention)
+            .where(
+                ReviewStaffMention.user_id == ctx.tenant_id,
+                ReviewStaffMention.staff_member_id == member_id,
+                ReviewStaffMention.review_created_at >= cutoff,
+            )
+            .order_by(ReviewStaffMention.review_created_at.desc())
+            .limit(200)
+        )
+    ).scalars().all()
+    return {
+        "employee": _out(member),
+        "mentions": [
+            {
+                "review_id": m.review_id,
+                "rating": m.rating,
+                "sentiment": m.sentiment,
+                "review_created_at": (
+                    m.review_created_at.isoformat() if m.review_created_at else None
+                ),
+            }
+            for m in rows
+        ],
+    }
+
+
 class AssignIn(BaseModel):
     name_normalized: str = Field(..., min_length=1, max_length=120)
     staff_member_id: str = Field(..., min_length=1, max_length=36)

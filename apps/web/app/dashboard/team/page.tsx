@@ -1,11 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense } from "react";
 import { apiFetch } from "@/lib/api-rag";
 import { resolveMediaUrl } from "@/lib/media-url";
 import PlatformMark, { platformLabel } from "@/components/channels/PlatformMark";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import type { Dict } from "@/lib/i18n/en";
+import StaffManager from "@/components/analytics/StaffManager";
 
 type TeamDict = Dict["team"];
 
@@ -1108,6 +1110,19 @@ export default function TeamPage() {
               {notice.text}
             </p>
           )}
+
+          {/* Employees (review recognition) */}
+          <section className={`ui-panel bg-[var(--ui-surface)] p-8`}>
+            <h2 className="text-[16px] font-bold text-[var(--ui-ink)]">Employees</h2>
+            <p className="mt-0.5 text-[12px] text-[var(--ui-ink-2)]">
+              Reviews that name an employee are counted for them — see who is working hard under Analytics &rarr; Staff.
+            </p>
+            <div className="mt-4">
+              <Suspense fallback={<p className="text-[12px] text-[var(--ui-ink-2)]">Loading…</p>}>
+                <StaffManager />
+              </Suspense>
+            </div>
+          </section>
 
           {/* Members */}
           <section className={`ui-panel bg-[var(--ui-surface)] p-8`}>
