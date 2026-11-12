@@ -27,6 +27,10 @@ class ReviewIssueOut(BaseModel):
     # When the code (and the wa.me link that prefills it) stops resolving.
     # NULL = legacy code with no expiry.
     handoff_code_expires_at: str | None = None
+    # When the code was first redeemed (single-use). NULL = still unused.
+    # Lets a merchant see that a customer used the link — the redemption
+    # audit surface for WAH-5.
+    handoff_code_used_at: str | None = None
     rating: int
     primary_category: str
     subcategory: str
@@ -62,6 +66,11 @@ def _to_out(r) -> ReviewIssueOut:
         handoff_code_expires_at=(
             r.handoff_code_expires_at.isoformat()
             if getattr(r, "handoff_code_expires_at", None)
+            else None
+        ),
+        handoff_code_used_at=(
+            r.handoff_code_used_at.isoformat()
+            if getattr(r, "handoff_code_used_at", None)
             else None
         ),
         rating=r.rating,

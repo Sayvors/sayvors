@@ -439,6 +439,10 @@ async def resolve_inbound(
             row.handoff_code_used_by_wamid = replay_key[:64]
         db.add(row)
         await db.flush()
+        logger.info(
+            "handoff code %s redeemed (tenant=%s) by %s — issue %s",
+            canon, tenant_id, replay_key or "<no-key>", row.id,
+        )
         return InboundMatch(issue=row, matched_by="handoff_code", raw=code)
 
     refs = extract_ticket_refs(text)
