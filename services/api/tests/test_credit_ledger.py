@@ -438,3 +438,125 @@ async def test_usage_row_can_reference_the_ledger_and_cost(
     assert event.cost_cents == 2
     assert event.ledger_id == reservation.id
     assert cost_cents("groq:oss-120b", 3000, 500) == 1
+
+
+async def test_reserve_retries_transient_lock_timeout_then_succeeds(monkeypatch, wallet_factory):
+    uid = await wallet_factory(100)
+    real_lock = ledger._lock_user
+    calls = {"n": 0}
+
+    async def flaky_lock(db, tenant_id):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            from sqlalchemy.exc import OperationalError
+
+            raise OperationalError(
+                "SELECT ... FOR UPDATE", {}, Exception("canceling statement due to lock timeout")
+            )
+        return await real_lock(db, tenant_id)
+
+    monkeypatch.setattr(ledger, "_lock_user", flaky_lock)
+    # Avoid the real 0.5s+ backoff delay in tests.
+    import app.modules.billing.ledger as _L
+    original_sleep = _L.asyncio.sleep
+    _L.asyncio.sleep = _async_noop_sleep
+    try:
+        r = await ledger.reserve(uid)
+    finally:
+        _L.asyncio.sleep = original_sleep
+
+    assert r.amount_cents == ledger.RESERVE_CENTS
+    # First attempt aborted at the first lock; second attempt took the lock twice
+    # (reserve + ensure_ledger_initialized) and committed.
+    assert calls["n"] == 3
+    # balance decremented exactly once
+    from app.modules.billing.ledger import _get_session_factory
+
+    async with _get_session_factory()() as db:
+        from app.modules.users.models import User
+
+        u = await db.get(User, uid)
+        assert int(u.ai_credit_cents) == 100 - ledger.RESERVE_CENTS
+
+
+async def _async_noop_sleep(*_a, **_k):
+    return None
+
+
+async def test_reserve_does_not_retry_budget_exhausted(monkeypatch, wallet_factory):
+    uid = await wallet_factory(0)  # below RESERVE_CENTS
+    calls = {"n": 0}
+    real_lock = ledger._lock_user
+
+    async def counting_lock(db, tenant_id):
+        calls["n"] += 1
+        return await real_lock(db, tenant_id)
+
+    monkeypatch.setattr(ledger, "_lock_user", counting_lock)
+    with pytest.raises(BudgetExhausted):
+        await ledger.reserve(uid)
+    # Exactly one attempt: BudgetExhausted is terminal, not retried.
+    assert calls["n"] == 2  # reserve + ensure, single attempt
+
+
+async def test_reserve_raises_unavailable_after_persistent_lock_timeout(monkeypatch, wallet_factory):
+    uid = await wallet_factory(100)
+
+    async def always_fail(db, tenant_id):
+        from sqlalchemy.exc import OperationalError
+
+        raise OperationalError("SELECT ... FOR UPDATE", {}, Exception("canceling statement due to lock timeout"))
+
+    monkeypatch.setattr(ledger, "_lock_user", always_fail)
+    import app.modules.billing.ledger as _L
+
+    _L.asyncio.sleep = _async_noop_sleep
+    try:
+        with pytest.raises(BudgetUnavailable):
+            await ledger.reserve(uid)
+    finally:
+        # restore default sleep
+        import asyncio as _a
+
+        _L.asyncio.sleep = _a.sleep
+    # balance untouched
+    async with _L._get_session_factory()() as db:
+        from app.modules.users.models import User
+
+        u = await db.get(User, uid)
+        assert int(u.ai_credit_cents) == 100
+
+
+async def test_reserve_idempotency_survives_retry(monkeypatch, wallet_factory):
+    uid = await wallet_factory(100)
+    key = f"k-{uid}"
+    real_lock = ledger._lock_user
+    calls = {"n": 0}
+
+    async def flaky_lock(db, tenant_id):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            from sqlalchemy.exc import OperationalError
+
+            raise OperationalError("x", {}, Exception("canceling statement due to lock timeout"))
+        return await real_lock(db, tenant_id)
+
+    monkeypatch.setattr(ledger, "_lock_user", flaky_lock)
+    import app.modules.billing.ledger as _L
+
+    _L.asyncio.sleep = _async_noop_sleep
+    try:
+        first = await ledger.reserve(uid, idempotency_key=key)
+    finally:
+        import asyncio as _a
+
+        _L.asyncio.sleep = _a.sleep
+    assert first.id
+    # A second call with the same key returns the same hold, no new charge.
+    second = await ledger.reserve(uid, idempotency_key=key)
+    assert second.id == first.id
+    async with _L._get_session_factory()() as db:
+        from app.modules.users.models import User
+
+        u = await db.get(User, uid)
+        assert int(u.ai_credit_cents) == 100 - ledger.RESERVE_CENTS

@@ -321,12 +321,18 @@ async def save_profile_image(
 
     from ...core.storage import local_media_url, put_media
 
-    user = await _locked_user(user_id, db)
+    # Upload to storage BEFORE taking the user row lock. put_media performs a
+    # (possibly slow, possibly network) write; doing it inside _locked_user held
+    # the row across that write and stalled every concurrent credit reserve for
+    # the same tenant (lock_timeout). The lock is only needed to swap the
+    # pointer, not to write the object.
     storage_key, public_url = put_media(user_id, filename, data, expected_type)
     if not public_url:
         # Local backend has no origin of its own; the request supplies it so
         # the browser and the API resolve the same public URL.
         public_url = local_media_url(base_url, user_id, storage_key)
+
+    user = await _locked_user(user_id, db)
 
     if kind == "avatar":
         old_key = user.avatar_storage_key

@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -110,6 +110,60 @@ async def _lock_user(db: AsyncSession, tenant_id: str):
     return user
 
 
+def _is_transient_db_error(exc: Exception) -> bool:
+    """Whether a reserve failure is worth retrying.
+
+    Lock timeouts, connection drops and pool waits are transient: the next
+    attempt usually succeeds once the holder releases. Logic errors (integrity,
+    not-null, programming) are not.
+    """
+    from sqlalchemy.exc import DBAPIError, OperationalError
+
+    if isinstance(exc, (OperationalError, DBAPIError)):
+        text = str(exc).lower()
+        if "lock timeout" in text or "canceling statement" in text:
+            return True
+        if "connection" in text or "timeout" in text or "too many clients" in text:
+            return True
+        orig = getattr(exc, "orig", None)
+        if orig is not None and "locknotavailable" in type(orig).__name__.lower():
+            return True
+        return False
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError, ConnectionError)):
+        return True
+    return False
+
+
+async def _log_lock_diagnostics(tenant_id: str) -> None:
+    """Best-effort: log who is holding locks when a reserve times out.
+
+    Runs in its own short session so it cannot be blocked by the contended
+    transaction. Swallows every error: diagnostics must never raise.
+    """
+    try:
+        factory = _get_session_factory()
+        async with factory() as db:
+            rows = (
+                await db.execute(
+                    text(
+                        "SELECT pid, state, wait_event_type, wait_event, "
+                        "left(query, 200) AS q "
+                        "FROM pg_stat_activity "
+                        "WHERE state = 'active' AND pid <> pg_backend_pid() "
+                        "ORDER BY query_start LIMIT 8"
+                    )
+                )
+            ).mappings().all()
+        if rows:
+            logger.warning(
+                "Credit reserve lock contention for tenant %s; active backends: %s",
+                tenant_id,
+                [dict(r) for r in rows],
+            )
+    except Exception:  # pragma: no cover - diagnostics only
+        logger.debug("Lock diagnostics unavailable", exc_info=True)
+
+
 async def _opening_row(db: AsyncSession, tenant_id: str) -> BillingEvent | None:
     return (
         await db.execute(
@@ -143,17 +197,35 @@ async def ensure_ledger_initialized(
     computed window predates usage retention. The backfill script uses that to
     require an explicit ``--force``.
     """
+    # Pre-compute the opening baseline OUTSIDE the row lock. ``compute_balance``
+    # is a streamed aggregate over grants and usage events; running it while
+    # holding the users row stalled every concurrent reserve/settle caller for
+    # the whole duration (the lock_timeout incident). The opening row does not
+    # exist yet for this tenant, so no other mutation can commit one without
+    # first taking this same lock — the pre-computed value stays valid until we
+    # acquire it below. If a concurrent creator wins, we discard it and use
+    # theirs.
+    existing = await _opening_row(db, tenant_id)
+    preview: dict[str, Any] | None = None
+    if existing is None:
+        from .wallet import compute_balance
+
+        preview = await compute_balance(tenant_id, db)
+        if preview["warning"] and not allow_unreliable and not force:
+            raise UnsafeLedgerBootstrap(tenant_id, preview)
+
     user = await _lock_user(db, tenant_id)
     existing = await _opening_row(db, tenant_id)
     if existing is not None:
         balance = int(user.ai_credit_cents or 0)
         return (balance, False) if _return_created else balance
 
-    from .wallet import compute_balance
+    if preview is None:
+        from .wallet import compute_balance
 
-    preview = await compute_balance(tenant_id, db)
-    if preview["warning"] and not allow_unreliable and not force:
-        raise UnsafeLedgerBootstrap(tenant_id, preview)
+        preview = await compute_balance(tenant_id, db)
+        if preview["warning"] and not allow_unreliable and not force:
+            raise UnsafeLedgerBootstrap(tenant_id, preview)
 
     balance = max(0, int(preview["balance_cents"]))
     db.add(
@@ -208,78 +280,101 @@ async def reserve(
     if amount <= 0:
         return Reservation(id="", tenant_id=tenant_id, amount_cents=0)
 
-    try:
-        factory = _get_session_factory()
-        async with factory() as db:
-            user = await _lock_user(db, tenant_id)
-            balance, created = await ensure_ledger_initialized(
-                tenant_id, db, allow_unreliable=True, _return_created=True
-            )
+    # Transient contention (lock timeout, connection blip) must not take down
+    # the whole LLM call. The transaction is all-or-nothing, so retrying from
+    # scratch is safe: a failed attempt never commits a partial hold. Budget
+    # exhaustion and validation errors are never retried.
+    max_attempts = 3
+    last_exc: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            factory = _get_session_factory()
+            async with factory() as db:
+                user = await _lock_user(db, tenant_id)
+                balance, created = await ensure_ledger_initialized(
+                    tenant_id, db, allow_unreliable=True, _return_created=True
+                )
 
-            if idempotency_key:
-                existing = (
-                    await db.execute(
-                        select(BillingEvent).where(
-                            BillingEvent.tenant_id == tenant_id,
-                            BillingEvent.idempotency_key == idempotency_key,
+                if idempotency_key:
+                    existing = (
+                        await db.execute(
+                            select(BillingEvent).where(
+                                BillingEvent.tenant_id == tenant_id,
+                                BillingEvent.idempotency_key == idempotency_key,
+                            )
                         )
-                    )
-                ).scalar_one_or_none()
-                if existing is not None:
-                    if existing.status != "pending":
-                        raise ValueError(
-                            "Idempotency key is already finalized for another call."
+                    ).scalar_one_or_none()
+                    if existing is not None:
+                        if existing.status != "pending":
+                            raise ValueError(
+                                "Idempotency key is already finalized for another call."
+                            )
+                        if created:
+                            await db.commit()
+                        return Reservation(
+                            id=existing.id,
+                            tenant_id=tenant_id,
+                            amount_cents=int(existing.reserved_cents or 0),
                         )
+
+                if balance < amount:
+                    # Persist a newly created opening row so the next request does
+                    # not redo the historical calculation, then deny the call.
                     if created:
                         await db.commit()
-                    return Reservation(
-                        id=existing.id,
-                        tenant_id=tenant_id,
-                        amount_cents=int(existing.reserved_cents or 0),
-                    )
+                    else:
+                        await db.rollback()
+                    raise BudgetExhausted(tenant_id)
 
-            if balance < amount:
-                # Persist a newly created opening row so the next request does
-                # not redo the historical calculation, then deny the call.
-                if created:
-                    await db.commit()
-                else:
-                    await db.rollback()
-                raise BudgetExhausted(tenant_id)
+                new_balance = balance - amount
+                hold = BillingEvent(
+                    id=str(uuid.uuid4()),
+                    tenant_id=tenant_id,
+                    kind="ai_usage",
+                    status="pending",
+                    amount_cents=0,
+                    reserved_cents=amount,
+                    balance_after_cents=new_balance,
+                    model_id=model_id,
+                    idempotency_key=idempotency_key,
+                    expires_at=_now() + timedelta(seconds=HOLD_TTL_SECONDS),
+                    note=(purpose or "")[:500] or None,
+                    created_by="system",
+                )
+                user.ai_credit_cents = new_balance
+                db.add(hold)
+                await db.commit()
+                reservation = Reservation(
+                    id=hold.id, tenant_id=tenant_id, amount_cents=amount
+                )
+            await _mirror(tenant_id, new_balance)
+            return reservation
+        except BudgetExhausted:
+            raise
+        except ValueError:
+            raise
+        except Exception as e:
+            last_exc = e
+            transient = _is_transient_db_error(e)
+            logger.warning(
+                "Credit reserve attempt %d/%d failed for %s (transient=%s): %s",
+                attempt,
+                max_attempts,
+                tenant_id,
+                transient,
+                e,
+            )
+            if not transient or attempt >= max_attempts:
+                break
+            await asyncio.sleep(0.5 * attempt)
 
-            new_balance = balance - amount
-            hold = BillingEvent(
-                id=str(uuid.uuid4()),
-                tenant_id=tenant_id,
-                kind="ai_usage",
-                status="pending",
-                amount_cents=0,
-                reserved_cents=amount,
-                balance_after_cents=new_balance,
-                model_id=model_id,
-                idempotency_key=idempotency_key,
-                expires_at=_now() + timedelta(seconds=HOLD_TTL_SECONDS),
-                note=(purpose or "")[:500] or None,
-                created_by="system",
-            )
-            user.ai_credit_cents = new_balance
-            db.add(hold)
-            await db.commit()
-            reservation = Reservation(
-                id=hold.id, tenant_id=tenant_id, amount_cents=amount
-            )
-        await _mirror(tenant_id, new_balance)
-        return reservation
-    except BudgetExhausted:
-        raise
-    except ValueError:
-        raise
-    except SQLAlchemyError as e:
+    assert last_exc is not None
+    if isinstance(last_exc, SQLAlchemyError):
+        await _log_lock_diagnostics(tenant_id)
         logger.exception("Credit reserve DB failure for %s", tenant_id)
-        raise BudgetUnavailable(tenant_id, "database error") from e
-    except Exception:
-        logger.exception("Credit reserve failed for %s", tenant_id)
-        raise
+        raise BudgetUnavailable(tenant_id, "database error") from last_exc
+    logger.exception("Credit reserve failed for %s", tenant_id)
+    raise last_exc
 
 
 def _result_from_hold(hold: BillingEvent) -> SettleResult:

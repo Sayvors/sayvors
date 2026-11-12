@@ -1053,6 +1053,9 @@ class ReviewIssue(Base):
         # "My tickets" scans by owner.
         Index("ix_review_issues_tenant_assigned", "tenant_id", "assigned_to"),
         Index("ix_review_issues_tenant_review_id", "tenant_id", "review_id"),
+        # One issue per review per channel. Backstop for the cross-replica
+        # race in _handle_fetched_review; the losing insert raises IntegrityError.
+        Index("uq_review_issues_channel_review", "channel_id", "review_id", unique=True),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     tenant_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False)
