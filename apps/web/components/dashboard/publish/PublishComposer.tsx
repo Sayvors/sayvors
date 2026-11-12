@@ -277,10 +277,18 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
 export default function PublishComposer({
   onPublished,
   onCancel,
+  onNotice,
   initialScheduleDate,
 }: {
   onPublished?: () => void;
   onCancel?: () => void;
+  /**
+   * Told about anything the merchant must know after a successful publish -
+   * today, that Google filed a photo under a different category. The composer
+   * closes on success, so the message has to travel to the page that opened
+   * it, otherwise it is never seen.
+   */
+  onNotice?: (text: string) => void;
   initialScheduleDate?: string | null;
 }) {
   // ── Destinations ─────────────────────────────────────────────────
@@ -715,7 +723,10 @@ export default function PublishComposer({
         setGalleryFallbacks(fallbacks);
         return;
       }
-      if (fallbacks.length) setGalleryFallbacks(fallbacks);
+      if (fallbacks.length) {
+        setGalleryFallbacks(fallbacks);
+        onNotice?.(fallbacks.join(" "));
+      }
 
       setConfirmOpen(false);
       clearMedia();
