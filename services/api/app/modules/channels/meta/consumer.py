@@ -2488,12 +2488,41 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
 
         try:
             chat_settings = await _load_chat_settings(db, tenant_id)
+            # A quoted handoff code that did not resolve (expired, or already
+            # used by another message) must not dead-end in the generic "you
+            # shared a code" drift. Tell the AI to acknowledge the link is
+            # inactive and invite the customer to restate the complaint, so
+            # the thread continues as a real enquiry.
+            code_status = None
+            if handoff_match is None and text:
+                from ...review_engine.tickets import classify_handoff_code
+
+                try:
+                    code_status = await classify_handoff_code(
+                        db, tenant_id=tenant_id, text=text
+                    )
+                except Exception as e:  # noqa: BLE001 — never cost the reply
+                    logger.warning(
+                        "handoff code classification failed wamid=%s: %s: %s",
+                        wamid[:32], type(e).__name__, str(e)[:150],
+                    )
             reply_kwargs: dict = {
                 "context": _handoff_context(handoff_match),
                 "contact": from_wa or None,
                 "ticket": inbound_lead,
                 "temperature": chat_settings["temperature"],
             }
+            if code_status in ("expired", "used"):
+                reply_kwargs["context"] = (
+                    reply_kwargs["context"] or ""
+                ) + "\n\n" + (
+                    "The customer quoted a handoff link whose code is "
+                    + ("expired." if code_status == "expired" else "already used.")
+                    + " Tell them kindly that the link is no longer active, "
+                    "assure them their message is still received, and ask "
+                    "them to describe the issue in their own words. Then "
+                    "help them normally. Do not keep asking about the code."
+                )
             if msg_type in ("image", "document"):
                 reply_kwargs["attachment_note"] = ATTACHMENT_PROMPT_NOTE
             raw_reply = await _generate_reply(

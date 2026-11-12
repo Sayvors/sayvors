@@ -104,6 +104,48 @@ _CODE_TOKEN_RE = re.compile(
 )
 
 
+async def classify_handoff_code(
+    db: AsyncSession,
+    *,
+    tenant_id: str,
+    text: str | None = None,
+    handoff_codes: list[str] | None = None,
+) -> Optional[str]:
+    """Why a quoted code did NOT resolve: "expired", "used", or None.
+
+    Call this only after ``resolve_inbound`` returned None — a valid code
+    would have matched. It lets the reply tell the customer the link is no
+    longer active AND keep their complaint, instead of the generic "you
+    shared a code" dead-end.
+
+    Returns the first reason in code order; None when the code is unknown
+    (never minted, or another tenant's) or still valid.
+    """
+    from ..channels.models import ReviewIssue
+
+    candidates = handoff_codes if handoff_codes is not None else extract_handoff_codes(text)
+    now = datetime.now(timezone.utc)
+    for code in candidates:
+        canon = _normalize_code(code)
+        if canon is None:
+            continue
+        row = (
+            await db.execute(
+                select(ReviewIssue).where(
+                    ReviewIssue.tenant_id == tenant_id,
+                    ReviewIssue.handoff_code == canon,
+                )
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            continue
+        if handoff_code_expired(row.handoff_code_expires_at, now=now):
+            return "expired"
+        if row.handoff_code_used_at is not None:
+            return "used"
+    return None
+
+
 def extract_handoff_codes(text: str | None) -> list[str]:
     """The handoff code in an inbound message, if the message is just a code.
 

@@ -665,6 +665,41 @@ async def test_handoff_code_consumed_without_replay_key_not_reusable(db, channel
     assert await resolve_inbound(db, tenant_id=user_id, text=f"#{code}") is None
 
 
+async def test_classify_handoff_code_expired_and_used(db, channel_id, user_id):
+    from app.modules.review_engine.handoff import ensure_handoff_code
+    from app.modules.review_engine.tickets import classify_handoff_code, resolve_inbound
+
+    issue = await _issue(db, channel_id, user_id)
+    code = await ensure_handoff_code(db, tenant_id=user_id, issue=issue)
+    assert code
+
+    # Valid, unused code: classifier says nothing (it would have matched).
+    assert await classify_handoff_code(db, tenant_id=user_id, text=f"#{code}") is None
+
+    # Consume it, then classifier reports "used".
+    await resolve_inbound(db, tenant_id=user_id, text=f"#{code}", replay_key="wamid-1")
+    assert await classify_handoff_code(db, tenant_id=user_id, text=f"#{code}") == "used"
+
+    # Unknown code: no state.
+    assert await classify_handoff_code(db, tenant_id=user_id, text="#ZZZZZZ") is None
+    assert await classify_handoff_code(db, tenant_id=user_id, text="no code here") is None
+
+
+async def test_classify_handoff_code_expired(db, channel_id, user_id):
+    from datetime import timedelta
+
+    from app.modules.review_engine.handoff import ensure_handoff_code
+    from app.modules.review_engine.tickets import classify_handoff_code
+
+    issue = await _issue(db, channel_id, user_id)
+    code = await ensure_handoff_code(db, tenant_id=user_id, issue=issue)
+    issue.handoff_code_expires_at = issue.handoff_code_expires_at - timedelta(days=2)
+    db.add(issue)
+    await db.commit()
+
+    assert await classify_handoff_code(db, tenant_id=user_id, text=f"#{code}") == "expired"
+
+
 async def test_no_code_for_praise(db, channel_id, user_id):
     """A code on praise is a handle to nothing."""
     from app.modules.review_engine.handoff import ensure_handoff_code
