@@ -35,6 +35,7 @@ from .modules.memory.router import router as memory_router
 from .modules.analytics.router import router as analytics_router
 from .modules.analytics.qa_router import router as analytics_qa_router
 from .modules.analytics.abuse_router import router as analytics_abuse_router
+from .modules.analytics.staff_router import router as staff_router
 from .modules.profile.router import router as profile_router
 from .modules.onboarding.router import router as onboarding_router
 from .modules.locations.router import router as locations_router
@@ -588,6 +589,7 @@ app.include_router(meta_webhooks_router)
 app.include_router(analytics_router)
 app.include_router(analytics_qa_router)
 app.include_router(analytics_abuse_router)
+app.include_router(staff_router)
 app.include_router(redis_router)
 app.include_router(kafka_router)
 app.include_router(rag_router)

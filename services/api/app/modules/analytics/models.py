@@ -788,3 +788,97 @@ class CompetitorSnapshot(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+
+
+class StaffMember(Base):
+    """One employee of the business, per branch. NOT a login user.
+
+    The owner curates this list on the Team page. It exists so review mentions
+    ("Ahmad was so supportive") can be attached to a real person and counted
+    per employee. `listing_id` is the Google location (branch) the employee
+    works at, matching the channel/listing ids used everywhere else.
+
+    `aliases` carries the name variants customers actually type
+    (["Ahmed", "Ahmad"], ["Al Bakhair", "albakhair"]). `normalized_name` is
+    the matcher key (see analytics/staff_match.py) and is unique per
+    (tenant, listing) so the same person is not registered twice.
+
+    `active` is a soft-disable: past mentions and history survive, the
+    employee just stops being offered in the UI.
+    """
+
+    __tablename__ = "staff_members"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "listing_id", "normalized_name",
+            name="uq_staff_members_user_listing_name",
+        ),
+        Index("ix_staff_members_user_listing", "user_id", "listing_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    listing_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(String(120))
+    # Matcher key: lowercase, diacritics/tatweel stripped, alef/hamza unified.
+    normalized_name: Mapped[str] = mapped_column(String(120))
+    aliases: Mapped[list | None] = mapped_column(JSON, default=list, server_default=_EMPTY_JSON, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class ReviewStaffMention(Base):
+    """One detected employee mention in one review.
+
+    Written by the mention pass that runs after meaning extraction. A mention
+    that matches no registered employee is still stored, with
+    `staff_member_id = NULL` — the "unassigned names" bucket the owner can
+    resolve later (assign to an employee, or add the name as a new one, and
+    the rows retro-link).
+
+    `review_created_at` is snapshotted so per-employee aggregation and trends
+    never need a join back to review_insights.
+    """
+
+    __tablename__ = "review_staff_mentions"
+    __table_args__ = (
+        # One mention row per (review, normalized name): the same review
+        # naming "Ahmad" twice, or naming two employees, is fine, but the
+        # enrichment re-run must not duplicate rows.
+        UniqueConstraint(
+            "user_id", "channel_id", "review_id", "name_normalized",
+            name="uq_staff_mentions_review_name",
+        ),
+        Index("ix_staff_mentions_user_staff_date", "user_id", "staff_member_id", "review_created_at"),
+        Index("ix_staff_mentions_user_unmatched", "user_id", "name_normalized"),
+        Index("ix_staff_mentions_review", "channel_id", "review_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    channel_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("channels.id", ondelete="CASCADE"), index=True
+    )
+    review_id: Mapped[str] = mapped_column(String(500), nullable=False)
+    # NULL = a name we saw but no employee matches (the unassigned bucket).
+    staff_member_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("staff_members.id", ondelete="SET NULL"), nullable=True
+    )
+    name_display: Mapped[str] = mapped_column(String(255))
+    name_normalized: Mapped[str] = mapped_column(String(120))
+    sentiment: Mapped[str] = mapped_column(
+        String(20), default="neutral", server_default="neutral"
+    )
+    rating: Mapped[int] = mapped_column(Integer, nullable=False)
+    review_created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
