@@ -1168,6 +1168,150 @@ class GoogleReviewsClient:
         return (resp.json() or {}).get("verification") or {}
 
 
+    # ── Location media (gallery, profile, cover) ─────────────────
+
+    @staticmethod
+    def _normalize_parent(account_id: str, location_id: str) -> tuple[str, str, str]:
+        account = (account_id or "").strip()
+        location = (location_id or "").strip()
+        if not account:
+            raise GoogleReviewsError("account_id is required for GBP media", 400)
+        if not location:
+            raise GoogleReviewsError("location_id is required for GBP media", 400)
+        if "/" not in account:
+            account = f"accounts/{account}"
+        if "/" not in location:
+            location = f"locations/{location}"
+        return account, location, f"{account}/{location}"
+
+    async def list_media(
+        self,
+        account_id: str,
+        location_id: str,
+        *,
+        page_size: int = 100,
+        page_token: str | None = None,
+        category: str | None = None,
+    ) -> dict:
+        """List media items in a location's GBP gallery (v4)."""
+        _, _, parent = self._normalize_parent(account_id, location_id)
+        params: dict[str, object] = {"pageSize": max(1, min(int(page_size or 100), 100))}
+        if page_token:
+            params["pageToken"] = page_token
+        if category:
+            params["filter"] = f"category = {str(category).upper()}"
+        resp = await self._authed_request(
+            "GET", f"{GBP_REVIEWS_API}/{parent}/media", params=params,
+        )
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"list_media failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        return resp.json() or {}
+
+    async def get_media(self, name: str) -> dict:
+        """Get one media item by full resource name."""
+        if not name or "/media/" not in str(name):
+            raise GoogleReviewsError("A full media resource name is required", 400)
+        resp = await self._authed_request("GET", f"{GBP_REVIEWS_API}/{name}")
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"get_media failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        return resp.json() or {}
+
+    async def delete_media(self, name: str) -> None:
+        """Delete one media item from the location's GBP gallery."""
+        if not name or "/media/" not in str(name):
+            raise GoogleReviewsError("A full media resource name is required", 400)
+        resp = await self._authed_request("DELETE", f"{GBP_REVIEWS_API}/{name}")
+        if resp.status_code not in (200, 204):
+            raise GoogleReviewsError(
+                f"delete_media failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+
+    async def create_location_media(
+        self,
+        account_id: str,
+        location_id: str,
+        *,
+        category: str = "ADDITIONAL",
+        source_url: str | None = None,
+        data_ref: str | None = None,
+        media_format: str = "PHOTO",
+        description: str | None = None,
+    ) -> dict:
+        """Create a GBP location media item. Provide source_url or data_ref."""
+        _, _, parent = self._normalize_parent(account_id, location_id)
+        body: dict[str, object] = {
+            "mediaFormat": str(media_format or "PHOTO").upper(),
+            "locationAssociation": {"category": str(category or "ADDITIONAL").upper()},
+        }
+        if description:
+            body["description"] = str(description)[:1000]
+        if data_ref:
+            body["dataRef"] = {"resourceName": data_ref}
+        elif source_url:
+            body["sourceUrl"] = source_url
+        else:
+            raise GoogleReviewsError(
+                "Either source_url or data_ref is required to create media", 400
+            )
+        resp = await self._authed_request(
+            "POST", f"{GBP_REVIEWS_API}/{parent}/media", json=body,
+        )
+        if resp.status_code not in (200, 201):
+            raise GoogleReviewsError(
+                f"create_media failed ({resp.status_code}): {resp.text[:2000]}",
+                resp.status_code,
+            )
+        return resp.json() or {}
+
+    async def start_media_upload(self, account_id: str, location_id: str) -> str:
+        """Start a media upload and return the resourceName for byte upload."""
+        _, _, parent = self._normalize_parent(account_id, location_id)
+        resp = await self._authed_request(
+            "POST", f"{GBP_REVIEWS_API}/{parent}/media:startUpload",
+        )
+        if resp.status_code not in (200, 201):
+            raise GoogleReviewsError(
+                f"start_media_upload failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        data = resp.json() or {}
+        ref = str(
+            data.get("resourceName")
+            or ((data.get("dataRef") or {}) if isinstance(data.get("dataRef"), dict) else {}).get("resourceName")
+            or ""
+        ).strip()
+        if not ref:
+            raise GoogleReviewsError("start_media_upload returned no resourceName", 502)
+        return ref
+
+    async def upload_media_bytes(
+        self, resource_name: str, data: bytes, content_type: str = "image/jpeg"
+    ) -> None:
+        """Upload raw bytes to a previously started GBP media upload."""
+        base = f"https://mybusiness.googleapis.com/upload/v1/media/{resource_name}"
+        last: tuple[int, str] = (502, "")
+        for param in ("uploadType=media", "upload_type=media"):
+            resp = await self._authed_request(
+                "POST",
+                f"{base}?{param}",
+                extra_headers={"Content-Type": content_type or "application/octet-stream"},
+                content=data,
+            )
+            if resp.status_code in (200, 201):
+                return
+            last = (resp.status_code, resp.text[:300])
+        raise GoogleReviewsError(
+            f"upload_media_bytes failed ({last[0]}): {last[1]}", last[0]
+        )
+
+
 def parse_review_resource(review_id: str) -> tuple[str, str] | None:
     """Split 'accounts/{a}/locations/{l}/reviews/{r}' into (account, location)."""
     parts = review_id.split("/")

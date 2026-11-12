@@ -596,3 +596,39 @@ class LeadSettingsUpdate(BaseModel):
     digest_max_leads: int | None = None
     qualified_categories: list[str] | None = Field(None, max_length=6)
     review_issue_subcategories: list[str] | None = Field(None, max_length=40)
+
+# -- Google Business Profile location media (gallery) -------------
+
+_GOOGLE_MEDIA_CATEGORIES = (
+    "COVER|PROFILE|LOGO|EXTERIOR|INTERIOR|PRODUCT|AT_WORK|"
+    "FOOD_AND_DRINK|MENU|COMMON_AREA|ROOMS|TEAMS|ADDITIONAL"
+)
+
+
+class GoogleMediaItemOut(BaseModel):
+    name: str = ""
+    mediaFormat: str | None = None
+    category: str | None = None
+    googleUrl: str | None = None
+    thumbnailUrl: str | None = None
+    sourceUrl: str | None = None
+    description: str | None = None
+    createTime: str | None = None
+    dimensions: dict | None = None
+    insights: dict | None = None
+
+
+class GoogleMediaListOut(BaseModel):
+    media: list[GoogleMediaItemOut] = Field(default_factory=list)
+    nextPageToken: str | None = None
+    totalMediaItemCount: int | None = None
+
+
+class GoogleMediaCreateOut(BaseModel):
+    media: GoogleMediaItemOut
+    created: bool = True
+
+
+class GoogleMediaDeleteOut(BaseModel):
+    deleted: bool = True
+    name: str

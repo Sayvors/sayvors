@@ -7,7 +7,17 @@ import ScheduledPostsCalendar, { type ScheduledEntry } from "@/components/dashbo
 
 type MediaType = "PHOTO" | "VIDEO";
 type MediaSource = "OWN" | "CUSTOMER";
-type MediaTab = "all" | "photos" | "videos" | "customer" | "scheduled";
+type MediaTab = "all" | "photos" | "videos" | "customer" | "scheduled" | "google";
+
+interface GoogleGalleryItem {
+  name: string;
+  mediaFormat?: string | null;
+  category?: string | null;
+  googleUrl?: string | null;
+  thumbnailUrl?: string | null;
+  description?: string | null;
+  createTime?: string | null;
+}
 type MediaStatus = "DRAFT" | "SCHEDULED" | "PUBLISHED" | "FAILED";
 
 export interface MediaItem {
@@ -31,6 +41,7 @@ export interface MediaItem {
 interface LocationOption {
   id: string;
   name: string;
+  channelId: string;
 }
 
 const CATEGORIES = ["PROFILE", "COVER", "EXTERIOR", "INTERIOR", "PRODUCT", "AT_WORK", "FOOD_AND_DRINK", "TEAM"];
@@ -91,6 +102,9 @@ function MediaInner({ initialLocationId, autoUpload, focusMediaId, onExit }: Med
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [items, setItems] = useState<MediaItem[]>([]);
   const [tab, setTab] = useState<MediaTab>("all");
+  const [googleItems, setGoogleItems] = useState<GoogleGalleryItem[]>([]);
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [googleError, setGoogleError] = useState<string | null>(null);
   const [showUpload, setShowUpload] = useState(false);
   const [viewing, setViewing] = useState<MediaItem | null>(null);
   const [editingCategory, setEditingCategory] = useState("");
@@ -139,6 +153,7 @@ function MediaInner({ initialLocationId, autoUpload, focusMediaId, onExit }: Med
             // Publishing resolves the Google location by listing/location id.
             id: channel.listing_id ?? channel.id,
             name: channel.display_name ?? "Google location",
+            channelId: channel.id,
           }));
         if (!cancelled) {
           setLocations(googleChannels);
@@ -155,6 +170,47 @@ function MediaInner({ initialLocationId, autoUpload, focusMediaId, onExit }: Med
     })();
     return () => { cancelled = true; };
   }, [initialLocationId]);
+
+  const selectedLocation = useMemo(
+    () => locations.find((l) => l.id === selectedId) ?? null,
+    [locations, selectedId]
+  );
+
+  const loadGoogleGallery = async (channelId: string) => {
+    setGoogleLoading(true);
+    setGoogleError(null);
+    try {
+      const data = await apiFetch(`/api/v1/channels/${encodeURIComponent(channelId)}/google-media?page_size=100`);
+      const list = Array.isArray(data?.media) ? data.media : [];
+      setGoogleItems(list as GoogleGalleryItem[]);
+    } catch (e) {
+      setGoogleError(e instanceof Error ? e.message.slice(0, 200) : "Could not load Google gallery.");
+      setGoogleItems([]);
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (tab !== "google" || !selectedLocation?.channelId) return;
+    void loadGoogleGallery(selectedLocation.channelId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, selectedLocation?.channelId]);
+
+  const handleDeleteGoogleMedia = async (name: string) => {
+    if (!selectedLocation?.channelId) return;
+    try {
+      await apiFetch(
+        `/api/v1/channels/${encodeURIComponent(selectedLocation.channelId)}/google-media?name=${encodeURIComponent(name)}`,
+        { method: "DELETE" }
+      );
+      setGoogleItems((prev) => prev.filter((m) => m.name !== name));
+      setBanner({ kind: "ok", text: "Removed from Google gallery." });
+      setTimeout(() => setBanner(null), 3500);
+    } catch (e) {
+      setBanner({ kind: "err", text: e instanceof Error ? e.message.slice(0, 200) : "Delete failed." });
+    }
+  };
 
   const loadItems = async () => {
     const q = selectedId ? `?listing_id=${encodeURIComponent(selectedId)}` : "";
@@ -414,6 +470,7 @@ function MediaInner({ initialLocationId, autoUpload, focusMediaId, onExit }: Med
               { key: "videos", label: `Videos (${counts.videos})` },
               { key: "scheduled", label: `Scheduled (${counts.scheduled})` },
               { key: "customer", label: `Customer Photos (${counts.customer})` },
+              { key: "google", label: "Live on Google" },
             ] as const).map((t) => (
               <button key={t.key} onClick={() => setTab(t.key)}
                 className={`whitespace-nowrap rounded-[2px] px-3 py-1.5 text-[12px] font-semibold transition ${tab === t.key ? "bg-white text-deep-violet shadow-sm dark:bg-ink dark:text-fog" : "text-ink/45 hover:text-ink/70 dark:text-fog/45"}`}>
@@ -422,7 +479,59 @@ function MediaInner({ initialLocationId, autoUpload, focusMediaId, onExit }: Med
             ))}
           </div>
 
-          {filtered.length === 0 ? (
+          {tab === "google" ? (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[12px] text-ink/45 dark:text-fog/45">
+                  Photos and videos currently on this Google Business Profile. Uploading with &quot;Photo gallery&quot; publishes directly to Google.
+                </p>
+                <button
+                  onClick={() => selectedLocation?.channelId && loadGoogleGallery(selectedLocation.channelId)}
+                  disabled={googleLoading || !selectedLocation?.channelId}
+                  className="rounded-[2px] border border-ink/[0.08] px-3 py-1.5 text-[12px] font-semibold text-ink/70 transition hover:border-deep-violet/30 disabled:opacity-50 dark:border-fog/[0.1] dark:text-fog/70"
+                >
+                  {googleLoading ? "Refreshing…" : "Refresh"}
+                </button>
+              </div>
+              {googleError && (
+                <div className="rounded-[2px] bg-red-50 px-3 py-2 text-[12px] text-red-700">{googleError}</div>
+              )}
+              {googleLoading && googleItems.length === 0 ? (
+                <div className="flex justify-center py-12"><LogoLoader size={24} /></div>
+              ) : googleItems.length === 0 ? (
+                <div className="flex flex-col items-center rounded-[2px] border border-dashed border-ink/[0.12] bg-white py-16 dark:border-fog/[0.12] dark:bg-ink">
+                  <p className="text-[14px] font-medium text-ink/40 dark:text-fog/40">No live Google media found</p>
+                  <p className="mt-1 text-[12px] text-ink/30 dark:text-fog/30">Publish a photo to the gallery to see it here.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                  {googleItems.map((m) => (
+                    <div key={m.name} className="group overflow-hidden rounded-[2px] border border-ink/[0.06] bg-white text-left dark:border-fog/[0.06] dark:bg-ink">
+                      <div className="relative flex aspect-[4/3] items-center justify-center bg-ink/[0.03] dark:bg-fog/[0.04]">
+                        {(m.thumbnailUrl || m.googleUrl) ? (
+                          // eslint-disable-next-line @next/next/no-img-element -- Google-hosted media URLs vary
+                          <img src={m.thumbnailUrl || m.googleUrl || ""} alt="" className="h-full w-full object-cover" loading="lazy" />
+                        ) : (
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-8 w-8 text-ink/20 dark:text-fog/20"><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" /></svg>
+                        )}
+                        {m.category && <span className="absolute left-2 top-2 rounded-[2px] bg-black/55 px-2 py-0.5 text-[9px] font-bold text-white">{m.category}</span>}
+                      </div>
+                      <div className="space-y-2 p-2.5">
+                        <p className="truncate text-[12px] font-semibold text-ink dark:text-fog">{(m.category || "Media").replace(/_/g, " ")}</p>
+                        <p className="truncate text-[10px] text-ink/35 dark:text-fog/35">{m.createTime ? new Date(m.createTime).toLocaleString() : m.mediaFormat || "PHOTO"}</p>
+                        <button
+                          onClick={() => handleDeleteGoogleMedia(m.name)}
+                          className="w-full rounded-[2px] border border-red-200 py-1.5 text-[11px] font-semibold text-red-600 hover:bg-red-50"
+                        >
+                          Remove from Google
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : filtered.length === 0 ? (
             <div className="flex flex-col items-center rounded-[2px] border border-dashed border-ink/[0.12] bg-white py-16 dark:border-fog/[0.12] dark:bg-ink">
               <p className="text-[14px] font-medium text-ink/40 dark:text-fog/40">No media here yet</p>
               <p className="mt-1 text-[12px] text-ink/30 dark:text-fog/30">Upload photos or videos for this location.</p>

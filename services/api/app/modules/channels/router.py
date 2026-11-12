@@ -4167,3 +4167,175 @@ async def test_review_pipeline(
         reviewer_name=getattr(issue, "reviewer_name", body.reviewer_name),
         review_text=getattr(issue, "review_text", body.review_text),
     )
+
+# -- Google Business Profile location media (gallery) -------------
+
+@router.get("/{channel_id}/google-media")
+async def list_google_media(
+    channel_id: str,
+    page_size: int = Query(50, ge=1, le=100),
+    page_token: str | None = Query(None, max_length=2000),
+    category: str | None = Query(None, max_length=40),
+    ctx: TenantContext = Depends(require_perm("channels.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """List photos/videos in the connected Google Business Profile gallery."""
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    channel = await _google_channel(channel_id, ctx.user, db)
+    client, location_id = await _verification_client(channel, db)
+    try:
+        data = await client.list_media(
+            channel.platform_user_id or "",
+            location_id,
+            page_size=page_size,
+            page_token=page_token,
+            category=category,
+        )
+        items = []
+        for m in (data.get("mediaItems") or []):
+            if not isinstance(m, dict):
+                continue
+            assoc = m.get("locationAssociation") or {}
+            items.append(
+                {
+                    "name": m.get("name") or "",
+                    "mediaFormat": m.get("mediaFormat"),
+                    "category": assoc.get("category"),
+                    "googleUrl": m.get("googleUrl"),
+                    "thumbnailUrl": m.get("thumbnailUrl"),
+                    "sourceUrl": m.get("sourceUrl"),
+                    "description": m.get("description"),
+                    "createTime": m.get("createTime"),
+                    "dimensions": m.get("dimensions"),
+                    "insights": m.get("insights"),
+                }
+            )
+        return {
+            "media": items,
+            "nextPageToken": data.get("nextPageToken"),
+            "totalMediaItemCount": data.get("totalMediaItemCount"),
+        }
+    except Exception as e:  # noqa: BLE001
+        raise upstream_http_error(
+            e,
+            context=f"Google media list failed for {channel_id}",
+            detail="Google could not return the location gallery.",
+        ) from None
+    finally:
+        await client.close()
+
+
+@router.post("/{channel_id}/google-media", status_code=status.HTTP_201_CREATED)
+async def upload_google_media(
+    channel_id: str,
+    file: UploadFile | None = File(None),
+    source_url: str | None = Form(None),
+    category: str = Form("ADDITIONAL"),
+    description: str | None = Form(None),
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload a photo to the connected Google Business Profile gallery.
+
+    Provide either a file upload or ``source_url`` (publicly accessible).
+    """
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    cat = (category or "ADDITIONAL").strip().upper()
+    allowed = {
+        "COVER", "PROFILE", "LOGO", "EXTERIOR", "INTERIOR", "PRODUCT",
+        "AT_WORK", "FOOD_AND_DRINK", "MENU", "COMMON_AREA", "ROOMS", "TEAMS", "ADDITIONAL",
+    }
+    if cat not in allowed:
+        raise HTTPException(status_code=400, detail=f"Invalid category: {category}")
+    if file is None and not (source_url or "").strip():
+        raise HTTPException(status_code=400, detail="Provide a file or source_url.")
+
+    channel = await _google_channel(channel_id, ctx.user, db)
+    client, location_id = await _verification_client(channel, db)
+    try:
+        if file is not None:
+            data = await file.read()
+            if not data:
+                raise HTTPException(status_code=400, detail="Empty file.")
+            ctype = file.content_type or "image/jpeg"
+            if not ctype.startswith("image/"):
+                raise HTTPException(status_code=400, detail="Only image files are supported.")
+            # Basic size guard; Google enforces its own limits too.
+            if len(data) > 5 * 1024 * 1024:
+                raise HTTPException(status_code=400, detail="Image is too large (max 5MB).")
+            ref = await client.start_media_upload(channel.platform_user_id or "", location_id)
+            await client.upload_media_bytes(ref, data, ctype)
+            created = await client.create_location_media(
+                channel.platform_user_id or "",
+                location_id,
+                category=cat,
+                data_ref=ref,
+                description=description,
+            )
+        else:
+            created = await client.create_location_media(
+                channel.platform_user_id or "",
+                location_id,
+                category=cat,
+                source_url=(source_url or "").strip(),
+                description=description,
+            )
+        assoc = created.get("locationAssociation") or {}
+        return {
+            "created": True,
+            "media": {
+                "name": created.get("name") or "",
+                "mediaFormat": created.get("mediaFormat"),
+                "category": assoc.get("category"),
+                "googleUrl": created.get("googleUrl"),
+                "thumbnailUrl": created.get("thumbnailUrl"),
+                "sourceUrl": created.get("sourceUrl"),
+                "description": created.get("description"),
+                "createTime": created.get("createTime"),
+                "dimensions": created.get("dimensions"),
+                "insights": created.get("insights"),
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise upstream_http_error(
+            e,
+            context=f"Google media upload failed for {channel_id}",
+            detail="Google could not add the photo to the location gallery.",
+        ) from None
+    finally:
+        await client.close()
+
+
+@router.delete("/{channel_id}/google-media")
+async def delete_google_media(
+    channel_id: str,
+    name: str = Query(..., min_length=1, max_length=500, description="Full media resource name"),
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a photo/video from the connected Google Business Profile gallery."""
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    channel = await _google_channel(channel_id, ctx.user, db)
+    client, location_id = await _verification_client(channel, db)
+    try:
+        # Safety: only allow deleting media belonging to this location.
+        _, _, parent = client._normalize_parent(channel.platform_user_id or "", location_id)
+        if not name.startswith(parent + "/media/"):
+            raise HTTPException(status_code=403, detail="Media does not belong to this location.")
+        await client.delete_media(name)
+        return {"deleted": True, "name": name}
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise upstream_http_error(
+            e,
+            context=f"Google media delete failed for {channel_id}",
+            detail="Google could not remove the photo from the location gallery.",
+        ) from None
+    finally:
+        await client.close()
