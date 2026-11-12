@@ -461,6 +461,7 @@ async def resolve_and_advance(
     channel_id: str,
     text: str | None,
     handoff_codes: list[str] | None = None,
+    replay_key: str | None = None,
 ) -> InboundMatch | None:
     """Find the issue this inbound message is about and move its status along.
 
@@ -479,7 +480,8 @@ async def resolve_and_advance(
     failure unwinds cleanly instead of poisoning the session.
     """
     match = await resolve_inbound(
-        db, tenant_id=tenant_id, text=text, handoff_codes=handoff_codes
+        db, tenant_id=tenant_id, text=text, handoff_codes=handoff_codes,
+        replay_key=replay_key,
     )
     if match is None:
         return None

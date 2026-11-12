@@ -618,6 +618,53 @@ def test_extract_handoff_codes_requires_the_marker():
     assert extract_handoff_codes(None) == []
 
 
+async def test_handoff_code_is_single_use(db, channel_id, user_id):
+    """A consumed code stops resolving for everyone but the same message replay."""
+    from app.modules.review_engine.handoff import ensure_handoff_code
+    from app.modules.review_engine.tickets import resolve_inbound
+
+    issue = await _issue(db, channel_id, user_id)
+    code = await ensure_handoff_code(db, tenant_id=user_id, issue=issue)
+    assert code
+
+    # First redemption consumes the code.
+    first = await resolve_inbound(
+        db, tenant_id=user_id, text=f"#{code}", replay_key="wamid-1"
+    )
+    assert first is not None
+    assert first.issue.id == issue.id
+    await db.refresh(issue)
+    assert issue.handoff_code_used_at is not None
+    assert issue.handoff_code_used_by_wamid == "wamid-1"
+
+    # A different message (different wamid) can no longer use it.
+    second = await resolve_inbound(
+        db, tenant_id=user_id, text=f"#{code}", replay_key="wamid-2"
+    )
+    assert second is None
+
+    # The SAME message redelivered (Meta webhook retry) still resolves.
+    replay = await resolve_inbound(
+        db, tenant_id=user_id, text=f"#{code}", replay_key="wamid-1"
+    )
+    assert replay is not None
+    assert replay.issue.id == issue.id
+
+
+async def test_handoff_code_consumed_without_replay_key_not_reusable(db, channel_id, user_id):
+    """A code spent by a message with no key is still spent for later messages."""
+    from app.modules.review_engine.handoff import ensure_handoff_code
+    from app.modules.review_engine.tickets import resolve_inbound
+
+    issue = await _issue(db, channel_id, user_id)
+    code = await ensure_handoff_code(db, tenant_id=user_id, issue=issue)
+    assert code
+
+    first = await resolve_inbound(db, tenant_id=user_id, text=f"#{code}")
+    assert first is not None
+    assert await resolve_inbound(db, tenant_id=user_id, text=f"#{code}") is None
+
+
 async def test_no_code_for_praise(db, channel_id, user_id):
     """A code on praise is a handle to nothing."""
     from app.modules.review_engine.handoff import ensure_handoff_code

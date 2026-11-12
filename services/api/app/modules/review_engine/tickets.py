@@ -367,6 +367,7 @@ async def resolve_inbound(
     tenant_id: str,
     text: str | None = None,
     handoff_codes: list[str] | None = None,
+    replay_key: str | None = None,
 ) -> Optional[InboundMatch]:
     """Find the issue an inbound message refers to, walking strongest-first.
 
@@ -388,6 +389,12 @@ async def resolve_inbound(
     marked-code extraction below is what makes the wa.me prefill actually
     resolve -- without it the customer taps the link, sends the code, and is
     re-interviewed from zero, which was the bug this rung existed to prevent.
+
+    Single-use redemption: a matched code is consumed on first use. A replay
+    of the SAME message (same ``replay_key`` — the WhatsApp wamid) still
+    resolves, so a Meta webhook redelivery never drops a real customer; a
+    different key (or no key) after consumption falls through to the ticket
+    rung.
     """
     from ..channels.models import ReviewIssue
 
@@ -414,6 +421,24 @@ async def resolve_inbound(
                 canon, tenant_id,
             )
             continue
+        if row.handoff_code_used_at is not None:
+            if replay_key and row.handoff_code_used_by_wamid == replay_key:
+                # Same message redelivered by the platform: allow the retry
+                # through without re-consuming. This is the replay carve-out.
+                return InboundMatch(issue=row, matched_by="handoff_code", raw=code)
+            logger.info(
+                "inbound quoted used handoff code %s (tenant=%s) -- "
+                "falling through to ticket number",
+                canon, tenant_id,
+            )
+            continue
+        # First redemption: consume the code. Marked with the spending message
+        # key when the platform gave us one (WhatsApp wamid).
+        row.handoff_code_used_at = now
+        if replay_key:
+            row.handoff_code_used_by_wamid = replay_key[:64]
+        db.add(row)
+        await db.flush()
         return InboundMatch(issue=row, matched_by="handoff_code", raw=code)
 
     refs = extract_ticket_refs(text)

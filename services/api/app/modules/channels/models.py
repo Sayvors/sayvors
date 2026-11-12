@@ -1102,6 +1102,17 @@ class ReviewIssue(Base):
     handoff_code_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Single-use redemption: when a code was first spent (NULL = unused).
+    # A screenshot taken after redemption is worthless. The wamid of the
+    # spending message is recorded so a Meta webhook redelivery of the SAME
+    # message still resolves (replay carve-out), while a replay from anyone
+    # else is rejected.
+    handoff_code_used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    handoff_code_used_by_wamid: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

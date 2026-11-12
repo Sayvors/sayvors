@@ -2329,6 +2329,7 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
             async with db.begin_nested():
                 handoff_match = await resolve_and_advance(
                     db, tenant_id=tenant_id, channel_id=channel.id, text=text,
+                    replay_key=wamid,
                 )
             if handoff_match is not None:
                 logger.info(
