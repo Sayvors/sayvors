@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import random
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
@@ -45,6 +46,12 @@ INITIAL_BACKOFF_SECONDS = 1.0     # starting backoff for 429 retries
 MAX_BACKOFF_SECONDS = 60.0        # ceiling on computed backoff
 MAX_REVIEW_PAGES = 10             # safety cap: 10 x 50 = 500 reviews per poll
 MAX_MEDIA_PAGES = 20              # safety cap: gallery pages followed per list call
+
+# Categories that describe a specific slot on the listing. Google never
+# accepts them as a plain gallery photo, so a rejected tag must NOT be
+# silently re-filed under ADDITIONAL - that would put an avatar in the
+# gallery. Only the plain photo tags fall back.
+_GALLERY_ONLY_CATEGORIES = {"COVER", "PROFILE", "LOGO"}
 
 
 def build_auth_url(state: str, redirect_uri: str) -> str:
@@ -105,9 +112,59 @@ async def list_accounts(access_token: str) -> list[dict]:
 
 
 class GoogleReviewsError(Exception):
-    def __init__(self, message: str, status_code: int = 502):
+    def __init__(self, message: str, status_code: int = 502, body: str | None = None):
         self.status_code = status_code
+        # The raw Google error body, kept so callers can report what Google
+        # actually said instead of inventing a message.
+        self.body = body
         super().__init__(message)
+
+
+def google_error_details(body: str | None) -> tuple[str | None, list[str]]:
+    """Split a Google JSON error body into (status message, detail messages).
+
+    Google nests the human-readable reason under
+    ``error.details[].errorDetails[].message`` (for example "Photo tag
+    'product' does not apply to this location"), which is the part a
+    merchant can act on. Returns (None, []) when the body is not a Google
+    error envelope.
+    """
+    if not body:
+        return None, []
+    start = body.find("{")
+    if start == -1:
+        return None, []
+    try:
+        parsed = json.loads(body[start:])
+    except (ValueError, TypeError):
+        return None, []
+    if not isinstance(parsed, dict):
+        return None, []
+    error = parsed.get("error")
+    if not isinstance(error, dict):
+        return None, []
+    status_message = error.get("message") if isinstance(error.get("message"), str) else None
+    details: list[str] = []
+    for detail in error.get("details") or []:
+        if not isinstance(detail, dict):
+            continue
+        for item in detail.get("errorDetails") or []:
+            if isinstance(item, dict) and isinstance(item.get("message"), str):
+                details.append(item["message"])
+    if not details and status_message:
+        details.append(status_message)
+    return status_message, details
+
+
+def is_category_not_applicable(body: str | None) -> bool:
+    """Whether Google refused a photo tag because it does not apply here.
+
+    Google allows only the tags that make sense for a location's business
+    type ("Photo tag 'product' does not apply to this location"), so a tag
+    can be valid for one location and rejected for another.
+    """
+    _, details = google_error_details(body)
+    return any("does not apply to this location" in d for d in details)
 
 
 @dataclass
@@ -1273,8 +1330,21 @@ class GoogleReviewsClient:
         data_ref: str | None = None,
         media_format: str = "PHOTO",
         description: str | None = None,
+        fresh_data_ref: Callable[[], Awaitable[str]] | None = None,
     ) -> dict:
-        """Create a GBP location media item. Provide source_url or data_ref."""
+        """Create a GBP location media item. Provide source_url or data_ref.
+
+        Google only accepts the photo tags that apply to a location's
+        business type ("Photo tag 'product' does not apply to this
+        location"). When it refuses the tag, the photo is re-created under
+        ``ADDITIONAL`` - Google's catch-all bucket - instead of failing the
+        whole publish, and the response carries ``categoryFallback`` so the
+        caller can tell the merchant what happened.
+
+        ``fresh_data_ref`` uploads the bytes again when Google has already
+        consumed the first upload (a failed create can invalidate the
+        resource name).
+        """
         _, _, parent = self._normalize_parent(account_id, location_id)
         body: dict[str, object] = {
             "mediaFormat": str(media_format or "PHOTO").upper(),
@@ -1294,9 +1364,33 @@ class GoogleReviewsClient:
             "POST", f"{GBP_REVIEWS_API}/{parent}/media", json=body,
         )
         if resp.status_code not in (200, 201):
+            requested = str(body["locationAssociation"]["category"])
+            fallback_ok = requested not in _GALLERY_ONLY_CATEGORIES
+            if is_category_not_applicable(resp.text) and fallback_ok:
+                body["locationAssociation"] = {"category": "ADDITIONAL"}
+                resp = await self._authed_request(
+                    "POST", f"{GBP_REVIEWS_API}/{parent}/media", json=body,
+                )
+                if resp.status_code not in (200, 201) and fresh_data_ref is not None:
+                    # The rejected attempt may have consumed the uploaded
+                    # bytes; upload again and retry once with a fresh ref.
+                    body.pop("sourceUrl", None)
+                    body["dataRef"] = {"resourceName": await fresh_data_ref()}
+                    resp = await self._authed_request(
+                        "POST", f"{GBP_REVIEWS_API}/{parent}/media", json=body,
+                    )
+                if resp.status_code in (200, 201):
+                    data = resp.json() or {}
+                    data["categoryFallback"] = {
+                        "requested": requested,
+                        "used": "ADDITIONAL",
+                        "reason": "Google does not allow this photo tag for this location.",
+                    }
+                    return data
             raise GoogleReviewsError(
                 f"create_media failed ({resp.status_code}): {resp.text[:2000]}",
                 resp.status_code,
+                body=resp.text,
             )
         return resp.json() or {}
 

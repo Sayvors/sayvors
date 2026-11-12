@@ -4276,6 +4276,7 @@ async def upload_google_media(
 
     channel = await _google_channel(channel_id, ctx.user, db)
     client, location_id = await _verification_client(channel, db)
+
     try:
         if file is not None:
             data = await file.read()
@@ -4287,15 +4288,6 @@ async def upload_google_media(
             # Basic size guard; Google enforces its own limits too.
             if len(data) > 5 * 1024 * 1024:
                 raise HTTPException(status_code=400, detail="Image is too large (max 5MB).")
-            ref = await client.start_media_upload(channel.platform_user_id or "", location_id)
-            await client.upload_media_bytes(ref, data, ctype)
-            created = await client.create_location_media(
-                channel.platform_user_id or "",
-                location_id,
-                category=cat,
-                data_ref=ref,
-                description=description,
-            )
         else:
             # Direct byte upload to Google: fetch source bytes and upload via
             # startUpload/dataRef instead of passing sourceUrl to GBP.
@@ -4317,16 +4309,24 @@ async def upload_google_media(
             ctype = (resp.headers.get("content-type") or "image/jpeg").split(";", 1)[0].strip()
             if not ctype.startswith("image/"):
                 ctype = "image/jpeg"
+
+        async def _ref_and_upload() -> str:
+            """Upload the bytes and return the resource name for the create."""
             ref = await client.start_media_upload(channel.platform_user_id or "", location_id)
             await client.upload_media_bytes(ref, data, ctype)
-            created = await client.create_location_media(
-                channel.platform_user_id or "",
-                location_id,
-                category=cat,
-                data_ref=ref,
-                description=description,
-            )
+            return ref
+
+        ref = await _ref_and_upload()
+        created = await client.create_location_media(
+            channel.platform_user_id or "",
+            location_id,
+            category=cat,
+            data_ref=ref,
+            description=description,
+            fresh_data_ref=_ref_and_upload,
+        )
         assoc = created.get("locationAssociation") or {}
+        fallback = created.get("categoryFallback")
         return {
             "created": True,
             "media": {
@@ -4341,30 +4341,46 @@ async def upload_google_media(
                 "dimensions": created.get("dimensions"),
                 "insights": created.get("insights"),
             },
+            # Present when Google refused the requested tag and the photo was
+            # filed under ADDITIONAL instead. The UI tells the merchant.
+            "categoryFallback": fallback,
         }
     except HTTPException:
         raise
     except Exception as e:  # noqa: BLE001
-        from .google_reviews import GoogleReviewsError
+        from .google_reviews import (
+            GoogleReviewsError,
+            google_error_details,
+            is_category_not_applicable,
+        )
         import logging
 
         if isinstance(e, GoogleReviewsError):
-            # Surface original Google status/body to the user as requested.
+            # Surface Google's own status and wording to the user. The raw
+            # JSON envelope is unreadable in a dialog, so the human message
+            # and each validation detail are reported separately.
             logging.getLogger(__name__).error(
                 "Google media upload failed for %s: %s", channel_id, e, exc_info=True
             )
-            msg = str(e)
-            if "{" in msg:
-                try:
-                    google_raw = msg[msg.index("{") :]
-                except Exception:
-                    google_raw = msg
-            else:
-                google_raw = msg
+            status_message, details = google_error_details(e.body)
             status = int(getattr(e, "status_code", 502) or 502)
             if status < 400 or status > 599:
                 status = 502
-            raise HTTPException(status_code=status, detail=google_raw) from None
+            raise HTTPException(
+                status_code=status,
+                detail={
+                    "message": (
+                        "Google rejected this photo. "
+                        + (details[0] if details else status_message or "See the Google response below.")
+                    ),
+                    "google": {
+                        "code": status,
+                        "status": "INVALID_ARGUMENT" if status == 400 else "ERROR",
+                        "message": status_message,
+                        "details": details,
+                    },
+                },
+            ) from None
         raise upstream_http_error(
             e,
             context=f"Google media upload failed for {channel_id}",

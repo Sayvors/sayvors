@@ -325,6 +325,14 @@ export default function PublishComposer({
   // ── Publishing ──────────────────────────────────────────────────
   const [publishing, setPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
+  /**
+   * The current publish attempt of this draft. The key stays the same
+   * across retries so a partial failure cannot publish the same post twice;
+   * galleryDone records the locations that already received the photo.
+   */
+  const publishAttemptRef = useRef<{ key: string; galleryDone: Set<string> } | null>(null);
+  /** Notices about photos Google filed under a different category. */
+  const [galleryFallbacks, setGalleryFallbacks] = useState<string[]>([]);
 
   // ── Schedule ────────────────────────────────────────────────────
   const [scheduleOn, setScheduleOn] = useState(false);
@@ -619,7 +627,16 @@ export default function PublishComposer({
       );
 
       if (postDestinations.length > 0) {
-        const batchId = crypto.randomUUID();
+        // One idempotency key per draft, reused across retries: the backend
+        // keys jobs as key:platform:asset:method, so a retry after a partial
+        // failure must not queue a second copy of the same post.
+        if (!publishAttemptRef.current) {
+          publishAttemptRef.current = {
+            key: crypto.randomUUID(),
+            galleryDone: new Set<string>(),
+          };
+        }
+        const attempt = publishAttemptRef.current;
         await apiFetch("/api/v1/channels/publish", {
           method: "POST",
           body: JSON.stringify({
@@ -636,15 +653,29 @@ export default function PublishComposer({
             start_date: startDate ? new Date(startDate).toISOString() : null,
             end_date: endDate ? new Date(endDate).toISOString() : null,
             destinations: postDestinations,
-            batch_id: batchId,
-            idempotency_key: `${batchId}:${Date.now()}`,
+            batch_id: attempt.key,
+            idempotency_key: attempt.key,
           }),
         });
       }
 
+      // A gallery photo that fails must not roll back the posts that already
+      // went out, and must not stop the other locations: each destination is
+      // reported on its own.
+      if (!publishAttemptRef.current) {
+        publishAttemptRef.current = {
+          key: crypto.randomUUID(),
+          galleryDone: new Set<string>(),
+        };
+      }
+      const attempt = publishAttemptRef.current;
+      const galleryErrors: string[] = [];
+      const fallbacks: string[] = [];
       for (const g of gallerySelections) {
         if (!media && !mediaUrl) throw new Error(pc.needMedia);
         const channelId = g.target.id.startsWith("google:") ? g.target.id.slice(7) : g.target.id;
+        // Already published on an earlier attempt of this same draft.
+        if (attempt.galleryDone.has(channelId)) continue;
         const form = new FormData();
         form.append("category", g.category);
         if (caption) form.append("description", caption);
@@ -658,11 +689,33 @@ export default function PublishComposer({
         } else {
           throw new Error(pc.needMedia);
         }
-        await apiFetch(`/api/v1/channels/${encodeURIComponent(channelId)}/google-media`, {
-          method: "POST",
-          body: form,
-        });
+        try {
+          const res = await apiFetch(`/api/v1/channels/${encodeURIComponent(channelId)}/google-media`, {
+            method: "POST",
+            body: form,
+          });
+          attempt.galleryDone.add(channelId);
+          const fb = res?.categoryFallback;
+          if (fb?.requested && fb.requested !== fb.used) {
+            fallbacks.push(
+              `${g.target.name}: Google does not allow the ${String(fb.requested).replace(/_/g, " ")} photo tag for this location — published as ${String(fb.used).replace(/_/g, " ")} instead.`,
+            );
+          }
+        } catch (e) {
+          galleryErrors.push(
+            `${g.target.name}: ${e instanceof Error ? e.message : pc.publishFailed}`,
+          );
+        }
       }
+
+      if (galleryErrors.length) {
+        // The draft stays open so the merchant can pick another category and
+        // retry; the posts are not re-queued (same idempotency key).
+        setPublishError(galleryErrors.join(" · "));
+        setGalleryFallbacks(fallbacks);
+        return;
+      }
+      if (fallbacks.length) setGalleryFallbacks(fallbacks);
 
       setConfirmOpen(false);
       clearMedia();
@@ -678,6 +731,8 @@ export default function PublishComposer({
       setEndDate("");
       setFormats({});
       setGalleryCategories({});
+      // The draft is done: a new publish starts a new attempt.
+      publishAttemptRef.current = null;
       onPublished?.();
     } catch (e) {
       setPublishError(e instanceof Error ? e.message : pc.publishFailed);
@@ -1095,6 +1150,15 @@ export default function PublishComposer({
             {scheduleOn && scheduleAt ? fill(pc.scheduledOn, { date: new Date(scheduleAt).toLocaleString(dateLocale) }) : ""}
           </p>
           {notice && <p className="w-full text-[12px] font-semibold text-red-600 dark:text-red-400 sm:w-auto">{notice}</p>}
+          {galleryFallbacks.length > 0 && (
+            <div className="w-full sm:w-auto" role="status">
+              {galleryFallbacks.map((f) => (
+                <p key={f} className="text-[12px] font-medium text-amber-700 dark:text-amber-400">
+                  {f}
+                </p>
+              ))}
+            </div>
+          )}
           <button
             type="button"
             onClick={openConfirm}

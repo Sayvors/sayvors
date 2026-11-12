@@ -39,6 +39,27 @@ async function readError(res: Response): Promise<string> {
       // Pydantic validation errors: surface the field, not the object dump.
       const d = parsed.detail[0];
       detail = d.loc?.length ? `${String(d.loc[1] ?? d.loc[0])}: ${d.msg}` : d.msg;
+    } else if (parsed?.detail && typeof parsed.detail === "object") {
+      // Structured upstream errors (Google, Meta): the API sends a readable
+      // message plus the provider's own wording. Show the message, and the
+      // provider's detail lines when they add something.
+      const d = parsed.detail as {
+        message?: string;
+        google?: { details?: string[]; message?: string; status?: string };
+      };
+      const providerLines = Array.isArray(d.google?.details)
+        ? d.google.details.filter((x) => typeof x === "string" && x.trim())
+        : [];
+      const message = typeof d.message === "string" ? d.message : "";
+      if (message && providerLines.length && !providerLines.includes(message)) {
+        detail = `${message} (${providerLines.join("; ")})`;
+      } else if (message) {
+        detail = message;
+      } else if (providerLines.length) {
+        detail = providerLines.join("; ");
+      } else if (d.google?.message) {
+        detail = d.google.message;
+      }
     }
   } catch {
     /* not JSON */
