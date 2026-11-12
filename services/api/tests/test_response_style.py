@@ -109,13 +109,20 @@ async def test_human_renderer_caps_and_drops_empties(db, user_id, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_human_renderer_falls_back_when_split_is_lossy(db, user_id, monkeypatch):
-    """A split that drops most of the text is a summary, not a repackaging."""
+    """A split that drops most of the text is a summary, not a repackaging.
+
+    The fallback is the deterministic-linted single message (em dashes
+    replaced), never the lossy split."""
     async def _lossy(tenant_id, db_, text):
         return '["Sure."]'
 
     monkeypatch.setattr(rs, "_ask_split", _lossy)
     long_reply = "Sure — we can deliver today. " * 10
-    assert await rs.human_renderer(long_reply, user_id, db) == [long_reply.strip()]
+    messages = await rs.human_renderer(long_reply, user_id, db)
+    assert len(messages) == 1
+    assert "we can deliver today" in messages[0]
+    assert messages[0] != "Sure."
+    assert "—" not in messages[0]
 
 
 @pytest.mark.asyncio

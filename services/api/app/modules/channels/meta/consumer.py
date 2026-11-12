@@ -997,6 +997,48 @@ async def _generate_reply(
     return (resp.content or "").strip()
 
 
+async def _last_outbound_opener(
+    db, channel_id: str, contact: str | None
+) -> str:
+    """The opener of the most recent AI outbound message to this contact.
+
+    Measure-only input for the opener-variation guard: if the same opener
+    keeps repeating to the same customer, that is the scripted-machine tell
+    Phase 1 asks the model to avoid. This is a bounded, indexed read (one
+    newest row per contact) and the result is only ever logged.
+    """
+    from .chat_voice import opener_key
+
+    if not contact:
+        return ""
+    try:
+        from ..models import ChannelMessage
+
+        row = (
+            await db.execute(
+                select(ChannelMessage)
+                .where(
+                    ChannelMessage.channel_id == channel_id,
+                    ChannelMessage.contact_phone_hash == hash_contact_phone(contact),
+                    ChannelMessage.direction == "outbound",
+                    ChannelMessage.is_ai.is_(True),
+                    ChannelMessage.deleted_at.is_(None),
+                )
+                .order_by(ChannelMessage.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+    except Exception as e:  # noqa: BLE001 — measure-only, never cost the reply
+        logger.warning(
+            "opener measure read failed channel=%s: %s: %s",
+            channel_id, type(e).__name__, str(e)[:150],
+        )
+        return ""
+    if row is None:
+        return ""
+    return opener_key(decrypt_message_content(row.content))
+
+
 async def _channel_for(
     db, tenant_id: str, phone_number_id: str, display_name,
     platform: str = "whatsapp",
@@ -2658,6 +2700,17 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
             # Tenant response style decides text delivery — one message, or
             # a short natural sequence. Rendering happens after reasoning
             # and never touches it: same agent, same reply, different shape.
+            if reply:
+                from .chat_voice import opener_key
+
+                previous_opener = await _last_outbound_opener(db, channel.id, from_wa)
+                if previous_opener and opener_key(reply) == previous_opener:
+                    # Measure-only: repeated openers to the same customer are
+                    # the scripted-machine tell; log frequency, act later.
+                    logger.warning(
+                        "WhatsApp AI repeated opener from=+%s wamid=%s opener=%r",
+                        from_wa[-6:], wamid[:32], previous_opener[:40],
+                    )
             messages = await render_response(
                 response_style, reply, tenant_id, db
             )

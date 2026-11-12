@@ -16,6 +16,8 @@ tenant style:
 import json
 import logging
 
+from .chat_voice import clean_reply
+
 logger = logging.getLogger(__name__)
 
 # Extensible string enum: new styles join the tuple (and the API pattern)
@@ -56,14 +58,18 @@ def normalize_response_style(value: str | None) -> str:
 
 
 def concise_renderer(response: str) -> list[str]:
-    """One clear message per response — the historical behaviour."""
-    text = (response or "").strip()
+    """One clear message per response — the historical behaviour.
+
+    The deterministic linter runs here too, so every style gets the same
+    machine-tell cleanup before it reaches the customer.
+    """
+    text = clean_reply(response)
     return [text] if text else []
 
 
 async def human_renderer(response: str, tenant_id: str, db) -> list[str]:
     """Split into 1..N natural messages; ALWAYS falls back to [response]."""
-    text = (response or "").strip()
+    text = clean_reply(response)
     if not text:
         return []
     try:
