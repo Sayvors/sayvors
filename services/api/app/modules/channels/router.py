@@ -4323,6 +4323,47 @@ async def upload_google_media(
     except HTTPException:
         raise
     except Exception as e:  # noqa: BLE001
+        from .google_reviews import GoogleReviewsError
+        import json
+
+        if isinstance(e, GoogleReviewsError):
+            msg = str(e)
+            # Extract Google validation details when present.
+            if "Photo tag" in msg or "does not apply" in msg or '"INVALID_ARGUMENT"' in msg:
+                try:
+                    # Message looks like: "create_media failed (400): {json}"
+                    if "{" in msg:
+                        j = msg[msg.index("{") :]
+                        data = json.loads(j)
+                        err = data.get("error") or {}
+                        details = err.get("details") or []
+                        for d in details:
+                            if isinstance(d, dict):
+                                for ed in d.get("errorDetails") or []:
+                                    if isinstance(ed, dict) and ed.get("message"):
+                                        raise HTTPException(
+                                            status_code=400,
+                                            detail=f"Google rejected this category for this location: {ed['message']}. Try 'Additional' or another category.",
+                                        )
+                        if err.get("message"):
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"Google rejected this upload: {err['message']}. Try category 'Additional'.",
+                            )
+                except HTTPException:
+                    raise
+                except Exception:
+                    pass
+                raise HTTPException(
+                    status_code=400,
+                    detail="Google rejected this photo category for this location. Try category 'Additional' instead.",
+                )
+            # If Google returned 400, surface a sanitized message.
+            if getattr(e, "status_code", None) in (400,):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Google could not add the photo with this category. Try category 'Additional' or check Google Business Profile for allowed photo types.",
+                )
         raise upstream_http_error(
             e,
             context=f"Google media upload failed for {channel_id}",
