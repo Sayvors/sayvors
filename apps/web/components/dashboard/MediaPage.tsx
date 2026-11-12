@@ -1,7 +1,9 @@
-"use client";
-
-import { Suspense } from "react";
-import MediaLibrary from "./media/MediaLibrary";
+/**
+ * Media item types shared by the surface feed.
+ *
+ * The standalone media library was folded into the Publish composer (step 1),
+ * so this module now exports only the shared types/helpers — no component.
+ */
 
 export interface MediaItem {
   id: string;
@@ -50,15 +52,4 @@ export function normalizeMedia(raw: unknown): MediaItem[] {
   });
 }
 
-export interface MediaPageProps {
-  initialLocationId?: string | null;
-  onOpenGoogle?: () => void;
-}
 
-export default function MediaPage(props: MediaPageProps) {
-  return (
-    <Suspense>
-      <MediaLibrary initialLocationId={props.initialLocationId ?? null} onOpenGoogle={props.onOpenGoogle} />
-    </Suspense>
-  );
-}

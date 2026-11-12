@@ -5,6 +5,7 @@ import { CROP_ASPECT } from "./CropFrame";
 import { MAX_MEDIA_MB, type CropState } from "./types";
 import { inspectImageFile, probeImageUrl, ALLOWED_IMAGE_EXT, ALLOWED_VIDEO_EXT } from "@/lib/media-validation";
 import { useI18n } from "@/lib/i18n/I18nProvider";
+import { apiFetch } from "@/lib/api-rag";
 
 function fill(s: string, vars: Record<string, string | number>): string {
   return Object.entries(vars).reduce(
@@ -49,6 +50,10 @@ export default function MediaSink({
   const [dropping, setDropping] = useState(false);
   const [urlDraft, setUrlDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [libraryItems, setLibraryItems] = useState<{ id: string; url: string; type: "image" | "video"; label: string; sizeBytes?: number }[]>([]);
+  const [libraryLoading, setLibraryLoading] = useState(false);
+  const [libraryError, setLibraryError] = useState<string | null>(null);
   const { t, locale } = useI18n();
   const md = t.publish.media;
   const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
@@ -100,6 +105,51 @@ export default function MediaSink({
       }
     }
     onPick(kind, URL.createObjectURL(file), file.name, file.size, file, width, height);
+  };
+
+  const openLibrary = async () => {
+    setLibraryOpen(true);
+    setLibraryError(null);
+    if (libraryItems.length > 0 || libraryLoading) return;
+    setLibraryLoading(true);
+    try {
+      const data = await apiFetch("/api/v1/media/?limit=60");
+      const list = Array.isArray(data) ? data : ((data as { media?: unknown[] })?.media ?? []);
+      setLibraryItems(
+        list.map((m) => {
+          const row = m as Record<string, unknown>;
+          const url = typeof row.image_url === "string" ? row.image_url : "";
+          return {
+            id: String(row.id ?? ""),
+            url,
+            type: row.type === "VIDEO" ? ("video" as const) : ("image" as const),
+            label: String(row.category ?? "Media").replace(/_/g, " "),
+            sizeBytes: typeof row.size === "number" ? row.size : undefined,
+          };
+        }).filter((m) => m.url),
+      );
+    } catch {
+      setLibraryError("Couldn't load your library. Try again.");
+    } finally {
+      setLibraryLoading(false);
+    }
+  };
+
+  const pickFromLibrary = (item: { id: string; url: string; type: "image" | "video"; label: string; sizeBytes?: number }) => {
+    if (item.type === "image") {
+      probeImageUrl(item.url).then((d) => {
+        if (d.width < 250 || d.height < 250) {
+          setError("That library image is below Google's 250×250px minimum — pick a larger one.");
+          return;
+        }
+        onPick("image", item.url, item.label, item.sizeBytes, undefined, d.width, d.height);
+      }).catch(() => {
+        onPick("image", item.url, item.label, item.sizeBytes);
+      });
+    } else {
+      onPick("video", item.url, item.label, item.sizeBytes);
+    }
+    setLibraryOpen(false);
   };
 
   const addUrl = async () => {
@@ -284,6 +334,67 @@ export default function MediaSink({
         <p role="alert" className="mt-2 text-[12px] font-semibold text-red-600 dark:text-red-400">
           {error}
         </p>
+      )}
+
+      <div className="mt-3 flex items-center gap-2 border-t border-[var(--ui-line)] pt-3">
+        <span className="text-[11px] text-[var(--ui-ink-2)]">
+          …or
+        </span>
+        <button
+          type="button"
+          onClick={openLibrary}
+          className="clay-btn-secondary px-3 py-1.5 text-[11px] font-semibold focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+        >
+          Choose from your library
+        </button>
+        {libraryOpen && (
+          <button
+            type="button"
+            onClick={() => setLibraryOpen(false)}
+            className="text-[11px] font-semibold text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
+          >
+            Close
+          </button>
+        )}
+      </div>
+
+      {libraryOpen && (
+        <div className="mt-2 rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-3">
+          {libraryLoading ? (
+            <p className="py-4 text-center text-[12px] text-[var(--ui-ink-2)]">Loading your library…</p>
+          ) : libraryError ? (
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[12px] font-medium text-red-600">{libraryError}</p>
+              <button type="button" onClick={openLibrary} className="text-[11px] font-semibold text-[var(--ui-ink)] hover:underline">Retry</button>
+            </div>
+          ) : libraryItems.length === 0 ? (
+            <p className="py-4 text-center text-[12px] text-[var(--ui-ink-2)]">
+              Your library is empty yet — upload a photo or video first.
+            </p>
+          ) : (
+            <div className="grid max-h-64 grid-cols-4 gap-2 overflow-y-auto">
+              {libraryItems.map((it) => (
+                <button
+                  key={it.id}
+                  type="button"
+                  onClick={() => pickFromLibrary(it)}
+                  title={`${it.label} — use this`}
+                  className="group relative aspect-square overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+                >
+                  {it.type === "video" ? (
+                    <video src={it.url} muted playsInline className="h-full w-full object-cover" />
+                  ) : (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={it.url} alt={it.label} className="h-full w-full object-cover" loading="lazy" />
+                  )}
+                  <span className="absolute inset-x-0 bottom-0 truncate bg-black/50 px-1 py-0.5 text-[9px] font-semibold text-white opacity-0 transition group-hover:opacity-100">
+                    {it.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
       <input

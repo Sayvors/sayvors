@@ -5,14 +5,12 @@ import { useRouter, useSearchParams } from "next/navigation";
 import PublishedPosts from "@/components/dashboard/PublishedPosts";
 import PublishComposer from "@/components/dashboard/publish/PublishComposer";
 import GoogleLiveGallery from "@/components/dashboard/GoogleLiveGallery";
-import MediaLibrary from "@/components/dashboard/media/MediaLibrary";
 import LogoLoader from "@/components/LogoLoader";
 
 type View = "feed" | "compose";
-type Tab = "posts" | "media" | "google";
+type Tab = "posts" | "google";
 
 function normalizeTab(v: string | null): Tab {
-  if (v === "media") return "media";
   if (v === "google") return "google";
   return "posts";
 }
@@ -60,7 +58,6 @@ function PostsMediaInner() {
         <div className="mx-auto flex max-w-6xl gap-1">
           {([
             { key: "posts", label: "Posts" },
-            { key: "media", label: "Media" },
             { key: "google", label: "Live on Google" },
           ] as const).map((t) => (
             <button
@@ -81,7 +78,6 @@ function PostsMediaInner() {
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-6xl px-6 py-5">
           {tab === "posts" && <PublishedPosts onPublish={(date) => { setScheduleDate(date ?? null); setView("compose"); }} />}
-          {tab === "media" && <MediaLibrary onOpenGoogle={() => changeTab("google")} />}
           {tab === "google" && <GoogleLiveGallery />}
         </div>
       </div>
