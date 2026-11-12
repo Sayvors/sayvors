@@ -309,11 +309,10 @@ class GoogleBusinessPublisher:
         """POST the raw image bytes to Google's media upload endpoint."""
         base = f"{GBP_MEDIA_UPLOAD_API}/{resource_name}"
         headers = {"Content-Type": content_type or "application/octet-stream"}
-        # Google's own docs disagree on the parameter spelling (`uploadType`
-        # in the reference, `upload_type` in the upload guide). Try both so
-        # a doc mismatch cannot break every byte upload.
+        # Google's upload guide documents `upload_type=media`; the reference
+        # spells it `uploadType`. Try the documented one first.
         last: tuple[int, str] | None = None
-        for param in ("uploadType=media", "upload_type=media"):
+        for param in ("upload_type=media", "uploadType=media"):
             resp = await self._client._authed_request(
                 "POST", f"{base}?{param}", content=data, extra_headers=headers,
             )
@@ -473,19 +472,33 @@ class GoogleBusinessPublisher:
                 body["sourceUrl"] = media_url
         else:
             body["sourceUrl"] = media_url
-        url = f"{GBP_MEDIA_API}/{account}/{location}/media"
-        resp = await self._client._authed_request("POST", url, json=body)
-        if resp.status_code not in (200, 201):
-            raise GoogleReviewsError(
-                f"create_location_media failed ({resp.status_code}): {resp.text[:2000]}",
-                resp.status_code,
+
+        async def _fresh_ref() -> str:
+            """Upload the bytes again when a rejected create consumed them."""
+            ref = await self.start_media_upload(account, location)
+            await self.upload_media_bytes(
+                ref, media_data, content_type or "image/jpeg"
             )
-        data = resp.json()
+            return ref
+
+        # One create path, shared with the channel media API: the request
+        # shape is Google's documented one, and a photo tag the location does
+        # not accept falls back to ADDITIONAL instead of failing the publish.
+        data = await self._client.create_location_media(
+            account,
+            location,
+            category=category,
+            source_url=body.get("sourceUrl"),
+            data_ref=(body.get("dataRef") or {}).get("resourceName"),
+            media_format="PHOTO",
+            fresh_data_ref=_fresh_ref if media_data is not None else None,
+        )
         return {
             "id": data.get("name", ""),
             "name": data.get("name", ""),
             "category": (data.get("locationAssociation") or {}).get("category"),
             "googleUrl": data.get("googleUrl", ""),
+            "categoryFallback": data.get("categoryFallback"),
         }
 
     async def get_post(self, post_name: str) -> dict:

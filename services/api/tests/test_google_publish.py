@@ -402,7 +402,7 @@ async def test_location_image_bytes_are_uploaded_directly():
 
     assert calls[1]["url"] == (
         "https://mybusiness.googleapis.com/upload/v1/media"
-        "/accounts/1/locations/2/media/up-1?uploadType=media"
+        "/accounts/1/locations/2/media/up-1?upload_type=media"
     )
     assert calls[1]["content"] == b"jpeg-bytes"
     assert calls[1]["extra_headers"]["Content-Type"] == "image/jpeg"
