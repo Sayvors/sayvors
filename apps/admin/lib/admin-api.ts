@@ -614,6 +614,36 @@ export async function patchFinance(
   );
 }
 
+export interface AdminNotificationItem {
+  id: string;
+  kind: string;
+  severity: string;
+  title: string;
+  body: string | null;
+  href: string | null;
+  read: boolean;
+  created_at: string | null;
+}
+
+export async function fetchAdminNotifications(
+  unread = false,
+  limit = 50,
+): Promise<{ items: AdminNotificationItem[]; unread_count: number }> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (unread) params.set("unread", "true");
+  return adminFetch<{ items: AdminNotificationItem[]; unread_count: number }>(
+    `/api/v1/admin/notifications?${params.toString()}`,
+  );
+}
+
+export async function markAdminNotificationRead(id: string): Promise<{ marked: number }> {
+  return adminFetch<{ marked: number }>(`/api/v1/admin/notifications/${id}/read`, { method: "POST" });
+}
+
+export async function markAllAdminNotificationsRead(): Promise<{ marked: number }> {
+  return adminFetch<{ marked: number }>("/api/v1/admin/notifications/read-all", { method: "POST" });
+}
+
 export interface PlatformStats {
   platform: string;
   label: string;

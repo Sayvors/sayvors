@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { AdminSearch } from "@/components/AdminSearch";
 import { SearchIcon } from "@/components/SearchIcon";
 import { adminLogout, checkAdminSession } from "@/lib/admin-api";
+import AdminBell from "@/components/AdminBell";
 import { FLAT_NAV, SECTIONS, type NavItem } from "@/lib/admin-nav";
 import { useTheme } from "../theme";
 
@@ -324,6 +325,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </button>
 
       <div className="flex shrink-0 items-center gap-2">
+        <AdminBell />
         <ThemeToggle toggle={toggle} />
         <span aria-hidden className="h-6 w-px bg-[var(--ui-line)]" />
         <div className="flex items-center gap-2.5 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-1.5">
@@ -478,6 +480,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           >
             <SearchIcon className="h-4 w-4" />
           </button>
+          <AdminBell />
           <ThemeToggle toggle={toggle} />
         </header>
 

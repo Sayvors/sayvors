@@ -2328,6 +2328,64 @@ async def admin_recompute_financials(
     return {"month": month, "tenants": rows}
 
 
+@router.get("/notifications")
+async def admin_notifications(
+    unread: bool = Query(False),
+    limit: int = Query(50, ge=1, le=200),
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    from .models import PlatformOperator
+    from .service import list_admin_notifications
+
+    op = (
+        await db.execute(
+            _select(PlatformOperator).where(PlatformOperator.username == _admin.get("username"))
+        )
+    ).scalar_one_or_none()
+    return await list_admin_notifications(db, op.id if op else "", unread_only=unread, limit=limit)
+
+
+@router.post("/notifications/read-all")
+async def admin_notifications_read_all(
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    from .models import PlatformOperator
+    from .service import mark_admin_notifications_read
+
+    op = (
+        await db.execute(
+            _select(PlatformOperator).where(PlatformOperator.username == _admin.get("username"))
+        )
+    ).scalar_one_or_none()
+    marked = await mark_admin_notifications_read(db, op.id if op else "")
+    return {"marked": marked}
+
+
+@router.post("/notifications/{notification_id}/read")
+async def admin_notification_read(
+    notification_id: str,
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    from .models import PlatformOperator
+    from .service import mark_admin_notifications_read
+
+    op = (
+        await db.execute(
+            _select(PlatformOperator).where(PlatformOperator.username == _admin.get("username"))
+        )
+    ).scalar_one_or_none()
+    marked = await mark_admin_notifications_read(db, op.id if op else "", notification_ids=[notification_id])
+    if marked == 0:
+        raise HTTPException(status_code=404, detail="Notification not found or already read")
+    return {"marked": marked}
+
+
 @router.get("/search")
 async def admin_global_search(
     q: str = Query(..., min_length=1, max_length=200),

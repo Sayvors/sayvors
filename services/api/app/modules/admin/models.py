@@ -73,6 +73,34 @@ class PurgedAccount(Base):
     )
 
 
+class AdminNotification(Base):
+    """In-app notification for platform operators.
+
+    `operator_id` NULL = broadcast (visible to every admin). Kinds:
+    request (billing/plan), error (delivery/system), finance, system.
+    """
+
+    __tablename__ = "admin_notifications"
+    __table_args__ = (
+        Index("ix_admin_notifications_operator_read_created", "operator_id", "read_at", "created_at"),
+        Index("ix_admin_notifications_created", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    operator_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("platform_operators.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(24), default="system", index=True)
+    severity: Mapped[str] = mapped_column(String(12), default="info")
+    title: Mapped[str] = mapped_column(String(200))
+    body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    href: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+
+
 class AdminAuditLog(Base):
     __tablename__ = "admin_audit_logs"
 

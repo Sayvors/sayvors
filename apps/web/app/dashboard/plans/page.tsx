@@ -52,7 +52,7 @@ function planLabel(slug: string | undefined, names: { trial: string; free: strin
 }
 
 // Online card payments are not connected yet. Until they are, only the
-// included free trial and the sales-assisted Enterprise plan are actionable,
+// included free trial and the sales-assisted Enterprise plan are actionable;
 // so only those are listed. Starter/Pro/Growth stay seeded in the catalog for
 // when payments land, but showing a price with no way to buy it reads as a
 // broken checkout.

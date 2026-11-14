@@ -1041,6 +1041,100 @@ async def patch_finance(
     }
 
 
+async def create_admin_notification(
+    db: AsyncSession,
+    *,
+    operator_id: str | None = None,
+    kind: str = "system",
+    severity: str = "info",
+    title: str,
+    body: str | None = None,
+    href: str | None = None,
+) -> None:
+    from .models import AdminNotification
+
+    db.add(AdminNotification(
+        operator_id=operator_id,
+        kind=kind,
+        severity=severity,
+        title=title[:200],
+        body=body,
+        href=href,
+    ))
+    await db.commit()
+
+
+async def list_admin_notifications(
+    db: AsyncSession,
+    operator_id: str,
+    *,
+    unread_only: bool = False,
+    limit: int = 50,
+) -> dict:
+    from sqlalchemy import func as _func, or_, select as _select
+
+    from .models import AdminNotification
+
+    scope = or_(
+        AdminNotification.operator_id.is_(None),
+        AdminNotification.operator_id == operator_id,
+    )
+    stmt = _select(AdminNotification).where(scope)
+    if unread_only:
+        stmt = stmt.where(AdminNotification.read_at.is_(None))
+    rows = (
+        await db.execute(stmt.order_by(AdminNotification.created_at.desc()).limit(limit))
+    ).scalars().all()
+    unread = int(
+        (
+            await db.execute(
+                _select(_func.count())
+                .select_from(AdminNotification)
+                .where(scope, AdminNotification.read_at.is_(None))
+            )
+        ).scalar_one()
+    )
+    return {
+        "items": [{
+            "id": n.id,
+            "kind": n.kind,
+            "severity": n.severity,
+            "title": n.title,
+            "body": n.body,
+            "href": n.href,
+            "read": n.read_at is not None,
+            "created_at": n.created_at.isoformat() if n.created_at else None,
+        } for n in rows],
+        "unread_count": unread,
+    }
+
+
+async def mark_admin_notifications_read(
+    db: AsyncSession,
+    operator_id: str,
+    *,
+    notification_ids: list[str] | None = None,
+) -> int:
+    from datetime import datetime, timezone as _tz
+
+    from sqlalchemy import or_, select as _select, update as _update
+
+    from .models import AdminNotification
+
+    scope = or_(
+        AdminNotification.operator_id.is_(None),
+        AdminNotification.operator_id == operator_id,
+    )
+    stmt = _update(AdminNotification).where(
+        scope, AdminNotification.read_at.is_(None)
+    )
+    if notification_ids:
+        stmt = stmt.where(AdminNotification.id.in_(notification_ids))
+    result = await db.execute(stmt.values(read_at=datetime.now(_tz.utc)))
+    await db.commit()
+    return result.rowcount or 0
+
+
 LEDGER_SORTS = ("newest", "oldest", "cost_high", "cost_low")
 DEFAULT_LEDGER_LIMIT = 75
 MAX_LEDGER_LIMIT = 200

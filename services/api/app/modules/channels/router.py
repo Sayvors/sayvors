@@ -4150,6 +4150,8 @@ async def test_review_pipeline(
     the reviewer-facing WhatsApp handoff link can be inspected before any
     external side effect.
     """
+    if not settings.TESTING and not await rate_limit(f"testgen:{channel_id}", 100, 60):
+        raise HTTPException(status_code=429, detail="Too many requests")
     channel = await db.get(Channel, channel_id)
     if channel is None or channel.user_id != ctx.tenant_id:
         raise HTTPException(status_code=404, detail="Channel not found.")

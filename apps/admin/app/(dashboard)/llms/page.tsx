@@ -386,11 +386,9 @@ export default function AdminLlmsPage() {
     }
   };
 
-  // Providers with a usable key first. The rest stay visible: with zero keys
-  // configured, hiding every card would also hide the only place to add one.
-  const orderedProviders = [...items].sort(
-    (a, b) => Number(b.has_key) - Number(a.has_key)
-  );
+  // Only providers with a configured API key are shown. Providers without a
+  // key stay out of the list; add one through the + Add model flow below.
+  const orderedProviders = items.filter((p) => p.has_key);
 
   return (
     <div className="space-y-4">
