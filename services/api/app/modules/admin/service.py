@@ -582,7 +582,8 @@ async def admin_search(
 ) -> dict:
     """Metadata-only admin search across tenants, operators, models, plans,
     jobs and audit log. Never searches message/review bodies or secrets."""
-    from sqlalchemy import or_, select as _select
+    from sqlalchemy import cast as sa_cast, or_, select as _select
+    from sqlalchemy import String as sa_String
 
     from ..billing.models import Plan
     from ..jobs.models import Job
@@ -701,14 +702,15 @@ async def admin_search(
         "meta": p.slug,
     } for p in plans])
 
-    # Jobs
+    # Jobs (job_type/lane/status are Postgres enums — cast to text before
+    # ILIKE, or the operator doesn't exist).
     jobs = (
         await db.execute(
             _select(Job)
             .where(or_(
-                Job.job_type.ilike(needle),
-                Job.lane.ilike(needle),
-                Job.status.ilike(needle),
+                sa_cast(Job.job_type, sa_String).ilike(needle),
+                sa_cast(Job.lane, sa_String).ilike(needle),
+                sa_cast(Job.status, sa_String).ilike(needle),
                 Job.tenant_id.ilike(needle),
             ))
             .order_by(Job.created_at.desc())
