@@ -452,6 +452,22 @@ async def create_invite(
             detail="This person already works in another workspace",
         )
 
+    # Seat cap: count every member row (invited + active + suspended) — a
+    # pending invite holds a slot until revoked or accepted.
+    from ..billing.entitlements import entitlement_403, get_entitlements
+
+    ent = await get_entitlements(ctx.tenant_id, db)
+    seat_count = (
+        await db.execute(
+            select(TeamMember.id).where(TeamMember.tenant_id == ctx.tenant_id)
+        )
+    ).scalars().all()
+    if not ent.team_member_quota_ok(len(seat_count)):
+        raise entitlement_403(
+            f"Team member limit reached for plan '{ent.plan_slug}' (max {ent.max_team_members}). Upgrade to add more.",
+            "quota",
+        )
+
     try:
         member, raw = await service.invite_member(
             db, ctx.tenant_id, ctx.user.id, normalized, role, body.channel_levels or None,

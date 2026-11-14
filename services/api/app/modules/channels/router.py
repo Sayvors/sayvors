@@ -898,6 +898,10 @@ async def request_verification(
 ):
     if not ctx.can_edit_channel(channel_id):
         raise HTTPException(status_code=403, detail="No edit access to this channel")
+    # Verification is a plan feature; deny before any provider work.
+    from ..billing.entitlements import check_feature
+
+    await check_feature(tenant_id_of(ctx.user), "verifications")
     channel = await _google_channel(channel_id, ctx.user, db)
     client, location_id = await _verification_client(channel, db)
     try:
@@ -965,6 +969,10 @@ async def complete_verification(
 ):
     if not ctx.can_edit_channel(channel_id):
         raise HTTPException(status_code=403, detail="No edit access to this channel")
+    # Verification is a plan feature; deny before any provider work.
+    from ..billing.entitlements import check_feature
+
+    await check_feature(tenant_id_of(ctx.user), "verifications")
     channel = await _google_channel(channel_id, ctx.user, db)
     result = await db.execute(
         select(VerificationRecord).where(VerificationRecord.channel_id == channel_id)
@@ -1838,6 +1846,11 @@ async def inbox_thread_set_assignee(
     not erase who was working it.
     """
     from .assignment import AssignmentError, assign_thread
+
+    # Ticket assignment is a plan feature; deny before any assignment work.
+    from ..billing.entitlements import check_feature
+
+    await check_feature(tenant_id_of(ctx.user), "ticket_assignment")
 
     if ctx.channel_level(channel_id) == "none":
         raise HTTPException(status_code=404, detail="Channel not found")
@@ -2898,6 +2911,23 @@ async def google_callback(
         return RedirectResponse(f"{base}?google_error=no_business_account")
 
     created = 0
+
+    # Location cap: count existing google_reviews channels once, and stop
+    # creating new ones once the tenant hits their plan's max_locations.
+    from ..billing.entitlements import get_entitlements as _get_entitlements
+
+    _ent = await _get_entitlements(user_id, db)
+    _existing_locs = (
+        await db.execute(
+            select(Channel).where(
+                Channel.user_id == user_id,
+                Channel.platform == "google_reviews",
+                Channel.status.in_(("active",)),
+            )
+        )
+    ).scalars().all()
+    _existing_loc_count = len(_existing_locs)
+
     for account in accounts:
         account_id = account.get("name", "accounts/").split("/")[-1]
         account_name = account.get("accountName") or account.get("name", "")
@@ -2946,6 +2976,14 @@ async def google_callback(
             key = location_id
             matching = await _find_by_key(db, user_id, "google_reviews", key)
             if matching is None:
+                # Cap check: only block brand-new locations. Re-consent of an
+                # existing location (matching row) must always be allowed.
+                if not _ent.location_quota_ok(_existing_loc_count):
+                    logger.info(
+                        "Google connect: location cap reached for user %s (%d/%s)",
+                        user_id, _existing_loc_count, _ent.max_locations,
+                    )
+                    continue
                 # Legacy rows predate listing_key: fall back to a metadata
                 # scan once, and heal the row so next time hits the index.
                 legacy = await db.execute(
@@ -3056,6 +3094,7 @@ async def google_callback(
                 db, channel, location_service_types(loc), location_category(loc)
             )
             created += 1
+            _existing_loc_count += 1
 
     await db.commit()
     # Reconnect restores the same rows; rebuild the assistant's location facts.
@@ -3794,6 +3833,71 @@ async def edit_pending_reply(
     return _reply_response(reply)
 
 
+async def _regeneration_used_today(db: AsyncSession, tenant_id: str) -> int:
+    """Count of manual regenerations today from the durable counter table."""
+    from datetime import date as _date
+
+    from .models import RegenerationUsage
+
+    used = (
+        await db.execute(
+            select(RegenerationUsage.count).where(
+                RegenerationUsage.tenant_id == tenant_id,
+                RegenerationUsage.usage_date == _date.today(),
+            )
+        )
+    ).scalar_one_or_none()
+    return int(used or 0)
+
+
+async def _regeneration_increment_today(db: AsyncSession, tenant_id: str) -> None:
+    """Upsert + increment today's regeneration counter (race-safe).
+
+    The unique (tenant_id, usage_date) index is the race boundary: a loser
+    of the concurrent insert rolls back in a savepoint and re-selects the
+    winner's row, so two parallel regenerations can never twin rows or
+    silently drop a count.
+    """
+    from datetime import date as _date
+
+    from sqlalchemy.exc import IntegrityError as _IntegrityError
+
+    from .models import RegenerationUsage
+
+    today = _date.today()
+    row = (
+        await db.execute(
+            select(RegenerationUsage)
+            .where(
+                RegenerationUsage.tenant_id == tenant_id,
+                RegenerationUsage.usage_date == today,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        try:
+            async with db.begin_nested():
+                db.add(RegenerationUsage(tenant_id=tenant_id, usage_date=today, count=1))
+                await db.flush()
+        except _IntegrityError:
+            row = (
+                await db.execute(
+                    select(RegenerationUsage)
+                    .where(
+                        RegenerationUsage.tenant_id == tenant_id,
+                        RegenerationUsage.usage_date == today,
+                    )
+                    .with_for_update()
+                )
+            ).scalar_one()
+            row.count += 1
+            await db.flush()
+        return
+    row.count += 1
+    await db.flush()
+
+
 @router.post("/{channel_id}/reviews/{reply_id}/regenerate", response_model=ReviewReplyResponse)
 async def regenerate_reply(
     channel_id: str,
@@ -3815,6 +3919,21 @@ async def regenerate_reply(
     if reply.status != "pending_approval":
         raise HTTPException(status_code=400, detail="Only pending replies can be regenerated")
     attempt = (reply.generation_attempt or 1) + 1
+
+    # Daily regeneration cap (plan-gated). Counted against the durable
+    # regeneration_usage table, not Redis, so a redeploy never resets the
+    # quota. Manual regenerations only — worker auto-replies and failed
+    # retries do not consume it.
+    from ..billing.entitlements import entitlement_403, get_entitlements
+
+    tid = tenant_id_of(ctx.user)
+    ent = await get_entitlements(tid, db)
+    used_today = await _regeneration_used_today(db, tid)
+    if not ent.regeneration_quota_ok(used_today):
+        raise entitlement_403(
+            f"Regeneration limit reached for plan '{ent.plan_slug}' (max {ent.max_regenerations_day} per day).",
+            "quota",
+        )
 
     config = (
         await db.execute(select(AutoReplyConfig).where(AutoReplyConfig.channel_id == channel_id))
@@ -3845,6 +3964,7 @@ async def regenerate_reply(
     refreshed = await db.get(ReviewReply, reply_id)
     refreshed.reply_text = reply.reply_text
     refreshed.generation_attempt = attempt
+    await _regeneration_increment_today(db, tid)
     await db.commit()
     await db.refresh(refreshed)
     return _reply_response(refreshed)

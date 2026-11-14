@@ -193,6 +193,9 @@ export interface WebPlan {
   included_credit_cents: number;
   max_channels: number | null;
   max_messages_per_month: number | null;
+  max_locations: number | null;
+  max_team_members: number | null;
+  max_regenerations_day: number | null;
   features: Record<string, boolean>;
   sort_order: number;
 }

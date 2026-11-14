@@ -231,6 +231,15 @@ class Plan(Base):
     included_credit_cents: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     max_channels: Mapped[int | None] = mapped_column(Integer, nullable=True)
     max_messages_per_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Google Business Profile locations (stored as google_reviews channels).
+    # Separate from max_channels because locations are created through their
+    # own endpoint and the OAuth callback, which never saw the channel quota.
+    max_locations: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Workspace seats (team_members rows: invited + active + suspended all
+    # occupy a slot). Null = unlimited.
+    max_team_members: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Daily manual reply-regeneration cap. Null = unlimited.
+    max_regenerations_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Feature flags / arbitrary limits.
     features: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")

@@ -1,11 +1,12 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { queryKeys } from "@/lib/query-keys";
 import LogoLoader from "@/components/LogoLoader";
 import {
+  createBillingRequest,
   getBudget,
   getEntitlements,
   getPlans,
@@ -51,8 +52,10 @@ function planLabel(slug: string | undefined, names: { trial: string; free: strin
 }
 
 // Online card payments are not connected yet. Until they are, only the
-// included free trial and the sales-assisted Enterprise plan are actionable;
-// showing "pay" for Starter/Pro/Growth would be a fake checkout.
+// included free trial and the sales-assisted Enterprise plan are actionable,
+// so only those are listed. Starter/Pro/Growth stay seeded in the catalog for
+// when payments land, but showing a price with no way to buy it reads as a
+// broken checkout.
 const ENABLED_PLAN_SLUGS = new Set(["free-trial", "enterprise"]);
 const TRIAL_CREDIT_CENTS = 1000; // $10 - keep in step with TRIAL_CREDIT_CENTS
 
@@ -61,18 +64,23 @@ function PlanCard({
   current,
   onSelect,
   scPerUsd,
+  selectBusy,
+  selectNotice,
+  selectError,
 }: {
   plan: WebPlan;
   current: boolean;
   onSelect: () => void;
   scPerUsd: number;
+  selectBusy: boolean;
+  selectNotice: string | null;
+  selectError: string | null;
 }) {
   const { t, locale } = useI18n();
   const labels = locale === "ar" ? FEATURE_LABELS_AR : FEATURE_LABELS;
   const features = FEATURE_ORDER.filter((k) => (plan.features || {})[k]);
   const isEnterprise = plan.slug === "enterprise";
   const isTrial = plan.slug === "free-trial";
-  const enabled = ENABLED_PLAN_SLUGS.has(plan.slug);
   const creditCents = isTrial ? TRIAL_CREDIT_CENTS : plan.included_credit_cents;
   return (
     <div
@@ -127,6 +135,36 @@ function PlanCard({
                 : fmtNum(plan.max_messages_per_month, locale)}
           </div>
         </div>
+        <div className="col-span-2 rounded-xl bg-ink/[0.03] px-3 py-2 dark:bg-fog/[0.04]">
+          <div className="text-ink/45 dark:text-fog/45">{t.dashboard.plans.locations}</div>
+          <div className="font-semibold text-ink dark:text-fog">
+            {isEnterprise
+              ? t.dashboard.plans.custom
+              : plan.max_locations == null
+                ? t.dashboard.plans.unlimited
+                : fmtNum(plan.max_locations, locale)}
+          </div>
+        </div>
+        <div className="col-span-2 rounded-xl bg-ink/[0.03] px-3 py-2 dark:bg-fog/[0.04]">
+          <div className="text-ink/45 dark:text-fog/45">{t.dashboard.plans.teamMembers}</div>
+          <div className="font-semibold text-ink dark:text-fog">
+            {isEnterprise
+              ? t.dashboard.plans.custom
+              : plan.max_team_members == null
+                ? t.dashboard.plans.unlimited
+                : fmtNum(plan.max_team_members, locale)}
+          </div>
+        </div>
+        <div className="col-span-2 rounded-xl bg-ink/[0.03] px-3 py-2 dark:bg-fog/[0.04]">
+          <div className="text-ink/45 dark:text-fog/45">{t.dashboard.plans.regenerations}</div>
+          <div className="font-semibold text-ink dark:text-fog">
+            {isEnterprise
+              ? t.dashboard.plans.custom
+              : plan.max_regenerations_day == null
+                ? t.dashboard.plans.unlimited
+                : fmtNum(plan.max_regenerations_day, locale)}
+          </div>
+        </div>
       </div>
 
       <ul className="mb-6 flex-1 space-y-2">
@@ -144,30 +182,41 @@ function PlanCard({
 
       <button
         onClick={onSelect}
-        disabled={current || !enabled}
+        disabled={current || (isEnterprise && selectBusy)}
         className={`w-full rounded-2xl px-4 py-3 text-[13px] font-bold transition-all ${
           current
             ? "cursor-default bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-            : enabled
-              ? "bg-deep-violet text-white hover:bg-deep-violet/90 active:scale-[0.98]"
-              : "cursor-not-allowed bg-ink/[0.06] text-ink/45 dark:bg-fog/[0.08] dark:text-fog/45"
+            : "bg-deep-violet text-white hover:bg-deep-violet/90 active:scale-[0.98] disabled:opacity-50"
         }`}
       >
         {current
           ? t.dashboard.plans.currentPlanCta
           : isEnterprise
-            ? t.dashboard.plans.request
-            : enabled
-              ? t.dashboard.plans.included
-              : t.dashboard.plans.comingSoon}
+            ? selectBusy
+              ? t.dashboard.billing.topup.sending
+              : t.dashboard.plans.request
+            : t.dashboard.plans.included}
       </button>
+      {isEnterprise && (selectNotice || selectError) && (
+        <p
+          role="status"
+          className={`mt-2 text-[11px] leading-snug ${
+            selectError ? "text-coral" : "text-emerald-600 dark:text-emerald-400"
+          }`}
+        >
+          {selectError ?? selectNotice}
+        </p>
+      )}
     </div>
   );
 }
 
 export default function PlansPage() {
-  const router = useRouter();
   const { t, locale } = useI18n();
+  const queryClient = useQueryClient();
+  const [requestBusy, setRequestBusy] = useState(false);
+  const [requestNotice, setRequestNotice] = useState<string | null>(null);
+  const [requestError, setRequestError] = useState<string | null>(null);
   const { data: plans, isLoading: plansLoading } = useQuery({
     queryKey: queryKeys.billing.plans(),
     queryFn: getPlans,
@@ -189,11 +238,19 @@ export default function PlansPage() {
   const channelCount = channels?.items?.length ?? channels?.total ?? 0;
   const maxChannels = entitlements?.max_channels ?? null;
 
-  const handleSelect = (plan: WebPlan) => {
-    if (plan.slug === "enterprise") {
-      // Sales-assisted: submit a request from the top-up page; no fake checkout.
-      router.push("/dashboard/billing/topup");
-      return;
+  const handleSelect = async (plan: WebPlan) => {
+    if (plan.slug !== "enterprise") return;
+    setRequestBusy(true);
+    setRequestNotice(null);
+    setRequestError(null);
+    try {
+      const result = await createBillingRequest({ kind: "plan", plan_slug: "enterprise" });
+      setRequestNotice(result.duplicate ? t.dashboard.billing.topup.duplicate : t.dashboard.billing.topup.sent);
+      await queryClient.invalidateQueries({ queryKey: ["billing", "requests"] });
+    } catch (e) {
+      setRequestError(e instanceof Error ? e.message : t.dashboard.billing.topup.sendFailed);
+    } finally {
+      setRequestBusy(false);
     }
   };
 
@@ -206,9 +263,8 @@ export default function PlansPage() {
   }
 
   const sortedPlans = [...(plans || [])]
-    // A legacy "free" row duplicates the free trial card and invites a
-    // downgrade we do not offer. The trial is the only entry plan.
-    .filter((p) => p.slug !== "free")
+    // Only plans that can actually be actioned are listed; see ENABLED_PLAN_SLUGS.
+    .filter((p) => ENABLED_PLAN_SLUGS.has(p.slug))
     .sort((a, b) => a.sort_order - b.sort_order);
 
   return (
@@ -286,14 +342,17 @@ export default function PlansPage() {
         </div>
 
         {/* plan grid */}
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
           {sortedPlans.map((p) => (
             <PlanCard
               key={p.id}
               plan={p}
               current={p.slug === currentSlug}
               scPerUsd={budget?.credits_per_usd ?? 1000}
-              onSelect={() => handleSelect(p)}
+              onSelect={() => void handleSelect(p)}
+              selectBusy={requestBusy}
+              selectNotice={requestNotice}
+              selectError={requestError}
             />
           ))}
         </div>

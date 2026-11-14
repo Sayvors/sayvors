@@ -48,6 +48,21 @@ def _member(
     )
 
 
+async def _enable_ticket_assignment(db):
+    """Turn on the ticket-assignment feature for the seeded free-trial plan.
+
+    These tests exercise assignment *behavior*, not the plan gate; without
+    the feature the router denies before any assignment work.
+    """
+    from app.modules.billing.models import Plan
+
+    plan = (
+        await db.execute(select(Plan).where(Plan.slug == "free-trial"))
+    ).scalar_one()
+    plan.features = {**(plan.features or {}), "ticket_assignment": True}
+    await db.commit()
+
+
 @pytest.mark.asyncio
 async def test_assignable_users_require_access_and_reply(db, user_id):
     channel_id = "chan-assignable"
@@ -223,6 +238,7 @@ async def test_assignment_rejects_someone_who_cannot_work_the_channel(
 @pytest.mark.asyncio
 async def test_inbox_assignment_endpoints(client, db, user_id):
     channel_id = "chan-assign-http"
+    await _enable_ticket_assignment(db)
     db.add(_user(user_id, "Owner"))
     db.add(_channel(user_id, channel_id))
     role = TeamRole(
@@ -299,6 +315,7 @@ async def test_inbox_assignment_endpoints(client, db, user_id):
 @pytest.mark.asyncio
 async def test_review_ticket_assignment(client, db, user_id):
     channel_id = "chan-review-assign"
+    await _enable_ticket_assignment(db)
     db.add(_user(user_id, "Owner"))
     db.add(_channel(user_id, channel_id, platform="google_reviews"))
     role = TeamRole(

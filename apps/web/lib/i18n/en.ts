@@ -2620,6 +2620,9 @@ const en = {
     page: {
       title: "Benchmark",
       sub: "Your branches, ranked against each other — real data, no estimates.",
+      lockedTitle: "Benchmarking isn't in your plan",
+      lockedBody: "Compare branches, spot top performers, and close the gaps — upgrade to unlock Benchmarking.",
+      viewPlans: "View plans",
       loadFail: "Couldn't load benchmark data.",
       retry: "Retry",
       emptyTitle: "No comparison data yet",
@@ -4008,6 +4011,9 @@ const en = {
       aiCredit: "AI credit",
       channels: "Channels",
       whatsappMonthly: "WhatsApp messages / month",
+      locations: "Locations",
+      teamMembers: "Team members",
+      regenerations: "Reply regenerations / day",
       sayvorsCredits: "Sayvors Credits",
       unlimited: "unlimited",
       custom: "Custom",
@@ -4017,12 +4023,11 @@ const en = {
       currentPlanCta: "Your current plan",
       request: "Request",
       included: "Included",
-      comingSoon: "Coming soon",
       topup: "Top up messages, AI credit or channels",
       featureComparison: "Feature comparison",
       feature: "Feature",
       footer:
-        "Prices in USD. The free trial includes $10 of AI credit. Online upgrades for Starter, Pro and Growth are coming soon; Enterprise is custom — contact us.",
+        "Prices in USD. The free trial includes $10 of AI credit. Enterprise is custom — contact us.",
       planNames: {
         trial: "Free Trial",
         free: "Free",

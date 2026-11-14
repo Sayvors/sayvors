@@ -3469,6 +3469,185 @@ order by created_at desc limit 5;</code></pre>
   <p class="note">Do not push unless explicitly asked (repo rule 4).</p>
 </section>
 
+<section id="plan-limits">
+  <div class="eyebrow">&sect;&sect; 34 - Plan feature limits &amp; gating - 2026-11-14</div>
+  <h2>Real features, real limits: the 15-item gating workstream</h2>
+  <p>Merchant-driven: the plans-page feature matrix must stop being a display-only
+  checklist and start matching what each plan actually allows. Audit of all 15
+  requested services against the tree (2026-11-14), then one item at a time.
+  The recommended numeric tier values are already catalogued in &sect;6b
+  (Limitable features per plan); this section tracks enforcement work against
+  that catalog. Plan columns added by this workstream must also land in the
+  admin Plans form and the tenant plans page.</p>
+
+  <p><span class="chip ok">Item 1 done 2026-11-14 - Locations cap.</span>
+  New <code>plans.max_locations</code> column (migration
+  <code>20261114120000</code>, single head) + <code>Entitlements.max_locations</code>
+  + <code>location_quota_ok()</code>. Enforced at both write paths:
+  <code>POST /api/v1/locations</code> (403 + <code>X-Entitlement-Denied: quota</code>)
+  and the Google OAuth callback (skips creating new location channels once the
+  cap is hit; re-consent of existing rows always allowed). Seeded free-trial/starter=1,
+  pro=5, growth=25, enterprise=unlimited. Tenant plans page now shows the
+  Locations row. Tests: <code>tests/test_plan_location_quota.py</code> (3 tests),
+  <code>test_message_quotas.py</code> green; 3 backend scoped files run, frontend
+  <code>tsc</code> + <code>next build</code> pass.</p>
+
+  <p><span class="chip ok">Item 2 done 2026-11-14 - Team members cap.</span>
+  New <code>plans.max_team_members</code> column (migration
+  <code>20261114150000</code>, single head) + <code>Entitlements.max_team_members</code>
+  + <code>team_member_quota_ok()</code>. Enforced at
+  <code>POST /api/v1/team/invites</code> (403 + <code>X-Entitlement-Denied: quota</code>).
+  Seats count every <code>team_members</code> row — invited, active and suspended
+  all hold a slot, so pending invites cannot be spammed past the cap. Seeded
+  free-trial=1, starter=3, pro=10, growth=50, enterprise=unlimited. Tenant plans
+  page now shows the Team members row. Tests:
+  <code>tests/test_plan_team_quota.py</code> (4 tests: entitlements exposure, blocked
+  at cap, allowed under cap, pending invites count as seats); full
+  <code>test_team_rbac.py</code> suite still green (40 passed); frontend
+  <code>tsc</code> + <code>next build</code> pass.</p>
+
+  <p><span class="chip ok">Item 4 done 2026-11-14 - Regeneration cap.</span>
+  New <code>plans.max_regenerations_day</code> column + durable
+  <code>regeneration_usage</code> counter table (one row per tenant per day,
+  unique <code>(tenant_id, usage_date)</code> index as the race boundary, upsert +
+  <code>FOR UPDATE</code> — migration <code>20261114160000</code>, single head).
+  Enforced at <code>POST /channels/{id}/reviews/{reply_id}/regenerate</code>:
+  403 + <code>X-Entitlement-Denied: quota</code> before generation when the day's
+  cap is used; the counter increments only after a successful regeneration, so
+  worker auto-replies and failed retries never consume it. LLM usage events
+  cannot isolate manual regenerations (same "review_engine.generate" purpose as
+  auto-replies), which is why a dedicated table is the source of truth.
+  Seeded free-trial=5, starter=25, pro=100, growth=500, enterprise=unlimited.
+  Tenant plans page shows "Reply regenerations / day". Tests:
+  <code>tests/test_plan_regeneration_quota.py</code> (4 tests incl. engine-not-called
+  on deny); existing regenerate regression (<code>test_api.py::test_reply_regenerate</code>)
+  still green; frontend <code>tsc</code> + <code>next build</code> pass.</p>
+
+  <p><span class="chip ok">Item 5 done 2026-11-14 - Scheduling posts gate.</span>
+  <code>scheduling</code> (a catalog feature key, no new column) is now enforced
+  at both scheduling write paths: <code>POST /api/v1/posts</code> with
+  <code>action=schedule</code> and <code>PUT /api/v1/posts/{id}</code> with
+  <code>status=scheduled</code> → 403 + <code>X-Entitlement-Denied: scheduling</code>
+  when the plan lacks the feature. Instant "publish" and "draft" paths stay
+  open; the scheduler worker is unchanged (execution is not creation). Tests:
+  <code>tests/test_plan_scheduling_gate.py</code> (5 tests, both write paths + a
+  service-not-called assertion on deny); full posts suite (46 tests) still green.</p>
+
+  <p><span class="chip ok">Item 6 done 2026-11-14 - Databank gate.</span>
+  <code>databank</code> feature key is now enforced on all 12 RAG write paths
+  via a shared <code>require_databank_feature</code> dependency
+  (<code>app/modules/rag/router.py</code>): create/delete bank, upload/delete
+  documents, scrape, process (all + single), save/delete DB sources, reindex,
+  retry, ingest → 403 + <code>X-Entitlement-Denied: databank</code> when the
+  plan lacks the feature. Reads (list/get/search/ask/preview/schema) stay open
+  per the billing docs — read-only data is never hidden by a feature gate.
+  Tests: <code>tests/test_plan_databank_gate.py</code> (3 tests: denied with
+  service-not-called, allowed with feature, reads open); full RAG suite
+  (16 passed, 2 PG-skipped) still green.</p>
+
+  <p><span class="chip ok">Item 7 done 2026-11-14 - Benchmarking UI gate.</span>
+  Product decision (a): <code>benchmarking</code> gates the frontend section,
+  while <code>benchmark_external</code> stays the enforced backend lever for
+  competitor/peer fetches. The Benchmark page (and the analytics tab that
+  mounts it) now reads <code>getEntitlements()</code> and renders a locked
+  state with a "View plans" link when the plan lacks the feature; data
+  fetching is skipped while locked. No backend change needed. Frontend
+  <code>tsc</code> + <code>next build</code> pass.</p>
+
+  <p><span class="chip ok">Item 8 done 2026-11-14 - Verifications gate.</span>
+  <code>verifications</code> feature key enforced on both verification write
+  paths in <code>channels/router.py</code>: <code>POST /channels/{id}/verification</code>
+  (request) and <code>POST /channels/{id}/verification/complete</code> (PIN
+  submission) → 403 + <code>X-Entitlement-Denied: verifications</code> before
+  any Google provider work. The read snapshot (<code>GET</code>) stays open.
+  Tests: <code>tests/test_plan_verification_gate.py</code> (4 tests: both writes
+  denied with provider-not-called, request allowed with feature, read open);
+  existing <code>test_google_verification.py</code> suite updated to enable the
+  feature for its direct router calls (11 tests pass together).</p>
+
+  <p><span class="chip ok">Item 11 done 2026-11-14 - Bulk edit CSV gate.</span>
+  <code>bulk_edit_csv</code> feature key enforced at
+  <code>POST /api/v1/locations/bulk-upload</code> (403 +
+  <code>X-Entitlement-Denied: bulk_edit_csv</code> before the file is read);
+  template/export reads (<code>/bulk-data</code>, <code>/bulk-template</code>)
+  stay open. Tests: <code>tests/test_plan_bulk_edit_gate.py</code> (3 tests:
+  denied with apply-not-called, allowed with feature, read open); full
+  locations suite (49 tests) still green.</p>
+
+  <p><span class="chip ok">Item 12 done 2026-11-14 - Ticket assignment gate.</span>
+  <code>ticket_assignment</code> feature key enforced on both ticket surfaces:
+  <code>PATCH /api/v1/inbox/threads/{channel}/{phone}/assignee</code> and
+  <code>PATCH /api/v1/reviews/issues/{id}</code> when <code>assigned_to</code>
+  is included (403 + <code>X-Entitlement-Denied: ticket_assignment</code>
+  before any assignment work). Review-issue status/priority edits without
+  assignment keep working; assignees pickers stay open. Tests:
+  <code>tests/test_plan_ticket_assignment_gate.py</code> (4 tests: inbox denied,
+  issue denied, issue-update-without-assignment works, picker open); existing
+  suites still green (104 review-issues + 27 inbox + 9 assignment tests).
+  Full suite (2026-11-14): 2444 passed, 3 skipped, 2 failed — both failures
+  were pre-existing assignment tests hitting the new gate; they now enable the
+  feature for their behavior checks, and the scoped re-run passes.</p>
+
+  <p><span class="chip ok">Workstream status 2026-11-14.</span> All 12 gating
+  items are resolved: 8 implemented (locations, team, regeneration, scheduling,
+  databank, benchmarking UI, verifications, bulk CSV, tickets — nine with
+  enforcement), 3 deferred/unlimited by product decision (ASK Sayvors,
+  response style, voice replies by-design), and AI usage + channel connections
+  were already enforced. Remaining: item 15 (feature-matrix display showing
+  numeric limits per plan instead of checkmarks) is the open UI step.</p>
+
+  <div class="scroll"><table>
+    <tr><th>#</th><th>Service</th><th>Status</th><th>Notes</th></tr>
+    <tr><td>1</td><td><strong>Locations (create/connect)</strong></td>
+        <td><span class="chip ok">Implemented</span></td>
+        <td><code>max_locations</code> enforced at locations router + Google OAuth callback; plans page shows cap.</td></tr>
+    <tr><td>2</td><td><strong>Team members</strong></td>
+        <td><span class="chip ok">Implemented</span></td>
+        <td><code>max_team_members</code> enforced at invite creation; seats = invited + active + suspended; plans page shows cap.</td></tr>
+    <tr><td>3</td><td><strong>ASK Sayvors</strong></td>
+        <td><span class="chip low">Deferred</span></td>
+        <td>Product decision 2026-11-14: no limits on ASK Sayvors for now — feature/UI build postponed, no quota work.</td></tr>
+    <tr><td>4</td><td><strong>Limit regenerate responses</strong></td>
+        <td><span class="chip ok">Implemented</span></td>
+        <td><code>max_regenerations_day</code> enforced at <code>POST /channels/{id}/reviews/{reply_id}/regenerate</code> via durable <code>regeneration_usage</code> table (per tenant per day).</td></tr>
+    <tr><td>5</td><td><strong>Scheduling posts</strong></td>
+        <td><span class="chip ok">Implemented</span></td>
+        <td><code>scheduling</code> feature gate on <code>POST /posts</code> (<code>action=schedule</code>) and <code>PUT /posts/{id}</code> (<code>status=scheduled</code>); instant publish/drafts stay open.</td></tr>
+    <tr><td>6</td><td><strong>Databank</strong></td>
+        <td><span class="chip ok">Implemented</span></td>
+        <td><code>databank</code> feature gate on all 12 RAG write paths; reads stay open.</td></tr>
+    <tr><td>7</td><td><strong>Benchmarking</strong></td>
+        <td><span class="chip ok">Implemented</span></td>
+        <td>UI gate per product decision (a): Benchmark page/tab shows locked state without <code>benchmarking</code> feature; backend <code>benchmark_external</code> gate already enforced.</td></tr>
+    <tr><td>8</td><td><strong>Verifications</strong></td>
+        <td><span class="chip ok">Implemented</span></td>
+        <td><code>verifications</code> feature gate on request + complete write paths; read snapshot stays open.</td></tr>
+    <tr><td>9</td><td><strong>Response style for AI/social</strong></td>
+        <td><span class="chip low">Deferred</span></td>
+        <td>Product decision 2026-11-14: response style stays unlimited — no plan gate on <code>PUT /profile/response-style</code>.</td></tr>
+    <tr><td>10</td><td><strong>Voice replies (beta)</strong></td>
+        <td><span class="chip ok">Handled by design</span></td>
+        <td>Already beta-gated via <code>users.voice_replies</code> tier (off/simple/advanced) + DB status, per the product description; no plan flag gate needed.</td></tr>
+    <tr><td>11</td><td><strong>Bulk edit CSV</strong></td>
+        <td><span class="chip ok">Implemented</span></td>
+        <td><code>bulk_edit_csv</code> feature gate on <code>POST /locations/bulk-upload</code>; template/export reads stay open.</td></tr>
+    <tr><td>12</td><td><strong>Assigning tickets</strong></td>
+        <td><span class="chip ok">Implemented</span></td>
+        <td><code>ticket_assignment</code> feature gate on inbox thread assignment + review-issue assignment write paths; pickers stay open.</td></tr>
+    <tr><td>13</td><td><strong>AI usage</strong></td>
+        <td><span class="chip ok">Already enforced</span></td>
+        <td>Wallet + ledger (<code>llm/gateway.py</code> reserve/settle) gate every LLM call; plan's <code>included_credit_cents</code> is the allowance.</td></tr>
+    <tr><td>14</td><td><strong>Social Media channel connections</strong></td>
+        <td><span class="chip ok">Already enforced</span></td>
+        <td><code>channels</code> flag + <code>max_channels</code> quota at connect.</td></tr>
+    <tr><td>15</td><td><strong>Feature matrix display</strong></td>
+        <td><span class="chip med">In progress</span></td>
+        <td>Plans page now shows only Free Trial + Enterprise (Starter/Pro/Growth hidden until payments); matrix rows are still boolean checkmarks — numeric limits per row (e.g. "5 answers", "unlimited members") are the next UI step.</td></tr>
+  </table></div>
+
+  <p class="note"><strong>Remaining:</strong> item 15 — feature-matrix display (numeric limits per row instead of checkmarks) is the open UI step. Items 3 (ASK Sayvors) and 9 (response style) stay unlimited per product decision; item 10 (voice replies) is handled by design via the DB beta gate. Do not push unless explicitly asked (repo rule 4).</p>
+</section>
+
 <footer>
   Sayvors production-readiness audit - originally compiled 2026-10-11 (read-only), kept current since. The actionable ledger is <strong>34 original findings</strong> (SEC 11, SCALE 6, OPS 5, ANL 12: 32 resolved, 2 open), the <strong>7-finding INS pass</strong> (4 fixed, 3 open), and the <strong>55-alert dependency ledger</strong> (all closed); CVE-1/CVE-2 (Next.js/sharp) are fixed, CVE-3 (Redis 7) and CVE-4 (Kafka 3.8) remain open on the server images; sections 5-7 are the strategy answers. Per-item status reflects the working tree as of 2026-11-01; implementation details live in <code>docs/security/</code>. The 2026-10-25 pass added the INS ledger and the ordered code/infra/buy fix queue (§§11) and re-verified the resolved findings against the working tree. The 2026-10-26 pass added the dependency ledger (§§15) and closed all 55 Dependabot alerts the same day; the default branch was moved from <code>main</code> to <code>development</code> so Dependabot scans the branch where fixes land. The 2026-10-29 pass added the conversation-control and Instagram &rarr; WhatsApp ledger (&sect;17, 16 items plus a deferred calling decision), including the silent-thread root cause (BUG-1 to BUG-4) and the outbox/publisher race that silently dropped inbound messages (BUG-5) found on staging. BUG-1/2/3, BUG-4, BUG-5, HAND-1 (the wa.me bridge), HAND-2 (templates + consent), HAND-3 (identity merge + carried context), HAND-4, HAND-5 (canonical lead labels), HAND-6 (catalog + public page), HAND-7 (databank grounding), HAND-8 (conversation mode), HAND-9 (stored context), HAND-10 (conversation/review assignment) and HAND-11 (cumulative memory) were fixed; all 16 are closed. The 2026-10-31 pass added the voice-note/ASR ledger (&sect;19): inbound voice notes are transcribed by the admin-managed engine and answered end to end, with billing for hosted minutes and moving the reply onto the job lanes still open. It also moved escalation from a per-message counter to urgency + a confused-return counter, and stopped information-only chats from creating CRM leads. It closed BUG-4: the inbox now shows the escalation clock, reminder state and auto-resume countdown, and an agent can hand the thread back with "Resume AI now" — including live over the realtime channel for an already-open thread. It also closed HAND-5: one stored lead category (wholesale/retail/booking/quote/support/info) is classified by the engine and rendered verbatim by the inbox, lead card, customer profile, digest and escalation email; <code>qualified</code> now requires a sellable category, with the auto-qualify set configurable per tenant. The same pass added the WhatsApp surface ledger (&sect;20): text and voice are verified end to end, with interactive messages, inbound media, QR codes and the remaining account surface listed as the next build order. The 2026-11-01 pass closed HAND-10: conversations, leads and review tickets now store an owner; <code>channels/assignment.py</code> validates tenant and channel access, sends one notification to the assignee and broadcasts the change, the inbox has an owner picker, and the inbox, leads board and review-ticket queue each have a "Mine" filter. Automatic round-robin and live presence were not built. It also closed HAND-11: a resolve drafts one scrubbed memory (summary, outcome, facts) into <code>/dashboard/memory</code>; only human-approved rows are retrieved into future replies, by bounded keyword overlap and always tenant-scoped. WA-4 shipped the API-supported half: quoted replies and reactions. Meta's Cloud API has no edit or delete-for-everyone endpoint, so a sent message can be corrected with a quoted follow-up and removed from this inbox locally — the UI never presents that as a customer-side retraction. The scoped audit (&sect;22) scores Google Reviews at ~90% and the WhatsApp conversation loop at ~90%, names the WhatsApp gaps with effort, and states the one thing that outranks all of them: an unproven backup on 152 migrations. The 2026-11-11 pass added the WhatsApp AI voice plan (&sect;28): diagnosis of the bounded/robotic tone (five concrete causes in <code>consumer.py:_system_prompt</code>), a 22-source research pass (<code>research-whatsapp-chatbot-human-tone-2026-11-11.md</code>), and a five-phase plan to rewrite the reply prompt's voice core, add a deterministic post-processing linter, upgrade the "human" split pass, tune and roll out behind a tenant flag, and add scoped tests. It touches only the WhatsApp AI path (<code>consumer.py</code>, <code>response_style.py</code>, new <code>chat_voice.py</code>) and cannot affect the Google reviews or posting pipelines; the four shared seams (LLM gateway, <code>AutoReplyConfig</code>, <code>review_engine.handoff</code> reverse direction, <code>channels/service.py</code> crypto) are documented and left alone. Status: planned, not started. The same pass added the security audit of the money/usage surface (&sect;29): 2 High (H-1 unlimited WhatsApp sends via uncounted review-request sends, H-2 trial credit farming at $10/signup via +tag email aliases), 1 Medium (M-1 unmetered LLM call in the WhatsApp thread classifier), 2 Low (L-1 grant_plan without idempotency key, L-2 billing-request dedupe race). Verified clean: no self-approval path (admin-only <code>require_admin</code> rejects user JWTs), no cross-tenant read on billing, credit reserve/settle row-locked and exactly-once, Redis-down fail-closed, all ~60 admin routes gated, all 25+ tenant LLM call sites pass <code>tenant_id</code> except M-1. Status: planned, not implemented. The same pass added the Google Reviews pipeline security audit + throughput analysis (&sect;30): 2 Medium (M-1 Pub/Sub push OIDC accepts any Google-signed token when the email pin is unset - availability attack on one tenant's Google quota; M-2 120s claim lock never renewed + no DB uniqueness on (channel_id, review_id) - double-processing race on long passes), 3 Low (L-1 sync-now triggers a poll across all tenants + leaks fleet stats; L-2 verify-posted mutates state under a view permission; L-3 test-review runs the full LLM pipeline unthrottled). Verified clean: push cannot poison data, removal detection not forgeable, tokens encrypted + never logged + scrubbed in GlitchTip, refresh races benign, OAuth connect flow solid, tenant isolation on every endpoint, publish bound to your own Google location, status transitions closed, public-reply leak controls, poll DB integrity. Throughput finding: no job queue for the reply pipeline - _handle_fetched_review runs classification + generation + optional Google POST + read-back inline, sequentially per review (~3-8s each; 100 reviews = 5-13 min); channel-level parallelism is only 5; the only bulk path is connect-time import (8 concurrent LLM generations platform-wide, up to 5000 items); the M-2 race exists because inline passes exceed the 120s lock. Status: planned, not implemented. The same pass added the multi-tenant website crawler plan (&sect;31): httpx + trafilatura core (research confirmed best extractor, F1 0.841), skip self-hosted Firecrawl (AGPL + 5-service stack) with Firecrawl Standard ($99/mo) as escape hatch, crawl_sources + crawl_pages tables with sync toggle/interval, sitemap-first discovery with per-domain token bucket + robots.txt + conditional GET, adaptive interval ladder (1h -&gt; 6h -&gt; 24h for unchanged pages - only ~15% change weekly), Postgres due-time scheduler with SKIP LOCKED + jitter + stale-first fairness (1000 sites = ~17 checks/min), heading-aware chunking, incremental sync via content_hash (fixes the duplicate-document bug on re-run), 8-12 days effort, one migration. Status: planned, not implemented.
  The same pass added the worker architecture reference (\u00a732): two deployables (API waiter + worker kitchen, <code>python -m app.workers</code>), ~24 named asyncio loops inside one worker process (meta-events-ai-replies, google-reviews-auto-reply, post-publisher, analytics consumer + 5 loops, job-runner 4 lanes, email outbox/campaigns, connect-import, lead-actions, lead-digest, escalation-sweeps, rag-ingest, reapers/rearmers, outbox-drainer). LLM speed is limited by provider rate limits and small per-loop constants (<code>_POLL_CONCURRENCY = 5</code>, RAG <code>Semaphore(4)</code>, sequential reviews), not worker count. Adding worker containers is safe for claim-based loops (SKIP LOCKED, outbox, reviews claim, connect-import leases) and Kafka consumers up to partition count; sequential-internal loops need constants fixed first. A second API instance with <code>RUN_BACKGROUND_WORKERS=false</code> is always safe; one with workers ON runs every loop twice (golden rule: workers ON in exactly one place). Recommended order: fix sequential hot spots, split by role via <code>WORKER_LOOPS</code>/<code>JOB_LANES</code> env vars, then add a second worker container, then partitions/pool sizing. Status: reference, no code change.</footer>

@@ -77,6 +77,13 @@ class Entitlements:
     max_channels: int | None
     max_messages_per_month: int | None
     included_credit_cents: int
+    # Google Business Profile location cap (None = unlimited). Defaulted so
+    # callers constructing Entitlements for older caps keep working.
+    max_locations: int | None = None
+    # Workspace seat cap (None = unlimited).
+    max_team_members: int | None = None
+    # Daily manual reply-regeneration cap (None = unlimited).
+    max_regenerations_day: int | None = None
     # Feature flags.
     features: dict[str, bool] = field(default_factory=dict)
     # The plan's raw baseline before the tenant override is applied.
@@ -100,6 +107,21 @@ class Entitlements:
         if self.max_messages_per_month is None:
             return True
         return used_this_month < self.max_messages_per_month
+
+    def location_quota_ok(self, current_count: int) -> bool:
+        if self.max_locations is None:
+            return True
+        return current_count < self.max_locations
+
+    def team_member_quota_ok(self, current_count: int) -> bool:
+        if self.max_team_members is None:
+            return True
+        return current_count < self.max_team_members
+
+    def regeneration_quota_ok(self, used_today: int) -> bool:
+        if self.max_regenerations_day is None:
+            return True
+        return used_today < self.max_regenerations_day
 
 
 def merge_feature_override(
@@ -182,6 +204,9 @@ async def get_entitlements(tenant_id: str, db: AsyncSession) -> Entitlements:
     ).first()
     message_limit = plan.max_messages_per_month
     channel_limit = plan.max_channels
+    location_limit = plan.max_locations
+    team_member_limit = plan.max_team_members
+    regeneration_limit = plan.max_regenerations_day
     # Top-ups are additive, never an absolute replacement. A plan change or a
     # plan-catalog edit therefore applies immediately without losing the
     # amount the tenant bought.
@@ -196,6 +221,9 @@ async def get_entitlements(tenant_id: str, db: AsyncSession) -> Entitlements:
         status=status,
         max_channels=channel_limit,
         max_messages_per_month=message_limit,
+        max_locations=location_limit,
+        max_team_members=team_member_limit,
+        max_regenerations_day=regeneration_limit,
         included_credit_cents=plan.included_credit_cents,
         features=merge_feature_override(plan.features, override),
         plan_features={k: bool(v) for k, v in (plan.features or {}).items()},

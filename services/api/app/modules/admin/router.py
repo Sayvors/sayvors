@@ -2265,6 +2265,9 @@ async def list_plans(_admin=Depends(require_admin)):
                 id=r.id, slug=r.slug, name=r.name, description=r.description,
                 price_cents=r.price_cents, included_credit_cents=r.included_credit_cents,
                 max_channels=r.max_channels, max_messages_per_month=r.max_messages_per_month,
+                max_locations=r.max_locations,
+                max_team_members=r.max_team_members,
+                max_regenerations_day=r.max_regenerations_day,
                 features=r.features or {}, is_active=r.is_active, sort_order=r.sort_order,
             )
             for r in rows
@@ -2285,6 +2288,9 @@ async def create_plan(body: PlanCreate, _admin=Depends(require_admin)):
             slug=body.slug, name=body.name, description=body.description,
             price_cents=body.price_cents, included_credit_cents=body.included_credit_cents,
             max_channels=body.max_channels, max_messages_per_month=body.max_messages_per_month,
+            max_locations=body.max_locations,
+            max_team_members=body.max_team_members,
+            max_regenerations_day=body.max_regenerations_day,
             features=sanitize_features(body.features), is_active=body.is_active, sort_order=body.sort_order,
         )
         db.add(plan)
@@ -2318,6 +2324,12 @@ async def update_plan(plan_id: str, body: PlanUpdate, _admin=Depends(require_adm
             plan.max_channels = body.max_channels
         if "max_messages_per_month" in body.model_fields_set:
             plan.max_messages_per_month = body.max_messages_per_month
+        if "max_locations" in body.model_fields_set:
+            plan.max_locations = body.max_locations
+        if "max_team_members" in body.model_fields_set:
+            plan.max_team_members = body.max_team_members
+        if "max_regenerations_day" in body.model_fields_set:
+            plan.max_regenerations_day = body.max_regenerations_day
         if body.features is not None:
             plan.features = sanitize_features(body.features)
         if body.is_active is not None:
@@ -2330,6 +2342,9 @@ async def update_plan(plan_id: str, body: PlanUpdate, _admin=Depends(require_adm
             id=plan.id, slug=plan.slug, name=plan.name, description=plan.description,
             price_cents=plan.price_cents, included_credit_cents=plan.included_credit_cents,
             max_channels=plan.max_channels, max_messages_per_month=plan.max_messages_per_month,
+            max_locations=plan.max_locations,
+            max_team_members=plan.max_team_members,
+            max_regenerations_day=plan.max_regenerations_day,
             features=plan.features or {}, is_active=plan.is_active, sort_order=plan.sort_order,
         )
 

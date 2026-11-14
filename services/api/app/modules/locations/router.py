@@ -174,6 +174,10 @@ async def upload_bulk_csv(
     db: AsyncSession = Depends(get_db),
 ):
     """Upload a CSV file to bulk-update listing information."""
+    # Bulk edit is a plan feature; deny before reading the file.
+    from ..billing.entitlements import check_feature
+
+    await check_feature(tenant_id_of(user), "bulk_edit_csv")
     if not file.filename or not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="File must be a .csv")
     content = await file.read()
@@ -239,9 +243,28 @@ async def create_location(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a location on Google and persist it as a native channel."""
+    from ..billing.entitlements import get_entitlements, entitlement_403
+    from ..channels.models import Channel
+
+    tid = tenant_id_of(user)
+    ent = await get_entitlements(tid, db)
+    existing = (
+        await db.execute(
+            select(Channel.id).where(
+                Channel.user_id == tid,
+                Channel.platform == "google_reviews",
+                Channel.status.in_(("active",)),
+            )
+        )
+    ).scalars().all()
+    if not ent.location_quota_ok(len(existing)):
+        raise entitlement_403(
+            f"Location limit reached for plan '{ent.plan_slug}' (max {ent.max_locations}). Upgrade to add more.",
+            "quota",
+        )
     try:
         return await service.create_google_location(
-            db, tenant_id_of(user), body.model_dump()
+            db, tid, body.model_dump()
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

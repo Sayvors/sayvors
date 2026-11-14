@@ -110,6 +110,9 @@ class PlanOut(BaseModel):
     included_credit_cents: int
     max_channels: int | None = None
     max_messages_per_month: int | None = None
+    max_locations: int | None = None
+    max_team_members: int | None = None
+    max_regenerations_day: int | None = None
     features: dict = {}
     is_active: bool
     sort_order: int
@@ -123,6 +126,9 @@ class PlanCreate(BaseModel):
     included_credit_cents: int = Field(default=0, ge=0)
     max_channels: int | None = Field(default=None, ge=1)
     max_messages_per_month: int | None = Field(default=None, ge=1)
+    max_locations: int | None = Field(default=None, ge=1)
+    max_team_members: int | None = Field(default=None, ge=1)
+    max_regenerations_day: int | None = Field(default=None, ge=1)
     features: dict = Field(default_factory=dict)
     is_active: bool = True
     sort_order: int = 0
@@ -135,6 +141,9 @@ class PlanUpdate(BaseModel):
     included_credit_cents: int | None = Field(default=None, ge=0)
     max_channels: int | None = Field(default=None)
     max_messages_per_month: int | None = Field(default=None)
+    max_locations: int | None = Field(default=None)
+    max_team_members: int | None = Field(default=None)
+    max_regenerations_day: int | None = Field(default=None)
     features: dict | None = None
     is_active: bool | None = None
     sort_order: int | None = None

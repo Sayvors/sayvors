@@ -1017,6 +1017,37 @@ class ReviewReply(Base):
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
 
+
+class RegenerationUsage(Base):
+    """Durable per-tenant daily counter for manual reply regenerations.
+
+    One row per (tenant_id, usage_date). The DB is the source of truth (not
+    Redis) so a redeploy never silently resets a plan quota. The unique
+    index on (tenant_id, usage_date) is the race boundary: concurrent
+    regenerations upsert, never twin rows.
+    """
+
+    __tablename__ = "regeneration_usage"
+    __table_args__ = (
+        Index("ix_regeneration_usage_tenant_date", "tenant_id", "usage_date", unique=True),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    usage_date: Mapped[date] = mapped_column(Date)
+    count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
 class ReviewIssue(Base):
     """A classified Google review — issue, subcategory, intent, sentiment,
     priority, status. One row per review that we have parsed.
