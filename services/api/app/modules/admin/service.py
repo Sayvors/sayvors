@@ -893,7 +893,7 @@ async def ensure_finance_rows(db: AsyncSession, month: str) -> int:
             actual_cost_micro=actual_micro,
         )
         stmt = stmt.on_conflict_do_update(
-            constraint="uq_tenant_finance_month_tenant_month",
+            index_elements=[TenantFinanceMonth.tenant_id, TenantFinanceMonth.month],
             set_={
                 "plan_slug": stmt.excluded.plan_slug,
                 "plan_name": stmt.excluded.plan_name,
