@@ -26,6 +26,33 @@ from .staff_match import match_staff_names, normalize_staff_name
 logger = logging.getLogger(__name__)
 
 
+async def listing_id_for_channel(db: AsyncSession, channel_id: str) -> str | None:
+    """The Google location (branch) id for a channel, or None when unknown.
+
+    Used to scope employee matching to the review's branch so a same-named
+    employee at another branch cannot capture the mention. Resolution order
+    mirrors the locations service: stored metadata location_id, listing_key,
+    then the platform user id (account id).
+    """
+    import json as _json
+
+    from ..channels.models import Channel
+
+    channel = await db.get(Channel, channel_id)
+    if channel is None:
+        return None
+    try:
+        meta = _json.loads(channel.metadata_json or "{}")
+    except (ValueError, TypeError):
+        meta = {}
+    return (
+        str(meta.get("location_id") or "").strip()
+        or channel.listing_key
+        or channel.platform_user_id
+        or None
+    )
+
+
 async def _employees_for(db: AsyncSession, user_id: str, listing_id: str | None) -> list:
     """The tenant's active employees, optionally narrowed to one branch.
 
@@ -185,6 +212,12 @@ async def backfill_staff_mentions(
     Old v2 meanings carry staff as plain strings; the matcher treats them as
     neutral, which is honest (the sentiment model was not run on them).
 
+    Reviews that already have mention rows are skipped, so re-running
+    progresses past the first ``limit`` rows toward the older ones instead of
+    rescanning the same newest reviews forever. Only reviews with no staff
+    entities at all never produce a row and are rescanned each run — that is
+    cheap (no writes) and unavoidable without a separate processed marker.
+
     ``reextract=True`` additionally re-runs meaning extraction (LLM) for rows
     whose meaning is stale (version < current, never human-corrected). The
     row cap bounds the cost; re-running the endpoint continues where this
@@ -196,6 +229,15 @@ async def backfill_staff_mentions(
     from .models import ReviewInsight
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    already_processed = (
+        select(ReviewStaffMention.id)
+        .where(
+            ReviewStaffMention.user_id == user_id,
+            ReviewStaffMention.channel_id == ReviewInsight.channel_id,
+            ReviewStaffMention.review_id == ReviewInsight.review_id,
+        )
+        .exists()
+    )
     rows = (
         await db.execute(
             select(ReviewInsight)
@@ -203,6 +245,7 @@ async def backfill_staff_mentions(
                 ReviewInsight.user_id == user_id,
                 ReviewInsight.removed_at.is_(None),
                 ReviewInsight.review_text.isnot(None),
+                ~already_processed,
                 func.coalesce(
                     ReviewInsight.review_updated_at, ReviewInsight.created_at
                 )
@@ -216,6 +259,20 @@ async def backfill_staff_mentions(
             .limit(limit)
         )
     ).scalars().all()
+
+    # Branch scoping: resolve the Google location for each scanned channel in
+    # one query so the matcher never cross-attaches a same-named employee
+    # between branches.
+    from ..channels.models import Channel
+
+    channel_ids = {r.channel_id for r in rows if r.channel_id}
+    listing_by_channel: dict[str, str | None] = {}
+    if channel_ids:
+        channels = (
+            await db.execute(select(Channel).where(Channel.id.in_(channel_ids)))
+        ).scalars().all()
+        for c in channels:
+            listing_by_channel[c.id] = await listing_id_for_channel(db, c.id)
 
     scanned = 0
     mentions = 0
@@ -252,6 +309,7 @@ async def backfill_staff_mentions(
                 insight.review_updated_at or insight.created_at
             ),
             staff_entities=staff_entities,
+            listing_id=listing_by_channel.get(insight.channel_id),
         )
     await db.commit()
     return {

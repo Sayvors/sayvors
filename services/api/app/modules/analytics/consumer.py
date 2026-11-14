@@ -215,11 +215,13 @@ async def _handle_discovered(payload: dict) -> None:
         insight.enrichment_status = "failed" if result.get("heuristic") else "done"
 
         # Staff mentions (§33): names the review extracted, matched to the
-        # tenant's employee registry. Additive and fail-soft — a mention
-        # problem never costs the review its enrichment or reply.
+        # tenant's employee registry, scoped to the review's branch so a
+        # same-named employee elsewhere cannot capture it. Additive and
+        # fail-soft — a mention problem never costs the review its
+        # enrichment or reply.
         if insight.user_id:
             try:
-                from .staff_mentions import record_mentions
+                from .staff_mentions import listing_id_for_channel, record_mentions
 
                 staff_entities = (insight.meaning or {}).get("entities", {}).get("staff")
                 await record_mentions(
@@ -232,6 +234,7 @@ async def _handle_discovered(payload: dict) -> None:
                         insight.review_updated_at or insight.created_at
                     ),
                     staff_entities=staff_entities,
+                    listing_id=await listing_id_for_channel(db, channel_id),
                 )
             except Exception as e:  # noqa: BLE001 — additive, never fail the event
                 logger.warning("staff mention pass failed for %s: %s", review_id, e)

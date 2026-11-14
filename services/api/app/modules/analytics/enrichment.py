@@ -449,13 +449,51 @@ def _clean_list(value, limit: int, item_limit: int) -> list[str]:
 
 _ENTITY_KEYS = ("product", "location", "staff", "dates")
 
+_STAFF_SENTIMENTS = {"positive", "neutral", "negative"}
+
+
+def _clean_staff(value) -> list[dict]:
+    """Staff entities as ``{name, sentiment}`` with a normalized sentiment.
+
+    The meaning prompt instructs the model to return staff as objects with
+    per-person sentiment, but older meanings stored plain strings. Accept
+    both: objects keep their sentiment (coerced to the three-class enum),
+    strings are treated as neutral (the sentiment model never ran on them).
+    Anything else is dropped. Bounded to 4 entries like the other keys.
+    """
+    if not isinstance(value, list):
+        return []
+    out: list[dict] = []
+    for item in value:
+        if isinstance(item, str):
+            name = item.strip()
+            sentiment = "neutral"
+        elif isinstance(item, dict):
+            name = str(item.get("name") or "").strip()
+            sentiment = str(item.get("sentiment") or "neutral").lower().strip()
+        else:
+            continue
+        if not name:
+            continue
+        if sentiment not in _STAFF_SENTIMENTS:
+            sentiment = "neutral"
+        out.append({"name": name[:80], "sentiment": sentiment})
+        if len(out) >= 4:
+            break
+    return out
+
 
 def _clean_entities(value) -> dict:
     """Entities as a fixed shape, so downstream code never guesses at keys."""
     from .subjects import ENTITY_KEYS
 
     src = value if isinstance(value, dict) else {}
-    return {k: _clean_list(src.get(k), 4, 80) for k in ENTITY_KEYS}
+    return {
+        "product": _clean_list(src.get("product"), 4, 80),
+        "location": _clean_list(src.get("location"), 4, 80),
+        "staff": _clean_staff(src.get("staff")),
+        "dates": _clean_list(src.get("dates"), 4, 80),
+    }
 
 
 def is_human_corrected(meaning) -> bool:

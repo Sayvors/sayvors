@@ -13,12 +13,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_db
 from ..team.context import TenantContext, require_perm
-from .models import StaffMember
+from .models import ReviewStaffMention, StaffMember
 from .staff_match import normalize_staff_name
 from .staff_mentions import (
     link_unassigned_mentions,
@@ -164,7 +164,7 @@ async def delete_staff(
 async def get_summary(
     listing_id: str | None = Query(None, max_length=255),
     days: int = Query(30, ge=7, le=365),
-    ctx: TenantContext = Depends(require_perm("media.view")),
+    ctx: TenantContext = Depends(require_perm("team.view")),
     db: AsyncSession = Depends(get_db),
 ):
     rows = await staff_summary(
@@ -175,7 +175,7 @@ async def get_summary(
 
 @router.get("/unmatched")
 async def get_unmatched(
-    ctx: TenantContext = Depends(require_perm("media.view")),
+    ctx: TenantContext = Depends(require_perm("team.view")),
     db: AsyncSession = Depends(get_db),
 ):
     return {"names": await unmatched_names(db, user_id=ctx.tenant_id)}
@@ -185,7 +185,7 @@ async def get_unmatched(
 async def list_mentions(
     member_id: str,
     days: int = Query(90, ge=7, le=365),
-    ctx: TenantContext = Depends(require_perm("media.view")),
+    ctx: TenantContext = Depends(require_perm("team.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """The reviews naming one employee — the details-page timeline."""
@@ -283,13 +283,29 @@ async def assign_unmatched(
     ).scalar_one_or_none()
     if member is None:
         raise HTTPException(status_code=404, detail="Employee not found.")
-    # Add the unknown spelling as an alias so future mentions match directly.
-    aliases = list(member.aliases or [])
+    # Retro-link history, then record the unknown spelling as an alias so
+    # future reviews using it keep matching (matching is keyed on the
+    # normalized name; when the spelling normalizes differently from the
+    # employee's stored name, only an alias bridges the gap).
     linked = await link_unassigned_mentions(
         db,
         user_id=ctx.tenant_id,
         name_normalized=body.name_normalized,
         staff_member_id=member.id,
     )
+    display = (
+        await db.execute(
+            select(func.max(ReviewStaffMention.name_display)).where(
+                ReviewStaffMention.user_id == ctx.tenant_id,
+                ReviewStaffMention.name_normalized == body.name_normalized,
+            )
+        )
+    ).scalar_one_or_none()
+    display = str(display or "").strip()
+    if display and normalize_staff_name(display) != member.normalized_name:
+        aliases = [a.strip() for a in (member.aliases or [])]
+        if display not in aliases:
+            aliases.append(display[:120])
+            member.aliases = aliases
     await db.commit()
     return {"linked": linked, "staff_member_id": member.id}
