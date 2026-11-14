@@ -1669,6 +1669,19 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
 _POLL_CONCURRENCY = 5
 
 
+def _channel_poll_jitter(channel_id: str) -> int:
+    """Stable 0..JITTER offset per channel id.
+
+    Deterministic (same channel always gets the same offset) so the spread is
+    even across runs and restarts, and a channel never drifts into a thundering
+    herd with the rest.
+    """
+    import zlib
+
+    max_jitter = max(0, settings.GOOGLE_REVIEWS_POLL_JITTER_SECONDS)
+    return zlib.crc32(channel_id.encode("utf-8")) % (max_jitter + 1)
+
+
 async def _poll_one_channel(
     channel_id: str,
     config_id: str,
@@ -1778,7 +1791,22 @@ async def poll_once() -> dict:
             )
         ).all()
 
-    channel_configs = [(str(ch.id), str(cfg.id)) for ch, cfg in rows]
+    # Per-channel jitter: each channel's effective interval is the base plus a
+    # stable 0..JITTER offset derived from its id, so 500 listings never all
+    # hit Google in the same second. The SQL above already narrowed to the
+    # base window; this final filter applies each channel's own deadline.
+    selected = []
+    for ch, cfg in rows:
+        deadline = now - timedelta(
+            seconds=(
+                settings.GOOGLE_REVIEWS_POLL_INTERVAL_SECONDS
+                + _channel_poll_jitter(str(ch.id))
+            )
+        )
+        if cfg.last_polled_at is None or cfg.last_polled_at < deadline:
+            selected.append((str(ch.id), str(cfg.id)))
+
+    channel_configs = selected
 
     semaphore = asyncio.Semaphore(_POLL_CONCURRENCY)
 
