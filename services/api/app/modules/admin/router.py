@@ -786,6 +786,21 @@ async def admin_billing_overview(
     return await get_billing_overview(db)
 
 
+@router.get("/billing/budget-alarms")
+async def admin_budget_alarms(
+    status: str | None = Query(None, pattern="^(low|empty|debt)$"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Tenants with low/empty/debt AI-credit balances (worst first)."""
+    from .service import list_budget_alarms
+
+    return await list_budget_alarms(db, status=status, limit=limit, offset=offset)
+
+
 @router.get("/tenants/{user_id}/billing")
 async def admin_tenant_billing(
     user_id: str,
@@ -2252,6 +2267,21 @@ async def list_plan_features(_admin=Depends(require_admin)):
     return feature_catalog_as_dicts()
 
 
+@router.get("/search")
+async def admin_global_search(
+    q: str = Query(..., min_length=1, max_length=200),
+    limit: int = Query(8, ge=1, le=25),
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Metadata-only global search (tenants, operators, models, plans, jobs,
+    audit log). Read-only; never searches bodies or secrets."""
+    from .service import admin_search
+
+    return await admin_search(db, q, limit=limit)
+
+
 @router.get("/config-health")
 async def admin_config_health(_admin=Depends(require_admin)):
     """Ops-facing configuration health: which API keys/env flags are present.
@@ -2322,6 +2352,25 @@ async def admin_config_health(_admin=Depends(require_admin)):
             })
         except Exception:
             db_checks.append({"key": "llm_provider_configs (rows)", "ok": False, "hint": "query failed"})
+
+        try:
+            dead_7d = (
+                await db.execute(
+                    _select(func.count())
+                    .select_from(_text("email_outbox"))
+                    .where(
+                        _text("status = 'dead'"),
+                        _text("created_at >= now() - interval '7 days'"),
+                    )
+                )
+            ).scalar() or 0
+            db_checks.append({
+                "key": "email_outbox dead (7d)",
+                "ok": int(dead_7d) == 0,
+                "hint": f"{int(dead_7d)} permanently failed row(s) in the last 7 days",
+            })
+        except Exception:
+            db_checks.append({"key": "email_outbox dead (7d)", "ok": False, "hint": "query failed"})
 
     return {
         "checked_at": datetime.now(timezone.utc).isoformat(),

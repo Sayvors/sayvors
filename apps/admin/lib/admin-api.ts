@@ -541,6 +541,29 @@ export async function fetchConfigHealth(): Promise<ConfigHealth> {
   return adminFetch<ConfigHealth>("/api/v1/admin/config-health");
 }
 
+export interface BudgetAlarm {
+  tenant_id: string;
+  email: string | null;
+  plan_slug: string;
+  plan_name: string;
+  balance_cents: number;
+  held_cents: number;
+  total_cents: number;
+  status: "low" | "empty" | "debt";
+}
+
+export async function fetchBudgetAlarms(
+  status: "low" | "empty" | "debt" | "all" = "all",
+  limit = 50,
+  offset = 0,
+): Promise<{ items: BudgetAlarm[]; total: number }> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (status !== "all") params.set("status", status);
+  return adminFetch<{ items: BudgetAlarm[]; total: number }>(
+    `/api/v1/admin/billing/budget-alarms?${params.toString()}`,
+  );
+}
+
 export interface PlatformStats {
   platform: string;
   label: string;

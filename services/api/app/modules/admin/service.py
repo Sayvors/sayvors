@@ -493,6 +493,264 @@ async def get_health(db: AsyncSession, probe: bool = False) -> dict:
     }
 
 
+async def list_budget_alarms(
+    db: AsyncSession,
+    *,
+    status: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    """Tenants with a non-healthy AI-credit balance (low/empty/debt).
+
+    Same status classification as the billing overview so the two views
+    never disagree. Sorted worst-first (lowest balance). Bounded and
+    paginated.
+    """
+    from sqlalchemy import func, select as _select
+
+    from ..billing.models import BillingEvent, Plan, TenantSubscription
+    from ..users.models import User
+
+    held_sub = (
+        _select(
+            BillingEvent.tenant_id,
+            func.coalesce(func.sum(BillingEvent.reserved_cents), 0).label("held"),
+        )
+        .where(BillingEvent.kind == "ai_usage", BillingEvent.status == "pending")
+        .group_by(BillingEvent.tenant_id)
+        .subquery()
+    )
+    plan_sub = (
+        _select(
+            TenantSubscription.tenant_id,
+            Plan.slug.label("plan_slug"),
+            Plan.name.label("plan_name"),
+        )
+        .join(Plan, Plan.id == TenantSubscription.plan_id)
+        .subquery()
+    )
+    base = (
+        _select(
+            User.id,
+            User.email,
+            User.ai_credit_cents,
+            func.coalesce(held_sub.c.held, 0).label("held_cents"),
+            func.coalesce(plan_sub.c.plan_slug, "free-trial").label("plan_slug"),
+            func.coalesce(plan_sub.c.plan_name, "Free Trial").label("plan_name"),
+        )
+        .outerjoin(held_sub, held_sub.c.tenant_id == User.id)
+        .outerjoin(plan_sub, plan_sub.c.tenant_id == User.id)
+    )
+    rows = (await db.execute(base.order_by(User.ai_credit_cents.asc(), User.email))).all()
+
+    items = []
+    for uid, email, balance, held, plan_slug, plan_name in rows:
+        balance = int(balance or 0)
+        held = int(held or 0)
+        if balance < 0:
+            s = "debt"
+        elif balance == 0:
+            s = "empty"
+        elif balance < 100:
+            s = "low"
+        else:
+            continue
+        if status and s != status:
+            continue
+        items.append({
+            "tenant_id": uid,
+            "email": email,
+            "plan_slug": plan_slug,
+            "plan_name": plan_name,
+            "balance_cents": balance,
+            "held_cents": held,
+            "total_cents": balance + held,
+            "status": s,
+        })
+
+    total = len(items)
+    limit = max(1, min(int(limit), 200))
+    offset = max(0, int(offset))
+    return {"items": items[offset:offset + limit], "total": total}
+
+
+async def admin_search(
+    db: AsyncSession,
+    query: str,
+    *,
+    limit: int = 8,
+) -> dict:
+    """Metadata-only admin search across tenants, operators, models, plans,
+    jobs and audit log. Never searches message/review bodies or secrets."""
+    from sqlalchemy import or_, select as _select
+
+    from ..billing.models import Plan
+    from ..jobs.models import Job
+    from ..llm.models import ModelConfig, ProviderConfig
+    from ..users.models import User
+    from .models import AdminAuditLog, PlatformOperator
+
+    q = query.strip()
+    if len(q) < 2:
+        return {"query": query, "groups": [], "total": 0}
+    needle = f"%{q}%"
+    limit = max(1, min(int(limit), 25))
+    groups: list[dict] = []
+
+    def add(group: str, label: str, items: list[dict]) -> None:
+        if items:
+            groups.append({"key": group, "label": label, "items": items})
+
+    # Tenants
+    tenants = (
+        await db.execute(
+            _select(User)
+            .where(or_(
+                User.email.ilike(needle),
+                User.first_name.ilike(needle),
+                User.last_name.ilike(needle),
+                User.id.ilike(needle),
+            ))
+            .order_by(User.created_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    add("tenants", "Tenants", [{
+        "id": u.id,
+        "group": "tenants",
+        "title": f"{u.first_name or ''} {u.last_name or ''}".strip() or u.email,
+        "subtitle": f"{u.email} · {u.id}",
+        "href": f"/tenants/{u.id}",
+        "meta": "tenant",
+    } for u in tenants])
+
+    # Operators
+    operators = (
+        await db.execute(
+            _select(PlatformOperator)
+            .where(or_(PlatformOperator.username.ilike(needle), PlatformOperator.role.ilike(needle)))
+            .order_by(PlatformOperator.username)
+            .limit(limit)
+        )
+    ).scalars().all()
+    add("operators", "Operators", [{
+        "id": op.id,
+        "group": "operators",
+        "title": op.username,
+        "subtitle": f"{op.role} · {'active' if op.is_active else 'disabled'}",
+        "href": "/operators",
+        "meta": op.role,
+    } for op in operators])
+
+    # Models (custom configs + provider rows)
+    models = (
+        await db.execute(
+            _select(ModelConfig)
+            .where(or_(
+                ModelConfig.model_id.ilike(needle),
+                ModelConfig.provider.ilike(needle),
+                ModelConfig.api_model.ilike(needle),
+                ModelConfig.display_name.ilike(needle),
+            ))
+            .order_by(ModelConfig.model_id)
+            .limit(limit)
+        )
+    ).scalars().all()
+    add("models", "Models", [{
+        "id": m.model_id,
+        "group": "models",
+        "title": m.model_id,
+        "subtitle": f"{m.provider or 'catalog'} · {m.api_model or ''}".strip(" ·"),
+        "href": "/llms",
+        "meta": "LLM",
+    } for m in models])
+    providers = (
+        await db.execute(
+            _select(ProviderConfig).where(ProviderConfig.provider.ilike(needle)).limit(limit)
+        )
+    ).scalars().all()
+    for p in providers:
+        groups_match = next((g for g in groups if g["key"] == "models"), None)
+        if groups_match is None:
+            groups.append({"key": "models", "label": "Models", "items": []})
+            groups_match = groups[-1]
+        groups_match["items"].append({
+            "id": p.provider,
+            "group": "models",
+            "title": p.provider,
+            "subtitle": f"provider key · {'enabled' if p.enabled else 'disabled'}",
+            "href": "/llms",
+            "meta": "provider",
+        })
+
+    # Plans
+    plans = (
+        await db.execute(
+            _select(Plan)
+            .where(or_(Plan.name.ilike(needle), Plan.slug.ilike(needle)))
+            .order_by(Plan.sort_order)
+            .limit(limit)
+        )
+    ).scalars().all()
+    add("plans", "Plans", [{
+        "id": p.slug,
+        "group": "plans",
+        "title": p.name,
+        "subtitle": p.description or p.slug,
+        "href": "/plans",
+        "meta": p.slug,
+    } for p in plans])
+
+    # Jobs
+    jobs = (
+        await db.execute(
+            _select(Job)
+            .where(or_(
+                Job.job_type.ilike(needle),
+                Job.lane.ilike(needle),
+                Job.status.ilike(needle),
+                Job.tenant_id.ilike(needle),
+            ))
+            .order_by(Job.created_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    add("jobs", "Jobs", [{
+        "id": j.id,
+        "group": "jobs",
+        "title": j.job_type,
+        "subtitle": f"{j.tenant_id} · {j.status}",
+        "href": "/jobs",
+        "meta": j.status,
+    } for j in jobs])
+
+    # Audit log
+    audits = (
+        await db.execute(
+            _select(AdminAuditLog)
+            .where(or_(
+                AdminAuditLog.action.ilike(needle),
+                AdminAuditLog.operator_username.ilike(needle),
+                AdminAuditLog.path.ilike(needle),
+                AdminAuditLog.detail.ilike(needle),
+            ))
+            .order_by(AdminAuditLog.created_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    add("audit", "Audit log", [{
+        "id": a.id,
+        "group": "audit",
+        "title": a.action,
+        "subtitle": f"{a.operator_username or 'system'} · {a.path} · {a.status_code}",
+        "href": "/audit-log",
+        "meta": a.method,
+    } for a in audits])
+
+    total = sum(len(g["items"]) for g in groups)
+    return {"query": q, "groups": groups, "total": total}
+
+
 async def get_billing_overview(db: AsyncSession) -> list[dict]:
     from sqlalchemy import func, select as _select
 
