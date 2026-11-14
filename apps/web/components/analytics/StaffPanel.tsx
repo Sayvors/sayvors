@@ -167,7 +167,7 @@ export default function StaffPanel() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="h-full space-y-5 overflow-y-auto px-4 pb-4 sm:px-6 sm:pb-6">
       {notice && (
         <p role="status" className="rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] px-3 py-2 text-[12px] font-medium text-[var(--ui-ink)]">
           {notice}

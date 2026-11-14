@@ -18,6 +18,7 @@ import {
   type BusinessProfileData,
 } from "@/lib/api-business-profile";
 import { useI18n } from "@/lib/i18n/I18nProvider";
+import FeatureLock from "@/components/billing/FeatureLock";
 
 type Databank = {
   id: string;
@@ -397,7 +398,7 @@ function BusinessProfileCard() {
   );
 }
 
-export default function DatabankPage() {
+function DatabankPageContent() {
   const { t, locale } = useI18n();
   const d = t.dashboard.databank;
   const badgeLabels = d.badge;
@@ -1103,5 +1104,13 @@ export default function DatabankPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function DatabankPage() {
+  return (
+    <FeatureLock feature="databank">
+      <DatabankPageContent />
+    </FeatureLock>
   );
 }

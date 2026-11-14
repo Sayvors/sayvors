@@ -117,6 +117,9 @@ export interface AdminPlan {
   included_credit_cents: number;
   max_channels: number | null;
   max_messages_per_month: number | null;
+  max_locations: number | null;
+  max_team_members: number | null;
+  max_regenerations_day: number | null;
   features: Record<string, boolean>;
   is_active: boolean;
   sort_order: number;
@@ -130,6 +133,9 @@ export interface PlanCreateInput {
   included_credit_cents?: number;
   max_channels?: number | null;
   max_messages_per_month?: number | null;
+  max_locations?: number | null;
+  max_team_members?: number | null;
+  max_regenerations_day?: number | null;
   features?: Record<string, boolean>;
   is_active?: boolean;
   sort_order?: number;

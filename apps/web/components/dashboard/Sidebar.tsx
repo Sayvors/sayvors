@@ -7,7 +7,9 @@ import { useEffect, useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { NAV_DRAWER_EVENTS } from "@/lib/tour/nav-drawer";
 import { visibleChannelNav, type ChannelNavRow } from "@/lib/channel-nav";
-import { getBudget, type Budget } from "@/lib/api-billing";
+import { getBudget, getEntitlements, type Budget } from "@/lib/api-billing";
+import { useQuery } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query-keys";
 
 interface NavItem {
   key: string;
@@ -36,6 +38,13 @@ const ADVANCED_ITEMS: NavItem[] = [
   { key: "billing", icon: <CardIcon />, href: "/dashboard/billing" },
   { key: "plans", icon: <CardIcon />, href: "/dashboard/plans" },
 ];
+
+// Nav entries whose surface is a plan feature: hide them when the tenant's
+// plan does not include the feature. Keys must match billing/features.py.
+const NAV_FEATURE: Record<string, string> = {
+  databank: "databank",
+  verification: "verifications",
+};
 
 function isActive(pathname: string, item: NavItem) {
   const { href } = item;
@@ -111,6 +120,19 @@ export default function Sidebar() {
   }, [isMobile]);
   const pathname = usePathname();
   const { t, dir } = useI18n();
+
+  // Feature-gated nav: fetch entitlements once; items whose feature is off
+  // are hidden. While loading, show everything (no jarring pop-in).
+  const { data: entitlements } = useQuery({
+    queryKey: queryKeys.billing.entitlements(),
+    queryFn: getEntitlements,
+  });
+  const featureEnabled = (item: NavItem) => {
+    const feature = NAV_FEATURE[item.key];
+    return !feature || !!entitlements?.features?.[feature];
+  };
+  const mainItems = MAIN_ITEMS.filter(featureEnabled);
+  const advancedItems = ADVANCED_ITEMS.filter(featureEnabled);
 
   // Channel workspaces (WhatsApp / Instagram / Facebook, and the inbox) are
   // reading-heavy: the nav column is noise there. Fold it on entry, but leave
@@ -230,7 +252,7 @@ export default function Sidebar() {
           }}
         >
           <div className="space-y-0.5">
-            {MAIN_ITEMS.slice(0, 3).map((item) => (
+            {mainItems.slice(0, 3).map((item) => (
               <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} label={labelFor(item)} />
             ))}
           </div>
@@ -241,7 +263,7 @@ export default function Sidebar() {
             loadingLabel={t.common.loading}
           />
           <div className="mt-0.5 space-y-0.5">
-            {MAIN_ITEMS.slice(3).map((item) => (
+            {mainItems.slice(3).map((item) => (
               <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} label={labelFor(item)} />
             ))}
           </div>
@@ -266,7 +288,7 @@ export default function Sidebar() {
             </button>
             {advancedOpen && (
               <div className="mt-0.5 space-y-0.5">
-                {ADVANCED_ITEMS.map((item) => (
+                {advancedItems.map((item) => (
                   <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} label={labelFor(item)} />
                 ))}
               </div>

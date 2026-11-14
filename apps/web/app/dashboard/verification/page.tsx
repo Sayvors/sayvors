@@ -9,6 +9,7 @@ import { apiFetch } from "@/lib/api-rag";
 import { GBP_DASHBOARD_URL } from "@/lib/google-links";
 import LogoLoader from "@/components/LogoLoader";
 import GoogleBusinessLogo from "@/components/channels/GoogleBusinessLogo";
+import FeatureLock from "@/components/billing/FeatureLock";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import type { Dict } from "@/lib/i18n/en";
 
@@ -99,7 +100,7 @@ function statusTone(status: string): string {
   return "bg-ink/[0.06] text-ink/60";
 }
 
-export default function VerificationPage() {
+function VerificationPageContent() {
   const queryClient = useQueryClient();
   const searchParams = useSearchParams();
   const requestedChannel = searchParams.get("channel") ?? "";
@@ -653,5 +654,13 @@ function Info({ label, value }: { label: string; value: string }) {
       <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">{label}</div>
       <div className="mt-2 min-h-4 text-[12px] font-medium text-[var(--ui-ink)]">{value || " "}</div>
     </div>
+  );
+}
+
+export default function VerificationPage() {
+  return (
+    <FeatureLock feature="verifications">
+      <VerificationPageContent />
+    </FeatureLock>
   );
 }

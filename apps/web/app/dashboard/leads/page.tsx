@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import LeadsBoard from "@/components/leads/LeadsBoard";
+import FeatureLock from "@/components/billing/FeatureLock";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 
 function fill(s: string, vars: Record<string, string | number>): string {
@@ -19,7 +20,7 @@ function fill(s: string, vars: Record<string, string | number>): string {
  * Follow-up and escalation settings live on /dashboard/settings — they are
  * account-wide rules an owner sets once, not per-conversation data.
  */
-export default function LeadsPage() {
+function LeadsPageContent() {
   const { t } = useI18n();
   const b = t.reviews.board;
   return (
@@ -44,5 +45,13 @@ export default function LeadsPage() {
       </div>
       <LeadsBoard />
     </div>
+  );
+}
+
+export default function LeadsPage() {
+  return (
+    <FeatureLock feature="leads">
+      <LeadsPageContent />
+    </FeatureLock>
   );
 }

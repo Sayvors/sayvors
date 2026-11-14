@@ -27,6 +27,9 @@ export default function PlansPage() {
   const [creditCents, setCreditCents] = useState(0);
   const [maxChannels, setMaxChannels] = useState<string>("");
   const [maxMessages, setMaxMessages] = useState<string>("");
+  const [maxLocations, setMaxLocations] = useState<string>("");
+  const [maxTeamMembers, setMaxTeamMembers] = useState<string>("");
+  const [maxRegenerations, setMaxRegenerations] = useState<string>("");
   const [sortOrder, setSortOrder] = useState(0);
   const [isActive, setIsActive] = useState(true);
   const [featureFlags, setFeatureFlags] = useState<Record<string, boolean>>({});
@@ -56,7 +59,8 @@ export default function PlansPage() {
   const resetForm = () => {
     setSlug(""); setName(""); setDescription("");
     setPriceCents(0); setCreditCents(0);
-    setMaxChannels(""); setMaxMessages(""); setSortOrder(0); setIsActive(true);
+    setMaxChannels(""); setMaxMessages(""); setMaxLocations(""); setMaxTeamMembers(""); setMaxRegenerations("");
+    setSortOrder(0); setIsActive(true);
     const defaults: Record<string, boolean> = {};
     features.forEach((spec) => { defaults[spec.key] = spec.default; });
     setFeatureFlags(defaults);
@@ -69,6 +73,9 @@ export default function PlansPage() {
     setPriceCents(p.price_cents); setCreditCents(p.included_credit_cents);
     setMaxChannels(p.max_channels == null ? "" : String(p.max_channels));
     setMaxMessages(p.max_messages_per_month == null ? "" : String(p.max_messages_per_month));
+    setMaxLocations(p.max_locations == null ? "" : String(p.max_locations));
+    setMaxTeamMembers(p.max_team_members == null ? "" : String(p.max_team_members));
+    setMaxRegenerations(p.max_regenerations_day == null ? "" : String(p.max_regenerations_day));
     setSortOrder(p.sort_order); setIsActive(p.is_active);
     const flags: Record<string, boolean> = {};
     features.forEach((spec) => { flags[spec.key] = !!(p.features || {})[spec.key]; });
@@ -101,6 +108,9 @@ export default function PlansPage() {
         included_credit_cents: creditCents,
         max_channels: maxChannels.trim() === "" ? null : Number(maxChannels),
         max_messages_per_month: maxMessages.trim() === "" ? null : Number(maxMessages),
+        max_locations: maxLocations.trim() === "" ? null : Number(maxLocations),
+        max_team_members: maxTeamMembers.trim() === "" ? null : Number(maxTeamMembers),
+        max_regenerations_day: maxRegenerations.trim() === "" ? null : Number(maxRegenerations),
         features: featureFlags,
         is_active: isActive,
         sort_order: sortOrder,
@@ -113,6 +123,9 @@ export default function PlansPage() {
           included_credit_cents: payload.included_credit_cents,
           max_channels: payload.max_channels,
           max_messages_per_month: payload.max_messages_per_month,
+          max_locations: payload.max_locations,
+          max_team_members: payload.max_team_members,
+          max_regenerations_day: payload.max_regenerations_day,
           features: payload.features,
           is_active: payload.is_active,
           sort_order: payload.sort_order,
@@ -188,6 +201,18 @@ export default function PlansPage() {
               <input className="input-field" type="number" min={1} value={maxMessages} onChange={(e) => setMaxMessages(e.target.value)} />
             </div>
             <div>
+              <label className="mb-1 block text-[11px] font-medium text-ink/60">Max locations (blank = unlimited)</label>
+              <input className="input-field" type="number" min={1} value={maxLocations} onChange={(e) => setMaxLocations(e.target.value)} />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-ink/60">Max team members (blank = unlimited)</label>
+              <input className="input-field" type="number" min={1} value={maxTeamMembers} onChange={(e) => setMaxTeamMembers(e.target.value)} />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-ink/60">Max regenerations/day (blank = unlimited)</label>
+              <input className="input-field" type="number" min={1} value={maxRegenerations} onChange={(e) => setMaxRegenerations(e.target.value)} />
+            </div>
+            <div>
               <label className="mb-1 block text-[11px] font-medium text-ink/60">Sort order</label>
               <input className="input-field" type="number" value={sortOrder} onChange={(e) => setSortOrder(Number(e.target.value))} />
             </div>
@@ -239,6 +264,9 @@ export default function PlansPage() {
               <th className="px-3 py-2">Credit</th>
               <th className="px-3 py-2">Channels</th>
               <th className="px-3 py-2">Msgs/mo</th>
+              <th className="px-3 py-2">Locations</th>
+              <th className="px-3 py-2">Team</th>
+              <th className="px-3 py-2">Regen/day</th>
               <th className="px-3 py-2">Features</th>
               <th className="px-3 py-2">Active</th>
               <th className="px-3 py-2">Actions</th>
@@ -246,9 +274,9 @@ export default function PlansPage() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={9} className="px-3 py-6 text-center text-ink/40">Loading…</td></tr>
+              <tr><td colSpan={12} className="px-3 py-6 text-center text-ink/40">Loading…</td></tr>
             ) : plans.length === 0 ? (
-              <tr><td colSpan={9} className="px-3 py-6 text-center text-ink/40">No plans yet.</td></tr>
+              <tr><td colSpan={12} className="px-3 py-6 text-center text-ink/40">No plans yet.</td></tr>
             ) : (
               plans.map((p) => (
                 <tr key={p.id} className="border-b border-[var(--ui-line)] last:border-0">
@@ -258,6 +286,9 @@ export default function PlansPage() {
                   <td className="px-3 py-2">{(p.included_credit_cents / 100).toFixed(2)}</td>
                   <td className="px-3 py-2">{p.max_channels ?? "∞"}</td>
                   <td className="px-3 py-2">{p.max_messages_per_month ?? "∞"}</td>
+                  <td className="px-3 py-2">{p.max_locations ?? "∞"}</td>
+                  <td className="px-3 py-2">{p.max_team_members ?? "∞"}</td>
+                  <td className="px-3 py-2">{p.max_regenerations_day ?? "∞"}</td>
                   <td className="px-3 py-2 text-[10px] text-ink/60">
                     {Object.entries(p.features || {}).filter(([, v]) => v).map(([k]) => k).join(", ") || "—"}
                   </td>

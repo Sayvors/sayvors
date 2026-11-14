@@ -1,5 +1,10 @@
 # Daily Progress Report
 
+## 2026-11-14 (plan gating + UI)
+- §34 workstream shipped to `development` (`8f1b8a5a`): plans caps `max_locations` / `max_team_members` / `max_regenerations_day` (3 migrations, single head) + feature-flag gates for scheduling, databank, verifications, bulk CSV, ticket assignment; plans page shows the new caps; benchmark locked state; 8 gate/quota test files; full suite 2444 pass / 2 fixed after assignment-test updates (`e9c5976e` hotfix for Google `location_service_area` string-places crash also pushed).
+- UI: removed the WhatsApp-messages top-up section from `/dashboard/billing/topup` (AI credit + channels + enterprise stay; usage meter stays). Staff analytics tab now scrolls within the shell like Overview/Insights (`h-full overflow-y-auto`). Admin plans page (`apps/admin/app/(dashboard)/plans`) now edits and shows the real caps — `max_locations`, `max_team_members`, `max_regenerations_day` — alongside channel/message limits; feature checkboxes stay catalog-driven from `/admin/plan-features`.
+- Page-level plan gates: new shared `FeatureLock` component locks Growth, Leads, Databank, Verification (and Benchmark already locked) with a premium panel when the plan lacks the feature; Sidebar hides Databank/Verification entries for plans without them (NAV_FEATURE map). Analytics Growth/Insights tabs inherit via the shared page components.
+
 ## 2026-10-19 (security + ops)
 - Meta-events worker cleanup: retry cap with exponential backoff (MAX_RETRIES=5, base 300s, cap 7200s), worker_id reused from startup, dead _process_batch removed, lease columns cleared on terminal states, failed events now retried. 29 tests pass.
 - SEC-H3: full WebSocket auth — on-connect blacklist + token_version + suspension, periodic re-check in heartbeat, one-time ticket endpoint. 3e32246 + 5c2f7fe.
