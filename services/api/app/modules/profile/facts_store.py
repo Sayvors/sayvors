@@ -244,7 +244,7 @@ async def _team(db, tenant_id: str) -> list[dict]:
 async def _locations(db, tenant_id: str) -> list[dict]:
     """Every native Google location with its address and normalised hours."""
     try:
-        from ..locations.models import LocationProfile
+        from ..locations.models import LocationBusinessOverride, LocationProfile
         from ..locations.service import (
             channel_meta,
             listing_id_of,
@@ -261,11 +261,19 @@ async def _locations(db, tenant_id: str) -> list[dict]:
         channels = await native_channels(
             db, tenant_id, statuses=("active", "expired")
         )
+        override_rows = (
+            await db.execute(
+                select(LocationBusinessOverride).where(
+                    LocationBusinessOverride.user_id == tenant_id
+                )
+            )
+        ).scalars().all()
     except Exception as e:  # noqa: BLE001
         logger.warning("location facts failed tenant=%s: %s", tenant_id, e)
         return []
 
     by_listing = {listing_id_of(ch): ch for ch in channels}
+    by_override = {str(o.listing_id): o for o in override_rows}
 
     out: list[dict] = []
     for profile in profiles:
@@ -276,17 +284,37 @@ async def _locations(db, tenant_id: str) -> list[dict]:
             # location; do not expose it to the assistant.
             continue
         meta = channel_meta(channel)
-        schedule = compress_schedule(normalise_schedule(profile.hours))
-        name = (channel.display_name or "").strip()
+        # Merchant overrides win over Google: the owner may know hours are
+        # stale or a category is wrong while Google's edit is still pending.
+        override = by_override.get(listing_id)
+        hours = (
+            (override.hours or {})
+            if override and (override.hours or {})
+            else (profile.hours or {})
+        )
+        schedule = compress_schedule(normalise_schedule(hours))
+        name = (
+            (override.name or "").strip()
+            if override and override.name
+            else (channel.display_name or "").strip()
+        )
         address = str(meta.get("address") or "").strip()
         website = str(meta.get("website") or "").strip()
-        out.append({
+        entry: dict = {
             "listing_id": listing_id,
             "name": name,
             "address": address,
             "website": website,
             "schedule": schedule,
-        })
+        }
+        if override:
+            if override.categories:
+                entry["categories"] = override.categories
+            if override.services:
+                entry["services"] = list(override.services)
+            if override.special_hours:
+                entry["special_hours"] = list(override.special_hours)
+        out.append(entry)
     return out
 
 

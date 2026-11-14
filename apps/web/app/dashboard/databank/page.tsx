@@ -17,6 +17,7 @@ import {
   regenerateBusinessProfile,
   type BusinessProfileData,
 } from "@/lib/api-business-profile";
+import BusinessDetailsSection from "@/components/databank/BusinessDetailsSection";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import FeatureLock from "@/components/billing/FeatureLock";
 
@@ -627,6 +628,9 @@ function DatabankPageContent() {
 
         {/* Business profile card — AI grounding facts, editable */}
         <BusinessProfileCard />
+
+        {/* Business details — merchant overrides vs Google's official record */}
+        <BusinessDetailsSection />
 
         {/* Databank Grid */}
         <div>
