@@ -63,3 +63,23 @@ def test_valid_result_defaults_missing():
     assert data["topics"] == []
     assert data["products"] == []
     assert data["problems"] == []
+
+
+def test_clean_entities_preserves_staff_sentiment():
+    """v3 staff entities are {name, sentiment} objects — they must survive the
+    sanitizer with a normalized sentiment, and legacy strings stay neutral
+    (regression: the shared string cleaner silently dropped the dict form)."""
+    from app.modules.analytics.enrichment import _clean_entities
+
+    out = _clean_entities({"staff": [
+        {"name": "Ahmad", "sentiment": "Positive"},
+        {"name": "   ", "sentiment": "negative"},   # blank name → dropped
+        "legacy name",
+        {"name": "Sara", "sentiment": "angry"},     # unknown sentiment → neutral
+        123,                                        # non-string/non-dict → dropped
+    ]})
+    assert out["staff"] == [
+        {"name": "Ahmad", "sentiment": "positive"},
+        {"name": "legacy name", "sentiment": "neutral"},
+        {"name": "Sara", "sentiment": "neutral"},
+    ]

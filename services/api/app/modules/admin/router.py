@@ -2252,6 +2252,83 @@ async def list_plan_features(_admin=Depends(require_admin)):
     return feature_catalog_as_dicts()
 
 
+@router.get("/config-health")
+async def admin_config_health(_admin=Depends(require_admin)):
+    """Ops-facing configuration health: which API keys/env flags are present.
+
+    Read-only and value-free: only presence/quality status (missing,
+    placeholder, or set with length) — never the secret itself. Grouped so
+    an operator can spot a missing integration at a glance.
+    """
+    from ...database import async_session
+    from sqlalchemy import func, text as _text
+
+    def secret_status(value: str) -> tuple[bool, str]:
+        v = (value or "").strip()
+        if not v:
+            return False, "missing"
+        low = v.lower()
+        if any(tok in low for tok in (
+            "change-me", "changeme", "your-", "replace", "xxx", "<", "placeholder"
+        )):
+            return False, "placeholder"
+        return True, f"set(len={len(v)})"
+
+    def item(key: str, value: str) -> dict:
+        ok, hint = secret_status(value)
+        return {"key": key, "ok": ok, "hint": hint}
+
+    env_groups = [
+        {"group": "Security", "items": [
+            item("JWT_SECRET", settings.JWT_SECRET),
+            item("CHANNEL_ENCRYPTION_KEY", settings.CHANNEL_ENCRYPTION_KEY),
+            item("EMAIL_UNSUBSCRIBE_SECRET", settings.EMAIL_UNSUBSCRIBE_SECRET),
+        ]},
+        {"group": "Email", "items": [
+            item("RESEND_API_KEY", settings.RESEND_API_KEY),
+            item("RESEND_FROM", settings.RESEND_FROM),
+            item("RESEND_WEBHOOK_SECRET", settings.RESEND_WEBHOOK_SECRET),
+        ]},
+        {"group": "Google", "items": [
+            item("GOOGLE_CLIENT_ID", settings.GOOGLE_CLIENT_ID),
+            item("GOOGLE_CLIENT_SECRET", settings.GOOGLE_CLIENT_SECRET),
+            item("GOOGLE_PLACES_API_KEY", settings.GOOGLE_PLACES_API_KEY),
+            item("GOOGLE_REVIEWS_REDIRECT_URI", settings.GOOGLE_REVIEWS_REDIRECT_URI),
+        ]},
+        {"group": "Meta / WhatsApp", "items": [
+            item("META_APP_ID", settings.META_APP_ID),
+            item("META_APP_SECRET", settings.META_APP_SECRET),
+            item("META_WEBHOOK_VERIFY_TOKEN", settings.META_WEBHOOK_VERIFY_TOKEN),
+            item("META_WHATSAPP_CONFIG_ID", settings.META_WHATSAPP_CONFIG_ID),
+            item("META_SOLUTION_ID", settings.META_SOLUTION_ID),
+            item("META_FACEBOOK_CONNECT_ENABLED", "true" if settings.META_FACEBOOK_CONNECT_ENABLED else ""),
+            item("META_INSTAGRAM_CONNECT_ENABLED", "true" if settings.META_INSTAGRAM_CONNECT_ENABLED else ""),
+        ]},
+        {"group": "Storage", "items": [
+            item("AWS_S3_BUCKET", settings.AWS_S3_BUCKET),
+            item("AWS_S3_ENDPOINT_URL", settings.AWS_S3_ENDPOINT_URL),
+        ]},
+    ]
+
+    # DB-backed checks (best-effort; never fail the endpoint).
+    db_checks: list[dict] = []
+    async with async_session() as db:
+        try:
+            llm_count = (await db.execute(_select(func.count()).select_from(_text("llm_provider_configs")))).scalar() or 0
+            db_checks.append({
+                "key": "llm_provider_configs (rows)",
+                "ok": int(llm_count) > 0,
+                "hint": f"{int(llm_count)} provider row(s) configured",
+            })
+        except Exception:
+            db_checks.append({"key": "llm_provider_configs (rows)", "ok": False, "hint": "query failed"})
+
+    return {
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "groups": env_groups + [{"group": "Database", "items": db_checks}],
+    }
+
+
 @router.get("/plans", response_model=list[PlanOut])
 async def list_plans(_admin=Depends(require_admin)):
     from ...database import async_session
@@ -2265,6 +2342,9 @@ async def list_plans(_admin=Depends(require_admin)):
                 id=r.id, slug=r.slug, name=r.name, description=r.description,
                 price_cents=r.price_cents, included_credit_cents=r.included_credit_cents,
                 max_channels=r.max_channels, max_messages_per_month=r.max_messages_per_month,
+                max_locations=r.max_locations,
+                max_team_members=r.max_team_members,
+                max_regenerations_day=r.max_regenerations_day,
                 features=r.features or {}, is_active=r.is_active, sort_order=r.sort_order,
             )
             for r in rows
@@ -2285,6 +2365,9 @@ async def create_plan(body: PlanCreate, _admin=Depends(require_admin)):
             slug=body.slug, name=body.name, description=body.description,
             price_cents=body.price_cents, included_credit_cents=body.included_credit_cents,
             max_channels=body.max_channels, max_messages_per_month=body.max_messages_per_month,
+            max_locations=body.max_locations,
+            max_team_members=body.max_team_members,
+            max_regenerations_day=body.max_regenerations_day,
             features=sanitize_features(body.features), is_active=body.is_active, sort_order=body.sort_order,
         )
         db.add(plan)
@@ -2318,6 +2401,12 @@ async def update_plan(plan_id: str, body: PlanUpdate, _admin=Depends(require_adm
             plan.max_channels = body.max_channels
         if "max_messages_per_month" in body.model_fields_set:
             plan.max_messages_per_month = body.max_messages_per_month
+        if "max_locations" in body.model_fields_set:
+            plan.max_locations = body.max_locations
+        if "max_team_members" in body.model_fields_set:
+            plan.max_team_members = body.max_team_members
+        if "max_regenerations_day" in body.model_fields_set:
+            plan.max_regenerations_day = body.max_regenerations_day
         if body.features is not None:
             plan.features = sanitize_features(body.features)
         if body.is_active is not None:
@@ -2330,6 +2419,9 @@ async def update_plan(plan_id: str, body: PlanUpdate, _admin=Depends(require_adm
             id=plan.id, slug=plan.slug, name=plan.name, description=plan.description,
             price_cents=plan.price_cents, included_credit_cents=plan.included_credit_cents,
             max_channels=plan.max_channels, max_messages_per_month=plan.max_messages_per_month,
+            max_locations=plan.max_locations,
+            max_team_members=plan.max_team_members,
+            max_regenerations_day=plan.max_regenerations_day,
             features=plan.features or {}, is_active=plan.is_active, sort_order=plan.sort_order,
         )
 

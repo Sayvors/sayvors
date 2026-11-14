@@ -117,6 +117,9 @@ export interface AdminPlan {
   included_credit_cents: number;
   max_channels: number | null;
   max_messages_per_month: number | null;
+  max_locations: number | null;
+  max_team_members: number | null;
+  max_regenerations_day: number | null;
   features: Record<string, boolean>;
   is_active: boolean;
   sort_order: number;
@@ -130,6 +133,9 @@ export interface PlanCreateInput {
   included_credit_cents?: number;
   max_channels?: number | null;
   max_messages_per_month?: number | null;
+  max_locations?: number | null;
+  max_team_members?: number | null;
+  max_regenerations_day?: number | null;
   features?: Record<string, boolean>;
   is_active?: boolean;
   sort_order?: number;
@@ -212,5 +218,22 @@ export async function saveTenantFeatures(
   return adminFetch<TenantSubscriptionRow>(
     `/api/v1/admin/tenants/${encodeURIComponent(tenantId)}/features`,
     { method: "PUT", body: JSON.stringify({ features }) },
+  );
+}
+
+/**
+ * Direct plan change — switches the tenant's subscription to any active plan
+ * without a tenant request. Applies immediately and permanently.
+ */
+export async function changeTenantPlan(
+  tenantId: string,
+  planSlug: string,
+): Promise<TenantSubscriptionRow> {
+  return adminFetch<TenantSubscriptionRow>(
+    `/api/v1/admin/tenants/${encodeURIComponent(tenantId)}/grant-plan`,
+    {
+      method: "POST",
+      body: JSON.stringify({ plan_slug: planSlug }),
+    },
   );
 }

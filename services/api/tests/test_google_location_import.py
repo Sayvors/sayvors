@@ -82,3 +82,20 @@ def test_attributes_keep_booleans_and_skip_url_values():
 
 def test_service_area_maps_place_names():
     assert location_service_area(_loc()) == ["Riyadh"]
+
+
+def test_service_area_tolerates_bare_string_places():
+    """Some Google accounts return place-name strings instead of objects —
+    a str element must not crash the parser (staging 500 on connect)."""
+    loc = _loc()
+    loc["serviceArea"] = {"places": ["Riyadh", "Jeddah"]}
+    assert location_service_area(loc) == ["Riyadh", "Jeddah"]
+
+
+def test_service_area_mixed_shapes_dedupes_and_skips_blank():
+    loc = _loc()
+    loc["serviceArea"] = {
+        "places": [{"placeName": "Riyadh"}, "Jeddah", "", None],
+        "regionCode": "SA",
+    }
+    assert location_service_area(loc) == ["Riyadh", "Jeddah", "SA"]

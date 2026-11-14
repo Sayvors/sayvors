@@ -87,6 +87,9 @@ def match_staff_names(
 
     out: list[dict] = []
     for item in extracted:
+        # v2 meanings stored plain strings; v3 stores dicts with sentiment.
+        if isinstance(item, str):
+            item = {"name": item, "sentiment": "neutral"}
         if not isinstance(item, dict):
             continue
         display = str(item.get("name") or "").strip()

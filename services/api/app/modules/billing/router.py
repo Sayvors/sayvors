@@ -207,6 +207,9 @@ async def list_public_plans(db: AsyncSession = Depends(get_db)):
             "included_credit_cents": r.included_credit_cents,
             "max_channels": r.max_channels,
             "max_messages_per_month": r.max_messages_per_month,
+            "max_locations": r.max_locations,
+            "max_team_members": r.max_team_members,
+            "max_regenerations_day": r.max_regenerations_day,
             "features": r.features or {},
             "sort_order": r.sort_order,
         }

@@ -14,12 +14,15 @@ import {
   type DeliveryReconciliation,
 } from "@/lib/admin-api";
 import {
+  changeTenantPlan,
   fetchPlanFeatures,
+  fetchPlans,
   fetchTenantBilling,
   fetchTenantEntitlements,
   grantTenantCredit,
   reconcileWallet,
   saveTenantFeatures,
+  type AdminPlan,
   type PlanFeatureSpec,
   type TenantBilling,
   type TenantEntitlements,
@@ -172,6 +175,11 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
   const [draft, setDraft] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // Direct plan switch (grant-plan): no tenant request involved.
+  const [planPlans, setPlanPlans] = useState<AdminPlan[]>([]);
+  const [planSlugDraft, setPlanSlugDraft] = useState("");
+  const [switching, setSwitching] = useState(false);
+  const [switchMsg, setSwitchMsg] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -299,9 +307,41 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
 
   const openPlan = useCallback(() => {
     setSaveError(null);
+    setSwitchMsg(null);
     setDraft({ ...(ent?.features_override ?? {}) });
+    setPlanSlugDraft(ent?.plan_slug ?? "");
     setPlanOpen(true);
   }, [ent]);
+
+  // Load active plan list lazily for the direct plan switch.
+  useEffect(() => {
+    if (!planOpen || planPlans.length > 0) return;
+    let cancelled = false;
+    fetchPlans()
+      .then((plans) => {
+        if (!cancelled) setPlanPlans((plans ?? []).filter((p) => p.is_active));
+      })
+      .catch(() => { /* list stays empty; select disabled */ });
+    return () => { cancelled = true; };
+  }, [planOpen, planPlans.length]);
+
+  const applyPlanSwitch = useCallback(async () => {
+    if (!planSlugDraft || planSlugDraft === ent?.plan_slug) return;
+    setSwitching(true);
+    setSaveError(null);
+    setSwitchMsg(null);
+    try {
+      await changeTenantPlan(id, planSlugDraft);
+      const fresh = await fetchTenantEntitlements(id);
+      setEnt(fresh);
+      setPlanSlugDraft(fresh.plan_slug);
+      setSwitchMsg(`Switched to ${fresh.plan_name}. Feature baseline below reflects the new plan.`);
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "Plan switch failed.");
+    } finally {
+      setSwitching(false);
+    }
+  }, [id, planSlugDraft, ent]);
 
   /**
    * A key is only stored when it differs from the plan baseline. An override
@@ -1547,6 +1587,40 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
             </div>
 
             <div className="min-h-0 flex-1 overflow-auto px-5 py-4">
+              {/* Direct plan switch — no tenant request involved */}
+              <div className="mb-5 rounded-[2px] border border-[var(--ui-line-strong)] p-4">
+                <p className="text-[12px] font-bold text-ink">Switch plan</p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-ink/50">
+                  Change this tenant's plan directly (same action as approving a plan request).
+                  Current: <span className="font-semibold text-ink/70">{ent.plan_name}</span>.
+                </p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                  <select
+                    aria-label="Target plan"
+                    value={planSlugDraft}
+                    onChange={(e) => { setPlanSlugDraft(e.target.value); setSwitchMsg(null); }}
+                    className="h-9 rounded-[2px] border border-[var(--ui-line)] bg-white px-2.5 text-[12px] text-ink outline-none focus:border-deep-violet"
+                  >
+                    <option value="" disabled>Select plan…</option>
+                    {planPlans.map((p) => (
+                      <option key={p.slug} value={p.slug}>{p.name}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => void applyPlanSwitch()}
+                    disabled={switching || !planSlugDraft || planSlugDraft === ent.plan_slug}
+                    className={`rounded-[2px] bg-ink px-3 py-2 text-[11.5px] font-bold text-white transition hover:bg-ink/85 disabled:opacity-40 ${FOCUS_RING}`}
+                  >
+                    {switching ? "Switching…" : "Apply"}
+                  </button>
+                </div>
+                {switchMsg && (
+                  <p role="status" className="mt-2 rounded-[2px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-medium text-emerald-800">
+                    {switchMsg}
+                  </p>
+                )}
+              </div>
+
               {catalog.length === 0 ? (
                 <div className="grid gap-2" aria-hidden aria-label="Loading features">
                   {[1, 2, 3, 4].map((i) => <div key={i} className="h-12 animate-pulse rounded-[2px] bg-ink/[0.04]" />)}

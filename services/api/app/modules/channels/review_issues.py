@@ -245,6 +245,11 @@ async def update_review_issue(
     if body.needs_attention is not None:
         row.needs_attention = bool(body.needs_attention)
     if "assigned_to" in body.model_fields_set:
+        # Ticket assignment is a plan feature; deny before any assignment work.
+        from ..billing.entitlements import check_feature
+        from ..team.context import tenant_id_of
+
+        await check_feature(tenant_id_of(ctx.user), "ticket_assignment")
         from .assignment import AssignmentError, assign_review_issue
 
         try:

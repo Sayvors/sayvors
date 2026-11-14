@@ -16,7 +16,6 @@ import {
 } from "@/lib/api-billing";
 import { queryKeys } from "@/lib/query-keys";
 
-const MESSAGE_PACKS = [500, 1000];
 const CREDIT_PACKS = [1000, 2500, 5000, 10000]; // cents: $10/$25/$50/$100
 const CHANNEL_PACKS = [1, 3, 5];
 
@@ -84,8 +83,6 @@ export default function TopUpPage() {
   const plans = useQuery({ queryKey: queryKeys.billing.plans(), queryFn: getPlans, staleTime: 300_000 });
   const requests = useQuery({ queryKey: ["billing", "requests"], queryFn: listBillingRequests });
 
-  const [messagePack, setMessagePack] = useState(500);
-  const [messageCustom, setMessageCustom] = useState("");
   const [creditPack, setCreditPack] = useState(2500);
   const [creditCustom, setCreditCustom] = useState("");
   const [channelPack, setChannelPack] = useState(1);
@@ -207,46 +204,6 @@ export default function TopUpPage() {
         </div>
 
         <div className="mt-6 grid gap-4 lg:grid-cols-2">
-          {/* messages */}
-          <section className="rounded-2xl border border-ink/[0.07] bg-white p-4 dark:border-fog/[0.08] dark:bg-ink/60">
-            <h2 className="text-[14px] font-bold text-ink dark:text-fog">{u.msgsTitle}</h2>
-            <p className="mt-1 text-[12px] leading-relaxed text-ink/50 dark:text-fog/50">
-              {u.msgsDesc}
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {MESSAGE_PACKS.map((pack) => (
-                <button
-                  key={pack}
-                  type="button"
-                  onClick={() => { setMessagePack(pack); setMessageCustom(""); }}
-                  className={`rounded-xl px-3 py-2 text-[12px] font-semibold transition ${
-                    messagePack === pack && !messageCustom
-                      ? "bg-deep-violet text-white"
-                      : "border border-ink/[0.08] bg-white text-ink/60 hover:border-deep-violet/40 hover:text-deep-violet dark:border-fog/[0.1] dark:bg-ink dark:text-fog/60"
-                  }`}
-                >
-                  +{fmtNum(pack, locale)}
-                </button>
-              ))}
-              <input
-                value={messageCustom}
-                onChange={(e) => setMessageCustom(e.target.value)}
-                inputMode="numeric"
-                placeholder={u.custom}
-                aria-label={u.customMsgsAria}
-                className="w-28 rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12px] text-ink outline-none focus:border-deep-violet/40 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
-              />
-            </div>
-            <button
-              type="button"
-              onClick={() => void submit("messages", parseCustom(messageCustom) ?? messagePack)}
-              disabled={busy !== null}
-              className="mt-3 w-full rounded-xl bg-deep-violet px-3 py-2.5 text-[12.5px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-50"
-            >
-              {busy === "messages" ? u.sending : fill(u.requestMsgs, { amount: fmtNum(parseCustom(messageCustom) ?? messagePack, locale) })}
-            </button>
-          </section>
-
           {/* AI credit */}
           <section className="rounded-2xl border border-ink/[0.07] bg-white p-4 dark:border-fog/[0.08] dark:bg-ink/60">
             <h2 className="text-[14px] font-bold text-ink dark:text-fog">{u.creditTitle}</h2>

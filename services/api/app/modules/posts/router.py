@@ -43,6 +43,12 @@ async def create_post(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # Scheduling is a plan feature: deny before any work if the tenant's
+    # effective plan lacks it. Instant "publish" and "draft" stay open.
+    if body.action == "schedule":
+        from ..billing.entitlements import check_feature
+
+        await check_feature(tenant_id_of(user), "scheduling")
     try:
         result = await service.create_post(db, tenant_id_of(user), body.model_dump())
     except ValueError as e:
@@ -156,6 +162,12 @@ async def update_post(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # Moving a post into the scheduled state consumes the scheduling feature,
+    # same as creating one with action=schedule.
+    if body.status == "scheduled":
+        from ..billing.entitlements import check_feature
+
+        await check_feature(tenant_id_of(user), "scheduling")
     try:
         result = await service.update_post(
             db, tenant_id_of(user), post_id,

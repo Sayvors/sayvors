@@ -383,13 +383,23 @@ def location_attributes(attributes: list[dict] | None) -> dict[str, str]:
 
 
 def location_service_area(loc: dict) -> list[str]:
-    """Google serviceArea → the profile's free-text area list."""
+    """Google serviceArea → the profile's free-text area list.
+
+    Tolerates both shapes Google returns for `serviceArea.places`: the
+    documented object form (`{placeName, placeId}`) and bare place-name
+    strings seen on some accounts. A single unexpected entry must never
+    take down the whole OAuth callback (it used to raise AttributeError on
+    `p.get` for a str element).
+    """
     area = (loc or {}).get("serviceArea") or {}
-    places = [
-        str(p.get("placeName") or p.get("placeId") or "").strip()
-        for p in (area.get("places") or [])
-        if str(p.get("placeName") or p.get("placeId") or "").strip()
-    ]
+    places: list[str] = []
+    for p in (area.get("places") or []):
+        if isinstance(p, dict):
+            name = str(p.get("placeName") or p.get("placeId") or "").strip()
+        else:
+            name = str(p or "").strip()
+        if name and name not in places:
+            places.append(name)
     region = str(area.get("regionCode") or "").strip()
     if region and region not in places:
         places.append(region)

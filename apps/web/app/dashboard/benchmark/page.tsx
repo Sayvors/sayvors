@@ -2,12 +2,15 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query-keys";
 import {
   fetchBenchmark,
   fetchMarketBenchmarks,
   type BenchmarkResponse,
   type BranchBenchmark,
 } from "@/lib/api-analytics";
+import { getEntitlements } from "@/lib/api-billing";
 import { RangeChannelControls, useGoogleChannels } from "@/components/analytics/Controls";
 import BenchmarkCards from "@/components/analytics/BenchmarkCards";
 import { FactSource } from "@/components/analytics/FactSource";
@@ -96,6 +99,13 @@ export default function BenchmarkPage() {
   const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
   const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
 
+  const { data: entitlements, isLoading: entitlementsLoading } = useQuery({
+    queryKey: queryKeys.billing.entitlements(),
+    queryFn: getEntitlements,
+  });
+  const benchmarkingEnabled = !!entitlements?.features?.benchmarking;
+  const locked = !!entitlements && !benchmarkingEnabled;
+
   const handleRefreshExternal = async () => {
     setRefreshingExternal(true);
     try {
@@ -111,6 +121,10 @@ export default function BenchmarkPage() {
   };
 
   useEffect(() => {
+    if (locked) {
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     Promise.all([
       fetchBenchmark(days, channelId),
@@ -140,7 +154,7 @@ export default function BenchmarkPage() {
     return () => {
       cancelled = true;
     };
-  }, [days, channelId, retryCount]);
+  }, [days, channelId, retryCount, locked]);
 
   const branches = useMemo(() => {
     let list = [...(benchmark?.branches ?? [])];
@@ -179,6 +193,25 @@ export default function BenchmarkPage() {
     plain: benchmark.plain_summary,
     dist: benchmark.distribution,
   } : null;
+
+  // Plan gate: benchmarking is a plan feature. The page (and the analytics
+  // tab that mounts it) shows a locked state until the plan includes it.
+  if (locked) {
+    return (
+      <div className="team-ui h-full overflow-y-auto p-4 sm:p-6">
+        <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+          <h1 className="text-[20px] font-bold text-[var(--ui-ink)]">{bp.lockedTitle}</h1>
+          <p className="max-w-sm text-[12px] text-[var(--ui-ink-2)]">{bp.lockedBody}</p>
+          <Link
+            href="/dashboard/plans"
+            className="mt-1 rounded-[2px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)]"
+          >
+            {bp.viewPlans}
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="team-ui h-full overflow-y-auto p-4 sm:p-6">

@@ -22,9 +22,6 @@ export const FEATURE_LABELS: Record<string, string> = {
   growth: "Growth insights",
   ticket_assignment: "Ticket assignment",
   voice_replies: "Voice replies (beta)",
-  ask_sayvors_premium: "ASK Sayvors premium",
-  priority_support: "Priority support",
-  sla: "SLA guarantee",
 };
 
 export const FEATURE_ORDER: string[] = [
@@ -48,9 +45,6 @@ export const FEATURE_ORDER: string[] = [
   "growth",
   "ticket_assignment",
   "voice_replies",
-  "ask_sayvors_premium",
-  "priority_support",
-  "sla",
 ];
 
 export function featureLabel(key: string): string {
@@ -79,7 +73,4 @@ export const FEATURE_LABELS_AR: Record<string, string> = {
   growth: "رؤى النمو",
   ticket_assignment: "إسناد التذاكر",
   voice_replies: "الردود الصوتية (تجريبي)",
-  ask_sayvors_premium: "اسأل Sayvors المميزة",
-  priority_support: "دعم ذي أولوية",
-  sla: "ضمان مستوى الخدمة",
 };

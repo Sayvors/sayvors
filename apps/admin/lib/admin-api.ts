@@ -521,6 +521,26 @@ export async function decideBillingRequest(
   );
 }
 
+export interface ConfigHealthItem {
+  key: string;
+  ok: boolean;
+  hint: string;
+}
+
+export interface ConfigHealthGroup {
+  group: string;
+  items: ConfigHealthItem[];
+}
+
+export interface ConfigHealth {
+  checked_at: string;
+  groups: ConfigHealthGroup[];
+}
+
+export async function fetchConfigHealth(): Promise<ConfigHealth> {
+  return adminFetch<ConfigHealth>("/api/v1/admin/config-health");
+}
+
 export interface PlatformStats {
   platform: string;
   label: string;

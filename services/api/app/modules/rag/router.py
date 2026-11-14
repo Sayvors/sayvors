@@ -59,10 +59,22 @@ from .service import (
 router = APIRouter(prefix="/api/v1/rag", tags=["rag"])
 
 
+async def require_databank_feature(
+    user: User = Depends(get_current_user),
+):
+    """Gate databank *writes* behind the plan feature. Reads stay open —
+    per the billing docs, read-only data is never hidden by a feature gate."""
+    from ..billing.entitlements import check_feature
+    from ..team.context import tenant_id_of
+
+    await check_feature(tenant_id_of(user), "databank")
+
+
 @router.post("/databanks", response_model=DatabankResponse, status_code=status.HTTP_201_CREATED)
 async def create_new_databank(
     body: DatabankCreate,
     user: User = Depends(get_current_user),
+    _gate: None = Depends(require_databank_feature),
     db: AsyncSession = Depends(get_db),
 ):
     bank = await create_databank(body, user, db)
@@ -127,6 +139,7 @@ async def get_single_databank(
 async def delete_single_databank(
     databank_id: str,
     user: User = Depends(get_current_user),
+    _gate: None = Depends(require_databank_feature),
     db: AsyncSession = Depends(get_db),
 ):
     deleted = await delete_databank(databank_id, user, db)
@@ -143,6 +156,7 @@ async def upload_new_document(
     databank_id: str,
     file: UploadFile = File(...),
     user: User = Depends(get_current_user),
+    _gate: None = Depends(require_databank_feature),
     db: AsyncSession = Depends(get_db),
 ):
     bank = await get_databank(databank_id, user, db)
@@ -203,6 +217,7 @@ async def delete_single_document(
     databank_id: str,
     doc_id: str,
     user: User = Depends(get_current_user),
+    _gate: None = Depends(require_databank_feature),
     db: AsyncSession = Depends(get_db),
 ):
     deleted = await delete_document(doc_id, user, db)
@@ -235,6 +250,7 @@ async def create_new_scrape_job(
     databank_id: str,
     body: ScrapeRequest,
     user: User = Depends(get_current_user),
+    _gate: None = Depends(require_databank_feature),
     db: AsyncSession = Depends(get_db),
 ):
     bank = await get_databank(databank_id, user, db)
@@ -260,6 +276,7 @@ async def create_new_scrape_job(
 async def process_all_pending(
     databank_id: str,
     user: User = Depends(get_current_user),
+    _gate: None = Depends(require_databank_feature),
     db: AsyncSession = Depends(get_db),
 ):
     bank = await get_databank(databank_id, user, db)
@@ -289,6 +306,7 @@ async def process_single_document(
     databank_id: str,
     doc_id: str,
     user: User = Depends(get_current_user),
+    _gate: None = Depends(require_databank_feature),
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -423,6 +441,7 @@ async def save_database_source(
     databank_id: str,
     body: DatabaseSourceCreate,
     user: User = Depends(get_current_user),
+    _gate: None = Depends(require_databank_feature),
     db: AsyncSession = Depends(get_db),
 ):
     """Test + save a named database connection (password stored encrypted)."""
@@ -459,6 +478,7 @@ async def delete_database_source(
     databank_id: str,
     source_id: str,
     user: User = Depends(get_current_user),
+    _gate: None = Depends(require_databank_feature),
     db: AsyncSession = Depends(get_db),
 ):
     await _owned_source(databank_id, source_id, user, db)
@@ -541,6 +561,7 @@ async def run_source_query(
 async def reindex_single_databank(
     databank_id: str,
     user: User = Depends(get_current_user),
+    _gate: None = Depends(require_databank_feature),
     db: AsyncSession = Depends(get_db),
 ):
     """Re-embed every document (e.g. after switching embedding providers)."""
@@ -559,6 +580,7 @@ async def retry_stuck_documents(
     databank_id: str,
     body: dict | None = None,
     user: User = Depends(get_current_user),
+    _gate: None = Depends(require_databank_feature),
     db: AsyncSession = Depends(get_db),
 ):
     """Retry stuck/failed docs without deleting anything.
@@ -619,6 +641,7 @@ async def ingest_source_query(
     source_id: str,
     body: IngestQueryRequest,
     user: User = Depends(get_current_user),
+    _gate: None = Depends(require_databank_feature),
     db: AsyncSession = Depends(get_db),
 ):
     """Run a query, store the result set as a document, and queue embedding."""

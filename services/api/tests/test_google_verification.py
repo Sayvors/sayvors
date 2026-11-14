@@ -212,6 +212,15 @@ async def test_request_verification_calls_google_and_stores_pending_name(
     db, user_id, channel_id, monkeypatch
 ):
     user = await _user(db, user_id)
+    # The verification plan feature must be on for the router gate to let
+    # the request through; enable it on the seeded free-trial plan.
+    from sqlalchemy import select as _sel
+
+    from app.modules.billing.models import Plan as _Plan
+
+    _plan = (await db.execute(_sel(_Plan).where(_Plan.slug == "free-trial"))).scalar_one()
+    _plan.features = {**( _plan.features or {}), "verifications": True}
+    await db.commit()
     fake = _FakeClient(
         state={"hasVoiceOfMerchant": False, "verify": {"hasPendingVerification": True}},
         options=[{"verificationMethod": "SMS", "phoneNumber": "+966500000000"}],
