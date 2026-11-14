@@ -564,6 +564,56 @@ export async function fetchBudgetAlarms(
   );
 }
 
+export interface FinanceRow {
+  tenant_id: string;
+  email: string | null;
+  month: string;
+  plan_slug: string | null;
+  plan_name: string | null;
+  plan_price_cents: number;
+  extra_cost_cents: number;
+  billed_cents: number;
+  credits_used_cents: number;
+  actual_cost_micro: number;
+  collected_cents: number;
+  status: "unpaid" | "paid" | "partial";
+  adjustments: Record<string, unknown>;
+  note: string | null;
+}
+
+export interface FinanceResponse {
+  month: string;
+  items: FinanceRow[];
+  total: number;
+  totals: {
+    expected_revenue_cents: number;
+    collected_cents: number;
+    infra_cost_micro: number;
+    margin_micro: number;
+    unpaid_count: number;
+  };
+}
+
+export async function fetchFinancials(
+  month: string,
+  limit = 50,
+  offset = 0,
+): Promise<FinanceResponse> {
+  const params = new URLSearchParams({ month, limit: String(limit), offset: String(offset) });
+  return adminFetch<FinanceResponse>(`/api/v1/admin/financials?${params.toString()}`);
+}
+
+export async function patchFinance(
+  tenantId: string,
+  month: string,
+  body: { status?: string; collected_cents?: number; adjustments?: Record<string, unknown>; note?: string },
+): Promise<FinanceRow> {
+  return adminFetch<FinanceRow>(
+    `/api/v1/admin/financials/${encodeURIComponent(tenantId)}?month=${encodeURIComponent(month)}`,
+    { method: "PATCH", body: JSON.stringify(body) },
+  );
+}
+
 export interface PlatformStats {
   platform: string;
   label: string;

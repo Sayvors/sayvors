@@ -7,10 +7,11 @@ a payment gateway later (see providers.py). Until a gateway is wired,
 rows are `verified=False` records the merchant maintains.
 """
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -18,6 +19,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -244,6 +246,48 @@ class Plan(Base):
     features: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class TenantFinanceMonth(Base):
+    """Admin bookkeeping: one row per tenant per month.
+
+    `actual_cost_micro` is the real delivered cost (provider + infra) summed
+    from the metering events; `plan_price_cents` is what the plan bills.
+    `collected_cents` + `status` are admin-maintained until real payments
+    exist; `adjustments` holds admin edits (extra cost, discounts) as JSON.
+    """
+
+    __tablename__ = "tenant_finance_month"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "month", name="uq_tenant_finance_month_tenant_month"),
+        Index("ix_tenant_finance_month", "month"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    month: Mapped[date] = mapped_column(Date)
+    plan_slug: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    plan_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    plan_price_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    credits_used_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    actual_cost_micro: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    collected_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # unpaid | paid | partial
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="unpaid", server_default="unpaid")
+    adjustments: Mapped[dict] = mapped_column(
+        JSONB, default=dict, server_default=text("'{}'")
+    )
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

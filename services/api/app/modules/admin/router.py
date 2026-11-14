@@ -340,6 +340,13 @@ class BillingRequestDecision(BaseModel):
     note: str | None = Field(default=None, max_length=500)
 
 
+class FinancePatchIn(BaseModel):
+    status: str | None = Field(default=None, pattern="^(unpaid|paid|partial)$")
+    collected_cents: int | None = Field(default=None, ge=0, le=100_000_000)
+    adjustments: dict | None = None
+    note: str | None = Field(default=None, max_length=1000)
+
+
 @router.get("/requests")
 async def admin_billing_requests(
     status: str | None = Query(None, pattern="^(pending|approved|rejected)$"),
@@ -2265,6 +2272,60 @@ async def list_plan_features(_admin=Depends(require_admin)):
     from ..billing.features import feature_catalog_as_dicts
 
     return feature_catalog_as_dicts()
+
+
+@router.get("/financials")
+async def admin_financials(
+    month: str = Query(..., pattern="^\\d{4}-\\d{2}$"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Per-tenant monthly finance rows + rollups (revenue, collected, infra)."""
+    from .service import list_financials
+
+    return await list_financials(db, month, limit=limit, offset=offset)
+
+
+@router.patch("/financials/{tenant_id}")
+async def admin_patch_finance(
+    tenant_id: str,
+    month: str = Query(..., pattern="^\\d{4}-\\d{2}$"),
+    body: FinancePatchIn | None = None,
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    from .service import patch_finance
+
+    body = body or FinancePatchIn()
+    try:
+        return await patch_finance(
+            db, tenant_id, month,
+            status=body.status,
+            collected_cents=body.collected_cents,
+            adjustments=body.adjustments,
+            note=body.note,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/financials/recompute")
+async def admin_recompute_financials(
+    month: str = Query(..., pattern="^\\d{4}-\\d{2}$"),
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upsert month rows (keep admin edits) and return how many tenants were
+    included."""
+    from .service import ensure_finance_rows
+
+    rows = await ensure_finance_rows(db, month)
+    return {"month": month, "tenants": rows}
 
 
 @router.get("/search")

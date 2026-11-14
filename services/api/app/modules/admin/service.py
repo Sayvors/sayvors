@@ -805,6 +805,242 @@ async def get_billing_overview(db: AsyncSession) -> list[dict]:
     return out
 
 
+async def ensure_finance_rows(db: AsyncSession, month: str) -> int:
+    """Upsert monthly finance rows for every tenant with activity in the month.
+
+    Activity = a subscription row OR any metered LLM usage event in that
+    month. Auto-fields (plan snapshot, credits used, actual cost) are
+    recomputed; admin fields (status/collected/adjustments/note) are kept.
+    """
+    from datetime import date as _date
+
+    from sqlalchemy import func as _func
+    from sqlalchemy import select as _select
+    from sqlalchemy.dialects.postgresql import insert as _pg_insert
+
+    import uuid
+
+    from ..billing.models import Plan, TenantFinanceMonth, TenantSubscription
+    from ..llm.models import LLMUsageEvent
+    from ..users.models import User
+
+    try:
+        year, month_num = (int(x) for x in month.split("-", 1))
+    except (ValueError, AttributeError):
+        raise ValueError("month must be YYYY-MM")
+    start = _date(year, month_num, 1)
+    if month_num == 12:
+        end = _date(year + 1, 1, 1)
+    else:
+        end = _date(year, month_num + 1, 1)
+
+    tenant_ids = set(
+        (
+            await db.execute(
+                _select(TenantSubscription.tenant_id).where(
+                    TenantSubscription.tenant_id.isnot(None)
+                )
+            )
+        ).scalars().all()
+    )
+    usage_ids = set(
+        (
+            await db.execute(
+                _select(LLMUsageEvent.tenant_id)
+                .where(
+                    LLMUsageEvent.tenant_id.isnot(None),
+                    LLMUsageEvent.created_at >= start,
+                    LLMUsageEvent.created_at < end,
+                )
+                .distinct()
+            )
+        ).scalars().all()
+    )
+    for tid in tenant_ids | usage_ids:
+        plan = (
+            await db.execute(
+                _select(Plan)
+                .join(TenantSubscription, TenantSubscription.plan_id == Plan.id)
+                .where(TenantSubscription.tenant_id == tid)
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        cost_row = (
+            await db.execute(
+                _select(
+                    _func.coalesce(_func.sum(LLMUsageEvent.delivery_cost_micro_usd), 0),
+                    _func.coalesce(_func.sum(LLMUsageEvent.cost_cents), 0),
+                )
+                .where(
+                    LLMUsageEvent.tenant_id == tid,
+                    LLMUsageEvent.created_at >= start,
+                    LLMUsageEvent.created_at < end,
+                )
+            )
+        ).first()
+        actual_micro = int(cost_row[0] or 0)
+        credits_cents = int(cost_row[1] or 0)
+        price_cents = int(plan.price_cents or 0) if plan else 0
+
+        stmt = _pg_insert(TenantFinanceMonth).values(
+            id=str(uuid.uuid4()),
+            tenant_id=tid,
+            month=start,
+            plan_slug=plan.slug if plan else None,
+            plan_name=plan.name if plan else None,
+            plan_price_cents=price_cents,
+            credits_used_cents=credits_cents,
+            actual_cost_micro=actual_micro,
+        )
+        stmt = stmt.on_conflict_do_update(
+            constraint="uq_tenant_finance_month_tenant_month",
+            set_={
+                "plan_slug": stmt.excluded.plan_slug,
+                "plan_name": stmt.excluded.plan_name,
+                "plan_price_cents": stmt.excluded.plan_price_cents,
+                "credits_used_cents": stmt.excluded.credits_used_cents,
+                "actual_cost_micro": stmt.excluded.actual_cost_micro,
+                "updated_at": _func.now(),
+            },
+        )
+        await db.execute(stmt)
+    await db.commit()
+    return len(tenant_ids | usage_ids)
+
+
+async def list_financials(
+    db: AsyncSession,
+    month: str,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    """Rows + monthly rollups (expected revenue, collected, infra cost, margin)."""
+    from datetime import date as _date
+
+    from sqlalchemy import func as _func
+    from sqlalchemy import select as _select
+
+    from ..billing.models import TenantFinanceMonth
+    from ..users.models import User
+
+    await ensure_finance_rows(db, month)
+    year, month_num = (int(x) for x in month.split("-", 1))
+    start = _date(year, month_num, 1)
+
+    base = (
+        _select(TenantFinanceMonth, User.email)
+        .join(User, User.id == TenantFinanceMonth.tenant_id)
+        .where(TenantFinanceMonth.month == start)
+    )
+    rows = (
+        await db.execute(
+            base.order_by(TenantFinanceMonth.plan_price_cents.desc(), User.email)
+            .offset(offset)
+            .limit(limit)
+        )
+    ).all()
+
+    totals = (
+        await db.execute(
+            _select(
+                _func.coalesce(_func.sum(TenantFinanceMonth.plan_price_cents), 0),
+                _func.coalesce(_func.sum(TenantFinanceMonth.collected_cents), 0),
+                _func.coalesce(_func.sum(TenantFinanceMonth.actual_cost_micro), 0),
+            ).where(TenantFinanceMonth.month == start)
+        )
+    ).first()
+
+    items = []
+    for row, email in rows:
+        extra = int((row.adjustments or {}).get("extra_cost_cents", 0))
+        billed_cents = row.plan_price_cents + extra
+        items.append({
+            "tenant_id": row.tenant_id,
+            "email": email,
+            "month": row.month.isoformat(),
+            "plan_slug": row.plan_slug,
+            "plan_name": row.plan_name,
+            "plan_price_cents": row.plan_price_cents,
+            "extra_cost_cents": extra,
+            "billed_cents": billed_cents,
+            "credits_used_cents": row.credits_used_cents,
+            "actual_cost_micro": row.actual_cost_micro,
+            "collected_cents": row.collected_cents,
+            "status": row.status,
+            "adjustments": row.adjustments or {},
+            "note": row.note,
+        })
+
+    expected_cents = int(totals[0] or 0)
+    collected_cents = int(totals[1] or 0)
+    infra_cost_micro = int(totals[2] or 0)
+    return {
+        "month": month,
+        "items": items,
+        "total": len(items),
+        "totals": {
+            "expected_revenue_cents": expected_cents,
+            "collected_cents": collected_cents,
+            "infra_cost_micro": infra_cost_micro,
+            # column (cents → micro) minus real delivered cost.
+            "margin_micro": expected_cents * 10_000 - infra_cost_micro,
+            "unpaid_count": 0,
+        },
+    }
+
+
+async def patch_finance(
+    db: AsyncSession,
+    tenant_id: str,
+    month: str,
+    *,
+    status: str | None = None,
+    collected_cents: int | None = None,
+    adjustments: dict | None = None,
+    note: str | None = None,
+) -> dict:
+    """Admin edit of one monthly row (payment status, collected, notes)."""
+    from datetime import date as _date
+
+    from sqlalchemy import select as _select
+
+    from ..billing.models import TenantFinanceMonth
+
+    year, month_num = (int(x) for x in month.split("-", 1))
+    start = _date(year, month_num, 1)
+    row = (
+        await db.execute(
+            _select(TenantFinanceMonth).where(
+                TenantFinanceMonth.tenant_id == tenant_id,
+                TenantFinanceMonth.month == start,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise ValueError("No finance row for this tenant/month — recompute first.")
+    if status is not None:
+        if status not in ("unpaid", "paid", "partial"):
+            raise ValueError("status must be unpaid, paid or partial")
+        row.status = status
+    if collected_cents is not None:
+        row.collected_cents = max(0, int(collected_cents))
+    if adjustments is not None:
+        row.adjustments = {k: v for k, v in adjustments.items() if k in ("extra_cost_cents",)}
+    if note is not None:
+        row.note = note.strip() or None
+    await db.commit()
+    await db.refresh(row)
+    return {
+        "tenant_id": row.tenant_id,
+        "month": start.isoformat(),
+        "status": row.status,
+        "collected_cents": row.collected_cents,
+        "adjustments": row.adjustments or {},
+        "note": row.note,
+    }
+
+
 LEDGER_SORTS = ("newest", "oldest", "cost_high", "cost_low")
 DEFAULT_LEDGER_LIMIT = 75
 MAX_LEDGER_LIMIT = 200
