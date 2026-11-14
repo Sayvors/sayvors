@@ -86,3 +86,30 @@ async def test_growth_cards_empty_tenant(db, user_id):
     assert out["contacts"]["new_contacts"] == 0
     kinds = {a["kind"] for a in out["actions"]}
     assert "connect" in kinds
+
+
+@pytest.mark.asyncio
+async def test_growth_cards_connected_channel_no_connect_action(db, user_id):
+    """A tenant with WhatsApp already connected must not be told to connect one."""
+    db.add(Channel(
+        id="ch-wa", user_id=user_id, platform="whatsapp",
+        platform_user_id="acct-wa", display_name="WA", status="active", metadata_json="{}",
+    ))
+    await db.commit()
+    out = await get_growth_cards(db, user_id, None, 30)
+    kinds = {a["kind"] for a in out["actions"]}
+    assert "connect" not in kinds
+    assert "ask" in kinds
+
+
+@pytest.mark.asyncio
+async def test_growth_cards_disconnected_channel_still_connect(db, user_id):
+    """A non-active WhatsApp channel does not count as connected."""
+    db.add(Channel(
+        id="ch-wa-off", user_id=user_id, platform="whatsapp",
+        platform_user_id="acct-wa", display_name="WA", status="disconnected", metadata_json="{}",
+    ))
+    await db.commit()
+    out = await get_growth_cards(db, user_id, None, 30)
+    kinds = {a["kind"] for a in out["actions"]}
+    assert "connect" in kinds

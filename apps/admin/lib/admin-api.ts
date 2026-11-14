@@ -734,3 +734,78 @@ export interface AdminHealth {
   services: HealthService[];
   recent_failures: HealthFailure[];
 }
+
+// ── Database backups ────────────────────────────────────────────────────
+
+export interface BackupConfig {
+  enabled: boolean;
+  interval_hours: number;
+  bucket: string;
+  region: string;
+  last_run_at: string | null;
+  next_run_at: string | null;
+}
+
+export interface BackupObjectVersion {
+  version_id: string;
+  is_latest: boolean;
+  size_bytes: number;
+  last_modified: string | null;
+}
+
+export interface BackupObject {
+  key: string;
+  versions: BackupObjectVersion[];
+  latest_size_bytes: number | null;
+  latest_modified: string | null;
+  run_id: string | null;
+  status: string | null;
+  trigger: string | null;
+  run_started_at: string | null;
+  error: string | null;
+}
+
+export interface BackupList {
+  config: BackupConfig;
+  objects: BackupObject[];
+}
+
+export async function fetchBackupConfig(): Promise<BackupConfig> {
+  return adminFetch<BackupConfig>("/api/v1/admin/backups/config");
+}
+
+export async function saveBackupConfig(input: {
+  enabled: boolean;
+  interval_hours: number;
+  bucket?: string;
+  region?: string;
+}): Promise<BackupConfig> {
+  return adminFetch<BackupConfig>("/api/v1/admin/backups/config", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function triggerBackup(): Promise<{ id: string; status: string; backup_key: string | null }> {
+  return adminFetch("/api/v1/admin/backups/run", { method: "POST" });
+}
+
+export async function fetchBackups(): Promise<BackupList> {
+  return adminFetch<BackupList>("/api/v1/admin/backups");
+}
+
+export async function deleteBackup(
+  key: string,
+  versionId?: string,
+): Promise<{ key: string; deleted_versions: number }> {
+  const params = new URLSearchParams({ key });
+  if (versionId) params.set("version_id", versionId);
+  return adminFetch(`/api/v1/admin/backups?${params.toString()}`, { method: "DELETE" });
+}
+
+export async function downloadBackup(key: string, versionId?: string): Promise<string> {
+  const params = new URLSearchParams({ key });
+  if (versionId) params.set("version_id", versionId);
+  const data = await adminFetch<{ url: string }>(`/api/v1/admin/backups/download?${params.toString()}`);
+  return data.url;
+}

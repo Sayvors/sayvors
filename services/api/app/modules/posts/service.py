@@ -9,7 +9,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, text as sa_text
+from sqlalchemy import func, select, text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..jobs.models import Job
@@ -170,6 +170,41 @@ async def list_posts(
         )
     ).scalars().all()
     return [_serialize(p) for p in rows]
+
+
+async def post_stats(db: AsyncSession, user_id: str) -> dict:
+    """Accurate per-status counts for the dashboard glance card.
+
+    The list endpoint caps at the newest 200 rows, so it cannot back a
+    counter. This runs one grouped COUNT over the same tenant + hidden-listing
+    filter, so the totals always match what the feed shows.
+    """
+    from ..locations.service import disconnected_listing_ids
+
+    filters = [LocationPost.user_id == user_id]
+    hidden = await disconnected_listing_ids(db, user_id)
+    if hidden:
+        filters.append(LocationPost.listing_id.notin_(hidden))
+    rows = (
+        await db.execute(
+            select(LocationPost.status, func.count())
+            .where(*filters)
+            .group_by(LocationPost.status)
+        )
+    ).all()
+    counts = {
+        "total": 0,
+        "published": 0,
+        "scheduled": 0,
+        "draft": 0,
+        "failed": 0,
+        "archived": 0,
+    }
+    for status, n in rows:
+        if status in counts:
+            counts[status] = n
+        counts["total"] += n
+    return counts
 
 
 async def create_post(db: AsyncSession, user_id: str, data: dict) -> dict:

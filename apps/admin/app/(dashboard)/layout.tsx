@@ -166,6 +166,16 @@ function NavIcon({ name, active }: { name: NavItem["icon"]; active: boolean }) {
           <path d="M15.2 15.2L20.5 20.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
         </svg>
       );
+    case "backups":
+      return (
+        <svg aria-hidden viewBox="0 0 24 24" fill="none" className={cls}>
+          <ellipse cx="12" cy="5.5" rx="7.5" ry="2.8" stroke="currentColor" strokeWidth="1.5" />
+          <path d="M4.5 5.5v6c0 1.55 3.36 2.8 7.5 2.8s7.5-1.25 7.5-2.8v-6" stroke="currentColor" strokeWidth="1.5" />
+          <path d="M4.5 11.5v6c0 1.55 3.36 2.8 7.5 2.8s7.5-1.25 7.5-2.8v-6" stroke="currentColor" strokeWidth="1.5" />
+          <path d="M12 9.5v8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+          <path d="M9.2 15.2L12 18l2.8-2.8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      );
     default:
       return null;
   }

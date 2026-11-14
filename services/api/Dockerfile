@@ -30,9 +30,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # Runtime libraries only: libpq for asyncpg, curl for the healthcheck, ffmpeg
-# for Edge-tier voice conversion. No build-essential, no headers.
+# for Edge-tier voice conversion, postgresql-client for pg_dump/pg_restore
+# (admin console backups). No build-essential, no headers.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 curl ffmpeg \
+    libpq5 curl ffmpeg postgresql-client \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd --gid 10001 appuser \
  && useradd --uid 10001 --gid appuser --create-home appuser

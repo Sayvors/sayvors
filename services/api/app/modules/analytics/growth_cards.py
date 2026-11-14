@@ -204,14 +204,39 @@ async def get_growth_cards(
             "expected": "Lift request-to-review conversion",
             "href": "/dashboard/reviews?ask=1",
         })
+    # A tenant that already has a messaging channel must never be told to
+    # connect one. Count active WhatsApp/Instagram/Facebook channels and gate
+    # the connect action on it; when a channel exists but nothing has been
+    # sent yet, the nudge becomes "send the first request" instead.
+    has_messaging_channel = bool(
+        (
+            await db.execute(
+                select(func.count()).where(
+                    Channel.user_id == user_id,
+                    Channel.platform.in_(("whatsapp", "instagram", "facebook")),
+                    Channel.status == "active",
+                )
+            )
+        ).scalar()
+        or 0
+    )
     if requests_sent == 0 and new_contacts == 0:
-        actions.append({
-            "kind": "connect",
-            "title": "Connect a messaging channel",
-            "detail": "The ask loop needs a way to reach customers. WhatsApp is the fastest start.",
-            "expected": "Unlocks review requests",
-            "href": "/dashboard/channels",
-        })
+        if has_messaging_channel:
+            actions.append({
+                "kind": "ask",
+                "title": "Send your first review request",
+                "detail": "Your messaging channel is connected — send a request to turn it into reviews.",
+                "expected": "3-10% conversion is a realistic first target",
+                "href": "/dashboard/reviews?ask=1",
+            })
+        else:
+            actions.append({
+                "kind": "connect",
+                "title": "Connect a messaging channel",
+                "detail": "The ask loop needs a way to reach customers. WhatsApp is the fastest start.",
+                "expected": "Unlocks review requests",
+                "href": "/dashboard/channels",
+            })
     unanswered = (
         await db.execute(
             select(func.count()).where(

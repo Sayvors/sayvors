@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timezone
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
@@ -2797,3 +2797,127 @@ async def get_tenant_entitlements(tenant_id: str, _admin=Depends(require_admin))
             "granted_by": ent.granted_by,
             "granted_until": ent.granted_until.isoformat() if ent.granted_until else None,
         }
+
+
+# ---------------------------------------------------------------------------
+# Database backups (config, run, list, delete, download)
+# ---------------------------------------------------------------------------
+
+class BackupConfigIn(BaseModel):
+    enabled: bool = False
+    interval_hours: int = Field(default=24, ge=1, le=24 * 30)
+    bucket: str | None = Field(default=None, max_length=255)
+    region: str | None = Field(default=None, max_length=32)
+
+
+class BackupConfigOut(BaseModel):
+    enabled: bool
+    interval_hours: int
+    bucket: str
+    region: str
+    last_run_at: str | None = None
+    next_run_at: str | None = None
+
+
+class BackupRunOut(BaseModel):
+    id: str
+    status: str
+    backup_key: str | None = None
+    size_bytes: int | None = None
+    error: str | None = None
+
+
+class BackupObjectVersionOut(BaseModel):
+    version_id: str
+    is_latest: bool
+    size_bytes: int
+    last_modified: datetime | None = None
+
+
+class BackupObjectOut(BaseModel):
+    key: str
+    versions: list[BackupObjectVersionOut] = []
+    latest_size_bytes: int | None = None
+    latest_modified: datetime | None = None
+    run_id: str | None = None
+    status: str | None = None
+    trigger: str | None = None
+    run_started_at: str | None = None
+    error: str | None = None
+
+
+class BackupListOut(BaseModel):
+    config: BackupConfigOut
+    objects: list[BackupObjectOut]
+
+
+@router.get("/backups/config", response_model=BackupConfigOut)
+async def get_backup_config(_admin=Depends(require_admin)):
+    from .backup import get_config, get_session_factory
+
+    async with get_session_factory()() as db:
+        return await get_config(db)
+
+
+@router.put("/backups/config", response_model=BackupConfigOut)
+async def set_backup_config(body: BackupConfigIn, _admin=Depends(require_admin)):
+    from .backup import get_session_factory, update_config
+
+    async with get_session_factory()() as db:
+        try:
+            return await update_config(
+                db, enabled=body.enabled, interval_hours=body.interval_hours,
+                bucket=body.bucket, region=body.region,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.post("/backups/run", response_model=BackupRunOut)
+async def run_backup_now(background: BackgroundTasks, _admin=Depends(require_admin)):
+    """Start a manual backup in the background; poll GET /backups for result."""
+    from .backup import run_backup_standalone
+
+    background.add_task(run_backup_standalone, "manual")
+    return BackupRunOut(id="pending", status="running", backup_key=None)
+
+
+@router.get("/backups", response_model=BackupListOut)
+async def list_backups(_admin=Depends(require_admin)):
+    from .backup import get_session_factory, list_backups
+
+    async with get_session_factory()() as db:
+        return await list_backups(db)
+
+
+@router.delete("/backups")
+async def delete_backup(
+    key: str = Query(..., min_length=1, max_length=500),
+    version_id: str | None = Query(default=None, max_length=64),
+    _admin=Depends(require_admin),
+):
+    from .backup import delete_backup as _delete_backup
+    from .backup import get_session_factory
+
+    async with get_session_factory()() as db:
+        try:
+            return await _delete_backup(db, key, version_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/backups/download")
+async def download_backup(
+    key: str = Query(..., min_length=1, max_length=500),
+    version_id: str | None = Query(default=None, max_length=64),
+    _admin=Depends(require_admin),
+):
+    """Return a short-lived presigned S3 GET URL for the backup object."""
+    from .backup import download_url, get_session_factory
+
+    async with get_session_factory()() as db:
+        try:
+            url = await download_url(db, key, version_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"url": url}

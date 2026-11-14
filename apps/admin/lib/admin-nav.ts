@@ -9,7 +9,8 @@ export type NavIconName =
   | "billing"
   | "jobs"
   | "special"
-  | "search";
+  | "search"
+  | "backups";
 
 export type NavItem = {
   href: string;
@@ -35,6 +36,7 @@ export const SECTIONS: { title: string; items: NavItem[] }[] = [
       { href: "/billing", label: "Billing", desc: "Wallets & ledger", icon: "billing" },
       { href: "/financials", label: "Financials", desc: "Monthly per-tenant finance", icon: "billing" },
       { href: "/budget-alarms", label: "Budget alarms", desc: "Low balances & debt", icon: "billing" },
+      { href: "/backups", label: "Backups", desc: "Schedule & restore", icon: "backups" },
       { href: "/requests", label: "Requests", desc: "Top-ups & plan requests", icon: "billing" },
       { href: "/plans", label: "Plans", desc: "Plans & entitlements", icon: "billing" },
       { href: "/pricing", label: "Pricing", desc: "Tokens & voice rates", icon: "billing" },
