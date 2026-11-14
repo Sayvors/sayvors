@@ -437,6 +437,25 @@ async def send_welcome_email(email: str, name: str) -> str:
     )
 
 
+def _resolve_cta(url: str) -> str:
+    """Turn a relative path into an absolute http(s) URL using FRONTEND_URL.
+
+    Callers (e.g. billing decisions) routinely pass a site path like
+    "/dashboard/billing/topup" as the CTA. Resend emails need an absolute URL,
+    so resolve here rather than rejecting the call — a relative CTA must
+    never silently kill a notification.
+    """
+    from urllib.parse import urlparse as _urlparse
+
+    parsed = _urlparse(url)
+    if parsed.scheme in ("http", "https") and parsed.netloc:
+        return url
+    base = (settings.FRONTEND_URL or "").rstrip("/")
+    if not base:
+        return url
+    return base + (url if url.startswith("/") else f"/{url}")
+
+
 async def send_notification_email(email: str, subject: str, message: str, cta_url: str | None = None) -> str:
     """Send a generic internal notification email to a user.
 
@@ -444,7 +463,8 @@ async def send_notification_email(email: str, subject: str, message: str, cta_ur
     transactional communications. When provided, a CTA link is included in the HTML.
 
     `message` is plain text and is HTML-escaped before being embedded; callers
-    must not rely on HTML markup surviving. `cta_url` must be an http(s) URL.
+    must not rely on HTML markup surviving. `cta_url` may be an absolute
+    http(s) URL or a site-relative path (resolved against FRONTEND_URL).
     """
 
     import html as _html
@@ -454,10 +474,11 @@ async def send_notification_email(email: str, subject: str, message: str, cta_ur
     safe_message = _html.escape(message or "")
     cta = ""
     if cta_url:
-        parsed = _urlparse(cta_url or "")
+        absolute = _resolve_cta(cta_url)
+        parsed = _urlparse(absolute)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
-            raise ValueError("cta_url must be an absolute http(s) URL.")
-        safe_cta = _html.escape(cta_url, quote=True)
+            raise ValueError("cta_url must resolve to an absolute http(s) URL.")
+        safe_cta = _html.escape(absolute, quote=True)
         cta = f"<p><a href='{safe_cta}'>View in Sayvors</a></p>"
     body = (
         f"<p dir=\"ltr\" style=\"margin:0 0 16px;font-size:15px;line-height:24px;color:#4A4266;\">{safe_message}</p>"
