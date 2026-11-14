@@ -220,3 +220,20 @@ export async function saveTenantFeatures(
     { method: "PUT", body: JSON.stringify({ features }) },
   );
 }
+
+/**
+ * Direct plan change — switches the tenant's subscription to any active plan
+ * without a tenant request. Applies immediately and permanently.
+ */
+export async function changeTenantPlan(
+  tenantId: string,
+  planSlug: string,
+): Promise<TenantSubscriptionRow> {
+  return adminFetch<TenantSubscriptionRow>(
+    `/api/v1/admin/tenants/${encodeURIComponent(tenantId)}/grant-plan`,
+    {
+      method: "POST",
+      body: JSON.stringify({ plan_slug: planSlug }),
+    },
+  );
+}
