@@ -682,3 +682,25 @@ async def test_sync_endpoint_admin_only(client):
     it. The real worker runs its own loop (posts/worker.py)."""
     r = client.post("/api/v1/posts/sync", headers={"host": "localhost"})
     assert r.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_post_stats_counts_by_status(monkeypatch, db, user_id):
+    """The glance-card counter is fed by /stats, not the 200-row list cap."""
+    await _connection(db, user_id)
+    _patch_publish(monkeypatch, result={"id": "pub-1"})
+    created = await posts.create_post(db, user_id, _draft())
+    future = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+    scheduled = await posts.create_post(
+        db, user_id, _draft(action="schedule", scheduled_on=future)
+    )
+    await posts.update_post(db, user_id, created["post"]["id"],
+                            {"status": "published"})
+
+    stats = await posts.post_stats(db, user_id)
+    assert stats["total"] == 2
+    assert stats["published"] == 1
+    assert stats["scheduled"] == 1
+    assert stats["draft"] == 0
+    assert stats["failed"] == 0
+    assert stats["archived"] == 0

@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useApproveReply, useEditReply } from "@/lib/mutation-hooks";
 import { queryKeys } from "@/lib/query-keys";
@@ -135,6 +136,23 @@ function ReviewsInner() {
   const [tab, setTab] = useState<ReviewTab>("all");
   const [initialTabSet, setInitialTabSet] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const moreBtnRef = useRef<HTMLButtonElement | null>(null);
+  // Screen coords for the portal menu. The tab row clips (overflow-x-auto),
+  // so the menu must render outside it (document.body) to be visible.
+  const [morePos, setMorePos] = useState<{ top: number; left: number } | null>(null);
+
+  // Close the More menu when the page scrolls/resizes so it never floats
+  // detached from its trigger.
+  useEffect(() => {
+    if (!moreOpen) return;
+    const close = () => setMoreOpen(false);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [moreOpen]);
 
   // Read tab from URL after hydration to avoid SSR mismatch
   useEffect(() => {
@@ -1015,9 +1033,19 @@ function ReviewsInner() {
                         ))}
                         <div className="relative shrink-0">
                           <button
+                            ref={moreBtnRef}
                             aria-haspopup="menu"
                             aria-expanded={moreOpen}
-                            onClick={() => setMoreOpen((o) => !o)}
+                            onClick={() => {
+                              const rect = moreBtnRef.current?.getBoundingClientRect();
+                              if (rect) {
+                                setMorePos({
+                                  top: rect.bottom + 6,
+                                  left: Math.min(rect.left, window.innerWidth - 192),
+                                });
+                              }
+                              setMoreOpen((o) => !o);
+                            }}
                             className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-[12px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
                               MORE_TABS.includes(tab)
                                 ? "border-deep-violet/30 bg-deep-violet/[0.06] text-deep-violet"
@@ -1029,10 +1057,14 @@ function ReviewsInner() {
                               <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
                             </svg>
                           </button>
-                          {moreOpen && (
+                          {moreOpen && morePos && createPortal(
                             <>
-                              <div className="fixed inset-0 z-10" onClick={() => setMoreOpen(false)} />
-                              <div role="menu" className="absolute left-0 top-full z-20 mt-1 w-44 rounded-xl border border-ink/[0.08] bg-white py-1 shadow-lg dark:border-fog/[0.1] dark:bg-ink">
+                              <div className="fixed inset-0 z-40" onClick={() => setMoreOpen(false)} />
+                              <div
+                                role="menu"
+                                className="fixed z-50 w-44 rounded-xl border border-ink/[0.08] bg-white py-1 shadow-lg dark:border-fog/[0.1] dark:bg-ink"
+                                style={{ top: morePos.top, left: morePos.left }}
+                              >
                                 {MORE_TABS.map((tabKey) => (
                                   <button
                                     key={tabKey}
@@ -1047,7 +1079,8 @@ function ReviewsInner() {
                                   </button>
                                 ))}
                               </div>
-                            </>
+                            </>,
+                            document.body,
                           )}
                         </div>
                       </div>

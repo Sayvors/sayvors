@@ -541,6 +541,109 @@ export async function fetchConfigHealth(): Promise<ConfigHealth> {
   return adminFetch<ConfigHealth>("/api/v1/admin/config-health");
 }
 
+export interface BudgetAlarm {
+  tenant_id: string;
+  email: string | null;
+  plan_slug: string;
+  plan_name: string;
+  balance_cents: number;
+  held_cents: number;
+  total_cents: number;
+  status: "low" | "empty" | "debt";
+}
+
+export async function fetchBudgetAlarms(
+  status: "low" | "empty" | "debt" | "all" = "all",
+  limit = 50,
+  offset = 0,
+): Promise<{ items: BudgetAlarm[]; total: number }> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (status !== "all") params.set("status", status);
+  return adminFetch<{ items: BudgetAlarm[]; total: number }>(
+    `/api/v1/admin/billing/budget-alarms?${params.toString()}`,
+  );
+}
+
+export interface FinanceRow {
+  tenant_id: string;
+  email: string | null;
+  month: string;
+  plan_slug: string | null;
+  plan_name: string | null;
+  plan_price_cents: number;
+  extra_cost_cents: number;
+  billed_cents: number;
+  credits_used_cents: number;
+  actual_cost_micro: number;
+  collected_cents: number;
+  status: "unpaid" | "paid" | "partial";
+  adjustments: Record<string, unknown>;
+  note: string | null;
+}
+
+export interface FinanceResponse {
+  month: string;
+  items: FinanceRow[];
+  total: number;
+  totals: {
+    expected_revenue_cents: number;
+    collected_cents: number;
+    infra_cost_micro: number;
+    margin_micro: number;
+    unpaid_count: number;
+  };
+}
+
+export async function fetchFinancials(
+  month: string,
+  limit = 50,
+  offset = 0,
+): Promise<FinanceResponse> {
+  const params = new URLSearchParams({ month, limit: String(limit), offset: String(offset) });
+  return adminFetch<FinanceResponse>(`/api/v1/admin/financials?${params.toString()}`);
+}
+
+export async function patchFinance(
+  tenantId: string,
+  month: string,
+  body: { status?: string; collected_cents?: number; adjustments?: Record<string, unknown>; note?: string },
+): Promise<FinanceRow> {
+  return adminFetch<FinanceRow>(
+    `/api/v1/admin/financials/${encodeURIComponent(tenantId)}?month=${encodeURIComponent(month)}`,
+    { method: "PATCH", body: JSON.stringify(body) },
+  );
+}
+
+export interface AdminNotificationItem {
+  id: string;
+  kind: string;
+  severity: string;
+  title: string;
+  body: string | null;
+  href: string | null;
+  read: boolean;
+  created_at: string | null;
+}
+
+export async function fetchAdminNotifications(
+  unread = false,
+  limit = 50,
+): Promise<{ items: AdminNotificationItem[]; unread_count: number }> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (unread) params.set("unread", "true");
+  return adminFetch<{ items: AdminNotificationItem[]; unread_count: number }>(
+    `/api/v1/admin/notifications?${params.toString()}`,
+  );
+}
+
+export async function markAdminNotificationRead(id: string): Promise<{ marked: number }> {
+  return adminFetch<{ marked: number }>(`/api/v1/admin/notifications/${id}/read`, { method: "POST" });
+}
+
+export async function markAllAdminNotificationsRead(): Promise<{ marked: number }> {
+  return adminFetch<{ marked: number }>("/api/v1/admin/notifications/read-all", { method: "POST" });
+}
+
 export interface PlatformStats {
   platform: string;
   label: string;
@@ -630,4 +733,79 @@ export interface AdminHealth {
   probe: boolean;
   services: HealthService[];
   recent_failures: HealthFailure[];
+}
+
+// ── Database backups ────────────────────────────────────────────────────
+
+export interface BackupConfig {
+  enabled: boolean;
+  interval_hours: number;
+  bucket: string;
+  region: string;
+  last_run_at: string | null;
+  next_run_at: string | null;
+}
+
+export interface BackupObjectVersion {
+  version_id: string;
+  is_latest: boolean;
+  size_bytes: number;
+  last_modified: string | null;
+}
+
+export interface BackupObject {
+  key: string;
+  versions: BackupObjectVersion[];
+  latest_size_bytes: number | null;
+  latest_modified: string | null;
+  run_id: string | null;
+  status: string | null;
+  trigger: string | null;
+  run_started_at: string | null;
+  error: string | null;
+}
+
+export interface BackupList {
+  config: BackupConfig;
+  objects: BackupObject[];
+}
+
+export async function fetchBackupConfig(): Promise<BackupConfig> {
+  return adminFetch<BackupConfig>("/api/v1/admin/backups/config");
+}
+
+export async function saveBackupConfig(input: {
+  enabled: boolean;
+  interval_hours: number;
+  bucket?: string;
+  region?: string;
+}): Promise<BackupConfig> {
+  return adminFetch<BackupConfig>("/api/v1/admin/backups/config", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function triggerBackup(): Promise<{ id: string; status: string; backup_key: string | null }> {
+  return adminFetch("/api/v1/admin/backups/run", { method: "POST" });
+}
+
+export async function fetchBackups(): Promise<BackupList> {
+  return adminFetch<BackupList>("/api/v1/admin/backups");
+}
+
+export async function deleteBackup(
+  key: string,
+  versionId?: string,
+): Promise<{ key: string; deleted_versions: number }> {
+  const params = new URLSearchParams({ key });
+  if (versionId) params.set("version_id", versionId);
+  return adminFetch(`/api/v1/admin/backups?${params.toString()}`, { method: "DELETE" });
+}
+
+export async function downloadBackup(key: string, versionId?: string): Promise<string> {
+  const params = new URLSearchParams({ key });
+  if (versionId) params.set("version_id", versionId);
+  const data = await adminFetch<{ url: string }>(`/api/v1/admin/backups/download?${params.toString()}`);
+  return data.url;
 }

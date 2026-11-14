@@ -4030,7 +4030,7 @@ const en = {
       premiumBody: "{feature} isn't included in your current plan.",
       viewPremiumPlans: "View plans",
       footer:
-        "Prices in USD. The free trial includes $10 of AI credit. Enterprise is custom — contact us.",
+        "Prices in USD. Every plan includes AI credit equal to its monthly price.",
       planNames: {
         trial: "Free Trial",
         free: "Free",

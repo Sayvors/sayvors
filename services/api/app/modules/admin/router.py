@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timezone
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
@@ -338,6 +338,13 @@ async def admin_tenants(
 
 class BillingRequestDecision(BaseModel):
     note: str | None = Field(default=None, max_length=500)
+
+
+class FinancePatchIn(BaseModel):
+    status: str | None = Field(default=None, pattern="^(unpaid|paid|partial)$")
+    collected_cents: int | None = Field(default=None, ge=0, le=100_000_000)
+    adjustments: dict | None = None
+    note: str | None = Field(default=None, max_length=1000)
 
 
 @router.get("/requests")
@@ -784,6 +791,21 @@ async def admin_billing_overview(
     from .service import get_billing_overview
 
     return await get_billing_overview(db)
+
+
+@router.get("/billing/budget-alarms")
+async def admin_budget_alarms(
+    status: str | None = Query(None, pattern="^(low|empty|debt)$"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Tenants with low/empty/debt AI-credit balances (worst first)."""
+    from .service import list_budget_alarms
+
+    return await list_budget_alarms(db, status=status, limit=limit, offset=offset)
 
 
 @router.get("/tenants/{user_id}/billing")
@@ -2252,6 +2274,133 @@ async def list_plan_features(_admin=Depends(require_admin)):
     return feature_catalog_as_dicts()
 
 
+@router.get("/financials")
+async def admin_financials(
+    month: str = Query(..., pattern="^\\d{4}-\\d{2}$"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Per-tenant monthly finance rows + rollups (revenue, collected, infra)."""
+    from .service import list_financials
+
+    return await list_financials(db, month, limit=limit, offset=offset)
+
+
+@router.patch("/financials/{tenant_id}")
+async def admin_patch_finance(
+    tenant_id: str,
+    month: str = Query(..., pattern="^\\d{4}-\\d{2}$"),
+    body: FinancePatchIn | None = None,
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    from .service import patch_finance
+
+    body = body or FinancePatchIn()
+    try:
+        return await patch_finance(
+            db, tenant_id, month,
+            status=body.status,
+            collected_cents=body.collected_cents,
+            adjustments=body.adjustments,
+            note=body.note,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/financials/recompute")
+async def admin_recompute_financials(
+    month: str = Query(..., pattern="^\\d{4}-\\d{2}$"),
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upsert month rows (keep admin edits) and return how many tenants were
+    included."""
+    from .service import ensure_finance_rows
+
+    rows = await ensure_finance_rows(db, month)
+    return {"month": month, "tenants": rows}
+
+
+@router.get("/notifications")
+async def admin_notifications(
+    unread: bool = Query(False),
+    limit: int = Query(50, ge=1, le=200),
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    from .models import PlatformOperator
+    from .service import list_admin_notifications
+
+    op = (
+        await db.execute(
+            _select(PlatformOperator).where(PlatformOperator.username == _admin.get("username"))
+        )
+    ).scalar_one_or_none()
+    return await list_admin_notifications(db, op.id if op else "", unread_only=unread, limit=limit)
+
+
+@router.post("/notifications/read-all")
+async def admin_notifications_read_all(
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    from .models import PlatformOperator
+    from .service import mark_admin_notifications_read
+
+    op = (
+        await db.execute(
+            _select(PlatformOperator).where(PlatformOperator.username == _admin.get("username"))
+        )
+    ).scalar_one_or_none()
+    marked = await mark_admin_notifications_read(db, op.id if op else "")
+    return {"marked": marked}
+
+
+@router.post("/notifications/{notification_id}/read")
+async def admin_notification_read(
+    notification_id: str,
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    from .models import PlatformOperator
+    from .service import mark_admin_notifications_read
+
+    op = (
+        await db.execute(
+            _select(PlatformOperator).where(PlatformOperator.username == _admin.get("username"))
+        )
+    ).scalar_one_or_none()
+    marked = await mark_admin_notifications_read(db, op.id if op else "", notification_ids=[notification_id])
+    if marked == 0:
+        raise HTTPException(status_code=404, detail="Notification not found or already read")
+    return {"marked": marked}
+
+
+@router.get("/search")
+async def admin_global_search(
+    q: str = Query(..., min_length=1, max_length=200),
+    limit: int = Query(8, ge=1, le=25),
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Metadata-only global search (tenants, operators, models, plans, jobs,
+    audit log). Read-only; never searches bodies or secrets."""
+    from .service import admin_search
+
+    return await admin_search(db, q, limit=limit)
+
+
 @router.get("/config-health")
 async def admin_config_health(_admin=Depends(require_admin)):
     """Ops-facing configuration health: which API keys/env flags are present.
@@ -2322,6 +2471,25 @@ async def admin_config_health(_admin=Depends(require_admin)):
             })
         except Exception:
             db_checks.append({"key": "llm_provider_configs (rows)", "ok": False, "hint": "query failed"})
+
+        try:
+            dead_7d = (
+                await db.execute(
+                    _select(func.count())
+                    .select_from(_text("email_outbox"))
+                    .where(
+                        _text("status = 'dead'"),
+                        _text("created_at >= now() - interval '7 days'"),
+                    )
+                )
+            ).scalar() or 0
+            db_checks.append({
+                "key": "email_outbox dead (7d)",
+                "ok": int(dead_7d) == 0,
+                "hint": f"{int(dead_7d)} permanently failed row(s) in the last 7 days",
+            })
+        except Exception:
+            db_checks.append({"key": "email_outbox dead (7d)", "ok": False, "hint": "query failed"})
 
     return {
         "checked_at": datetime.now(timezone.utc).isoformat(),
@@ -2629,3 +2797,127 @@ async def get_tenant_entitlements(tenant_id: str, _admin=Depends(require_admin))
             "granted_by": ent.granted_by,
             "granted_until": ent.granted_until.isoformat() if ent.granted_until else None,
         }
+
+
+# ---------------------------------------------------------------------------
+# Database backups (config, run, list, delete, download)
+# ---------------------------------------------------------------------------
+
+class BackupConfigIn(BaseModel):
+    enabled: bool = False
+    interval_hours: int = Field(default=24, ge=1, le=24 * 30)
+    bucket: str | None = Field(default=None, max_length=255)
+    region: str | None = Field(default=None, max_length=32)
+
+
+class BackupConfigOut(BaseModel):
+    enabled: bool
+    interval_hours: int
+    bucket: str
+    region: str
+    last_run_at: str | None = None
+    next_run_at: str | None = None
+
+
+class BackupRunOut(BaseModel):
+    id: str
+    status: str
+    backup_key: str | None = None
+    size_bytes: int | None = None
+    error: str | None = None
+
+
+class BackupObjectVersionOut(BaseModel):
+    version_id: str
+    is_latest: bool
+    size_bytes: int
+    last_modified: datetime | None = None
+
+
+class BackupObjectOut(BaseModel):
+    key: str
+    versions: list[BackupObjectVersionOut] = []
+    latest_size_bytes: int | None = None
+    latest_modified: datetime | None = None
+    run_id: str | None = None
+    status: str | None = None
+    trigger: str | None = None
+    run_started_at: str | None = None
+    error: str | None = None
+
+
+class BackupListOut(BaseModel):
+    config: BackupConfigOut
+    objects: list[BackupObjectOut]
+
+
+@router.get("/backups/config", response_model=BackupConfigOut)
+async def get_backup_config(_admin=Depends(require_admin)):
+    from .backup import get_config, get_session_factory
+
+    async with get_session_factory()() as db:
+        return await get_config(db)
+
+
+@router.put("/backups/config", response_model=BackupConfigOut)
+async def set_backup_config(body: BackupConfigIn, _admin=Depends(require_admin)):
+    from .backup import get_session_factory, update_config
+
+    async with get_session_factory()() as db:
+        try:
+            return await update_config(
+                db, enabled=body.enabled, interval_hours=body.interval_hours,
+                bucket=body.bucket, region=body.region,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.post("/backups/run", response_model=BackupRunOut)
+async def run_backup_now(background: BackgroundTasks, _admin=Depends(require_admin)):
+    """Start a manual backup in the background; poll GET /backups for result."""
+    from .backup import run_backup_standalone
+
+    background.add_task(run_backup_standalone, "manual")
+    return BackupRunOut(id="pending", status="running", backup_key=None)
+
+
+@router.get("/backups", response_model=BackupListOut)
+async def list_backups(_admin=Depends(require_admin)):
+    from .backup import get_session_factory, list_backups
+
+    async with get_session_factory()() as db:
+        return await list_backups(db)
+
+
+@router.delete("/backups")
+async def delete_backup(
+    key: str = Query(..., min_length=1, max_length=500),
+    version_id: str | None = Query(default=None, max_length=64),
+    _admin=Depends(require_admin),
+):
+    from .backup import delete_backup as _delete_backup
+    from .backup import get_session_factory
+
+    async with get_session_factory()() as db:
+        try:
+            return await _delete_backup(db, key, version_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/backups/download")
+async def download_backup(
+    key: str = Query(..., min_length=1, max_length=500),
+    version_id: str | None = Query(default=None, max_length=64),
+    _admin=Depends(require_admin),
+):
+    """Return a short-lived presigned S3 GET URL for the backup object."""
+    from .backup import download_url, get_session_factory
+
+    async with get_session_factory()() as db:
+        try:
+            url = await download_url(db, key, version_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"url": url}

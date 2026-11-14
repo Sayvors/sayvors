@@ -138,3 +138,37 @@ class BusinessProfileUpdateRequest(BaseModel):
     products_services: str | None = Field(None, max_length=2000)
     not_offered_and_policies: str | None = Field(None, max_length=2000)
     audience_languages: str | None = Field(None, max_length=500)
+
+
+class BusinessDetailsGoogle(BaseModel):
+    name: str = ""
+    address: str = ""
+    website: str = ""
+    categories: dict = {}
+    hours: dict = {}
+    services: list = []
+    special_hours: list = []
+
+
+class BusinessDetailsUser(BaseModel):
+    name: str | None = None
+    categories: dict = {}
+    services: list = []
+    hours: dict = {}
+    special_hours: list = []
+    source: str = "auto"
+    updated_at: str | None = None
+
+
+class BusinessDetailsOut(BaseModel):
+    listing_id: str
+    google: BusinessDetailsGoogle
+    user: BusinessDetailsUser | None = None
+
+
+class BusinessDetailsIn(BaseModel):
+    name: str | None = Field(None, max_length=255)
+    categories: dict | None = None
+    services: list[str] | None = None
+    hours: dict | None = None
+    special_hours: list[dict] | None = None

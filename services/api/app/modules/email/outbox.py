@@ -275,6 +275,23 @@ async def _mark_failure(row_id: str, error: Exception) -> None:
             "Email %s %s (%s attempts): %s",
             status, row_id, row.attempts, error,
         )
+        if status == "dead":
+            # Tell the admin console (bell) — best effort, never fail the worker.
+            try:
+                from ..admin.service import create_admin_notification
+
+                async with async_session() as n_db:
+                    await create_admin_notification(
+                        n_db,
+                        kind="error",
+                        severity="crit",
+                        title="Email permanently failed",
+                        body=f"A transactional email to {row.to_email[:120]} could not be delivered "
+                        f"({str(error)[:120]}). Check the outbox.",
+                        href="/email",
+                    )
+            except Exception:  # noqa: BLE001
+                logger.exception("Admin dead-email notification failed")
 
 
 async def process_once(limit: int | None = None) -> int:

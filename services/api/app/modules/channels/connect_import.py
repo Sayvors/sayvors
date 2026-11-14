@@ -172,6 +172,24 @@ async def latest_active_session(
     return result.scalar_one_or_none()
 
 
+async def latest_session_overall(
+    db: AsyncSession, user_id: str
+) -> ConnectImportSession | None:
+    """The most recent session regardless of status.
+
+    Used only to surface a just-finished import to the UI (the launcher
+    gates it by freshness and dismissal). Creating a session must keep using
+    ``latest_active_session`` so reconnect resets the *running* work.
+    """
+    result = await db.execute(
+        select(ConnectImportSession)
+        .where(ConnectImportSession.user_id == user_id)
+        .order_by(ConnectImportSession.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def session_items(
     db: AsyncSession, session_id: str
 ) -> list[ConnectImportItem]:

@@ -121,12 +121,21 @@ class GeminiProvider(LLMProvider):
             raise ProviderError("gemini", str(e), status)
 
     async def stream(self, req: LLMRequest) -> AsyncIterator[str]:
+        # Capture Gemini's final usage_metadata chunk for exact token metering.
+        self._last_stream_usage = None
         try:
             async for chunk in await self._client.aio.models.generate_content_stream(
                 model=req.model,
                 contents=self._build_contents(req),
                 config=self._build_config(req),
             ):
+                usage_meta = getattr(chunk, "usage_metadata", None)
+                if usage_meta is not None:
+                    self._last_stream_usage = LLMUsage(
+                        prompt_tokens=getattr(usage_meta, "prompt_token_count", 0) or 0,
+                        completion_tokens=getattr(usage_meta, "candidates_token_count", 0) or 0,
+                        total_tokens=getattr(usage_meta, "total_token_count", 0) or 0,
+                    )
                 if chunk.text:
                     yield chunk.text
         except Exception as e:

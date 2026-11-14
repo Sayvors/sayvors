@@ -128,24 +128,26 @@ export default function GlanceStrip() {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      try {
-        const data = await apiFetch("/api/v1/posts");
-        if (cancelled) return;
-        const rows = (Array.isArray(data) ? data : []) as Record<string, unknown>[];
-        let published = 0, scheduled = 0, draft = 0;
-        for (const p of rows) {
-          const s = String(p.status ?? "");
-          if (s === "published") published++;
-          else if (s === "scheduled") scheduled++;
-          else if (s === "draft") draft++;
-        }
-        setPostStats({ total: rows.length, published, scheduled, draft });
-      } catch {
-        /* leave empty */
-      }
+    let timer: ReturnType<typeof setInterval> | null = null;
 
-      // Leads by stage for the glance card (same limit as the board).
+    // The posts counter uses the /stats endpoint (list caps at 200 rows).
+    // Leads are by stage from the board list. Both re-fetch while the tab is
+    // visible so publishing/scheduling/replying updates the cards without a
+    // full reload; hidden tabs are skipped to avoid background polling.
+    const loadStats = async () => {
+      try {
+        const data = (await apiFetch("/api/v1/posts/stats")) as {
+          total: number; published: number; scheduled: number; draft: number;
+        } | null;
+        if (!cancelled && data) {
+          setPostStats({ total: data.total, published: data.published, scheduled: data.scheduled, draft: data.draft });
+        }
+      } catch {
+        /* keep last known values */
+      }
+    };
+
+    const loadLeads = async () => {
       try {
         const { leads } = await fetchLeads({ limit: 200 });
         if (cancelled) return;
@@ -157,10 +159,30 @@ export default function GlanceStrip() {
         }
         setLeadStats(stats);
       } catch {
-        /* leave empty */
+        /* keep last known values */
       }
-    })();
-    return () => { cancelled = true; };
+    };
+
+    const tick = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      void loadStats();
+      void loadLeads();
+    };
+
+    void tick();
+    timer = setInterval(tick, 45_000);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        void loadStats();
+        void loadLeads();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, []);
 
   const totalMsgs = (platformMsgs["whatsapp"] ?? 0) + (platformMsgs["instagram"] ?? 0) + (platformMsgs["facebook"] ?? 0);

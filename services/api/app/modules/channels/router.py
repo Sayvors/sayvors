@@ -545,9 +545,14 @@ async def latest_google_import_session(
     ctx: TenantContext = Depends(require_perm("channels.view")),
     db: AsyncSession = Depends(get_db),
 ):
-    from .connect_import import latest_active_session
+    from .connect_import import latest_active_session, latest_session_overall
 
     session = await latest_active_session(db, tenant_id_of(ctx.user))
+    if session is None:
+        # Nothing active: surface the most recent session (even a finished
+        # one) so a just-completed import can still show its summary. The
+        # launcher gates it by freshness + dismissal.
+        session = await latest_session_overall(db, tenant_id_of(ctx.user))
     if session is None:
         return ConnectImportLatestOut(session=None)
     return ConnectImportLatestOut(
@@ -4145,6 +4150,8 @@ async def test_review_pipeline(
     the reviewer-facing WhatsApp handoff link can be inspected before any
     external side effect.
     """
+    if not settings.TESTING and not await rate_limit(f"testgen:{channel_id}", 100, 60):
+        raise HTTPException(status_code=429, detail="Too many requests")
     channel = await db.get(Channel, channel_id)
     if channel is None or channel.user_id != ctx.tenant_id:
         raise HTTPException(status_code=404, detail="Channel not found.")

@@ -88,6 +88,49 @@ const SCOPES = [
 
 const ACTIVE_STATUSES = ["queued", "fetching", "awaiting_scope", "generating", "ready", "publishing"];
 
+// Guided stage strip: the user sees the whole journey one step at a time,
+// even when a step has zero items (fresh account / no reviews yet).
+const STAGES = [
+  { id: "connected", label: "Connected" },
+  { id: "fetching", label: "Fetching history" },
+  { id: "drafting", label: "Drafting replies" },
+  { id: "publishing", label: "Publishing" },
+] as const;
+
+function stageIndexFor(status: string): number {
+  if (status === "publishing" || status === "completed") return 3;
+  if (status === "ready") return 2;
+  if (status === "generating" || status === "awaiting_scope") return 2;
+  if (status === "fetching" || status === "queued") return 1;
+  return 0;
+}
+
+function StageSteps({ status }: { status: string }) {
+  const current = stageIndexFor(status);
+  const done = status === "completed";
+  return (
+    <ol className="mt-4 flex items-center gap-1 overflow-x-auto">
+      {STAGES.map((stage, i) => {
+        const active = i === current && !done;
+        const reached = done || i <= current;
+        return (
+          <li key={stage.id} className="flex min-w-0 items-center gap-1">
+            {i > 0 && <span className="h-px w-4 shrink-0 bg-ink/15" aria-hidden />}
+            <span
+              className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10.5px] font-bold uppercase tracking-wide ${
+                reached ? "bg-emerald-100 text-emerald-700" : "bg-ink/[0.06] text-ink/45"
+              } ${active ? "ring-2 ring-emerald-400/50" : ""}`}
+            >
+              <span aria-hidden>{done || i < current ? "✓" : i === current ? "●" : "○"}</span>
+              <span className="whitespace-nowrap">{stage.label}</span>
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 function itemMatches(item: ImportItem, filter: Filter): boolean {
   if (filter === "all") return true;
   if (filter === "needs_reply") {
@@ -380,6 +423,7 @@ export default function ConnectImportModal({
               </div>
             </div>
           )}
+          {session && session.status !== "failed" && <StageSteps status={session.status} />}
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-7">
@@ -443,7 +487,15 @@ export default function ConnectImportModal({
 
           {session?.status === "completed" && !session.summary ? (
             <div className="rounded-md border border-ink/[0.08] bg-ink/[0.025] p-5 text-[13px] text-ink/60">
-              The import completed. Reviews and drafts are available in Reviews and Outbox.
+              <p className="font-bold text-ink">Your Google import is complete</p>
+              <p className="mt-1">
+                {session.progress.fetched_reviews || 0} reviews fetched ·{" "}
+                {session.progress.drafts_ready || 0} drafts ready for approval ·{" "}
+                {session.progress.drafts_failed || 0} failed.
+              </p>
+              <p className="mt-1 text-[12px] text-ink/45">
+                New reviews keep flowing in automatically. Drafts appear in Reviews and Outbox.
+              </p>
             </div>
           ) : null}
 

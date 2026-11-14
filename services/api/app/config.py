@@ -251,7 +251,10 @@ class Settings(BaseSettings):
     # ── Google Business Profile (Reviews) ────────────────
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
-    GOOGLE_REVIEWS_POLL_INTERVAL_SECONDS: int = 60  # 1 min
+    GOOGLE_REVIEWS_POLL_INTERVAL_SECONDS: int = 60  # 1 min — product wants near-real-time replies
+    # Spread per-channel polls so N channels never all hit Google in the same
+    # second: each channel's effective interval = base + (0..jitter).
+    GOOGLE_REVIEWS_POLL_JITTER_SECONDS: int = 120
     # Q&A changes much less often than reviews. Poll independently so 1M
     # connected numbers do not make a Q&A request every review cycle.
     GOOGLE_QA_POLL_INTERVAL_SECONDS: int = 3600  # 60 min

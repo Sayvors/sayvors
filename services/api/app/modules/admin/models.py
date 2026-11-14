@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy import text as sa_text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -73,6 +73,34 @@ class PurgedAccount(Base):
     )
 
 
+class AdminNotification(Base):
+    """In-app notification for platform operators.
+
+    `operator_id` NULL = broadcast (visible to every admin). Kinds:
+    request (billing/plan), error (delivery/system), finance, system.
+    """
+
+    __tablename__ = "admin_notifications"
+    __table_args__ = (
+        Index("ix_admin_notifications_operator_read_created", "operator_id", "read_at", "created_at"),
+        Index("ix_admin_notifications_created", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    operator_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("platform_operators.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(24), default="system", index=True)
+    severity: Mapped[str] = mapped_column(String(12), default="info")
+    title: Mapped[str] = mapped_column(String(200))
+    body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    href: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+
+
 class AdminAuditLog(Base):
     __tablename__ = "admin_audit_logs"
 
@@ -91,3 +119,53 @@ class AdminAuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
     )
+
+
+class AdminBackupConfig(Base):
+    """Single-row scheduler config for automatic database backups.
+
+    The worker loop and the admin API both read this row; ``next_run_at``
+    is the next scheduled execution time and is advanced when a backup is
+    claimed, so two replicas cannot both fire the same due backup.
+    """
+
+    __tablename__ = "admin_backup_config"
+
+    id: Mapped[str] = mapped_column(String(16), primary_key=True, default="default")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    interval_hours: Mapped[int] = mapped_column(Integer, default=24)
+    bucket: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    region: Mapped[str] = mapped_column(String(32), default="eu-north-1")
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class AdminBackupRun(Base):
+    """One backup attempt (manual or scheduled), durable audit of S3 state.
+
+    ``status`` is one of running | success | failed | deleted. A deleted run
+    means the S3 object was removed from the admin console; the row stays so
+    operators can see what was cleaned up and when.
+    """
+
+    __tablename__ = "admin_backup_runs"
+    __table_args__ = (
+        Index("ix_admin_backup_runs_started", "started_at"),
+        Index("ix_admin_backup_runs_key", "backup_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    backup_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="running")
+    trigger_type: Mapped[str] = mapped_column(String(16), default="manual")
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

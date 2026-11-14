@@ -493,6 +493,266 @@ async def get_health(db: AsyncSession, probe: bool = False) -> dict:
     }
 
 
+async def list_budget_alarms(
+    db: AsyncSession,
+    *,
+    status: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    """Tenants with a non-healthy AI-credit balance (low/empty/debt).
+
+    Same status classification as the billing overview so the two views
+    never disagree. Sorted worst-first (lowest balance). Bounded and
+    paginated.
+    """
+    from sqlalchemy import func, select as _select
+
+    from ..billing.models import BillingEvent, Plan, TenantSubscription
+    from ..users.models import User
+
+    held_sub = (
+        _select(
+            BillingEvent.tenant_id,
+            func.coalesce(func.sum(BillingEvent.reserved_cents), 0).label("held"),
+        )
+        .where(BillingEvent.kind == "ai_usage", BillingEvent.status == "pending")
+        .group_by(BillingEvent.tenant_id)
+        .subquery()
+    )
+    plan_sub = (
+        _select(
+            TenantSubscription.tenant_id,
+            Plan.slug.label("plan_slug"),
+            Plan.name.label("plan_name"),
+        )
+        .join(Plan, Plan.id == TenantSubscription.plan_id)
+        .subquery()
+    )
+    base = (
+        _select(
+            User.id,
+            User.email,
+            User.ai_credit_cents,
+            func.coalesce(held_sub.c.held, 0).label("held_cents"),
+            func.coalesce(plan_sub.c.plan_slug, "free-trial").label("plan_slug"),
+            func.coalesce(plan_sub.c.plan_name, "Free Trial").label("plan_name"),
+        )
+        .outerjoin(held_sub, held_sub.c.tenant_id == User.id)
+        .outerjoin(plan_sub, plan_sub.c.tenant_id == User.id)
+    )
+    rows = (await db.execute(base.order_by(User.ai_credit_cents.asc(), User.email))).all()
+
+    items = []
+    for uid, email, balance, held, plan_slug, plan_name in rows:
+        balance = int(balance or 0)
+        held = int(held or 0)
+        if balance < 0:
+            s = "debt"
+        elif balance == 0:
+            s = "empty"
+        elif balance < 100:
+            s = "low"
+        else:
+            continue
+        if status and s != status:
+            continue
+        items.append({
+            "tenant_id": uid,
+            "email": email,
+            "plan_slug": plan_slug,
+            "plan_name": plan_name,
+            "balance_cents": balance,
+            "held_cents": held,
+            "total_cents": balance + held,
+            "status": s,
+        })
+
+    total = len(items)
+    limit = max(1, min(int(limit), 200))
+    offset = max(0, int(offset))
+    return {"items": items[offset:offset + limit], "total": total}
+
+
+async def admin_search(
+    db: AsyncSession,
+    query: str,
+    *,
+    limit: int = 8,
+) -> dict:
+    """Metadata-only admin search across tenants, operators, models, plans,
+    jobs and audit log. Never searches message/review bodies or secrets."""
+    from sqlalchemy import cast as sa_cast, or_, select as _select
+    from sqlalchemy import String as sa_String
+
+    from ..billing.models import Plan
+    from ..jobs.models import Job
+    from ..llm.models import ModelConfig, ProviderConfig
+    from ..users.models import User
+    from .models import AdminAuditLog, PlatformOperator
+
+    q = query.strip()
+    if len(q) < 2:
+        return {"query": query, "groups": [], "total": 0}
+    needle = f"%{q}%"
+    limit = max(1, min(int(limit), 25))
+    groups: list[dict] = []
+
+    def add(group: str, label: str, items: list[dict]) -> None:
+        if items:
+            groups.append({"key": group, "label": label, "items": items})
+
+    # Tenants
+    tenants = (
+        await db.execute(
+            _select(User)
+            .where(or_(
+                User.email.ilike(needle),
+                User.first_name.ilike(needle),
+                User.last_name.ilike(needle),
+                User.id.ilike(needle),
+            ))
+            .order_by(User.created_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    add("tenants", "Tenants", [{
+        "id": u.id,
+        "group": "tenants",
+        "title": f"{u.first_name or ''} {u.last_name or ''}".strip() or u.email,
+        "subtitle": f"{u.email} · {u.id}",
+        "href": f"/tenants/{u.id}",
+        "meta": "tenant",
+    } for u in tenants])
+
+    # Operators
+    operators = (
+        await db.execute(
+            _select(PlatformOperator)
+            .where(or_(PlatformOperator.username.ilike(needle), PlatformOperator.role.ilike(needle)))
+            .order_by(PlatformOperator.username)
+            .limit(limit)
+        )
+    ).scalars().all()
+    add("operators", "Operators", [{
+        "id": op.id,
+        "group": "operators",
+        "title": op.username,
+        "subtitle": f"{op.role} · {'active' if op.is_active else 'disabled'}",
+        "href": "/operators",
+        "meta": op.role,
+    } for op in operators])
+
+    # Models (custom configs + provider rows)
+    models = (
+        await db.execute(
+            _select(ModelConfig)
+            .where(or_(
+                ModelConfig.model_id.ilike(needle),
+                ModelConfig.provider.ilike(needle),
+                ModelConfig.api_model.ilike(needle),
+                ModelConfig.display_name.ilike(needle),
+            ))
+            .order_by(ModelConfig.model_id)
+            .limit(limit)
+        )
+    ).scalars().all()
+    add("models", "Models", [{
+        "id": m.model_id,
+        "group": "models",
+        "title": m.model_id,
+        "subtitle": f"{m.provider or 'catalog'} · {m.api_model or ''}".strip(" ·"),
+        "href": "/llms",
+        "meta": "LLM",
+    } for m in models])
+    providers = (
+        await db.execute(
+            _select(ProviderConfig).where(ProviderConfig.provider.ilike(needle)).limit(limit)
+        )
+    ).scalars().all()
+    for p in providers:
+        groups_match = next((g for g in groups if g["key"] == "models"), None)
+        if groups_match is None:
+            groups.append({"key": "models", "label": "Models", "items": []})
+            groups_match = groups[-1]
+        groups_match["items"].append({
+            "id": p.provider,
+            "group": "models",
+            "title": p.provider,
+            "subtitle": f"provider key · {'enabled' if p.enabled else 'disabled'}",
+            "href": "/llms",
+            "meta": "provider",
+        })
+
+    # Plans
+    plans = (
+        await db.execute(
+            _select(Plan)
+            .where(or_(Plan.name.ilike(needle), Plan.slug.ilike(needle)))
+            .order_by(Plan.sort_order)
+            .limit(limit)
+        )
+    ).scalars().all()
+    add("plans", "Plans", [{
+        "id": p.slug,
+        "group": "plans",
+        "title": p.name,
+        "subtitle": p.description or p.slug,
+        "href": "/plans",
+        "meta": p.slug,
+    } for p in plans])
+
+    # Jobs (job_type/lane/status are Postgres enums — cast to text before
+    # ILIKE, or the operator doesn't exist).
+    jobs = (
+        await db.execute(
+            _select(Job)
+            .where(or_(
+                sa_cast(Job.job_type, sa_String).ilike(needle),
+                sa_cast(Job.lane, sa_String).ilike(needle),
+                sa_cast(Job.status, sa_String).ilike(needle),
+                Job.tenant_id.ilike(needle),
+            ))
+            .order_by(Job.created_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    add("jobs", "Jobs", [{
+        "id": j.id,
+        "group": "jobs",
+        "title": j.job_type,
+        "subtitle": f"{j.tenant_id} · {j.status}",
+        "href": "/jobs",
+        "meta": j.status,
+    } for j in jobs])
+
+    # Audit log
+    audits = (
+        await db.execute(
+            _select(AdminAuditLog)
+            .where(or_(
+                AdminAuditLog.action.ilike(needle),
+                AdminAuditLog.operator_username.ilike(needle),
+                AdminAuditLog.path.ilike(needle),
+                AdminAuditLog.detail.ilike(needle),
+            ))
+            .order_by(AdminAuditLog.created_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    add("audit", "Audit log", [{
+        "id": a.id,
+        "group": "audit",
+        "title": a.action,
+        "subtitle": f"{a.operator_username or 'system'} · {a.path} · {a.status_code}",
+        "href": "/audit-log",
+        "meta": a.method,
+    } for a in audits])
+
+    total = sum(len(g["items"]) for g in groups)
+    return {"query": q, "groups": groups, "total": total}
+
+
 async def get_billing_overview(db: AsyncSession) -> list[dict]:
     from sqlalchemy import func, select as _select
 
@@ -543,6 +803,336 @@ async def get_billing_overview(db: AsyncSession) -> list[dict]:
             "status": status,
         })
     return out
+
+
+async def ensure_finance_rows(db: AsyncSession, month: str) -> int:
+    """Upsert monthly finance rows for every tenant with activity in the month.
+
+    Activity = a subscription row OR any metered LLM usage event in that
+    month. Auto-fields (plan snapshot, credits used, actual cost) are
+    recomputed; admin fields (status/collected/adjustments/note) are kept.
+    """
+    from datetime import date as _date
+
+    from sqlalchemy import func as _func
+    from sqlalchemy import select as _select
+    from sqlalchemy.dialects.postgresql import insert as _pg_insert
+
+    import uuid
+
+    from ..billing.models import Plan, TenantFinanceMonth, TenantSubscription
+    from ..llm.models import LLMUsageEvent
+    from ..users.models import User
+
+    try:
+        year, month_num = (int(x) for x in month.split("-", 1))
+    except (ValueError, AttributeError):
+        raise ValueError("month must be YYYY-MM")
+    start = _date(year, month_num, 1)
+    if month_num == 12:
+        end = _date(year + 1, 1, 1)
+    else:
+        end = _date(year, month_num + 1, 1)
+
+    tenant_ids = set(
+        (
+            await db.execute(
+                _select(TenantSubscription.tenant_id).where(
+                    TenantSubscription.tenant_id.isnot(None)
+                )
+            )
+        ).scalars().all()
+    )
+    usage_ids = set(
+        (
+            await db.execute(
+                _select(LLMUsageEvent.tenant_id)
+                .where(
+                    LLMUsageEvent.tenant_id.isnot(None),
+                    LLMUsageEvent.created_at >= start,
+                    LLMUsageEvent.created_at < end,
+                )
+                .distinct()
+            )
+        ).scalars().all()
+    )
+    for tid in tenant_ids | usage_ids:
+        plan = (
+            await db.execute(
+                _select(Plan)
+                .join(TenantSubscription, TenantSubscription.plan_id == Plan.id)
+                .where(TenantSubscription.tenant_id == tid)
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        cost_row = (
+            await db.execute(
+                _select(
+                    _func.coalesce(_func.sum(LLMUsageEvent.delivery_cost_micro_usd), 0),
+                    _func.coalesce(_func.sum(LLMUsageEvent.cost_cents), 0),
+                )
+                .where(
+                    LLMUsageEvent.tenant_id == tid,
+                    LLMUsageEvent.created_at >= start,
+                    LLMUsageEvent.created_at < end,
+                )
+            )
+        ).first()
+        actual_micro = int(cost_row[0] or 0)
+        credits_cents = int(cost_row[1] or 0)
+        price_cents = int(plan.price_cents or 0) if plan else 0
+
+        stmt = _pg_insert(TenantFinanceMonth).values(
+            id=str(uuid.uuid4()),
+            tenant_id=tid,
+            month=start,
+            plan_slug=plan.slug if plan else None,
+            plan_name=plan.name if plan else None,
+            plan_price_cents=price_cents,
+            credits_used_cents=credits_cents,
+            actual_cost_micro=actual_micro,
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[TenantFinanceMonth.tenant_id, TenantFinanceMonth.month],
+            set_={
+                "plan_slug": stmt.excluded.plan_slug,
+                "plan_name": stmt.excluded.plan_name,
+                "plan_price_cents": stmt.excluded.plan_price_cents,
+                "credits_used_cents": stmt.excluded.credits_used_cents,
+                "actual_cost_micro": stmt.excluded.actual_cost_micro,
+                "updated_at": _func.now(),
+            },
+        )
+        await db.execute(stmt)
+    await db.commit()
+    return len(tenant_ids | usage_ids)
+
+
+async def list_financials(
+    db: AsyncSession,
+    month: str,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    """Rows + monthly rollups (expected revenue, collected, infra cost, margin)."""
+    from datetime import date as _date
+
+    from sqlalchemy import func as _func
+    from sqlalchemy import select as _select
+
+    from ..billing.models import TenantFinanceMonth
+    from ..users.models import User
+
+    await ensure_finance_rows(db, month)
+    year, month_num = (int(x) for x in month.split("-", 1))
+    start = _date(year, month_num, 1)
+
+    base = (
+        _select(TenantFinanceMonth, User.email)
+        .join(User, User.id == TenantFinanceMonth.tenant_id)
+        .where(TenantFinanceMonth.month == start)
+    )
+    rows = (
+        await db.execute(
+            base.order_by(TenantFinanceMonth.plan_price_cents.desc(), User.email)
+            .offset(offset)
+            .limit(limit)
+        )
+    ).all()
+
+    totals = (
+        await db.execute(
+            _select(
+                _func.coalesce(_func.sum(TenantFinanceMonth.plan_price_cents), 0),
+                _func.coalesce(_func.sum(TenantFinanceMonth.collected_cents), 0),
+                _func.coalesce(_func.sum(TenantFinanceMonth.actual_cost_micro), 0),
+            ).where(TenantFinanceMonth.month == start)
+        )
+    ).first()
+
+    items = []
+    for row, email in rows:
+        extra = int((row.adjustments or {}).get("extra_cost_cents", 0))
+        billed_cents = row.plan_price_cents + extra
+        items.append({
+            "tenant_id": row.tenant_id,
+            "email": email,
+            "month": row.month.isoformat(),
+            "plan_slug": row.plan_slug,
+            "plan_name": row.plan_name,
+            "plan_price_cents": row.plan_price_cents,
+            "extra_cost_cents": extra,
+            "billed_cents": billed_cents,
+            "credits_used_cents": row.credits_used_cents,
+            "actual_cost_micro": row.actual_cost_micro,
+            "collected_cents": row.collected_cents,
+            "status": row.status,
+            "adjustments": row.adjustments or {},
+            "note": row.note,
+        })
+
+    expected_cents = int(totals[0] or 0)
+    collected_cents = int(totals[1] or 0)
+    infra_cost_micro = int(totals[2] or 0)
+    return {
+        "month": month,
+        "items": items,
+        "total": len(items),
+        "totals": {
+            "expected_revenue_cents": expected_cents,
+            "collected_cents": collected_cents,
+            "infra_cost_micro": infra_cost_micro,
+            # column (cents → micro) minus real delivered cost.
+            "margin_micro": expected_cents * 10_000 - infra_cost_micro,
+            "unpaid_count": 0,
+        },
+    }
+
+
+async def patch_finance(
+    db: AsyncSession,
+    tenant_id: str,
+    month: str,
+    *,
+    status: str | None = None,
+    collected_cents: int | None = None,
+    adjustments: dict | None = None,
+    note: str | None = None,
+) -> dict:
+    """Admin edit of one monthly row (payment status, collected, notes)."""
+    from datetime import date as _date
+
+    from sqlalchemy import select as _select
+
+    from ..billing.models import TenantFinanceMonth
+
+    year, month_num = (int(x) for x in month.split("-", 1))
+    start = _date(year, month_num, 1)
+    row = (
+        await db.execute(
+            _select(TenantFinanceMonth).where(
+                TenantFinanceMonth.tenant_id == tenant_id,
+                TenantFinanceMonth.month == start,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise ValueError("No finance row for this tenant/month — recompute first.")
+    if status is not None:
+        if status not in ("unpaid", "paid", "partial"):
+            raise ValueError("status must be unpaid, paid or partial")
+        row.status = status
+    if collected_cents is not None:
+        row.collected_cents = max(0, int(collected_cents))
+    if adjustments is not None:
+        row.adjustments = {k: v for k, v in adjustments.items() if k in ("extra_cost_cents",)}
+    if note is not None:
+        row.note = note.strip() or None
+    await db.commit()
+    await db.refresh(row)
+    return {
+        "tenant_id": row.tenant_id,
+        "month": start.isoformat(),
+        "status": row.status,
+        "collected_cents": row.collected_cents,
+        "adjustments": row.adjustments or {},
+        "note": row.note,
+    }
+
+
+async def create_admin_notification(
+    db: AsyncSession,
+    *,
+    operator_id: str | None = None,
+    kind: str = "system",
+    severity: str = "info",
+    title: str,
+    body: str | None = None,
+    href: str | None = None,
+) -> None:
+    from .models import AdminNotification
+
+    db.add(AdminNotification(
+        operator_id=operator_id,
+        kind=kind,
+        severity=severity,
+        title=title[:200],
+        body=body,
+        href=href,
+    ))
+    await db.commit()
+
+
+async def list_admin_notifications(
+    db: AsyncSession,
+    operator_id: str,
+    *,
+    unread_only: bool = False,
+    limit: int = 50,
+) -> dict:
+    from sqlalchemy import func as _func, or_, select as _select
+
+    from .models import AdminNotification
+
+    scope = or_(
+        AdminNotification.operator_id.is_(None),
+        AdminNotification.operator_id == operator_id,
+    )
+    stmt = _select(AdminNotification).where(scope)
+    if unread_only:
+        stmt = stmt.where(AdminNotification.read_at.is_(None))
+    rows = (
+        await db.execute(stmt.order_by(AdminNotification.created_at.desc()).limit(limit))
+    ).scalars().all()
+    unread = int(
+        (
+            await db.execute(
+                _select(_func.count())
+                .select_from(AdminNotification)
+                .where(scope, AdminNotification.read_at.is_(None))
+            )
+        ).scalar_one()
+    )
+    return {
+        "items": [{
+            "id": n.id,
+            "kind": n.kind,
+            "severity": n.severity,
+            "title": n.title,
+            "body": n.body,
+            "href": n.href,
+            "read": n.read_at is not None,
+            "created_at": n.created_at.isoformat() if n.created_at else None,
+        } for n in rows],
+        "unread_count": unread,
+    }
+
+
+async def mark_admin_notifications_read(
+    db: AsyncSession,
+    operator_id: str,
+    *,
+    notification_ids: list[str] | None = None,
+) -> int:
+    from datetime import datetime, timezone as _tz
+
+    from sqlalchemy import or_, select as _select, update as _update
+
+    from .models import AdminNotification
+
+    scope = or_(
+        AdminNotification.operator_id.is_(None),
+        AdminNotification.operator_id == operator_id,
+    )
+    stmt = _update(AdminNotification).where(
+        scope, AdminNotification.read_at.is_(None)
+    )
+    if notification_ids:
+        stmt = stmt.where(AdminNotification.id.in_(notification_ids))
+    result = await db.execute(stmt.values(read_at=datetime.now(_tz.utc)))
+    await db.commit()
+    return result.rowcount or 0
 
 
 LEDGER_SORTS = ("newest", "oldest", "cost_high", "cost_low")

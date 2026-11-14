@@ -131,6 +131,11 @@ class OpenAICompatibleProvider(LLMProvider):
             raise ProviderError(self._provider, str(e), status)
 
     async def stream(self, req: LLMRequest) -> AsyncIterator[str]:
+        # Capture the provider's final usage chunk (both OpenAI-compatible and
+        # Gemini send usage on the last chunk) so streaming calls are metered
+        # with exact tokens, not the char estimate. Read by the gateway after
+        # iteration; reset per stream.
+        self._last_stream_usage = None
         try:
             response = await self._client.chat.completions.create(
                 model=req.model,
@@ -140,6 +145,13 @@ class OpenAICompatibleProvider(LLMProvider):
                 stream=True,
             )
             async for chunk in response:
+                usage_meta = getattr(chunk, "usage", None)
+                if usage_meta is not None:
+                    self._last_stream_usage = LLMUsage(
+                        prompt_tokens=getattr(usage_meta, "prompt_tokens", 0) or 0,
+                        completion_tokens=getattr(usage_meta, "completion_tokens", 0) or 0,
+                        total_tokens=getattr(usage_meta, "total_tokens", 0) or 0,
+                    )
                 delta = self._extract_delta(chunk)
                 if delta:
                     yield delta

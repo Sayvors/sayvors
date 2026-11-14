@@ -246,6 +246,24 @@ async def create_purchase_request(
         )
     except RequestError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
+    # Tell the admin console (bell) about the new request — best effort.
+    if not duplicate:
+        try:
+            from ...database import async_session as _async_session
+            from ..admin.service import create_admin_notification
+
+            async with _async_session() as n_db:
+                await create_admin_notification(
+                    n_db,
+                    kind="request",
+                    severity="info",
+                    title=f"New {body.kind} request",
+                    body=f"{user.email or body.kind} requested {body.kind}"
+                    + (f" ({body.plan_slug})" if body.plan_slug else ""),
+                    href="/requests",
+                )
+        except Exception:  # noqa: BLE001 — notifications never fail the request
+            pass
     return {**serialize(request), "duplicate": duplicate}
 
 

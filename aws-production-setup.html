@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sayvors — AWS Production Setup Checklist</title>
+<style>
+  :root { --bg:#f1f2f5;--card:#ffffff;--ink:#14101f;--ink2:#3b2d5e;--accent:#3d1d6e;--ok:#16a34a;--warn:#d97706;--danger:#dc2626;--line:#e5e7eb;--sunken:#f9fafb; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:'Segoe UI',system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--ink); line-height:1.6; }
+  .header { background:var(--accent); color:#fff; padding:32px 24px; }
+  .header h1 { font-size:28px; font-weight:700; margin-bottom:4px; }
+  .header p { opacity:0.85; font-size:14px; }
+  .progress-bar { background:rgba(255,255,255,0.2); height:8px; border-radius:4px; margin-top:16px; overflow:hidden; }
+  .progress-fill { background:#fff; height:100%; border-radius:4px; transition:width 0.3s; }
+  .progress-text { font-size:13px; margin-top:8px; opacity:0.9; }
+  .container { max-width:960px; margin:0 auto; padding:24px 16px; }
+  .section { background:var(--card); border-radius:16px; margin-bottom:20px; box-shadow:0 1px 3px rgba(0,0,0,0.08); overflow:hidden; }
+  .section-header { padding:20px 24px; cursor:pointer; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--line); user-select:none; }
+  .section-header:hover { background:var(--sunken); }
+  .section-header h2 { font-size:18px; font-weight:600; color:var(--accent); display:flex; align-items:center; gap:10px; }
+  .section-header .badge { font-size:11px; padding:2px 8px; border-radius:10px; font-weight:600; }
+  .badge-done { background:#dcfce7; color:#166534; } .badge-progress { background:#fef3c7; color:#92400e; } .badge-todo { background:#f3f4f6; color:#6b7280; }
+  .section-body { padding:0 24px 20px; display:none; }
+  .section.open .section-body { display:block; } .section.open .chevron { transform:rotate(90deg); }
+  .chevron { transition:transform 0.2s; font-size:14px; color:var(--ink2); }
+  .step { display:flex; align-items:flex-start; gap:12px; padding:12px 0; border-bottom:1px solid var(--line); }
+  .step:last-child { border-bottom:none; }
+  .step input[type="checkbox"] { width:20px; height:20px; margin-top:2px; cursor:pointer; accent-color:var(--accent); flex-shrink:0; }
+  .step-content { flex:1; }
+  .step-title { font-weight:600; font-size:14px; margin-bottom:4px; }
+  .step-desc { font-size:13px; color:#4b5563; }
+  .step-desc code { background:var(--sunken); padding:1px 6px; border-radius:4px; font-size:12px; font-family:'Consolas',monospace; }
+  .step-desc ul { margin:6px 0 6px 20px; } .step-desc li { margin-bottom:2px; }
+  .step.done .step-title { text-decoration:line-through; color:#9ca3af; }
+  .step.done .step-desc { color:#9ca3af; }
+  .note { background:#fffbeb; border-left:3px solid var(--warn); padding:10px 14px; margin:10px 0; font-size:13px; border-radius:0 8px 8px 0; }
+  .note.danger { background:#fef2f2; border-left-color:var(--danger); }
+  .note.ok { background:#f0fdf4; border-left-color:var(--ok); }
+  .reset-btn { background:var(--danger); color:#fff; border:none; padding:10px 20px; border-radius:8px; cursor:pointer; font-size:14px; margin:20px 0; }
+  .reset-btn:hover { opacity:0.9; }
+  .footer { text-align:center; padding:24px; color:#6b7280; font-size:13px; }
+  .top-bar { position:sticky; top:0; background:var(--card); padding:12px 24px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:16px; z-index:10; box-shadow:0 1px 4px rgba(0,0,0,0.06); }
+  .top-bar .progress-fill { background:var(--accent); }
+  .top-bar .progress-text { color:var(--ink); font-size:13px; }
+  .top-bar .progress-bar { background:var(--line); flex:1; max-width:400px; }
+  pre { white-space:pre-wrap; word-break:break-word; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Sayvors — AWS Production Setup Checklist</h1>
+  <p>Step-by-step production deployment. Region: me-central-1 (UAE) · Topology: 1× EC2 + managed RDS/ElastiCache/S3 · Est. ~$150–250/mo</p>
+  <div class="progress-bar"><div class="progress-fill" id="headerProgress" style="width:0%"></div></div>
+  <div class="progress-text" id="headerProgressText">0 of 0 steps complete</div>
+</div>
+
+<div class="top-bar">
+  <strong style="color:var(--accent)">Progress</strong>
+  <div class="progress-bar"><div class="progress-fill" id="topProgress" style="width:0%"></div></div>
+  <span class="progress-text" id="topProgressText">0%</span>
+</div>
+
+<div class="container">
+
+<!-- 1. PREREQUISITES -->
+<div class="section open" id="s1">
+  <div class="section-header" onclick="toggle('s1')"><h2>1. Prerequisites & AWS Account</h2><span class="chevron">▶</span></div>
+  <div class="section-body">
+    <div class="step" data-id="1-1"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">AWS account with billing alerts</div><div class="step-desc">Set billing alarm at $50, $100, $200 in CloudWatch → Billing. Enable Cost Anomaly Detection. Tag everything: <code>env=production</code>, <code>app=sayvors</code>.</div></div></div>
+    <div class="step" data-id="1-2"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">IAM user for deployment (not root)</div><div class="step-desc">Create IAM user with programmatic access. Attach: <code>AmazonEC2FullAccess</code>, <code>AmazonRDSFullAccess</code>, <code>AmazonElastiCacheFullAccess</code>, <code>AmazonS3FullAccess</code>, <code>SecretsManagerReadWrite</code>, <code>IAMReadOnlyAccess</code>, <code>CloudWatchFullAccess</code>, <code>AmazonSSMFullAccess</code>. Store credentials in password manager — never in code.</div></div></div>
+    <div class="step" data-id="1-3"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Install AWS CLI v2 locally</div><div class="step-desc"><code>aws configure</code> with IAM credentials. Default region: <code>me-central-1</code>. Verify: <code>aws sts get-caller-identity</code>.</div></div></div>
+    <div class="step" data-id="1-4"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Docker + Docker Compose installed locally</div><div class="step-desc">Needed for building and testing the image before pushing to GHCR.</div></div></div>
+    <div class="step" data-id="1-5"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">GitHub Actions secrets set</div><div class="step-desc">Ensure <code>GITHUB_TOKEN</code> has <code>packages:write</code>. Add <code>AWS_ACCESS_KEY_ID</code> and <code>AWS_SECRET_ACCESS_KEY</code> as repo secrets if using AWS CLI in CI.</div></div></div>
+    <div class="step" data-id="1-6"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Domain DNS ready</div><div class="step-desc"><code>sayvors.com</code> registered. Decide: Route 53 or keep Cloudflare. Cookie domain is <code>.sayvors.com</code>.</div></div></div>
+  </div>
+</div>
+
+<!-- 2. VPC -->
+<div class="section" id="s2">
+  <div class="section-header" onclick="toggle('s2')"><h2>2. VPC & Networking</h2><span class="chevron">▶</span></div>
+  <div class="section-body">
+    <div class="step" data-id="2-1"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Create VPC</div><div class="step-desc">VPC CIDR <code>10.0.0.0/16</code>. Name: <code>sayvors-prod-vpc</code>. Region: <code>me-central-1</code>.</div></div></div>
+    <div class="step" data-id="2-2"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Create Subnets (2 AZs)</div><div class="step-desc"><ul><li>Public A: <code>10.0.1.0/24</code> in <code>me-central-1a</code></li><li>Public B: <code>10.0.2.0/24</code> in <code>me-central-1b</code></li><li>Private A: <code>10.0.10.0/24</code> in <code>me-central-1a</code></li><li>Private B: <code>10.0.11.0/24</code> in <code>me-central-1b</code></li></ul>Enable auto-assign public IP on public subnets.</div></div></div>
+    <div class="step" data-id="2-3"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Internet Gateway + Route Table</div><div class="step-desc">Create IGW, attach to VPC. Public route table: <code>0.0.0.0/0 → IGW</code>. Associate with both public subnets. Private subnets: no IGW route (or add NAT Gateway — skip for cheapest, put EC2 in public subnet).</div></div></div>
+    <div class="step" data-id="2-4"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Create Security Groups</div><div class="step-desc"><ul><li><strong>sg-ec2</strong>: Inbound 80, 443 from 0.0.0.0/0. Outbound: all. Tag: <code>sayvors-ec2-sg</code></li><li><strong>sg-rds</strong>: Inbound 5432 from sg-ec2 only. Tag: <code>sayvors-rds-sg</code></li><li><strong>sg-redis</strong>: Inbound 6379 from sg-ec2 only. Tag: <code>sayvors-redis-sg</code></li></ul></div></div></div>
+    <div class="step" data-id="2-5"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">VPC Endpoints (optional, saves NAT cost)</div><div class="step-desc">Gateway endpoint for S3 (free). Interface endpoints for Secrets Manager, CloudWatch Logs. Avoids NAT Gateway charges for AWS service traffic.</div></div></div>
+    <div class="note">For the 1-box cheapest setup, put EC2 in a public subnet with an Elastic IP. No NAT Gateway needed.</div>
+  </div>
+</div>
+
+<!-- 3. EC2 -->
+<div class="section" id="s3">
+  <div class="section-header" onclick="toggle('s3')"><h2>3. EC2 Instance</h2><span class="chevron">▶</span></div>
+  <div class="section-body">
+    <div class="step" data-id="3-1"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Create IAM Role for EC2</div><div class="step-desc">IAM Role: <code>sayvors-ec2-role</code>. Attach: <code>AmazonS3FullAccess</code>, <code>SecretsManagerReadWrite</code>, <code>CloudWatchAgentServerPolicy</code>, <code>AmazonSSMManagedInstanceCore</code>. Instance profile — no access keys needed.</div></div></div>
+    <div class="step" data-id="3-2"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Launch EC2 Instance</div><div class="step-desc"><ul><li>AMI: Amazon Linux 2023 (or Ubuntu 24.04 LTS)</li><li>Instance type: <code>m6i.large</code> (2 vCPU, 8 GB) — non-burstable. Or <code>t3.large</code> (cheaper, burstable).</li><li>Subnet: public subnet A · Security group: sg-ec2</li><li>IAM instance profile: sayvors-ec2-role</li><li>Storage: 100 GB gp3, encrypted (default KMS key)</li><li>Key pair: create or use existing · Termination protection: Yes · Detailed monitoring: Yes</li><li>User data: install Docker + Docker Compose (see below)</li></ul></div></div></div>
+    <div class="step" data-id="3-3"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">User Data — Install Docker & Compose</div><div class="step-desc"><pre style="background:var(--sunken);padding:12px;border-radius:8px;font-size:12px;overflow:auto;margin-top:8px;">#!/bin/bash
+set -euxo pipefail
+dnf update -y
+dnf install -y docker git
+systemctl enable --now docker
+usermod -aG docker ec2-user
+mkdir -p /usr/local/lib/docker/cli-plugins
+curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m) \
+  -o /usr/local/lib/docker/cli-plugins/docker-compose
+chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+mkdir -p /opt/sayvors
+chown ec2-user:ec2-user /opt/sayvors
+dnf install -y amazon-cloudwatch-agent</pre></div></div></div>
+    <div class="step" data-id="3-4"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Allocate Elastic IP</div><div class="step-desc">Allocate EIP and associate with the instance. Stable public IP for DNS. Tag: <code>sayvors-prod-eip</code>.</div></div></div>
+    <div class="step" data-id="3-5"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">EBS Snapshot Schedule</div><div class="step-desc">AWS Backup or DLM: daily snapshots, 7-day retention. Tag: <code>sayvors-prod-snapshots</code>.</div></div></div>
+    <div class="step" data-id="3-6"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">SSH in and verify Docker</div><div class="step-desc"><code>ssh ec2-user@&lt;EIP&gt;</code> → <code>docker --version && docker compose version</code>. Verify instance profile: <code>aws sts get-caller-identity</code>.</div></div></div>
+  </div>
+</div>
+
+<!-- 4. RDS -->
+<div class="section" id="s4">
+  <div class="section-header" onclick="toggle('s4')"><h2>4. RDS PostgreSQL (Production Database)</h2><span class="chevron">▶</span></div>
+  <div class="section-body">
+    <div class="step" data-id="4-1"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Create DB Subnet Group</div><div class="step-desc">RDS → Subnet groups → Create. Name: <code>sayvors-prod-db-subnet</code>. VPC: sayvors-prod-vpc. Subnets: private A + B.</div></div></div>
+    <div class="step" data-id="4-2"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Create RDS Instance</div><div class="step-desc"><ul><li>Engine: PostgreSQL 16 (≥16.5 for pgvector 0.8.2)</li><li>Template: Production (or Dev/Test for cheaper)</li><li>DB instance ID: <code>sayvors-prod-db</code></li><li>Master username: <code>sayvors_admin</code> (not "postgres")</li><li>Master password: generate strong (32+ chars), store in SSM</li><li>Instance class: <code>db.t4g.medium</code> (2 vCPU, 4 GB) — cheapest viable. Or <code>db.m6g.large</code> (2 vCPU, 8 GB) for headroom.</li><li>Storage: gp3, 100 GB, autoscaling enabled (max 200 GB), encrypted (default KMS)</li><li>Multi-AZ: No (single-AZ for cheapest; enable later for HA)</li><li>VPC: sayvors-prod-vpc, subnet group: sayvors-prod-db-subnet</li><li>Security group: sg-rds · Public access: No</li><li>Database name: <code>sayvors</code></li><li>Backup retention: 7 days (PITR) · Backup window: 02:00–03:00 UTC</li><li>Maintenance window: Sun 04:00–05:00 UTC</li><li>Enhanced monitoring: Yes (60s) · Performance Insights: Yes (7 days free)</li><li>Deletion protection: Yes · Auto minor version upgrade: Yes</li></ul></div></div></div>
+    <div class="step" data-id="4-3"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Create Application DB User (least privilege)</div><div class="step-desc">Connect as master. Run:
+      <pre style="background:var(--sunken);padding:10px;border-radius:8px;font-size:12px;margin-top:6px;">CREATE USER sayvors_app WITH PASSWORD 'STRONG_PASSWORD_HERE';
+GRANT CONNECT ON DATABASE sayvors TO sayvors_app;
+GRANT USAGE ON SCHEMA public TO sayvors_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO sayvors_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO sayvors_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO sayvors_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO sayvors_app;</pre></div></div></div>
+    <div class="step" data-id="4-4"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Enable pgvector Extension</div><div class="step-desc">Connect as master or app user: <code>CREATE EXTENSION IF NOT EXISTS vector;</code> Verify: <code>SELECT * FROM pg_available_extensions WHERE name = 'vector';</code></div></div></div>
+    <div class="step" data-id="4-5"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Run Alembic Migrations</div><div class="step-desc">From EC2 box: <code>docker compose -f docker-compose.prod.yml run --rm api alembic upgrade head</code>. Verify single head: <code>alembic heads</code> → exactly 1.</div></div></div>
+    <div class="step" data-id="4-6"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Verify Connection from EC2</div><div class="step-desc"><code>psql "postgresql://sayvors_app:PASSWORD@RDS_ENDPOINT:5432/sayvors?ssl=require" -c "SELECT 1;"</code>. Or check <code>/readyz</code> after deploy.</div></div></div>
+    <div class="step" data-id="4-7"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Rehearse One Restore (OPS-1)</div><div class="step-desc">Create manual snapshot → restore into temp DB → run app against it → verify data → delete temp → write runbook. <strong>Most important step. Un-rehearsed backups are not backups.</strong></div></div></div>
+    <div class="note danger">RDS credentials go in SSM — never in .env files on the box or in git.</div>
+  </div>
+</div>
+
+<!-- 5. ELASTICACHE -->
+<div class="section" id="s5">
+  <div class="section-header" onclick="toggle('s5')"><h2>5. ElastiCache Redis (Auth Infrastructure)</h2><span class="chevron">▶</span></div>
+  <div class="section-body">
+    <div class="step" data-id="5-1"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Create Cache Subnet Group</div><div class="step-desc">ElastiCache → Subnet groups → Create. Name: <code>sayvors-prod-redis-subnet</code>. VPC: sayvors-prod-vpc. Subnets: private A + B.</div></div></div>
+    <div class="step" data-id="5-2"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Create Redis Replication Group</div><div class="step-desc"><ul><li>Engine: Redis 7.x · Cluster mode: Disabled</li><li>Name: <code>sayvors-prod-redis</code></li><li>Node type: <code>cache.t4g.small</code> (1.5 GB) — cheapest viable. Or <code>cache.t4g.medium</code> (3 GB) for headroom.</li><li>Replicas: 1 (for failover; 0 for cheapest) · Multi-AZ: Yes (if replicas > 0)</li><li>VPC: sayvors-prod-vpc, subnet group: sayvors-prod-redis-subnet</li><li>Security group: sg-redis</li><li>Encryption at rest: Yes · Encryption in transit: Yes (TLS)</li><li>Auth token: Yes — generate strong password, store in SSM</li><li>Parameter group: custom with <code>maxmemory-policy noeviction</code></li></ul></div></div></div>
+    <div class="step" data-id="5-3"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Set maxmemory-policy to noeviction</div><div class="step-desc">ElastiCache → Parameter groups → Create custom from default. Set <code>maxmemory-policy = noeviction</code>. Apply to replication group. Reboot if required.</div></div></div>
+    <div class="step" data-id="5-4"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Verify Connection from EC2</div><div class="step-desc"><code>redis-cli -h REDIS_ENDPOINT -p 6379 --tls -a AUTH_TOKEN ping</code> → <code>PONG</code>. Or set <code>REDIS_URL=rediss://:AUTH_TOKEN@REDIS_ENDPOINT:6379/0</code> and check <code>/readyz</code>.</div></div></div>
+    <div class="note">Redis holds auth state (OTPs, rate limits, JWT blacklist, sessions). Fails closed — a Redis outage locks everyone out. ElastiCache multi-AZ = automatic failover.</div>
+  </div>
+</div>
+
+<!-- 6. S3 -->
+<div class="section" id="s6">
+  <div class="section-header" onclick="toggle('s6')"><h2>6. S3 (Object Storage)</h2><span class="chevron">▶</span></div>
+  <div class="section-body">
+    <div class="step" data-id="6-1"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Create S3 Buckets</div><div class="step-desc"><ul><li><strong>Media (public):</strong> <code>sayvors-media-prod</code> — owner photos/videos. Block Public Access: OFF. SSE-S3 encryption. Bucket policy: <code>s3:GetObject</code> for <code>*</code> on <code>media/*</code>.</li><li><strong>Docs (private):</strong> <code>sayvors-docs-prod</code> — databank uploads, scrapes. Block Public Access: ON. SSE-S3 or SSE-KMS. Never reuse media bucket.</li><li><strong>Backups:</strong> <code>sayvors-backups-prod</code> — pg_dump dumps. Block Public Access: ON. SSE-S3. Lifecycle: Glacier after 30 days, expire after 90 days.</li></ul></div></div></div>
+    <div class="step" data-id="6-2"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Enable Versioning on All Buckets</div><div class="step-desc">S3 → each bucket → Properties → Versioning → Enable.</div></div></div>
+    <div class="step" data-id="6-3"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Set CORS on Media Bucket</div><div class="step-desc">Allow GET from <code>https://*.sayvors.com</code>. Needed for browser-based media fetches.</div></div></div>
+    <div class="step" data-id="6-4"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Migrate Existing Local Uploads</div><div class="step-desc"><code>aws s3 sync ./data/uploads/media s3://sayvors-media-prod/media/</code> and <code>aws s3 sync ./data/uploads s3://sayvors-docs-prod/docs/</code>. Verify: <code>aws s3 ls s3://sayvors-media-prod/media/ --recursive</code>.</div></div></div>
+    <div class="step" data-id="6-5"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Set Environment Variables</div><div class="step-desc"><pre style="background:var(--sunken);padding:10px;border-radius:8px;font-size:12px;margin-top:6px;">S3_MEDIA_BUCKET=sayvors-media-prod
+S3_DOCS_BUCKET=sayvors-docs-prod
+AWS_REGION=me-central-1
+S3_MEDIA_PUBLIC_BASE_URL=https://sayvors-media-prod.s3.me-central-1.amazonaws.com</pre></div></div></div>
+    <div class="note danger">Never point S3_DOCS_BUCKET at the public media bucket. Private docs must stay private.</div>
+  </div>
+</div>
+
+<!-- 7. SECRETS -->
+<div class="section" id="s7">
+  <div class="section-header" onclick="toggle('s7')"><h2>7. Secrets Management (SSM Parameter Store)</h2><span class="chevron">▶</span></div>
+  <div class="section-body">
+    <div class="step" data-id="7-1"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Create SSM Parameters (SecureString)</div><div class="step-desc">SSM → Parameter Store → Create parameter (SecureString, default KMS key): <code>/sayvors/prod/DATABASE_URL</code>, <code>/sayvors/prod/REDIS_URL</code>, <code>/sayvors/prod/KAFKA_BOOTSTRAP_SERVERS</code>, <code>/sayvors/prod/JWT_SECRET</code>, <code>/sayvors/prod/CHANNEL_ENCRYPTION_KEY</code>, <code>/sayvors/prod/ADMIN_PASSWORD_HASH</code>, <code>/sayvors/prod/RESEND_API_KEY</code>, <code>/sayvors/prod/GOOGLE_CLIENT_SECRET</code>, <code>/sayvors/prod/META_APP_SECRET</code>, <code>/sayvors/prod/EMAIL_UNSUBSCRIBE_SECRET</code>, <code>/sayvors/prod/GLITCHTIP_DSN</code>. Non-secret config (ALLOWED_HOSTS, CORS_ORIGINS, etc.) can go in a plain <code>.env.prod</code> file on the box.</div></div></div>
+    <div class="step" data-id="7-2"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Create .env.prod on the EC2 box</div><div class="step-desc">SSH into EC2. Create <code>/opt/sayvors/.env.prod</code> from <code>deploy/env.prod.example</code>. Fill in all values. For secrets, pull from SSM: <code>aws ssm get-parameter --name /sayvors/prod/DATABASE_URL --with-decryption --query Parameter.Value --output text</code>.</div></div></div>
+    <div class="step" data-id="7-3"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Verify Production Validator Passes</div><div class="step-desc">On the EC2 box: <code>cd /opt/sayvors && docker compose -f docker-compose.prod.yml config</code>. Then start the API: <code>docker compose -f docker-compose.prod.yml up -d api</code>. Check logs: <code>docker compose -f docker-compose.prod.yml logs api</code>. The <code>validate_production_settings()</code> must pass (no FATAL errors). If it fails, fix the config before proceeding.</div></div></div>
+    <div class="note danger">Never commit .env.prod to git. The root .gitignore already excludes .env*.</div>
+  </div>
+</div>
+
+<!-- 8. LOAD BALANCER (for 2-box HA) -->
+<div class="section" id="s8">
+  <div class="section-header" onclick="toggle('s8')"><h2>8. Load Balancer (ALB) — For 2-Box HA (Skip for 1-Box)</h2><span class="chevron">▶</span></div>
+  <div class="section-body">
+    <div class="note">For the 1-box cheapest setup, skip this section. Caddy terminates TLS on the box directly. Come back here when you add the second box.</div>
+    <div class="step" data-id="8-1"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Request ACM Certificate</div><div class="step-desc">ACM → Request certificate → Public. Domain: <code>api.sayvors.com</code>. Validation: DNS. Wait for status: Issued.</div></div></div>
+    <div class="step" data-id="8-2"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Create Target Group</div><div class="step-desc"><ul><li>Type: Instances · Protocol: HTTP, Port: 80</li><li>VPC: sayvors-prod-vpc</li><li>Health check: HTTP, path <code>/readyz</code>, interval 30s, timeout 10s, healthy threshold 2, unhealthy 3</li><li>Health check success codes: 200 · Host header: <code>api.sayvors.com</code></li><li>Deregistration delay: 30s (matches graceful shutdown)</li></ul></div></div></div>
+    <div class="step" data-id="8-3"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Create ALB</div><div class="step-desc"><ul><li>Name: <code>sayvors-prod-alb</code> · Scheme: Internet-facing</li><li>VPC: sayvors-prod-vpc, subnets: public A + B</li><li>Security group: allow 443 from 0.0.0.0/0, 80 from 0.0.0.0/0</li><li>Listeners: HTTPS 443 → target group (ACM cert), HTTP 80 → redirect to HTTPS</li></ul></div></div></div>
+    <div class="step" data-id="8-4"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Register EC2 Instances in Target Group</div><div class="step-desc">Add both EC2 instances. Wait for health status: Healthy. If unhealthy, check security groups, health check path, Host header, and that the app is running.</div></div></div>
+    <div class="step" data-id="8-5"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">ALB Path Rules (Block Sensitive Paths)</div><div class="step-desc">Add listener rules: if path is <code>/metrics</code> or <code>/docs*</code> or <code>/openapi.json</code> or <code>/redoc*</code>, return 403. Or rely on Caddy if still in the chain.</div></div></div>
+    <div class="step" data-id="8-6"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Route 53 — Point Domain at ALB</div><div class="step-desc">Route 53 → Hosted zone → Create record: <code>api.sayvors.com</code> → A (Alias) → ALB.</div></div></div>
+    <div class="step" data-id="8-7"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Update TRUSTED_PROXIES</div><div class="step-desc">Set <code>TRUSTED_PROXIES=["10.0.0.0/16"]</code> in <code>.env.prod</code> on both boxes. This makes the app trust <code>X-Forwarded-For</code> from the ALB.</div></div></div>
+  </div>
+</div>
+
+<!-- 9. CADDY -->
+<div class="section" id="s9">
+  <div class="section-header" onclick="toggle('s9')"><h2>9. Caddy Configuration</h2><span class="chevron">▶</span></div>
+  <div class="section-body">
+    <div class="step" data-id="9-1"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Option A: Caddy terminates TLS (1-box, no ALB)</div><div class="step-desc">Use the existing <code>deploy/Caddyfile</code> as-is. Caddy auto-provisions a Let's Encrypt cert for <code>api.sayvors.com</code>. Ports 80 + 443 open on the security group. No changes needed.</div></div></div>
+    <div class="step" data-id="9-2"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Option B: Caddy behind ALB (HTTP only)</div><div class="step-desc">ALB terminates TLS (ACM). Caddy listens on port 80 internally. Update Caddyfile:
+      <pre style="background:var(--sunken);padding:10px;border-radius:8px;font-size:12px;margin-top:6px;">:80 {
+  @blocked path /metrics /docs /docs/* /redoc /redoc/* /openapi.json
+  respond @blocked 403
+  header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+  reverse_proxy api:8000
+}</pre>
+      Remove the TLS block and domain block. Caddy no longer needs port 443.
+    </div></div></div>
+    <div class="step" data-id="9-3"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Option C: Remove Caddy entirely</div><div class="step-desc">ALB → API directly. Add path blocks as ALB listener rules. Simpler, one less hop. The app already disables /docs in production. Just block /metrics at the ALB.</div></div></div>
+    <div class="note">For the 1-box cheapest setup, use Option A (Caddy auto-TLS). For 2-box HA, use Option B or C.</div>
+  </div>
+</div>
+
+<!-- 10. APP DEPLOY -->
+<div class="section" id="s10">
+  <div class="section-header" onclick="toggle('s10')"><h2>10. Application Deployment</h2><span class="chevron">▶</span></div>
+  <div class="section-body">
+    <div class="step" data-id="10-1"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Clone repo on EC2</div><div class="step-desc"><code>cd /opt/sayvors && git clone https://github.com/Sayvors/sayvors.git .</code> Checkout the <code>production</code> or <code>staging</code> branch.</div></div></div>
+    <div class="step" data-id="10-2"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Create .env.prod</div><div class="step-desc">Copy <code>deploy/env.prod.example</code> to <code>.env.prod</code>. Fill in all values. Key settings: <code>ENVIRONMENT=production</code>, <code>DATABASE_URL=postgresql+asyncpg://sayvors_app:PASSWORD@RDS_ENDPOINT:5432/sayvors?ssl=require</code>, <code>REDIS_URL=rediss://:AUTH_TOKEN@REDIS_ENDPOINT:6379/0</code>, <code>KAFKA_BOOTSTRAP_SERVERS=MSK_BROKER_1:9092,MSK_BROKER_2:9092,MSK_BROKER_3:9092</code>, <code>S3_MEDIA_BUCKET=sayvors-media-prod</code>, <code>S3_DOCS_BUCKET=sayvors-docs-prod</code>, <code>ALLOWED_HOSTS=["api.sayvors.com"]</code>, <code>CORS_ORIGINS=["https://app.sayvors.com"]</code>, <code>COOKIE_DOMAIN=.sayvors.com</code>, <code>COOKIE_SECURE=true</code>, <code>COOKIE_SAMESITE=none</code>, <code>RUN_BACKGROUND_WORKERS=false</code>, <code>TESTING=false</code>, <code>GOOGLE_REVIEWS_MOCK=false</code>.</div></div></div>
+    <div class="step" data-id="10-3"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Pull the Docker Image</div><div class="step-desc"><code>docker pull ghcr.io/sayvors/sayvors-api:staging</code> (or SHA-pinned tag). Verify: <code>docker images | grep sayvors-api</code>.</div></div></div>
+    <div class="step" data-id="10-4"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Run Migrations (One-Shot)</div><div class="step-desc"><code>docker compose -f docker-compose.prod.yml run --rm api alembic upgrade head</code>. Verify: <code>docker compose -f docker-compose.prod.yml run --rm api alembic heads</code> → exactly 1 head.</div></div></div>
+    <div class="step" data-id="10-5"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Start Services</div><div class="step-desc"><code>docker compose -f docker-compose.prod.yml up -d</code>. Check: <code>docker compose -f docker-compose.prod.yml ps</code>. All services should be healthy.</div></div></div>
+    <div class="step" data-id="10-6"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Verify Health Endpoints</div><div class="step-desc"><ul><li><code>curl https://api.sayvors.com/health</code> → 200, no deps checked</li><li><code>curl https://api.sayvors.com/readyz</code> → 200, all deps healthy</li><li><code>curl https://api.sayvors.com/metrics</code> → 403 (blocked by Caddy/ALB)</li></ul></div></div></div>
+    <div class="step" data-id="10-7"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Verify Login Flow</div><div class="step-desc">Open the web app. Log in. Check DevTools → Cookies: <code>access_token</code> and <code>refresh_token</code> are httpOnly, Secure, SameSite. Check Network tab: no <code>access_token</code> in JSON response body.</div></div></div>
+    <div class="step" data-id="10-8"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Test Upload (S3)</div><div class="step-desc">Upload a media file and a databank doc. Verify they land in S3: <code>aws s3 ls s3://sayvors-media-prod/media/ --recursive</code>. Verify the public URL is fetchable. Verify the private doc is not public.</div></div></div>
+    <div class="step" data-id="10-9"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Test WhatsApp Webhook</div><div class="step-desc">Send a test message to the WhatsApp number. Verify it appears in the inbox. Check worker logs: <code>docker compose -f docker-compose.prod.yml logs worker</code>. AI reply should be generated and sent.</div></div></div>
+    <div class="step" data-id="10-10"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">SHA-Pin the Image</div><div class="step-desc">Update <code>docker-compose.prod.yml</code>: change <code>image: ghcr.io/sayvors/sayvors-api:staging</code> to <code>image: ghcr.io/sayvors/sayvors-api:SHA</code> (the commit SHA). Commit and push. This ensures rollback to a known-good image.</div></div></div>
+  </div>
+</div>
+
+<!-- 11. BACKUPS -->
+<div class="section" id="s11">
+  <div class="section-header" onclick="toggle('s11')"><h2>11. Backups & Disaster Recovery</h2><span class="chevron">▶</span></div>
+  <div class="section-body">
+    <div class="step" data-id="11-1"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Verify RDS PITR</div><div class="step-desc">RDS → sayvors-prod-db → Maintenance & backups → Automated backups: Enabled, retention 7 days. Verify: <code>aws rds describe-db-instances --db-instance-identifier sayvors-prod-db --query 'DBInstances[0].BackupRetentionPeriod'</code> → 7.</div></div></div>
+    <div class="step" data-id="11-2"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Schedule Nightly pg_dump → S3</div><div class="step-desc">On the EC2 box, add a cron job:
+      <pre style="background:var(--sunken);padding:10px;border-radius:8px;font-size:12px;margin-top:6px;">0 2 * * * cd /opt/sayvors && DATABASE_URL="postgresql://sayvors_app:PASSWORD@RDS_ENDPOINT:5432/sayvors" S3_DOCS_BUCKET=sayvors-backups-prod AWS_REGION=me-central-1 python scripts/db_backup.py >> /var/log/db_backup.log 2>&1</pre>
+      Or use EventBridge + SSM Run Command / Lambda for a serverless schedule.</div></div></div>
+    <div class="step" data-id="11-3"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Rehearse One Restore</div><div class="step-desc"><ol style="margin:6px 0 6px 20px;font-size:13px;"><li>Create a manual RDS snapshot.</li><li>Restore it into a new temporary DB instance.</li><li>Point a test DATABASE_URL at the temp instance.</li><li>Run the app against it (or just run alembic current + a few queries).</li><li>Verify data integrity (row counts, recent records).</li><li>Delete the temp instance.</li><li>Write the runbook in docs/operations/.</li></ol><strong>This is the single most important step. Un-rehearsed backups are not backups.</strong></div></div></div>
+    <div class="step" data-id="11-4"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">S3 Backup Lifecycle</div><div class="step-desc">On <code>sayvors-backups-prod</code>: S3 → Management → Lifecycle rules. Transition to Glacier after 30 days. Expire after 90 days. This keeps backup costs low.</div></div></div>
+  </div>
+</div>
+
+<!-- 12. MONITORING -->
+<div class="section" id="s12">
+  <div class="section-header" onclick="toggle('s12')"><h2>12. Monitoring & Alerting</h2><span class="chevron">▶</span></div>
+  <div class="section-body">
+    <div class="step" data-id="12-1"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">CloudWatch Agent on EC2</div><div class="step-desc">Install the CloudWatch agent on the EC2 box. Configure it to ship: CPU, memory, disk, and the Docker container logs. Use the SSM parameter for config. Or skip and rely on local logs + GlitchTip.</div></div></div>
+    <div class="step" data-id="12-2"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">CloudWatch Alarms</div><div class="step-desc">Create alarms (SNS topic → email) for: EC2: CPU > 80% for 5 min, memory > 85%, disk > 80%. RDS: CPU > 80%, free storage < 10 GB, connections > 80% of max, read/write latency > 50ms. ElastiCache: memory utilization > 75%, evictions > 0, CPU > 80%. ALB (if used): 5xx > 1%, target unhealthy count > 0, latency p99 > 2s.</div></div></div>
+    <div class="step" data-id="12-3"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">External Uptime Monitor</div><div class="step-desc">UptimeRobot / Better Stack (free tier): monitor <code>https://api.sayvors.com/readyz</code> every 5 min. Alert on 2 consecutive failures. This is the "the box is down and nobody knows" safety net.</div></div></div>
+    <div class="step" data-id="12-4"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">GlitchTip DSN</div><div class="step-desc">Set <code>GLITCHTIP_DSN</code> in <code>.env.prod</code>. Verify errors appear in GlitchTip by triggering a test error (e.g., hit a non-existent endpoint). Both API and worker processes report.</div></div></div>
+    <div class="step" data-id="12-5"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Prometheus Scrape</div><div class="step-desc">Ensure <code>deploy/prometheus.yml</code> is mounted and Prometheus is running. Scrape target: <code>api:8000/metrics</code>. Verify: <code>curl http://localhost:9090/targets</code> shows the API target as UP.</div></div></div>
+  </div>
+</div>
+
+<!-- 13. SECURITY -->
+<div class="section" id="s13">
+  <div class="section-header" onclick="toggle('s13')"><h2>13. Security Policies & Hardening</h2><span class="chevron">▶</span></div>
+  <div class="section-body">
+    <div class="step" data-id="13-1"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">IAM Least Privilege</div><div class="step-desc">The EC2 instance profile should have: S3 read/write on the 3 buckets only, SSM read on <code>/sayvors/prod/*</code>, CloudWatch Logs write, SSM session manager. No <code>*</code> resources. No access keys in env files.</div></div></div>
+    <div class="step" data-id="13-2"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">RDS Encryption at Rest</div><div class="step-desc">RDS → sayvors-prod-db → Encryption: Enabled (default KMS key). Verify: <code>aws rds describe-db-instances --db-instance-identifier sayvors-prod-db --query 'DBInstances[0].StorageEncrypted'</code> → true.</div></div></div>
+    <div class="step" data-id="13-3"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">S3 Encryption at Rest</div><div class="step-desc">All 3 buckets: Properties → Default encryption → SSE-S3 (or SSE-KMS). Block Public Access on docs + backups buckets: ON.</div></div></div>
+    <div class="step" data-id="13-4"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">CloudTrail Enabled</div><div class="step-desc">CloudTrail → Create trail → All regions, management events + data events (S3). Send logs to the backups bucket or a dedicated CloudTrail bucket. This is your audit trail.</div></div></div>
+    <div class="step" data-id="13-5"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">VPC Flow Logs</div><div class="step-desc">VPC → Flow logs → Create. Send to CloudWatch Logs. This helps debug network issues and security investigations.</div></div></div>
+    <div class="step" data-id="13-6"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Security Group Audit</div><div class="step-desc">Verify: sg-ec2 allows 80/443 from 0.0.0.0/0 only. sg-rds allows 5432 from sg-ec2 only. sg-redis allows 6379 from sg-ec2 only. No 0.0.0.0/0 on database ports. No SSH (22) open to the world — use SSM Session Manager instead.</div></div></div>
+    <div class="step" data-id="13-7"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">SSM Session Manager (No SSH)</div><div class="step-desc">Instead of opening port 22, use SSM Session Manager to access the EC2 box. The instance profile already has <code>AmazonSSMManagedInstanceCore</code>. Connect: <code>aws ssm start-session --target i-INSTANCE_ID</code>. Remove SSH key pair from the security group.</div></div></div>
+    <div class="step" data-id="13-8"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Production Validator Passes</div><div class="step-desc">Verify <code>validate_production_settings()</code> passes on boot. Check logs for "FATAL" — there should be none. The app refuses to start with localhost in CORS/redirect URIs, wildcard hosts, missing admin hash, etc.</div></div></div>
+    <div class="step" data-id="13-9"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">TESTING and GOOGLE_REVIEWS_MOCK are OFF</div><div class="step-desc">Verify in <code>.env.prod</code>: <code>TESTING=false</code> and <code>GOOGLE_REVIEWS_MOCK=false</code>. The production validator rejects <code>true</code> for both.</div></div></div>
+  </div>
+</div>
+
+<!-- 14. FINAL VERIFICATION -->
+<div class="section" id="s14">
+  <div class="section-header" onclick="toggle('s14')"><h2>14. Final Verification & Go-Live</h2><span class="chevron">▶</span></div>
+  <div class="section-body">
+    <div class="step" data-id="14-1"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Full smoke test</div><div class="step-desc"><ul><li>Login → httpOnly cookies set (Secure, SameSite)</li><li>Upload media → lands in S3, public URL fetchable</li><li>Upload doc → lands in S3, private, presigned URL works</li><li>Send WhatsApp message → appears in inbox, AI replies</li><li>Google reviews sync → reviews appear in dashboard</li><li>Scheduled post → publishes to Google</li><li>Email OTP → arrives in inbox, verify works</li></ul></div></div></div>
+    <div class="step" data-id="14-2"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Security verification</div><div class="step-desc"><ul><li><code>http://api.sayvors.com</code> redirects to HTTPS</li><li><code>curl https://api.sayvors.com/metrics</code> → 403</li><li><code>curl https://api.sayvors.com/docs</code> → 403 or 404</li><li>Login response body has no <code>access_token</code></li><li>Stop Redis → login is denied (fail-closed), /readyz → 503</li><li>Restart Redis → app recovers without restart</li></ul></div></div></div>
+    <div class="step" data-id="14-3"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">DNS cutover</div><div class="step-desc">Point <code>api.sayvors.com</code> and <code>app.sayvors.com</code> to production. Update Meta webhook URL, Google OAuth redirect URI, Resend webhook. Verify <code>validate_production_settings()</code> passes.</div></div></div>
+    <div class="step" data-id="14-4"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Monitor for 24 hours</div><div class="step-desc">Watch CloudWatch, GlitchTip, and the uptime monitor. Check for errors, latency spikes, memory growth, and disk usage. Fix anything before announcing.</div></div></div>
+    <div class="step" data-id="14-5"><input type="checkbox" onchange="save()"><div class="step-content"><div class="step-title">Document the runbook</div><div class="step-desc">Write down: how to deploy, how to rollback, how to restore from backup, how to add a second box, how to rotate secrets. Store in <code>docs/operations/</code>.</div></div></div>
+  </div>
+</div>
+
+<div style="text-align:center;margin:24px 0;">
+  <button class="reset-btn" onclick="resetAll()">Reset All Checkboxes</button>
+</div>
+
+</div>
+
+<div class="footer">
+  Sayvors AWS Production Setup Checklist · Generated from codebase audit · 2026-11-12<br>
+  Estimated monthly cost: ~$150–250 (1-box) or ~$300–450 (2-box HA)
+</div>
+
+<script>
+const STORAGE_KEY = 'sayvors-aws-checklist';
+function toggle(id) { document.getElementById(id).classList.toggle('open'); }
+function save() {
+  const checks = {};
+  document.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    const step = cb.closest('.step'); const id = step.dataset.id;
+    checks[id] = cb.checked;
+    if (cb.checked) step.classList.add('done'); else step.classList.remove('done');
+  });
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(checks));
+  updateProgress(); updateBadges();
+}
+function load() {
+  const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+  document.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    const step = cb.closest('.step'); const id = step.dataset.id;
+    if (saved[id]) { cb.checked = true; step.classList.add('done'); }
+  });
+  updateProgress(); updateBadges();
+}
+function updateProgress() {
+  const total = document.querySelectorAll('input[type="checkbox"]').length;
+  const done = document.querySelectorAll('input[type="checkbox"]:checked').length;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  document.getElementById('headerProgress').style.width = pct + '%';
+  document.getElementById('headerProgressText').textContent = done + ' of ' + total + ' steps complete (' + pct + '%)';
+  document.getElementById('topProgress').style.width = pct + '%';
+  document.getElementById('topProgressText').textContent = pct + '%';
+}
+function updateBadges() {
+  document.querySelectorAll('.section').forEach(sec => {
+    const checks = sec.querySelectorAll('input[type="checkbox"]');
+    const done = sec.querySelectorAll('input[type="checkbox"]:checked').length;
+    const total = checks.length;
+    const badge = sec.querySelector('.badge');
+    if (!badge) return;
+    if (done === 0) { badge.textContent = 'To do'; badge.className = 'badge badge-todo'; }
+    else if (done === total) { badge.textContent = 'Done'; badge.className = 'badge badge-done'; }
+    else { badge.textContent = done + '/' + total; badge.className = 'badge badge-progress'; }
+  });
+}
+function resetAll() {
+  if (!confirm('Reset all checkboxes? This cannot be undone.')) return;
+  localStorage.removeItem(STORAGE_KEY);
+  document.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; cb.closest('.step').classList.remove('done'); });
+  updateProgress(); updateBadges();
+}
+load();
+</script>
+</body>
+</html>

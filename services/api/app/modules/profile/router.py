@@ -6,6 +6,8 @@ from ...core.storage import public_media_base
 from . import business_profile, service
 from .schemas import (
     AvatarSourceUpdateRequest,
+    BusinessDetailsIn,
+    BusinessDetailsOut,
     BusinessProfileResponse,
     BusinessProfileUpdateRequest,
     FeedbackRequest,
@@ -252,3 +254,36 @@ async def regenerate_business_profile(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"profile": profile}
+
+
+# ── Business details overrides (Databank · Google vs merchant) ────────────
+
+@router.get("/business-details", response_model=list[BusinessDetailsOut])
+async def list_business_details(
+    user=Depends(get_current_user), db: AsyncSession = Depends(get_db)
+):
+    """Every Google location with its official values and merchant overrides."""
+    from .business_details import get_all_details
+
+    return await get_all_details(db, user.id)
+
+
+@router.put("/business-details/{listing_id}", response_model=BusinessDetailsOut)
+async def save_business_details(
+    listing_id: str,
+    body: BusinessDetailsIn,
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Save merchant overrides for one location (they win over Google)."""
+    from .business_details import save_details
+
+    try:
+        return await save_details(
+            db, user.id, listing_id,
+            name=body.name, categories=body.categories,
+            services=body.services, hours=body.hours,
+            special_hours=body.special_hours,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))

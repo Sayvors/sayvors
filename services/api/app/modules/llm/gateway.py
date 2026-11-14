@@ -303,9 +303,16 @@ async def stream(
     finally:
         latency_ms = int((time.monotonic() - started) * 1000)
         text = "".join(parts)
-        completion_tokens = (
-            max(1, len(text) // _STREAM_CHARS_PER_TOKEN) if text else 0
-        )
+        # Prefer the provider's exact stream usage (last chunk) when present;
+        # fall back to the char estimate for providers/clients that omit it.
+        stream_usage = getattr(provider, "_last_stream_usage", None)
+        if stream_usage is not None and (stream_usage.prompt_tokens or stream_usage.completion_tokens):
+            prompt_tokens = stream_usage.prompt_tokens
+            completion_tokens = stream_usage.completion_tokens
+        else:
+            completion_tokens = (
+                max(1, len(text) // _STREAM_CHARS_PER_TOKEN) if text else 0
+            )
         from ..billing import pricing as _pricing
 
         await _pricing.ensure_fresh()

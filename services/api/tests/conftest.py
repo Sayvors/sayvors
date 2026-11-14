@@ -77,6 +77,9 @@ def _test_billing_sessions(monkeypatch):
     from app.modules.billing import pricing
 
     monkeypatch.setattr(pricing, "_session_factory", TEST_SESSION, raising=False)
+    from app.modules.admin import backup as admin_backup
+
+    monkeypatch.setattr(admin_backup, "_session_factory", TEST_SESSION, raising=False)
 
 
 @asynccontextmanager

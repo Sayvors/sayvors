@@ -107,6 +107,7 @@ async def _amain() -> None:
     from ..modules.rag import jobs as rag_jobs
     from ..modules.redis.client import run_redis_rearmer
     from ..modules.kafka.client import run_kafka_rearmer
+    from ..modules.admin.backup import run_db_backup_scheduler
 
     # Provision Kafka topics with explicit partition counts before any consumer
     # or runner starts. Prevents auto-create from making 1-partition topics.
@@ -140,6 +141,7 @@ async def _amain() -> None:
         "email-outbox": run_email_worker,
         "email-campaigns": run_campaign_worker,
         "unverified-purge": run_unverified_purge,
+        "db-backup-scheduler": run_db_backup_scheduler,
     }
     # RAG ingest worker (was lazily started from request handlers).
     loops["rag-ingest"] = rag_jobs.start_worker

@@ -245,6 +245,23 @@ async def _claim_channel(db: AsyncSession, config_id: str, last_polled_at) -> bo
     return (result.rowcount or 0) > 0
 
 
+async def _renew_channel_claim(db: AsyncSession, config_id: str) -> None:
+    """Extend the poll claim so a long pass doesn't expire mid-processing.
+
+    A pass with many reviews can run past the 120s claim TTL. Without a
+    renewal, another replica sees the expired lock, claims the channel,
+    and both workers double-process the same reviews. Renew before the
+    TTL elapses so the claim stays ours for the whole pass.
+    """
+    now = datetime.now(timezone.utc)
+    await db.execute(
+        update(AutoReplyConfig)
+        .where(AutoReplyConfig.id == config_id)
+        .values(polling_locked_until=now + timedelta(seconds=LOCK_SECONDS))
+    )
+    await db.commit()
+
+
 async def _release_channel(db: AsyncSession, config_id: str) -> None:
     """Release the poll claim WITHOUT moving the cursor.
 
@@ -1377,7 +1394,19 @@ async def _handle_fetched_review(
                     error=str(e)[:2000],
                 )
             )
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError:
+            # Another replica won the unique (channel_id, review_id) index
+            # for this review's reply row. Roll back so the session stays
+            # usable, then skip — the winner's row is the source of truth.
+            await db.rollback()
+            logger.info(
+                "review reply for %s already created by another worker; skipping",
+                review.review_id,
+            )
+            stats["skipped"] += 1
+            return
         stats["errors"] += 1
         return
 
@@ -1413,7 +1442,16 @@ async def _handle_fetched_review(
                 data={"review_id": review.review_id, "channel_id": channel.id},
                 href="/dashboard/outbox",
             )
-            await db.commit()
+            try:
+                await db.commit()
+            except IntegrityError:
+                await db.rollback()
+                logger.info(
+                    "review reply for %s already created by another worker; skipping",
+                    review.review_id,
+                )
+                stats["skipped"] += 1
+                return
             return
         _save_reply_row(
             db, failed_row, channel.id, review.review_id,
@@ -1427,7 +1465,16 @@ async def _handle_fetched_review(
             data={"review_id": review.review_id, "channel_id": channel.id},
             href="/dashboard/reviews",
         )
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            logger.info(
+                "review reply for %s already created by another worker; skipping",
+                review.review_id,
+            )
+            stats["skipped"] += 1
+            return
         try:
             await _enqueue_review_replied(db, channel, review, "posted")
         except Exception as e:
@@ -1439,7 +1486,16 @@ async def _handle_fetched_review(
             review.rating, review.text, review.reviewer_name,
             reply_text, "pending_approval",
         )
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            logger.info(
+                "review reply for %s already created by another worker; skipping",
+                review.review_id,
+            )
+            stats["skipped"] += 1
+            return
         stats["queued"] += 1
         try:
             await _enqueue_review_replied(db, channel, review, "pending_approval")
@@ -1573,8 +1629,18 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
 
         await _mark_reviews_seen(db, channel, reviews)
 
+        # Renew the channel claim every 10 reviews so a long pass (many
+        # reviews, each taking seconds for LLM classify + generate + post)
+        # doesn't let the 120s claim TTL expire and let a second replica
+        # claim the channel mid-pass. Double-processing is the race this
+        # prevents; the unique index on (channel_id, review_id) is the
+        # database backstop if renewal ever lapses.
+        _review_count = 0
         for review in reviews:
             await _handle_fetched_review(db, channel, config, client, review, stats)
+            _review_count += 1
+            if _review_count % 10 == 0:
+                await _renew_channel_claim(db, config.id)
 
         # A complete sweep is intentionally rare: the normal poll is
         # incremental, so removal detection needs one full read per day.
@@ -1667,6 +1733,19 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
 
 
 _POLL_CONCURRENCY = 5
+
+
+def _channel_poll_jitter(channel_id: str) -> int:
+    """Stable 0..JITTER offset per channel id.
+
+    Deterministic (same channel always gets the same offset) so the spread is
+    even across runs and restarts, and a channel never drifts into a thundering
+    herd with the rest.
+    """
+    import zlib
+
+    max_jitter = max(0, settings.GOOGLE_REVIEWS_POLL_JITTER_SECONDS)
+    return zlib.crc32(channel_id.encode("utf-8")) % (max_jitter + 1)
 
 
 async def _poll_one_channel(
@@ -1778,7 +1857,22 @@ async def poll_once() -> dict:
             )
         ).all()
 
-    channel_configs = [(str(ch.id), str(cfg.id)) for ch, cfg in rows]
+    # Per-channel jitter: each channel's effective interval is the base plus a
+    # stable 0..JITTER offset derived from its id, so 500 listings never all
+    # hit Google in the same second. The SQL above already narrowed to the
+    # base window; this final filter applies each channel's own deadline.
+    selected = []
+    for ch, cfg in rows:
+        deadline = now - timedelta(
+            seconds=(
+                settings.GOOGLE_REVIEWS_POLL_INTERVAL_SECONDS
+                + _channel_poll_jitter(str(ch.id))
+            )
+        )
+        if cfg.last_polled_at is None or cfg.last_polled_at < deadline:
+            selected.append((str(ch.id), str(cfg.id)))
+
+    channel_configs = selected
 
     semaphore = asyncio.Semaphore(_POLL_CONCURRENCY)
 

@@ -80,6 +80,15 @@ class PostOut(BaseModel):
     created_at: str
 
 
+class PostStatsOut(BaseModel):
+    total: int = 0
+    published: int = 0
+    scheduled: int = 0
+    draft: int = 0
+    failed: int = 0
+    archived: int = 0
+
+
 class PublishResult(BaseModel):
     post: PostOut
     google_published: bool

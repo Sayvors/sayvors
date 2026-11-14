@@ -21,6 +21,7 @@ from .schemas import (
     AiDraftResponse,
     PostCreate,
     PostOut,
+    PostStatsOut,
     PostUpdate,
     PublishResult,
     SyncMetricsRequest,
@@ -76,6 +77,16 @@ async def list_posts(
 ):
     rows = await service.list_posts(db, tenant_id_of(user), listing_id)
     return [PostOut(**r) for r in rows]
+
+
+@router.get("/stats", response_model=PostStatsOut)
+async def get_post_stats(
+    ctx: TenantContext = Depends(require_perm("posts.view")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Per-status post counts for the dashboard glance card (no 200-row cap)."""
+    return PostStatsOut(**await service.post_stats(db, tenant_id_of(user)))
 
 
 @router.post("/sync-metrics", response_model=SyncMetricsResult)

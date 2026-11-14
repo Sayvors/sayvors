@@ -72,14 +72,17 @@ export default function ConnectImportLauncher() {
 
   useEffect(() => {
     const latest = latestQuery.data?.session;
-    // Only auto-open work that is actually moving. A "ready" session is
-    // waiting on the merchant, and a dismissed one was closed on purpose —
-    // the 20s poll must not resurrect either.
-    if (
-      latest &&
-      ["queued", "fetching", "awaiting_scope", "generating", "publishing"].includes(latest.status) &&
-      !isConnectImportDismissed(latest.id)
-    ) {
+    if (!latest) return;
+    // A freshly finished import (even with zero reviews) must still surface
+    // once; anything older than an hour is not "just connected" and must
+    // not resurrect. Dismissed sessions never reopen.
+    if (isConnectImportDismissed(latest.id)) return;
+    const active = ["queued", "fetching", "awaiting_scope", "generating", "ready", "publishing"].includes(latest.status);
+    const terminalFresh =
+      ["completed", "failed"].includes(latest.status) &&
+      latest.created_at != null &&
+      Date.now() - new Date(latest.created_at).getTime() < 60 * 60 * 1000;
+    if (active || terminalFresh) {
       setSessionId(latest.id);
       setOpen(true);
     }
