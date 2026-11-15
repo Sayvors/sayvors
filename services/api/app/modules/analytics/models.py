@@ -894,6 +894,18 @@ class StaffMember(Base):
     normalized_name: Mapped[str] = mapped_column(String(120))
     aliases: Mapped[list | None] = mapped_column(JSON, default=list, server_default=_EMPTY_JSON, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    # ── Profile (the employee's own page) ──────────────────────────────
+    # The registry started as name + branch only, enough to attach review
+    # mentions. A profile page needs a face and a way to reach the person, so
+    # these are optional merchant-entered fields. `avatar_storage_key` is the
+    # object key behind `avatar_url`, kept so replacing the picture can delete
+    # the one it supersedes (same pattern as users.avatar_storage_key).
+    avatar_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    avatar_storage_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    job_title: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    bio: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
