@@ -186,7 +186,7 @@
 
 <div class="top">
   <span class="name">Sayvors 1M-User Readiness</span>
-  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 4 open (0 blockers · 3 majors · 1 medium) · INS: 1 open · original audit: 2 open (OPS-1, OPS-4) · 38 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 6 open (1 high · 3 medium · 2 low)</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,137 passed / 3 skipped (2026-11-03)</span>
+  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 4 open (0 blockers · 3 majors · 1 medium) · INS: 1 open · original audit: 2 open (OPS-1, OPS-4) · 38 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 6 open (1 high · 3 medium · 2 low)</span> <span class="chip warn"><a href="#infra-8gb">Nov 15 8 GB plan</a>: proposed, not applied</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,137 passed / 3 skipped (2026-11-03)</span>
   <nav class="topnav">
     <a href="#blockers">Blockers</a>
     <a href="#pass-2026-10-25">Oct 25 pass</a>
@@ -214,6 +214,7 @@
     <a href="#reviews-audit">Reviews audit</a>
     <a href="#crawler-plan">Crawler plan</a>
     <a href="#workers-arch">Workers arch</a>
+    <a href="#infra-8gb">8 GB plan</a>
   </nav>
 </div>
 
@@ -278,7 +279,7 @@
     </div>
     <div class="card">
       <h3>Infrastructure <span class="chip crit">Single box, zero DR</span></h3>
-      <p><strong>Production host stood up: EC2 m7i-flex.large (8 GiB, 2 vCPU, 80 GiB gp3) in eu-north-1.</strong> Runs API + background worker + internal PostgreSQL (Docker Compose) + Redis + Kafka + TLS ingress on one box; frontends stay on Vercel. Two S3 buckets created: <code>sayvors-prod-backups-221201452822-221201452822-eu-north-1-an</code> (db backups, private, versioning on) and <code>sayvors-prod-media-221201452822-221201452822-eu-north-1-an</code> (media, private, SSE-S3). <code>deploy/env.prod.example</code> updated with both bucket names and <code>S3_DOCS_BUCKET</code> uncommented. <strong>Not yet done:</strong> backup restore rehearsal (OPS-1), RDS eliminated in favor of internal Postgres (saves ~$14/mo), SSH restricted to admin IP, termination protection on, CloudWatch monitoring on, cron scheduled for daily <code>db_backup.py</code>. Box failure still kills everything simultaneously — single point of failure until a second instance or managed services are added.</p>
+      <p><strong>Production host stood up: EC2 m7i-flex.large (8 GiB, 2 vCPU, 80 GiB gp3) in eu-north-1.</strong> Runs API + background worker + Redis + Kafka + TLS ingress on one box; frontends stay on Vercel. Postgres runs on <strong>external RDS</strong> today — whether to keep RDS or move Postgres into a compose container is an open decision (see <a href="#infra-8gb">§35</a>), deliberately not baked into the proposed resource limits. Two S3 buckets created: <code>sayvors-prod-backups-221201452822-221201452822-eu-north-1-an</code> (db backups, private, versioning on) and <code>sayvors-prod-media-221201452822-221201452822-eu-north-1-an</code> (media, private, SSE-S3). <code>deploy/env.prod.example</code> updated with both bucket names and <code>S3_DOCS_BUCKET</code> uncommented. <strong>Not yet done:</strong> the 8 GB right-sizing in §35 (worker memory/CPU, Redis AOF+auth, Kafka heap, swap), backup restore rehearsal (OPS-1), SSH restricted to admin IP, termination protection on, CloudWatch monitoring on, cron scheduled for daily <code>db_backup.py</code>. Box failure still kills everything simultaneously — single point of failure until a second instance or managed services are added.</p>
     </div>
   </div>
 </section>
@@ -3431,6 +3432,8 @@ order by created_at desc limit 5;</code></pre>
   <p><span class="chip ok">Implemented 2026-11-12</span> Merchant-driven workstream: the owner adds their employees per branch on the Team page, the review AI detects when a customer names an employee ("Ahmad was so supportive", "albakhair solved my issue perfectly"), and a new Analytics <strong>Staff</strong> tab shows each employee's performance. The system already extracted <code>entities.staff</code> from reviews, so this was a layer on top: a registry, a deterministic matcher, per-employee aggregation, and UI.</p>
   <p class="note"><strong>What shipped:</strong> <code>staff_members</code> (tenant-scoped, per <code>listing_id</code> branch, aliases JSONB, unique normalized name, soft-active) and <code>review_staff_mentions</code> (one row per review per normalized name; unmatched names kept with <code>staff_member_id</code> NULL — the unassigned bucket). Enrichment upgraded to per-staff sentiment (<code>"staff": [{"name", "sentiment"}]</code>, <code>MEANING_VERSION = 3</code>); matcher is deterministic Arabic-aware normalization (diacritics/tatweel stripped, alef/hamza unified, honorifics dropped) over names + aliases. The mention pass runs in the analytics consumer after meaning extraction (idempotent per review, fail-soft, deletes stale names). API: <code>/api/v1/staff</code> CRUD, <code>/summary</code> (window counts, sentiment split, avg rating, trend vs prior window), <code>/unmatched</code>, <code>/unmatched/assign</code> (retro-links history), <code>/{id}/mentions</code> (details timeline), <code>/backfill</code> (90-day, idempotent, optional LLM re-extract opt-in). UI: Team page Employees section (add with aliases, activate/deactivate, remove — removal keeps mentions as unassigned); Analytics Staff tab (per-employee cards with rating/mentions/split/trend → per-employee details page, "Link past reviews" backfill button, unassigned-names panel with assign-dropdown and add-as-employee flow pre-filling the Team form via <code>?addName=</code>). Tests: staff-mention tests (normalizer variants, alias matching, unmatched bucket, retro-link, idempotency, summary math) + model-schema parity; single alembic head (<code>20261112140000</code>, dev DB migrated). <strong>2026-11-14 production-readiness fixes:</strong> (1) meaning sanitizer now preserves <code>{name, sentiment}</code> staff objects with normalized sentiment (previously the shared string cleaner silently dropped the dict form the prompt requires — mentions would be empty when the model obeyed, and per-person sentiment was never stored); (2) backfill now skips reviews that already have mention rows, so re-runs progress to older reviews instead of rescanning the newest <code>limit</code> forever; (3) assign-unmatched records the spelling as an employee alias so future reviews keep matching; (4) mentions are scoped to the review's branch (listing resolved from the channel in both the live pass and the backfill), so a same-named employee at another branch can no longer capture them; (5) staff summary/unmatched/mentions reads now require <code>team.view</code> instead of the odd <code>media.view</code>. Two decisions open as documented: Arabic dialect policy for few-shots and AI disclosure (unchanged from §28).</p>
 
+  <p class="note"><strong>2026-11-15 &mdash; employee profile page:</strong> each employee in <code>staff_members</code> now has a real profile at <code>/dashboard/analytics/staff/{id}</code>, linked from the Staff cards and the Team &rarr; Employees list. It shows the person's picture (validated upload, stored on the public media backend under the workspace prefix), name, job title, phone, email and bio; the credit aggregate (mention count, sentiment split, positive %, average star rating, first/last mention); the AI's read of those reviews (deterministic summary, top topics, praise and concern quotes, needs-human count, meaning version); and only the reviews that name the employee, with reviewer, stars, text, AI intent/problem/evidence and the Google link. The profile fields are optional merchant-entered columns (<code>avatar_url</code>, <code>avatar_storage_key</code>, <code>phone</code>, <code>email</code>, <code>job_title</code>, <code>bio</code>) added by migration <code>20261115020000</code>; the read model is <code>GET /api/v1/staff/{id}</code> (window optional, all-time by default), the photo endpoints are <code>POST/DELETE /api/v1/staff/{id}/avatar</code>, and <code>GET /{id}/mentions</code> now carries the same review + meaning fields. Tests: <code>tests/test_staff_profile.py</code> (aggregate math, AI analysis, window filter, contact patch/clear, tenant scoping, photo validation).</p>
+
   <h3>Phase 0 - Data model (one migration)</h3>
   <ul>
     <li><strong><code>staff_members</code></strong> - the registry: <code>id</code>, <code>tenant_id</code>, <code>listing_id</code> (branch), <code>name</code>, <code>aliases</code> (JSONB, e.g. ["Ahmed", "Ahmad"]), <code>active</code> (soft-disable, history kept), unique <code>(tenant_id, listing_id, normalized_name)</code>.</li>
@@ -3647,6 +3650,54 @@ order by created_at desc limit 5;</code></pre>
   </table></div>
 
   <p class="note"><strong>Remaining:</strong> item 15 — feature-matrix display (numeric limits per row instead of checkmarks) is the open UI step. Items 3 (ASK Sayvors) and 9 (response style) stay unlimited per product decision; item 10 (voice replies) is handled by design via the DB beta gate. Do not push unless explicitly asked (repo rule 4).</p>
+</section>
+
+<section id="infra-8gb">
+  <div class="eyebrow">&sect;&sect; 35 - 8 GB single-EC2 production optimization - 2026-11-15</div>
+  <h2>Right-sizing one 8 GB box (proposed, not applied)</h2>
+  <p><span class="chip warn">Proposed</span> <span class="chip low">Not implemented</span> <span class="chip low">No code change</span> Target hardware: one EC2 <code>m7i-flex.large</code> (2 vCPU, 8 GiB), external RDS Postgres, Vercel frontends. This section records the audit of the current compose limits and the configuration that maximises WhatsApp AI reply throughput without adding containers. <strong>Nothing here is applied yet</strong> — it is the plan to execute when the box is stood up.</p>
+
+  <h3>What the audit found (current compose)</h3>
+  <div class="scroll"><table>
+    <tr><th>Service</th><th>mem_limit</th><th>cpus</th><th>Finding</th></tr>
+    <tr><td>api</td><td>768m</td><td>0.75</td><td><code>UVICORN_WORKERS</code> defaults to 2 — doubles the DB pool (5+5 each), splits <code>/metrics</code>, races alembic on boot.</td></tr>
+    <tr><td>worker</td><td><strong>384m</strong></td><td><strong>0.5</strong></td><td>The bottleneck. ~21 asyncio loops + 4 job lanes (realtime 8 · publishing 4 · media 2 · bulk 4) share one event loop and 0.5 CPU. LLM tokenisation, gzip, TLS and JSON are CPU work that stalls every other loop.</td></tr>
+    <tr><td>redis</td><td>192m</td><td>0.25</td><td><code>--maxmemory 128mb</code>, no AOF, no <code>requirepass</code>. Holds OTPs, rate-limit windows, JWT blacklist — a restart wipes them.</td></tr>
+    <tr><td>kafka</td><td>640m</td><td>0.5</td><td>heap <code>-Xmx384m</code> inside 640m leaves no headroom; <code>auto.create.topics.enable=true</code> would silently make 1-partition topics.</td></tr>
+    <tr><td>caddy / prometheus</td><td>128m / 256m</td><td>0.25 / 0.25</td><td>Fine, but prometheus scrapes at 15s and each scrape makes the API run live DB queries.</td></tr>
+  </table></div>
+  <p class="note">Total container memory today ≈ 2.4 GB on an 8 GB box — leaving ~5.6 GB unused while the worker is starved. The fix is reallocation, not more hardware.</p>
+
+  <h3>Proposed limits (8 GB, Postgres on RDS — no local DB RAM)</h3>
+  <div class="scroll"><table>
+    <tr><th>Service</th><th>mem_limit</th><th>mem_reservation</th><th>cpus</th><th>Why</th></tr>
+    <tr><td><strong>worker</strong></td><td><strong>2560m</strong></td><td>2048m</td><td><strong>1.2</strong></td><td>The WhatsApp AI reply path and every background loop live here. Largest share.</td></tr>
+    <tr><td>api</td><td>1024m</td><td>768m</td><td>0.5</td><td>One uvicorn process (<code>UVICORN_WORKERS=1</code>).</td></tr>
+    <tr><td>kafka</td><td>1024m</td><td>768m</td><td>0.3</td><td>heap <code>-Xmx640m -Xms640m</code>, <code>auto.create=false</code>.</td></tr>
+    <tr><td>redis</td><td>512m</td><td>384m</td><td>0.15</td><td><code>--maxmemory 384mb --appendonly yes --appendfsync everysec --requirepass</code>, <code>noeviction</code> kept.</td></tr>
+    <tr><td>caddy</td><td>128m</td><td>64m</td><td>0.1</td><td>Unchanged.</td></tr>
+    <tr><td>prometheus</td><td>256m</td><td>128m</td><td>0.05</td><td>scrape 30s, retention 15d.</td></tr>
+    <tr><td><strong>containers</strong></td><td><strong>5504m</strong></td><td></td><td>2.3 cap</td><td>+ ~0.9 GB OS/Docker, ~1.8 GB page cache.</td></tr>
+    <tr><td><strong>swap</strong></td><td colspan="3"><strong>4 GB swapfile, <code>vm.swappiness=10</code></strong></td><td>OOM insurance; swap touched only under real pressure.</td></tr>
+  </table></div>
+
+  <h3>Concurrency changes (env only, no code)</h3>
+  <pre><code>UVICORN_WORKERS=1
+JOBS_REALTIME_CONCURRENCY=6      # was 8
+JOBS_PUBLISHING_CONCURRENCY=3    # was 4
+JOBS_MEDIA_CONCURRENCY=2
+JOBS_BULK_CONCURRENCY=2          # was 4
+DB_POOL_SIZE=5
+DB_POOL_MAX_OVERFLOW=5</code></pre>
+  <p class="note">Lower lane concurrency keeps one lane (e.g. a bulk campaign) from starving the AI path inside the shared event loop. One API process keeps ~20 DB connections against RDS.</p>
+
+  <h3>The one real throughput unlock (code, phase 2)</h3>
+  <p>The AI reply consumer is <strong>sequential</strong>: <code>meta_events_worker.py</code> uses <code>max_poll_records=1</code> and awaits <code>_process_event</code> inline per message — ~1–2 replies/sec platform-wide, regardless of RAM. Proposed: batch <strong>8</strong>, bounded <code>gather</code> with an <strong>8</strong> semaphore, <strong>one <code>asyncio.Lock</code> per contact</strong> (so a customer's messages stay ordered while different customers run in parallel), and <strong>commit per event</strong> (unchanged dedupe/idempotency). Raise <code>KAFKA_MAX_POLL_INTERVAL_MS</code> to 1800000 so a slow batch cannot get the consumer kicked. Expected 6–10 replies/sec (LLM-latency bound).</p>
+  <p class="note"><strong>Constraint:</strong> per-contact locks are per-process. Safe with one worker; if you ever run two replicas, messages for one contact on different partitions could reorder — that is a partition-key decision, not this change.</p>
+
+  <h3>Database placement — deliberately undecided</h3>
+  <p>Postgres runs on <strong>external RDS</strong> today and this plan allocates <strong>no local RAM to a database</strong>. Whether to keep RDS or move Postgres into a compose container is an open infrastructure decision (cost vs. box-failure blast radius); it is intentionally not baked into the proposed limits so either choice can be made later without rework. When decided: RDS → nothing changes here; internal → carve ~1.8 GB from the worker/api headroom and add a <code>db</code> service with <code>shared_buffers=512MB</code>.</p>
+  <p class="note"><strong>Status:</strong> proposal only — compose, env template, prometheus config and worker code are unchanged. Do not push unless explicitly asked (repo rule 4).</p>
 </section>
 
 <footer>
