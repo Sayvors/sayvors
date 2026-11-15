@@ -2372,6 +2372,12 @@ interface Intelligence {
   dimensions: IntelDimension[];
   /** Where this business leads / trails the cohort. */
   competitive: IntelCompetitive;
+  /** Factual charts (computed from real reviews, never AI-generated). */
+  ratingDistribution: { star: number; count: number }[];
+  monthlyVolume: { label: string; count: number; avg: number }[];
+  responseRate: number;
+  responded: number;
+  unanswered: number;
 }
 
 // Local dimension set for the instant heuristic view. `key` matches the
@@ -2422,6 +2428,34 @@ function buildIntelligence(reviews: ReviewItem[], ctx: HeuristicCtx): Intelligen
     const inGroup = (fn: (r: ReviewItem) => boolean) => reviews.filter((r) => fn(r) && t.keywords.some((k) => r.comment.toLowerCase().includes(k))).length;
     return { theme: t.name, s5: inGroup((r) => r.rating === 5), s4: inGroup((r) => r.rating === 4), s3: inGroup((r) => r.rating === 3), low: inGroup((r) => r.rating <= 2) };
   });
+
+  // Factual, review-derived charts (never AI-generated).
+  const ratingDistribution = [5, 4, 3, 2, 1].map((star) => ({
+    star,
+    count: reviews.filter((r) => r.rating === star).length,
+  }));
+  const byMonth = new Map<string, ReviewItem[]>();
+  for (const r of reviews) {
+    const key = r.createdAt ? r.createdAt.slice(0, 7) : "";
+    if (!key) continue;
+    const arr = byMonth.get(key) ?? [];
+    arr.push(r);
+    byMonth.set(key, arr);
+  }
+  const monthlyVolume = Array.from(byMonth.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .slice(-12)
+    .map(([key, items]) => {
+      const [y, m] = key.split("-").map(Number);
+      const label = Number.isFinite(y) && Number.isFinite(m)
+        ? new Date(y, m - 1, 1).toLocaleDateString("en-US", { month: "short", year: "2-digit" })
+        : key;
+      const avgM = items.length ? items.reduce((a, r) => a + r.rating, 0) / items.length : 0;
+      return { label, count: items.length, avg: Math.round(avgM * 10) / 10 };
+    });
+  const responded = reviews.filter((r) => r.replied).length;
+  const unansweredCount = Math.max(0, total - responded);
+  const responseRate = total ? Math.round((responded / total) * 100) : 0;
 
   const waitTheme = themes.find((t) => t.name === "Speed");
   const valueTheme = themes.find((t) => t.name === "Value");
@@ -2476,9 +2510,14 @@ function buildIntelligence(reviews: ReviewItem[], ctx: HeuristicCtx): Intelligen
     competitive: { wins: [], gaps: [], scope: null },
     actions: [
       ...(waitTheme && waitTheme.mentions > 0 ? [{ title: hx.actionWaitTitle, detail: fill(hx.actionWaitDetail, { n: fmt(waitTheme.mentions) }) }] : []),
-      { title: fill(hx.actionRespondTitle, { n: fmt(reviews.filter((r) => !r.replied).length) }), detail: hx.actionRespondDetail },
+      { title: fill(hx.actionRespondTitle, { n: fmt(unansweredCount) }), detail: hx.actionRespondDetail },
       ...(staffTheme ? [{ title: hx.actionStaffTitle, detail: hx.actionStaffDetail }] : []),
     ].slice(0, 5),
+    ratingDistribution,
+    monthlyVolume,
+    responseRate,
+    responded,
+    unanswered: unansweredCount,
   };
 }
 
@@ -2528,6 +2567,12 @@ function mergeAiIntel(data: {
       // rows server-side); otherwise keep the locally computed one.
       dimensions: data.dimensions?.length ? data.dimensions : base.dimensions,
       competitive: data.competitive ?? base.competitive,
+      // Factual charts stay grounded in real reviews, not AI output.
+      ratingDistribution: base.ratingDistribution,
+      monthlyVolume: base.monthlyVolume,
+      responseRate: base.responseRate,
+      responded: base.responded,
+      unanswered: base.unanswered,
     },
     source: data.source,
     model: data.model,
@@ -2617,7 +2662,7 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
   const badge = isLoading
     ? { text: analyzing ? ih.badgeAnalyzing : ih.badgeLoading, icon: "◐", cls: "bg-[#1A73E8]/10 text-[#1A73E8] border border-[#1A73E8]/20" }
     : isAI
-      ? { text: fill(ih.badgeAi, { model: aiMeta?.model ?? ih.modelFallback, rag: aiMeta?.ragUsed ? ih.badgeRag : "" }), icon: "✦", cls: "bg-[#E6F4EA] text-[#137333] border border-[#CEEAD6]" }
+      ? { text: ih.badgeAiFact, icon: "✦", cls: "bg-[#E6F4EA] text-[#137333] border border-[#CEEAD6]" }
       : aiMeta
         ? { text: ih.badgeHeuristic, icon: "◈", cls: "bg-[#F1F3F4] text-[#5F6368] border border-[#DADCE0]" }
         : { text: ih.badgeNone, icon: "○", cls: "bg-[#FEF7E0] text-[#EA8600] border border-[#FDE293]" };
@@ -2661,7 +2706,7 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
               <span className="mx-1.5 text-[#DADCE0]">•</span>
               <span className="font-medium text-[#202124]">{intelInterval.label}</span>
               <span className="mx-1.5 text-[#DADCE0]">•</span>
-              {fill(ih.kpiReviews, { n: fmt(total) })} • {isAI ? fill(ih.aiAnalysis, { model: aiMeta?.model ? ` • ${aiMeta.model}` : "" }) : ih.heuristicLine}
+              {fill(ih.kpiReviews, { n: fmt(total) })} • {isAI ? ih.aiAnalysisFact : ih.heuristicLine}
             </p>
             {analyzedLabel && <p className="mt-1 text-[12px] text-[#5F6368]">{fill(ih.updated, { when: analyzedLabel })}</p>}
             {aiMeta?.stale && (
@@ -2745,14 +2790,15 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
           {isLoading && <span className="text-[12px] text-[#5F6368]">{fill(ih.loadingPeriod, { label: intelInterval.label.toLowerCase() })}…</span>}
         </div>
 
-        {/* Source transparency — makes AI vs heuristic crystal clear */}
+        {/* Source transparency — facts first, AI used for interpretation */}
         <div className="mt-3 flex flex-wrap gap-2 border-t border-[#E8EAED] pt-3 text-[12px]">
-          <span className={`inline-flex items-center gap-1.5 ${isAI ? "text-[#137333]" : "text-[#5F6368]"}`}>
-            <span className={`h-2 w-2 rounded-full ${isAI ? "bg-[#34A853]" : "bg-[#5F6368]"}`} />
-            {isAI ? ih.srcAi : ih.srcHeuristic}
+          <span className="inline-flex items-center gap-1.5 text-[#137333]">
+            <span className="h-2 w-2 rounded-full bg-[#34A853]" /> {ih.srcFacts}
           </span>
           <span className="text-[#DADCE0]">•</span>
-          <span className="text-[#5F6368]">{isAI && aiMeta?.ragUsed ? ih.ragYes : isAI ? ih.ragReviewsOnly : ih.ragNo}</span>
+          <span className="text-[#5F6368]">{isAI ? (aiMeta?.ragUsed ? ih.ragYes : ih.ragReviewsOnly) : ih.ragNo}</span>
+          <span className="text-[#DADCE0]">•</span>
+          <span className="text-[#5F6368]">{ih.purposeLine}</span>
         </div>
       </div>
 
@@ -2776,14 +2822,64 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
           </div>
         </div>
         <div className="rounded-lg border border-[#DADCE0] bg-white p-4">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-[#5F6368]">{ih.kpiConfidence}</p>
-          <p className="mt-1 text-[22px] font-normal leading-7 text-[#202124]">{fmt(i.confidence)}%</p>
-          <p className="mt-1 text-[12px] text-[#5F6368]">{total >= 20 ? ih.confHigh : total >= 8 ? ih.confMid : ih.confLow}</p>
+          <p className="text-[11px] font-medium uppercase tracking-wide text-[#5F6368]">{ih.kpiResponse}</p>
+          <p className="mt-1 text-[22px] font-normal leading-7 text-[#202124]">{fmt(i.responseRate)}%</p>
+          <p className="mt-1 text-[12px] text-[#5F6368]">{fill(ih.responseMeta, { r: fmt(i.responded), t: fmt(total) })}</p>
         </div>
         <div className="rounded-lg border border-[#DADCE0] bg-white p-4">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-[#5F6368]">{ih.kpiRisk}</p>
-          <p className="mt-1 text-[14px] font-medium leading-5 text-[#202124]">{revenueRisk}</p>
-          <p className="mt-1 text-[12px] text-[#5F6368]">{ih.riskFix}</p>
+          <p className="text-[11px] font-medium uppercase tracking-wide text-[#5F6368]">{ih.kpiUnanswered}</p>
+          <p className={`mt-1 text-[22px] font-normal leading-7 ${i.unanswered > 0 ? "text-[#C5221F]" : "text-[#137333]"}`}>{fmt(i.unanswered)}</p>
+          <p className="mt-1 text-[12px] text-[#5F6368]">{i.unanswered > 0 ? ih.replyCta : ih.replyAllDone}</p>
+        </div>
+      </div>
+
+      {/* FACTS — rating distribution and review volume (from real reviews) */}
+      <div className="grid gap-3 lg:grid-cols-2">
+        <div className="rounded-lg border border-[#DADCE0] bg-white p-5">
+          <h3 className="text-[14px] font-medium text-[#202124]">{ih.ratingDistTitle}</h3>
+          <p className="text-[12px] text-[#5F6368]">{ih.ratingDistSub}</p>
+          <div className="mt-3 space-y-2">
+            {i.ratingDistribution.map((d) => {
+              const pct = total ? Math.round((d.count / total) * 100) : 0;
+              const color = d.star >= 4 ? "#34A853" : d.star === 3 ? "#FBBC05" : "#EA4335";
+              return (
+                <div key={d.star} className="flex items-center gap-2 text-[12px]">
+                  <span className="w-8 shrink-0 font-medium text-[#202124]">{fmt(d.star)}★</span>
+                  <div className="h-3 flex-1 overflow-hidden rounded-full bg-[#E8EAED]">
+                    <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: color }} />
+                  </div>
+                  <span className="w-20 shrink-0 text-right tabular-nums text-[#5F6368]">{fmt(d.count)} · {fmt(pct)}%</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <div className="rounded-lg border border-[#DADCE0] bg-white p-5">
+          <h3 className="text-[14px] font-medium text-[#202124]">{ih.volumeTitle}</h3>
+          <p className="text-[12px] text-[#5F6368]">{ih.volumeSub}</p>
+          {i.monthlyVolume.length === 0 ? (
+            <p className="mt-3 text-[13px] text-[#5F6368]">{ih.noThemes}</p>
+          ) : (
+            <div className="mt-3">
+              <div className="flex h-28 items-end gap-1.5">
+                {(() => {
+                  const maxC = Math.max(1, ...i.monthlyVolume.map((m) => m.count));
+                  return i.monthlyVolume.map((m) => {
+                    const h = Math.max(6, Math.round((m.count / maxC) * 100));
+                    const color = m.avg >= 4 ? "#34A853" : m.avg >= 3 ? "#FBBC05" : "#EA4335";
+                    return (
+                      <div key={m.label} className="flex flex-1 flex-col items-center gap-1" title={`${m.label}: ${m.count} reviews, ${m.avg}★ avg`}>
+                        <span className="text-[10px] tabular-nums text-[#5F6368]">{fmt(m.count)}</span>
+                        <div className="w-full rounded-t" style={{ height: `${h}%`, backgroundColor: color, minHeight: 4 }} />
+                        <span className="truncate text-[10px] text-[#5F6368]">{m.label}</span>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+              <p className="mt-2 text-[11px] text-[#5F6368]">{ih.volumeLegend}</p>
+            </div>
+          )}
         </div>
       </div>
 
@@ -3119,8 +3215,8 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
 
       <button onClick={onBack} className="text-[13px] font-medium text-[#1A73E8] hover:underline">{t.reviews.detail.back}</button>
       <p className="text-[11px] leading-4 text-[#5F6368]">
-        {isAI ? fill(ih.footerAi, { m: aiMeta?.model ?? ih.modelFallback, rag: aiMeta?.ragUsed ? ih.footerRagYes : ih.footerRagNo }) : ih.footerHeuristic}
-        {" "}• Sayvors-derived analytics • <span className="underline decoration-dotted">{ih.whyMatters}</span>
+        {ih.footerFact} {isAI ? `• ${aiMeta?.ragUsed ? ih.footerRagYes : ih.footerRagNo}` : `• ${ih.footerHeuristicShort}`}
+        {" "}• <span className="underline decoration-dotted">{ih.whyMatters}</span>
       </p>
     </div>
   );
