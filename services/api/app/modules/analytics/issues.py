@@ -12,7 +12,7 @@ out, exactly as they are in the report, and the count is returned so the gap
 stays visible instead of quietly shrinking the list.
 """
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -239,6 +239,218 @@ async def update_issue(
         # Stamped on close, cleared on reopen, so the before/after comparison
         # stays honest if someone reopens an issue they fixed in a hurry.
         issue.resolved_at = now() if status in ("done", "dismissed") else None
+    if resolution_note is not None:
+        issue.resolution_note = resolution_note[:2000] or None
+    await db.commit()
+    await db.refresh(issue)
+    return issue
+
+
+# ── AI-detected complaint themes (free-text problems) ─────────────────────
+
+_PROBLEM_WINDOW_DAYS = 90
+_PROBLEM_EVIDENCE_LIMIT = 12
+
+
+def _problem_severity(problems: list[dict]) -> str:
+    """Most severe severity across the problems carried by one review."""
+    sev = "low"
+    for p in problems or []:
+        if not isinstance(p, dict):
+            continue
+        s = str(p.get("severity") or "medium").lower()
+        if s == "high":
+            return "high"
+        if s == "medium":
+            sev = "medium"
+    return sev
+
+
+async def sync_problem_issues(
+    db: AsyncSession,
+    user_id: str,
+    days: int = _PROBLEM_WINDOW_DAYS,
+) -> dict:
+    """Recompute tracked complaint themes from current review enrichment.
+
+    Aggregates the free-text ``problems`` arrays on ``ReviewInsight`` rows
+    (e.g. "lack of respect for customers") into one tracked issue per problem
+    name. Merchant-owned fields (status, resolution_note, resolved_at) are
+    never overwritten. A ``done`` issue reopens when the problem resurfaces
+    beyond the mentions it had when it was marked done.
+    """
+    from .intelligence import SEVERITY_WEIGHTS
+    from .models import ReviewInsight, ReviewProblemIssue
+
+    start = now() - timedelta(days=days)
+    rows = (
+        await db.execute(
+            select(
+                ReviewInsight.review_id,
+                ReviewInsight.channel_id,
+                ReviewInsight.rating,
+                ReviewInsight.problems,
+                ReviewInsight.review_text,
+                ReviewInsight.reviewer_name,
+            ).where(
+                ReviewInsight.user_id == user_id,
+                ReviewInsight.removed_at.is_(None),
+                ReviewInsight.created_at >= start,
+            )
+        )
+    ).all()
+
+    agg: dict[str, dict] = {}
+    for review_id, channel_id, rating, problems, text, reviewer in rows:
+        for p in problems or []:
+            if not isinstance(p, dict) or not p.get("name"):
+                continue
+            name = str(p["name"]).strip().lower()
+            if not name or len(name) > 255:
+                continue
+            entry = agg.setdefault(name, {
+                "mentions": 0, "negatives": 0, "ratings": [],
+                "severity": "low", "evidence": [], "channel_id": None,
+            })
+            entry["mentions"] += 1
+            if rating <= 2:
+                entry["negatives"] += 1
+            entry["ratings"].append(int(rating))
+            s = _problem_severity([p])
+            if s == "high":
+                entry["severity"] = "high"
+            elif s == "medium" and entry["severity"] != "high":
+                entry["severity"] = "medium"
+            if not entry["channel_id"] and channel_id:
+                entry["channel_id"] = str(channel_id)
+            if text and len(entry["evidence"]) < _PROBLEM_EVIDENCE_LIMIT:
+                entry["evidence"].append({
+                    "review_id": str(review_id),
+                    "quote": text.strip()[:200],
+                    "rating": int(rating),
+                    "reviewer": reviewer or "Customer",
+                })
+
+    created = updated = reopened = 0
+    for name, e in agg.items():
+        mentions = e["mentions"]
+        negatives = e["negatives"]
+        # An issue needs something to fix: only file when at least one review
+        # actually complained (rating <= 2). Praise-only mentions stay out.
+        if negatives == 0:
+            continue
+        ratings = e["ratings"]
+        severity = e["severity"]
+        impact = round(mentions * SEVERITY_WEIGHTS.get(severity, 1.0), 1)
+
+        from .intelligence import _canonical_complaint
+        from .intelligence_ai import _SUBJECT_PLAYBOOK
+
+        cat = _canonical_complaint(name)
+        title, detail = _SUBJECT_PLAYBOOK.get(cat, ("Review this directly", ""))
+
+        existing = (
+            await db.execute(
+                select(ReviewProblemIssue).where(
+                    ReviewProblemIssue.user_id == user_id,
+                    ReviewProblemIssue.problem == name,
+                )
+            )
+        ).scalar_one_or_none()
+
+        if existing is None:
+            db.add(ReviewProblemIssue(
+                user_id=user_id,
+                channel_id=e["channel_id"],
+                problem=name,
+                severity=severity,
+                mentions_last=mentions,
+                negative_count=negatives,
+                avg_rating=round(sum(ratings) / len(ratings), 2),
+                impact_last=impact,
+                evidence=e["evidence"],
+                title=title[:200],
+                detail=detail[:400],
+                status="open",
+                first_seen_at=now(),
+                last_seen_at=now(),
+            ))
+            created += 1
+        else:
+            existing.channel_id = e["channel_id"] or existing.channel_id
+            existing.severity = severity
+            existing.mentions_last = mentions
+            existing.negative_count = negatives
+            existing.avg_rating = round(sum(ratings) / len(ratings), 2)
+            existing.impact_last = impact
+            existing.evidence = e["evidence"]
+            existing.title = title[:200]
+            existing.detail = detail[:400]
+            existing.last_seen_at = now()
+            # A fixed problem that resurfaces beyond the level it was fixed at
+            # reopens so the merchant re-checks their fix.
+            if (
+                existing.status == "done"
+                and existing.mentions_at_resolve is not None
+                and mentions > existing.mentions_at_resolve
+            ):
+                existing.status = "open"
+                existing.resolved_at = None
+                existing.mentions_at_resolve = None
+                reopened += 1
+            updated += 1
+
+    await db.commit()
+    return {"created": created, "updated": updated, "reopened": reopened}
+
+
+async def list_problem_issues(
+    db: AsyncSession,
+    user_id: str,
+    status: str | None = None,
+) -> list["ReviewProblemIssue"]:
+    from .models import ReviewProblemIssue
+
+    stmt = select(ReviewProblemIssue).where(ReviewProblemIssue.user_id == user_id)
+    if status:
+        if status not in ALL_STATUSES:
+            raise ValueError(f"unknown status: {status}")
+        stmt = stmt.where(ReviewProblemIssue.status == status)
+    stmt = stmt.order_by(
+        ReviewProblemIssue.impact_last.desc(),
+        ReviewProblemIssue.last_seen_at.desc(),
+    )
+    return list((await db.execute(stmt)).scalars().all())
+
+
+async def update_problem_issue(
+    db: AsyncSession,
+    user_id: str,
+    issue_id: str,
+    status: str | None = None,
+    resolution_note: str | None = None,
+) -> "ReviewProblemIssue | None":
+    from .models import ReviewProblemIssue
+
+    if status is not None and status not in ALL_STATUSES:
+        raise ValueError(f"unknown status: {status}")
+
+    issue = (
+        await db.execute(
+            select(ReviewProblemIssue).where(
+                ReviewProblemIssue.id == issue_id,
+                ReviewProblemIssue.user_id == user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if issue is None:
+        return None
+
+    if status is not None and status != issue.status:
+        issue.status = status
+        closed = status in ("done", "dismissed")
+        issue.resolved_at = now() if closed else None
+        issue.mentions_at_resolve = issue.mentions_last if closed else None
     if resolution_note is not None:
         issue.resolution_note = resolution_note[:2000] or None
     await db.commit()

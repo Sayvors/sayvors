@@ -3335,6 +3335,12 @@ const en = {
     checkThem: "Check them",
     emptyTitle: "No issues found",
     emptyBody: "Issues appear when negative Google reviews name something specific. If you just connected a location, re-check after the first sync.",
+    problemsTitle: "AI-detected complaints",
+    problemsSub: "Complaints named by AI across your reviews. Mark them fixed so your assistant knows they have been handled.",
+    problemMentions: "{n} mentions",
+    problemImpact: "impact {n}",
+    problemAvg: "average {avg}",
+    problemsEmpty: "No AI-detected complaints right now. They appear when a negative review names a specific problem.",
   },
   team: {
     title: "Team management",

@@ -20,6 +20,7 @@ from .schemas import (
     IssueUpdateBody,
     KeywordsResponse,
     LocationIssueOut,
+    ProblemIssueOut,
     MessagingOverviewResponse,
     OpportunitiesResponse,
     OverviewResponse,
@@ -128,6 +129,24 @@ async def _held_out_counts(
     }
 
 
+async def _problem_issue_payload(db: AsyncSession, issues: list) -> list[dict]:
+    """Serialise AI-detected complaint themes, resolving channel names."""
+    from ..channels.models import Channel
+
+    names: dict[str, str] = {}
+    channel_ids = {i.channel_id for i in issues if i.channel_id}
+    if channel_ids:
+        rows = await db.execute(
+            select(Channel.id, Channel.display_name).where(Channel.id.in_(channel_ids))
+        )
+        names = {cid: name for cid, name in rows.all()}
+    return [
+        ProblemIssueOut.model_validate(i).model_dump()
+        | {"channel_name": names.get(i.channel_id) if i.channel_id else None}
+        for i in issues
+    ]
+
+
 @router.get("/issues", response_model=IssueListResponse)
 async def list_issues(
     channel_id: str | None = Query(None),
@@ -138,8 +157,17 @@ async def list_issues(
     ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Tracked issues for this tenant, most-negative first."""
+    """Tracked issues for this tenant, most-negative first.
+
+    Also syncs the AI-detected complaint themes from current reviews so they
+    appear without requiring a manual re-check.
+    """
     from . import issues as issues_service
+
+    try:
+        await issues_service.sync_problem_issues(db, tenant_id_of(user))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
     try:
         rows = await issues_service.list_issues(db, tenant_id_of(user), channel_id, status)
@@ -151,8 +179,13 @@ async def list_issues(
     for r in all_rows:
         counts[r.status] = counts.get(r.status, 0) + 1
 
+    problem_rows = await issues_service.list_problem_issues(db, tenant_id_of(user), status)
+    for r in problem_rows:
+        counts[r.status] = counts.get(r.status, 0) + 1
+
     return {
         "items": await _issue_payload(db, user, rows),
+        "problem_items": await _problem_issue_payload(db, problem_rows),
         "held_out": await _held_out_counts(db, tenant_id_of(user), channel_id),
         "counts": counts,
     }
@@ -174,7 +207,10 @@ async def refresh_issues(
     from . import intelligence_ai, issues as issues_service
 
     rows = await intelligence_ai._load_reviews(db, tenant_id_of(user), channel_id, days)
-    return await issues_service.refresh_issues(db, tenant_id_of(user), rows)
+    summary = await issues_service.refresh_issues(db, tenant_id_of(user), rows)
+    problem_summary = await issues_service.sync_problem_issues(db, tenant_id_of(user), days)
+    summary["problems"] = problem_summary
+    return summary
 
 
 @router.patch("/issues/{issue_id}", response_model=LocationIssueOut)
@@ -203,6 +239,30 @@ async def update_issue(
     payload = LocationIssueOut.model_validate(issue).model_dump()
     payload["subject_label"] = SUBJECTS.get(issue.subject, issue.subject)
     return payload
+
+
+@router.patch("/issues/problems/{issue_id}", response_model=ProblemIssueOut)
+async def update_problem_issue(
+    issue_id: str,
+    body: IssueUpdateBody,
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Move an AI-detected complaint theme along (start / fix / dismiss / reopen)."""
+    from . import issues as issues_service
+
+    try:
+        issue = await issues_service.update_problem_issue(
+            db, tenant_id_of(user), issue_id,
+            status=body.status,
+            resolution_note=body.resolution_note,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    if issue is None:
+        raise HTTPException(status_code=404, detail="Issue not found")
+    return ProblemIssueOut.model_validate(issue).model_dump()
 
 
 @router.get("/overview", response_model=OverviewResponse)

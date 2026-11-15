@@ -4,7 +4,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -4373,6 +4373,31 @@ async def list_google_media(
         ) from None
     finally:
         await client.close()
+
+
+@router.post("/{channel_id}/google-content/import")
+async def import_google_content(
+    channel_id: str,
+    background: BackgroundTasks,
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-import this location's posts + gallery media from Google.
+
+    Runs in the background; the Posts & Media and Live on Google pages pick
+    the rows up on their next refresh.
+    """
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    channel = await _google_channel(channel_id, ctx.user, db)
+
+    async def _bg() -> None:
+        from .google_content_import import import_channel_content
+
+        await import_channel_content(channel.id)
+
+    background.add_task(_bg)
+    return {"started": True, "channel_id": channel_id}
 
 
 @router.post("/{channel_id}/google-media", status_code=status.HTTP_201_CREATED)

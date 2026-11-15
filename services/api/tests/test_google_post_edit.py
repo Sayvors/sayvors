@@ -1,155 +1,157 @@
-"""Reading and changing a live Google local post (localPosts.get / patch).
+"""Editing / removing posts that already live on Google.
 
-HTTP is mocked: these pin the request shape Google requires, not the network.
+Imported Google posts are mirrors of a remote localPost. These tests pin:
+  * an edit is pushed to Google and mirrored locally
+  * a post without a google_post_id is refused
+  * a Google failure surfaces as a 502, not a silent local-only change
+  * remove deletes on Google then drops the local row
 """
-
-import json
+from datetime import datetime, timezone
 
 import pytest
 
-from app.modules.channels.google_reviews import GoogleReviewsError
-from app.modules.channels.meta.providers.google_publish import GoogleBusinessPublisher
-
-POST = "accounts/1/locations/2/localPosts/3"
+from app.modules.channels.service import encrypt_token
+from app.modules.posts.models import LocationPost
 
 
-class _Resp:
-    def __init__(self, payload: dict, status_code: int = 200):
-        self._payload = payload
-        self.status_code = status_code
-        self.text = json.dumps(payload)
-
-    def json(self) -> dict:
-        return self._payload
-
-
-def _publisher(fake) -> GoogleBusinessPublisher:
-    publisher = GoogleBusinessPublisher("token", "refresh")
-    publisher._client._authed_request = fake
-    return publisher
+async def _seed_channel(db, user_id, channel_id, listing_id="demo-loc-456"):
+    """The fixture channel has no tokens by default; a real connect stores them."""
+    channel = await db.get(__import__(
+        "app.modules.channels.models", fromlist=["Channel"]
+    ).Channel, channel_id)
+    if channel is None:
+        return
+    channel.access_token = encrypt_token("test-token")
+    channel.refresh_token = encrypt_token("test-refresh")
+    channel.status = "active"
+    db.add(channel)
+    await db.commit()
 
 
-@pytest.mark.asyncio
-async def test_update_sends_only_the_changed_fields_with_a_matching_mask():
-    calls = []
-
-    async def fake(method, url, **kwargs):
-        calls.append((method, url, kwargs.get("json")))
-        return _Resp({"name": POST, "topicType": "STANDARD", "state": "LIVE", "summary": "New text"})
-
-    result = await _publisher(fake).update_post(POST, {"summary": "New text", "callToAction": None})
-    method, url, body = calls[0]
-    assert method == "PATCH"
-    assert url == f"https://mybusiness.googleapis.com/v4/{POST}?updateMask=callToAction,summary"
-    assert body == {"summary": "New text", "callToAction": None}
-    assert result["summary"] == "New text"
-    assert result["state"] == "LIVE"
+def _post(**over):
+    data = dict(
+        id="gp-1",
+        user_id="test-user-0000-0000-0000-000000000001",
+        listing_id="demo-loc-456",
+        location_name="Test Burgers",
+        business_name="Test Burgers",
+        title="Hello",
+        description="Original text",
+        post_type="update",
+        status="published",
+        google_post_id="accounts/a/locations/l/localPosts/p1",
+    )
+    data.update(over)
+    return LocationPost(**data)
 
 
 @pytest.mark.asyncio
-async def test_an_empty_change_is_refused_before_any_request():
-    with pytest.raises(GoogleReviewsError):
-        await _publisher(None).update_post(POST, {})
+async def test_update_pushes_to_google_and_mirrors(client, db, user_id, channel_id, monkeypatch):
+    await _seed_channel(db, user_id, channel_id)
+    db.add(_post())
+    await db.commit()
+
+    calls = {}
+
+    async def _update(self, post_name, fields):
+        calls["post_name"] = post_name
+        calls["fields"] = fields
+        return {"name": post_name, "state": "PUBLISHED"}
+
+    monkeypatch.setattr(
+        "app.modules.channels.meta.providers.google_publish.GoogleBusinessPublisher.update_post",
+        _update,
+    )
+
+    r = client.patch(
+        "/api/v1/posts/gp-1/google",
+        json={"description": "Updated text", "cta_type": "learn_more", "cta_url": "https://x.dev"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["google_published"] is True
+    assert body["post"]["description"] == "Updated text"
+
+    assert calls["post_name"] == "accounts/a/locations/l/localPosts/p1"
+    assert calls["fields"]["summary"] == "Hello\n\nUpdated text"
+    assert calls["fields"]["callToAction"]["actionType"] == "LEARN_MORE"
+
+    row = await db.get(LocationPost, "gp-1")
+    assert row.description == "Updated text"
+    assert row.cta_type == "learn_more"
 
 
 @pytest.mark.asyncio
-async def test_a_bare_post_id_is_refused_before_any_request():
-    with pytest.raises(GoogleReviewsError):
-        await _publisher(None).update_post("3", {"summary": "x"})
-    with pytest.raises(GoogleReviewsError):
-        await _publisher(None).get_post("3")
+async def test_update_refuses_post_not_on_google(client, db, user_id, channel_id):
+    db.add(_post(google_post_id=None))
+    await db.commit()
+    r = client.patch("/api/v1/posts/gp-1/google", json={"description": "x"})
+    assert r.status_code == 400
 
 
 @pytest.mark.asyncio
-async def test_google_refusal_keeps_its_status_and_reason():
-    async def fake(method, url, **kwargs):
-        return _Resp({"error": {"message": "Unknown name"}}, status_code=400)
+async def test_update_google_failure_is_502(client, db, user_id, channel_id, monkeypatch):
+    await _seed_channel(db, user_id, channel_id)
+    db.add(_post())
+    await db.commit()
 
-    with pytest.raises(GoogleReviewsError) as err:
-        await _publisher(fake).update_post(POST, {"summary": "x"})
-    assert err.value.status_code == 400
-    assert "Unknown name" in str(err.value)
+    async def _boom(self, post_name, fields):
+        raise RuntimeError("Google refused")
 
-
-@pytest.mark.asyncio
-async def test_get_reports_a_missing_post_as_404():
-    async def fake(method, url, **kwargs):
-        assert method == "GET"
-        return _Resp({"error": {"message": "not found"}}, status_code=404)
-
-    with pytest.raises(GoogleReviewsError) as err:
-        await _publisher(fake).get_post(POST)
-    assert err.value.status_code == 404
+    monkeypatch.setattr(
+        "app.modules.channels.meta.providers.google_publish.GoogleBusinessPublisher.update_post",
+        _boom,
+    )
+    r = client.patch("/api/v1/posts/gp-1/google", json={"description": "x"})
+    assert r.status_code == 502
+    # Local row must not change when Google refused.
+    row = await db.get(LocationPost, "gp-1")
+    assert row.description == "Original text"
 
 
 @pytest.mark.asyncio
-async def test_get_returns_the_state_google_holds_now():
-    async def fake(method, url, **kwargs):
-        return _Resp(
-            {
-                "name": POST,
-                "topicType": "EVENT",
-                "state": "SCHEDULED",
-                "media": [{"sourceUrl": "https://cdn.example/p.jpg"}],
-            }
-        )
+async def test_delete_removes_on_google_and_drops_row(client, db, user_id, channel_id, monkeypatch):
+    await _seed_channel(db, user_id, channel_id)
+    db.add(_post())
+    await db.commit()
 
-    result = await _publisher(fake).get_post(POST)
-    assert result["state"] == "SCHEDULED"
-    assert result["topicType"] == "EVENT"
-    assert result["mediaCount"] == 1
+    calls = {}
 
+    async def _delete(self, token, post_id):
+        calls["post_id"] = post_id
+        return {"deleted": True}
 
-@pytest.mark.asyncio
-async def test_get_500_is_gone_when_the_location_list_lacks_the_post():
-    """Google answers 500 INTERNAL — never 404 — for a deleted local post.
+    monkeypatch.setattr(
+        "app.modules.channels.meta.providers.google_publish.GoogleBusinessPublisher.delete_post",
+        _delete,
+    )
 
-    The list is what decides: the same status with the post still listed is a
-    real Google failure and must stay one.
-    """
-    async def fake(method, url, **kwargs):
-        if url.endswith("/localPosts"):
-            return _Resp({"localPosts": [{"name": "accounts/1/locations/2/localPosts/999"}]})
-        return _Resp({"error": {"message": "Internal error encountered."}}, status_code=500)
-
-    with pytest.raises(GoogleReviewsError) as err:
-        await _publisher(fake).get_post(POST)
-    assert err.value.status_code == 404
+    r = client.delete("/api/v1/posts/gp-1/google")
+    assert r.status_code == 204
+    assert calls["post_id"] == "accounts/a/locations/l/localPosts/p1"
+    assert await db.get(LocationPost, "gp-1") is None
 
 
 @pytest.mark.asyncio
-async def test_get_500_stays_a_failure_while_the_post_is_still_listed():
-    async def fake(method, url, **kwargs):
-        if url.endswith("/localPosts"):
-            return _Resp({"localPosts": [{"name": POST}]})
-        return _Resp({"error": {"message": "Internal error encountered."}}, status_code=500)
+async def test_event_window_is_pushed_for_event_posts(client, db, user_id, channel_id, monkeypatch):
+    await _seed_channel(db, user_id, channel_id)
+    db.add(_post(post_type="event", start_date=datetime(2026, 12, 1, 10, 0, tzinfo=timezone.utc)))
+    await db.commit()
 
-    with pytest.raises(GoogleReviewsError) as err:
-        await _publisher(fake).get_post(POST)
-    assert err.value.status_code == 500
+    calls = {}
 
+    async def _update(self, post_name, fields):
+        calls["fields"] = fields
+        return {"name": post_name}
 
-@pytest.mark.asyncio
-async def test_a_failed_list_check_keeps_the_original_failure():
-    async def fake(method, url, **kwargs):
-        if url.endswith("/localPosts"):
-            return _Resp({"error": {"message": "backend error"}}, status_code=503)
-        return _Resp({"error": {"message": "Internal error encountered."}}, status_code=500)
+    monkeypatch.setattr(
+        "app.modules.channels.meta.providers.google_publish.GoogleBusinessPublisher.update_post",
+        _update,
+    )
 
-    with pytest.raises(GoogleReviewsError) as err:
-        await _publisher(fake).get_post(POST)
-    assert err.value.status_code == 500
-
-
-@pytest.mark.asyncio
-async def test_delete_of_an_already_gone_post_reports_success():
-    """A removal job that runs after the post was deleted must not retry: the
-    desired state (gone) is already true."""
-    async def fake(method, url, **kwargs):
-        if url.endswith("/localPosts"):
-            return _Resp({"localPosts": []})
-        return _Resp({"error": {"message": "Internal error encountered."}}, status_code=500)
-
-    result = await _publisher(fake).delete_post("token", POST)
-    assert result["deleted"] is True
-    assert result["already_gone"] is True
+    r = client.patch(
+        "/api/v1/posts/gp-1/google",
+        json={"end_date": "2026-12-02T10:00:00Z"},
+    )
+    assert r.status_code == 200, r.text
+    assert "event" in calls["fields"]

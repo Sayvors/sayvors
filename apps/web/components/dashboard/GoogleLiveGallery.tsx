@@ -52,6 +52,7 @@ export default function GoogleLiveGallery() {
   const [confirmRemove, setConfirmRemove] = useState<{ names: string[] } | null>(null);
   const [removing, setRemoving] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [importing, setImporting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,6 +105,25 @@ export default function GoogleLiveGallery() {
     if (!selectedChannelId) return;
     void loadGallery(selectedChannelId, category);
   }, [selectedChannelId, category]);
+
+  // Pull this location's posts + gallery media into Sayvors from Google.
+  const importFromGoogle = async () => {
+    if (!selectedChannelId) return;
+    setImporting(true);
+    setError(null);
+    try {
+      await apiFetch(
+        `/api/v1/channels/${encodeURIComponent(selectedChannelId)}/google-content/import`,
+        { method: "POST" },
+      );
+      setNotice("Import started — posts and photos will appear shortly.");
+      await loadGallery(selectedChannelId, category);
+    } catch (e) {
+      setError(e instanceof Error ? e.message.slice(0, 220) : "Could not start the import.");
+    } finally {
+      setImporting(false);
+    }
+  };
 
   const categoryCounts = useMemo(() => {
     const m = new Map<string, number>();
@@ -204,6 +224,15 @@ export default function GoogleLiveGallery() {
               Cancel
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => void importFromGoogle()}
+            disabled={importing || !selectedChannelId}
+            title="Pull this location's posts and gallery photos from Google into Sayvors"
+            className="rounded-[20px] border border-ink/10 bg-white px-4 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:bg-white/[0.04] dark:text-fog"
+          >
+            {importing ? "Importing…" : "Import from Google"}
+          </button>
           <button
             type="button"
             onClick={() => selectedChannelId && loadGallery(selectedChannelId, category)}

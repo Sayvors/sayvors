@@ -560,6 +560,34 @@ async def _fetch_phase(db: AsyncSession, session: ConnectImportSession) -> None:
         )
         await db.commit()
 
+    # Content import: pull each location's posts + gallery media so they are
+    # visible in Posts & Media right after connect (not only after the
+    # merchant opens the page). Best-effort and idempotent.
+    content_semaphore = asyncio.Semaphore(FETCH_PER_SESSION)
+
+    async def _content_one(channel: Channel):
+        async with content_semaphore:
+            try:
+                from .google_content_import import import_channel_content
+
+                summary = await import_channel_content(channel.id)
+                posts = int(summary.get("posts") or 0)
+                media = int(summary.get("media") or 0)
+                if posts or media:
+                    await _log(
+                        db, session.id,
+                        f"Imported {_plural(posts, 'post')} and {_plural(media, 'photo')} "
+                        f"from {channel.display_name or 'this location'}.",
+                        "success",
+                    )
+                    await db.commit()
+            except Exception as e:  # noqa: BLE001 — content must not break reviews
+                logger.warning(
+                    "Content import failed for channel %s: %s", channel.id, e
+                )
+
+    await asyncio.gather(*[_content_one(c) for c in channels], return_exceptions=True)
+
     session.total_drafts = sum(
         1 for item in await session_items(db, session.id) if item.status == "pending"
     )

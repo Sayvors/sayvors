@@ -19,6 +19,7 @@ from . import service
 from .schemas import (
     AiDraftRequest,
     AiDraftResponse,
+    GooglePostUpdate,
     PostCreate,
     PostOut,
     PostStatsOut,
@@ -213,6 +214,57 @@ async def delete_post(
         await service.delete_post(db, tenant_id_of(user), post_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+# ── Editing / removing posts that already live on Google ──────────────────
+
+@router.patch("/{post_id}/google", response_model=PublishResult)
+async def update_google_post(
+    post_id: str,
+    body: GooglePostUpdate,
+    ctx: TenantContext = Depends(require_perm("posts.create")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Edit a post that lives on Google; the change is pushed to Google."""
+    try:
+        result = await service.update_google_post(
+            db, tenant_id_of(user), post_id, body.model_dump(exclude_unset=True)
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise upstream_http_error(
+            e,
+            context="Posts provider failed",
+            detail="Google could not apply that change. Try again shortly.",
+        ) from None
+    return PublishResult(
+        post=_out(result),
+        google_published=result["google_published"],
+        images_sent=0,
+        images_skipped=0,
+    )
+
+
+@router.delete("/{post_id}/google", status_code=204)
+async def delete_google_post(
+    post_id: str,
+    ctx: TenantContext = Depends(require_perm("posts.publish")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove a post from Google, then drop the local mirror row."""
+    try:
+        await service.delete_google_post(db, tenant_id_of(user), post_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:
+        raise upstream_http_error(
+            e,
+            context="Posts provider failed",
+            detail="Google could not remove that post. Try again shortly.",
+        ) from None
 
 
 @router.post("/{post_id}/publish", status_code=202)

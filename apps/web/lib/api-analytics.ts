@@ -125,8 +125,31 @@ export interface LocationIssue {
   last_seen_at: string;
 }
 
+export interface ProblemIssue {
+  id: string;
+  user_id: string;
+  channel_id: string | null;
+  channel_name: string | null;
+  problem: string;
+  severity: string;
+  mentions_last: number;
+  negative_count: number;
+  avg_rating: number;
+  impact_last: number;
+  evidence: IssueEvidence[];
+  title: string;
+  detail: string;
+  status: "open" | "in_progress" | "done" | "dismissed";
+  resolution_note: string | null;
+  resolved_at: string | null;
+  first_seen_at: string;
+  last_seen_at: string;
+}
+
 export interface IssueListResponse {
   items: LocationIssue[];
+  /** AI-detected complaint themes (free-text problems) tracked alongside. */
+  problem_items: ProblemIssue[];
   /** Reviews that exist but could not be categorised. Never hidden. */
   held_out: { total: number; reviewable: number; reviews: number };
   counts: Record<string, number>;
@@ -219,6 +242,17 @@ export function updateIssue(
   patch: { status?: LocationIssue["status"]; resolution_note?: string | null }
 ): Promise<LocationIssue> {
   return apiFetch(`/api/v1/analytics/issues/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+/** Move an AI-detected complaint theme along (start / fix / dismiss / reopen). */
+export function updateProblemIssue(
+  id: string,
+  patch: { status?: ProblemIssue["status"]; resolution_note?: string | null }
+): Promise<ProblemIssue> {
+  return apiFetch(`/api/v1/analytics/issues/problems/${encodeURIComponent(id)}`, {
     method: "PATCH",
     body: JSON.stringify(patch),
   });

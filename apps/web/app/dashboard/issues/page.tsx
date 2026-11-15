@@ -4,9 +4,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   LocationIssue,
+  ProblemIssue,
   fetchIssues,
   refreshIssues,
   updateIssue,
+  updateProblemIssue,
 } from "@/lib/api-analytics";
 import { apiFetch } from "@/lib/api-rag";
 import { safeHref } from "@/lib/safe-url";
@@ -344,8 +346,190 @@ function IssueRow({
   );
 }
 
+/** One AI-detected complaint theme — mark fixed/dismissed so the AI knows. */
+function ProblemRow({
+  issue,
+  onUpdate,
+  updating,
+}: {
+  issue: ProblemIssue;
+  onUpdate: (patch: { status?: ProblemIssue["status"]; resolution_note?: string | null }) => void;
+  updating: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState(issue.resolution_note ?? "");
+  const [savingNote, setSavingNote] = useState(false);
+  const { t, locale } = useI18n();
+  const iu = t.issues;
+  const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
+  const fmt = (n: number) => new Intl.NumberFormat(dateLocale).format(n);
+
+  const saveNote = async () => {
+    setSavingNote(true);
+    try {
+      onUpdate({ resolution_note: note });
+    } finally {
+      setSavingNote(false);
+    }
+  };
+
+  const closed = issue.status === "done" || issue.status === "dismissed";
+
+  return (
+    <article
+      className={`overflow-hidden rounded-2xl border bg-[var(--ui-surface)] transition ${
+        closed
+          ? "border-[var(--ui-line)] opacity-80"
+          : "border-[var(--ui-line)] hover:border-deep-violet/25"
+      }`}
+    >
+      <div className="p-3.5 sm:p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <button
+            type="button"
+            onClick={() => setOpen((value) => !value)}
+            aria-expanded={open}
+            className="min-w-0 flex-1 rounded-xl text-left outline-none focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-[var(--ui-sunken)] px-2 py-0.5 text-[9.5px] font-semibold text-[var(--ui-ink)]">
+                <GoogleBusinessLogo size={11} />
+                <span className="truncate">{issue.channel_name ?? iu.allLocations}</span>
+              </span>
+              <h3 className="text-[14px] font-bold text-[var(--ui-ink)]">
+                {issue.problem}
+              </h3>
+              <StatusPill status={issue.status} />
+            </div>
+
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-[var(--ui-ink-2)]">
+              <span className="font-semibold text-[var(--ui-ink)]">
+                {fill(iu.problemMentions, { n: fmt(issue.mentions_last) })} · {fill(iu.problemImpact, { n: fmt(issue.impact_last) })}
+              </span>
+              <Stars rating={issue.avg_rating} />
+              <span>{fill(iu.problemAvg, { avg: fmt(Math.round(issue.avg_rating * 10) / 10) })}</span>
+            </div>
+
+            {issue.title && (
+              <p className="mt-2 text-[12.5px] leading-5 text-[var(--ui-ink)]">
+                <span className="font-semibold">{iu.fixLabel}</span> {issue.title}
+              </p>
+            )}
+
+            <p className="mt-2 inline-flex items-center gap-1 text-[10.5px] font-semibold text-[var(--ui-ink-2)]">
+              {open ? iu.hideReviews : issue.evidence.length > 0 ? fill(iu.readN, { n: fmt(issue.evidence.length) }) : iu.openDetails}
+              <span aria-hidden className={`transition ${open ? "rotate-180" : ""}`}>⌄</span>
+            </p>
+          </button>
+
+          <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+            {issue.status === "open" && (
+              <button type="button" onClick={() => onUpdate({ status: "in_progress" })} disabled={updating}
+                className="rounded-lg border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2.5 py-1.5 text-[10.5px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] disabled:opacity-40">
+                {iu.start}
+              </button>
+            )}
+            {issue.status !== "done" && (
+              <button type="button" onClick={() => onUpdate({ status: "done" })} disabled={updating}
+                className="rounded-lg bg-deep-violet px-2.5 py-1.5 text-[10.5px] font-semibold text-white transition hover:bg-deep-violet/90 disabled:opacity-40">
+                {iu.markFixed}
+              </button>
+            )}
+            {issue.status === "done" && (
+              <button type="button" onClick={() => onUpdate({ status: "open" })} disabled={updating}
+                className="rounded-lg border border-[var(--ui-line)] px-2.5 py-1.5 text-[10.5px] font-medium text-[var(--ui-ink-2)] transition hover:bg-[var(--ui-sunken)] disabled:opacity-40">
+                {iu.reopen}
+              </button>
+            )}
+            {(issue.status === "open" || issue.status === "in_progress") && (
+              <button type="button" onClick={() => onUpdate({ status: "dismissed" })} disabled={updating}
+                title={iu.dismissTitle}
+                className="rounded-lg px-2 py-1.5 text-[10.5px] text-[var(--ui-ink-2)] transition hover:bg-[var(--ui-sunken)] disabled:opacity-40">
+                {iu.dismissBtn}
+              </button>
+            )}
+            {issue.status === "dismissed" && (
+              <button type="button" onClick={() => onUpdate({ status: "open" })} disabled={updating}
+                className="rounded-lg border border-[var(--ui-line)] px-2.5 py-1.5 text-[10.5px] font-medium text-[var(--ui-ink-2)] transition hover:bg-[var(--ui-sunken)] disabled:opacity-40">
+                {iu.reopen}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {open && (
+        <div className="border-t border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-3.5 sm:px-4">
+          {issue.detail && (
+            <div className="rounded-xl border-l-2 border-deep-violet/50 bg-[var(--ui-sunken)] px-3 py-2.5">
+              <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">{iu.whatToDo}</p>
+              <p className="mt-1 text-[12px] leading-5 text-[var(--ui-ink)]">{issue.detail}</p>
+            </div>
+          )}
+
+          <div className="mt-3 flex items-center justify-between gap-2">
+            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">{iu.whatSaid}</p>
+            <Link href="/dashboard/reviews" className="text-[10.5px] font-semibold text-[#1a73e8] hover:underline">
+              {iu.openReviews}
+            </Link>
+          </div>
+
+          {issue.evidence.length === 0 ? (
+            <p className="mt-1.5 rounded-xl bg-[var(--ui-sunken)] px-3 py-2 text-[12px] text-[var(--ui-ink-2)]">{iu.noQuotes}</p>
+          ) : (
+            <ul className="mt-2 space-y-2">
+              {issue.evidence.map((e, index) => (
+                <li key={`${e.review_id}-${index}`} className="rounded-xl border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-2.5">
+                  <div className="flex items-start gap-2.5">
+                    <CustomerAvatar name={e.reviewer ?? null} url={e.reviewer_photo_url ?? null} size="sm" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="text-[11.5px] font-semibold text-[var(--ui-ink)]">{e.reviewer || iu.reviewerFallback}</span>
+                        <Stars rating={e.rating} size={11} />
+                      </div>
+                      <p className="mt-1 text-[12px] leading-5 text-[var(--ui-ink)]" dir="auto">“{e.quote}”</p>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <label className="mt-3 block">
+            <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">{iu.whatYouDid}</span>
+            <textarea
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              rows={2}
+              maxLength={2000}
+              placeholder={iu.notePh}
+              className="mt-1 w-full resize-y rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[12.5px] leading-5 text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]"
+            />
+          </label>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={saveNote}
+              disabled={savingNote}
+              className="rounded-lg bg-[var(--ui-ink)] px-3 py-1.5 text-[11px] font-semibold text-[var(--ui-on-ink)] transition hover:opacity-90 disabled:opacity-40"
+            >
+              {savingNote ? iu.saving : iu.saveNote}
+            </button>
+            {issue.resolved_at && (
+              <span className="text-[10.5px] text-[var(--ui-ink-2)]">
+                {fill(iu.resolvedOn, { date: new Date(issue.resolved_at).toLocaleDateString(dateLocale) })}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+    </article>
+  );
+}
+
 function IssuesContent() {
   const [issues, setIssues] = useState<LocationIssue[]>([]);
+  const [problems, setProblems] = useState<ProblemIssue[]>([]);
   const [heldOut, setHeldOut] = useState({ total: 0, reviewable: 0, reviews: 0 });
   const [channels, setChannels] = useState<{ id: string; name: string }[]>([]);
   const [channel, setChannel] = useState<string>("");
@@ -376,6 +560,7 @@ function IssuesContent() {
     try {
       const data = await fetchIssues({ channelId: channel || null });
       setIssues(data.items);
+      setProblems(data.problem_items ?? []);
       setHeldOut(data.held_out ?? { total: 0, reviewable: 0, reviews: 0 });
     } catch (e) {
       setError(e instanceof Error ? e.message : iu.loadFail);
@@ -427,6 +612,25 @@ function IssuesContent() {
     }
   };
 
+  const applyProblemUpdate = async (
+    issue: ProblemIssue,
+    patch: { status?: ProblemIssue["status"]; resolution_note?: string | null }
+  ) => {
+    setUpdatingId(issue.id);
+    try {
+      const updated = await updateProblemIssue(issue.id, patch);
+      setProblems((prev) =>
+        [...prev.filter((i) => i.id !== issue.id), updated].sort(
+          (a, b) => b.impact_last - a.impact_last
+        )
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : iu.saveFail);
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
   const grouped = useMemo(() => {
     const byStatus: Record<string, LocationIssue[]> = {};
     for (const s of STATUS_ORDER) byStatus[s] = [];
@@ -440,13 +644,16 @@ function IssuesContent() {
       (sum, issue) => sum + issue.avg_rating * issue.review_count,
       0
     );
+    const probAvg = problems.reduce((sum, p) => sum + p.avg_rating * p.mentions_last, 0);
+    const probReviews = problems.reduce((sum, p) => sum + p.mentions_last, 0);
+    const allReviews = totalReviews + probReviews;
     return {
-      open: grouped.open?.length ?? 0,
-      inProgress: grouped.in_progress?.length ?? 0,
-      fixed: grouped.done?.length ?? 0,
-      avgRating: totalReviews > 0 ? weighted / totalReviews : 0,
+      open: (grouped.open?.length ?? 0) + problems.filter((p) => p.status === "open").length,
+      inProgress: (grouped.in_progress?.length ?? 0) + problems.filter((p) => p.status === "in_progress").length,
+      fixed: (grouped.done?.length ?? 0) + problems.filter((p) => p.status === "done").length,
+      avgRating: allReviews > 0 ? (weighted + probAvg) / allReviews : 0,
     };
-  }, [grouped, issues]);
+  }, [grouped, issues, problems]);
 
   return (
     <div className="team-ui h-full overflow-y-auto">
@@ -542,7 +749,7 @@ function IssuesContent() {
               />
             ))}
           </div>
-        ) : issues.length === 0 ? (
+        ) : issues.length === 0 && problems.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-[var(--ui-line-strong)] bg-[var(--ui-surface)] p-8 text-center">
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[var(--ui-sunken)]">
               <GoogleBusinessLogo size={28} />
@@ -564,6 +771,29 @@ function IssuesContent() {
           </div>
         ) : (
           <>
+            {problems.length > 0 && (
+              <section>
+                <h2 className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">
+                  <GoogleBusinessLogo size={14} />
+                  {iu.problemsTitle}
+                  <span className="rounded-full bg-[var(--ui-sunken)] px-1.5 py-0.5 text-[9px]">
+                    {fmt(problems.length)}
+                  </span>
+                </h2>
+                <p className="mb-2 text-[11px] text-[var(--ui-ink-2)]">{iu.problemsSub}</p>
+                <div className="space-y-2">
+                  {problems.map((p) => (
+                    <ProblemRow
+                      key={p.id}
+                      issue={p}
+                      updating={updatingId === p.id}
+                      onUpdate={(patch) => applyProblemUpdate(p, patch)}
+                    />
+                  ))}
+                </div>
+              </section>
+            )}
+
             {STATUS_ORDER.filter((s) => s !== "dismissed").map((status) => {
               const group = grouped[status] ?? [];
               if (group.length === 0) return null;

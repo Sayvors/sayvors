@@ -329,6 +329,24 @@ async def build_facts(db, tenant_id: str, user=None) -> dict:
     team = await _team(db, tenant_id)
     locations = await _locations(db, tenant_id)
 
+    # Complaints the merchant marked fixed/dismissed. The assistant must know
+    # these were addressed instead of repeating them as open problems.
+    addressed_complaints: list[str] = []
+    try:
+        from ..analytics.models import ReviewProblemIssue
+
+        rows = (
+            await db.execute(
+                select(ReviewProblemIssue).where(
+                    ReviewProblemIssue.user_id == tenant_id,
+                    ReviewProblemIssue.status.in_(("done", "dismissed")),
+                )
+            )
+        ).scalars().all()
+        addressed_complaints = [r.problem for r in rows][:20]
+    except Exception as e:  # noqa: BLE001
+        logger.warning("addressed complaints facts failed tenant=%s: %s", tenant_id, e)
+
     # Pre-removal tenants saved hours only on the old WhatsApp profile editor.
     # Until they re-save under Locations, expose that schedule as the main
     # location so the answer is still correct.
@@ -364,6 +382,7 @@ async def build_facts(db, tenant_id: str, user=None) -> dict:
             "sells": (getattr(user, "business_sells", None) or "").strip(),
             "doesnt_sell": (getattr(user, "business_doesnt_sell", None) or "").strip(),
             "owner": owner,
+            "addressed_complaints": addressed_complaints,
         },
         "contact": {
             "address": str(profile.get("address") or "").strip(),

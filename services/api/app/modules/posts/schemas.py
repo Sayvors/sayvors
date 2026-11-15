@@ -50,6 +50,23 @@ class PostUpdate(BaseModel):
     terms_conditions: str | None = Field(None, max_length=2000)
 
 
+class GooglePostUpdate(BaseModel):
+    """Editable fields for a post that already lives on Google.
+
+    Only the fields Google lets you change after publish are accepted; the
+    post type (topicType) is immutable, so it is not part of this schema.
+    """
+
+    title: str | None = Field(None, max_length=500)
+    description: str | None = Field(None, max_length=1500)
+    cta_type: str | None = Field(None, max_length=32)
+    cta_url: str | None = Field(None, max_length=1000)
+    start_date: str | None = None
+    end_date: str | None = None
+    coupon_code: str | None = Field(None, max_length=64)
+    terms_conditions: str | None = Field(None, max_length=2000)
+
+
 class PostOut(BaseModel):
     id: str
     listing_id: str
