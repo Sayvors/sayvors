@@ -230,6 +230,8 @@ async def list_all_documents(
                 status=d.status,
                 chunk_count=d.chunk_count,
                 created_at=d.created_at,
+                lang=d.lang,
+                variant_group=d.variant_group,
             )
             for d in docs
         ],
@@ -557,6 +559,7 @@ async def list_crawl_source_pages(
             content_hash=p.content_hash,
             word_count=p.word_count,
             lang=p.lang,
+            variant_group=p.variant_group,
             fetched_at=p.fetched_at,
             document_id=p.document_id,
             error=p.error,

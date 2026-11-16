@@ -110,6 +110,13 @@ class Document(Base):
     chunk_count: Mapped[int] = mapped_column(Integer, default=0)
     content_hash: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Content language ("en"/"ar") — set by the crawler (Phase A). Lets the UI
+    # badge language variants and lets search prefer the customer's language.
+    lang: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    # Language-neutral identity shared by hreflang twins (crawler.variant_group):
+    # /en/pricing and /ar/pricing both map to "/pricing" so the UI can present
+    # them as variants of one knowledge item instead of duplicate crawls.
+    variant_group: Mapped[str | None] = mapped_column(String(2000), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -366,6 +373,12 @@ class CrawlPage(Base):
     url: Mapped[str] = mapped_column(String(2000))
     title: Mapped[str | None] = mapped_column(String(500), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default=STATUS_DISCOVERED)
+    # Language-neutral identity for EN/AR pairing (crawler.variant_group).
+    # Shared by every hreflang twin of the same page, so the UI can group
+    # language variants instead of showing them as duplicate crawls.
+    variant_group: Mapped[str | None] = mapped_column(String(2000), nullable=True, index=True)
+    # Content language ("en"/"ar"): URL prefix wins, then detected script.
+    lang: Mapped[str | None] = mapped_column(String(8), nullable=True)
     http_etag: Mapped[str | None] = mapped_column(String(300), nullable=True)
     http_last_modified: Mapped[str | None] = mapped_column(String(300), nullable=True)
     content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)

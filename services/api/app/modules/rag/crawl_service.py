@@ -12,7 +12,11 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .crawler import normalize_url, same_origin
+from .crawler import normalize_url, path_lang, same_origin, variant_group
+
+
+def _variant_fields(url: str) -> tuple[str | None, str | None]:
+    return variant_group(url), path_lang(url)
 from .models import CrawlPage, CrawlSource
 
 DEFAULT_NEXT_SYNC_DELAY_MINUTES = 5
@@ -59,6 +63,8 @@ async def create_crawl_source(
     )
     # Interactive selection: persist exactly the user-ticked pages as
     # CrawlPage rows (status "discovered"). The worker crawls only these.
+    # variant_group/lang are computed here so hreflang twins are grouped
+    # from the moment of selection, before any content is crawled.
     selected = _normalize_selected(start_url, urls or [])
     if sync_enabled:
         source.next_sync_at = datetime.now(timezone.utc) + timedelta(
@@ -72,10 +78,13 @@ async def create_crawl_source(
     await db.flush()
 
     for url in selected:
+        vg, lang = _variant_fields(url)
         db.add(CrawlPage(
             id=str(uuid.uuid4()),
             source_id=source.id,
             url=url,
+            variant_group=vg,
+            lang=lang,
         ))
     await db.commit()
     await db.refresh(source)

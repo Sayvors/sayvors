@@ -125,6 +125,10 @@ async def test_create_source_with_selected_pages(client, db, allow_databank_gate
     urls = {p.url for p in pages}
     assert urls == {"https://example.com/", "https://example.com/services"}
     assert all(p.status == "discovered" for p in pages)
+    # Phase A: hreflang grouping computed at selection time. These URLs have
+    # no /en|/ar prefix, so lang stays None until the crawl detects script.
+    assert all(p.variant_group == "/services" for p in pages if p.url.endswith("/services"))
+    assert all(p.lang is None for p in pages if p.url.endswith("/services"))
 
 
 @pytest.mark.asyncio

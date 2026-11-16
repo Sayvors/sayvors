@@ -53,6 +53,9 @@ MAX_SITEMAP_URLS = 2000
 TRACKING_PARAMS = {"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
                    "gclid", "fbclid", "yclid", "igshid", "mc_cid", "mc_eid"}
 
+# Language-prefix path segment (SEO hreflang pattern: /en/..., /ar/...).
+_LANG_PREFIX_RE = re.compile(r"^/(en|ar)(/.*)?$")
+
 _HTML_CONTENT_TYPES = {"text/html", "application/xhtml+xml"}
 _SITEMAP_LINK_RE = re.compile(r"<loc>\s*(.*?)\s*</loc>", re.IGNORECASE)
 
@@ -141,6 +144,26 @@ def normalize_url(url: str, base: str | None = None) -> str:
 
 def same_origin(a: str, b: str) -> bool:
     return urlparse(a).netloc == urlparse(b).netloc
+
+
+def variant_group(url: str) -> str:
+    """Language-neutral identity of a page for EN/AR pairing.
+
+    Sites commonly publish hreflang twins (``/en/pricing`` and ``/ar/pricing``).
+    Stripping the leading language segment maps both to ``pricing`` so documents
+    can be grouped as variants of one canonical page instead of looking like
+    duplicated crawls. URLs without a language prefix map to their own path.
+    """
+    path = urlparse(url).path or "/"
+    match = _LANG_PREFIX_RE.match(path)
+    stripped = (match.group(2) or "/") if match else path
+    return stripped.rstrip("/") or "/"
+
+
+def path_lang(url: str) -> str | None:
+    """Language from a /en|/ar path prefix; None when the URL is unprefixed."""
+    match = _LANG_PREFIX_RE.match(urlparse(url).path or "/")
+    return match.group(1) if match else None
 
 
 def _normalize_selected_urls(

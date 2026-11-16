@@ -88,6 +88,33 @@ def test_same_origin():
     assert not same_origin("https://example.com/a", "https://www.example.com/b")
 
 
+# ── Language-variant grouping (Phase A) ─────────────────────────
+
+def test_variant_group_pairs_hreflang_twins():
+    from app.modules.rag.crawler import variant_group
+
+    assert variant_group("https://example.com/en/pricing") == \
+        variant_group("https://example.com/ar/pricing") == "/pricing"
+    assert variant_group("https://example.com/en/blog/post-1") == \
+        variant_group("https://example.com/ar/blog/post-1") == "/blog/post-1"
+
+
+def test_variant_group_unprefixed_and_root():
+    from app.modules.rag.crawler import variant_group
+
+    assert variant_group("https://example.com/about") == "/about"
+    assert variant_group("https://example.com/") == "/"
+    assert variant_group("https://example.com/en") == "/"
+
+
+def test_path_lang_reads_prefix():
+    from app.modules.rag.crawler import path_lang
+
+    assert path_lang("https://example.com/en/pricing") == "en"
+    assert path_lang("https://example.com/ar") == "ar"
+    assert path_lang("https://example.com/about") is None
+
+
 # ── Crawl behavior ─────────────────────────────────────────────
 
 def test_crawl_site_subtree_returns_crawled_pages():

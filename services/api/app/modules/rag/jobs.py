@@ -7,7 +7,7 @@ from sqlalchemy import select, update
 from ...database import async_session
 from .cache import set_progress
 from .chunker import chunk_text
-from .crawler import crawl_site
+from .crawler import crawl_site, path_lang, variant_group
 from .embeddings import get_embedding_provider
 from .models import CrawlPage, CrawlSource, Document, DocumentChunk, IngestJob, ScrapeJob
 
@@ -418,7 +418,8 @@ async def _process_due_crawl_sources() -> bool:
                 continue
             # crawled
             doc_id = await _upsert_scrape_document(
-                db, databank_id, user_id, r.url, r.markdown
+                db, databank_id, user_id, r.url, r.markdown,
+                lang=r.lang, variant_group=variant_group(r.url),
             )
             if doc_id:
                 created += 1
@@ -427,7 +428,10 @@ async def _process_due_crawl_sources() -> bool:
                 page.status = CrawlPage.STATUS_CRAWLED
                 page.title = r.title or page.title
                 page.content_hash = r.content_hash
-                page.lang = r.lang
+                # Language: URL prefix is authoritative (mirrors the site's
+                # hreflang intent); detected script only fills unprefixed URLs.
+                page.lang = path_lang(r.url) or r.lang or page.lang
+                page.variant_group = variant_group(r.url)
                 page.word_count = r.word_count
                 page.http_etag = r.etag or page.http_etag
                 page.http_last_modified = r.last_modified or page.http_last_modified
@@ -523,7 +527,8 @@ async def _process_pending_scrape() -> None:
 
 
 async def _upsert_scrape_document(
-    db, databank_id: str, user_id: str, url: str, markdown: str
+    db, databank_id: str, user_id: str, url: str, markdown: str,
+    *, lang: str | None = None, variant_group: str | None = None,
 ) -> str | None:
     """Create or update one scrape document, deduping by (databank, url).
 
@@ -532,7 +537,10 @@ async def _upsert_scrape_document(
     row for the same URL is updated in place; identical content is skipped
     entirely, changed content is re-stored and re-marked pending for ingest.
 
-    Returns the document id when new/changed content needs ingest, else None.
+    ``lang``/``variant_group`` feed the EN/AR variant pairing (Phase A):
+    ``variant_group`` is the language-neutral path shared by hreflang twins,
+    ``lang`` the page language. Returns the document id when new/changed
+    content needs ingest, else None.
     """
     import hashlib
     import uuid
@@ -563,6 +571,10 @@ async def _upsert_scrape_document(
         doc.chunk_count = 0
         doc.error = None
         doc.filename = url[:500]
+        if lang:
+            doc.lang = lang
+        if variant_group:
+            doc.variant_group = variant_group
         await db.flush()
         put_doc(databank_id, f"{doc.id}.md", content)
         return doc.id
@@ -578,6 +590,8 @@ async def _upsert_scrape_document(
         size_bytes=len(content),
         status="pending",
         content_hash=digest,
+        lang=lang,
+        variant_group=variant_group,
     )
     db.add(doc)
     await db.flush()

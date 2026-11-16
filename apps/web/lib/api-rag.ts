@@ -219,6 +219,12 @@ export interface DatabankDoc {
   file_type?: string;
   file_size?: number;
   status?: string;
+  /** Content language ("en"/"ar") — crawler-provenance (Phase A). */
+  lang?: string | null;
+  /** Language-neutral identity shared by hreflang twins (EN/AR pairing). */
+  variant_group?: string | null;
+  source_url?: string | null;
+  source_type?: string;
 }
 
 /* ── Databank CRUD ──────────────────────────────────── */

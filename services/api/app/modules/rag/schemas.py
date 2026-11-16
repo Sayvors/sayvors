@@ -34,6 +34,10 @@ class DocumentResponse(BaseModel):
     status: str
     chunk_count: int = 0
     created_at: datetime
+    # Crawler provenance (Phase A): content language and the language-neutral
+    # identity shared by hreflang twins, so the UI can group EN/AR variants.
+    lang: str | None = None
+    variant_group: str | None = None
 
 
 class DocumentListResponse(BaseModel):
@@ -105,9 +109,10 @@ class CrawlPageResponse(BaseModel):
     url: str
     title: str | None = None
     status: str
+    lang: str | None = None
+    variant_group: str | None = None
     content_hash: str | None = None
     word_count: int = 0
-    lang: str | None = None
     fetched_at: datetime | None = None
     document_id: str | None = None
     error: str | None = None

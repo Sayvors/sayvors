@@ -108,6 +108,10 @@ async def test_worker_crawls_only_selected_pages(monkeypatch):
             "https://example.com/about",
         ]
         assert all(d.file_type == "md" for d in docs)
+        # Phase A: language-neutral grouping on documents (no /en prefix here,
+        # so each page is its own variant group with no URL language).
+        assert all(d.variant_group in ("/", "/about") for d in docs)
+        assert all(d.lang in (None, "en") for d in docs)
 
         pages = (await db.execute(select(CrawlPage).where(CrawlPage.source_id == source_id))).scalars().all()
         assert all(p.status == "crawled" for p in pages)

@@ -1016,7 +1016,17 @@ function DatabankPageContent() {
                               <div className="flex items-center gap-3">
                                 <FileIcon type={doc.file_type} />
                                 <div className="min-w-0">
-                                  <div className="truncate text-[12px] font-semibold text-foreground">{doc.filename || doc.name || doc.id}</div>
+                                  <div className="flex min-w-0 items-center gap-2">
+                                    <span className="truncate text-[12px] font-semibold text-foreground">{doc.filename || doc.name || doc.id}</span>
+                                    {doc.lang && (
+                                      <span
+                                        className="shrink-0 rounded-[2px] bg-deep-violet/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-deep-violet"
+                                        title={doc.variant_group ? `Language variant of ${doc.variant_group}` : doc.lang}
+                                      >
+                                        {doc.lang}
+                                      </span>
+                                    )}
+                                  </div>
                                   <div className="text-[11px] text-foreground/35 sm:hidden">{doc.file_type || "—"} · {formatBytes(doc.file_size ?? 0)}</div>
                                 </div>
                               </div>
