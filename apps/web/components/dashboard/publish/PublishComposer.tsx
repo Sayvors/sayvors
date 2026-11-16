@@ -590,6 +590,12 @@ export default function PublishComposer({
     ),
   );
   const canPublish = confirmItems.length > 0 && (media !== null || !needsMedia);
+  // Required markers follow the selected format, not the step: Google needs
+  // an event window for EVENT/OFFER, and OFFER needs a way to redeem it.
+  const needsOfferFields = confirmItems.some(({ methods }) =>
+    methods.some((m) => m === "offer"),
+  );
+  const needsCaption = confirmItems.length > 0;
 
   const openConfirm = () => {
     if (needsMedia && media === null) {
@@ -1014,7 +1020,10 @@ export default function PublishComposer({
             );
           })}
         </ol>
-        <p className={`mt-2 text-[11px] ${INK2}`}>{fill(pc.wizard.stepOf, { n: postStep })}</p>
+        <p className={`mt-2 text-[11px] ${INK2}`}>
+          {fill(pc.wizard.stepOf, { n: postStep })}
+          <span className="ml-2 text-coral">* {pc.wizard.requiredHint}</span>
+        </p>
       </header>
 
       <div className="flex-1 overflow-y-auto">
@@ -1025,6 +1034,7 @@ export default function PublishComposer({
           <section aria-labelledby="publish-media-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
             <h2 id="publish-media-h" className={`text-[14px] font-bold ${INK}`}>
               {pc.stepMedia}
+              {needsMedia && <span className="ml-1 text-coral" title={pc.wizard.requiredHint}>*</span>}
             </h2>
             <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
               {pc.mediaSub}
@@ -1070,6 +1080,7 @@ export default function PublishComposer({
                 <div className="flex items-baseline justify-between">
                   <label htmlFor="pub-caption" className={`text-[12px] font-semibold ${INK2}`}>
                     {pc.caption}
+                    {needsCaption && <span className="ml-1 text-coral" title={pc.wizard.requiredHint}>*</span>}
                   </label>
                   <span
                     className={`text-[11px] ${
@@ -1161,10 +1172,11 @@ export default function PublishComposer({
               <div className="mt-3 border-t border-[var(--ui-line)] pt-3">
                 <p className={`mb-2 text-[12px] font-semibold ${INK2}`}>
                   {pc.eventWindow}
+                  <span className="ml-1 text-coral" title={pc.wizard.requiredHint}>*</span>
                 </p>
                 <div className="flex flex-wrap items-center gap-3">
                   <label className={`flex items-center gap-2 text-[12px] ${INK2}`}>
-                    {pc.eventStart}
+                    {pc.eventStart}<span className="text-coral">*</span>
                     <input
                       type="datetime-local"
                       value={startDate}
@@ -1175,7 +1187,7 @@ export default function PublishComposer({
                     />
                   </label>
                   <label className={`flex items-center gap-2 text-[12px] ${INK2}`}>
-                    {pc.eventEnd}
+                    {pc.eventEnd}<span className="text-coral">*</span>
                     <input
                       type="datetime-local"
                       value={endDate}
@@ -1225,8 +1237,13 @@ export default function PublishComposer({
           <div className={postStep === 2 ? "grid gap-5 lg:grid-cols-2 lg:items-start" : "hidden"}>
           <div className={`space-y-5 ${selectedTargets.length === 0 ? "lg:col-span-2" : ""}`}>
           <section aria-labelledby="publish-cta-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
-            <h2 id="publish-cta-h" className={`text-[14px] font-bold ${INK}`}>{pc.wizard.ctaTitle}</h2>
-            <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>{pc.ctaHint}</p>
+            <h2 id="publish-cta-h" className={`text-[14px] font-bold ${INK}`}>
+              {pc.wizard.ctaTitle}
+              {needsOfferFields && <span className="ml-1 text-coral" title={pc.wizard.requiredHint}>*</span>}
+            </h2>
+            <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
+              {needsOfferFields ? pc.wizard.offerLinkHint : pc.ctaHint}
+            </p>
             <div>
               <label htmlFor="pub-cta-type" className={`text-[12px] font-semibold ${INK2}`}>
                 {pc.ctaType}
@@ -1248,14 +1265,19 @@ export default function PublishComposer({
                 ))}
               </select>
               {ctaType && ctaType !== "call" && (
-                <input
-                  type="url"
-                  value={ctaUrl}
-                  onChange={(e) => setCtaUrl(e.target.value)}
-                  placeholder={pc.ctaUrlPh}
-                  aria-label={pc.ctaUrlPh}
-                  className={`${FIELD} mt-1.5 w-full`}
-                />
+                <>
+                  <input
+                    type="url"
+                    value={ctaUrl}
+                    onChange={(e) => setCtaUrl(e.target.value)}
+                    placeholder={pc.ctaUrlPh}
+                    aria-label={pc.ctaUrlPh}
+                    className={`${FIELD} mt-1.5 w-full`}
+                  />
+                  {needsOfferFields && (
+                    <p className="mt-1 text-[11px] text-coral">{pc.wizard.offerLinkRequired}</p>
+                  )}
+                </>
               )}
             </div>
           </section>
@@ -1488,6 +1510,7 @@ export default function PublishComposer({
                       <div>
                         <label htmlFor="offer-coupon" className="mb-1 block text-[12px] font-semibold text-[var(--ui-ink)]">
                           {pc.couponLabel}
+                          <span className="ml-1 text-coral" title={pc.wizard.requiredHint}>*</span>
                         </label>
                         <input
                           id="offer-coupon"
