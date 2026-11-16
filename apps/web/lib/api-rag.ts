@@ -271,6 +271,70 @@ export async function scrapeUrl(databankId: string, url: string, crawlMode: stri
   });
 }
 
+export interface CrawlPreviewItem {
+  url: string;
+  title?: string | null;
+  status: string;
+}
+
+export interface CrawlPreview {
+  url: string;
+  scope: string;
+  max_pages: number;
+  candidates: CrawlPreviewItem[];
+}
+
+/** Step 1 of the interactive crawl: discover candidate pages (no content stored). */
+export async function previewCrawl(
+  url: string,
+  scope = "subtree",
+  maxPages = 100,
+): Promise<CrawlPreview> {
+  const q = new URLSearchParams({ url, scope, max_pages: String(maxPages) });
+  return apiFetch(`/api/v1/rag/crawl/preview?${q.toString()}`);
+}
+
+export interface CrawlSourceInput {
+  url: string;
+  scope: string;
+  max_pages: number;
+  urls: string[];
+  sync_enabled: boolean;
+  sync_interval_minutes?: number;
+}
+
+/** Step 2: save a source with the user-selected page URLs. */
+export async function createCrawlSource(
+  databankId: string,
+  payload: CrawlSourceInput,
+): Promise<any> {
+  return apiFetch(`/api/v1/rag/databanks/${databankId}/crawl/sources`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface CrawlSourceStatus {
+  id: string;
+  databank_id: string;
+  start_url: string;
+  sync_enabled: boolean;
+  sync_interval_minutes: number;
+  next_sync_at: string | null;
+  last_sync_at: string | null;
+  last_status: string;
+  error: string | null;
+  page_count: number;
+  page_status_counts: Record<string, number>;
+}
+
+/** Crawl sources of a databank, with per-page progress counts. */
+export async function listCrawlSources(
+  databankId: string,
+): Promise<{ sources: CrawlSourceStatus[]; total: number }> {
+  return apiFetch(`/api/v1/rag/databanks/${databankId}/crawl/sources`);
+}
+
 export async function processPending(databankId: string): Promise<any> {
   return apiFetch(`/api/v1/rag/databanks/${databankId}/process`, { method: "POST" });
 }

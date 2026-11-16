@@ -6,10 +6,12 @@ import {
   listDatabanks,
   deleteDatabank,
   listDocuments,
+  listCrawlSources,
   retryDocuments,
   previewDocument,
   type DatabankDoc,
   type DocumentPreview,
+  type CrawlSourceStatus,
 } from "@/lib/api-rag";
 import {
   getBusinessProfile,
@@ -419,6 +421,23 @@ function DatabankPageContent() {
   const [deleting, setDeleting] = useState(false);
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<string>("all");
+  const [crawlSources, setCrawlSources] = useState<CrawlSourceStatus[]>([]);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    const bankId = selectedId;
+    let cancelled = false;
+    listCrawlSources(bankId)
+      .then((data) => {
+        if (!cancelled) setCrawlSources(Array.isArray(data?.sources) ? data.sources : []);
+      })
+      .catch(() => {
+        if (!cancelled) setCrawlSources([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId]);
 
   useEffect(() => {
     async function load() {
@@ -463,6 +482,28 @@ function DatabankPageContent() {
       cancelled = true;
     };
   }, [selectedId]);
+
+  // Live progress: while any document is still being processed (upload or a
+  // background crawl), poll so the counts/statuses move in real time instead
+  // of requiring a manual refresh.
+  const hasInFlight = docs.some(
+    (x) => x.status === "pending" || x.status === "queued" || x.status === "processing",
+  );
+  useEffect(() => {
+    if (!selectedId || !hasInFlight) return;
+    const bankId = selectedId;
+    const timer = setInterval(async () => {
+      try {
+        const data = await listDocuments(bankId);
+        setDocs(Array.isArray(data) ? data : data?.documents ?? []);
+        const sources = await listCrawlSources(bankId);
+        setCrawlSources(Array.isArray(sources?.sources) ? sources.sources : []);
+      } catch {
+        // keep the last known state on transient errors
+      }
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [selectedId, hasInFlight]);
 
   const confirmDeleteDb = confirmDeleteId ? databanks.find((d) => d.id === confirmDeleteId) ?? null : null;
 
@@ -781,6 +822,65 @@ function DatabankPageContent() {
                 </Link>
               </div>
             </div>
+
+            {/* Crawler sources (live page-level progress) */}
+            {crawlSources.length > 0 && (
+              <div className="space-y-2 border-b border-card-border bg-foreground/[0.015] px-5 py-4">
+                {crawlSources.map((s) => {
+                  const counts = s.page_status_counts ?? {};
+                  const crawled = (counts.crawled ?? 0) + (counts.unchanged ?? 0);
+                  const failed = counts.failed ?? 0;
+                  const discovered = counts.discovered ?? 0;
+                  const total = s.page_count || crawled + failed + discovered;
+                  const pct = total > 0 ? Math.round((crawled / total) * 100) : 0;
+                  const busy = s.last_status === "running";
+                  return (
+                    <div key={s.id} className="rounded-[2px] border border-card-border bg-card px-3.5 py-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="h-4 w-4 shrink-0 text-deep-violet">
+                            <circle cx="12" cy="12" r="9" />
+                            <path d="M3 12h18M12 3a15 15 0 010 18M12 3a15 15 0 000 18" />
+                          </svg>
+                          <span className="truncate text-[12px] font-bold text-foreground">{s.start_url}</span>
+                          {s.sync_enabled && (
+                            <span className="rounded-[2px] bg-emerald/10 px-2 py-0.5 text-[10px] font-bold text-emerald ring-1 ring-emerald/30">
+                              auto {s.sync_interval_minutes}m
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 text-[11px] font-semibold">
+                          {busy ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-[2px] bg-deep-violet/10 px-2 py-0.5 text-deep-violet">
+                              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-deep-violet" />
+                              crawling…
+                            </span>
+                          ) : s.last_status === "success" ? (
+                            <span className="rounded-[2px] bg-emerald/10 px-2 py-0.5 text-emerald">done</span>
+                          ) : s.last_status === "failed" ? (
+                            <span className="rounded-[2px] bg-coral/10 px-2 py-0.5 text-coral">failed</span>
+                          ) : (
+                            <span className="rounded-[2px] bg-foreground/[0.06] px-2 py-0.5 text-foreground/50">{s.last_status}</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-foreground/[0.08]">
+                        <div
+                          className="h-full rounded-full bg-deep-violet transition-all duration-500"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-foreground/50">
+                        <span>{crawled}/{total} pages crawled</span>
+                        {discovered > 0 && <span>· {discovered} queued</span>}
+                        {failed > 0 && <span className="text-coral">· {failed} failed</span>}
+                        {s.error && <span className="truncate text-coral">· {s.error}</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
             {/* Stats */}
             <div className="grid grid-cols-3 divide-x divide-card-border border-b border-card-border bg-foreground/[0.015]">
