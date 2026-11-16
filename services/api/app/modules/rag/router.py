@@ -238,6 +238,7 @@ async def list_all_documents(
                 variant_group=d.variant_group,
                 summary=(d.meta or {}).get("summary"),
                 intent=(d.meta or {}).get("intent"),
+                ai_summary=(d.meta or {}).get("ai_summary"),
             )
             for d in docs
         ],

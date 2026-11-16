@@ -42,6 +42,9 @@ class DocumentResponse(BaseModel):
     # summary preview and intent chip; full sections stay in meta for search.
     summary: str | None = None
     intent: str | None = None
+    # Phase C LLM-polished summary (present only when enrichment is enabled
+    # and succeeded); the UI prefers it over the extractive summary.
+    ai_summary: str | None = None
 
 
 class DocumentListResponse(BaseModel):

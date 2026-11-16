@@ -1089,9 +1089,12 @@ function DatabankPageContent() {
                                       </span>
                                     )}
                                   </div>
-                                  {doc.summary && (
-                                    <div className="mt-0.5 line-clamp-1 text-[11px] leading-snug text-foreground/40" title={doc.summary}>
-                                      {doc.summary}
+                                  {(doc.ai_summary || doc.summary) && (
+                                    <div
+                                      className="mt-0.5 line-clamp-1 text-[11px] leading-snug text-foreground/40"
+                                      title={doc.ai_summary || doc.summary || undefined}
+                                    >
+                                      {doc.ai_summary || doc.summary}
                                     </div>
                                   )}
                                   {!doc.summary && (

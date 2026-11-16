@@ -228,6 +228,8 @@ export interface DatabankDoc {
   /** Phase B structured extraction preview. */
   summary?: string | null;
   intent?: string | null;
+  /** Phase C LLM-polished summary (when enrichment is enabled). */
+  ai_summary?: string | null;
 }
 
 /* ── Databank CRUD ──────────────────────────────────── */

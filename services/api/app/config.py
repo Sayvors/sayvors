@@ -248,6 +248,14 @@ class Settings(BaseSettings):
     # must reach private/VPN networks.
     RAG_DB_ALLOW_PRIVATE_HOSTS: bool = False
 
+    # LLM-polished page summaries for crawled docs (§31 Phase C). Off by
+    # default: enrichment bills the tenant's LLM budget per page, so a deploy
+    # must opt in deliberately. The extractive summary always remains as
+    # fallback — turning this off never loses data.
+    RAG_AI_SUMMARY_ENABLED: bool = False
+    # Concurrent enrichment LLM calls per worker process (cost ceiling).
+    RAG_AI_SUMMARY_CONCURRENCY: int = 2
+
     # ── Google Business Profile (Reviews) ────────────────
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""

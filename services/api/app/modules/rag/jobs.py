@@ -11,6 +11,7 @@ from .crawler import crawl_site, path_lang, variant_group
 from .document_structure import build_structured_doc
 from .embeddings import get_embedding_provider
 from .models import CrawlPage, CrawlSource, Document, DocumentChunk, IngestJob, ScrapeJob
+from .summarizer import maybe_enrich_document
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +157,10 @@ async def _process_job(job_id: str) -> None:
                 await db.commit()
                 await set_progress(job_id, 100, "Done")
                 _maybe_refresh_business_profile(job.user_id)
+                # Phase C: LLM-polish the page summary of scraped docs
+                # (fire-and-forget, budget-gated, off by default).
+                if job.job_type == "scrape" and job.document_id:
+                    maybe_enrich_document(str(job.document_id))
             except Exception as e:
                 logger.exception("Job %s failed", job_id)
                 job.status = "failed"
