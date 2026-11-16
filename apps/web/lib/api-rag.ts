@@ -219,6 +219,17 @@ export interface DatabankDoc {
   file_type?: string;
   file_size?: number;
   status?: string;
+  /** Content language ("en"/"ar") — crawler-provenance (Phase A). */
+  lang?: string | null;
+  /** Language-neutral identity shared by hreflang twins (EN/AR pairing). */
+  variant_group?: string | null;
+  source_url?: string | null;
+  source_type?: string;
+  /** Phase B structured extraction preview. */
+  summary?: string | null;
+  intent?: string | null;
+  /** Phase C LLM-polished summary (when enrichment is enabled). */
+  ai_summary?: string | null;
 }
 
 /* ── Databank CRUD ──────────────────────────────────── */
@@ -269,6 +280,86 @@ export async function scrapeUrl(databankId: string, url: string, crawlMode: stri
     method: "POST",
     body: JSON.stringify({ url, crawl_mode: crawlMode, max_pages: maxPages }),
   });
+}
+
+export interface CrawlPreviewItem {
+  url: string;
+  title?: string | null;
+  status: string;
+}
+
+export interface CrawlPreview {
+  url: string;
+  scope: string;
+  max_pages: number;
+  candidates: CrawlPreviewItem[];
+}
+
+/** Step 1 of the interactive crawl: discover candidate pages (no content stored). */
+export async function previewCrawl(
+  url: string,
+  scope = "subtree",
+  maxPages = 100,
+): Promise<CrawlPreview> {
+  const q = new URLSearchParams({ url, scope, max_pages: String(maxPages) });
+  return apiFetch(`/api/v1/rag/crawl/preview?${q.toString()}`);
+}
+
+export interface CrawlSourceInput {
+  url: string;
+  scope: string;
+  max_pages: number;
+  urls: string[];
+  sync_enabled: boolean;
+  sync_interval_minutes?: number;
+}
+
+/** Step 2: save a source with the user-selected page URLs. */
+export async function createCrawlSource(
+  databankId: string,
+  payload: CrawlSourceInput,
+): Promise<any> {
+  return apiFetch(`/api/v1/rag/databanks/${databankId}/crawl/sources`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface CrawlSourceStatus {
+  id: string;
+  databank_id: string;
+  start_url: string;
+  sync_enabled: boolean;
+  sync_interval_minutes: number;
+  next_sync_at: string | null;
+  last_sync_at: string | null;
+  last_status: string;
+  error: string | null;
+  page_count: number;
+  page_status_counts: Record<string, number>;
+}
+
+/** Crawl sources of a databank, with per-page progress counts. */
+export async function listCrawlSources(
+  databankId: string,
+): Promise<{ sources: CrawlSourceStatus[]; total: number }> {
+  return apiFetch(`/api/v1/rag/databanks/${databankId}/crawl/sources`);
+}
+
+export interface ActivityEvent {
+  type: "crawl" | "ingest" | "error" | string;
+  status: string;
+  title: string;
+  detail?: string;
+  progress?: number | null;
+  at?: string | null;
+}
+
+/** Organized activity log: ingest jobs, crawl runs, failed pages. */
+export async function fetchActivity(
+  databankId: string,
+): Promise<{ events: ActivityEvent[] }> {
+  return apiFetch(`/api/v1/rag/databanks/${databankId}/activity`);
 }
 
 export async function processPending(databankId: string): Promise<any> {

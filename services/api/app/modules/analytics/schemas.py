@@ -195,8 +195,42 @@ class LocationIssueOut(BaseModel):
         from_attributes = True
 
 
+class ProblemIssueOut(BaseModel):
+    """One AI-detected complaint theme (free-text problem name), tenant-wide."""
+
+    id: str
+    user_id: str
+    channel_id: str | None = None
+    channel_name: str | None = None
+    problem: str
+    severity: str
+    mentions_last: int
+    negative_count: int
+    avg_rating: float
+    impact_last: float
+    evidence: list[dict[str, Any]] = []
+    title: str
+    detail: str
+    status: str
+    resolution_note: str | None = None
+    resolved_at: datetime | None = None
+    first_seen_at: datetime
+    last_seen_at: datetime
+
+    @field_validator("evidence", mode="before")
+    @classmethod
+    def _null_evidence_is_empty(cls, v):
+        return [] if v is None else v
+
+    class Config:
+        from_attributes = True
+
+
 class IssueListResponse(BaseModel):
     items: list[LocationIssueOut]
+    # AI-detected complaint themes (free-text problems) tracked alongside the
+    # closed-vocabulary issues above.
+    problem_items: list[ProblemIssueOut] = []
     # Reviews the meaning layer refused to categorise. Surfaced so the list is
     # never mistaken for the whole picture.
     held_out: dict[str, int] = Field(default_factory=dict)

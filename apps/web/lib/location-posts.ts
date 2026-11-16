@@ -27,6 +27,9 @@ export interface LocationPost {
   cta_clicks: number | null;
   error: string | null;
   created_at: string;
+  cta_type: string | null;
+  cta_url: string | null;
+  google_post_id: string | null;
 }
 
 export function useLocationPosts() {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api-rag";
 
@@ -196,6 +197,12 @@ export default function StaffManager() {
                   {emp.aliases.length > 0 ? ` · also: ${emp.aliases.join(", ")}` : ""}
                 </p>
               </div>
+              <Link
+                href={`/dashboard/analytics/staff/${emp.id}`}
+                className="rounded-[10px] border border-[var(--ui-line-strong)] px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)]"
+              >
+                View profile
+              </Link>
               <button
                 type="button"
                 onClick={() => toggleActive(emp)}

@@ -257,6 +257,74 @@ class LocationIssue(Base):
     )
 
 
+class ReviewProblemIssue(Base):
+    """One AI-detected complaint theme, tracked across reviews (tenant-wide).
+
+    Unlike `LocationIssue` (which groups reviews into the closed subject
+    vocabulary), this row captures the free-text problem names the enrichment
+    layer writes onto reviews — e.g. "lack of respect for customers". The
+    merchant fixes/dismisses them here; the status feeds the AI's grounding so
+    it knows a complaint was addressed.
+
+    `channel_id` is informational only (the most recent channel the problem
+    appeared on); an issue is tenant-wide, so one row per problem name.
+    """
+
+    __tablename__ = "review_problem_issues"
+    __table_args__ = (
+        UniqueConstraint("user_id", "problem", name="uq_review_problem_issue_user_problem"),
+        Index("ix_review_problem_issues_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(String(36), index=True)
+    channel_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    # The free-text problem as the enrichment layer named it, normalised.
+    problem: Mapped[str] = mapped_column(String(255), index=True)
+    severity: Mapped[str] = mapped_column(String(16), default="medium")
+    # Latest snapshot, recomputed from current reviews on refresh.
+    mentions_last: Mapped[int] = mapped_column(Integer, default=0)
+    negative_count: Mapped[int] = mapped_column(Integer, default=0)
+    avg_rating: Mapped[float] = mapped_column(Float, default=0.0)
+    impact_last: Mapped[float] = mapped_column(Float, default=0.0)
+    # [{"review_id", "quote", "rating", "reviewer"}] — latest snippet quotes.
+    evidence: Mapped[list] = mapped_column(JSON, default=list, server_default=_EMPTY_JSON)
+
+    title: Mapped[str] = mapped_column(String(200), default="")
+    detail: Mapped[str] = mapped_column(String(400), default="")
+
+    status: Mapped[str] = mapped_column(
+        Enum(
+            "open", "in_progress", "done", "dismissed",
+            name="review_problem_issue_status",
+        ),
+        default="open",
+        nullable=False,
+        server_default="open",
+        index=True,
+    )
+    resolution_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Mentions at the moment the merchant marked it done; if the problem
+    # resurfaces beyond this, the issue reopens so the fix is re-checked.
+    mentions_at_resolve: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
 class LocationDailyMetric(Base):
     """One row per channel per day: review rollup + Google performance metrics."""
 
@@ -826,6 +894,18 @@ class StaffMember(Base):
     normalized_name: Mapped[str] = mapped_column(String(120))
     aliases: Mapped[list | None] = mapped_column(JSON, default=list, server_default=_EMPTY_JSON, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    # ── Profile (the employee's own page) ──────────────────────────────
+    # The registry started as name + branch only, enough to attach review
+    # mentions. A profile page needs a face and a way to reach the person, so
+    # these are optional merchant-entered fields. `avatar_storage_key` is the
+    # object key behind `avatar_url`, kept so replacing the picture can delete
+    # the one it supersedes (same pattern as users.avatar_storage_key).
+    avatar_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    avatar_storage_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    job_title: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    bio: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

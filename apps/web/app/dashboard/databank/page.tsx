@@ -6,10 +6,14 @@ import {
   listDatabanks,
   deleteDatabank,
   listDocuments,
+  listCrawlSources,
+  fetchActivity,
   retryDocuments,
   previewDocument,
   type DatabankDoc,
   type DocumentPreview,
+  type CrawlSourceStatus,
+  type ActivityEvent,
 } from "@/lib/api-rag";
 import {
   getBusinessProfile,
@@ -419,6 +423,31 @@ function DatabankPageContent() {
   const [deleting, setDeleting] = useState(false);
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<string>("all");
+  const [crawlSources, setCrawlSources] = useState<CrawlSourceStatus[]>([]);
+  const [activity, setActivity] = useState<ActivityEvent[]>([]);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    const bankId = selectedId;
+    let cancelled = false;
+    listCrawlSources(bankId)
+      .then((data) => {
+        if (!cancelled) setCrawlSources(Array.isArray(data?.sources) ? data.sources : []);
+      })
+      .catch(() => {
+        if (!cancelled) setCrawlSources([]);
+      });
+    fetchActivity(bankId)
+      .then((data) => {
+        if (!cancelled) setActivity(Array.isArray(data?.events) ? data.events : []);
+      })
+      .catch(() => {
+        if (!cancelled) setActivity([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId]);
 
   useEffect(() => {
     async function load() {
@@ -463,6 +492,40 @@ function DatabankPageContent() {
       cancelled = true;
     };
   }, [selectedId]);
+
+  // Live progress: poll while documents are processing OR a crawl is queued/
+  // running. A fresh one-shot source starts with ZERO documents and status
+  // "idle" — gating only on in-flight docs used to freeze the UI at 0/58
+  // until a manual refresh, hiding all progress.
+  const hasInFlightDocs = docs.some(
+    (x) => x.status === "pending" || x.status === "queued" || x.status === "processing",
+  );
+  const crawlActive = crawlSources.some((s) => {
+    const counts = s.page_status_counts ?? {};
+    return (
+      s.last_status === "idle" ||
+      s.last_status === "running" ||
+      (counts.discovered ?? 0) > 0
+    );
+  });
+  const hasInFlight = hasInFlightDocs || crawlActive;
+  useEffect(() => {
+    if (!selectedId || !hasInFlight) return;
+    const bankId = selectedId;
+    const timer = setInterval(async () => {
+      try {
+        const data = await listDocuments(bankId);
+        setDocs(Array.isArray(data) ? data : data?.documents ?? []);
+        const sources = await listCrawlSources(bankId);
+        setCrawlSources(Array.isArray(sources?.sources) ? sources.sources : []);
+        const feed = await fetchActivity(bankId);
+        setActivity(Array.isArray(feed?.events) ? feed.events : []);
+      } catch {
+        // keep the last known state on transient errors
+      }
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [selectedId, hasInFlight]);
 
   const confirmDeleteDb = confirmDeleteId ? databanks.find((d) => d.id === confirmDeleteId) ?? null : null;
 
@@ -782,6 +845,115 @@ function DatabankPageContent() {
               </div>
             </div>
 
+            {/* Crawler sources (live page-level progress) */}
+            {crawlSources.length > 0 && (
+              <div className="space-y-2 border-b border-card-border bg-foreground/[0.015] px-5 py-4">
+                {crawlSources.map((s) => {
+                  const counts = s.page_status_counts ?? {};
+                  const crawled = (counts.crawled ?? 0) + (counts.unchanged ?? 0);
+                  const failed = counts.failed ?? 0;
+                  const discovered = counts.discovered ?? 0;
+                  const total = s.page_count || crawled + failed + discovered;
+                  const pct = total > 0 ? Math.round((crawled / total) * 100) : 0;
+                  const busy = s.last_status === "running";
+                  return (
+                    <div key={s.id} className="rounded-[2px] border border-card-border bg-card px-3.5 py-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="h-4 w-4 shrink-0 text-deep-violet">
+                            <circle cx="12" cy="12" r="9" />
+                            <path d="M3 12h18M12 3a15 15 0 010 18M12 3a15 15 0 000 18" />
+                          </svg>
+                          <span className="truncate text-[12px] font-bold text-foreground">{s.start_url}</span>
+                          {s.sync_enabled && (
+                            <span className="rounded-[2px] bg-emerald/10 px-2 py-0.5 text-[10px] font-bold text-emerald ring-1 ring-emerald/30">
+                              {fill(d.crawler.autoSync, { n: s.sync_interval_minutes })}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 text-[11px] font-semibold">
+                          {busy ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-[2px] bg-deep-violet/10 px-2 py-0.5 text-deep-violet">
+                              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-deep-violet" />
+                              {d.crawler.crawling}
+                            </span>
+                          ) : s.last_status === "success" ? (
+                            <span className="rounded-[2px] bg-emerald/10 px-2 py-0.5 text-emerald">{d.crawler.done}</span>
+                          ) : s.last_status === "failed" ? (
+                            <span className="rounded-[2px] bg-coral/10 px-2 py-0.5 text-coral">{d.crawler.failed}</span>
+                          ) : s.last_status === "idle" && discovered > 0 ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-[2px] bg-deep-violet/10 px-2 py-0.5 text-deep-violet">
+                              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-deep-violet" />
+                              {d.crawler.queued}
+                            </span>
+                          ) : (
+                            <span className="rounded-[2px] bg-foreground/[0.06] px-2 py-0.5 text-foreground/50">
+                              {s.last_status === "running" ? d.crawler.running : d.crawler.idle}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-foreground/[0.08]">
+                        <div
+                          className="h-full rounded-full bg-deep-violet transition-all duration-500"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-foreground/50">
+                        <span>{fill(d.crawler.pagesCrawled, { done: crawled, total })}</span>
+                        {discovered > 0 && <span>· {fill(d.crawler.queuedCount, { n: discovered })}</span>}
+                        {failed > 0 && <span className="text-coral">· {fill(d.crawler.failedCount, { n: failed })}</span>}
+                        {s.error && <span className="truncate text-coral">· {s.error}</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Activity (organized log: ingest, crawls, failures) */}
+            {activity.length > 0 && (
+              <div className="border-b border-card-border bg-foreground/[0.015] px-5 py-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="h-4 w-4 text-foreground/40">
+                    <path d="M6 8a6 6 0 0112 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 003.4 0" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  <span className="text-[11px] font-bold uppercase tracking-widest text-foreground/40">{d.activity.title}</span>
+                </div>
+                <div className="max-h-56 space-y-1.5 overflow-y-auto pr-1">
+                  {activity.map((ev, i) => {
+                    const isError = ev.type === "error" || ev.status === "failed";
+                    const isDone = ev.status === "done" || ev.status === "success" || ev.status === "completed";
+                    const isRunning = ev.status === "running" || ev.status === "queued";
+                    const dot = isError ? "bg-coral" : isDone ? "bg-emerald" : isRunning ? "bg-deep-violet animate-pulse" : "bg-foreground/25";
+                    const label =
+                      ev.type === "crawl" ? d.activity.crawl :
+                      ev.type === "ingest" ? d.activity.ingest :
+                      d.activity.error;
+                    return (
+                      <div key={`${ev.type}-${ev.at ?? i}-${i}`} className="flex items-start gap-2.5 rounded-[2px] bg-card px-3 py-2 ring-1 ring-card-border">
+                        <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="rounded-[2px] bg-foreground/[0.05] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-foreground/45">{label}</span>
+                            <span className="truncate text-[12px] font-semibold text-foreground/85">{ev.title}</span>
+                          </div>
+                          {ev.detail && (
+                            <div className={`mt-0.5 truncate text-[11px] ${isError ? "text-coral" : "text-foreground/45"}`}>{ev.detail}</div>
+                          )}
+                        </div>
+                        {ev.at && (
+                          <span className="shrink-0 text-[10px] tabular-nums text-foreground/30">
+                            {new Date(ev.at).toLocaleTimeString(locale === "ar" ? "ar-SA" : "en-US", { hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Stats */}
             <div className="grid grid-cols-3 divide-x divide-card-border border-b border-card-border bg-foreground/[0.015]">
               <div className="px-5 py-4">
@@ -916,8 +1088,33 @@ function DatabankPageContent() {
                               <div className="flex items-center gap-3">
                                 <FileIcon type={doc.file_type} />
                                 <div className="min-w-0">
-                                  <div className="truncate text-[12px] font-semibold text-foreground">{doc.filename || doc.name || doc.id}</div>
-                                  <div className="text-[11px] text-foreground/35 sm:hidden">{doc.file_type || "—"} · {formatBytes(doc.file_size ?? 0)}</div>
+                                  <div className="flex min-w-0 items-center gap-2">
+                                    <span className="truncate text-[12px] font-semibold text-foreground">{doc.filename || doc.name || doc.id}</span>
+                                    {doc.lang && (
+                                      <span
+                                        className="shrink-0 rounded-[2px] bg-deep-violet/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-deep-violet"
+                                        title={doc.variant_group ? `Language variant of ${doc.variant_group}` : doc.lang}
+                                      >
+                                        {doc.lang}
+                                      </span>
+                                    )}
+                                    {doc.intent && (
+                                      <span className="shrink-0 rounded-[2px] bg-foreground/[0.06] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-foreground/45">
+                                        {doc.intent}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {(doc.ai_summary || doc.summary) && (
+                                    <div
+                                      className="mt-0.5 line-clamp-1 text-[11px] leading-snug text-foreground/40"
+                                      title={doc.ai_summary || doc.summary || undefined}
+                                    >
+                                      {doc.ai_summary || doc.summary}
+                                    </div>
+                                  )}
+                                  {!doc.summary && (
+                                    <div className="text-[11px] text-foreground/35 sm:hidden">{doc.file_type || "—"} · {formatBytes(doc.file_size ?? 0)}</div>
+                                  )}
                                 </div>
                               </div>
                             </td>

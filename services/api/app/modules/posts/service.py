@@ -343,6 +343,171 @@ async def delete_post(db: AsyncSession, user_id: str, post_id: str) -> None:
     await db.commit()
 
 
+# ── Editing posts that already live on Google ─────────────────────────────
+#
+# Posts imported from Google (or published by Sayvors) carry a
+# ``google_post_id``. Google lets the text, button and event/offer window of a
+# live local post be changed in place via ``localPosts.patch``; the Sayvors
+# row is then a mirror of that remote post.
+
+def _google_patch_fields(post: LocationPost, data: dict) -> dict:
+    """Map the editable Sayvors fields onto Google LocalPost PATCH fields.
+
+    Uses the same builders as the create path so a post made at publish time
+    and one edited later always take the same shape. ``None`` for a field
+    means "clear it" (Google reads a JSON null as a removal).
+    """
+    from ..channels.meta.providers.google_post_fields import (
+        build_summary,
+        call_to_action_block,
+        event_block,
+        event_title,
+        offer_block,
+        resolve_window,
+    )
+
+    def pick(field: str, current):
+        return data[field] if field in data else current
+
+    caption = pick("title", post.title)
+    description = pick("description", post.description)
+    cta_type = pick("cta_type", post.cta_type)
+    cta_url = pick("cta_url", post.cta_url)
+
+    fields: dict = {}
+    summary = build_summary(caption, description)
+    if summary:
+        fields["summary"] = summary
+
+    if post.post_type == "offer":
+        # An offer's link is its redeem URL; Google gives an offer no button.
+        fields["offer"] = offer_block(
+            pick("terms_conditions", post.terms_conditions),
+            pick("coupon_code", post.coupon_code),
+            cta_url,
+        )
+    else:
+        fields["callToAction"] = call_to_action_block(cta_type, cta_url)
+
+    if post.post_type in ("event", "offer"):
+        start = pick("start_date", post.start_date)
+        end = pick("end_date", post.end_date)
+        if start is not None:
+            begin, finish = resolve_window(
+                _as_datetime(start), _as_datetime(end), datetime.now(timezone.utc)
+            )
+            fields["event"] = event_block(
+                event_title(caption, description), begin, finish
+            )
+    return fields
+
+
+def _as_datetime(value) -> datetime | None:
+    """An aware UTC datetime from a stored value.
+
+    SQLite (the test DB) drops timezone info from ``DateTime(timezone=True)``,
+    so a value read back can be naive; normalise it rather than comparing
+    naive to aware and raising.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    return _parse_dt(str(value))
+
+
+async def _google_publisher_for(db: AsyncSession, user_id: str, listing_id: str):
+    """Build a Google publisher bound to the listing's connected channel."""
+    from ..channels.meta.providers.google_publish import GoogleBusinessPublisher
+    from ..channels.service import decrypt_token, encrypt_token
+
+    channel = await _require_google_channel(db, user_id, listing_id)
+    access = decrypt_token(channel.access_token) if channel.access_token else None
+    refresh = decrypt_token(channel.refresh_token) if channel.refresh_token else None
+    if not access and not refresh:
+        raise ValueError("Reconnect Google in Channels before editing posts.")
+
+    publisher = GoogleBusinessPublisher(access or "", refresh)
+    publisher.set_known_expiry(channel.token_expires_at)
+
+    async def _persist(new_access: str, new_expires) -> None:
+        channel.access_token = encrypt_token(new_access)
+        channel.token_expires_at = new_expires
+        db.add(channel)
+        try:
+            await db.commit()
+        except Exception as e:  # noqa: BLE001 — token write must not break the edit
+            await db.rollback()
+            logger.error("Failed to persist refreshed Google token: %s", e)
+
+    publisher.set_token_persister(_persist)
+    return publisher
+
+
+async def update_google_post(
+    db: AsyncSession, user_id: str, post_id: str, data: dict
+) -> dict:
+    """Edit a post that lives on Google and mirror the change locally.
+
+    Raises ValueError for a post that is not on Google; RuntimeError when
+    Google refuses the change (surfaced as a 502 with a safe message).
+    """
+    post = await _owned_post(db, user_id, post_id)
+    if post is None:
+        raise ValueError("Post not found.")
+    if not post.google_post_id:
+        raise ValueError("This post is not on Google.")
+
+    fields = _google_patch_fields(post, data)
+    if not fields:
+        return {"post": _serialize(post), "google_published": False}
+
+    publisher = await _google_publisher_for(db, user_id, post.listing_id)
+    try:
+        response = await publisher.update_post(post.google_post_id, fields)
+    except Exception as e:  # noqa: BLE001 — Google refusal, surfaced by the router
+        await db.rollback()
+        raise RuntimeError(f"Google update failed: {e}") from e
+    finally:
+        await publisher.close()
+
+    for field in (
+        "title", "description", "cta_type", "cta_url",
+        "start_date", "end_date", "coupon_code", "terms_conditions",
+    ):
+        if field in data and data[field] is not None:
+            value = data[field]
+            if field in ("start_date", "end_date"):
+                value = _parse_dt(value)
+            setattr(post, field, value)
+    post.google_response = response
+    post.error = None
+    await db.commit()
+    await db.refresh(post)
+    return {"post": _serialize(post), "google_published": True}
+
+
+async def delete_google_post(db: AsyncSession, user_id: str, post_id: str) -> None:
+    """Remove a post from Google, then drop the local mirror row."""
+    post = await _owned_post(db, user_id, post_id)
+    if post is None:
+        raise ValueError("Post not found.")
+    if not post.google_post_id:
+        raise ValueError("This post is not on Google.")
+
+    publisher = await _google_publisher_for(db, user_id, post.listing_id)
+    try:
+        await publisher.delete_post("", post.google_post_id)
+    except Exception as e:  # noqa: BLE001
+        await db.rollback()
+        raise RuntimeError(f"Google delete failed: {e}") from e
+    finally:
+        await publisher.close()
+
+    await db.delete(post)
+    await db.commit()
+
+
 async def publish_post(
     db: AsyncSession, user_id: str, post_id: str, notify_user: bool = True
 ) -> dict:

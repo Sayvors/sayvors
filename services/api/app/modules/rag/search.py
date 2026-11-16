@@ -39,6 +39,30 @@ FALLBACK_SCAN_LIMIT = 5000
 # Words shorter than this are noise for a keyword match.
 _MIN_TERM_LENGTH = 2
 _MAX_QUERY_TERMS = 8
+# \w includes Unicode letters (Arabic included) in Python 3.
+_WORD_RE = re.compile(r"[\w\u0600-\u06FF]+", re.UNICODE)
+
+
+def keyword_tsquery(query_text: str) -> str:
+    """Build an OR tsquery from natural-language text.
+
+    ``plainto_tsquery`` ANDs every word, so a question like "multilingual
+    social media Arabic English" only matched a chunk containing ALL five
+    words — usually zero results, even when the databank has the answer.
+    OR + ts_rank (more matched terms rank higher) gives forgiving retrieval
+    that works for both English and Arabic without embeddings. Terms come
+    from a word-character regex, so the result is safe to pass as a bound
+    parameter to ``to_tsquery``.
+    """
+    terms: list[str] = []
+    for raw in _WORD_RE.findall(query_text or ""):
+        term = raw.strip("_").lower()
+        if len(term) < _MIN_TERM_LENGTH or term in terms:
+            continue
+        terms.append(term)
+        if len(terms) >= _MAX_QUERY_TERMS:
+            break
+    return " | ".join(terms)
 # The keyword side uses Postgres' 'simple' configuration on purpose: it
 # applies no stemming and no English stopwords, so Arabic text is not
 # mangled by an English stemmer.
@@ -160,23 +184,25 @@ async def _fallback_vector_search(
 async def _pg_keyword_search(
     db: AsyncSession, databank_id: str, query_text: str, limit: int
 ) -> list[dict[str, Any]]:
+    q = keyword_tsquery(query_text)
+    if not q:
+        return []
     sql = text(f"""
         SELECT id, content, document_id, metadata,
                ts_rank(
                    to_tsvector('{_TS_CONFIG}', content),
-                   plainto_tsquery('{_TS_CONFIG}', :q)
+                   to_tsquery('{_TS_CONFIG}', :q)
                ) AS score
         FROM document_chunks
         WHERE databank_id = :databank_id
-          AND to_tsvector('{_TS_CONFIG}', content)
-              @@ plainto_tsquery('{_TS_CONFIG}', :q)
+          AND to_tsvector('{_TS_CONFIG}', content) @@ to_tsquery('{_TS_CONFIG}', :q)
         ORDER BY score DESC
         LIMIT :limit
     """)
     rows = (
         await db.execute(
             sql,
-            {"databank_id": databank_id, "q": query_text, "limit": limit},
+            {"databank_id": databank_id, "q": q, "limit": limit},
         )
     ).fetchall()
     return [_row_to_hit(row) for row in rows]

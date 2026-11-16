@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from pgvector import Vector as VectorValue
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator, UserDefinedType
 
@@ -110,6 +110,17 @@ class Document(Base):
     chunk_count: Mapped[int] = mapped_column(Integer, default=0)
     content_hash: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Content language ("en"/"ar") — set by the crawler (Phase A). Lets the UI
+    # badge language variants and lets search prefer the customer's language.
+    lang: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    # Language-neutral identity shared by hreflang twins (crawler.variant_group):
+    # /en/pricing and /ar/pricing both map to "/pricing" so the UI can present
+    # them as variants of one knowledge item instead of duplicate crawls.
+    variant_group: Mapped[str | None] = mapped_column(String(2000), nullable=True, index=True)
+    # Structured extraction (§31 Phase B, document_structure.build_structured_doc):
+    # summary, intent, section outline, bounded entities. Nullable — uploads
+    # and legacy scrape rows stay valid without it.
+    meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -274,6 +285,129 @@ class IngestJob(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class CrawlSource(Base):
+    """A tenant website the crawler maintains for a databank (§31 Phase 0).
+
+    One row per site. ``sync_enabled`` + ``sync_interval_minutes`` drive the
+    scheduled re-check worker; ``next_sync_at`` is claimed with
+    ``UPDATE ... SKIP LOCKED`` so concurrent workers never double-fire.
+    """
+
+    __tablename__ = "crawl_sources"
+
+    # Scope of the crawl (see ScrapeJob.crawl_mode for the legacy one-shot).
+    SCOPE_TOP = "top"            # sitemap/section list only
+    SCOPE_SUBTREE = "subtree"    # same-origin BFS below the start URL
+    SCOPE_MAX_PAGES = "max_pages"  # any same-origin pages, capped by max_pages
+    SCOPES = (SCOPE_TOP, SCOPE_SUBTREE, SCOPE_MAX_PAGES)
+
+    # Buckets for last_status — coarse, matches what the dashboard renders.
+    STATUS_IDLE = "idle"
+    STATUS_RUNNING = "running"
+    STATUS_SUCCESS = "success"
+    STATUS_FAILED = "failed"
+
+    MIN_SYNC_INTERVAL_MINUTES = 60
+    DEFAULT_SYNC_INTERVAL_MINUTES = 60
+    DEFAULT_MAX_PAGES = 200
+    MAX_PAGES_LIMIT = 500
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(36), index=True)
+    databank_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("databanks.id"), index=True
+    )
+    start_url: Mapped[str] = mapped_column(String(2000))
+    scope: Mapped[str] = mapped_column(String(16), default=SCOPE_SUBTREE)
+    max_pages: Mapped[int] = mapped_column(Integer, default=DEFAULT_MAX_PAGES)
+    sync_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    sync_interval_minutes: Mapped[int] = mapped_column(
+        Integer, default=DEFAULT_SYNC_INTERVAL_MINUTES
+    )
+    next_sync_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    last_sync_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_status: Mapped[str] = mapped_column(String(20), default=STATUS_IDLE)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class CrawlPage(Base):
+    """One discovered page of a ``CrawlSource`` — the sync state machine.
+
+    This table is both the crawl preview and the incremental-sync ledger:
+    conditional-GET validators (ETag/Last-Modified), ``content_hash`` for
+    change detection, and ``document_id`` linking the crawled content to the
+    ingestable ``Document`` row. One row per (source, normalized URL).
+    """
+
+    __tablename__ = "crawl_pages"
+
+    STATUS_DISCOVERED = "discovered"
+    STATUS_CRAWLED = "crawled"
+    STATUS_UNCHANGED = "unchanged"
+    STATUS_FAILED = "failed"
+    STATUS_EXCLUDED = "excluded"
+    STATUSES = (
+        STATUS_DISCOVERED,
+        STATUS_CRAWLED,
+        STATUS_UNCHANGED,
+        STATUS_FAILED,
+        STATUS_EXCLUDED,
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    source_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("crawl_sources.id", ondelete="CASCADE"), index=True
+    )
+    url: Mapped[str] = mapped_column(String(2000))
+    title: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default=STATUS_DISCOVERED)
+    # Language-neutral identity for EN/AR pairing (crawler.variant_group).
+    # Shared by every hreflang twin of the same page, so the UI can group
+    # language variants instead of showing them as duplicate crawls.
+    variant_group: Mapped[str | None] = mapped_column(String(2000), nullable=True, index=True)
+    # Content language ("en"/"ar"): URL prefix wins, then detected script.
+    lang: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    http_etag: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    http_last_modified: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    lang: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    word_count: Mapped[int] = mapped_column(Integer, default=0)
+    fetched_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    document_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("documents.id"), nullable=True, index=True
+    )
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (
+        # Dedup guard: a source never has the same normalized URL twice. The
+        # migration mirrors this as a unique index (SQLite tests use this).
+        UniqueConstraint("source_id", "url", name="uq_crawl_pages_source_url"),
     )
 
 

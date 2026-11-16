@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import PlatformMark from "@/components/channels/PlatformMark";
 import GoogleBusinessLogo from "@/components/channels/GoogleBusinessLogo";
 import LogoLoader from "@/components/LogoLoader";
 import { useI18n } from "@/lib/i18n/I18nProvider";
+import { apiFetch } from "@/lib/api-rag";
 import type { Dict } from "@/lib/i18n/en";
 import {
   QUEUED_STATUSES,
@@ -99,9 +100,15 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
   const [armDelete, setArmDelete] = useState(false);
   const [notice, setNotice] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
+  const [openLegacyId, setOpenLegacyId] = useState<string | null>(null);
+  const [legacyBusy, setLegacyBusy] = useState<string | null>(null);
+  const [legacyErrorState, setLegacyErrorState] = useState<string | null>(null);
 
   const feedError = error ?? legacyError;
   const openJob = openId ? (jobs ?? []).find((j) => j.job_id === openId) ?? null : null;
+  const openLegacy = openLegacyId
+    ? (legacyPosts ?? []).find((post) => post.id === openLegacyId) ?? null
+    : null;
 
   const scheduledEntries = useMemo<ScheduledEntry[]>(() => {
     return (jobs ?? [])
@@ -169,6 +176,41 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
         : { kind: "ok", text: p.cancelledOk },
     );
     setTimeout(() => setNotice(null), 6000);
+  };
+
+  const removeLegacy = async (post: LocationPost) => {
+    const id = post.id;
+    setLegacyBusy(`remove:${id}`);
+    setLegacyErrorState(null);
+    try {
+      await apiFetch(`/api/v1/posts/${encodeURIComponent(id)}/google`, { method: "DELETE" });
+      setNotice({ kind: "ok", text: p.removedOne });
+      setOpenLegacyId(null);
+      await refreshLegacy();
+    } catch (e) {
+      setLegacyErrorState(e instanceof Error ? e.message : "Could not remove the post.");
+    } finally {
+      setLegacyBusy(null);
+    }
+  };
+
+  const saveLegacy = async (patch: Record<string, unknown>) => {
+    if (!openLegacy) return;
+    const id = openLegacy.id;
+    setLegacyBusy(`save:${id}`);
+    setLegacyErrorState(null);
+    try {
+      await apiFetch(`/api/v1/posts/${encodeURIComponent(id)}/google`, {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      });
+      setNotice({ kind: "ok", text: p.detail.saved });
+      await refreshLegacy();
+    } catch (e) {
+      setLegacyErrorState(e instanceof Error ? e.message : "Could not save the change.");
+    } finally {
+      setLegacyBusy(null);
+    }
   };
 
   return (
@@ -277,7 +319,18 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
                     busy={busy}
                   />
                 ) : (
-                  <LegacyPostCard key={entry.post.id} post={entry.post} />
+                  <LegacyPostCard
+                    key={entry.post.id}
+                    post={entry.post}
+                    onDetails={() => setOpenLegacyId(entry.post.id)}
+                    onRemove={() => {
+                      if (window.confirm(`${p.detail.removeNow}: ${entry.post.location_name || entry.post.business_name}?`)) {
+                        void removeLegacy(entry.post);
+                      }
+                    }}
+                    busy={legacyBusy === `remove:${entry.post.id}`}
+                    removing={false}
+                  />
                 ),
               )}
             </div>
@@ -339,6 +392,190 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
           }}
         />
       )}
+
+      {openLegacy && (
+        <GooglePostDetailDialog
+          key={openLegacy.id}
+          post={openLegacy}
+          onClose={() => setOpenLegacyId(null)}
+          onSave={(patch) => saveLegacy(patch)}
+          onRemove={() => {
+            if (window.confirm(`${p.detail.removeNow}: ${openLegacy.location_name || openLegacy.business_name}?`)) {
+              void removeLegacy(openLegacy);
+            }
+          }}
+          saving={legacyBusy === `save:${openLegacy.id}`}
+          removing={legacyBusy === `remove:${openLegacy.id}`}
+          error={legacyErrorState}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Detail + edit dialog for a Google post that lives on Google directly. */
+function GooglePostDetailDialog({
+  post,
+  onClose,
+  onSave,
+  onRemove,
+  saving,
+  removing,
+  error,
+}: {
+  post: LocationPost;
+  onClose: () => void;
+  onSave: (patch: Record<string, unknown>) => void;
+  onRemove: () => void;
+  saving: boolean;
+    removing: boolean;
+  error: string | null;
+}) {
+  const { t } = useI18n();
+  const d = t.publish.detail;
+  const isEvent = post.post_type === "event" || post.post_type === "offer";
+  const [caption, setCaption] = useState(post.title ?? "");
+  const [description, setDescription] = useState(post.description ?? "");
+  const [ctaType, setCtaType] = useState(post.cta_type ?? "");
+  const [ctaUrl, setCtaUrl] = useState(post.cta_url ?? "");
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-6"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="google-post-detail-title"
+        className="flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-[2px] bg-white shadow-2xl dark:bg-ink"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-ink/[0.06] px-5 py-4 dark:border-fog/[0.06]">
+          <div className="flex min-w-0 items-center gap-2">
+            <GoogleBusinessLogo size={16} />
+            <div className="min-w-0">
+              <h2 id="google-post-detail-title" className="truncate text-[15px] font-bold text-ink dark:text-fog">
+                {post.location_name || post.business_name || "Google Business Profile"}
+              </h2>
+              <p className="mt-0.5 text-[12px] text-ink/50 dark:text-fog/50">
+                {post.post_type}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            autoFocus
+            aria-label={d.close}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] text-ink/45 transition hover:bg-ink/[0.04] hover:text-ink focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:text-fog/45"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden>
+              <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="flex-1 space-y-3 overflow-y-auto p-5">
+          <label className="block text-[12px] font-semibold text-ink/60 dark:text-fog/60">
+            {d.caption}
+            <textarea
+              value={caption}
+              onChange={(e) => setCaption(e.target.value)}
+              rows={2}
+              maxLength={500}
+              className="mt-1 w-full resize-y rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none"
+            />
+          </label>
+          <label className="block text-[12px] font-semibold text-ink/60 dark:text-fog/60">
+            {d.description}
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={4}
+              maxLength={1500}
+              className="mt-1 w-full resize-y rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none"
+            />
+          </label>
+          {!isEvent && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block text-[12px] font-semibold text-ink/60 dark:text-fog/60">
+                {d.button}
+                <select
+                  value={ctaType}
+                  onChange={(e) => setCtaType(e.target.value)}
+                  className="mt-1 w-full rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none"
+                >
+                  <option value="">{d.noButton}</option>
+                  <option value="book">Book</option>
+                  <option value="order">Order</option>
+                  <option value="shop">Shop</option>
+                  <option value="learn_more">Learn more</option>
+                  <option value="sign_up">Sign up</option>
+                  <option value="call">Call</option>
+                </select>
+              </label>
+              {ctaType && ctaType !== "call" && (
+                <label className="block text-[12px] font-semibold text-ink/60 dark:text-fog/60">
+                  {d.buttonLink}
+                  <input
+                    type="url"
+                    value={ctaUrl}
+                    onChange={(e) => setCtaUrl(e.target.value)}
+                    placeholder="https://…"
+                    className="mt-1 w-full rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none"
+                  />
+                </label>
+              )}
+            </div>
+          )}
+          {error && (
+            <p role="alert" className="text-[12px] font-semibold text-red-600 dark:text-red-400">{error}</p>
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 border-t border-ink/[0.06] px-5 py-3 dark:border-fog/[0.06]">
+          <button
+            type="button"
+            onClick={() =>
+              onSave({
+                title: caption,
+                description,
+                cta_type: ctaType || null,
+                cta_url: ctaUrl || null,
+              })
+            }
+            disabled={saving}
+            className="rounded-[2px] bg-deep-violet px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90 disabled:opacity-50"
+          >
+            {saving ? d.saving : d.save}
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving || removing}
+            className="rounded-[2px] border border-ink/[0.1] px-4 py-2 text-[13px] font-semibold text-ink/60 transition hover:bg-ink/[0.04] disabled:opacity-50 dark:border-fog/[0.12] dark:text-fog/60"
+          >
+            {d.discard}
+          </button>
+          <button
+            type="button"
+            onClick={onRemove}
+            disabled={saving || removing}
+            className="ms-auto rounded-[2px] border border-red-500/40 px-4 py-2 text-[13px] font-semibold text-red-700 transition hover:bg-red-500/10 disabled:opacity-50 dark:text-red-400"
+          >
+            {removing ? d.saving : d.removeNow}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -351,10 +588,23 @@ function legacyChip(post: LocationPost, c: StatusDict): Chip {
   return { label: c.draft, cls: GREY };
 }
 
-/** A Google post from the old per-branch flow. It never passed through the
- * publishing job queue, so it has no remove/cancel actions — the Google-side
- * copy keeps its own lifecycle. */
-function LegacyPostCard({ post }: { post: LocationPost }) {
+/** A Google post that lives on Google (imported or legacy). It can be edited
+ *  and removed through the Google API, so it gets the same details dialog as
+ *  composer posts — the difference is that its actions talk to Google
+ *  directly instead of the job queue. */
+function LegacyPostCard({
+  post,
+  onDetails,
+  onRemove,
+  busy,
+  removing,
+}: {
+  post: LocationPost;
+  onDetails: () => void;
+  onRemove: () => void;
+  busy: boolean;
+  removing: boolean;
+}) {
   const { t, locale } = useI18n();
   const c = t.publish;
   const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
@@ -363,10 +613,17 @@ function LegacyPostCard({ post }: { post: LocationPost }) {
   const text = post.title ? [post.title, post.description].filter(Boolean).join(" — ") : post.description;
   const hasMetrics = post.views !== null || post.cta_clicks !== null;
   const shownAt = post.published_at ?? post.created_at;
+  const googleManageable = Boolean(post.google_post_id) && post.status !== "draft";
 
   return (
     <div className="flex w-full flex-col overflow-hidden rounded-[2px] border border-ink/[0.06] bg-white text-left dark:border-fog/[0.07] dark:bg-ink">
-      <div className="relative block aspect-video overflow-hidden bg-ink/[0.04] dark:bg-fog/[0.06]">
+      <button
+        type="button"
+        onClick={onDetails}
+        aria-label={`${c.detail.title}: ${post.location_name || post.business_name || "Google"}`}
+        disabled={!googleManageable}
+        className="relative block aspect-video w-full overflow-hidden bg-ink/[0.04] text-left focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 disabled:cursor-default dark:bg-fog/[0.06]"
+      >
         <JobThumb url={post.image_urls[0] ?? null} platform="google_reviews" />
         <span className="absolute left-2 top-2 rounded-[2px] bg-white/90 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-deep-violet dark:bg-ink/85">
           Google
@@ -374,7 +631,7 @@ function LegacyPostCard({ post }: { post: LocationPost }) {
         <span className={`absolute right-2 top-2 rounded-[2px] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide ${chip.cls}`}>
           {chip.label}
         </span>
-      </div>
+      </button>
       <div className="flex flex-1 flex-col p-3.5">
         <span className="truncate text-[13px] font-bold text-ink dark:text-fog">
           {post.location_name || post.business_name || "Google Business Profile"}
@@ -388,6 +645,28 @@ function LegacyPostCard({ post }: { post: LocationPost }) {
           </span>
         )}
         <span className="mt-auto flex flex-wrap items-center gap-1.5 pt-3">
+          {googleManageable && (
+            <button
+              type="button"
+              onClick={onDetails}
+              className="rounded-[2px] border border-ink/[0.1] px-2 py-0.5 text-[10px] font-semibold text-ink/60 transition hover:bg-ink/[0.04] dark:border-fog/[0.12] dark:text-fog/60"
+            >
+              {c.detail.open}
+            </button>
+          )}
+          {googleManageable && (
+            <label className="flex cursor-pointer items-center gap-1.5 rounded-[2px] bg-ink/[0.05] px-2 py-1 text-[10px] font-semibold text-ink/60 dark:bg-fog/[0.07] dark:text-fog/60">
+              <input
+                type="checkbox"
+                checked={removing}
+                disabled={busy}
+                onChange={onRemove}
+                aria-label={fill(c.removeAria, { platform: "Google" })}
+                className="h-3.5 w-3.5 accent-deep-violet"
+              />
+              {busy ? c.working : c.remove}
+            </label>
+          )}
           {post.status === "scheduled" && post.scheduled_on && (
             <span className="rounded-[2px] bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
               {new Date(post.scheduled_on).toLocaleDateString(dateLocale)}

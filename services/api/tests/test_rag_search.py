@@ -17,7 +17,30 @@ import pytest
 
 from app.modules.rag.embeddings import CANONICAL_DIMENSIONS, canonical_vector
 from app.modules.rag.models import Databank, Document, DocumentChunk
-from app.modules.rag.search import hybrid_search
+from app.modules.rag.search import hybrid_search, keyword_tsquery
+
+# ── Keyword query building (naive questions must still retrieve) ──
+
+def test_keyword_tsquery_ors_terms_and_dedups():
+    q = keyword_tsquery("multilingual social media Arabic English")
+    assert "|" in q
+    for term in ("multilingual", "social", "media", "arabic", "english"):
+        assert term in q
+    assert set(q.split(" | ")) == set(
+        keyword_tsquery("Arabic, english multilingual social media").split(" | ")
+    )  # dedup-invariant set
+
+
+def test_keyword_tsquery_keeps_arabic_and_caps_terms():
+    q = keyword_tsquery("مطعم البرجر في جدة potassium 1 2 3 4 5 6 7 8 9 10")
+    assert "مطعم" in q
+    assert "|" in q
+    assert len(q.split("|")) <= 8
+
+
+def test_keyword_tsquery_empty_for_symbols():
+    assert keyword_tsquery("?! ...") == ""
+
 
 _BANK = "rag-search-bank-0001"
 _USER = "rag-search-user-0001"

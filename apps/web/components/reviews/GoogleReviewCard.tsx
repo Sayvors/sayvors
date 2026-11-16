@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import PlatformMark from "@/components/channels/PlatformMark";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import type { Dict } from "@/lib/i18n/en";
 
@@ -158,6 +159,58 @@ function ExternalLinkIcon(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
+function SentimentTrendIcon({ sentiment, className }: { sentiment: string; className?: string }) {
+  if (sentiment === "positive") {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden className={className}>
+        <path d="M4 17l6-6 4 4 6-7" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M15 8h5v5" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (sentiment === "negative") {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden className={className}>
+        <path d="M4 7l6 6 4-4 6 7" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M15 16h5v-5" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden className={className}>
+      <path d="M5 12h14" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** The AI's read of one review, made scannable at a glance. */
+function SentimentBadge({ sentiment, labels }: { sentiment: string; labels: CardDict }) {
+  const key = sentiment.toLowerCase();
+  const tone =
+    key === "positive"
+      ? "border-[#CEEAD6] bg-[#E6F4EA] text-[#137333]"
+      : key === "negative"
+        ? "border-[#F6C9C9] bg-[#FCE8E6] text-[#C5221F]"
+        : "border-[#E8EAED] bg-[#F8F9FA] text-[#5F6368]";
+  const label =
+    key === "positive"
+      ? labels.sentimentPositive
+      : key === "negative"
+        ? labels.sentimentNegative
+        : key === "neutral"
+          ? labels.sentimentNeutral
+          : sentiment;
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${tone}`}
+      title={`Sentiment: ${label}`}
+    >
+      <SentimentTrendIcon sentiment={key} className="h-3 w-3" />
+      {label}
+    </span>
+  );
+}
+
 export default function GoogleReviewCard({
   review,
   onOpen,
@@ -199,8 +252,11 @@ export default function GoogleReviewCard({
       <header className="border-b border-[#E8EAED] px-4 py-3">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5">
-              <h2 className="truncate text-[14px] font-medium leading-5 text-[#202124]">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span className="inline-flex shrink-0" title={c.businessProfile}>
+                <PlatformMark platform="google_reviews" size={18} />
+              </span>
+              <h2 className="min-w-0 truncate rounded-md bg-[#F1F3F4] px-2 py-0.5 text-[14px] font-semibold leading-5 text-[#202124]">
                 {review.locationName}
               </h2>
               {review.reviewUrl && (
@@ -216,11 +272,17 @@ export default function GoogleReviewCard({
                 </a>
               )}
             </div>
-            <p className="mt-0.5 text-[12px] leading-4 text-[#5F6368]">{c.googleReview}</p>
+            <div className="mt-1 flex items-center gap-1.5 text-[12px] leading-4 text-[#5F6368]">
+              <GoogleWordmark className="text-[12px]" />
+              <span>{c.googleReview}</span>
+            </div>
           </div>
-          <span className="shrink-0 text-[11px] leading-4 text-[#5F6368]" title={exact(review.createdAt)}>
-            {exact(review.createdAt)}
-          </span>
+          <div className="flex shrink-0 flex-col items-end gap-1">
+            <span className="text-[11px] leading-4 text-[#5F6368]" title={exact(review.createdAt)}>
+              {exact(review.createdAt)}
+            </span>
+            {review.sentiment && <SentimentBadge sentiment={review.sentiment} labels={c} />}
+          </div>
         </div>
       </header>
 
@@ -403,12 +465,6 @@ export default function GoogleReviewCard({
           >
             {c.viewOnGoogle}
           </a>
-        )}
-
-        {review.sentiment && (
-          <span className="hidden rounded-full border border-[#E8EAED] bg-[#F8F9FA] px-2 py-0.5 text-[11px] font-medium capitalize text-[#5F6368] sm:inline-flex">
-            {review.sentiment}
-          </span>
         )}
       </footer>
     </article>

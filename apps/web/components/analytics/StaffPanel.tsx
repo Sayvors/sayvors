@@ -4,8 +4,9 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api-rag";
 
-/* Staff performance panel (§33): per-employee review cards, per-employee
- * details, the unassigned-names bucket, and the backfill trigger.
+/* Staff performance panel (§33): per-employee review cards, the
+ * unassigned-names bucket, and the backfill trigger. Cards link to the full
+ * employee profile (picture, contact details, AI analysis, credited reviews).
  *
  * Theme: the analytics tab system's flat style — --ui-* vars, hairlines,
  * no shadows. All copy is merchant-facing and states the promise, never
@@ -39,25 +40,12 @@ interface UnmatchedName {
   latest: string | null;
 }
 
-interface Mention {
-  review_id: string;
-  rating: number;
-  sentiment: string;
-  review_created_at: string | null;
-}
-
 interface ChannelRow {
   id: string;
   platform: string;
   listing_id?: string | null;
   display_name?: string | null;
 }
-
-const SENTIMENT_STYLE: Record<string, string> = {
-  positive: "bg-emerald-100 text-emerald-700",
-  neutral: "bg-[var(--ui-sunken)] text-[var(--ui-ink-2)]",
-  negative: "bg-red-100 text-red-700",
-};
 
 export default function StaffPanel() {
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -67,8 +55,6 @@ export default function StaffPanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [detail, setDetail] = useState<{ employee: Employee; mentions: Mention[] } | null>(null);
   const [backfilling, setBackfilling] = useState(false);
 
   const loadAll = useCallback(async () => {
@@ -103,17 +89,6 @@ export default function StaffPanel() {
   useEffect(() => {
     void loadAll();
   }, [loadAll]);
-
-  const openDetail = async (id: string) => {
-    setError(null);
-    try {
-      const data = await apiFetch(`/api/v1/staff/${id}/mentions?days=90`);
-      setSelected(id);
-      setDetail({ employee: data.employee, mentions: data.mentions ?? [] });
-    } catch (e) {
-      setError(e instanceof Error ? e.message.slice(0, 200) : "Could not load details.");
-    }
-  };
 
   const runBackfill = async () => {
     setBackfilling(true);
@@ -152,16 +127,6 @@ export default function StaffPanel() {
   const branchName = (listingId: string) =>
     branches.find((b) => b.id === listingId)?.name ?? listingId;
 
-  const back = (
-    <button
-      type="button"
-      onClick={() => { setSelected(null); setDetail(null); }}
-      className="text-[12px] font-semibold text-[var(--ui-ink-2)] transition hover:text-[var(--ui-ink)]"
-    >
-      ← Back to staff
-    </button>
-  );
-
   if (loading) {
     return <p className="py-10 text-center text-[13px] text-[var(--ui-ink-2)]">Loading staff…</p>;
   }
@@ -179,37 +144,7 @@ export default function StaffPanel() {
         </p>
       )}
 
-      {selected && detail ? (
-        <div className="space-y-4">
-          {back}
-          <div>
-            <h3 className="text-[16px] font-bold text-[var(--ui-ink)]">{detail.employee.name}</h3>
-            <p className="text-[12px] text-[var(--ui-ink-2)]">
-              {branchName(detail.employee.listing_id)} · last 90 days
-            </p>
-          </div>
-          {detail.mentions.length === 0 ? (
-            <p className="rounded-[10px] border border-dashed border-[var(--ui-line)] px-4 py-8 text-center text-[13px] text-[var(--ui-ink-2)]">
-              No reviews mention this employee in the last 90 days.
-            </p>
-          ) : (
-            <ul className="space-y-2">
-              {detail.mentions.map((m) => (
-                <li key={`${m.review_id}-${m.review_created_at}`} className="flex items-center gap-3 rounded-[10px] border border-[var(--ui-line)] px-3 py-2.5">
-                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${SENTIMENT_STYLE[m.sentiment] ?? SENTIMENT_STYLE.neutral}`}>
-                    {m.sentiment}
-                  </span>
-                  <span className="text-[12px] font-bold text-[var(--ui-ink)]">★{m.rating}</span>
-                  <span className="min-w-0 flex-1 truncate text-[12px] text-[var(--ui-ink-2)]">
-                    {m.review_created_at ? new Date(m.review_created_at).toLocaleDateString() : "—"}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      ) : (
-        <div className="space-y-5">
+      <div className="space-y-5">
           {/* Employee cards */}
           {summary.length === 0 ? (
             <p className="rounded-[10px] border border-dashed border-[var(--ui-line)] px-4 py-8 text-center text-[13px] text-[var(--ui-ink-2)]">
@@ -218,11 +153,10 @@ export default function StaffPanel() {
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {summary.map((row) => (
-                <button
+                <Link
                   key={row.staff_member_id}
-                  type="button"
-                  onClick={() => openDetail(row.staff_member_id)}
-                  className="rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 text-left transition hover:border-[var(--ui-ink)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+                  href={`/dashboard/analytics/staff/${row.staff_member_id}`}
+                  className="block rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 text-left transition hover:border-[var(--ui-ink)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate text-[14px] font-bold text-[var(--ui-ink)]">{row.name}</span>
@@ -240,7 +174,7 @@ export default function StaffPanel() {
                   <p className="mt-1.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--ui-ink-2)]">
                     {row.trend === "up" ? "▲ trending up" : row.trend === "down" ? "▼ trending down" : "— steady"} vs previous 30d
                   </p>
-                </button>
+                </Link>
               ))}
             </div>
           )}
@@ -304,7 +238,6 @@ export default function StaffPanel() {
             )}
           </div>
         </div>
-      )}
     </div>
   );
 }

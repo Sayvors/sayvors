@@ -22,8 +22,6 @@ interface BizRow {
 
 const platformConfig = [
   { key: "whatsapp", label: "WhatsApp", bg: "bg-emerald-500/10", text: "text-emerald-400", border: "border-emerald-500/20" },
-  { key: "instagram", label: "Instagram", bg: "bg-pink-500/10", text: "text-pink-400", border: "border-pink-500/20" },
-  { key: "facebook", label: "Messenger", bg: "bg-blue-500/10", text: "text-blue-400", border: "border-blue-500/20" },
 ] as const;
 
 function PlatformIcon({ name }: { name: string }) {
@@ -185,7 +183,7 @@ export default function GlanceStrip() {
     };
   }, []);
 
-  const totalMsgs = (platformMsgs["whatsapp"] ?? 0) + (platformMsgs["instagram"] ?? 0) + (platformMsgs["facebook"] ?? 0);
+  const totalMsgs = platformConfig.reduce((sum, p) => sum + (platformMsgs[p.key] ?? 0), 0);
 
   return (
     <section aria-label="Glance" className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -260,26 +258,28 @@ export default function GlanceStrip() {
         </div>
       </Link>
 
-      <div className="rounded-[2px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-[#1d1636]">
-        <div className="flex items-center justify-between">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">Reviews</p>
-          <Image src="/google-review.png" alt="Google Reviews" width={32} height={32} />
+      <Link href="/dashboard/reviews" aria-label="Open reviews">
+        <div className="h-full rounded-[2px] border border-ink/[0.06] bg-white p-4 transition hover:border-deep-violet/30 dark:border-fog/[0.06] dark:bg-[#1d1636] dark:hover:border-violet-soft/30">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">Reviews</p>
+            <Image src="/google-review.png" alt="Google Reviews" width={32} height={32} />
+          </div>
+          <p className="mt-1 text-[22px] font-bold text-ink dark:text-fog">{totalReviews ?? "-"}</p>
+          <div className="mt-3 space-y-2">
+            {biz.slice(0, 4).map((b) => (
+              <div key={b.id} className="flex items-center gap-2 rounded-[2px] border border-amber-500/20 bg-amber-500/10 px-2.5 py-1.5">
+                <span className="text-amber-400">
+                  <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
+                    <path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 16.8l-6.2 4.5 2.4-7.4L2 9.4h7.6z" />
+                  </svg>
+                </span>
+                <span className="flex-1 truncate text-[12px] font-medium text-ink/70 dark:text-fog/70">{b.name}</span>
+                <span className="text-[12px] font-bold text-ink dark:text-fog">{b.reviews ?? 0}</span>
+              </div>
+            ))}
+          </div>
         </div>
-        <p className="mt-1 text-[22px] font-bold text-ink dark:text-fog">{totalReviews ?? "-"}</p>
-        <div className="mt-3 space-y-2">
-          {biz.slice(0, 4).map((b) => (
-            <div key={b.id} className="flex items-center gap-2 rounded-[2px] border border-amber-500/20 bg-amber-500/10 px-2.5 py-1.5">
-              <span className="text-amber-400">
-                <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
-                  <path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 16.8l-6.2 4.5 2.4-7.4L2 9.4h7.6z" />
-                </svg>
-              </span>
-              <span className="flex-1 truncate text-[12px] font-medium text-ink/70 dark:text-fog/70">{b.name}</span>
-              <span className="text-[12px] font-bold text-ink dark:text-fog">{b.reviews ?? 0}</span>
-            </div>
-          ))}
-        </div>
-      </div>
+      </Link>
 
       <div className="rounded-[2px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-[#1d1636]">
         <div className="flex items-center justify-between">
