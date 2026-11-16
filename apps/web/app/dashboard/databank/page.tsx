@@ -493,12 +493,22 @@ function DatabankPageContent() {
     };
   }, [selectedId]);
 
-  // Live progress: while any document is still being processed (upload or a
-  // background crawl), poll so the counts/statuses move in real time instead
-  // of requiring a manual refresh.
-  const hasInFlight = docs.some(
+  // Live progress: poll while documents are processing OR a crawl is queued/
+  // running. A fresh one-shot source starts with ZERO documents and status
+  // "idle" — gating only on in-flight docs used to freeze the UI at 0/58
+  // until a manual refresh, hiding all progress.
+  const hasInFlightDocs = docs.some(
     (x) => x.status === "pending" || x.status === "queued" || x.status === "processing",
   );
+  const crawlActive = crawlSources.some((s) => {
+    const counts = s.page_status_counts ?? {};
+    return (
+      s.last_status === "idle" ||
+      s.last_status === "running" ||
+      (counts.discovered ?? 0) > 0
+    );
+  });
+  const hasInFlight = hasInFlightDocs || crawlActive;
   useEffect(() => {
     if (!selectedId || !hasInFlight) return;
     const bankId = selectedId;
@@ -871,6 +881,11 @@ function DatabankPageContent() {
                             <span className="rounded-[2px] bg-emerald/10 px-2 py-0.5 text-emerald">{d.crawler.done}</span>
                           ) : s.last_status === "failed" ? (
                             <span className="rounded-[2px] bg-coral/10 px-2 py-0.5 text-coral">{d.crawler.failed}</span>
+                          ) : s.last_status === "idle" && discovered > 0 ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-[2px] bg-deep-violet/10 px-2 py-0.5 text-deep-violet">
+                              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-deep-violet" />
+                              {d.crawler.queued}
+                            </span>
                           ) : (
                             <span className="rounded-[2px] bg-foreground/[0.06] px-2 py-0.5 text-foreground/50">
                               {s.last_status === "running" ? d.crawler.running : d.crawler.idle}

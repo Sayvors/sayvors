@@ -156,7 +156,12 @@ async def _process_job(job_id: str) -> None:
                 job.stage = "Done"
                 await db.commit()
                 await set_progress(job_id, 100, "Done")
-                _maybe_refresh_business_profile(job.user_id)
+                # A crawl produces one ingest job per page (58 on a typical
+                # site). Refreshing the tenant business card after EACH of them
+                # wasted 58 LLM calls and buried the log in warnings. Only a
+                # real file upload should re-distill the business card.
+                if job.job_type == "upload":
+                    _maybe_refresh_business_profile(job.user_id)
                 # Phase C: LLM-polish the page summary of scraped docs
                 # (fire-and-forget, budget-gated, off by default).
                 if job.job_type == "scrape" and job.document_id:

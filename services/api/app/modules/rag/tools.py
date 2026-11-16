@@ -150,19 +150,24 @@ async def vector_search(ctx: ToolContext, query: str, top_k: int = 5) -> dict:
 
 
 async def keyword_search(ctx: ToolContext, query: str, top_k: int = 5) -> dict:
+    from .search import keyword_tsquery
+
     top_k = max(1, min(int(top_k or 5), 10))
+    q = keyword_tsquery(query)
+    if not q:
+        return {"passages": []}
     rows = await ctx.db.execute(
         text("""
             SELECT id, content, document_id,
                    ts_rank(to_tsvector('simple', content),
-                           plainto_tsquery('simple', :q)) AS score
+                           to_tsquery('simple', :q)) AS score
             FROM document_chunks
             WHERE databank_id = :b
-              AND to_tsvector('simple', content) @@ plainto_tsquery('simple', :q)
+              AND to_tsvector('simple', content) @@ to_tsquery('simple', :q)
             ORDER BY score DESC
             LIMIT :limit
         """),
-        {"q": query, "b": ctx.databank_id, "limit": top_k},
+        {"q": q, "b": ctx.databank_id, "limit": top_k},
     )
     names = await ctx.doc_names()
     passages = [

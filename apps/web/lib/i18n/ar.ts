@@ -4424,6 +4424,7 @@ const ar: Dict = {
         done: "تم",
         failed: "فشل",
         idle: "خامل",
+        queued: "في الانتظار",
         running: "قيد التشغيل",
         pagesCrawled: "تم زحف {done}/{total} صفحة",
         queuedCount: "{n} في الانتظار",

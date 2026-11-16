@@ -4418,6 +4418,7 @@ const en = {
         done: "done",
         failed: "failed",
         idle: "idle",
+        queued: "queued",
         running: "running",
         pagesCrawled: "{done}/{total} pages crawled",
         queuedCount: "{n} queued",
