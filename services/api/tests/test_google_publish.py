@@ -98,13 +98,14 @@ async def test_event_carries_the_date_google_requires():
     LocalPostEvent is {title, schedule:{startDate, startTime, ...}} with
     Date/TimeOfDay objects — not ISO strings.
 
-    The instants are 06:00 UTC, which is 09:00 at a Saudi business. Google
-    reads the schedule as the business's local time, so 09:00 must be sent,
-    not 06:00."""
+    The instants are 06:00 UTC, which is 09:00 in the business's IANA zone.
+    Google reads the schedule as wall-clock time with no timezone field, so
+    the converted local values must be sent, not the UTC instants."""
     captured = await _publish(
         "event",
         start_date="2026-11-09T06:00:00+00:00",
         end_date="2026-11-10T06:00:00+00:00",
+        timezone_name="Asia/Riyadh",
     )
     body = captured["body"]
     assert body["topicType"] == "EVENT"
