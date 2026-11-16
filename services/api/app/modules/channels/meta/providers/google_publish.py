@@ -259,10 +259,45 @@ class GoogleBusinessPublisher:
                 "create_local_post failed (%s): %s | request=%s",
                 resp.status_code, detail, str(post_body)[:800],
             )
-            raise GoogleReviewsError(
-                f"create_local_post failed ({resp.status_code}): {detail}",
-                resp.status_code,
-            )
+            # A 400 is a rejection: Google created nothing, so retrying a
+            # payload variant has no side effects. Some accounts reject the
+            # documented OFFER shape (media or event) with a generic
+            # INVALID_ARGUMENT and no field details. Try the known shapes and
+            # log which one succeeded so the builder can be corrected.
+            if (
+                resp.status_code == 400
+                and topic_type == "OFFER"
+                and "Request contains an invalid argument" in detail
+            ):
+                variants: list[tuple[str, dict[str, Any]]] = []
+                if "media" in post_body:
+                    variants.append(("without media", {k: v for k, v in post_body.items() if k != "media"}))
+                if topic_type == "OFFER" and "event" in post_body:
+                    variants.append(("without event", {k: v for k, v in post_body.items() if k != "event"}))
+                if "media" in post_body and topic_type == "OFFER":
+                    variants.append(("without media or event", {
+                        k: v for k, v in post_body.items() if k not in ("media", "event")
+                    }))
+                for label, candidate in variants:
+                    attempt = await self._client._authed_request("POST", url, json=candidate)
+                    if attempt.status_code in (200, 201):
+                        logger.warning(
+                            "create_local_post succeeded with variant '%s' after a generic 400; "
+                            "original request=%s",
+                            label, str(post_body)[:800],
+                        )
+                        resp = attempt
+                        post_body = candidate
+                        break
+                    logger.warning(
+                        "create_local_post variant '%s' also failed (%s): %s",
+                        label, attempt.status_code, attempt.text[:300],
+                    )
+            if resp.status_code not in (200, 201):
+                raise GoogleReviewsError(
+                    f"create_local_post failed ({resp.status_code}): {detail}",
+                    resp.status_code,
+                )
         window = None
         if built.window:
             window = {

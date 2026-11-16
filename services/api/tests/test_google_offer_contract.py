@@ -119,3 +119,35 @@ async def test_offer_without_a_coupon_still_sends_the_documented_fields():
     assert "couponCode" not in offer          # optional, not invented
     assert offer["redeemOnlineUrl"] == "https://example.com/shop-now"
     assert offer["termsConditions"]           # a default, never empty
+
+
+@pytest.mark.asyncio
+async def test_generic_400_retries_safe_payload_variants():
+    """A generic INVALID_ARGUMENT creates nothing, so variants are safe."""
+    generic_400 = (
+        400, {},
+        b'{"error":{"code":400,"message":"Request contains an invalid argument.",'
+        b'"status":"INVALID_ARGUMENT"}}',
+    )
+    ok = (200, {}, b'{"name":"accounts/a/locations/l/localPosts/2","state":"PROCESSING"}')
+    script = [generic_400, generic_400, ok]  # with media, without media, without event
+    publisher = _publisher(script)
+
+    result = await publisher.publish_post(
+        token="token", asset_id="8411302920254759403",
+        account_id="117767562410497296372", method="offer",
+        media_url="https://example.com/promo.jpg", media_type="image",
+        caption="Promo", description="", scheduled_at=None,
+        cta_type="shop", cta_url="https://example.com/redeem",
+        coupon_code="SAVE20", terms_conditions="Terms apply",
+        language_code="en-US",
+    )
+
+    assert result["name"].endswith("/localPosts/2")
+    requests = publisher._client._http._transport.requests
+    assert len(requests) == 3
+    without_media = json.loads(requests[1].content.decode())
+    assert "media" not in without_media
+    assert "event" in without_media
+    without_event = json.loads(requests[2].content.decode())
+    assert "event" not in without_event
