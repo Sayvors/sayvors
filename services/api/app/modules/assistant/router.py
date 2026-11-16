@@ -548,12 +548,12 @@ async def _rag_answer(
     the prompt so the model reports the real reason instead of guessing.
     """
     try:
-        from ..rag.models import Databank
+        from ..rag.selection import select_databank_for_question
         from ..rag.agent import ask_question
 
-        bank_id = (
-            await db.execute(select(Databank.id).where(Databank.user_id == tenant_id_of(user)).limit(1))
-        ).scalar_one_or_none()
+        bank_id, _bank_name = await select_databank_for_question(
+            db, tenant_id_of(user), message
+        )
         if not bank_id:
             return "", [], False, "no_databank"
         result = await asyncio.wait_for(
@@ -1143,13 +1143,11 @@ async def chat_stream(
             #    Retrieval reasons with the tenant's own model — the same one
             #    that writes the answer — so databank search works on whatever
             #    provider the tenant actually has.
-            from ..rag.models import Databank
+            from ..rag.selection import select_databank_for_question
 
-            bank_id = (
-                await db.execute(
-                    select(Databank.id).where(Databank.user_id == tid).limit(1)
-                )
-            ).scalar_one_or_none()
+            bank_id, bank_name = await select_databank_for_question(
+                db, tid, body.message
+            )
             skip_reason: str | None = None
             rag_status = "no_databank"
             if bank_id:
@@ -1172,7 +1170,10 @@ async def chat_stream(
             if bank_id:
                 from ..rag.agent import ask_question
 
-                yield sse({"type": "step", "id": "rag", "label": "Checking your databank"})
+                yield sse({
+                    "type": "step", "id": "rag", "label": "Checking your databank",
+                    "detail": bank_name,
+                })
 
                 # ask_question is a single await, so tool progress is collected
                 # into `pending` by a sync callback and drained here while the
