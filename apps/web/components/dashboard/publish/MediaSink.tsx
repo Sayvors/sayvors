@@ -40,12 +40,15 @@ export default function MediaSink({
   onClear,
   thumb = null,
   thumbLabel = "",
+  platforms = [],
 }: {
   media: { type: "image" | "video" | null; url: string; fileName?: string; sizeBytes?: number } | null;
   onPick: (type: "image" | "video", url: string, fileName?: string, sizeBytes?: number, file?: File, width?: number, height?: number) => void;
   onClear: () => void;
   thumb?: ThumbCrop | null;
   thumbLabel?: string;
+  /** Destinations this media will be published to — drives Google's stricter limits. */
+  platforms?: string[];
 }) {
   const [dropping, setDropping] = useState(false);
   const [urlDraft, setUrlDraft] = useState("");
@@ -56,9 +59,13 @@ export default function MediaSink({
   const [libraryError, setLibraryError] = useState<string | null>(null);
   const { t, locale } = useI18n();
   const md = t.publish.media;
+  const pc = t.publish.composer;
   const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
   const fileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
+  // Google posts take a single photo, max 5MB, min 250px, and no video.
+  const hasGoogle = platforms.includes("google_reviews");
+  const maxMb = hasGoogle ? 5 : MAX_MEDIA_MB;
 
   const aspect = thumb && thumb.cropKey !== "orig" ? CROP_ASPECT[thumb.cropKey as Exclude<CropState["key"], "orig">] : null;
   const box = thumbBox(thumb?.cropKey ?? "orig");
@@ -67,8 +74,8 @@ export default function MediaSink({
     setError(null);
     const file = files?.[0];
     if (!file) return;
-    if (file.size > MAX_MEDIA_MB * 1024 * 1024) {
-      setError(fill(md.tooBig, { n: fmt(MAX_MEDIA_MB) }));
+    if (file.size > maxMb * 1024 * 1024) {
+      setError(hasGoogle ? pc.googleSize : fill(md.tooBig, { n: fmt(maxMb) }));
       return;
     }
     const ext = (file.name.split(".").pop() || "").toLowerCase();
@@ -90,6 +97,10 @@ export default function MediaSink({
       setError(md.badType);
       return;
     }
+    if (hasGoogle && kind === "video") {
+      setError(pc.googleVideo);
+      return;
+    }
     let width: number | undefined;
     let height: number | undefined;
     if (kind === "image") {
@@ -97,7 +108,7 @@ export default function MediaSink({
         const d = await inspectImageFile(file);
         width = d.width; height = d.height;
         if (width < 250 || height < 250) {
-          setError("That image is below Google's 250×250px minimum — Google may reject it.");
+          setError(pc.googleSmall);
           return;
         }
       } catch {
@@ -172,6 +183,10 @@ export default function MediaSink({
       return;
     }
     const kind = /\.(mp4|mov|m4v)(\?|$)/i.test(parsed.pathname) ? "video" : "image";
+    if (hasGoogle && kind === "video") {
+      setError(pc.googleVideo);
+      return;
+    }
     let width: number | undefined;
     let height: number | undefined;
     if (kind === "image") {
@@ -179,7 +194,7 @@ export default function MediaSink({
         const d = await probeImageUrl(value);
         width = d.width; height = d.height;
         if (width < 250 || height < 250) {
-          setError("That image is below Google's 250×250px minimum — Google may reject it.");
+          setError(pc.googleSmall);
           return;
         }
       } catch (e) {
@@ -196,7 +211,7 @@ export default function MediaSink({
       {media ? (
         <div className="flex flex-wrap items-start gap-3">
           <div
-            className="relative shrink-0 overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] transition-[width,height] duration-200"
+            className="relative shrink-0 overflow-hidden rounded-[20px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] shadow-[0_12px_28px_-20px_rgba(61,29,110,0.5)] transition-[width,height] duration-200"
             style={{ width: box.w, height: box.h }}
           >
             {media.type === "video" ? (
@@ -278,27 +293,29 @@ export default function MediaSink({
             setDropping(false);
             acceptFiles(e.dataTransfer.files);
           }}
-          className={`flex flex-col items-center rounded-[24px] border-2 border-dashed px-4 py-7 text-center transition ${
+          className={`flex flex-col items-center rounded-[28px] border-2 border-dashed bg-[var(--ui-sunken)] px-4 py-9 text-center transition duration-200 ${
             dropping
               ? "border-[var(--ui-ink)] bg-[var(--ui-ink)]/[0.04]"
-              : "border-[var(--ui-line)]"
+              : "border-[var(--ui-line-strong)] hover:border-[var(--ui-ink)]/40"
           }`}
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6 text-[var(--ui-ink-2)]" aria-hidden>
-            <rect x="3" y="3" width="18" height="18" rx="2" />
-            <circle cx="8.5" cy="8.5" r="1.5" />
-            <path d="M21 15l-5-5L5 21" />
-          </svg>
-          <p className="mt-2 text-[13px] font-semibold text-[var(--ui-ink)]">
+          <span className="flex h-14 w-14 items-center justify-center rounded-[20px] bg-[var(--ui-surface)] text-[var(--ui-ink)] shadow-[0_10px_20px_-14px_rgba(61,29,110,0.6)]">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6" aria-hidden>
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <circle cx="8.5" cy="8.5" r="1.5" />
+              <path d="M21 15l-5-5L5 21" />
+            </svg>
+          </span>
+          <p className="mt-3 text-[14px] font-bold text-[var(--ui-ink)]">
             {md.dropTitle}
           </p>
-          <p className="mt-0.5 text-[11px] text-[var(--ui-ink-2)]">
-            {fill(md.dropSub, { n: fmt(MAX_MEDIA_MB) })}
+          <p className="mt-1 text-[11.5px] text-[var(--ui-ink-2)]">
+            {fill(md.dropSub, { n: fmt(maxMb) })}
           </p>
           <button
             type="button"
             onClick={() => fileInput.current?.click()}
-            className="clay-btn-secondary mt-3 px-4 py-1.5 text-[12px] font-semibold focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+            className="clay-btn-primary mt-4 px-5 py-2.5 text-[12px] font-bold focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
           >
             {md.browse}
           </button>
@@ -359,7 +376,7 @@ export default function MediaSink({
       </div>
 
       {libraryOpen && (
-        <div className="mt-2 rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-3">
+        <div className="mt-3 rounded-[24px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-3 shadow-[0_12px_28px_-22px_rgba(61,29,110,0.45)]">
           {libraryLoading ? (
             <p className="py-4 text-center text-[12px] text-[var(--ui-ink-2)]">Loading your library…</p>
           ) : libraryError ? (
@@ -379,7 +396,7 @@ export default function MediaSink({
                   type="button"
                   onClick={() => pickFromLibrary(it)}
                   title={`${it.label} — use this`}
-                  className="group relative aspect-square overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+                  className="group relative aspect-square overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] transition duration-200 hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
                 >
                   {it.type === "video" ? (
                     <video src={it.url} muted playsInline className="h-full w-full object-cover" />
@@ -400,7 +417,9 @@ export default function MediaSink({
       <input
         ref={fileInput}
         type="file"
-        accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime"
+        accept={hasGoogle
+          ? "image/jpeg,image/png,image/webp,image/gif"
+          : "image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime"}
         hidden
         onChange={(e) => {
           void acceptFiles(e.target.files);

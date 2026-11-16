@@ -48,4 +48,33 @@ describe("checkWindow", () => {
       checkWindow({ ...base, startDate: "2026-11-20T10:00", endDate: "2026-11-20T09:00" }),
     ).toBe("eventEnd");
   });
+
+  it("requires both dates when the event window is mandatory", () => {
+    expect(checkWindow({ ...base, eventRequired: true })).toBe("eventMissing");
+    expect(
+      checkWindow({ ...base, eventRequired: true, startDate: "2026-11-20T10:00" }),
+    ).toBe("eventMissing");
+  });
+
+  it("refuses an event that starts in the past", () => {
+    expect(
+      checkWindow({
+        ...base,
+        eventRequired: true,
+        startDate: "2026-11-09T10:00",
+        endDate: "2026-11-20T10:00",
+      }),
+    ).toBe("eventStart");
+  });
+
+  it("accepts a complete future event window", () => {
+    expect(
+      checkWindow({
+        ...base,
+        eventRequired: true,
+        startDate: "2026-11-20T10:00",
+        endDate: "2026-11-20T12:00",
+      }),
+    ).toBeNull();
+  });
 });

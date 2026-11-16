@@ -5,7 +5,12 @@
  * means the date is not set.
  */
 
-export type WindowError = "scheduleInPast" | "removeBeforePublish" | "eventEnd";
+export type WindowError =
+  | "scheduleInPast"
+  | "removeBeforePublish"
+  | "eventMissing"
+  | "eventStart"
+  | "eventEnd";
 
 /** The value a datetime-local input takes for a local Date. */
 export function toLocalInput(date: Date): string {
@@ -28,13 +33,15 @@ export function minLocalInput(now: Date = new Date()): string {
  * - A schedule must be in the future.
  * - A removal must come after the time the post goes out: its schedule, or
  *   now when the post goes out immediately.
- * - An event must end after it starts.
+ * - An event must have both dates, start in the future and end after it starts.
  */
 export function checkWindow(input: {
   scheduleAt: string;
   removeAt: string;
   startDate: string;
   endDate: string;
+  /** EVENT and OFFER posts cannot rely on the backend's default window. */
+  eventRequired?: boolean;
   now?: Date;
 }): WindowError | null {
   const nowMs = (input.now ?? new Date()).getTime();
@@ -43,6 +50,13 @@ export function checkWindow(input: {
   if (input.removeAt) {
     const publishMs = scheduleMs ?? nowMs;
     if (new Date(input.removeAt).getTime() <= publishMs) return "removeBeforePublish";
+  }
+  if (input.eventRequired) {
+    if (!input.startDate || !input.endDate) return "eventMissing";
+    const startMs = new Date(input.startDate).getTime();
+    if (startMs <= nowMs) return "eventStart";
+    if (new Date(input.endDate).getTime() <= startMs) return "eventEnd";
+    return null;
   }
   if (input.startDate && input.endDate) {
     if (new Date(input.endDate).getTime() <= new Date(input.startDate).getTime()) {

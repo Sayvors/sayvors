@@ -19,19 +19,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
-
-# Every Sayvors Google location is a Saudi business. Saudi Arabia keeps UTC+3
-# all year (no daylight saving), so a fixed offset is exact. A location in
-# another zone would need its own offset, which the channel does not store.
-SAUDI_UTC_OFFSET_HOURS = 3
-LOCATION_TZ = timezone(timedelta(hours=SAUDI_UTC_OFFSET_HOURS))
+from zoneinfo import ZoneInfo
 
 # Google takes one body field, so the caption and description are joined into
 # it and the result is capped here.
 SUMMARY_MAX_CHARS = 1500
 # An event title is one line on Google's card: the first line of the caption,
-# cut to this length.
-EVENT_TITLE_MAX_CHARS = 60
+# cut to this length. Google's v4 API rejects 59+ characters on
+# `event.title` (ValidationError code 3), so 58 is the hard ceiling — for
+# EVENT *and* OFFER posts, since OFFER also requires an event block.
+EVENT_TITLE_MAX_CHARS = 58
 # An event or offer without dates runs for this many days from now.
 DEFAULT_WINDOW_DAYS = 7
 OFFER_TERMS_DEFAULT = "Terms apply"
@@ -119,11 +116,30 @@ def build_summary(caption: str | None, description: str | None) -> str:
     return text[:SUMMARY_MAX_CHARS]
 
 
-def event_title(caption: str | None, description: str | None) -> str:
-    """The event's name: the first line of the caption, else of the description."""
+def derive_event_title(caption: str | None, description: str | None) -> str:
+    """Fallback name when the merchant did not enter one: caption's first line."""
     source = (caption or "").strip() or (description or "").strip()
     first_line = source.splitlines()[0].strip() if source else ""
     return (first_line or "Event")[:EVENT_TITLE_MAX_CHARS]
+
+
+# Historic name kept for callers/tests that derive a title from caption text.
+event_title = derive_event_title
+
+
+def resolve_event_title(
+    entered: str | None, caption: str | None, description: str | None
+) -> str:
+    """Google requires an event name; prefer the one entered in the composer."""
+    title = (entered or "").strip()
+    return title[:EVENT_TITLE_MAX_CHARS] or derive_event_title(caption, description)
+
+
+def location_timezone(name: str | None):
+    """The IANA zone the times were entered in. Invalid names fail loudly."""
+    if not name:
+        return timezone.utc
+    return ZoneInfo(name)
 
 
 def resolve_window(
@@ -150,10 +166,17 @@ def _time_part(dt: datetime) -> dict[str, int]:
     }
 
 
-def event_block(title: str, begin: datetime, finish: datetime) -> dict[str, Any]:
-    """LocalPostEvent. Date and time are read in the business's local zone."""
-    start_local = begin.astimezone(LOCATION_TZ)
-    end_local = finish.astimezone(LOCATION_TZ)
+def event_block(
+    title: str, begin: datetime, finish: datetime, timezone_name: str | None = None
+) -> dict[str, Any]:
+    """LocalPostEvent. Wall-clock fields use the zone the times were entered in.
+
+    Google's TimeInterval has no timezone field, so the business's local
+    wall-clock values are what must be sent — never a fixed country offset.
+    """
+    local_tz = location_timezone(timezone_name)
+    start_local = begin.astimezone(local_tz)
+    end_local = finish.astimezone(local_tz)
     return {
         "title": title,
         "schedule": {
@@ -210,6 +233,8 @@ def build_post_fields(
     coupon_code: str | None,
     terms: str | None,
     now: datetime,
+    event_title: str | None = None,
+    timezone_name: str | None = None,
 ) -> PostFields:
     """The text, button, event and offer fields for one post of ``topic``."""
     fields: dict[str, Any] = {}
@@ -219,7 +244,11 @@ def build_post_fields(
     window = None
     if topic in ("EVENT", "OFFER"):
         window = resolve_window(start, end, now)
-        fields["event"] = event_block(event_title(caption, description), *window)
+        fields["event"] = event_block(
+            resolve_event_title(event_title, caption, description),
+            *window,
+            timezone_name=timezone_name,
+        )
     if topic == "OFFER":
         # The offer's link is its redeem URL. An offer has no button.
         fields["offer"] = offer_block(terms, coupon_code, cta_url)

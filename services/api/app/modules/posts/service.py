@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select, text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...config import settings
 from ..jobs.models import Job
 from ..notifications.service import notify
 from .models import LocationPost
@@ -361,7 +362,7 @@ def _google_patch_fields(post: LocationPost, data: dict) -> dict:
         build_summary,
         call_to_action_block,
         event_block,
-        event_title,
+        resolve_event_title,
         offer_block,
         resolve_window,
     )
@@ -397,7 +398,7 @@ def _google_patch_fields(post: LocationPost, data: dict) -> dict:
                 _as_datetime(start), _as_datetime(end), datetime.now(timezone.utc)
             )
             fields["event"] = event_block(
-                event_title(caption, description), begin, finish
+                resolve_event_title(post.title, caption, description), begin, finish
             )
     return fields
 
@@ -584,6 +585,8 @@ async def _publish_post_inner(
             coupon_code=post.coupon_code,
             terms_conditions=post.terms_conditions,
             tenant_id=user_id,
+            event_title=post.title or None,
+            timezone_name=settings.GOOGLE_POST_TIMEZONE,
         )
     except Exception as e:
         _register_publish_failure(post, str(e)[:500])

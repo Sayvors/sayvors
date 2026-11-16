@@ -74,16 +74,20 @@ async def _worker_loop() -> None:
         job_id = await _dequeue_job()
         if job_id:
             await _process_job(job_id)
-        else:
-            await _process_pending_scrape()
-            # Process all currently-due sources so a newly created one-shot
-            # crawl starts immediately instead of waiting for poll cycles.
-            processed_any = False
-            for _ in range(10):
-                did = await _process_due_crawl_sources()
-                if not did:
-                    break
-                processed_any = True
+        # Check crawl sources on EVERY iteration, not only when the job queue
+        # is empty: a backlog of ingest jobs (e.g. after a batch of retries)
+        # used to starve the due-source poll indefinitely, so a re-crawl that
+        # must re-upload missing files never started.
+        await _process_pending_scrape()
+        # Process all currently-due sources so a newly created one-shot
+        # crawl starts immediately instead of waiting for poll cycles.
+        processed_any = False
+        for _ in range(10):
+            did = await _process_due_crawl_sources()
+            if not did:
+                break
+            processed_any = True
+        if not job_id:
             await asyncio.sleep(0.1 if processed_any else 0.5)
 
 

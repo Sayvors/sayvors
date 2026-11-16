@@ -138,6 +138,21 @@ def test_s3_backend_selection(monkeypatch):
     assert storage.storage_status()["s3_docs_bucket"] == "private-docs"
 
 
+def test_media_force_local_overrides_buckets(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "GCS_PUBLIC_BUCKET", "sayvors-media")
+    monkeypatch.setattr(settings, "GCS_PRIVATE_BUCKET", "sayvors-private")
+    monkeypatch.setattr(settings, "S3_MEDIA_BUCKET", "media-bucket")
+    monkeypatch.setattr(settings, "S3_DOCS_BUCKET", "docs-bucket")
+    monkeypatch.setattr(settings, "MEDIA_DIR", str(tmp_path / "media"))
+    monkeypatch.setattr(settings, "MEDIA_FORCE_LOCAL", True)
+
+    assert storage.storage_status()["media"] == "local"
+    assert storage.storage_status()["docs"] == "s3"  # docs unaffected
+    key, public_url = storage.put_media("u1", "photo.jpg", b"jpeg", "image/jpeg")
+    assert public_url == ""
+    assert (tmp_path / "media" / "u1" / key).read_bytes() == b"jpeg"
+
+
 def test_s3_storage_operations_return_metadata(monkeypatch):
     from integrations.storage import s3
 

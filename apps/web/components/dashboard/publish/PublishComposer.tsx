@@ -17,6 +17,7 @@ import {
   DEFAULT_CROP,
   GALLERY_CATEGORIES,
   GOOGLE_POST_LANGUAGE,
+  METHOD_META,
   PLATFORM_META,
   cropKeyFor,
   defaultCropFor,
@@ -75,13 +76,9 @@ const CTA_VALUES: CtaValue[] = [
 /*
  * The unified Publish composer.
  *
- * Destinations are picked in the aside (step 3) with an "all connected"
- * master switch. Each selected destination shows method pills (Feed post /
- * Story / Reel / Status) right below it — clicking a pill opens a wide
- * modal where that specific platform+method gets its own preview + crop
- * editor + Save button. Crop state is keyed per destination+method so every
- * format keeps its own framing, and the step-1 thumbnail + live preview
- * mirror whatever you're currently configuring.
+ * A 3-step wizard (Media & message → Destinations → When & publish) keeps
+ * every section mounted — steps are toggled with `hidden` — so no draft
+ * state, media preview or open modal is lost while navigating.
  *
  * Confirming uploads locally-picked media to /api/v1/media/upload (the
  * provider must fetch the files from a public URL at publish time), then
@@ -91,7 +88,7 @@ const CTA_VALUES: CtaValue[] = [
  */
 
 const FIELD =
-  "clay-input px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]";
+  "clay-input px-3.5 py-2.5 text-[13px] text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]";
 
 // ── AI video creator (UI-only, HTML-based, no backend) ─────────────────
 function sanitizeName(s: string): string {
@@ -341,6 +338,12 @@ export default function PublishComposer({
     () => [...targets.filter((t) => selected.has(t.id)), ...googleTargets.filter((t) => selected.has(t.id))],
     [targets, googleTargets, selected],
   );
+  // Several branches of the same platform share one format panel and one
+  // configuration: selecting a format, its crop, a Promotion's code/terms or
+  // a gallery category is entered once and written to every selected branch.
+  const sharedMode =
+    selectedTargets.length > 1 &&
+    selectedTargets.every((t) => t.platform === selectedTargets[0].platform);
 
   // ── Media + message ─────────────────────────────────────────────
   const [media, setMedia] = useState<MediaState | null>(null);
@@ -389,11 +392,15 @@ export default function PublishComposer({
   // blank the publisher defaults it (now → +7 days).
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  // Google requires a name for event/offer posts; without one the backend
+  // falls back to the caption's first line.
+  const [eventTitle, setEventTitle] = useState("");
 
   // ── Per-format previews + saved crops ───────────────────────────
   const [crops, setCrops] = useState<Record<string, CropState>>({});
-  /** destination+format currently being edited in the modal */
-  const [modalCtx, setModalCtx] = useState<{ targetId: string; method: PostMethod } | null>(null);
+  /** destination+format currently being edited in the modal. `applyToIds`
+   *  holds every selected branch when configuring several at once. */
+  const [modalCtx, setModalCtx] = useState<{ targetId: string; method: PostMethod; applyToIds: string[] } | null>(null);
   /** draft crop being edited in the modal (committed on Save) */
   const [draftCrop, setDraftCrop] = useState<CropState>(DEFAULT_CROP);
   const [draftGalleryCategory, setDraftGalleryCategory] = useState<string>("EXTERIOR");
@@ -414,6 +421,9 @@ export default function PublishComposer({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
+  // Wizard navigation only — every input/handler stays mounted (steps are
+  // shown with `hidden`), so no draft state or media preview is ever lost.
+  const [postStep, setPostStep] = useState<1 | 2 | 3>(1);
   const { t: tr, locale } = useI18n();
   const pc: ComposerDict = tr.publish.composer;
   const methods = tr.publish.methods as MethodDict;
@@ -469,41 +479,46 @@ export default function PublishComposer({
     return (formats[t.id] ?? []).filter((m) => avail.includes(m));
   };
 
-  const toggleFormat = (t: PublishTarget, m: PostMethod) => {
-    const cur = chosenFor(t);
-    const wasOn = cur.includes(m);
-    const nextList = wasOn ? cur.filter((x) => x !== m) : [...cur, m];
-    setFormats((prev) => ({ ...prev, [t.id]: nextList }));
-    if (!wasOn) {
-      // seed crop/defaults if not present
-      const key = cropKeyFor(t.id, m);
-      setCrops((prev) => (prev[key] ? prev : { ...prev, [key]: defaultCropFor(t.platform, m) }));
-      if (m === "gallery") {
-        setGalleryCategories((prev) => (prev[key] ? prev : { ...prev, [key]: "EXTERIOR" }));
-      }
-    }
-  };
-
-  const toggleAllFormats = (t: PublishTarget) => {
-    // "All" covers the feed formats only. Selecting every pill would
-    // also replace the account's avatar and cover image, which must
-    // stay a deliberate, one-at-a-time choice.
-    const feed = availableFor(t).filter(isFeedMethod);
-    const cur = chosenFor(t);
-    const turningAll = cur.filter(isFeedMethod).length < feed.length;
-    const nextList = turningAll
-      ? [...cur.filter((m) => !isFeedMethod(m)), ...feed]
-      : cur.filter((m) => !isFeedMethod(m));
-    setFormats((prev) => ({ ...prev, [t.id]: nextList }));
-    if (turningAll) {
-      feed.forEach((m) => {
-        const key = cropKeyFor(t.id, m);
-        setCrops((prev) => (prev[key] ? prev : { ...prev, [key]: defaultCropFor(t.platform, m) }));
+  const toggleFormat = (t: PublishTarget, m: PostMethod, applyTo?: PublishTarget[]) => {
+    const targetsToApply = applyTo ?? [t];
+    // Shared branches are the same platform and stay in sync, so one on/off
+    // decision applies to every row instead of each row flipping on its own.
+    const wasOn = chosenFor(targetsToApply[0]).includes(m);
+    targetsToApply.forEach((target) => {
+      const cur = chosenFor(target);
+      const nextList = wasOn ? cur.filter((x) => x !== m) : [...cur, m];
+      setFormats((prev) => ({ ...prev, [target.id]: nextList }));
+      if (!wasOn) {
+        // seed crop/defaults if not present
+        const key = cropKeyFor(target.id, m);
+        setCrops((prev) => (prev[key] ? prev : { ...prev, [key]: defaultCropFor(target.platform, m) }));
         if (m === "gallery") {
           setGalleryCategories((prev) => (prev[key] ? prev : { ...prev, [key]: "EXTERIOR" }));
         }
-      });
-    }
+      }
+    });
+  };
+
+  const toggleAllFormats = (t: PublishTarget, applyTo?: PublishTarget[]) => {
+    const targetsToApply = applyTo ?? [t];
+    // "All" covers feed formats only; avatar/cover stay deliberate one-offs.
+    const feed = availableFor(targetsToApply[0]).filter(isFeedMethod);
+    const turningAll = chosenFor(targetsToApply[0]).filter(isFeedMethod).length < feed.length;
+    targetsToApply.forEach((target) => {
+      const nextList = turningAll
+        ? [...chosenFor(target).filter((m) => !isFeedMethod(m)), ...feed]
+        : chosenFor(target).filter((m) => !isFeedMethod(m));
+      setFormats((prev) => ({ ...prev, [target.id]: nextList }));
+      if (turningAll) {
+        feed.forEach((m) => {
+          const key = cropKeyFor(target.id, m);
+          setCrops((prev) => (prev[key] ? prev : { ...prev, [key]: defaultCropFor(target.platform, m) }));
+          if (m === "gallery") {
+            setGalleryCategories((prev) => (prev[key] ? prev : { ...prev, [key]: "EXTERIOR" }));
+          }
+        });
+      }
+    });
   };
 
   // ── Media blob lifecycle ────────────────────────────────────────
@@ -532,31 +547,36 @@ export default function PublishComposer({
   const findTargetById = (id: string) =>
     targets.find((x) => x.id === id) ?? googleTargets.find((x) => x.id === id) ?? null;
 
-  const openConfig = (t: PublishTarget, m: PostMethod) => {
+  const openConfig = (t: PublishTarget, m: PostMethod, applyTo?: PublishTarget[]) => {
+    const ids = (applyTo ?? [t]).map((x) => x.id);
     const key = cropKeyFor(t.id, m);
     setDraftCrop(crops[key] ?? defaultCropFor(t.platform, m));
     setDraftGalleryCategory(galleryCategories[key] ?? "EXTERIOR");
     setDraftCoupon(offerDetails[key]?.coupon ?? "");
     setDraftTerms(offerDetails[key]?.terms ?? "");
-    setModalCtx({ targetId: t.id, method: m });
+    setModalCtx({ targetId: t.id, method: m, applyToIds: ids });
   };
 
   const saveConfig = () => {
     if (!modalCtx) return;
-    const t = findTargetById(modalCtx.targetId);
-    if (!t) return;
-    const key = cropKeyFor(modalCtx.targetId, modalCtx.method);
-    setCrops((prev) => ({ ...prev, [key]: draftCrop }));
-    if (modalCtx.method === "gallery") {
-      setGalleryCategories((prev) => ({ ...prev, [key]: draftGalleryCategory }));
-    }
-    if (modalCtx.method === "offer") {
-      setOfferDetails((prev) => ({
-        ...prev,
-        [key]: { coupon: draftCoupon.trim(), terms: draftTerms.trim() },
-      }));
-    }
-    setConfigured((prev) => new Set(prev).add(key));
+    if (!findTargetById(modalCtx.targetId)) return;
+    const ids = modalCtx.applyToIds.length ? modalCtx.applyToIds : [modalCtx.targetId];
+    // One edit is written to every selected branch, so downstream publish
+    // code still reads its normal per-destination keys.
+    ids.forEach((id) => {
+      const key = cropKeyFor(id, modalCtx.method);
+      setCrops((prev) => ({ ...prev, [key]: draftCrop }));
+      if (modalCtx.method === "gallery") {
+        setGalleryCategories((prev) => ({ ...prev, [key]: draftGalleryCategory }));
+      }
+      if (modalCtx.method === "offer") {
+        setOfferDetails((prev) => ({
+          ...prev,
+          [key]: { coupon: draftCoupon.trim(), terms: draftTerms.trim() },
+        }));
+      }
+      setConfigured((prev) => new Set(prev).add(key));
+    });
     setModalCtx(null);
   };
 
@@ -591,14 +611,79 @@ export default function PublishComposer({
     ),
   );
   const canPublish = confirmItems.length > 0 && (media !== null || !needsMedia);
+  // Required markers follow the selected format, not the step: Google needs
+  // an event window for EVENT/OFFER, and OFFER needs a way to redeem it.
+  const needsOfferFields = confirmItems.some(({ methods }) =>
+    methods.some((m) => m === "offer"),
+  );
+  const hasGoogle = confirmItems.some(({ target }) => target.platform === "google_reviews");
+  // A Google post needs text or an image — the API refuses one with neither.
+  const needsText = hasGoogle && confirmItems.some(({ methods }) =>
+    methods.some((m) => m === "update" || m === "event" || m === "offer" || m === "post"),
+  );
+  const hasOfferCoupon = confirmItems.some(({ target }) =>
+    !!offerDetails[cropKeyFor(target.id, "offer")]?.coupon?.trim(),
+  );
 
-  const openConfirm = () => {
-    if (needsMedia && media === null) {
-      setNotice(pc.needMedia);
+  /** Every required field for the current draft, in step order. */
+  const draftProblems = (): string[] => {
+    const problems: string[] = [];
+    if (confirmItems.length === 0) problems.push(pc.needDest);
+    if (needsMedia && media === null) problems.push(pc.needMedia);
+    if (needsText && media === null && !caption.trim() && !description.trim()) {
+      problems.push(pc.captionRequired);
+    }
+    if (needsEventWindow && !eventTitle.trim()) problems.push(pc.eventTitleRequired);
+    if (ctaType && ctaType !== "call" && !ctaUrl.trim()) problems.push(pc.ctaUrlRequired);
+    if (needsOfferFields && !ctaUrl.trim() && !hasOfferCoupon) {
+      problems.push(pc.wizard.offerLinkRequired);
+    }
+    const dateProblem = checkWindow({
+      scheduleAt: scheduleOn ? scheduleAt : "",
+      removeAt: removeOn ? removeAt : "",
+      startDate: needsEventWindow ? startDate : "",
+      endDate: needsEventWindow ? endDate : "",
+      eventRequired: needsEventWindow,
+    });
+    if (dateProblem) problems.push(tr.publish.dates[dateProblem]);
+    return problems;
+  };
+
+  /** Only the fields owned by the step the merchant is on. */
+  const stepProblems = (step: 1 | 2 | 3): string[] => {
+    if (step === 1) {
+      const p: string[] = [];
+      if (needsMedia && media === null) p.push(pc.needMedia);
+      if (needsText && media === null && !caption.trim() && !description.trim()) {
+        p.push(pc.captionRequired);
+      }
+      return p;
+    }
+    if (step === 2) {
+      const p: string[] = [];
+      if (ctaType && ctaType !== "call" && !ctaUrl.trim()) p.push(pc.ctaUrlRequired);
+      if (needsOfferFields && !ctaUrl.trim() && !hasOfferCoupon) {
+        p.push(pc.wizard.offerLinkRequired);
+      }
+      return p;
+    }
+    return draftProblems();
+  };
+
+  const nextStep = () => {
+    const problems = stepProblems(postStep);
+    if (problems.length > 0) {
+      setNotice(problems[0]);
       return;
     }
-    if (confirmItems.length === 0) {
-      setNotice(pc.needDest);
+    setNotice(null);
+    setPostStep((s) => Math.min(3, s + 1) as 1 | 2 | 3);
+  };
+
+  const openConfirm = () => {
+    const problems = draftProblems();
+    if (problems.length > 0) {
+      setNotice(problems[0]);
       return;
     }
     if (media && media.type === "image" && media.width && media.height) {
@@ -638,6 +723,7 @@ export default function PublishComposer({
         removeAt: removeOn ? removeAt : "",
         startDate: needsEventWindow ? startDate : "",
         endDate: needsEventWindow ? endDate : "",
+        eventRequired: needsEventWindow,
       });
       if (dateProblem) {
         throw new Error(tr.publish.dates[dateProblem]);
@@ -807,6 +893,11 @@ export default function PublishComposer({
             delete_at: removeOn && removeAt ? new Date(removeAt).toISOString() : null,
             start_date: startDate ? new Date(startDate).toISOString() : null,
             end_date: endDate ? new Date(endDate).toISOString() : null,
+            // The wall-clock time the merchant picked is in this zone. Google's
+            // TimeInterval has no timezone field, so the backend renders the
+            // same wall-clock values here before sending them.
+            event_title: eventTitle.trim() || null,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
             coupon_code: group.coupon || null,
             terms_conditions: group.terms || null,
             // Google labels the post with the language the merchant wrote
@@ -930,6 +1021,21 @@ export default function PublishComposer({
   const mirrorMethod = modalCtx ? modalCtx.method : null;
   const mirrorCrop = modalCtx ? draftCrop : DEFAULT_CROP;
 
+  // The persistent preview rail mirrors the first destination that actually
+  // has a format chosen, so the frame reflects a real surface from step one —
+  // not an empty placeholder that only fills in while a crop modal is open.
+  const previewTarget = modalCtx
+    ? activeTarget
+    : (selectedTargets.find((t) => chosenFor(t).length > 0) ?? selectedTargets[0] ?? null);
+  const previewMethod = modalCtx
+    ? modalCtx.method
+    : (previewTarget ? (chosenFor(previewTarget)[0] ?? "post") : "post");
+  const previewCrop = modalCtx
+    ? draftCrop
+    : previewTarget
+      ? (crops[cropKeyFor(previewTarget.id, previewMethod)] ?? defaultCropFor(previewTarget.platform, previewMethod))
+      : DEFAULT_CROP;
+
   const thumb =
     media && mirrorTarget && mirrorMethod
       ? { cropKey: mirrorCrop.key, zoom: mirrorCrop.zoom, x: mirrorCrop.x, y: mirrorCrop.y }
@@ -948,7 +1054,12 @@ export default function PublishComposer({
   const showCaptionWarn = caption.length > 0 && captionOver.length > 0;
 
   const openRow = (id: string) => {
-    document.getElementById(`dest-row-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    // In shared mode every branch uses one panel, so any chip scrolls there.
+    if (postStep !== 2) setPostStep(2);
+    const rowId = sharedMode ? selectedTargets[0].id : id;
+    requestAnimationFrame(() => {
+      document.getElementById(`dest-row-${rowId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
   };
 
   // The modal target + method
@@ -957,39 +1068,103 @@ export default function PublishComposer({
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
-      <header className="shrink-0 border-b border-[var(--ui-line)] px-4 py-4 sm:px-6">
+      <header className="shrink-0 border-b border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-4 sm:px-6">
         {onCancel && (
           <button
             type="button"
             onClick={onCancel}
-            className="mb-2 inline-flex items-center gap-1 text-[12px] font-semibold text-[var(--ui-ink-2)] transition hover:text-[var(--ui-ink)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+            className="mb-3 inline-flex items-center gap-1.5 rounded-[20px] border border-[var(--ui-line)] px-3 py-1.5 text-[12px] font-bold text-[var(--ui-ink-2)] transition duration-200 hover:bg-[var(--ui-sunken)] hover:text-[var(--ui-ink)] active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
           >
+            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+              <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
             {pc.back}
           </button>
         )}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h1 className={`text-[20px] font-bold ${INK}`}>{pc.title}</h1>
+            <h1 className={`text-[22px] font-bold tracking-[-0.02em] ${INK}`}>{pc.title}</h1>
             <p className={`mt-0.5 text-[13px] ${INK2}`}>
               {pc.sub}
             </p>
           </div>
         </div>
+        {/* Step wizard — visual navigation only; all steps stay mounted. */}
+        <ol className="mt-4 flex items-center gap-1 rounded-[24px] bg-[var(--ui-sunken)] p-1.5 sm:gap-2" aria-label="Post steps">
+          {([
+            { id: 1 as const, label: pc.wizard.step1 },
+            { id: 2 as const, label: pc.wizard.step2 },
+            { id: 3 as const, label: pc.wizard.step3 },
+          ]).map((s, index) => {
+            const active = postStep === s.id;
+            const done = postStep > s.id;
+            return (
+              <li key={s.id} className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPostStep(s.id)}
+                  aria-current={active ? "step" : undefined}
+                  className={`flex min-w-0 items-center gap-1.5 rounded-[20px] px-1 py-1 pr-1.5 transition duration-200 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:gap-2 sm:px-1.5 sm:pr-2.5 ${
+                    active
+                      ? "bg-[var(--ui-surface)] text-[var(--ui-ink)] shadow-[0_8px_18px_-12px_rgba(61,29,110,0.55)]"
+                      : done ? "text-[var(--ui-ink-2)]" : "text-[var(--ui-ink-2)] opacity-70"
+                  }`}
+                >
+                  <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[16px] text-[12px] font-bold transition ${
+                    active
+                      ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
+                      : done
+                        ? "bg-[var(--ui-ink)]/10 text-[var(--ui-ink)]"
+                        : "border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] text-[var(--ui-ink-2)]"
+                  }`}>
+                    {done ? "✓" : s.id}
+                  </span>
+                  <span className="hidden min-w-0 truncate text-[12px] font-semibold sm:inline sm:text-[13px]">{s.label}</span>
+                </button>
+                {index < 2 && <span className={`h-px min-w-[6px] flex-1 ${done ? "bg-[var(--ui-ink)]/40" : "bg-[var(--ui-line)]"}`} />}
+              </li>
+            );
+          })}
+        </ol>
+        <p className={`mt-2 text-[11px] ${INK2}`}>
+          {fill(pc.wizard.stepOf, { n: postStep })}
+          <span className="ml-2 text-coral">* {pc.wizard.requiredHint}</span>
+        </p>
       </header>
 
+      {notice && (
+        <div className="shrink-0 px-4 pt-3 sm:px-6">
+          <div className="mx-auto max-w-[1280px]">
+            <p role="alert" className="rounded-[20px] border border-red-500/40 bg-red-50 px-4 py-3 text-[13px] font-semibold text-red-700 shadow-[0_12px_28px_-22px_rgba(61,29,110,0.45)] dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-300">
+              {notice}
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto grid max-w-6xl gap-5 px-4 pb-28 pt-5 sm:px-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
-          {/* Below lg the wrappers are display:contents, so the sections
-              become one ordered column: 1 → 2 → 3 → formats → 4 → preview. */}
-          <div className="contents lg:col-start-1 lg:block lg:space-y-5">
-          <section aria-labelledby="publish-media-h" className="clay-panel order-1 bg-[var(--ui-surface)] p-4 sm:p-5">
-            <h2 id="publish-media-h" className={`text-[14px] font-bold ${INK}`}>
+        <div className="mx-auto grid max-w-[1280px] gap-5 px-4 pb-8 pt-5 sm:px-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+          {/* One working column. Steps use `hidden`, not unmounting: every
+              input, ref and preview stays alive while navigating. */}
+          <div className="min-w-0 space-y-5">
+          {/* STEP 1 — media + message. */}
+          <div className={postStep === 1 ? "space-y-5" : "hidden"}>
+          <section aria-labelledby="publish-media-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
+            <h2 id="publish-media-h" className={`text-[15px] font-bold ${INK}`}>
               {pc.stepMedia}
+              {needsMedia && <span className="ml-1 text-coral" title={pc.wizard.requiredHint}>*</span>}
             </h2>
             <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
               {pc.mediaSub}
             </p>
-            <MediaSink media={media} onPick={pickMedia} onClear={clearMedia} thumb={thumb} thumbLabel={thumbLabel} />
+            <MediaSink
+              media={media}
+              onPick={pickMedia}
+              onClear={clearMedia}
+              thumb={thumb}
+              thumbLabel={thumbLabel}
+              platforms={confirmItems.map(({ target }) => target.platform)}
+            />
             {needsMedia && media === null && (
               <p className="mt-3 text-[12px] font-semibold text-amber-700 dark:text-amber-400">
                 An image or video is required for the selected destinations.
@@ -997,8 +1172,29 @@ export default function PublishComposer({
             )}
           </section>
 
-          <section aria-labelledby="publish-message-h" className="clay-panel order-2 bg-[var(--ui-surface)] p-4 sm:p-5">
-            <h2 id="publish-message-h" className={`text-[14px] font-bold ${INK}`}>
+          <section aria-labelledby="ai-video-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
+            <button
+              type="button"
+              id="ai-video-h"
+              onClick={() => setAiOpen((v) => !v)}
+              aria-expanded={aiOpen}
+              className={`flex w-full items-center justify-between gap-2 text-left ${INK}`}
+            >
+              <span className="text-[14px] font-bold">{pc.aiTitle}</span>
+              <span className={`text-[12px] font-semibold ${INK2}`}>{aiOpen ? "Hide" : "Show"}</span>
+            </button>
+            {aiOpen && (
+              <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
+                {pc.aiSub}
+              </p>
+            )}
+            <div className={aiOpen ? "" : "hidden"}>
+              <AiVideoCreator googleTargets={googleTargets} />
+            </div>
+          </section>
+
+          <section aria-labelledby="publish-message-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
+            <h2 id="publish-message-h" className={`text-[15px] font-bold ${INK}`}>
               {pc.stepMessage}
             </h2>
             <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
@@ -1009,6 +1205,7 @@ export default function PublishComposer({
                 <div className="flex items-baseline justify-between">
                   <label htmlFor="pub-caption" className={`text-[12px] font-semibold ${INK2}`}>
                     {pc.caption}
+                    {needsText && !media && <span className="ml-1 text-coral" title={pc.wizard.requiredHint}>*</span>}
                   </label>
                   <span
                     className={`text-[11px] ${
@@ -1053,43 +1250,15 @@ export default function PublishComposer({
                   className={`${FIELD} mt-1 w-full resize-y`}
                 />
               </div>
-              <div className="mt-4 border-t border-[var(--ui-line)] pt-3">
-                <label htmlFor="pub-cta-type" className={`text-[12px] font-semibold ${INK2}`}>
-                  {pc.ctaType}
-                </label>
-                <select
-                  id="pub-cta-type"
-                  value={ctaType}
-                  onChange={(e) => {
-                    setCtaType(e.target.value);
-                    if (e.target.value === "call") setCtaUrl("");
-                  }}
-                  className={`${FIELD} mt-1 w-full sm:w-64`}
-                >
-                  <option value="">{pc.ctaTypePh}</option>
-                  {CTA_VALUES.map((value) => (
-                    <option key={value} value={value}>
-                      {pc.ctaTypes[value]}
-                    </option>
-                  ))}
-                </select>
-                {ctaType && ctaType !== "call" && (
-                  <input
-                    type="url"
-                    value={ctaUrl}
-                    onChange={(e) => setCtaUrl(e.target.value)}
-                    placeholder={pc.ctaUrlPh}
-                    aria-label={pc.ctaUrlPh}
-                    className={`${FIELD} mt-1.5 w-full`}
-                  />
-                )}
-                <p className={`mt-1.5 text-[11px] ${INK2}`}>{pc.ctaHint}</p>
-              </div>
             </div>
           </section>
 
-          <section aria-labelledby="publish-schedule-h" className="clay-panel order-5 bg-[var(--ui-surface)] p-4 sm:p-5">
-            <h2 id="publish-schedule-h" className={`text-[14px] font-bold ${INK}`}>
+          </div>{/* end step 1 */}
+
+          {/* STEP 3 — schedule. The live preview lives in the persistent rail. */}
+          <div className={postStep === 3 ? "space-y-5" : "hidden"}>
+          <section aria-labelledby="publish-schedule-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
+            <h2 id="publish-schedule-h" className={`text-[15px] font-bold ${INK}`}>
               {pc.stepWhen}
             </h2>
             <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>{pc.whenSub}</p>
@@ -1128,10 +1297,23 @@ export default function PublishComposer({
               <div className="mt-3 border-t border-[var(--ui-line)] pt-3">
                 <p className={`mb-2 text-[12px] font-semibold ${INK2}`}>
                   {pc.eventWindow}
+                  <span className="ml-1 text-coral" title={pc.wizard.requiredHint}>*</span>
                 </p>
+                <label className={`mb-3 block text-[12px] font-semibold ${INK2}`}>
+                  {pc.eventTitle}<span className="text-coral">*</span>
+                  <input
+                    type="text"
+                    value={eventTitle}
+                    onChange={(e) => setEventTitle(e.target.value)}
+                    maxLength={58}
+                    placeholder={pc.eventTitlePh}
+                    aria-label={pc.eventTitle}
+                    className={`${FIELD} mt-1 w-full`}
+                  />
+                </label>
                 <div className="flex flex-wrap items-center gap-3">
                   <label className={`flex items-center gap-2 text-[12px] ${INK2}`}>
-                    {pc.eventStart}
+                    {pc.eventStart}<span className="text-coral">*</span>
                     <input
                       type="datetime-local"
                       value={startDate}
@@ -1142,7 +1324,7 @@ export default function PublishComposer({
                     />
                   </label>
                   <label className={`flex items-center gap-2 text-[12px] ${INK2}`}>
-                    {pc.eventEnd}
+                    {pc.eventEnd}<span className="text-coral">*</span>
                     <input
                       type="datetime-local"
                       value={endDate}
@@ -1158,39 +1340,58 @@ export default function PublishComposer({
             )}
           </section>
 
-          <section aria-labelledby="publish-preview-h" className="clay-panel order-6 bg-[var(--ui-surface)] p-4 sm:p-5">
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h2 id="publish-preview-h" className={`text-[14px] font-bold ${INK}`}>
-                {pc.stepPreview}
-              </h2>
-              <p className={`text-[12px] ${INK2}`} role="status">
-                {mirrorTarget && mirrorMethod
-                  ? fill(pc.mirroring, { name: mirrorTarget.name, method: methodLabel(mirrorMethod) })
-                  : (
-                    <>
-                      <span className="lg:hidden">{pc.mirrorNoneWide}</span>
-                      <span className="hidden lg:inline">{pc.mirrorNoneSide}</span>
-                    </>
+          </div>{/* end step 3 */}
+
+          {/* STEP 2 — destinations + their per-platform configuration */}
+          <div className={postStep === 2 ? "space-y-5" : "hidden"}>
+          <div className="space-y-5">
+          <section aria-labelledby="publish-cta-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
+            <h2 id="publish-cta-h" className={`text-[15px] font-bold ${INK}`}>
+              {pc.wizard.ctaTitle}
+              {needsOfferFields && <span className="ml-1 text-coral" title={pc.wizard.requiredHint}>*</span>}
+            </h2>
+            <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
+              {needsOfferFields ? pc.wizard.offerLinkHint : pc.ctaHint}
+            </p>
+            <div>
+              <label htmlFor="pub-cta-type" className={`text-[12px] font-semibold ${INK2}`}>
+                {pc.ctaType}
+              </label>
+              <select
+                id="pub-cta-type"
+                value={ctaType}
+                onChange={(e) => {
+                  setCtaType(e.target.value);
+                  if (e.target.value === "call") setCtaUrl("");
+                }}
+                className={`${FIELD} mt-1 w-full`}
+              >
+                <option value="">{pc.ctaTypePh}</option>
+                {CTA_VALUES.map((value) => (
+                  <option key={value} value={value}>
+                    {pc.ctaTypes[value]}
+                  </option>
+                ))}
+              </select>
+              {ctaType && ctaType !== "call" && (
+                <>
+                  <input
+                    type="url"
+                    value={ctaUrl}
+                    onChange={(e) => setCtaUrl(e.target.value)}
+                    placeholder={pc.ctaUrlPh}
+                    aria-label={pc.ctaUrlPh}
+                    className={`${FIELD} mt-1.5 w-full`}
+                  />
+                  {needsOfferFields && (
+                    <p className="mt-1 text-[11px] text-coral">{pc.wizard.offerLinkRequired}</p>
                   )}
-              </p>
-            </div>
-            <div className="mt-3">
-              <DestinationPreview
-                target={mirrorTarget}
-                method={mirrorMethod ?? "post"}
-                media={media ?? { type: null, url: "" }}
-                caption={caption}
-                description={description}
-                crop={mirrorCrop}
-              />
+                </>
+              )}
             </div>
           </section>
-
-          </div>
-
-          <aside className="contents lg:col-start-2 lg:block lg:space-y-5 lg:sticky lg:top-4 lg:h-fit">
-          <section aria-labelledby="publish-dest-h" className="clay-panel order-3 bg-[var(--ui-surface)] p-4 sm:p-5">
-            <h2 id="publish-dest-h" className={`text-[14px] font-bold ${INK}`}>
+          <section aria-labelledby="publish-dest-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
+            <h2 id="publish-dest-h" className={`text-[15px] font-bold ${INK}`}>
               {pc.stepDest}
             </h2>
             <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
@@ -1208,77 +1409,186 @@ export default function PublishComposer({
               onToggleTarget={toggleTarget}
               onToggleGoogleTarget={toggleTarget}
             />
+            {selectedTargets.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-1.5 border-t border-[var(--ui-line)] pt-3">
+                {selectedTargets.map((target) => {
+                  const hasFormat = chosenFor(target).length > 0;
+                  return (
+                    <button
+                      key={target.id}
+                      type="button"
+                      onClick={() => openRow(target.id)}
+                      title={hasFormat ? fill(pc.reviewRow, { name: target.name }) : fill(pc.noFormatRow, { name: target.name })}
+                      className={`inline-flex max-w-full items-center gap-1.5 rounded-[20px] border px-2.5 py-1.5 text-[11px] font-bold transition duration-200 hover:bg-[var(--ui-sunken)] active:scale-[0.97] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+                        hasFormat
+                          ? "border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink)]"
+                          : "border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                      }`}
+                    >
+                      <PlatformMark platform={target.platform} size={12} />
+                      <span className="max-w-[140px] truncate">{target.name}</span>
+                      <span className="font-medium opacity-70">
+                        {hasFormat ? chosenFor(target)[0] ? methodLabel(chosenFor(target)[0]) : "" : pc.noFormat}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </section>
+          </div>{/* destinations column */}
 
-          {/* Configure formats — method pills per selected destination */}
+          {/* Configure formats — roomy, grouped cards per destination */}
           {selectedTargets.length > 0 && (
-            <section aria-labelledby="publish-formats-h" className="clay-panel order-4 bg-[var(--ui-surface)] p-4 sm:p-5">
-              <h2 id="publish-formats-h" className={`text-[14px] font-bold ${INK}`}>
-                {pc.formatsTitle}
-              </h2>
-              <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
-                {pc.formatsSub}
-              </p>
+            <section aria-labelledby="publish-formats-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <div>
+                  <h2 id="publish-formats-h" className={`text-[15px] font-bold ${INK}`}>
+                    {pc.formatsTitle}
+                  </h2>
+                  <p className={`mt-0.5 text-[12px] ${INK2}`}>
+                    {pc.formatsSub}
+                  </p>
+                </div>
+                <span className="rounded-[20px] bg-[var(--ui-sunken)] px-3 py-1 text-[11px] font-bold text-[var(--ui-ink)]">
+                  {fmt(formatCount)} selected
+                </span>
+              </div>
               {selectedTargets.some((t) =>
                 availableFor(t).some((m) => m === "profile" || m === "banner" || m === "gallery"),
               ) && (
-                <p className={`mb-3 text-[11px] ${INK2}`}>
-                  {pc.formatsNote} Gallery photos are added to the location&apos;s photo gallery — pick a category when you configure it.
-                </p>
+                <div className="mt-3 flex items-start gap-2.5 rounded-[20px] border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5">
+                  <svg className="mt-0.5 h-4 w-4 shrink-0 text-amber-700 dark:text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 11v5" strokeLinecap="round" />
+                    <path d="M12 8h.01" strokeLinecap="round" />
+                  </svg>
+                  <p className="text-[11.5px] leading-relaxed text-amber-800 dark:text-amber-300">
+                    {pc.formatsNote} Gallery photos are added to the location&apos;s photo gallery — pick a category when you configure it.
+                  </p>
+                </div>
               )}
-              <div className="space-y-3">
-                {selectedTargets.map((t) => {
+              {sharedMode && (
+                <div className="mt-3 flex items-center gap-2 rounded-[20px] border border-emerald-500/30 bg-emerald-500/[0.07] px-3.5 py-2.5 text-[11.5px] font-semibold text-emerald-700 dark:text-emerald-400">
+                  <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" strokeLinecap="round" />
+                    <circle cx="9" cy="7" r="4" />
+                    <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" strokeLinecap="round" />
+                  </svg>
+                  One setup for all {fmt(selectedTargets.length)} locations. Pick a format and configure it once — it applies everywhere.
+                </div>
+              )}
+              <div className="mt-4 space-y-4">
+                {(sharedMode ? selectedTargets.slice(0, 1) : selectedTargets).map((t) => {
+                  const applyTargets = sharedMode ? selectedTargets : [t];
                   const avail = availableFor(t);
-                  const chosen = chosenFor(t);
+                  // Shared mode shows a format as on only when every selected
+                  // location has it, so the one panel never lies about the set.
+                  const chosen = sharedMode
+                    ? avail.filter((m) => selectedTargets.every((x) => chosenFor(x).includes(m)))
+                    : chosenFor(t);
+                  const postFormats = avail.filter((m) => m !== "gallery" && m !== "profile" && m !== "banner");
+                  const surfaceFormats = avail.filter((m) => m === "gallery" || m === "profile" || m === "banner");
+                  const renderFormat = (m: PostMethod) => {
+                    const isOn = chosen.includes(m);
+                    const key = cropKeyFor(t.id, m);
+                    const isConfigured = configured.has(key);
+                    const crop = crops[key] ?? defaultCropFor(t.platform, m);
+                    return (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => {
+                          // One click updates every selected location in
+                          // shared mode; unselected also opens the editor.
+                          toggleFormat(t, m, applyTargets);
+                          if (isOn) {
+                            if (
+                              modalCtx?.method === m &&
+                              applyTargets.some((x) => modalCtx.applyToIds.includes(x.id))
+                            ) {
+                              cancelConfig();
+                            }
+                          } else {
+                            openConfig(t, m, applyTargets);
+                          }
+                        }}
+                        aria-pressed={isOn}
+                        className={`flex items-center gap-3 rounded-[20px] border p-2.5 text-left transition duration-200 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+                          isOn
+                            ? "border-emerald-500/70 bg-[var(--ui-surface)] shadow-[0_12px_26px_-16px_rgba(16,185,129,0.85)]"
+                            : "border-[var(--ui-line)] bg-[var(--ui-sunken)] hover:border-[var(--ui-ink)]/30 hover:bg-[var(--ui-surface)]"
+                        }`}
+                      >
+                        <FormatThumb media={media} crop={crop} size={40} className="rounded-[12px]" />
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-center gap-1.5">
+                            <span className={`truncate text-[12px] font-bold ${INK}`}>{methodLabel(m)}</span>
+                            {isOn && isConfigured && (
+                              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" title="Crop set" />
+                            )}
+                          </span>
+                          <span className={`mt-0.5 block text-[10.5px] leading-snug line-clamp-2 ${INK2}`}>
+                            {METHOD_META[m].hint}
+                          </span>
+                        </span>
+                        <span
+                          aria-hidden={!isOn}
+                          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 transition ${
+                            isOn
+                              ? "border-emerald-500 bg-white text-emerald-600 shadow-[0_6px_14px_-8px_rgba(16,185,129,0.9)] dark:bg-fog/10 dark:text-emerald-400"
+                              : "border-[var(--ui-line-strong)] bg-[var(--ui-surface)]"
+                          }`}
+                        >
+                          {isOn && (
+                            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" aria-hidden>
+                              <path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          )}
+                        </span>
+                      </button>
+                    );
+                  };
                   return (
-                    <div key={t.id} id={`dest-row-${t.id}`} className="rounded-[20px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3">
-                      <div className="flex items-center gap-2">
-                        <PlatformMark platform={t.platform} size={14} />
-                        <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-[var(--ui-ink)]">{t.name}</span>
-                      </div>
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {avail.map((m) => {
-                          const isOn = chosen.includes(m);
-                          const key = cropKeyFor(t.id, m);
-                          const isConfigured = configured.has(key);
-                          const crop = crops[key] ?? defaultCropFor(t.platform, m);
-                          return (
-                            <button
-                              key={m}
-                              type="button"
-                              onClick={() => {
-                                // Clicking an unselected format selects it and
-                                // opens its crop editor; clicking a selected one
-                                // removes it (and closes the editor if it was open).
-                                toggleFormat(t, m);
-                                if (isOn) {
-                                  if (modalCtx?.targetId === t.id && modalCtx?.method === m) {
-                                    cancelConfig();
-                                  }
-                                } else {
-                                  openConfig(t, m);
-                                }
-                              }}
-                              className={`inline-flex items-center gap-1.5 rounded-full border py-1 pl-1 pr-2.5 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
-                                isOn
-                                  ? "border-[var(--ui-ink)] bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
-                                  : "border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink-2)] hover:bg-[var(--ui-line)]"
-                              }`}
-                            >
-                              <FormatThumb media={media} crop={crop} />
-                              {isOn && isConfigured && <span aria-hidden>✓</span>}
-                              {methodLabel(m)}
-                            </button>
-                          );
-                        })}
+                    <div key={t.id} id={`dest-row-${t.id}`} className="overflow-hidden rounded-[24px] border border-[var(--ui-line)] bg-[var(--ui-sunken)]">
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--ui-line)] px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <span className="flex h-10 w-10 items-center justify-center rounded-[16px] bg-[var(--ui-surface)] shadow-[0_8px_18px_-12px_rgba(61,29,110,0.6)]">
+                            <PlatformMark platform={t.platform} size={16} />
+                          </span>
+                          <div className="min-w-0">
+                            <p className={`truncate text-[13px] font-bold ${INK}`}>
+                              {sharedMode ? `All ${fmt(selectedTargets.length)} locations` : t.name}
+                            </p>
+                            <p className={`text-[11px] ${INK2}`}>
+                              {sharedMode
+                                ? "Same formats and settings on every location"
+                                : `${fmt(chosen.length)} of ${fmt(avail.length)} selected`}
+                            </p>
+                          </div>
+                        </div>
                         <button
                           type="button"
-                          onClick={() => toggleAllFormats(t)}
-                          className="inline-flex items-center gap-1 rounded-full border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2.5 py-1 text-[11px] font-semibold text-[var(--ui-ink-2)] transition hover:bg-[var(--ui-line)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+                          onClick={() => toggleAllFormats(t, applyTargets)}
                           title={pc.allTitle}
+                          className="rounded-[20px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-1.5 text-[11px] font-bold text-[var(--ui-ink-2)] transition duration-200 hover:bg-[var(--ui-sunken)] active:scale-[0.97] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
                         >
                           {pc.allPill}
                         </button>
+                      </div>
+                      <div className="p-3 sm:p-4">
+                        {postFormats.length > 0 && (
+                          <>
+                            <p className={`mb-2 text-[10px] font-bold uppercase tracking-[0.12em] ${INK2}`}>Posts</p>
+                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">{postFormats.map(renderFormat)}</div>
+                          </>
+                        )}
+                        {surfaceFormats.length > 0 && (
+                          <>
+                            <p className={`mb-2 mt-4 text-[10px] font-bold uppercase tracking-[0.12em] ${INK2}`}>Location media</p>
+                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">{surfaceFormats.map(renderFormat)}</div>
+                          </>
+                        )}
                       </div>
                     </div>
                   );
@@ -1287,87 +1597,113 @@ export default function PublishComposer({
             </section>
           )}
 
-          <section aria-labelledby="ai-video-h" className="clay-panel order-7 bg-[var(--ui-surface)] p-4 sm:p-5">
-            <button
-              type="button"
-              id="ai-video-h"
-              onClick={() => setAiOpen((v) => !v)}
-              aria-expanded={aiOpen}
-              className={`flex w-full items-center justify-between gap-2 text-left ${INK}`}
-            >
-              <span className="text-[14px] font-bold">{pc.aiTitle}</span>
-              <span className={`text-[12px] font-semibold ${INK2}`}>{aiOpen ? "Hide" : "Show"}</span>
-            </button>
-            {aiOpen && (
-              <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
-                {pc.aiSub}
-              </p>
+          </div>{/* end step 2 */}
+
+          {/* Step-local footer: navigation belongs to the step, and the
+              publish action only exists on the final step. */}
+          <div className="rounded-[24px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)] sm:p-5">
+            {postStep === 3 && galleryFallbacks.length > 0 && (
+              <div className="mb-3 space-y-1" role="status">
+                {galleryFallbacks.map((f) => (
+                  <p key={f} className="text-[12px] font-medium text-amber-700 dark:text-amber-400">
+                    {f}
+                  </p>
+                ))}
+              </div>
             )}
-            <div className={aiOpen ? "" : "hidden"}>
-              <AiVideoCreator googleTargets={googleTargets} />
+            {stepProblems(postStep).length > 0 && (
+              <div className="mb-3 space-y-1 rounded-[20px] border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5" role="status">
+                {stepProblems(postStep).map((problem) => (
+                  <p key={problem} className="text-[12px] font-semibold text-amber-800 dark:text-amber-300">
+                    {problem}
+                  </p>
+                ))}
+              </div>
+            )}
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                {postStep > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setPostStep((s) => Math.max(1, s - 1) as 1 | 2 | 3)}
+                    className="clay-btn-secondary px-5 py-2.5 text-[13px] font-bold text-[var(--ui-ink)] transition duration-200 hover:bg-[var(--ui-sunken)] active:translate-y-0.5 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+                  >
+                    {pc.wizard.back}
+                  </button>
+                )}
+                {postStep < 3 && (
+                  <p className={`text-[12px] font-medium ${INK2}`}>
+                    {fill(pc.wizard.stepOf, { n: postStep })}
+                  </p>
+                )}
+              </div>
+              {postStep < 3 ? (
+                <button
+                  type="button"
+                  onClick={nextStep}
+                  className="clay-btn-primary px-6 py-2.5 text-[13px] font-bold text-[var(--ui-on-ink)] transition duration-200 hover:opacity-90 active:translate-y-0.5 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+                >
+                  {pc.wizard.next}
+                </button>
+              ) : (
+                <div className="flex flex-wrap items-center justify-end gap-3">
+                  <p className={`max-w-[340px] text-[12px] font-medium ${INK2}`} role="status" aria-live="polite">
+                    {confirmItems.length === 0
+                      ? pc.readyNone
+                      : `${pc.readyPre}${destStr} · ${fmtStr}`}
+                    {scheduleOn && scheduleAt
+                      ? fill(pc.scheduledOn, { date: new Date(scheduleAt).toLocaleString(dateLocale, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) })
+                      : ""}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={openConfirm}
+                    disabled={!canPublish}
+                    title={!canPublish ? (confirmItems.length === 0 ? "Select at least one destination." : needsMedia ? "Add an image or video first." : undefined) : undefined}
+                    className="clay-btn-primary px-6 py-2.5 text-[13px] font-bold text-[var(--ui-on-ink)] transition duration-200 hover:opacity-90 active:translate-y-0.5 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+                  >
+                    {scheduleOn ? pc.reviewSchedule : pc.reviewPublish}
+                  </button>
+                </div>
+              )}
             </div>
-          </section>
+          </div>
+          </div>{/* end working column */}
+
+          {/* Persistent preview rail — visible on every step, so the frame
+              always mirrors the destination/format it will actually use. */}
+          <aside className="order-first min-w-0 lg:order-none lg:sticky lg:top-4 lg:self-start">
+            <section aria-labelledby="publish-preview-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <h2 id="publish-preview-h" className={`text-[15px] font-bold ${INK}`}>
+                  {pc.stepPreview}
+                </h2>
+                <p className={`text-[12px] ${INK2}`} role="status">
+                  {previewTarget && previewMethod
+                    ? fill(pc.mirroring, { name: previewTarget.name, method: methodLabel(previewMethod) })
+                    : (
+                      <>
+                        <span className="lg:hidden">{pc.mirrorNoneWide}</span>
+                        <span className="hidden lg:inline">{pc.mirrorNoneSide}</span>
+                      </>
+                    )}
+                </p>
+              </div>
+              <div className="mt-4">
+                <DestinationPreview
+                  target={previewTarget}
+                  method={previewMethod}
+                  media={media ?? { type: null, url: "" }}
+                  caption={caption}
+                  description={description}
+                  crop={previewCrop}
+                />
+              </div>
+            </section>
           </aside>
         </div>
       </div>
 
-      {/* Sticky action bar */}
-      <div className="sticky bottom-0 z-10 border-t border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-3 sm:px-6">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3">
-          {selectedTargets.length > 0 && (
-            <div className="flex w-full gap-1.5 overflow-x-auto pb-0.5">
-              {selectedTargets.map((t) => {
-                const fmt = chosenFor(t)[0];
-                const ok = !!fmt;
-                return (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => openRow(t.id)}
-                    title={ok ? fill(pc.reviewRow, { name: t.name }) : fill(pc.noFormatRow, { name: t.name })}
-                    className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
-                      ok
-                        ? "border-[var(--ui-line)] bg-[var(--ui-sunken)] text-[var(--ui-ink)] hover:bg-[var(--ui-line)]"
-                        : "border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-400"
-                    }`}
-                  >
-                    <PlatformMark platform={t.platform} size={12} />
-                    <span className="max-w-[140px] truncate">{t.name}</span>
-                    <span className={ok ? "text-[var(--ui-ink-2)]" : ""}>
-                      {fmt ? `${methodLabel(fmt)}` : pc.noFormat}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-          <p className={`min-w-0 flex-1 truncate text-[12px] font-medium ${INK2}`} role="status" aria-live="polite">
-            {confirmItems.length === 0
-              ? pc.readyNone
-              : `${pc.readyPre}${destStr} · ${fmtStr}`}
-            {scheduleOn && scheduleAt ? fill(pc.scheduledOn, { date: new Date(scheduleAt).toLocaleString(dateLocale, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) }) : ""}
-          </p>
-          {notice && <p className="w-full text-[12px] font-semibold text-red-600 dark:text-red-400 sm:w-auto">{notice}</p>}
-          {galleryFallbacks.length > 0 && (
-            <div className="w-full sm:w-auto" role="status">
-              {galleryFallbacks.map((f) => (
-                <p key={f} className="text-[12px] font-medium text-amber-700 dark:text-amber-400">
-                  {f}
-                </p>
-              ))}
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={openConfirm}
-            disabled={!canPublish}
-            title={!canPublish ? (confirmItems.length === 0 ? "Select at least one destination." : needsMedia ? "Add an image or video first." : undefined) : undefined}
-            className="clay-btn-primary px-5 py-2.5 text-[13px] font-semibold text-[var(--ui-on-ink)] transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
-          >
-            {scheduleOn ? pc.reviewSchedule : pc.reviewPublish}
-          </button>
-        </div>
-      </div>
 
       {/* Configuration modal — opens when a format pill is clicked */}
       {modalCtx && modalTarget && (
@@ -1387,7 +1723,9 @@ export default function PublishComposer({
                   {fill(pc.modalTitle, { name: modalTarget.name, method: methodLabel(modalCtx.method) })}
                 </h2>
                 <p className="mt-0.5 text-[12px] text-[var(--ui-ink-2)]">
-                  {pc.modalSub}
+                  {modalCtx.applyToIds.length > 1
+                    ? `This setup applies to ${fmt(modalCtx.applyToIds.length)} selected locations.`
+                    : pc.modalSub}
                 </p>
               </div>
               <button
@@ -1418,6 +1756,7 @@ export default function PublishComposer({
                       <div>
                         <label htmlFor="offer-coupon" className="mb-1 block text-[12px] font-semibold text-[var(--ui-ink)]">
                           {pc.couponLabel}
+                          <span className="ml-1 text-coral" title={pc.wizard.requiredHint}>*</span>
                         </label>
                         <input
                           id="offer-coupon"

@@ -34,6 +34,9 @@ dependencies = [
     "edge-tts>=6.1",
     "boto3>=1.35",
     "phonenumbers>=9.0",
+    # zoneinfo has no system database on Windows; IANA zones for Google
+    # EVENT/OFFER wall-clock times need this data package there.
+    "tzdata>=2024.1",
     "sentry-sdk>=2.0",
     # Stateful orchestration for the review -> ticket -> handoff pipeline
     # (app/modules/review_engine/graph.py). Kept deliberately small: the graph

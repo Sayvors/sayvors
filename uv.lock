@@ -3214,6 +3214,7 @@ dependencies = [
     { name = "sentry-sdk" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "trafilatura" },
+    { name = "tzdata" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 

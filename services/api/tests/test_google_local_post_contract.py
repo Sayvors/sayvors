@@ -82,6 +82,7 @@ async def test_event_post_matches_the_documented_body():
         start_date="2024-12-15T10:00:00+00:00",
         end_date="2024-12-15T18:00:00+00:00",
         language_code="en-US",
+        timezone_name="Asia/Riyadh",
     )
 
     req = publisher._client._http._transport.requests[0]

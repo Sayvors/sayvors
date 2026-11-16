@@ -214,21 +214,21 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
   };
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex flex-col">
       {/* ── Header ── */}
-      <div className="shrink-0 border-b border-ink/[0.06] bg-white px-6 py-4 dark:border-fog/[0.06] dark:bg-ink">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-end justify-between gap-3">
+      <div className="shrink-0 border-b border-ink/[0.06] bg-white px-6 py-5 dark:border-fog/[0.06] dark:bg-ink">
+        <div className="mx-auto flex max-w-[1280px] flex-wrap items-end justify-between gap-4">
           <div className="min-w-0">
-            <h1 className="text-[19px] font-bold text-ink dark:text-fog">{p.feedTitle}</h1>
-            <p className="mt-0.5 max-w-xl text-[12px] text-ink/45 dark:text-fog/45">
+            <h1 className="text-[22px] font-bold tracking-[-0.02em] text-ink dark:text-fog">{p.feedTitle}</h1>
+            <p className="mt-1 max-w-xl text-[13px] leading-relaxed text-ink/50 dark:text-fog/50">
               {p.feedSub}
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2.5">
             <button
               type="button"
               onClick={() => onPublish()}
-              className="flex items-center gap-1.5 rounded-[2px] bg-deep-violet px-4 py-2 text-[13px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40"
+              className="flex items-center gap-2 rounded-[20px] bg-deep-violet px-5 py-2.5 text-[13px] font-bold text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)] transition duration-200 hover:bg-deep-violet/90 active:translate-y-0.5 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="h-3.5 w-3.5">
                 <path d="M12 19V5" strokeLinecap="round" />
@@ -244,7 +244,7 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
               }}
               aria-label={p.refreshAria}
               title={p.refreshTitle}
-              className="flex h-9 w-9 items-center justify-center rounded-[2px] border border-ink/[0.08] text-ink/45 transition hover:bg-ink/[0.04] hover:text-ink focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:border-fog/[0.1] dark:text-fog/45"
+              className="flex h-10 w-10 items-center justify-center rounded-[20px] border border-ink/[0.08] bg-white text-ink/50 shadow-[0_8px_18px_-14px_rgba(61,29,110,0.6)] transition duration-200 hover:bg-ink/[0.04] hover:text-ink active:translate-y-0.5 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:border-fog/[0.1] dark:bg-fog/[0.04] dark:text-fog/45"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden>
                 <path d="M20 11a8 8 0 1 0-2.3 5.7" strokeLinecap="round" />
@@ -256,14 +256,14 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
       </div>
 
       {notice && (
-        <div className="shrink-0 px-6 pt-3">
-          <div className="mx-auto max-w-6xl">
+        <div className="px-6 pt-4">
+          <div className="mx-auto max-w-[1280px]">
             <p
               role={notice.kind === "err" ? "alert" : "status"}
-              className={`rounded-[2px] border px-3 py-2 text-[12px] font-medium ${
+              className={`flex items-start gap-2.5 rounded-[20px] border px-4 py-3 text-[13px] font-medium shadow-[0_12px_28px_-22px_rgba(61,29,110,0.45)] ${
                 notice.kind === "err"
-                  ? "border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-400"
-                  : "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                  ? "border-red-500/40 bg-red-50 text-red-700 dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-300"
+                  : "border-emerald-500/40 bg-emerald-50 text-emerald-700 dark:border-emerald-400/20 dark:bg-emerald-400/10 dark:text-emerald-300"
               }`}
             >
               {notice.text}
@@ -273,39 +273,45 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
       )}
 
       {/* ── Feed ── */}
-      <div className="shrink-0 px-6 pt-4">
-    <div className="mx-auto max-w-6xl">
-      <ScheduledPostsCalendar items={scheduledEntries} onScheduleDate={onPublish} />
-    </div>
-  </div>
+      <div className="px-6 pt-5">
+        <div className="mx-auto max-w-[1280px]">
+          <ScheduledPostsCalendar items={scheduledEntries} onScheduleDate={onPublish} />
+        </div>
+      </div>
 
-  <div className="flex-1 overflow-y-auto px-6 py-5">
-        <div className="mx-auto max-w-6xl">
+      <div className="px-6 pb-6 pt-5">
+        <div className="mx-auto max-w-[1280px]">
           {jobs === null && legacyPosts === null && !feedError && (
-            <div className="flex h-44 items-center justify-center"><LogoLoader size={28} /></div>
+            <div className="flex h-56 items-center justify-center"><LogoLoader size={28} /></div>
           )}
           {feedError && (
-            <p role="alert" className="rounded-[2px] border border-red-500/40 bg-red-500/10 px-3 py-2 text-[12px] font-medium text-red-700 dark:text-red-400">
+            <p role="alert" className="rounded-[20px] border border-red-500/40 bg-red-50 px-4 py-3 text-[13px] font-medium text-red-700 shadow-[0_12px_28px_-22px_rgba(61,29,110,0.45)] dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-300">
               {feedError}
             </p>
           )}
           {jobs !== null && legacyPosts !== null && list.length === 0 && !feedError && (
-            <div className="rounded-[2px] border border-dashed border-ink/[0.12] bg-white px-6 py-14 text-center dark:border-fog/[0.12] dark:bg-ink">
-              <p className="text-[15px] font-bold text-ink dark:text-fog">{p.emptyTitle}</p>
-              <p className="mx-auto mt-1 max-w-sm text-[12px] leading-relaxed text-ink/40 dark:text-fog/40">
+            <div className="flex flex-col items-center rounded-[32px] border border-dashed border-ink/[0.12] bg-white px-6 py-14 text-center shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)] dark:border-fog/[0.12] dark:bg-ink">
+              <span className="flex h-14 w-14 items-center justify-center rounded-[20px] bg-deep-violet/10 text-deep-violet">
+                <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                  <rect x="3" y="4" width="18" height="16" rx="2" />
+                  <path d="M3 10h18M8 4v16" strokeLinecap="round" />
+                </svg>
+              </span>
+              <p className="mt-4 text-[17px] font-bold text-ink dark:text-fog">{p.emptyTitle}</p>
+              <p className="mx-auto mt-2 max-w-sm text-[13px] leading-relaxed text-ink/45 dark:text-fog/45">
                 {p.emptyBody}
               </p>
               <button
                 type="button"
                 onClick={() => onPublish()}
-                className="mt-5 rounded-[2px] bg-deep-violet px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90"
+                className="mt-6 rounded-[20px] bg-deep-violet px-5 py-2.5 text-[13px] font-bold text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)] transition duration-200 hover:bg-deep-violet/90 active:translate-y-0.5 active:scale-[0.98]"
               >
                 {p.publishCta}
               </button>
             </div>
           )}
           {list.length > 0 && (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="grid grid-cols-1 gap-5 lg:grid-cols-2 2xl:grid-cols-3">
               {list.map((entry) =>
                 entry.kind === "job" ? (
                   <PostCard
@@ -340,9 +346,9 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
 
       {/* ── Bulk removal bar ── */}
       {checked.size > 0 && (
-        <div className="shrink-0 border-t border-ink/[0.06] bg-white px-6 py-3 dark:border-fog/[0.06] dark:bg-ink">
-          <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3">
-            <p className="min-w-0 flex-1 text-[12px] font-medium text-ink/55 dark:text-fog/55">
+        <div className="sticky bottom-3 z-20 mt-4 rounded-[24px] border border-ink/[0.08] bg-white px-5 py-3 shadow-[0_24px_48px_-24px_rgba(20,16,31,0.55)] dark:border-fog/[0.1] dark:bg-ink">
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="min-w-0 flex-1 text-[13px] font-semibold text-ink/55 dark:text-fog/55">
               {fill(p.selectedLine, { n: fmt(selectedDeletable.length) })}
             </p>
             <button
@@ -352,7 +358,7 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
                 deletableIds.forEach((id) => next.add(id));
                 setChecked(next);
               }}
-              className="rounded-[2px] border border-ink/[0.1] px-3 py-1.5 text-[12px] font-semibold text-ink/60 transition hover:bg-ink/[0.04] dark:border-fog/[0.12] dark:text-fog/60"
+              className="rounded-[20px] border border-ink/[0.1] px-4 py-2 text-[12px] font-bold text-ink/60 transition duration-200 hover:bg-ink/[0.04] active:translate-y-0.5 active:scale-[0.98] dark:border-fog/[0.12] dark:text-fog/60"
             >
               {p.selectAll}
             </button>
@@ -367,7 +373,7 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
                   void bulkDelete();
                 }}
                 disabled={busy}
-                className={`rounded-[2px] px-4 py-2 text-[13px] font-semibold text-white transition disabled:opacity-50 ${
+                className={`rounded-[20px] px-5 py-2.5 text-[13px] font-bold text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)] transition duration-200 active:translate-y-0.5 active:scale-[0.98] disabled:opacity-50 ${
                   armDelete ? "bg-[#FF4F6E]" : "bg-deep-violet hover:bg-deep-violet/90"
                 }`}
               >
@@ -456,7 +462,7 @@ function GooglePostDetailDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="google-post-detail-title"
-        className="flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-[2px] bg-white shadow-2xl dark:bg-ink"
+        className="flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-[28px] bg-white shadow-[0_40px_80px_-32px_rgba(20,16,31,0.65)] dark:bg-ink"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3 border-b border-ink/[0.06] px-5 py-4 dark:border-fog/[0.06]">
@@ -476,7 +482,7 @@ function GooglePostDetailDialog({
             onClick={onClose}
             autoFocus
             aria-label={d.close}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] text-ink/45 transition hover:bg-ink/[0.04] hover:text-ink focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:text-fog/45"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[20px] text-ink/45 transition hover:bg-ink/[0.04] hover:text-ink focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:text-fog/45"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden>
               <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
@@ -492,7 +498,7 @@ function GooglePostDetailDialog({
               onChange={(e) => setCaption(e.target.value)}
               rows={2}
               maxLength={500}
-              className="mt-1 w-full resize-y rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none"
+              className="mt-1 w-full resize-y rounded-[20px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-2.5 text-[13px] text-[var(--ui-ink)] outline-none focus-visible:border-deep-violet/60"
             />
           </label>
           <label className="block text-[12px] font-semibold text-ink/60 dark:text-fog/60">
@@ -502,7 +508,7 @@ function GooglePostDetailDialog({
               onChange={(e) => setDescription(e.target.value)}
               rows={4}
               maxLength={1500}
-              className="mt-1 w-full resize-y rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none"
+              className="mt-1 w-full resize-y rounded-[20px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-2.5 text-[13px] text-[var(--ui-ink)] outline-none focus-visible:border-deep-violet/60"
             />
           </label>
           {!isEvent && (
@@ -512,7 +518,7 @@ function GooglePostDetailDialog({
                 <select
                   value={ctaType}
                   onChange={(e) => setCtaType(e.target.value)}
-                  className="mt-1 w-full rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none"
+                  className="mt-1 w-full rounded-[20px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-2.5 text-[13px] text-[var(--ui-ink)] outline-none focus-visible:border-deep-violet/60"
                 >
                   <option value="">{d.noButton}</option>
                   <option value="book">Book</option>
@@ -531,7 +537,7 @@ function GooglePostDetailDialog({
                     value={ctaUrl}
                     onChange={(e) => setCtaUrl(e.target.value)}
                     placeholder="https://…"
-                    className="mt-1 w-full rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none"
+                    className="mt-1 w-full rounded-[20px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-2.5 text-[13px] text-[var(--ui-ink)] outline-none focus-visible:border-deep-violet/60"
                   />
                 </label>
               )}
@@ -554,7 +560,7 @@ function GooglePostDetailDialog({
               })
             }
             disabled={saving}
-            className="rounded-[2px] bg-deep-violet px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90 disabled:opacity-50"
+            className="rounded-[20px] bg-deep-violet px-5 py-2.5 text-[13px] font-bold text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)] transition duration-200 hover:bg-deep-violet/90 active:translate-y-0.5 active:scale-[0.98] disabled:opacity-50"
           >
             {saving ? d.saving : d.save}
           </button>
@@ -562,7 +568,7 @@ function GooglePostDetailDialog({
             type="button"
             onClick={onClose}
             disabled={saving || removing}
-            className="rounded-[2px] border border-ink/[0.1] px-4 py-2 text-[13px] font-semibold text-ink/60 transition hover:bg-ink/[0.04] disabled:opacity-50 dark:border-fog/[0.12] dark:text-fog/60"
+            className="rounded-[20px] border border-ink/[0.1] px-5 py-2.5 text-[13px] font-bold text-ink/60 transition duration-200 hover:bg-ink/[0.04] active:translate-y-0.5 active:scale-[0.98] disabled:opacity-50 dark:border-fog/[0.12] dark:text-fog/60"
           >
             {d.discard}
           </button>
@@ -570,7 +576,7 @@ function GooglePostDetailDialog({
             type="button"
             onClick={onRemove}
             disabled={saving || removing}
-            className="ms-auto rounded-[2px] border border-red-500/40 px-4 py-2 text-[13px] font-semibold text-red-700 transition hover:bg-red-500/10 disabled:opacity-50 dark:text-red-400"
+            className="ms-auto rounded-[20px] border border-red-500/40 px-5 py-2.5 text-[13px] font-bold text-red-700 transition duration-200 hover:bg-red-500/10 active:translate-y-0.5 active:scale-[0.98] disabled:opacity-50 dark:text-red-400"
           >
             {removing ? d.saving : d.removeNow}
           </button>
@@ -616,7 +622,7 @@ function LegacyPostCard({
   const googleManageable = Boolean(post.google_post_id) && post.status !== "draft";
 
   return (
-    <div className="flex w-full flex-col overflow-hidden rounded-[2px] border border-ink/[0.06] bg-white text-left dark:border-fog/[0.07] dark:bg-ink">
+    <div className="group flex w-full flex-col overflow-hidden rounded-[24px] border border-ink/[0.06] bg-white text-left shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)] transition duration-200 hover:-translate-y-0.5 hover:shadow-[0_28px_52px_-28px_rgba(61,29,110,0.55)] dark:border-fog/[0.07] dark:bg-ink">
       <button
         type="button"
         onClick={onDetails}
@@ -625,19 +631,19 @@ function LegacyPostCard({
         className="relative block aspect-video w-full overflow-hidden bg-ink/[0.04] text-left focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 disabled:cursor-default dark:bg-fog/[0.06]"
       >
         <JobThumb url={post.image_urls[0] ?? null} platform="google_reviews" />
-        <span className="absolute left-2 top-2 rounded-[2px] bg-white/90 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-deep-violet dark:bg-ink/85">
+        <span className="absolute left-3 top-3 rounded-[20px] bg-white/90 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-deep-violet dark:bg-ink/85">
           Google
         </span>
-        <span className={`absolute right-2 top-2 rounded-[2px] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide ${chip.cls}`}>
+        <span className={`absolute right-3 top-3 rounded-[20px] px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] ${chip.cls}`}>
           {chip.label}
         </span>
       </button>
-      <div className="flex flex-1 flex-col p-3.5">
-        <span className="truncate text-[13px] font-bold text-ink dark:text-fog">
+      <div className="flex flex-1 flex-col p-4">
+        <span className="truncate text-[14px] font-bold text-ink dark:text-fog">
           {post.location_name || post.business_name || "Google Business Profile"}
         </span>
         {text && (
-          <span className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/55 dark:text-fog/55">{text}</span>
+          <span className="mt-1.5 line-clamp-2 text-[13px] leading-relaxed text-ink/55 dark:text-fog/55">{text}</span>
         )}
         {post.status === "failed" && post.error && (
           <span className="mt-1 line-clamp-2 text-[11px] font-medium text-red-600 dark:text-red-400" title={post.error}>
@@ -649,13 +655,13 @@ function LegacyPostCard({
             <button
               type="button"
               onClick={onDetails}
-              className="rounded-[2px] border border-ink/[0.1] px-2 py-0.5 text-[10px] font-semibold text-ink/60 transition hover:bg-ink/[0.04] dark:border-fog/[0.12] dark:text-fog/60"
+              className="rounded-[20px] border border-ink/[0.1] px-2 py-0.5 text-[11px] font-semibold text-ink/60 transition hover:bg-ink/[0.04] dark:border-fog/[0.12] dark:text-fog/60"
             >
               {c.detail.open}
             </button>
           )}
           {googleManageable && (
-            <label className="flex cursor-pointer items-center gap-1.5 rounded-[2px] bg-ink/[0.05] px-2 py-1 text-[10px] font-semibold text-ink/60 dark:bg-fog/[0.07] dark:text-fog/60">
+            <label className="flex cursor-pointer items-center gap-1.5 rounded-[20px] bg-ink/[0.05] px-2 py-1 text-[11px] font-semibold text-ink/60 dark:bg-fog/[0.07] dark:text-fog/60">
               <input
                 type="checkbox"
                 checked={removing}
@@ -668,12 +674,12 @@ function LegacyPostCard({
             </label>
           )}
           {post.status === "scheduled" && post.scheduled_on && (
-            <span className="rounded-[2px] bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
+            <span className="rounded-[20px] bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
               {new Date(post.scheduled_on).toLocaleDateString(dateLocale)}
             </span>
           )}
           {hasMetrics && (
-            <span className="rounded-[2px] bg-ink/[0.05] px-2 py-0.5 text-[10px] font-semibold text-ink/50 dark:bg-fog/[0.07] dark:text-fog/50">
+            <span className="rounded-[20px] bg-ink/[0.05] px-2 py-0.5 text-[11px] font-semibold text-ink/50 dark:bg-fog/[0.07] dark:text-fog/50">
               {fill(c.views, { n: fmt(post.views ?? 0) })}{post.cta_clicks ? fill(c.clicks, { n: fmt(post.cta_clicks) }) : ""}
             </span>
           )}
@@ -717,7 +723,7 @@ function PostCard({
   const alreadyGone = job.result?.deleted === true;
 
   return (
-    <div className="group flex w-full flex-col overflow-hidden rounded-[2px] border border-ink/[0.06] bg-white text-left dark:border-fog/[0.07] dark:bg-ink">
+    <div className="group flex w-full flex-col overflow-hidden rounded-[24px] border border-ink/[0.06] bg-white text-left shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)] transition duration-200 hover:-translate-y-0.5 hover:shadow-[0_28px_52px_-28px_rgba(61,29,110,0.55)] dark:border-fog/[0.07] dark:bg-ink">
       <button
         type="button"
         onClick={onOpen}
@@ -725,23 +731,23 @@ function PostCard({
         className="relative block aspect-video w-full overflow-hidden bg-ink/[0.04] text-left focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:bg-fog/[0.06]"
       >
         <JobThumb url={job.media_url} platform={platform} />
-        <span className="absolute left-2 top-2 rounded-[2px] bg-white/90 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-deep-violet dark:bg-ink/85">
+        <span className="absolute left-3 top-3 rounded-[20px] bg-white/90 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-deep-violet dark:bg-ink/85">
           {meta?.label ?? c.postFallback}
         </span>
-        <span className="absolute right-2 top-2 flex flex-col items-end gap-1">
-          <span className={`rounded-[2px] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide ${chip.cls}`}>
+        <span className="absolute right-3 top-3 flex flex-col items-end gap-1">
+          <span className={`rounded-[20px] px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] ${chip.cls}`}>
             {chip.label}
           </span>
           {job.method && (
-            <span className="rounded-[2px] bg-deep-violet/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-deep-violet">
+            <span className="rounded-[20px] bg-deep-violet/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-deep-violet">
               {metaLabel(job.method)}
             </span>
           )}
         </span>
       </button>
-      <div className="flex flex-1 flex-col p-3.5">
-        <span className="truncate text-[13px] font-bold text-ink dark:text-fog">{destination}</span>
-        <span className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/55 dark:text-fog/55">
+      <div className="flex flex-1 flex-col p-4">
+        <span className="truncate text-[14px] font-bold text-ink dark:text-fog">{destination}</span>
+        <span className="mt-1.5 line-clamp-2 text-[13px] leading-relaxed text-ink/55 dark:text-fog/55">
           {job.caption || c.noCaption}
         </span>
         {job.status === "failed" && job.last_error && (
@@ -761,12 +767,12 @@ function PostCard({
           <button
             type="button"
             onClick={onOpen}
-            className="rounded-[2px] border border-ink/[0.1] px-2 py-0.5 text-[10px] font-semibold text-ink/60 transition hover:bg-ink/[0.04] dark:border-fog/[0.12] dark:text-fog/60"
+            className="rounded-[20px] border border-ink/[0.1] px-2 py-0.5 text-[11px] font-semibold text-ink/60 transition hover:bg-ink/[0.04] dark:border-fog/[0.12] dark:text-fog/60"
           >
             {c.detail.open}
           </button>
           {removable && (
-            <label className="flex cursor-pointer items-center gap-1.5 rounded-[2px] bg-ink/[0.05] px-2 py-1 text-[10px] font-semibold text-ink/60 dark:bg-fog/[0.07] dark:text-fog/60">
+            <label className="flex cursor-pointer items-center gap-1.5 rounded-[20px] bg-ink/[0.05] px-2 py-1 text-[11px] font-semibold text-ink/60 dark:bg-fog/[0.07] dark:text-fog/60">
               <input
                 type="checkbox"
                 checked={checked}
@@ -779,14 +785,14 @@ function PostCard({
           )}
           {job.delete_at && !alreadyGone && (
             <span
-              className="rounded-[2px] bg-ink/[0.05] px-2 py-0.5 text-[10px] font-semibold text-ink/50 dark:bg-fog/[0.07] dark:text-fog/50"
+              className="rounded-[20px] bg-ink/[0.05] px-2 py-0.5 text-[11px] font-semibold text-ink/50 dark:bg-fog/[0.07] dark:text-fog/50"
               title={fill(c.comesDownTitle, { date: new Date(job.delete_at).toLocaleString(dateLocale) })}
             >
               {fill(c.comesDown, { date: new Date(job.delete_at).toLocaleDateString(dateLocale) })}
             </span>
           )}
           {job.scheduled_at && (
-            <span className="rounded-[2px] bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
+            <span className="rounded-[20px] bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
               {new Date(job.scheduled_at).toLocaleDateString(dateLocale)}
             </span>
           )}
@@ -795,7 +801,7 @@ function PostCard({
               type="button"
               onClick={onCancel}
               disabled={busy}
-              className="rounded-[2px] border border-ink/[0.1] px-2 py-0.5 text-[10px] font-semibold text-ink/60 transition hover:bg-ink/[0.04] disabled:opacity-50 dark:border-fog/[0.12] dark:text-fog/60"
+              className="rounded-[20px] border border-ink/[0.1] px-2 py-0.5 text-[11px] font-semibold text-ink/60 transition hover:bg-ink/[0.04] disabled:opacity-50 dark:border-fog/[0.12] dark:text-fog/60"
             >
               {c.cancel}
             </button>
