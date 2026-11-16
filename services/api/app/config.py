@@ -171,6 +171,12 @@ class Settings(BaseSettings):
     # redeploys never wipe them.
     MEDIA_DIR: str = "./data/uploads/media"
     MEDIA_PUBLIC_PATH: str = "/media-files"
+    # Force media uploads to local disk even when an S3/GCS media bucket is
+    # configured. Local files are served publicly at
+    # <PUBLIC_API_URL>/media-files/... (Cloudflare tunnel / reverse proxy),
+    # which Google can crawl — unlike a private S3 object URL. Docs storage
+    # (RAG uploads/scrapes) is unaffected.
+    MEDIA_FORCE_LOCAL: bool = False
     MEDIA_MAX_MB: int = 25
     # Storage (optional; empty = local disk). GCS remains supported; S3 can
     # be selected independently for public media and private documents. S3

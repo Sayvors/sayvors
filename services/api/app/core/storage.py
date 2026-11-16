@@ -78,6 +78,8 @@ def docs_configured() -> bool:
 def _media_backend() -> str:
     from integrations.storage import s3
 
+    if _settings().MEDIA_FORCE_LOCAL:
+        return "local"
     if s3.configured("media"):
         return "s3"
     return "gcs" if (_settings().GCS_PUBLIC_BUCKET or "").strip() else "local"
