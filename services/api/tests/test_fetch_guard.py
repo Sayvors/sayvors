@@ -80,9 +80,9 @@ def test_max_fetch_bytes_sane():
 
 def test_crawl_sync_rejects_blocked_start_url_without_network():
     from app.core.http import UnsafeUrlError
-    from app.modules.rag.jobs import _crawl_sync
+    from app.modules.rag.crawler import crawl_site
 
     with pytest.raises(UnsafeUrlError):
-        _crawl_sync("http://169.254.169.254/latest/meta-data/", "single", 5)
+        crawl_site("http://169.254.169.254/latest/meta-data/", "single", 5)
     with pytest.raises(UnsafeUrlError):
-        _crawl_sync("file:///etc/passwd", "single", 5)
+        crawl_site("file:///etc/passwd", "single", 5)

@@ -92,8 +92,18 @@ async def test_backup_run_starts_background(client, admin_csrf, monkeypatch):
     assert calls == ["manual"]
 
 
+@pytest.fixture
+def no_s3_bucket(monkeypatch):
+    """These tests assert the no-bucket behavior; the dev .env may configure
+    S3 buckets, so blank them out for hermeticity."""
+    from app.modules.admin import backup as backup_mod
+
+    monkeypatch.setattr(backup_mod.settings, "S3_DOCS_BUCKET", "", raising=False)
+    monkeypatch.setattr(backup_mod.settings, "AWS_S3_BUCKET", "", raising=False)
+
+
 @pytest.mark.asyncio
-async def test_backup_list_empty_without_bucket(client, admin_csrf):
+async def test_backup_list_empty_without_bucket(client, admin_csrf, no_s3_bucket):
     r = client.get("/api/v1/admin/backups", headers=admin_csrf)
     assert r.status_code == 200
     body = r.json()
@@ -102,12 +112,12 @@ async def test_backup_list_empty_without_bucket(client, admin_csrf):
 
 
 @pytest.mark.asyncio
-async def test_backup_delete_requires_bucket(client, admin_csrf):
+async def test_backup_delete_requires_bucket(client, admin_csrf, no_s3_bucket):
     r = client.delete("/api/v1/admin/backups?key=backups/x.sql.gz", headers=admin_csrf)
     assert r.status_code == 400
 
 
 @pytest.mark.asyncio
-async def test_backup_download_requires_bucket(client, admin_csrf):
+async def test_backup_download_requires_bucket(client, admin_csrf, no_s3_bucket):
     r = client.get("/api/v1/admin/backups/download?key=backups/x.sql.gz", headers=admin_csrf)
     assert r.status_code == 400

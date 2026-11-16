@@ -57,6 +57,76 @@ class ScrapeJobResponse(BaseModel):
     created_at: datetime
 
 
+class CrawlSourceCreate(BaseModel):
+    url: str = Field(..., min_length=1, max_length=2000)
+    scope: str = Field(default="subtree", pattern="^(top|subtree|max_pages)$")
+    max_pages: int = Field(default=200, ge=1, le=500)
+    # The user-selected page URLs (from the preview checkboxes). When empty,
+    # the worker discovers pages at crawl time; when provided, ONLY these are
+    # crawled — the interactive selection contract.
+    urls: list[str] = Field(default_factory=list, max_length=500)
+    sync_enabled: bool = False
+    sync_interval_minutes: int = Field(default=60, ge=60, le=10080)
+
+
+class CrawlSourceUpdate(BaseModel):
+    scope: str | None = Field(None, pattern="^(top|subtree|max_pages)$")
+    max_pages: int | None = Field(None, ge=1, le=500)
+    sync_enabled: bool | None = None
+    sync_interval_minutes: int | None = Field(None, ge=60, le=10080)
+
+
+class CrawlSourceResponse(BaseModel):
+    id: str
+    databank_id: str
+    start_url: str
+    scope: str
+    max_pages: int
+    sync_enabled: bool
+    sync_interval_minutes: int
+    next_sync_at: datetime | None = None
+    last_sync_at: datetime | None = None
+    last_status: str
+    error: str | None = None
+    created_at: datetime
+    page_count: int = 0
+    # Per-page status counts (discovered/crawled/unchanged/failed/excluded)
+    # so the UI can show crawl progress without a separate request.
+    page_status_counts: dict[str, int] = {}
+
+
+class CrawlSourceListResponse(BaseModel):
+    sources: list[CrawlSourceResponse]
+    total: int
+
+
+class CrawlPageResponse(BaseModel):
+    id: str
+    url: str
+    title: str | None = None
+    status: str
+    content_hash: str | None = None
+    word_count: int = 0
+    lang: str | None = None
+    fetched_at: datetime | None = None
+    document_id: str | None = None
+    error: str | None = None
+    updated_at: datetime
+
+
+class CrawlPreviewItem(BaseModel):
+    url: str
+    title: str | None = None
+    status: str
+
+
+class CrawlPreviewResponse(BaseModel):
+    url: str
+    scope: str
+    max_pages: int
+    candidates: list[CrawlPreviewItem]
+
+
 class IngestJobResponse(BaseModel):
     id: str
     job_type: str

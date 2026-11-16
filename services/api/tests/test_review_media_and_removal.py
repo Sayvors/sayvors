@@ -113,6 +113,10 @@ async def test_new_photo_is_downloaded_and_stored(monkeypatch, tmp_path):
 
     monkeypatch.setattr(review_media.settings, "MEDIA_DIR", str(tmp_path), raising=False)
     monkeypatch.setattr(review_media, "media_configured", lambda: False)
+    # The dev .env may configure S3 media; force the local backend so the
+    # test writes to tmp_path (no cloud, no credentials).
+    monkeypatch.setattr(review_media.settings, "S3_MEDIA_BUCKET", "", raising=False)
+    monkeypatch.setattr(review_media.settings, "AWS_S3_BUCKET", "", raising=False)
 
     async def fake_download(url):
         return PNG, ".png"

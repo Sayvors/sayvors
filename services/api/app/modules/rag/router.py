@@ -1,14 +1,36 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
+import asyncio
+import logging
+
+import jwt
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...config import settings
 from ...core.deps import get_db, get_current_user
+from ...database import async_session
 from ..users.models import User
-from .models import Document as DocumentModel
+from .crawl_service import (
+    create_crawl_source,
+    delete_crawl_source,
+    get_crawl_source,
+    list_crawl_sources,
+    page_count_for_sources,
+    page_status_counts_for_sources,
+    update_crawl_source,
+)
+from .crawler import preview_candidates
+from .models import CrawlPage, Document as DocumentModel
 from .schemas import (
     AskRequest,
     AskResponse,
     Citation,
+    CrawlPageResponse,
+    CrawlPreviewResponse,
+    CrawlSourceCreate,
+    CrawlSourceListResponse,
+    CrawlSourceResponse,
+    CrawlSourceUpdate,
     DatabankCreate,
     DatabankListResponse,
     DatabankResponse,
@@ -57,6 +79,12 @@ from .service import (
 )
 
 router = APIRouter(prefix="/api/v1/rag", tags=["rag"])
+
+logger = logging.getLogger(__name__)
+
+# Preview/crawl discovery stays bounded: showing the tenant a few hundred
+# candidates is enough to select from; the crawl cap itself is max_pages.
+PREVIEW_MAX_PAGES = 200
 
 
 async def require_databank_feature(
@@ -266,6 +294,344 @@ async def create_new_scrape_job(
         error=job.error,
         created_at=job.created_at,
     )
+
+
+async def _authenticate_preview_user(request: Request) -> User:
+    """Dependency: authenticate WITHOUT holding a DB session open.
+
+    Preview can take minutes; keeping the request-scoped session alive that
+    long risks stale/closed connections and teardown rollback failures, so
+    this opens a short-lived session for auth only. Injectable so tests can
+    override it like ``get_current_user``.
+    """
+    token = request.cookies.get(settings.ACCESS_COOKIE_NAME)
+    if not token:
+        auth = request.headers.get("authorization", "")
+        if auth.lower().startswith("bearer "):
+            token = auth.split(" ", 1)[1].strip()
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
+    user_id = payload.get("sub")
+    token_type = payload.get("type")
+    if not user_id or token_type != "access":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
+    async with async_session() as db:
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if not user:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+
+        from ..users.status import suspension_message
+
+        suspended = await suspension_message(db, user)
+        if suspended:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=suspended)
+        if user.tenant_id and user.tenant_id != user.id:
+            from ..team.models import TeamMember
+
+            member = (
+                await db.execute(
+                    select(TeamMember.status).where(
+                        TeamMember.user_id == user.id, TeamMember.tenant_id == user.tenant_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if member == "suspended":
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This account is suspended")
+
+        from ..auth.rate_limit import is_token_blacklisted
+
+        if await is_token_blacklisted(payload.get("jti", "")):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token revoked")
+        if payload.get("ver", 0) != (user.token_version or 0):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token revoked")
+        return user
+
+
+@router.get("/crawl/preview", response_model=CrawlPreviewResponse)
+async def preview_crawl_candidates_standalone(
+    request: Request,
+    url: str = Query(..., min_length=1, max_length=2000),
+    scope: str = Query("subtree", pattern="^(single|top|subtree|max_pages)$"),
+    max_pages: int = Query(100, ge=1, le=PREVIEW_MAX_PAGES),
+    user: User = Depends(_authenticate_preview_user),
+):
+    """Discover candidate pages before a databank exists (create wizard).
+
+    Read-only page discovery (no content stored) so the user can pick which
+    pages to crawl before the databank/source is created.
+    """
+    try:
+        candidates = await asyncio.get_event_loop().run_in_executor(
+            None, preview_candidates, url, scope, max_pages
+        )
+    except (ValueError, TypeError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:  # noqa: BLE001 — surface the real cause to the UI
+        logger.exception("Crawl preview failed for %s", url)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not preview {url}: {type(e).__name__}",
+        )
+    return CrawlPreviewResponse(
+        url=url,
+        scope=scope,
+        max_pages=max_pages,
+        candidates=[
+            {"url": c.url, "title": c.title, "status": c.status}
+            for c in candidates
+        ],
+    )
+
+
+@router.get("/databanks/{databank_id}/crawl/preview", response_model=CrawlPreviewResponse)
+async def preview_crawl_candidates(
+    databank_id: str,
+    url: str = Query(..., min_length=1, max_length=2000),
+    scope: str = Query("subtree", pattern="^(single|top|subtree|max_pages)$"),
+    max_pages: int = Query(100, ge=1, le=PREVIEW_MAX_PAGES),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Step 1 of the interactive crawl: list pages the crawler would touch.
+
+    No content is fetched or stored here — the tenant uses this list to
+    tick the pages they actually want, then creates a source with that
+    selection.
+    """
+    bank = await get_databank(databank_id, user, db)
+    if not bank:
+        raise HTTPException(status_code=404, detail="Databank not found")
+    try:
+        candidates = await asyncio.get_event_loop().run_in_executor(
+            None, preview_candidates, url, scope, max_pages
+        )
+    except (ValueError, TypeError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:  # noqa: BLE001 — surface the real cause to the UI
+        logger.exception("Crawl preview failed for %s", url)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not preview {url}: {type(e).__name__}",
+        )
+    return CrawlPreviewResponse(
+        url=url,
+        scope=scope,
+        max_pages=max_pages,
+        candidates=[
+            {"url": c.url, "title": c.title, "status": c.status}
+            for c in candidates
+        ],
+    )
+
+
+@router.post(
+    "/databanks/{databank_id}/crawl/sources",
+    response_model=CrawlSourceResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_crawl_source_endpoint(
+    databank_id: str,
+    body: CrawlSourceCreate,
+    user: User = Depends(get_current_user),
+    _gate: None = Depends(require_databank_feature),
+    db: AsyncSession = Depends(get_db),
+):
+    """Step 2: save a source with the user-selected page URLs."""
+    bank = await get_databank(databank_id, user, db)
+    if not bank:
+        raise HTTPException(status_code=404, detail="Databank not found")
+    try:
+        source = await create_crawl_source(
+            db,
+            databank_id=databank_id,
+            user_id=user.id,
+            start_url=body.url,
+            scope=body.scope,
+            max_pages=body.max_pages,
+            sync_enabled=body.sync_enabled,
+            sync_interval_minutes=body.sync_interval_minutes,
+            urls=body.urls,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    counts = await page_count_for_sources(db, [source.id])
+    status_counts = await page_status_counts_for_sources(db, [source.id])
+    return CrawlSourceResponse(
+        id=source.id,
+        databank_id=source.databank_id,
+        start_url=source.start_url,
+        scope=source.scope,
+        max_pages=source.max_pages,
+        sync_enabled=source.sync_enabled,
+        sync_interval_minutes=source.sync_interval_minutes,
+        next_sync_at=source.next_sync_at,
+        last_sync_at=source.last_sync_at,
+        last_status=source.last_status,
+        error=source.error,
+        created_at=source.created_at,
+        page_count=counts.get(source.id, 0),
+        page_status_counts=status_counts.get(source.id, {}),
+    )
+
+
+@router.get("/databanks/{databank_id}/crawl/sources", response_model=CrawlSourceListResponse)
+async def list_crawl_sources_endpoint(
+    databank_id: str,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    bank = await get_databank(databank_id, user, db)
+    if not bank:
+        raise HTTPException(status_code=404, detail="Databank not found")
+    sources, total = await list_crawl_sources(
+        db, databank_id=databank_id, user_id=user.id, limit=limit, offset=offset
+    )
+    counts = await page_count_for_sources(db, [s.id for s in sources])
+    status_counts = await page_status_counts_for_sources(db, [s.id for s in sources])
+    return CrawlSourceListResponse(
+        sources=[
+            CrawlSourceResponse(
+                id=s.id,
+                databank_id=s.databank_id,
+                start_url=s.start_url,
+                scope=s.scope,
+                max_pages=s.max_pages,
+                sync_enabled=s.sync_enabled,
+                sync_interval_minutes=s.sync_interval_minutes,
+                next_sync_at=s.next_sync_at,
+                last_sync_at=s.last_sync_at,
+                last_status=s.last_status,
+                error=s.error,
+                created_at=s.created_at,
+                page_count=counts.get(s.id, 0),
+                page_status_counts=status_counts.get(s.id, {}),
+            )
+            for s in sources
+        ],
+        total=total,
+    )
+
+
+@router.get(
+    "/databanks/{databank_id}/crawl/sources/{source_id}/pages",
+    response_model=list[CrawlPageResponse],
+)
+async def list_crawl_source_pages(
+    databank_id: str,
+    source_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """The selected pages of a source (statuses after crawls)."""
+    bank = await get_databank(databank_id, user, db)
+    if not bank:
+        raise HTTPException(status_code=404, detail="Databank not found")
+    try:
+        source = await get_crawl_source(db, databank_id, user.id, source_id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Crawl source not found")
+    pages = (
+        await db.execute(
+            select(CrawlPage)
+            .where(CrawlPage.source_id == source.id)
+            .order_by(CrawlPage.url)
+        )
+    ).scalars().all()
+    return [
+        CrawlPageResponse(
+            id=p.id,
+            url=p.url,
+            title=p.title,
+            status=p.status,
+            content_hash=p.content_hash,
+            word_count=p.word_count,
+            lang=p.lang,
+            fetched_at=p.fetched_at,
+            document_id=p.document_id,
+            error=p.error,
+            updated_at=p.updated_at,
+        )
+        for p in pages
+    ]
+
+
+@router.patch(
+    "/databanks/{databank_id}/crawl/sources/{source_id}",
+    response_model=CrawlSourceResponse,
+)
+async def update_crawl_source_endpoint(
+    databank_id: str,
+    source_id: str,
+    body: CrawlSourceUpdate,
+    user: User = Depends(get_current_user),
+    _gate: None = Depends(require_databank_feature),
+    db: AsyncSession = Depends(get_db),
+):
+    bank = await get_databank(databank_id, user, db)
+    if not bank:
+        raise HTTPException(status_code=404, detail="Databank not found")
+    values = body.model_dump(exclude_unset=True)
+    try:
+        source = await update_crawl_source(
+            db,
+            databank_id=databank_id,
+            user_id=user.id,
+            source_id=source_id,
+            values=values,
+        )
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Crawl source not found")
+    counts = await page_count_for_sources(db, [source.id])
+    status_counts = await page_status_counts_for_sources(db, [source.id])
+    return CrawlSourceResponse(
+        id=source.id,
+        databank_id=source.databank_id,
+        start_url=source.start_url,
+        scope=source.scope,
+        max_pages=source.max_pages,
+        sync_enabled=source.sync_enabled,
+        sync_interval_minutes=source.sync_interval_minutes,
+        next_sync_at=source.next_sync_at,
+        last_sync_at=source.last_sync_at,
+        last_status=source.last_status,
+        error=source.error,
+        created_at=source.created_at,
+        page_count=counts.get(source.id, 0),
+        page_status_counts=status_counts.get(source.id, {}),
+    )
+
+
+@router.delete(
+    "/databanks/{databank_id}/crawl/sources/{source_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_crawl_source_endpoint(
+    databank_id: str,
+    source_id: str,
+    user: User = Depends(get_current_user),
+    _gate: None = Depends(require_databank_feature),
+    db: AsyncSession = Depends(get_db),
+):
+    bank = await get_databank(databank_id, user, db)
+    if not bank:
+        raise HTTPException(status_code=404, detail="Databank not found")
+    try:
+        await delete_crawl_source(
+            db, databank_id=databank_id, user_id=user.id, source_id=source_id
+        )
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Crawl source not found")
 
 
 @router.post(

@@ -4,12 +4,12 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, update
 
-from ...core.http import assert_public_http_url
 from ...database import async_session
 from .cache import set_progress
 from .chunker import chunk_text
+from .crawler import crawl_site
 from .embeddings import get_embedding_provider
-from .models import Document, DocumentChunk, IngestJob, ScrapeJob
+from .models import CrawlPage, CrawlSource, Document, DocumentChunk, IngestJob, ScrapeJob
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,15 @@ async def _worker_loop() -> None:
             await _process_job(job_id)
         else:
             await _process_pending_scrape()
-            await asyncio.sleep(2)
+            # Process all currently-due sources so a newly created one-shot
+            # crawl starts immediately instead of waiting for poll cycles.
+            processed_any = False
+            for _ in range(10):
+                did = await _process_due_crawl_sources()
+                if not did:
+                    break
+                processed_any = True
+            await asyncio.sleep(0.1 if processed_any else 0.5)
 
 
 async def _dequeue_job() -> str | None:
@@ -277,6 +285,178 @@ async def _process_document_job_single(doc, job, db, index, total) -> None:
     await _embed_and_store(doc, chunks, job)
 
 
+async def _process_due_crawl_sources() -> bool:
+    """Claim one due crawl source and crawl only its selected pages.
+
+    §31 Phase 2 core. The source rows are the sync state machine: the worker
+    claims one due source (``next_sync_at <= now``) under a row lock, crawls
+    exactly the pages the tenant selected (``crawl_pages`` rows), upserts the
+    extracted markdown as Documents, and records per-page statuses +
+    conditional-GET validators for the next check.
+
+    One-shot sources (``sync_enabled`` false) get ``next_sync_at = None``
+    after the run; scheduled sources get the next interval. The adaptive
+    interval ladder (unchanged 1h -> 6h -> 24h) is a follow-up refinement.
+    """
+    import uuid
+
+    from .crawler import crawl_site
+
+    async with async_session() as db:
+        now = datetime.now(timezone.utc)
+        # Fetch candidate sources ordered by due time, then pick the oldest due
+        # in Python: SQLite stores timestamptz as strings where a SQL-side
+        # `<= now` comparison is unreliable, and the volume (1000s of sites,
+        # one worker) makes the in-process filter trivially cheap.
+        rows = (
+            await db.execute(
+                select(CrawlSource)
+                .where(
+                    CrawlSource.next_sync_at.is_not(None),
+                    CrawlSource.last_status != CrawlSource.STATUS_RUNNING,
+                )
+                .order_by(CrawlSource.next_sync_at)
+                .limit(20)
+            )
+        ).scalars().all()
+        source = None
+        for s in rows:
+            next_at = s.next_sync_at
+            if next_at is None:
+                continue
+            ref = now
+            # SQLite hands back naive datetimes (no tz storage); Postgres is
+            # tz-aware. Compare on a matching basis.
+            if next_at.tzinfo is None:
+                ref = now.replace(tzinfo=None)
+            if next_at <= ref:
+                source = s
+                break
+        if source is None:
+            return False
+        # Claim under the row: a concurrent worker that already flipped it to
+        # "running" makes this UPDATE match 0 rows and we back off. Any
+        # non-running state (idle/success/failed) is claimable — this is what
+        # lets a scheduled source be re-crawled after a successful run.
+        claimed = await db.execute(
+            update(CrawlSource)
+            .where(
+                CrawlSource.id == source.id,
+                CrawlSource.last_status != CrawlSource.STATUS_RUNNING,
+            )
+            .values(
+                last_status=CrawlSource.STATUS_RUNNING,
+                error=None,
+                updated_at=now,
+            )
+        )
+        if claimed.rowcount == 0:
+            await db.rollback()
+            return False
+        await db.commit()
+        source_id, databank_id, user_id = source.id, source.databank_id, source.user_id
+        scope, max_pages = source.scope, source.max_pages
+
+        pages_result = await db.execute(
+            select(CrawlPage).where(CrawlPage.source_id == source_id)
+        )
+        pages = list(pages_result.scalars().all())
+
+    known = {
+        p.url: (p.http_etag, p.http_last_modified)
+        for p in pages
+        if p.status != CrawlPage.STATUS_FAILED
+    }
+    selected_urls = [p.url for p in pages]
+    try:
+        results = await asyncio.get_event_loop().run_in_executor(
+            None, crawl_site, source.start_url, scope, max_pages, known, None, selected_urls
+        )
+    except Exception as e:
+        logger.exception("Crawl source %s failed", source_id)
+        async with async_session() as db:
+            done = (
+                await db.execute(select(CrawlSource).where(CrawlSource.id == source_id))
+            ).scalar_one_or_none()
+            if done:
+                done.last_status = CrawlSource.STATUS_FAILED
+                done.error = str(e)[:2000]
+                done.last_sync_at = datetime.now(timezone.utc)
+                done.next_sync_at = None
+                await db.commit()
+        return True
+
+    now = datetime.now(timezone.utc)
+    async with async_session() as db:
+        created = 0
+        pending_doc_ids: list[str] = []
+        for r in results:
+            # Re-query the page in THIS session (pages rows belong to the
+            # claim session, which is closed by now).
+            page = (
+                await db.execute(
+                    select(CrawlPage).where(
+                        CrawlPage.source_id == source_id,
+                        CrawlPage.url == r.url,
+                    )
+                )
+            ).scalar_one_or_none()
+            if r.status == "failed":
+                if page is not None:
+                    page.status = CrawlPage.STATUS_FAILED
+                    page.error = (r.error or "")[:2000]
+                    page.fetched_at = now
+                    page.updated_at = now
+                continue
+            if r.status == "unchanged":
+                if page is not None:
+                    page.status = CrawlPage.STATUS_UNCHANGED
+                    page.http_etag = r.etag or page.http_etag
+                    page.http_last_modified = r.last_modified or page.http_last_modified
+                    page.fetched_at = now
+                    page.updated_at = now
+                continue
+            # crawled
+            doc_id = await _upsert_scrape_document(
+                db, databank_id, user_id, r.url, r.markdown
+            )
+            if doc_id:
+                created += 1
+                pending_doc_ids.append(doc_id)
+            if page is not None:
+                page.status = CrawlPage.STATUS_CRAWLED
+                page.title = r.title or page.title
+                page.content_hash = r.content_hash
+                page.lang = r.lang
+                page.word_count = r.word_count
+                page.http_etag = r.etag or page.http_etag
+                page.http_last_modified = r.last_modified or page.http_last_modified
+                page.fetched_at = now
+                page.error = None
+                page.updated_at = now
+
+        done = (
+            await db.execute(select(CrawlSource).where(CrawlSource.id == source_id))
+        ).scalar_one_or_none()
+        if done is not None:
+            done.last_status = CrawlSource.STATUS_SUCCESS
+            done.last_sync_at = now
+            done.next_sync_at = (
+                now + timedelta(minutes=done.sync_interval_minutes)
+                if done.sync_enabled
+                else None
+            )
+            await db.commit()
+        # Queue ingest for new/changed pages so they're chunked + indexed
+        # (otherwise documents stay "pending" forever and search stays empty).
+        queued = await _queue_ingest_for_docs(db, databank_id, user_id, pending_doc_ids)
+        logger.info(
+            "Crawl source %s: %d docs created (%d queued for ingest) from %d pages",
+            source_id, created, queued, len(results),
+        )
+        return True
+
+
 async def _process_pending_scrape() -> None:
     """Claim and run one pending crawl job (single page or same-domain BFS)."""
     import hashlib
@@ -297,9 +477,10 @@ async def _process_pending_scrape() -> None:
         job_id, databank_id, user_id = job.id, job.databank_id, job.user_id
         start_url, crawl_mode, max_pages = job.url, job.crawl_mode, max(1, min(job.max_pages, 500))
 
+    scope = "single" if crawl_mode == "single" else "subtree"
     try:
-        pages = await asyncio.get_event_loop().run_in_executor(
-            None, _crawl_sync, start_url, crawl_mode, max_pages
+        results = await asyncio.get_event_loop().run_in_executor(
+            None, crawl_site, start_url, scope, max_pages
         )
     except Exception as e:
         logger.exception("Scrape job %s failed", job_id)
@@ -314,91 +495,127 @@ async def _process_pending_scrape() -> None:
 
     async with async_session() as db:
         created = 0
-        for url, text in pages:
-            if not text.strip():
+        unchanged = 0
+        pending_doc_ids: list[str] = []
+        for r in results:
+            if r.status == "unchanged":
+                unchanged += 1
                 continue
-            content = text.encode("utf-8")
-            doc = Document(
-                id=str(uuid.uuid4()),
-                databank_id=databank_id,
-                user_id=user_id,
-                filename=url[:500],
-                source_type="scrape",
-                source_url=url[:2000],
-                file_type="txt",
-                size_bytes=len(content),
-                status="pending",
-                content_hash=hashlib.sha256(content).hexdigest(),
+            if r.status != "crawled" or not r.markdown.strip():
+                continue
+            doc_id = await _upsert_scrape_document(
+                db, databank_id, user_id, r.url, r.markdown
             )
-            db.add(doc)
-            await db.flush()
-            from ...core.storage import put_doc
-
-            put_doc(databank_id, f"{doc.id}.txt", content)
-            created += 1
+            if doc_id:
+                created += 1
+                pending_doc_ids.append(doc_id)
         result = await db.execute(select(ScrapeJob).where(ScrapeJob.id == job_id))
         done = result.scalar_one_or_none()
         if done:
             done.status = "completed"
             done.pages_found = created
             await db.commit()
-        logger.info("Scrape job %s: %d documents from %s", job_id, created, start_url)
+        queued = await _queue_ingest_for_docs(db, databank_id, user_id, pending_doc_ids)
+        logger.info(
+            "Scrape job %s: %d created (%d queued for ingest), %d unchanged from %s",
+            job_id, created, queued, unchanged, start_url,
+        )
 
 
-def _crawl_sync(start_url: str, crawl_mode: str, max_pages: int) -> list[tuple[str, str]]:
-    """Blocking crawl: fetch + trafilatura extract. Same-domain BFS for full mode."""
-    # Fail the job loudly on a blocked start URL instead of returning [].
-    start_url = assert_public_http_url(start_url)
+async def _upsert_scrape_document(
+    db, databank_id: str, user_id: str, url: str, markdown: str
+) -> str | None:
+    """Create or update one scrape document, deduping by (databank, url).
 
-    import trafilatura
-    from html.parser import HTMLParser
-    from urllib.parse import urljoin, urlparse
+    Fixes the duplicate-document bug: the old crawler inserted a new Document
+    row on every run, so re-crawling a site doubled its rows. Now an existing
+    row for the same URL is updated in place; identical content is skipped
+    entirely, changed content is re-stored and re-marked pending for ingest.
 
-    class _Links(HTMLParser):
-        def __init__(self):
-            super().__init__()
-            self.links: list[str] = []
+    Returns the document id when new/changed content needs ingest, else None.
+    """
+    import hashlib
+    import uuid
 
-        def handle_starttag(self, tag, attrs):
-            if tag == "a":
-                for k, v in attrs:
-                    if k == "href" and v:
-                        self.links.append(v)
+    from ...core.storage import put_doc
 
-    def _fetch(url: str) -> str:
-        # SSRF-validated + DNS-pinned fetch (see app.core.pinned_http).
-        # ValueError propagates: blocked start URL fails the job loudly,
-        # blocked discovered links are skipped by the loop below.
-        from ...core.pinned_http import fetch_pinned
+    content = markdown.encode("utf-8")
+    digest = hashlib.sha256(content).hexdigest()
 
-        return fetch_pinned(url, timeout=20)
+    existing = (
+        await db.execute(
+            select(Document).where(
+                Document.databank_id == databank_id,
+                Document.user_id == user_id,
+                Document.source_type == "scrape",
+                Document.source_url == url,
+            )
+        )
+    ).scalars().all()
 
-    base_netloc = urlparse(start_url).netloc
-    seen: set[str] = set()
-    queue = [start_url]
-    pages: list[tuple[str, str]] = []
-    depth = 1 if crawl_mode == "single" else max_pages
+    if existing:
+        doc = existing[0]
+        if doc.content_hash == digest:
+            return None  # unchanged — no new work
+        doc.content_hash = digest
+        doc.size_bytes = len(content)
+        doc.status = "pending"
+        doc.chunk_count = 0
+        doc.error = None
+        doc.filename = url[:500]
+        await db.flush()
+        put_doc(databank_id, f"{doc.id}.md", content)
+        return doc.id
 
-    while queue and len(pages) < max_pages and len(seen) < max_pages:
-        url = queue.pop(0)
-        if url in seen:
-            continue
-        seen.add(url)
-        try:
-            html = _fetch(url)
-        except Exception:
-            continue
-        text = trafilatura.extract(html) or ""
-        if text.strip():
-            pages.append((url, text))
-        if crawl_mode == "full" and len(pages) < depth:
-            parser = _Links()
-            try:
-                parser.feed(html)
-            except Exception:
-                continue
-            for link in parser.links:
-                full = urljoin(url, link).split("#")[0]
-                if urlparse(full).netloc == base_netloc and full not in seen:
-                    queue.append(full)
-    return pages
+    doc = Document(
+        id=str(uuid.uuid4()),
+        databank_id=databank_id,
+        user_id=user_id,
+        filename=url[:500],
+        source_type="scrape",
+        source_url=url[:2000],
+        file_type="md",
+        size_bytes=len(content),
+        status="pending",
+        content_hash=digest,
+    )
+    db.add(doc)
+    await db.flush()
+    put_doc(databank_id, f"{doc.id}.md", content)
+    return doc.id
+
+
+async def _queue_ingest_for_docs(
+    db, databank_id: str, user_id: str, doc_ids: list[str]
+) -> int:
+    """Queue ingest jobs for crawled documents so they actually get indexed.
+
+    The crawl only stores pending Documents; without ingest jobs they would
+    never be chunked/embedded and the UI would show 0 processed forever.
+    Returns the number of jobs queued.
+    """
+    import uuid
+
+    if not doc_ids:
+        return 0
+
+    queued = 0
+    for doc_id in doc_ids:
+        job = IngestJob(
+            id=str(uuid.uuid4()),
+            user_id=user_id,
+            databank_id=databank_id,
+            document_id=doc_id,
+            job_type="scrape",
+            status="queued",
+            progress=0,
+        )
+        db.add(job)
+        await db.flush()
+        await enqueue_job(str(job.id))
+        queued += 1
+    await db.commit()
+    return queued
+
+
+

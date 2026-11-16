@@ -16,7 +16,7 @@ from ..users.models import User
 from .cache import content_hash, set_progress
 from .chunker import chunk_text
 from .embeddings import canonical_vector, get_embedding_provider
-from .models import Databank, DataSource, Document, DocumentChunk, IngestJob, ScrapeJob
+from .models import CrawlPage, CrawlSource, Databank, DataSource, Document, DocumentChunk, IngestJob, ScrapeJob
 from .search import hybrid_search
 from .schemas import (
     DatabankCreate,
@@ -83,6 +83,20 @@ async def delete_databank(
             DocumentChunk.databank_id == databank_id
         )
     )
+    # Crawl pages may reference documents and sources; remove them before
+    # documents/sources so FK constraints are satisfied on Postgres.
+    source_ids = (
+        await db.execute(
+            select(CrawlSource.id).where(CrawlSource.databank_id == databank_id)
+        )
+    ).scalars().all()
+    if source_ids:
+        await db.execute(
+            CrawlPage.__table__.delete().where(CrawlPage.source_id.in_(source_ids))
+        )
+        await db.execute(
+            CrawlSource.__table__.delete().where(CrawlSource.id.in_(source_ids))
+        )
     await db.execute(
         Document.__table__.delete().where(Document.databank_id == databank_id)
     )
@@ -250,6 +264,12 @@ async def delete_document(doc_id: str, user: User, db: AsyncSession) -> bool:
     )
     await db.execute(
         IngestJob.__table__.delete().where(IngestJob.document_id == doc_id)
+    )
+    # Crawl pages may reference the ingested document; detach before delete.
+    await db.execute(
+        CrawlPage.__table__.update()
+        .where(CrawlPage.document_id == doc_id)
+        .values(document_id=None)
     )
     databank_id = doc.databank_id
     file_type = doc.file_type
