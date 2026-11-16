@@ -30,8 +30,10 @@ LOCATION_TZ = timezone(timedelta(hours=SAUDI_UTC_OFFSET_HOURS))
 # it and the result is capped here.
 SUMMARY_MAX_CHARS = 1500
 # An event title is one line on Google's card: the first line of the caption,
-# cut to this length.
-EVENT_TITLE_MAX_CHARS = 60
+# cut to this length. Google's v4 API rejects 59+ characters on
+# `event.title` (ValidationError code 3), so 58 is the hard ceiling — for
+# EVENT *and* OFFER posts, since OFFER also requires an event block.
+EVENT_TITLE_MAX_CHARS = 58
 # An event or offer without dates runs for this many days from now.
 DEFAULT_WINDOW_DAYS = 7
 OFFER_TERMS_DEFAULT = "Terms apply"

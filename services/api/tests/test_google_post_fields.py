@@ -57,6 +57,7 @@ def test_event_title_falls_back_to_the_description_then_a_default():
 
 def test_event_title_is_capped():
     assert len(event_title("y" * 500, "")) == EVENT_TITLE_MAX_CHARS
+    assert EVENT_TITLE_MAX_CHARS == 58  # Google's v4 validation ceiling
 
 
 def test_window_defaults_to_a_week_from_now():
