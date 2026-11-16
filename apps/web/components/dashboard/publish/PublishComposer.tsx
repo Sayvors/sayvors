@@ -75,13 +75,9 @@ const CTA_VALUES: CtaValue[] = [
 /*
  * The unified Publish composer.
  *
- * Destinations are picked in the aside (step 3) with an "all connected"
- * master switch. Each selected destination shows method pills (Feed post /
- * Story / Reel / Status) right below it — clicking a pill opens a wide
- * modal where that specific platform+method gets its own preview + crop
- * editor + Save button. Crop state is keyed per destination+method so every
- * format keeps its own framing, and the step-1 thumbnail + live preview
- * mirror whatever you're currently configuring.
+ * A 3-step wizard (Media & message → Destinations → When & publish) keeps
+ * every section mounted — steps are toggled with `hidden` — so no draft
+ * state, media preview or open modal is lost while navigating.
  *
  * Confirming uploads locally-picked media to /api/v1/media/upload (the
  * provider must fetch the files from a public URL at publish time), then
@@ -414,6 +410,9 @@ export default function PublishComposer({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
+  // Wizard navigation only — every input/handler stays mounted (steps are
+  // shown with `hidden`), so no draft state or media preview is ever lost.
+  const [postStep, setPostStep] = useState<1 | 2 | 3>(1);
   const { t: tr, locale } = useI18n();
   const pc: ComposerDict = tr.publish.composer;
   const methods = tr.publish.methods as MethodDict;
@@ -948,7 +947,12 @@ export default function PublishComposer({
   const showCaptionWarn = caption.length > 0 && captionOver.length > 0;
 
   const openRow = (id: string) => {
-    document.getElementById(`dest-row-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    // Chips live in the sticky bar, which is visible on every step. Bring the
+    // destination step into view first, then scroll to the exact row.
+    if (postStep !== 2) setPostStep(2);
+    requestAnimationFrame(() => {
+      document.getElementById(`dest-row-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
   };
 
   // The modal target + method
@@ -975,14 +979,50 @@ export default function PublishComposer({
             </p>
           </div>
         </div>
+        {/* Step wizard — visual navigation only; all steps stay mounted. */}
+        <ol className="mt-4 flex items-center gap-2 sm:gap-3" aria-label="Post steps">
+          {([
+            { id: 1 as const, label: pc.wizard.step1 },
+            { id: 2 as const, label: pc.wizard.step2 },
+            { id: 3 as const, label: pc.wizard.step3 },
+          ]).map((s, index) => {
+            const active = postStep === s.id;
+            const done = postStep > s.id;
+            return (
+              <li key={s.id} className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+                <button
+                  type="button"
+                  onClick={() => setPostStep(s.id)}
+                  aria-current={active ? "step" : undefined}
+                  className={`flex shrink-0 items-center gap-2 rounded-full py-1 pr-2 transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+                    active ? "text-[var(--ui-ink)]" : done ? "text-[var(--ui-ink-2)]" : "text-[var(--ui-ink-2)] opacity-70"
+                  }`}
+                >
+                  <span className={`flex h-7 w-7 items-center justify-center rounded-full text-[12px] font-bold transition ${
+                    active
+                      ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
+                      : done
+                        ? "bg-[var(--ui-ink)]/10 text-[var(--ui-ink)]"
+                        : "border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] text-[var(--ui-ink-2)]"
+                  }`}>
+                    {done ? "✓" : s.id}
+                  </span>
+                  <span className="truncate text-[12px] font-semibold sm:text-[13px]">{s.label}</span>
+                </button>
+                {index < 2 && <span className={`h-px min-w-2 flex-1 ${done ? "bg-[var(--ui-ink)]/40" : "bg-[var(--ui-line)]"}`} />}
+              </li>
+            );
+          })}
+        </ol>
+        <p className={`mt-2 text-[11px] ${INK2}`}>{fill(pc.wizard.stepOf, { n: postStep })}</p>
       </header>
 
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto grid max-w-6xl gap-5 px-4 pb-28 pt-5 sm:px-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
-          {/* Below lg the wrappers are display:contents, so the sections
-              become one ordered column: 1 → 2 → 3 → formats → 4 → preview. */}
-          <div className="contents lg:col-start-1 lg:block lg:space-y-5">
-          <section aria-labelledby="publish-media-h" className="clay-panel order-1 bg-[var(--ui-surface)] p-4 sm:p-5">
+        <div className="mx-auto max-w-6xl px-4 pb-28 pt-5 sm:px-6">
+          {/* STEP 1 — media + message. Steps use `hidden`, not unmounting:
+              every input, ref and preview stays alive while navigating. */}
+          <div className={postStep === 1 ? "mx-auto max-w-3xl space-y-5" : "hidden"}>
+          <section aria-labelledby="publish-media-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
             <h2 id="publish-media-h" className={`text-[14px] font-bold ${INK}`}>
               {pc.stepMedia}
             </h2>
@@ -997,7 +1037,28 @@ export default function PublishComposer({
             )}
           </section>
 
-          <section aria-labelledby="publish-message-h" className="clay-panel order-2 bg-[var(--ui-surface)] p-4 sm:p-5">
+          <section aria-labelledby="ai-video-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
+            <button
+              type="button"
+              id="ai-video-h"
+              onClick={() => setAiOpen((v) => !v)}
+              aria-expanded={aiOpen}
+              className={`flex w-full items-center justify-between gap-2 text-left ${INK}`}
+            >
+              <span className="text-[14px] font-bold">{pc.aiTitle}</span>
+              <span className={`text-[12px] font-semibold ${INK2}`}>{aiOpen ? "Hide" : "Show"}</span>
+            </button>
+            {aiOpen && (
+              <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
+                {pc.aiSub}
+              </p>
+            )}
+            <div className={aiOpen ? "" : "hidden"}>
+              <AiVideoCreator googleTargets={googleTargets} />
+            </div>
+          </section>
+
+          <section aria-labelledby="publish-message-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
             <h2 id="publish-message-h" className={`text-[14px] font-bold ${INK}`}>
               {pc.stepMessage}
             </h2>
@@ -1053,42 +1114,14 @@ export default function PublishComposer({
                   className={`${FIELD} mt-1 w-full resize-y`}
                 />
               </div>
-              <div className="mt-4 border-t border-[var(--ui-line)] pt-3">
-                <label htmlFor="pub-cta-type" className={`text-[12px] font-semibold ${INK2}`}>
-                  {pc.ctaType}
-                </label>
-                <select
-                  id="pub-cta-type"
-                  value={ctaType}
-                  onChange={(e) => {
-                    setCtaType(e.target.value);
-                    if (e.target.value === "call") setCtaUrl("");
-                  }}
-                  className={`${FIELD} mt-1 w-full sm:w-64`}
-                >
-                  <option value="">{pc.ctaTypePh}</option>
-                  {CTA_VALUES.map((value) => (
-                    <option key={value} value={value}>
-                      {pc.ctaTypes[value]}
-                    </option>
-                  ))}
-                </select>
-                {ctaType && ctaType !== "call" && (
-                  <input
-                    type="url"
-                    value={ctaUrl}
-                    onChange={(e) => setCtaUrl(e.target.value)}
-                    placeholder={pc.ctaUrlPh}
-                    aria-label={pc.ctaUrlPh}
-                    className={`${FIELD} mt-1.5 w-full`}
-                  />
-                )}
-                <p className={`mt-1.5 text-[11px] ${INK2}`}>{pc.ctaHint}</p>
-              </div>
             </div>
           </section>
 
-          <section aria-labelledby="publish-schedule-h" className="clay-panel order-5 bg-[var(--ui-surface)] p-4 sm:p-5">
+          </div>{/* end step 1 */}
+
+          {/* STEP 3 — schedule + live preview */}
+          <div className={postStep === 3 ? "grid gap-5 lg:grid-cols-2 lg:items-start" : "hidden"}>
+          <section aria-labelledby="publish-schedule-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
             <h2 id="publish-schedule-h" className={`text-[14px] font-bold ${INK}`}>
               {pc.stepWhen}
             </h2>
@@ -1158,7 +1191,7 @@ export default function PublishComposer({
             )}
           </section>
 
-          <section aria-labelledby="publish-preview-h" className="clay-panel order-6 bg-[var(--ui-surface)] p-4 sm:p-5">
+          <section aria-labelledby="publish-preview-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <h2 id="publish-preview-h" className={`text-[14px] font-bold ${INK}`}>
                 {pc.stepPreview}
@@ -1186,10 +1219,47 @@ export default function PublishComposer({
             </div>
           </section>
 
-          </div>
+          </div>{/* end step 3 */}
 
-          <aside className="contents lg:col-start-2 lg:block lg:space-y-5 lg:sticky lg:top-4 lg:h-fit">
-          <section aria-labelledby="publish-dest-h" className="clay-panel order-3 bg-[var(--ui-surface)] p-4 sm:p-5">
+          {/* STEP 2 — destinations + their per-platform configuration */}
+          <div className={postStep === 2 ? "grid gap-5 lg:grid-cols-2 lg:items-start" : "hidden"}>
+          <div className={`space-y-5 ${selectedTargets.length === 0 ? "lg:col-span-2" : ""}`}>
+          <section aria-labelledby="publish-cta-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
+            <h2 id="publish-cta-h" className={`text-[14px] font-bold ${INK}`}>{pc.wizard.ctaTitle}</h2>
+            <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>{pc.ctaHint}</p>
+            <div>
+              <label htmlFor="pub-cta-type" className={`text-[12px] font-semibold ${INK2}`}>
+                {pc.ctaType}
+              </label>
+              <select
+                id="pub-cta-type"
+                value={ctaType}
+                onChange={(e) => {
+                  setCtaType(e.target.value);
+                  if (e.target.value === "call") setCtaUrl("");
+                }}
+                className={`${FIELD} mt-1 w-full`}
+              >
+                <option value="">{pc.ctaTypePh}</option>
+                {CTA_VALUES.map((value) => (
+                  <option key={value} value={value}>
+                    {pc.ctaTypes[value]}
+                  </option>
+                ))}
+              </select>
+              {ctaType && ctaType !== "call" && (
+                <input
+                  type="url"
+                  value={ctaUrl}
+                  onChange={(e) => setCtaUrl(e.target.value)}
+                  placeholder={pc.ctaUrlPh}
+                  aria-label={pc.ctaUrlPh}
+                  className={`${FIELD} mt-1.5 w-full`}
+                />
+              )}
+            </div>
+          </section>
+          <section aria-labelledby="publish-dest-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
             <h2 id="publish-dest-h" className={`text-[14px] font-bold ${INK}`}>
               {pc.stepDest}
             </h2>
@@ -1209,10 +1279,11 @@ export default function PublishComposer({
               onToggleGoogleTarget={toggleTarget}
             />
           </section>
+          </div>{/* destinations column */}
 
           {/* Configure formats — method pills per selected destination */}
           {selectedTargets.length > 0 && (
-            <section aria-labelledby="publish-formats-h" className="clay-panel order-4 bg-[var(--ui-surface)] p-4 sm:p-5">
+            <section aria-labelledby="publish-formats-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
               <h2 id="publish-formats-h" className={`text-[14px] font-bold ${INK}`}>
                 {pc.formatsTitle}
               </h2>
@@ -1287,27 +1358,7 @@ export default function PublishComposer({
             </section>
           )}
 
-          <section aria-labelledby="ai-video-h" className="clay-panel order-7 bg-[var(--ui-surface)] p-4 sm:p-5">
-            <button
-              type="button"
-              id="ai-video-h"
-              onClick={() => setAiOpen((v) => !v)}
-              aria-expanded={aiOpen}
-              className={`flex w-full items-center justify-between gap-2 text-left ${INK}`}
-            >
-              <span className="text-[14px] font-bold">{pc.aiTitle}</span>
-              <span className={`text-[12px] font-semibold ${INK2}`}>{aiOpen ? "Hide" : "Show"}</span>
-            </button>
-            {aiOpen && (
-              <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
-                {pc.aiSub}
-              </p>
-            )}
-            <div className={aiOpen ? "" : "hidden"}>
-              <AiVideoCreator googleTargets={googleTargets} />
-            </div>
-          </section>
-          </aside>
+          </div>{/* end step 2 */}
         </div>
       </div>
 
@@ -1341,6 +1392,25 @@ export default function PublishComposer({
               })}
             </div>
           )}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setPostStep((s) => Math.max(1, s - 1) as 1 | 2 | 3)}
+              disabled={postStep === 1}
+              className="clay-btn-secondary px-4 py-2.5 text-[13px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {pc.wizard.back}
+            </button>
+            {postStep < 3 && (
+              <button
+                type="button"
+                onClick={() => setPostStep((s) => Math.min(3, s + 1) as 1 | 2 | 3)}
+                className="clay-btn-primary px-4 py-2.5 text-[13px] font-semibold text-[var(--ui-on-ink)] transition hover:opacity-90"
+              >
+                {pc.wizard.next}
+              </button>
+            )}
+          </div>
           <p className={`min-w-0 flex-1 truncate text-[12px] font-medium ${INK2}`} role="status" aria-live="polite">
             {confirmItems.length === 0
               ? pc.readyNone

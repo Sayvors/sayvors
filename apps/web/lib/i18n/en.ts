@@ -2501,6 +2501,15 @@ const en = {
       comingTitle: "{label} publishing lands later",
     },
     composer: {
+      wizard: {
+        step1: "Media & message",
+        step2: "Destinations",
+        step3: "When & publish",
+        back: "Back",
+        next: "Next",
+        stepOf: "Step {n} of 3",
+        ctaTitle: "Call to action",
+      },
       back: "← Back to posts",
       title: "Publish a post",
       sub: "One post, every connected network — pick a format on any destination to configure its crop.",
