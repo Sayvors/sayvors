@@ -624,19 +624,31 @@ app.include_router(jobs_router)
 app.include_router(jobs_admin_router)
 app.include_router(team_router)
 
-# Public media files
-try:
-    import os as _os
-    from fastapi.staticfiles import StaticFiles as _StaticFiles
+# Public media files. This must stream from the configured backend, not just
+# the local disk: with S3/GCS the raw object URL is private (Google gets a 403
+# on a localPost's `sourceUrl`), so providers are handed this origin instead.
+import mimetypes as _mimetypes
+import os as _os
+from fastapi import HTTPException as _HTTPException
 
-    _os.makedirs(settings.MEDIA_DIR, exist_ok=True)
-    app.mount(
-        settings.MEDIA_PUBLIC_PATH,
-        _StaticFiles(directory=settings.MEDIA_DIR, check_dir=False),
-        name="media-files",
-    )
-except Exception:
-    pass
+from .core.storage import get_media as _get_media
+
+_os.makedirs(settings.MEDIA_DIR, exist_ok=True)
+
+
+@app.get(settings.MEDIA_PUBLIC_PATH + "/{tenant_id}/{key:path}", name="media-files")
+async def _public_media(tenant_id: str, key: str):
+    """Public byte stream for a tenant's media object, on any storage backend."""
+    try:
+        data = _get_media(tenant_id, key)
+    except (FileNotFoundError, KeyError):
+        raise _HTTPException(status_code=404, detail="Media not found") from None
+    except Exception:
+        # Storage errors must not leak credentials or bucket names to callers.
+        logger.exception("Public media read failed for %s/%s", tenant_id, key)
+        raise _HTTPException(status_code=404, detail="Media not found") from None
+    content_type = _mimetypes.guess_type(key)[0] or "application/octet-stream"
+    return Response(content=data, media_type=content_type)
 
 
 # ── Health & readiness endpoints ───────────────────────────────────────

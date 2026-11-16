@@ -294,6 +294,12 @@ class Settings(BaseSettings):
     # configured, set it explicitly there.
     GOOGLE_POST_MEDIA_STAGING: bool = False
 
+    # IANA zone used to render Google EVENT/OFFER wall-clock times when the
+    # request does not carry one (legacy post rows). The composer sends the
+    # merchant's own zone per publish. UTC here is neutral, never a hardcoded
+    # country offset.
+    GOOGLE_POST_TIMEZONE: str = "UTC"
+
     # ── Google Places API (New) ──────────────────────────────────────────
     # Server-side key for two features: resolving free-text service areas to
     # Google Place IDs, and the nearby-competitor peer set. Empty means both

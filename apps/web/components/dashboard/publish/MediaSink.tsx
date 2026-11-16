@@ -40,12 +40,15 @@ export default function MediaSink({
   onClear,
   thumb = null,
   thumbLabel = "",
+  platforms = [],
 }: {
   media: { type: "image" | "video" | null; url: string; fileName?: string; sizeBytes?: number } | null;
   onPick: (type: "image" | "video", url: string, fileName?: string, sizeBytes?: number, file?: File, width?: number, height?: number) => void;
   onClear: () => void;
   thumb?: ThumbCrop | null;
   thumbLabel?: string;
+  /** Destinations this media will be published to — drives Google's stricter limits. */
+  platforms?: string[];
 }) {
   const [dropping, setDropping] = useState(false);
   const [urlDraft, setUrlDraft] = useState("");
@@ -56,9 +59,13 @@ export default function MediaSink({
   const [libraryError, setLibraryError] = useState<string | null>(null);
   const { t, locale } = useI18n();
   const md = t.publish.media;
+  const pc = t.publish.composer;
   const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
   const fileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
+  // Google posts take a single photo, max 5MB, min 250px, and no video.
+  const hasGoogle = platforms.includes("google_reviews");
+  const maxMb = hasGoogle ? 5 : MAX_MEDIA_MB;
 
   const aspect = thumb && thumb.cropKey !== "orig" ? CROP_ASPECT[thumb.cropKey as Exclude<CropState["key"], "orig">] : null;
   const box = thumbBox(thumb?.cropKey ?? "orig");
@@ -67,8 +74,8 @@ export default function MediaSink({
     setError(null);
     const file = files?.[0];
     if (!file) return;
-    if (file.size > MAX_MEDIA_MB * 1024 * 1024) {
-      setError(fill(md.tooBig, { n: fmt(MAX_MEDIA_MB) }));
+    if (file.size > maxMb * 1024 * 1024) {
+      setError(hasGoogle ? pc.googleSize : fill(md.tooBig, { n: fmt(maxMb) }));
       return;
     }
     const ext = (file.name.split(".").pop() || "").toLowerCase();
@@ -90,6 +97,10 @@ export default function MediaSink({
       setError(md.badType);
       return;
     }
+    if (hasGoogle && kind === "video") {
+      setError(pc.googleVideo);
+      return;
+    }
     let width: number | undefined;
     let height: number | undefined;
     if (kind === "image") {
@@ -97,7 +108,7 @@ export default function MediaSink({
         const d = await inspectImageFile(file);
         width = d.width; height = d.height;
         if (width < 250 || height < 250) {
-          setError("That image is below Google's 250×250px minimum — Google may reject it.");
+          setError(pc.googleSmall);
           return;
         }
       } catch {
@@ -172,6 +183,10 @@ export default function MediaSink({
       return;
     }
     const kind = /\.(mp4|mov|m4v)(\?|$)/i.test(parsed.pathname) ? "video" : "image";
+    if (hasGoogle && kind === "video") {
+      setError(pc.googleVideo);
+      return;
+    }
     let width: number | undefined;
     let height: number | undefined;
     if (kind === "image") {
@@ -179,7 +194,7 @@ export default function MediaSink({
         const d = await probeImageUrl(value);
         width = d.width; height = d.height;
         if (width < 250 || height < 250) {
-          setError("That image is below Google's 250×250px minimum — Google may reject it.");
+          setError(pc.googleSmall);
           return;
         }
       } catch (e) {
@@ -295,7 +310,7 @@ export default function MediaSink({
             {md.dropTitle}
           </p>
           <p className="mt-1 text-[11.5px] text-[var(--ui-ink-2)]">
-            {fill(md.dropSub, { n: fmt(MAX_MEDIA_MB) })}
+            {fill(md.dropSub, { n: fmt(maxMb) })}
           </p>
           <button
             type="button"
@@ -402,7 +417,9 @@ export default function MediaSink({
       <input
         ref={fileInput}
         type="file"
-        accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime"
+        accept={hasGoogle
+          ? "image/jpeg,image/png,image/webp,image/gif"
+          : "image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime"}
         hidden
         onChange={(e) => {
           void acceptFiles(e.target.files);

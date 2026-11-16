@@ -85,6 +85,7 @@ def test_event_times_are_sent_in_the_business_timezone():
         coupon_code=None,
         terms=None,
         now=NOW,
+        timezone_name="Asia/Riyadh",
     )
     schedule = built.fields["event"]["schedule"]
     assert schedule["startTime"]["hours"] == 9
@@ -104,10 +105,32 @@ def test_a_date_crossing_midnight_moves_the_day_in_the_business_timezone():
         coupon_code=None,
         terms=None,
         now=NOW,
+        timezone_name="Asia/Riyadh",
     )
     schedule = built.fields["event"]["schedule"]
     assert schedule["startDate"] == {"year": 2026, "month": 11, "day": 10}
     assert schedule["startTime"]["hours"] == 1
+
+
+def test_event_times_follow_any_iana_zone_not_a_fixed_country_offset():
+    """The zone comes from the request, so a non-Saudi business is correct too."""
+    built = build_post_fields(
+        topic="EVENT",
+        caption="Open",
+        description="",
+        cta_type=None,
+        cta_url=None,
+        start=datetime(2026, 11, 20, 6, 0, tzinfo=timezone.utc),
+        end=datetime(2026, 11, 20, 10, 0, tzinfo=timezone.utc),
+        coupon_code=None,
+        terms=None,
+        now=NOW,
+        timezone_name="America/New_York",
+    )
+    schedule = built.fields["event"]["schedule"]
+    # 06:00 UTC is 01:00 in New York (UTC-5 in November), not 09:00 in Riyadh.
+    assert schedule["startTime"]["hours"] == 1
+    assert schedule["startDate"] == {"year": 2026, "month": 11, "day": 20}
 
 
 def test_an_offer_has_event_and_offer_and_no_button():

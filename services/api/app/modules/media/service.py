@@ -113,9 +113,12 @@ async def save_upload(
     if not _magic_matches(ext, data):
         raise ValueError("File content doesn't look like the file type it claims.")
     expected_type = _CONTENT_TYPES[ext]
-    storage_key, public_url = put_media(user_id, filename, data, expected_type)
-    if not public_url:
-        public_url = local_media_url(base_url, user_id, storage_key)
+    storage_key, _provider_url = put_media(user_id, filename, data, expected_type)
+    # Always hand out our own public origin, even when the bytes live in S3 or
+    # GCS. The raw object URL is often private, and Google's localPosts API
+    # fetches `sourceUrl` itself — a 403 there is a generic INVALID_ARGUMENT.
+    # `/media-files` streams the object from whichever backend holds it.
+    public_url = local_media_url(base_url, user_id, storage_key)
     object_key = storage_key
     if object_key.startswith(f"media/{user_id}/"):
         object_key = object_key[len("media/"):]

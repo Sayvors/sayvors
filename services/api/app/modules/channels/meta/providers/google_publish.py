@@ -129,6 +129,8 @@ class GoogleBusinessPublisher:
         terms_conditions: str | None = None,
         language_code: str | None = None,
         tenant_id: str | None = None,
+        event_title: str | None = None,
+        timezone_name: str | None = None,
     ) -> dict:
         """Publish one post to one GBP location.
 
@@ -177,6 +179,8 @@ class GoogleBusinessPublisher:
                 coupon_code=coupon_code,
                 terms=terms_conditions,
                 now=now,
+                event_title=event_title,
+                timezone_name=timezone_name,
             )
             scheduled_time = scheduled_time_rfc3339(scheduled_at, now)
         except ValueError as e:

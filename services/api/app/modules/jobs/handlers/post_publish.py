@@ -74,6 +74,8 @@ async def handle_post_publish(job: Job, db: AsyncSession) -> dict | None:
     terms_conditions = payload.get("terms_conditions")
     # The language of the post (BCP-47). Google defaults to en-US.
     language_code = payload.get("language_code")
+    event_title = payload.get("event_title")
+    timezone_name = payload.get("timezone")
 
     if not platform:
         raise ValueError("platform missing from payload")
@@ -153,6 +155,8 @@ async def handle_post_publish(job: Job, db: AsyncSession) -> dict | None:
             coupon_code=coupon_code,
             terms_conditions=terms_conditions,
             language_code=language_code,
+            event_title=event_title,
+            timezone_name=timezone_name,
         )
     else:
         provider = _provider_for(platform)

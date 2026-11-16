@@ -18,6 +18,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -120,6 +121,13 @@ class PublishBody(BaseModel):
     # defaults the window (now → +7 days).
     start_date: str | None = None
     end_date: str | None = None
+    # Google requires a name for EVENT and OFFER posts. Without one the
+    # publisher derives it from the caption's first line.
+    event_title: str | None = Field(None, max_length=58)
+    # IANA zone the event/offer times were entered in, e.g. "Europe/Riyadh".
+    # Google's TimeInterval has no timezone field, so wall-clock values are
+    # rendered in this zone before being sent.
+    timezone: str | None = Field(None, max_length=64)
     # Offer (promotion) fields. Google's LocalPostOffer carries exactly
     # three: couponCode, redeemOnlineUrl and termsConditions. The redeem URL
     # is the post's CTA link for an OFFER, so only the coupon and the terms
@@ -133,6 +141,16 @@ class PublishBody(BaseModel):
     idempotency_key: str | None = Field(None, max_length=200)
     destinations: list[PublishDestination]
     batch_id: str | None = Field(None, max_length=64)
+
+    @field_validator("timezone")
+    @classmethod
+    def _validate_timezone(cls, v: str | None) -> str | None:
+        if v:
+            try:
+                ZoneInfo(v)
+            except (ZoneInfoNotFoundError, ValueError) as e:
+                raise ValueError(f"unknown IANA timezone {v!r}") from e
+        return v
 
     @field_validator("media_type")
     @classmethod
@@ -346,6 +364,8 @@ async def publish_post(
                     "delete_at": body.delete_at,
                     "start_date": body.start_date,
                     "end_date": body.end_date,
+                    "event_title": body.event_title,
+                    "timezone": body.timezone,
                     "coupon_code": body.coupon_code,
                     "terms_conditions": body.terms_conditions,
                     "language_code": body.language_code,

@@ -392,6 +392,9 @@ export default function PublishComposer({
   // blank the publisher defaults it (now → +7 days).
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  // Google requires a name for event/offer posts; without one the backend
+  // falls back to the caption's first line.
+  const [eventTitle, setEventTitle] = useState("");
 
   // ── Per-format previews + saved crops ───────────────────────────
   const [crops, setCrops] = useState<Record<string, CropState>>({});
@@ -613,15 +616,74 @@ export default function PublishComposer({
   const needsOfferFields = confirmItems.some(({ methods }) =>
     methods.some((m) => m === "offer"),
   );
-  const needsCaption = confirmItems.length > 0;
+  const hasGoogle = confirmItems.some(({ target }) => target.platform === "google_reviews");
+  // A Google post needs text or an image — the API refuses one with neither.
+  const needsText = hasGoogle && confirmItems.some(({ methods }) =>
+    methods.some((m) => m === "update" || m === "event" || m === "offer" || m === "post"),
+  );
+  const hasOfferCoupon = confirmItems.some(({ target }) =>
+    !!offerDetails[cropKeyFor(target.id, "offer")]?.coupon?.trim(),
+  );
 
-  const openConfirm = () => {
-    if (needsMedia && media === null) {
-      setNotice(pc.needMedia);
+  /** Every required field for the current draft, in step order. */
+  const draftProblems = (): string[] => {
+    const problems: string[] = [];
+    if (confirmItems.length === 0) problems.push(pc.needDest);
+    if (needsMedia && media === null) problems.push(pc.needMedia);
+    if (needsText && media === null && !caption.trim() && !description.trim()) {
+      problems.push(pc.captionRequired);
+    }
+    if (needsEventWindow && !eventTitle.trim()) problems.push(pc.eventTitleRequired);
+    if (ctaType && ctaType !== "call" && !ctaUrl.trim()) problems.push(pc.ctaUrlRequired);
+    if (needsOfferFields && !ctaUrl.trim() && !hasOfferCoupon) {
+      problems.push(pc.wizard.offerLinkRequired);
+    }
+    const dateProblem = checkWindow({
+      scheduleAt: scheduleOn ? scheduleAt : "",
+      removeAt: removeOn ? removeAt : "",
+      startDate: needsEventWindow ? startDate : "",
+      endDate: needsEventWindow ? endDate : "",
+      eventRequired: needsEventWindow,
+    });
+    if (dateProblem) problems.push(tr.publish.dates[dateProblem]);
+    return problems;
+  };
+
+  /** Only the fields owned by the step the merchant is on. */
+  const stepProblems = (step: 1 | 2 | 3): string[] => {
+    if (step === 1) {
+      const p: string[] = [];
+      if (needsMedia && media === null) p.push(pc.needMedia);
+      if (needsText && media === null && !caption.trim() && !description.trim()) {
+        p.push(pc.captionRequired);
+      }
+      return p;
+    }
+    if (step === 2) {
+      const p: string[] = [];
+      if (ctaType && ctaType !== "call" && !ctaUrl.trim()) p.push(pc.ctaUrlRequired);
+      if (needsOfferFields && !ctaUrl.trim() && !hasOfferCoupon) {
+        p.push(pc.wizard.offerLinkRequired);
+      }
+      return p;
+    }
+    return draftProblems();
+  };
+
+  const nextStep = () => {
+    const problems = stepProblems(postStep);
+    if (problems.length > 0) {
+      setNotice(problems[0]);
       return;
     }
-    if (confirmItems.length === 0) {
-      setNotice(pc.needDest);
+    setNotice(null);
+    setPostStep((s) => Math.min(3, s + 1) as 1 | 2 | 3);
+  };
+
+  const openConfirm = () => {
+    const problems = draftProblems();
+    if (problems.length > 0) {
+      setNotice(problems[0]);
       return;
     }
     if (media && media.type === "image" && media.width && media.height) {
@@ -661,6 +723,7 @@ export default function PublishComposer({
         removeAt: removeOn ? removeAt : "",
         startDate: needsEventWindow ? startDate : "",
         endDate: needsEventWindow ? endDate : "",
+        eventRequired: needsEventWindow,
       });
       if (dateProblem) {
         throw new Error(tr.publish.dates[dateProblem]);
@@ -830,6 +893,11 @@ export default function PublishComposer({
             delete_at: removeOn && removeAt ? new Date(removeAt).toISOString() : null,
             start_date: startDate ? new Date(startDate).toISOString() : null,
             end_date: endDate ? new Date(endDate).toISOString() : null,
+            // The wall-clock time the merchant picked is in this zone. Google's
+            // TimeInterval has no timezone field, so the backend renders the
+            // same wall-clock values here before sending them.
+            event_title: eventTitle.trim() || null,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
             coupon_code: group.coupon || null,
             terms_conditions: group.terms || null,
             // Google labels the post with the language the merchant wrote
@@ -1089,7 +1157,14 @@ export default function PublishComposer({
             <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
               {pc.mediaSub}
             </p>
-            <MediaSink media={media} onPick={pickMedia} onClear={clearMedia} thumb={thumb} thumbLabel={thumbLabel} />
+            <MediaSink
+              media={media}
+              onPick={pickMedia}
+              onClear={clearMedia}
+              thumb={thumb}
+              thumbLabel={thumbLabel}
+              platforms={confirmItems.map(({ target }) => target.platform)}
+            />
             {needsMedia && media === null && (
               <p className="mt-3 text-[12px] font-semibold text-amber-700 dark:text-amber-400">
                 An image or video is required for the selected destinations.
@@ -1130,7 +1205,7 @@ export default function PublishComposer({
                 <div className="flex items-baseline justify-between">
                   <label htmlFor="pub-caption" className={`text-[12px] font-semibold ${INK2}`}>
                     {pc.caption}
-                    {needsCaption && <span className="ml-1 text-coral" title={pc.wizard.requiredHint}>*</span>}
+                    {needsText && !media && <span className="ml-1 text-coral" title={pc.wizard.requiredHint}>*</span>}
                   </label>
                   <span
                     className={`text-[11px] ${
@@ -1224,6 +1299,18 @@ export default function PublishComposer({
                   {pc.eventWindow}
                   <span className="ml-1 text-coral" title={pc.wizard.requiredHint}>*</span>
                 </p>
+                <label className={`mb-3 block text-[12px] font-semibold ${INK2}`}>
+                  {pc.eventTitle}<span className="text-coral">*</span>
+                  <input
+                    type="text"
+                    value={eventTitle}
+                    onChange={(e) => setEventTitle(e.target.value)}
+                    maxLength={58}
+                    placeholder={pc.eventTitlePh}
+                    aria-label={pc.eventTitle}
+                    className={`${FIELD} mt-1 w-full`}
+                  />
+                </label>
                 <div className="flex flex-wrap items-center gap-3">
                   <label className={`flex items-center gap-2 text-[12px] ${INK2}`}>
                     {pc.eventStart}<span className="text-coral">*</span>
@@ -1524,6 +1611,15 @@ export default function PublishComposer({
                 ))}
               </div>
             )}
+            {stepProblems(postStep).length > 0 && (
+              <div className="mb-3 space-y-1 rounded-[20px] border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5" role="status">
+                {stepProblems(postStep).map((problem) => (
+                  <p key={problem} className="text-[12px] font-semibold text-amber-800 dark:text-amber-300">
+                    {problem}
+                  </p>
+                ))}
+              </div>
+            )}
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 {postStep > 1 && (
@@ -1544,7 +1640,7 @@ export default function PublishComposer({
               {postStep < 3 ? (
                 <button
                   type="button"
-                  onClick={() => setPostStep((s) => Math.min(3, s + 1) as 1 | 2 | 3)}
+                  onClick={nextStep}
                   className="clay-btn-primary px-6 py-2.5 text-[13px] font-bold text-[var(--ui-on-ink)] transition duration-200 hover:opacity-90 active:translate-y-0.5 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
                 >
                   {pc.wizard.next}
