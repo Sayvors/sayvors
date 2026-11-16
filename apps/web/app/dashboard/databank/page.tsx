@@ -7,11 +7,13 @@ import {
   deleteDatabank,
   listDocuments,
   listCrawlSources,
+  fetchActivity,
   retryDocuments,
   previewDocument,
   type DatabankDoc,
   type DocumentPreview,
   type CrawlSourceStatus,
+  type ActivityEvent,
 } from "@/lib/api-rag";
 import {
   getBusinessProfile,
@@ -422,6 +424,7 @@ function DatabankPageContent() {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<string>("all");
   const [crawlSources, setCrawlSources] = useState<CrawlSourceStatus[]>([]);
+  const [activity, setActivity] = useState<ActivityEvent[]>([]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -433,6 +436,13 @@ function DatabankPageContent() {
       })
       .catch(() => {
         if (!cancelled) setCrawlSources([]);
+      });
+    fetchActivity(bankId)
+      .then((data) => {
+        if (!cancelled) setActivity(Array.isArray(data?.events) ? data.events : []);
+      })
+      .catch(() => {
+        if (!cancelled) setActivity([]);
       });
     return () => {
       cancelled = true;
@@ -498,6 +508,8 @@ function DatabankPageContent() {
         setDocs(Array.isArray(data) ? data : data?.documents ?? []);
         const sources = await listCrawlSources(bankId);
         setCrawlSources(Array.isArray(sources?.sources) ? sources.sources : []);
+        const feed = await fetchActivity(bankId);
+        setActivity(Array.isArray(feed?.events) ? feed.events : []);
       } catch {
         // keep the last known state on transient errors
       }
@@ -845,7 +857,7 @@ function DatabankPageContent() {
                           <span className="truncate text-[12px] font-bold text-foreground">{s.start_url}</span>
                           {s.sync_enabled && (
                             <span className="rounded-[2px] bg-emerald/10 px-2 py-0.5 text-[10px] font-bold text-emerald ring-1 ring-emerald/30">
-                              auto {s.sync_interval_minutes}m
+                              {fill(d.crawler.autoSync, { n: s.sync_interval_minutes })}
                             </span>
                           )}
                         </div>
@@ -853,14 +865,16 @@ function DatabankPageContent() {
                           {busy ? (
                             <span className="inline-flex items-center gap-1.5 rounded-[2px] bg-deep-violet/10 px-2 py-0.5 text-deep-violet">
                               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-deep-violet" />
-                              crawling…
+                              {d.crawler.crawling}
                             </span>
                           ) : s.last_status === "success" ? (
-                            <span className="rounded-[2px] bg-emerald/10 px-2 py-0.5 text-emerald">done</span>
+                            <span className="rounded-[2px] bg-emerald/10 px-2 py-0.5 text-emerald">{d.crawler.done}</span>
                           ) : s.last_status === "failed" ? (
-                            <span className="rounded-[2px] bg-coral/10 px-2 py-0.5 text-coral">failed</span>
+                            <span className="rounded-[2px] bg-coral/10 px-2 py-0.5 text-coral">{d.crawler.failed}</span>
                           ) : (
-                            <span className="rounded-[2px] bg-foreground/[0.06] px-2 py-0.5 text-foreground/50">{s.last_status}</span>
+                            <span className="rounded-[2px] bg-foreground/[0.06] px-2 py-0.5 text-foreground/50">
+                              {s.last_status === "running" ? d.crawler.running : d.crawler.idle}
+                            </span>
                           )}
                         </div>
                       </div>
@@ -871,14 +885,57 @@ function DatabankPageContent() {
                         />
                       </div>
                       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-foreground/50">
-                        <span>{crawled}/{total} pages crawled</span>
-                        {discovered > 0 && <span>· {discovered} queued</span>}
-                        {failed > 0 && <span className="text-coral">· {failed} failed</span>}
+                        <span>{fill(d.crawler.pagesCrawled, { done: crawled, total })}</span>
+                        {discovered > 0 && <span>· {fill(d.crawler.queuedCount, { n: discovered })}</span>}
+                        {failed > 0 && <span className="text-coral">· {fill(d.crawler.failedCount, { n: failed })}</span>}
                         {s.error && <span className="truncate text-coral">· {s.error}</span>}
                       </div>
                     </div>
                   );
                 })}
+              </div>
+            )}
+
+            {/* Activity (organized log: ingest, crawls, failures) */}
+            {activity.length > 0 && (
+              <div className="border-b border-card-border bg-foreground/[0.015] px-5 py-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="h-4 w-4 text-foreground/40">
+                    <path d="M6 8a6 6 0 0112 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 003.4 0" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  <span className="text-[11px] font-bold uppercase tracking-widest text-foreground/40">{d.activity.title}</span>
+                </div>
+                <div className="max-h-56 space-y-1.5 overflow-y-auto pr-1">
+                  {activity.map((ev, i) => {
+                    const isError = ev.type === "error" || ev.status === "failed";
+                    const isDone = ev.status === "done" || ev.status === "success" || ev.status === "completed";
+                    const isRunning = ev.status === "running" || ev.status === "queued";
+                    const dot = isError ? "bg-coral" : isDone ? "bg-emerald" : isRunning ? "bg-deep-violet animate-pulse" : "bg-foreground/25";
+                    const label =
+                      ev.type === "crawl" ? d.activity.crawl :
+                      ev.type === "ingest" ? d.activity.ingest :
+                      d.activity.error;
+                    return (
+                      <div key={`${ev.type}-${ev.at ?? i}-${i}`} className="flex items-start gap-2.5 rounded-[2px] bg-card px-3 py-2 ring-1 ring-card-border">
+                        <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="rounded-[2px] bg-foreground/[0.05] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-foreground/45">{label}</span>
+                            <span className="truncate text-[12px] font-semibold text-foreground/85">{ev.title}</span>
+                          </div>
+                          {ev.detail && (
+                            <div className={`mt-0.5 truncate text-[11px] ${isError ? "text-coral" : "text-foreground/45"}`}>{ev.detail}</div>
+                          )}
+                        </div>
+                        {ev.at && (
+                          <span className="shrink-0 text-[10px] tabular-nums text-foreground/30">
+                            {new Date(ev.at).toLocaleTimeString(locale === "ar" ? "ar-SA" : "en-US", { hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
 
@@ -1026,8 +1083,20 @@ function DatabankPageContent() {
                                         {doc.lang}
                                       </span>
                                     )}
+                                    {doc.intent && (
+                                      <span className="shrink-0 rounded-[2px] bg-foreground/[0.06] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-foreground/45">
+                                        {doc.intent}
+                                      </span>
+                                    )}
                                   </div>
-                                  <div className="text-[11px] text-foreground/35 sm:hidden">{doc.file_type || "—"} · {formatBytes(doc.file_size ?? 0)}</div>
+                                  {doc.summary && (
+                                    <div className="mt-0.5 line-clamp-1 text-[11px] leading-snug text-foreground/40" title={doc.summary}>
+                                      {doc.summary}
+                                    </div>
+                                  )}
+                                  {!doc.summary && (
+                                    <div className="text-[11px] text-foreground/35 sm:hidden">{doc.file_type || "—"} · {formatBytes(doc.file_size ?? 0)}</div>
+                                  )}
                                 </div>
                               </div>
                             </td>

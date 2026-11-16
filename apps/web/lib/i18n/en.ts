@@ -4412,6 +4412,25 @@ const en = {
           audience: "Audience & languages",
         },
       },
+      crawler: {
+        autoSync: "auto {n}m",
+        crawling: "crawling…",
+        done: "done",
+        failed: "failed",
+        idle: "idle",
+        running: "running",
+        pagesCrawled: "{done}/{total} pages crawled",
+        queuedCount: "{n} queued",
+        failedCount: "{n} failed",
+      },
+      activity: {
+        title: "Activity",
+        empty: "No activity yet — crawl a site or upload files.",
+        crawl: "Crawl",
+        ingest: "Process",
+        error: "Error",
+        viewChunk: "1 chunk — what the AI actually searches",
+      },
       create: {
         notSelected: "Not selected",
         steps: {

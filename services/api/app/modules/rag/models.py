@@ -117,6 +117,10 @@ class Document(Base):
     # /en/pricing and /ar/pricing both map to "/pricing" so the UI can present
     # them as variants of one knowledge item instead of duplicate crawls.
     variant_group: Mapped[str | None] = mapped_column(String(2000), nullable=True, index=True)
+    # Structured extraction (§31 Phase B, document_structure.build_structured_doc):
+    # summary, intent, section outline, bounded entities. Nullable — uploads
+    # and legacy scrape rows stay valid without it.
+    meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

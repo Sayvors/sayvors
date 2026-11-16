@@ -38,6 +38,10 @@ class DocumentResponse(BaseModel):
     # identity shared by hreflang twins, so the UI can group EN/AR variants.
     lang: str | None = None
     variant_group: str | None = None
+    # Phase B structured extraction (from documents.meta): the UI shows the
+    # summary preview and intent chip; full sections stay in meta for search.
+    summary: str | None = None
+    intent: str | None = None
 
 
 class DocumentListResponse(BaseModel):
@@ -130,6 +134,19 @@ class CrawlPreviewResponse(BaseModel):
     scope: str
     max_pages: int
     candidates: list[CrawlPreviewItem]
+
+
+class ActivityEvent(BaseModel):
+    type: str
+    status: str
+    title: str
+    detail: str = ""
+    progress: int | None = None
+    at: datetime | None = None
+
+
+class ActivityResponse(BaseModel):
+    events: list[ActivityEvent]
 
 
 class IngestJobResponse(BaseModel):

@@ -8,6 +8,7 @@ from ...database import async_session
 from .cache import set_progress
 from .chunker import chunk_text
 from .crawler import crawl_site, path_lang, variant_group
+from .document_structure import build_structured_doc
 from .embeddings import get_embedding_provider
 from .models import CrawlPage, CrawlSource, Document, DocumentChunk, IngestJob, ScrapeJob
 
@@ -213,7 +214,13 @@ async def _process_document_job(job: IngestJob, db) -> None:
     await db.commit()
     await set_progress(str(job.id), 30, "Chunking...")
 
-    chunks = chunk_text(text_content)
+    # Chunk provenance (§31 Phase B): every chunk knows its document's
+    # language and source so search can filter/prefer per language.
+    chunks = chunk_text(text_content, metadata={
+        "lang": doc.lang,
+        "source_url": doc.source_url,
+        "doc_title": (doc.meta or {}).get("title") or doc.filename,
+    })
 
     doc.status = "processing"
     doc.chunk_count = len(chunks)
@@ -264,7 +271,11 @@ async def _process_document_job_single(doc, job, db, index, total) -> None:
     await db.commit()
     await set_progress(str(job.id), chunk_progress, job.stage)
 
-    chunks = chunk_text(text_content)
+    chunks = chunk_text(text_content, metadata={
+        "lang": doc.lang,
+        "source_url": doc.source_url,
+        "doc_title": (doc.meta or {}).get("title") or doc.filename,
+    })
 
     doc.status = "processing"
     doc.chunk_count = len(chunks)
@@ -419,7 +430,7 @@ async def _process_due_crawl_sources() -> bool:
             # crawled
             doc_id = await _upsert_scrape_document(
                 db, databank_id, user_id, r.url, r.markdown,
-                lang=r.lang, variant_group=variant_group(r.url),
+                lang=r.lang, variant_group=variant_group(r.url), title=r.title,
             )
             if doc_id:
                 created += 1
@@ -508,7 +519,8 @@ async def _process_pending_scrape() -> None:
             if r.status != "crawled" or not r.markdown.strip():
                 continue
             doc_id = await _upsert_scrape_document(
-                db, databank_id, user_id, r.url, r.markdown
+                db, databank_id, user_id, r.url, r.markdown,
+                lang=r.lang, variant_group=variant_group(r.url), title=r.title,
             )
             if doc_id:
                 created += 1
@@ -529,6 +541,7 @@ async def _process_pending_scrape() -> None:
 async def _upsert_scrape_document(
     db, databank_id: str, user_id: str, url: str, markdown: str,
     *, lang: str | None = None, variant_group: str | None = None,
+    title: str | None = None,
 ) -> str | None:
     """Create or update one scrape document, deduping by (databank, url).
 
@@ -537,10 +550,9 @@ async def _upsert_scrape_document(
     row for the same URL is updated in place; identical content is skipped
     entirely, changed content is re-stored and re-marked pending for ingest.
 
-    ``lang``/``variant_group`` feed the EN/AR variant pairing (Phase A):
-    ``variant_group`` is the language-neutral path shared by hreflang twins,
-    ``lang`` the page language. Returns the document id when new/changed
-    content needs ingest, else None.
+    ``lang``/``variant_group`` feed the EN/AR variant pairing (Phase A);
+    ``title`` and the structured extraction (Phase B) land in ``doc.meta``.
+    Returns the document id when new/changed content needs ingest, else None.
     """
     import hashlib
     import uuid
@@ -575,10 +587,12 @@ async def _upsert_scrape_document(
             doc.lang = lang
         if variant_group:
             doc.variant_group = variant_group
+        doc.meta = build_structured_doc(url, title, markdown, lang)
         await db.flush()
         put_doc(databank_id, f"{doc.id}.md", content)
         return doc.id
 
+    structured = build_structured_doc(url, title, markdown, lang)
     doc = Document(
         id=str(uuid.uuid4()),
         databank_id=databank_id,
@@ -592,6 +606,7 @@ async def _upsert_scrape_document(
         content_hash=digest,
         lang=lang,
         variant_group=variant_group,
+        meta=structured,
     )
     db.add(doc)
     await db.flush()

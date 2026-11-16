@@ -628,6 +628,8 @@ async def _embed_and_store(
                 embedding_model=embedding_model,
                 seq=idx,
                 token_count=chunk["token_count"],
+                # Phase B provenance: section trail, lang, source_url, doc_title.
+                metadata_=chunk.get("metadata") or None,
             )
             db_chunks.append(db_chunk)
 

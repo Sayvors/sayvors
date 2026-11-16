@@ -4418,6 +4418,25 @@ const ar: Dict = {
           audience: "الجمهور واللغات",
         },
       },
+      crawler: {
+        autoSync: "تلقائي كل {n} د",
+        crawling: "جارٍ الزحف…",
+        done: "تم",
+        failed: "فشل",
+        idle: "خامل",
+        running: "قيد التشغيل",
+        pagesCrawled: "تم زحف {done}/{total} صفحة",
+        queuedCount: "{n} في الانتظار",
+        failedCount: "{n} فشلت",
+      },
+      activity: {
+        title: "النشاط",
+        empty: "لا يوجد نشاط بعد — زحف موقعاً أو ارفع ملفات.",
+        crawl: "زحف",
+        ingest: "معالجة",
+        error: "خطأ",
+        viewChunk: "مقطع واحد — ما يبحث فيه الذكاء الاصطناعي فعلياً",
+      },
       create: {
         notSelected: "غير محدد",
         steps: {

@@ -21,7 +21,11 @@ from .crawl_service import (
 )
 from .crawler import preview_candidates
 from .models import CrawlPage, Document as DocumentModel
+from .activity import databank_activity
+from ..team.context import tenant_id_of
 from .schemas import (
+    ActivityEvent,
+    ActivityResponse,
     AskRequest,
     AskResponse,
     Citation,
@@ -232,6 +236,8 @@ async def list_all_documents(
                 created_at=d.created_at,
                 lang=d.lang,
                 variant_group=d.variant_group,
+                summary=(d.meta or {}).get("summary"),
+                intent=(d.meta or {}).get("intent"),
             )
             for d in docs
         ],
@@ -663,6 +669,24 @@ async def process_all_pending(
         stage=job.stage,
         error=job.error,
         created_at=job.created_at,
+    )
+
+
+@router.get("/databanks/{databank_id}/activity", response_model=ActivityResponse)
+async def databank_activity_endpoint(
+    databank_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Organized log: ingest jobs, crawl runs and failed pages, newest first."""
+    bank = await get_databank(databank_id, user, db)
+    if not bank:
+        raise HTTPException(status_code=404, detail="Databank not found")
+    events = await databank_activity(
+        db, databank_id=databank_id, user_id=tenant_id_of(user)
+    )
+    return ActivityResponse(
+        events=[ActivityEvent(**e) for e in events]
     )
 
 

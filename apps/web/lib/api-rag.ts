@@ -225,6 +225,9 @@ export interface DatabankDoc {
   variant_group?: string | null;
   source_url?: string | null;
   source_type?: string;
+  /** Phase B structured extraction preview. */
+  summary?: string | null;
+  intent?: string | null;
 }
 
 /* ── Databank CRUD ──────────────────────────────────── */
@@ -339,6 +342,22 @@ export async function listCrawlSources(
   databankId: string,
 ): Promise<{ sources: CrawlSourceStatus[]; total: number }> {
   return apiFetch(`/api/v1/rag/databanks/${databankId}/crawl/sources`);
+}
+
+export interface ActivityEvent {
+  type: "crawl" | "ingest" | "error" | string;
+  status: string;
+  title: string;
+  detail?: string;
+  progress?: number | null;
+  at?: string | null;
+}
+
+/** Organized activity log: ingest jobs, crawl runs, failed pages. */
+export async function fetchActivity(
+  databankId: string,
+): Promise<{ events: ActivityEvent[] }> {
+  return apiFetch(`/api/v1/rag/databanks/${databankId}/activity`);
 }
 
 export async function processPending(databankId: string): Promise<any> {
