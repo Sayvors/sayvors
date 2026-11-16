@@ -142,22 +142,22 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
   const isSelectedPast = selectedDay !== null && new Date(year, month, selectedDay) < todayStart;
 
   return (
-    <div className="rounded-xl border border-ink/[0.1] dark:border-fog/[0.1] bg-white dark:bg-ink overflow-hidden shadow-sm">
+    <div className="overflow-hidden rounded-[24px] border border-ink/[0.06] bg-white shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)] dark:border-fog/[0.08] dark:bg-ink">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-ink/[0.04] dark:hover:bg-fog/[0.04]"
+        className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left transition duration-200 hover:bg-ink/[0.03] active:scale-[0.995] dark:hover:bg-fog/[0.04]"
         aria-expanded={open}
       >
-        <div className="flex items-center gap-3 min-w-0">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-deep-violet/10 text-deep-violet">
+        <div className="flex items-center gap-3.5 min-w-0">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[16px] bg-deep-violet/10 text-deep-violet">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
               <rect x="3" y="4" width="18" height="18" rx="2" />
               <path d="M16 2v4M8 2v4M3 10h18" strokeLinecap="round" />
             </svg>
           </span>
           <div className="min-w-0">
-            <p className="text-[14px] font-semibold text-ink dark:text-fog">
+            <p className="text-[14px] font-bold text-ink dark:text-fog">
               {scheduled.length === 1 ? c.scheduledOne : fill(c.scheduledN, { n: fmt(scheduled.length) })}
             </p>
             {nextUpcoming ? (
@@ -171,7 +171,7 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
         </div>
         <div className="flex items-center gap-2">
           {scheduled.length > 0 && (
-            <span className="rounded-full bg-deep-violet/10 px-2.5 py-0.5 text-[11px] font-semibold text-deep-violet">
+            <span className="rounded-[20px] bg-deep-violet/10 px-3 py-1 text-[11px] font-bold text-deep-violet">
               {fmt(scheduled.length)}
             </span>
           )}
@@ -182,27 +182,27 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
       </button>
 
       {open && (
-        <div className="border-t border-ink/[0.06] dark:border-fog/[0.06] p-4">
+        <div className="border-t border-ink/[0.06] p-5 dark:border-fog/[0.06]">
           <div className="mb-4 flex items-center justify-between">
             <div className="flex items-center gap-1">
-              <button type="button" onClick={() => setCursor(new Date(year, month - 1, 1))} className="rounded-lg p-1.5 text-ink/50 dark:text-fog/50 hover:bg-ink/[0.06] dark:hover:bg-fog/[0.06] transition" aria-label={c.prevMonth}>
+              <button type="button" onClick={() => setCursor(new Date(year, month - 1, 1))} className="rounded-[16px] p-1.5 text-ink/50 transition duration-200 hover:bg-ink/[0.06] active:scale-95 dark:text-fog/50 dark:hover:bg-fog/[0.06]" aria-label={c.prevMonth}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
               </button>
-              <button type="button" onClick={() => setCursor(new Date(year, month + 1, 1))} className="rounded-lg p-1.5 text-ink/50 dark:text-fog/50 hover:bg-ink/[0.06] dark:hover:bg-fog/[0.06] transition" aria-label={c.nextMonth}>
+              <button type="button" onClick={() => setCursor(new Date(year, month + 1, 1))} className="rounded-[16px] p-1.5 text-ink/50 transition duration-200 hover:bg-ink/[0.06] active:scale-95 dark:text-fog/50 dark:hover:bg-fog/[0.06]" aria-label={c.nextMonth}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
               </button>
             </div>
             <p className="text-[15px] font-semibold text-ink dark:text-fog">{monthName} {fmt(year)}</p>
-            <button type="button" onClick={() => setCursor(new Date())} className="rounded-lg border border-ink/[0.1] dark:border-fog/[0.1] px-3 py-1 text-[12px] font-medium text-ink/60 dark:text-fog/60 hover:bg-ink/[0.04] dark:hover:bg-fog/[0.04] transition">{c.today}</button>
+            <button type="button" onClick={() => setCursor(new Date())} className="rounded-[20px] border border-ink/[0.1] px-3.5 py-1.5 text-[12px] font-bold text-ink/60 transition duration-200 hover:bg-ink/[0.04] active:scale-95 dark:border-fog/[0.1] dark:text-fog/60 dark:hover:bg-fog/[0.04]">{c.today}</button>
           </div>
 
-          <div className="grid grid-cols-7 gap-px mb-1">
+          <div className="grid grid-cols-7 gap-1 mb-1">
             {weekdays.map((w) => (
               <div key={w} className="py-1 text-center text-[10px] font-semibold uppercase tracking-wider text-ink/40 dark:text-fog/40">{w}</div>
             ))}
           </div>
 
-          <div className="grid grid-cols-7 gap-px">
+          <div className="grid grid-cols-7 gap-1">
             {cells.map((day, i) => {
               if (day === null) return <div key={`empty-${i}`} className="h-16 sm:h-20" />;
               const key = `${year}-${month}-${day}`;
@@ -216,7 +216,7 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
                   type="button"
                   onClick={(e) => !isPast && handleDayClick(day, e)}
                   disabled={isPast}
-                  className={`relative flex flex-col items-start p-1.5 sm:p-2 h-16 sm:h-20 rounded-md text-left transition ${
+                  className={`relative flex flex-col items-start p-1.5 sm:p-2 h-16 sm:h-20 rounded-[14px] text-left transition duration-200 ${
                     isPast
                       ? "text-ink/30 dark:text-fog/30 cursor-not-allowed"
                       : has
@@ -266,7 +266,7 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
         <>
           <div className="fixed inset-0 z-40" onClick={() => { setSelectedDay(null); setAnchor(null); }} />
           <div
-            className="fixed z-50 w-72 rounded-xl border border-ink/[0.1] dark:border-fog/[0.1] bg-white p-4 shadow-xl"
+            className="fixed z-50 w-72 rounded-[24px] border border-ink/[0.08] bg-white p-4 shadow-[0_24px_48px_-24px_rgba(20,16,31,0.55)] dark:border-fog/[0.1] dark:bg-ink"
             style={{ left: Math.min(anchor.x - 144, window.innerWidth - 300), top: anchor.y + 8 }}
           >
             <p className="text-[10px] font-bold uppercase tracking-widest text-ink/40 dark:text-fog/40 mb-2">
@@ -307,7 +307,7 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
                   setSelectedDay(null);
                   setAnchor(null);
                 }}
-                className="w-full rounded-lg bg-deep-violet py-2 text-[12px] font-semibold text-white hover:bg-deep-violet/90 transition"
+                className="w-full rounded-[20px] bg-deep-violet py-2.5 text-[12px] font-bold text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)] transition duration-200 hover:bg-deep-violet/90 active:translate-y-0.5 active:scale-[0.98]"
               >
                 {c.scheduleBtn}
               </button>
@@ -315,7 +315,7 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
             <button
               type="button"
               onClick={() => { setSelectedDay(null); setAnchor(null); }}
-              className="mt-2 w-full rounded-lg border border-ink/[0.1] dark:border-fog/[0.1] bg-ink/[0.04] dark:bg-fog/[0.04] py-1.5 text-[11px] font-semibold text-ink/60 dark:text-fog/60 hover:bg-ink/[0.06] dark:hover:bg-fog/[0.06] transition"
+              className="mt-2 w-full rounded-[20px] border border-ink/[0.1] bg-ink/[0.04] py-2 text-[11px] font-bold text-ink/60 transition duration-200 hover:bg-ink/[0.06] active:scale-[0.98] dark:border-fog/[0.1] dark:bg-fog/[0.04] dark:text-fog/60 dark:hover:bg-fog/[0.06]"
             >
               {c.close}
             </button>

@@ -196,7 +196,7 @@ export default function MediaSink({
       {media ? (
         <div className="flex flex-wrap items-start gap-3">
           <div
-            className="relative shrink-0 overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] transition-[width,height] duration-200"
+            className="relative shrink-0 overflow-hidden rounded-[20px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] shadow-[0_12px_28px_-20px_rgba(61,29,110,0.5)] transition-[width,height] duration-200"
             style={{ width: box.w, height: box.h }}
           >
             {media.type === "video" ? (
@@ -278,27 +278,29 @@ export default function MediaSink({
             setDropping(false);
             acceptFiles(e.dataTransfer.files);
           }}
-          className={`flex flex-col items-center rounded-[24px] border-2 border-dashed px-4 py-7 text-center transition ${
+          className={`flex flex-col items-center rounded-[28px] border-2 border-dashed bg-[var(--ui-sunken)] px-4 py-9 text-center transition duration-200 ${
             dropping
               ? "border-[var(--ui-ink)] bg-[var(--ui-ink)]/[0.04]"
-              : "border-[var(--ui-line)]"
+              : "border-[var(--ui-line-strong)] hover:border-[var(--ui-ink)]/40"
           }`}
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6 text-[var(--ui-ink-2)]" aria-hidden>
-            <rect x="3" y="3" width="18" height="18" rx="2" />
-            <circle cx="8.5" cy="8.5" r="1.5" />
-            <path d="M21 15l-5-5L5 21" />
-          </svg>
-          <p className="mt-2 text-[13px] font-semibold text-[var(--ui-ink)]">
+          <span className="flex h-14 w-14 items-center justify-center rounded-[20px] bg-[var(--ui-surface)] text-[var(--ui-ink)] shadow-[0_10px_20px_-14px_rgba(61,29,110,0.6)]">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6" aria-hidden>
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <circle cx="8.5" cy="8.5" r="1.5" />
+              <path d="M21 15l-5-5L5 21" />
+            </svg>
+          </span>
+          <p className="mt-3 text-[14px] font-bold text-[var(--ui-ink)]">
             {md.dropTitle}
           </p>
-          <p className="mt-0.5 text-[11px] text-[var(--ui-ink-2)]">
+          <p className="mt-1 text-[11.5px] text-[var(--ui-ink-2)]">
             {fill(md.dropSub, { n: fmt(MAX_MEDIA_MB) })}
           </p>
           <button
             type="button"
             onClick={() => fileInput.current?.click()}
-            className="clay-btn-secondary mt-3 px-4 py-1.5 text-[12px] font-semibold focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+            className="clay-btn-primary mt-4 px-5 py-2.5 text-[12px] font-bold focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
           >
             {md.browse}
           </button>
@@ -359,7 +361,7 @@ export default function MediaSink({
       </div>
 
       {libraryOpen && (
-        <div className="mt-2 rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-3">
+        <div className="mt-3 rounded-[24px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-3 shadow-[0_12px_28px_-22px_rgba(61,29,110,0.45)]">
           {libraryLoading ? (
             <p className="py-4 text-center text-[12px] text-[var(--ui-ink-2)]">Loading your library…</p>
           ) : libraryError ? (
@@ -379,7 +381,7 @@ export default function MediaSink({
                   type="button"
                   onClick={() => pickFromLibrary(it)}
                   title={`${it.label} — use this`}
-                  className="group relative aspect-square overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+                  className="group relative aspect-square overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] transition duration-200 hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
                 >
                   {it.type === "video" ? (
                     <video src={it.url} muted playsInline className="h-full w-full object-cover" />

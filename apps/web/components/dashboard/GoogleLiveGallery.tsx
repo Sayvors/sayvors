@@ -265,7 +265,7 @@ export default function GoogleLiveGallery() {
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-3">
         <div className="relative">
           <select
             value={selectedId}
@@ -293,7 +293,7 @@ export default function GoogleLiveGallery() {
           </select>
           <svg className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink/40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </div>
-        <div className="flex flex-wrap gap-1.5">
+        <div className="-mx-1 flex max-w-full gap-1.5 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {CATEGORY_FILTERS.map((c) => {
             const count = c.value ? (categoryCounts.get(c.value) ?? 0) : items.length;
             const active = category === c.value;
@@ -302,7 +302,7 @@ export default function GoogleLiveGallery() {
                 key={c.value || "all"}
                 type="button"
                 onClick={() => setCategory(c.value)}
-                className={`rounded-full px-3 py-1.5 text-[12px] font-bold transition ${active ? "bg-deep-violet text-white" : "bg-ink/[0.04] text-ink/65 hover:bg-ink/[0.08] dark:bg-white/[0.06] dark:text-fog/70"}`}
+                className={`shrink-0 whitespace-nowrap rounded-[20px] px-3.5 py-2 text-[12px] font-bold transition duration-200 active:scale-[0.97] ${active ? "bg-deep-violet text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)]" : "bg-ink/[0.04] text-ink/65 hover:bg-ink/[0.08] dark:bg-white/[0.06] dark:text-fog/70"}`}
               >
                 {c.label} <span className={active ? "opacity-80" : "opacity-60"}>({count})</span>
               </button>
