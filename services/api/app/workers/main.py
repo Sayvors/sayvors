@@ -69,6 +69,16 @@ async def _amain() -> None:
 
     configure_logging("worker")
 
+    # Same warning as the API: local doc files are invisible to another
+    # worker replica/container, which breaks the crawl → ingest pipeline.
+    from ..core.storage import docs_configured
+
+    if not docs_configured():
+        logging.getLogger(__name__).warning(
+            "S3_DOCS_BUCKET is not set — documents use LOCAL disk; "
+            "crawled markdown may be unreadable by the ingest worker"
+        )
+
     # The worker is a separate process from the API, and sentry_sdk patches
     # handlers in-process only. Without this call every failure in the
     # outbox/review/post-publish loops is invisible in GlitchTip.

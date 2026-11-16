@@ -318,6 +318,18 @@ async def lifespan(app: FastAPI):
     setup_logging()  # Initialize structured JSON logging
     setup_glitchtip()  # Initialize GlitchTip error tracking
 
+    # Local doc storage is per-process/per-container: a crawl write in one
+    # worker is invisible to the ingest worker (or lost on restart), which
+    # surfaces as "Document file not found" on every ingest job. Fail loudly
+    # in logs so a missing S3_DOCS_BUCKET is never a silent misconfiguration.
+    from .core.storage import docs_configured
+
+    if not docs_configured():
+        log.warning(
+            "S3_DOCS_BUCKET is not set — documents use LOCAL disk; "
+            "do not run multiple API/worker processes with this setting"
+        )
+
     # Warm up database connection pool (critical for first-request speed)
     try:
         from .database import engine
