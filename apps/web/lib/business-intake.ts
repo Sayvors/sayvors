@@ -15,6 +15,7 @@ export interface IntakeQuestion {
   fact_key: string;
   answer: string[] | string | Record<string, unknown>;
   skipped: boolean;
+  answer_source: "manual" | "google_confirmed";
   google_value: string | null;
 }
 

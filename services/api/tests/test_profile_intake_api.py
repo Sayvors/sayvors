@@ -76,6 +76,7 @@ async def test_put_intake_persists_answers_outside_the_facts_cache(client, db, u
     assert body["sub_focus"] == "dine_in"
     by_key = {q["key"]: q for q in body["questions"]}
     assert by_key["dietary"]["answer"] == ["Halal", "Vegan"]
+    assert by_key["dietary"]["answer_source"] == "manual"
     assert by_key["price_range"]["skipped"] is True
     assert "not_a_real_question" not in by_key
     assert body["answered"] == 2

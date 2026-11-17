@@ -50,6 +50,18 @@ function fill(s: string, vars: Record<string, string | number>): string {
   );
 }
 
+/** Render one saved intake answer as a single readable line. */
+function intakeAnswerText(answer: unknown): string {
+  if (Array.isArray(answer)) return answer.map(String).join(" · ");
+  if (typeof answer === "string") return answer;
+  if (answer && typeof answer === "object") {
+    const value = (answer as { value?: unknown }).value;
+    if (Array.isArray(value)) return value.map(String).join(" · ");
+    if (value != null) return String(value);
+  }
+  return "";
+}
+
 type BadgeLabels = {
   ready: string;
   processing: string;
@@ -413,7 +425,20 @@ function DatabankPageContent() {
     iso ? new Date(iso).toLocaleDateString(locale === "ar" ? "ar-SA" : "en-US") : "";
   // Business-intake progress. A skipped onboarding answer is never lost:
   // the card below is the permanent "answer it later" entry point.
-  const [intake, setIntake] = useState<{ answered: number; total: number } | null>(null);
+  const [intake, setIntake] = useState<{
+    answered: number;
+    total: number;
+    skipped: number;
+    questions: {
+      key: string;
+      label: string;
+      answer: string[] | string | Record<string, unknown>;
+      skipped: boolean;
+      answer_source: "manual" | "google_confirmed";
+      google_value: string | null;
+    }[];
+  } | null>(null);
+  const [showIntakeAnswers, setShowIntakeAnswers] = useState(false);
   const [databanks, setDatabanks] = useState<Databank[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -435,7 +460,14 @@ function DatabankPageContent() {
     let alive = true;
     apiFetch("/api/v1/profile/intake")
       .then((res) => {
-        if (alive) setIntake({ answered: res?.answered ?? 0, total: res?.total ?? 0 });
+        if (alive) {
+          setIntake({
+            answered: res?.answered ?? 0,
+            total: res?.total ?? 0,
+            skipped: res?.skipped ?? 0,
+            questions: Array.isArray(res?.questions) ? res.questions : [],
+          });
+        }
       })
       .catch(() => {
         // The card stays visible without a progress number if this fails.
@@ -748,9 +780,66 @@ function DatabankPageContent() {
                   style={{ width: `${Math.min(100, (intake.answered / intake.total) * 100)}%` }}
                 />
               </div>
-              <p className="mt-1.5 text-[11px] font-semibold tabular-nums text-foreground/45">
-                {fill(intakeCopy.answered, { n: intake.answered, total: intake.total })}
-              </p>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                <p className="text-[11px] font-semibold tabular-nums text-foreground/45">
+                  {fill(intakeCopy.answered, { n: intake.answered, total: intake.total })}
+                </p>
+                {intake.skipped > 0 && (
+                  <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+                    {fill(intakeCopy.skippedNote, { n: intake.skipped })}
+                  </span>
+                )}
+                {intake.questions.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowIntakeAnswers((v) => !v)}
+                    className="ml-auto text-[11px] font-bold text-deep-violet underline underline-offset-2 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet"
+                  >
+                    {showIntakeAnswers ? intakeCopy.hideAnswers : intakeCopy.viewAnswers}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {showIntakeAnswers && intake && intake.questions.length > 0 && (
+            <div className="mt-4 overflow-hidden rounded-[20px] border border-card-border">
+              <table className="w-full text-left text-[12px]">
+                <thead className="bg-[var(--ui-sunken)] text-[10px] uppercase tracking-widest text-foreground/45">
+                  <tr>
+                    <th className="px-3 py-2 font-bold">{intakeCopy.pickDetails}</th>
+                    <th className="px-3 py-2 font-bold">{intakeCopy.viewAnswers}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {intake.questions.map((q) => {
+                    const text = q.skipped ? "" : intakeAnswerText(q.answer);
+                    return (
+                      <tr key={q.key} className="border-t border-card-border align-top">
+                        <td className="px-3 py-2 font-medium text-foreground/70">{q.label}</td>
+                        <td className="px-3 py-2">
+                          {text ? (
+                            <span className="flex flex-wrap items-center gap-1.5">
+                              {text.split(" · ").map((part) => (
+                                <span key={part} className="rounded-full bg-deep-violet/10 px-2 py-0.5 text-[11px] font-semibold text-deep-violet">
+                                  {part}
+                                </span>
+                              ))}
+                              {q.answer_source === "google_confirmed" && (
+                                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                                  {intakeCopy.fromGoogle}
+                                </span>
+                              )}
+                            </span>
+                          ) : (
+                            <span className="text-foreground/35">{intakeCopy.notAnswered}</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
         </section>

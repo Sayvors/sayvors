@@ -20,6 +20,7 @@ const q = (over: Partial<IntakeQuestion> = {}): IntakeQuestion => ({
   fact_key: "dietary",
   answer: [],
   skipped: false,
+  answer_source: "manual",
   google_value: null,
   ...over,
 });

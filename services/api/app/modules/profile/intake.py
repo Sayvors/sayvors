@@ -169,6 +169,7 @@ async def get_intake(
                 "fact_key": q.fact_key,
                 "answer": (row.answer or {}) if row else {},
                 "skipped": bool(row.skipped) if row else False,
+                "answer_source": (row.source if row else "manual"),
                 "google_value": _google_value(q.key, google),
             })
 
