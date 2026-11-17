@@ -2273,12 +2273,13 @@ function HoursTab({ initial, onSave, bulk, copy, synced, status, reason, current
   const pendingDay = (day: string) => {
     const remote = current?.["hours.regular"];
     if (!isPendingReview(status) || !remote) return null;
-    return valuesDiffer(hours[day], remote[day])
-      ? {
-          before: formatRegularDay(remote[day], copy),
-          after: formatRegularDay(hours[day], copy),
-        }
-      : null;
+    // Compare the rendered values, not the raw objects: the two sides carry
+    // the same opening in different shapes (Google uses 00:00-24:00, the form
+    // uses all_day; a closed day may or may not carry an all_day:false flag).
+    // Comparing objects marks every identical day as "changed".
+    const before = formatRegularDay(remote[day], copy);
+    const after = formatRegularDay(hours[day], copy);
+    return before !== after ? { before, after } : null;
   };
 
   useEffect(() => {
