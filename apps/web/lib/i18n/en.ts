@@ -2441,7 +2441,7 @@ const en = {
       offer: { label: "Promotion", hint: "offer, discount or coupon" },
       gallery: { label: "Gallery", hint: "add a photo to location photos" },
       profile: { label: "Profile picture", hint: "1:1 · your avatar" },
-      banner: { label: "Banner", hint: "16:9 · cover image" },
+      banner: { label: "Promotion", hint: "16:9 · promotional image" },
     },
     crops: {
       square: "Square",
@@ -2489,7 +2489,7 @@ const en = {
       bizName: "Your business",
       gpOverflow: "{n} characters past Google's limit",
       profileHint: "Profile picture · replaces your avatar",
-      bannerHint: "Banner · replaces your cover image",
+      bannerHint: "Promotion · replaces your cover image",
       howRead: "How this post reads",
     },
     dest: {
@@ -2567,7 +2567,7 @@ const en = {
       destSub: "Flip the master switch for every network, or hand-pick below.",
       formatsTitle: "Configure formats",
       formatsSub: "Click a format to select it and set its crop. Click a selected format again to remove it.",
-      formatsNote: "A profile picture or banner replaces that image on the account — it carries no caption, and it can only be changed by publishing a new one.",
+      formatsNote: "A profile picture or promotion replaces that image on the account — it carries no caption, and it can only be changed by publishing a new one.",
       allPill: "All",
       allTitle: "Select every feed format for this destination",
       aiTitle: "✨ Create a video for your business",

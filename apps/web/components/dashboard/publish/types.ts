@@ -15,9 +15,11 @@ export type PlatformKey =
  * A publish "format" — one surface a post lands on.
  *
  * Meta: post / story / reel / status.
- * Google Business Profile: update / event / offer (local posts), gallery
- * (add a photo to the location gallery in a chosen category), and the
- * profile surfaces profile / banner (avatar / cover image).
+ * Google Business Profile: update (local post), gallery (add a photo to the
+ * location gallery in a chosen category), and the profile surfaces profile /
+ * banner (avatar / promotion image). `event` and `offer` stay in the type
+ * because posts already published with them still render and edit, but the
+ * composer no longer offers new ones.
  */
 export type PostMethod =
   | "post"
@@ -99,7 +101,7 @@ export const METHOD_META: Record<PostMethod, MethodMeta> = {
   offer: { label: "Promotion", hint: "offer, discount or coupon" },
   gallery: { label: "Gallery", hint: "add a photo to location photos" },
   profile: { label: "Profile picture", hint: "1:1 · your avatar" },
-  banner: { label: "Banner", hint: "16:9 · cover image" },
+  banner: { label: "Promotion", hint: "16:9 · promotional image" },
 };
 
 export const GALLERY_CATEGORIES = [
@@ -131,6 +133,14 @@ export const GOOGLE_POST_LANGUAGE: Record<string, string> = {
   ur: "ur",
   ch: "zh-CN",
 };
+
+/**
+ * Formats the composer hides even though the publish pipeline still supports
+ * them. Existing Google Event/Offer posts keep their detail view; only the
+ * create step stops offering new ones. Removing a method here restores its
+ * card with no backend change.
+ */
+const HIDDEN_COMPOSER_METHODS = new Set<PostMethod>(["event", "offer"]);
 
 /**
  * Which formats each platform can actually deliver.
@@ -188,7 +198,9 @@ export function isFeedMethod(method: PostMethod): boolean {
 }
 
 export function methodsFor(platform: PlatformKey, mediaType: MediaKind): PostMethod[] {
-  const base = PLATFORM_METHODS[platform] ?? [];
+  const base = (PLATFORM_METHODS[platform] ?? []).filter(
+    (method) => !HIDDEN_COMPOSER_METHODS.has(method),
+  );
   if (mediaType === "video") {
     // An avatar/cover/gallery item is an image — offering them for a
     // video would queue a job the provider must reject.
@@ -205,8 +217,7 @@ export function defaultCropFor(platform: PlatformKey, method: PostMethod): CropS
   if (method === "banner") return { key: "16:9", zoom: 1, x: 0, y: 0 };
   if (method === "gallery") return { key: "orig", zoom: 1, x: 0, y: 0 };
   // Meta story/reel/status formats are 9:16; every other method uses the
-  // platform's post crop (Google "Update"/"Event"/"Promotion" all use the
-  // same landscape frame).
+  // platform's post crop. Google updates use the same landscape frame.
   const storyLike = method === "story" || method === "reel" || method === "status";
   return { key: storyLike ? "9:16" : PLATFORM_POST_CROP[platform], zoom: 1, x: 0, y: 0 };
 }

@@ -41,13 +41,13 @@ function fill(s: string, vars: Record<string, string | number>): string {
 /**
  * A short stable token for a request group, used as the idempotency suffix.
  *
- * The group is identified by its crop plus, for a promotion, the coupon and
- * terms. Those fields alone can reach 364 characters while the publish API
- * caps `idempotency_key` at 200, so the raw group key cannot be sent. FNV-1a
- * is deterministic, so a retry of the same draft produces the same token and
- * the backend still collapses it onto the earlier job. Two different groups
- * can only collide on the same platform/asset/method if they are the same
- * request, so a collision cannot drop a destination.
+ * The group is identified by its crop. A crop signature can reach 364
+ * characters while the publish API caps `idempotency_key` at 200, so the raw
+ * group key cannot be sent. FNV-1a is deterministic, so a retry of the same
+ * draft produces the same token and the backend still collapses it onto the
+ * earlier job. Two different groups can only collide on the same
+ * platform/asset/method if they are the same request, so a collision cannot
+ * drop a destination.
  */
 function groupToken(key: string): string {
   let hash = 0x811c9dc5;
@@ -61,9 +61,9 @@ function groupToken(key: string): string {
 type MethodDict = Dict["publish"]["methods"];
 type ComposerDict = Dict["publish"]["composer"];
 
-/** Formats that cannot be published without an image. Google's What's New /
- * Event / Offer and Meta feed posts allow a text-only post. Gallery,
- * profile and banner are image surfaces. */
+/** Formats that cannot be published without an image. Google updates and
+ * Meta feed posts allow text-only; gallery, profile and banner (shown as
+ * Promotion) are image surfaces. */
 const MEDIA_ONLY_METHODS = new Set<string>([
   "story", "reel", "status", "gallery", "profile", "banner",
 ]);
@@ -339,8 +339,8 @@ export default function PublishComposer({
     [targets, googleTargets, selected],
   );
   // Several branches of the same platform share one format panel and one
-  // configuration: selecting a format, its crop, a Promotion's code/terms or
-  // a gallery category is entered once and written to every selected branch.
+  // configuration: selecting a format or a gallery category is entered once
+  // and written to every selected branch.
   const sharedMode =
     selectedTargets.length > 1 &&
     selectedTargets.every((t) => t.platform === selectedTargets[0].platform);
@@ -382,19 +382,10 @@ export default function PublishComposer({
       );
     }
   }, [initialScheduleDate]);
-  // A promotional post has an end date: it goes up now and comes down
-  // on the day the offer lapses.
+  // A scheduled post can also be given an end date: it goes up now and comes
+  // down on the day the offer or announcement lapses.
   const [removeOn, setRemoveOn] = useState(false);
   const [removeAt, setRemoveAt] = useState("");
-
-  // Event/offer window. Google requires an `event` object for EVENT and
-  // OFFER topics, so the composer collects the schedule here; when left
-  // blank the publisher defaults it (now → +7 days).
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-  // Google requires a name for event/offer posts; without one the backend
-  // falls back to the caption's first line.
-  const [eventTitle, setEventTitle] = useState("");
 
   // ── Per-format previews + saved crops ───────────────────────────
   const [crops, setCrops] = useState<Record<string, CropState>>({});
@@ -404,12 +395,6 @@ export default function PublishComposer({
   /** draft crop being edited in the modal (committed on Save) */
   const [draftCrop, setDraftCrop] = useState<CropState>(DEFAULT_CROP);
   const [draftGalleryCategory, setDraftGalleryCategory] = useState<string>("EXTERIOR");
-  /** Coupon code + terms of a Promotion (offer) post, per destination. */
-  const [offerDetails, setOfferDetails] = useState<
-    Record<string, { coupon: string; terms: string }>
-  >({});
-  const [draftCoupon, setDraftCoupon] = useState("");
-  const [draftTerms, setDraftTerms] = useState("");
   /** formats that have been explicitly saved */
   const [configured, setConfigured] = useState<Set<string>>(new Set());
   /** Gallery category per destination+format (gallery only). */
@@ -465,7 +450,7 @@ export default function PublishComposer({
     setFormats((prev) => {
       if (prev[t.id]?.length) return prev;
       const avail = methodsFor(t.platform, media?.type ?? null);
-      // "all" means every FEED format — the avatar and cover surfaces
+      // "all" means every FEED format - the avatar and promotion surfaces
       // are never seeded, only ever picked one by one.
       const chosen =
         mode === "default" ? avail.slice(0, 1) : avail.filter(isFeedMethod);
@@ -501,7 +486,7 @@ export default function PublishComposer({
 
   const toggleAllFormats = (t: PublishTarget, applyTo?: PublishTarget[]) => {
     const targetsToApply = applyTo ?? [t];
-    // "All" covers feed formats only; avatar/cover stay deliberate one-offs.
+    // "All" covers feed formats only; avatar/promotion stay deliberate one-offs.
     const feed = availableFor(targetsToApply[0]).filter(isFeedMethod);
     const turningAll = chosenFor(targetsToApply[0]).filter(isFeedMethod).length < feed.length;
     targetsToApply.forEach((target) => {
@@ -552,8 +537,6 @@ export default function PublishComposer({
     const key = cropKeyFor(t.id, m);
     setDraftCrop(crops[key] ?? defaultCropFor(t.platform, m));
     setDraftGalleryCategory(galleryCategories[key] ?? "EXTERIOR");
-    setDraftCoupon(offerDetails[key]?.coupon ?? "");
-    setDraftTerms(offerDetails[key]?.terms ?? "");
     setModalCtx({ targetId: t.id, method: m, applyToIds: ids });
   };
 
@@ -568,12 +551,6 @@ export default function PublishComposer({
       setCrops((prev) => ({ ...prev, [key]: draftCrop }));
       if (modalCtx.method === "gallery") {
         setGalleryCategories((prev) => ({ ...prev, [key]: draftGalleryCategory }));
-      }
-      if (modalCtx.method === "offer") {
-        setOfferDetails((prev) => ({
-          ...prev,
-          [key]: { coupon: draftCoupon.trim(), terms: draftTerms.trim() },
-        }));
       }
       setConfigured((prev) => new Set(prev).add(key));
     });
@@ -592,17 +569,12 @@ export default function PublishComposer({
   const confirmItems = selectedTargets
     .map((t) => ({ target: t, methods: chosenFor(t) }))
     .filter((i) => i.methods.length > 0 && externalAssetIdFor(i.target) !== null);
-  // Google requires an event window for EVENT and OFFER topics, so the
-  // composer only asks for the dates when one of those is actually chosen.
-  const needsEventWindow = confirmItems.some(({ methods }) =>
-    methods.some((m) => m === "event" || m === "offer"),
-  );
   const cf = tr.publish.confirm;
   const formatCount = confirmItems.reduce((n, i) => n + i.methods.length, 0);
   const destStr = confirmItems.length === 1 ? cf.destOne : fill(cf.destN, { n: fmt(confirmItems.length) });
   const fmtStr = formatCount === 1 ? cf.fmtOne : fill(cf.fmtN, { n: fmt(formatCount) });
-  // A text-only post is valid for Google What's New / Event / Offer and Meta
-  // feed posts. Everything else (and every Instagram post) needs an image.
+  // A text-only post is valid for a Google update and Meta feed posts.
+  // Everything else (and every Instagram post) needs an image.
   const needsMedia = confirmItems.some(({ target, methods }) =>
     methods.some(
       (m) =>
@@ -611,18 +583,10 @@ export default function PublishComposer({
     ),
   );
   const canPublish = confirmItems.length > 0 && (media !== null || !needsMedia);
-  // Required markers follow the selected format, not the step: Google needs
-  // an event window for EVENT/OFFER, and OFFER needs a way to redeem it.
-  const needsOfferFields = confirmItems.some(({ methods }) =>
-    methods.some((m) => m === "offer"),
-  );
   const hasGoogle = confirmItems.some(({ target }) => target.platform === "google_reviews");
   // A Google post needs text or an image — the API refuses one with neither.
   const needsText = hasGoogle && confirmItems.some(({ methods }) =>
-    methods.some((m) => m === "update" || m === "event" || m === "offer" || m === "post"),
-  );
-  const hasOfferCoupon = confirmItems.some(({ target }) =>
-    !!offerDetails[cropKeyFor(target.id, "offer")]?.coupon?.trim(),
+    methods.some((m) => m === "update" || m === "post"),
   );
 
   /** Every required field for the current draft, in step order. */
@@ -633,17 +597,12 @@ export default function PublishComposer({
     if (needsText && media === null && !caption.trim() && !description.trim()) {
       problems.push(pc.captionRequired);
     }
-    if (needsEventWindow && !eventTitle.trim()) problems.push(pc.eventTitleRequired);
     if (ctaType && ctaType !== "call" && !ctaUrl.trim()) problems.push(pc.ctaUrlRequired);
-    if (needsOfferFields && !ctaUrl.trim() && !hasOfferCoupon) {
-      problems.push(pc.wizard.offerLinkRequired);
-    }
     const dateProblem = checkWindow({
       scheduleAt: scheduleOn ? scheduleAt : "",
       removeAt: removeOn ? removeAt : "",
-      startDate: needsEventWindow ? startDate : "",
-      endDate: needsEventWindow ? endDate : "",
-      eventRequired: needsEventWindow,
+      startDate: "",
+      endDate: "",
     });
     if (dateProblem) problems.push(tr.publish.dates[dateProblem]);
     return problems;
@@ -662,9 +621,6 @@ export default function PublishComposer({
     if (step === 2) {
       const p: string[] = [];
       if (ctaType && ctaType !== "call" && !ctaUrl.trim()) p.push(pc.ctaUrlRequired);
-      if (needsOfferFields && !ctaUrl.trim() && !hasOfferCoupon) {
-        p.push(pc.wizard.offerLinkRequired);
-      }
       return p;
     }
     return draftProblems();
@@ -710,8 +666,8 @@ export default function PublishComposer({
     setPublishError(null);
     try {
       // Dates are checked here, with the reason, so the tenant is not met by a
-      // 422 from the API: a schedule must be set and in the future, a removal
-      // must come after the post goes out, and an event must end after it starts.
+      // 422 from the API: a schedule must be set and in the future, and a
+      // removal must come after the post goes out.
       if (scheduleOn && !scheduleAt) {
         throw new Error(tr.publish.dates.scheduleMissing);
       }
@@ -721,9 +677,8 @@ export default function PublishComposer({
       const dateProblem = checkWindow({
         scheduleAt: scheduleOn ? scheduleAt : "",
         removeAt: removeOn ? removeAt : "",
-        startDate: needsEventWindow ? startDate : "",
-        endDate: needsEventWindow ? endDate : "",
-        eventRequired: needsEventWindow,
+        startDate: "",
+        endDate: "",
       });
       if (dateProblem) {
         throw new Error(tr.publish.dates[dateProblem]);
@@ -821,10 +776,9 @@ export default function PublishComposer({
       const attempt = publishAttemptRef.current;
 
       // Two things vary per request: the crop (each format bakes its own
-      // file) and, for a promotion, the coupon/terms (they live in the post
-      // body). Grouping by both is what lets one draft publish a 1:1 avatar,
-      // a 16:9 cover and an uncropped update without shipping one file to
-      // all of them.
+      // file) and the destination. Grouping by crop is what lets one draft
+      // publish a 1:1 avatar, a 16:9 promotion and an uncropped update
+      // without shipping one file to all of them.
       type PostDestination = {
         platform: string;
         external_asset_id: string;
@@ -834,31 +788,22 @@ export default function PublishComposer({
         string,
         {
           destinations: PostDestination[];
-          coupon: string;
-          terms: string;
           crop: CropState;
         }
       >();
       for (const item of confirmItems) {
         const methods = item.methods.filter((m) => m !== "gallery");
         if (methods.length === 0) continue;
-        const details = offerDetails[cropKeyFor(item.target.id, "offer")];
         const assetId = externalAssetIdFor(item.target) as string;
         for (const method of methods) {
           const crop =
             crops[cropKeyFor(item.target.id, method)] ??
             defaultCropFor(item.target.platform, method);
-          const offerSig =
-            method === "offer"
-              ? `${details?.coupon ?? ""}|${details?.terms ?? ""}`
-              : "";
-          const groupKey = `${cropSignature(crop)}::${offerSig}`;
+          const groupKey = cropSignature(crop);
           let group = groups.get(groupKey);
           if (!group) {
             group = {
               destinations: [],
-              coupon: details?.coupon ?? "",
-              terms: details?.terms ?? "",
               crop,
             };
             groups.set(groupKey, group);
@@ -891,15 +836,14 @@ export default function PublishComposer({
               ctaType && ctaType !== "call" ? ctaUrl.trim() || null : null,
             scheduled_at: scheduleOn && scheduleAt ? new Date(scheduleAt).toISOString() : null,
             delete_at: removeOn && removeAt ? new Date(removeAt).toISOString() : null,
-            start_date: startDate ? new Date(startDate).toISOString() : null,
-            end_date: endDate ? new Date(endDate).toISOString() : null,
-            // The wall-clock time the merchant picked is in this zone. Google's
-            // TimeInterval has no timezone field, so the backend renders the
-            // same wall-clock values here before sending them.
-            event_title: eventTitle.trim() || null,
+            // Event and offer fields remain part of the publish API for posts
+            // created elsewhere; the composer no longer sets them.
+            start_date: null,
+            end_date: null,
+            event_title: null,
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-            coupon_code: group.coupon || null,
-            terms_conditions: group.terms || null,
+            coupon_code: null,
+            terms_conditions: null,
             // Google labels the post with the language the merchant wrote
             // it in, so an Arabic post is not published as English.
             language_code: GOOGLE_POST_LANGUAGE[locale] ?? "en-US",
@@ -999,11 +943,8 @@ export default function PublishComposer({
       setRemoveAt("");
       setCtaType("");
       setCtaUrl("");
-      setStartDate("");
-      setEndDate("");
       setFormats({});
       setGalleryCategories({});
-      setOfferDetails({});
       // The draft is done: a new publish starts a new attempt.
       publishAttemptRef.current = null;
       onPublished?.();
@@ -1293,51 +1234,6 @@ export default function PublishComposer({
                 {pc.removeNote}
               </p>
             )}
-            {needsEventWindow && (
-              <div className="mt-3 border-t border-[var(--ui-line)] pt-3">
-                <p className={`mb-2 text-[12px] font-semibold ${INK2}`}>
-                  {pc.eventWindow}
-                  <span className="ml-1 text-coral" title={pc.wizard.requiredHint}>*</span>
-                </p>
-                <label className={`mb-3 block text-[12px] font-semibold ${INK2}`}>
-                  {pc.eventTitle}<span className="text-coral">*</span>
-                  <input
-                    type="text"
-                    value={eventTitle}
-                    onChange={(e) => setEventTitle(e.target.value)}
-                    maxLength={58}
-                    placeholder={pc.eventTitlePh}
-                    aria-label={pc.eventTitle}
-                    className={`${FIELD} mt-1 w-full`}
-                  />
-                </label>
-                <div className="flex flex-wrap items-center gap-3">
-                  <label className={`flex items-center gap-2 text-[12px] ${INK2}`}>
-                    {pc.eventStart}<span className="text-coral">*</span>
-                    <input
-                      type="datetime-local"
-                      value={startDate}
-                      onChange={(e) => setStartDate(e.target.value)}
-                      aria-label={pc.eventStart}
-                      min={minLocalInput()}
-                      className={`${FIELD} w-full sm:w-56`}
-                    />
-                  </label>
-                  <label className={`flex items-center gap-2 text-[12px] ${INK2}`}>
-                    {pc.eventEnd}<span className="text-coral">*</span>
-                    <input
-                      type="datetime-local"
-                      value={endDate}
-                      onChange={(e) => setEndDate(e.target.value)}
-                      aria-label={pc.eventEnd}
-                      min={startDate || minLocalInput()}
-                      className={`${FIELD} w-full sm:w-56`}
-                    />
-                  </label>
-                </div>
-                <p className={`mt-1.5 text-[11px] ${INK2}`}>{pc.eventWindowHint}</p>
-              </div>
-            )}
           </section>
 
           </div>{/* end step 3 */}
@@ -1348,10 +1244,9 @@ export default function PublishComposer({
           <section aria-labelledby="publish-cta-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
             <h2 id="publish-cta-h" className={`text-[15px] font-bold ${INK}`}>
               {pc.wizard.ctaTitle}
-              {needsOfferFields && <span className="ml-1 text-coral" title={pc.wizard.requiredHint}>*</span>}
             </h2>
             <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
-              {needsOfferFields ? pc.wizard.offerLinkHint : pc.ctaHint}
+              {pc.ctaHint}
             </p>
             <div>
               <label htmlFor="pub-cta-type" className={`text-[12px] font-semibold ${INK2}`}>
@@ -1374,19 +1269,14 @@ export default function PublishComposer({
                 ))}
               </select>
               {ctaType && ctaType !== "call" && (
-                <>
-                  <input
-                    type="url"
-                    value={ctaUrl}
-                    onChange={(e) => setCtaUrl(e.target.value)}
-                    placeholder={pc.ctaUrlPh}
-                    aria-label={pc.ctaUrlPh}
-                    className={`${FIELD} mt-1.5 w-full`}
-                  />
-                  {needsOfferFields && (
-                    <p className="mt-1 text-[11px] text-coral">{pc.wizard.offerLinkRequired}</p>
-                  )}
-                </>
+                <input
+                  type="url"
+                  value={ctaUrl}
+                  onChange={(e) => setCtaUrl(e.target.value)}
+                  placeholder={pc.ctaUrlPh}
+                  aria-label={pc.ctaUrlPh}
+                  className={`${FIELD} mt-1.5 w-full`}
+                />
               )}
             </div>
           </section>
@@ -1751,40 +1641,6 @@ export default function PublishComposer({
                   />
                 </div>
                 <div className="w-full max-w-[320px] shrink-0 space-y-3">
-                  {modalCtx.method === "offer" && (
-                    <div className="space-y-3">
-                      <div>
-                        <label htmlFor="offer-coupon" className="mb-1 block text-[12px] font-semibold text-[var(--ui-ink)]">
-                          {pc.couponLabel}
-                          <span className="ml-1 text-coral" title={pc.wizard.requiredHint}>*</span>
-                        </label>
-                        <input
-                          id="offer-coupon"
-                          type="text"
-                          value={draftCoupon}
-                          onChange={(e) => setDraftCoupon(e.target.value)}
-                          placeholder={pc.couponPh}
-                          maxLength={64}
-                          className="w-full clay-input px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus:border-deep-violet/40"
-                        />
-                        <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">{pc.couponHint}</p>
-                      </div>
-                      <div>
-                        <label htmlFor="offer-terms" className="mb-1 block text-[12px] font-semibold text-[var(--ui-ink)]">
-                          {pc.termsLabel}
-                        </label>
-                        <textarea
-                          id="offer-terms"
-                          value={draftTerms}
-                          onChange={(e) => setDraftTerms(e.target.value)}
-                          placeholder={pc.termsPh}
-                          maxLength={300}
-                          rows={3}
-                          className="w-full clay-input px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus:border-deep-violet/40"
-                        />
-                      </div>
-                    </div>
-                  )}
                   {modalCtx.method === "gallery" && (
                     <div>
                       <label className="mb-1 block text-[12px] font-semibold text-[var(--ui-ink)]">Gallery category</label>

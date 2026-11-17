@@ -393,7 +393,9 @@ function ProfilePicturePreview({
   );
 }
 
-/* A banner is the wide cover image that sits behind a page header. */
+/* A banner is the wide cover image that sits behind a page header. The
+ * composer labels it "Promotion"; keep the internal method key because the
+ * publish API and existing jobs use it. */
 function BannerPreview({
   target,
   media,
