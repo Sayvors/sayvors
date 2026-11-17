@@ -617,6 +617,73 @@ function PendingChanges({
   );
 }
 
+/**
+ * Google grades a whole field at once — it cannot tell us which individual
+ * row is pending. A row is "waiting" only when its field is under review AND
+ * the value we hold differs from what Google shows today. That is an
+ * inference from two things Google does report, never a claim it made per row.
+ */
+function isPendingReview(status?: string | null): boolean {
+  return status === "pending" || status === "draft";
+}
+
+function valuesDiffer(local: unknown, remote: unknown): boolean {
+  if (local === remote) return false;
+  try {
+    return JSON.stringify(local ?? null) !== JSON.stringify(remote ?? null);
+  } catch {
+    return true;
+  }
+}
+
+const PENDING_ROW_CLASS =
+  "border-amber-400 bg-amber-50 dark:border-amber-500/50 dark:bg-amber-500/10";
+
+function formatRegularDay(
+  value: { open: string; close: string; closed: boolean; all_day?: boolean } | undefined,
+  copy: LocationsCopy,
+): string {
+  if (!value) return copy.notSet;
+  if (value.closed) return copy.closedLabel;
+  if (value.all_day || (value.open === "00:00" && value.close === "00:00"))
+    return copy.open24Hours;
+  return `${value.open || "?"} - ${value.close || "?"}`;
+}
+
+/** Old (live on Google, struck through) → new (ours, applied on approval). */
+function PendingDiff({
+  before,
+  after,
+  copy,
+  label,
+}: {
+  before: string | null | undefined;
+  after: string | null | undefined;
+  copy: LocationsCopy;
+  label?: string;
+}) {
+  if (before == null && after == null) return null;
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-amber-200/70 pt-2 text-[11px] dark:border-amber-500/20">
+      <span
+        className="rounded bg-amber-500/15 px-1.5 py-0.5 font-bold text-amber-800 dark:text-amber-300"
+        title={copy.pendingRowHint}
+      >
+        {label ?? copy.pendingOnGoogle}
+      </span>
+      {before != null && (
+        <>
+          <span className="line-through text-ink/35 dark:text-fog/35">{before}</span>
+          <span aria-hidden className="font-bold text-amber-500">&rarr;</span>
+        </>
+      )}
+      <span className="font-semibold text-amber-900 dark:text-amber-200">
+        {after ?? copy.notSet}
+      </span>
+    </div>
+  );
+}
+
 function CompletenessCard({
   profile,
   fullProfile,
@@ -1888,6 +1955,14 @@ function DetailsTab({
     !detailFailures.phone &&
     !detailFailures.website;
 
+  const pendingDetail = (section: "name" | "phone" | "website", value: string) => {
+    if (!isPendingReview(detailStatuses?.[section]?.stage)) return null;
+    const was = (fullProfile?.google_current as Record<string, unknown> | undefined)?.[section];
+    const before = typeof was === "string" && was.trim() ? was : null;
+    if ((before ?? "") === value) return null;
+    return { before, after: value || copy.notSet };
+  };
+
   useEffect(() => {
     setName(fullProfile?.name ?? location?.name ?? "");
     setAddress(location?.address ?? "");
@@ -1987,6 +2062,7 @@ function DetailsTab({
         <>
           <Field label={copy.essentialName}>
             <input value={name} onChange={(e) => setName(e.target.value)} className="input-field" />
+            {pendingDetail("name", name) && <PendingDiff {...pendingDetail("name", name)!} copy={copy} />}
           </Field>
           <Field label={copy.essentialAddress}>
             <input
@@ -2017,6 +2093,7 @@ function DetailsTab({
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label={copy.fieldPhone} varies={bulk?.varies.has("phone") ?? false}>
           <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+966 55 000 0000" className="input-field" />
+          {pendingDetail("phone", phone) && <PendingDiff {...pendingDetail("phone", phone)!} copy={copy} />}
           {bulk?.fieldValues?.phone ? (
             <BranchValues
               branches={bulk.branches}
@@ -2027,6 +2104,7 @@ function DetailsTab({
         </Field>
         <Field label={copy.fieldWebsite} varies={bulk?.varies.has("website") ?? false}>
           <input value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://..." className="input-field" />
+          {pendingDetail("website", website) && <PendingDiff {...pendingDetail("website", website)!} copy={copy} />}
           {bulk?.fieldValues?.website ? (
             <BranchValues
               branches={bulk.branches}
@@ -2080,6 +2158,22 @@ function CategoriesTab({ initial, onSave, bulk, copy, synced, status, reason, cu
   const [additional, setAdditional] = useState<string[]>(initial?.additional ?? []);
   const [saving, setSaving] = useState(false);
 
+  const pendingPrimary = () => {
+    const remote = current?.categories;
+    if (!isPendingReview(status) || !remote || (remote.primary ?? "") === primary)
+      return null;
+    return { before: remote.primary ?? null, after: primary || copy.notSet };
+  };
+  const pendingAdditional = () => {
+    const remote = current?.categories;
+    if (!isPendingReview(status) || !remote) return null;
+    if (!valuesDiffer(remote.additional ?? [], additional)) return null;
+    return {
+      before: (remote.additional ?? []).join(", ") || null,
+      after: additional.join(", ") || copy.notSet,
+    };
+  };
+
   useEffect(() => {
     setPrimary(initial?.primary ?? "");
     setAdditional(initial?.additional ?? []);
@@ -2111,6 +2205,7 @@ function CategoriesTab({ initial, onSave, bulk, copy, synced, status, reason, cu
       <Field label={copy.primaryCategory} varies={bulk?.varies.has("primary") ?? false}>
         <CategoryPicker value={primary} region={region} onChange={setPrimary} />
         <p className="mt-1 text-[11px] text-ink/40 dark:text-fog/40">{copy.primaryCategoryHint}</p>
+        {pendingPrimary() && <PendingDiff {...pendingPrimary()!} copy={copy} />}
       </Field>
       <Field label={copy.additionalCategories} varies={bulk?.varies.has("additional") ?? false}>
         <p className="mb-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.additionalCategoriesHint}</p>
@@ -2141,6 +2236,7 @@ function CategoriesTab({ initial, onSave, bulk, copy, synced, status, reason, cu
           }}
         />
       </Field>
+      {pendingAdditional() && <PendingDiff {...pendingAdditional()!} copy={copy} />}
       <div className="pt-2 sm:flex sm:justify-end">
         <button onClick={handleSave} disabled={saving} className="btn-primary disabled:opacity-50">
           {saving
@@ -2171,6 +2267,19 @@ function HoursTab({ initial, onSave, bulk, copy, synced, status, reason, current
     { ...blank(), ...(initial ?? {}) }
   );
   const [saving, setSaving] = useState(false);
+
+  // Google reports one stage for the whole hours block; the exact waiting
+  // rows are our local values that differ from what Google shows today.
+  const pendingDay = (day: string) => {
+    const remote = current?.["hours.regular"];
+    if (!isPendingReview(status) || !remote) return null;
+    return valuesDiffer(hours[day], remote[day])
+      ? {
+          before: formatRegularDay(remote[day], copy),
+          after: formatRegularDay(hours[day], copy),
+        }
+      : null;
+  };
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reset form when switching locations
@@ -2223,7 +2332,7 @@ function HoursTab({ initial, onSave, bulk, copy, synced, status, reason, current
       )}
       <div className="space-y-2">
         {HOURS_DAYS.map((day) => (
-          <div key={day} className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 sm:flex-nowrap dark:border-fog/[0.06] dark:bg-fog/[0.02]">
+          <div key={day} className={`flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 sm:flex-nowrap dark:border-fog/[0.06] dark:bg-fog/[0.02] ${pendingDay(day) ? PENDING_ROW_CLASS : ""}`}>
             <span className="w-24 shrink-0 text-[13px] font-medium text-ink dark:text-fog">{dayLabel(day, copy)}</span>
             <label className="flex items-center gap-1.5">
               <input
@@ -2257,6 +2366,7 @@ function HoursTab({ initial, onSave, bulk, copy, synced, status, reason, current
             ) : (
               <span className="text-[12px] font-medium text-ink/30 dark:text-fog/30">{copy.closedLabel}</span>
             )}
+            {pendingDay(day) && <PendingDiff {...pendingDay(day)!} copy={copy} />}
           </div>
         ))}
       </div>
@@ -2290,6 +2400,25 @@ function SpecialHoursTab({ initial, onSave, bulk, copy, synced, status, reason, 
   // Where a special-hours template starts and how many days it spans.
   const [templateStart, setTemplateStart] = useState(() => new Date().toISOString().slice(0, 10));
   const [templateDays, setTemplateDays] = useState(1);
+
+  const pendingEntry = (
+    entry: { date: string; hours: string; reason: string },
+    i: number,
+  ) => {
+    const remote = current?.["hours.special"];
+    if (!isPendingReview(status) || !remote) return null;
+    const was = remote.find((r) => r.date === entry.date) ?? remote[i];
+    if (
+      was &&
+      was.date === entry.date &&
+      was.hours === entry.hours &&
+      (was.reason ?? "") === entry.reason
+    ) return null;
+    return {
+      before: was ? `${was.hours}${was.reason ? ` · ${was.reason}` : ""}` : null,
+      after: `${entry.hours}${entry.reason ? ` · ${entry.reason}` : ""}`,
+    };
+  };
   const addEntry = () => setEntries([...entries, { date: "", hours: "09:00 - 17:00", reason: "" }]);
   const removeEntry = (i: number) => setEntries(entries.filter((_, idx) => idx !== i));
   const updateEntry = (i: number, field: string, value: string) => {
@@ -2344,7 +2473,7 @@ function SpecialHoursTab({ initial, onSave, bulk, copy, synced, status, reason, 
         <CurrentPanel section="hours.special" current={current} bulkRows={bulkCurrent} copy={copy} />
       )}
       {entries.map((entry, i) => (
-        <div key={i} className="grid grid-cols-1 items-start gap-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 sm:grid-cols-[150px_150px_1fr_auto] dark:border-fog/[0.06] dark:bg-fog/[0.02]">
+        <div key={i} className={`grid grid-cols-1 items-start gap-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 sm:grid-cols-[150px_150px_1fr_auto] dark:border-fog/[0.06] dark:bg-fog/[0.02] ${pendingEntry(entry, i) ? PENDING_ROW_CLASS : ""}`}>
           <input type="date" value={entry.date} onChange={(e) => updateEntry(i, "date", e.target.value)} className="input-field" />
           {/* "09:00 - 17:00" / "closed" are Google wire values � not translated. */}
           <input value={entry.hours} onChange={(e) => updateEntry(i, "hours", e.target.value)} placeholder="09:00 - 17:00" className="input-field" />
@@ -2352,6 +2481,11 @@ function SpecialHoursTab({ initial, onSave, bulk, copy, synced, status, reason, 
           <button onClick={() => removeEntry(i)} className="mt-1 text-ink/30 transition hover:text-red-500 dark:text-fog/30">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" /></svg>
           </button>
+          {pendingEntry(entry, i) && (
+            <div className="sm:col-span-4">
+              <PendingDiff {...pendingEntry(entry, i)!} copy={copy} />
+            </div>
+          )}
         </div>
       ))}
       <button onClick={addEntry} className="btn-secondary">{copy.addSpecialHours}</button>
@@ -2403,6 +2537,21 @@ function MoreHoursTab({ initial, onSave, bulk, copy, synced, status, reason, cur
   const [entries, setEntries] = useState<{ type: string; open: string; close: string }[]>(initial ?? []);
   const [saving, setSaving] = useState(false);
   const addEntry = () => setEntries([...entries, { type: MORE_HOURS_OPTIONS[0], open: "09:00", close: "17:00" }]);
+
+  const pendingEntry = (
+    entry: { type: string; open: string; close: string },
+    i: number,
+  ) => {
+    const remote = current?.["hours.more"];
+    if (!isPendingReview(status) || !remote) return null;
+    const was = remote.find((r) => (r.type ?? "") === entry.type) ?? remote[i];
+    if (was && was.type === entry.type && was.open === entry.open && was.close === entry.close)
+      return null;
+    return {
+      before: was ? `${serviceTypeLabel(was.type ?? "", copy)} ${was.open ?? "?"} - ${was.close ?? "?"}` : null,
+      after: `${serviceTypeLabel(entry.type, copy)} ${entry.open} - ${entry.close}`,
+    };
+  };
   const removeEntry = (i: number) => setEntries(entries.filter((_, idx) => idx !== i));
   const updateEntry = (i: number, field: string, value: string) => {
     const next = [...entries];
@@ -2452,7 +2601,7 @@ function MoreHoursTab({ initial, onSave, bulk, copy, synced, status, reason, cur
         <p className="text-[12px] text-ink/35 dark:text-fog/35">{copy.moreHoursEmpty}</p>
       )}
       {entries.map((entry, i) => (
-        <div key={i} className="grid grid-cols-1 items-center gap-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 sm:grid-cols-[150px_120px_auto_120px_auto] dark:border-fog/[0.06] dark:bg-fog/[0.02]">
+        <div key={i} className={`grid grid-cols-1 items-center gap-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 sm:grid-cols-[150px_120px_auto_120px_auto] dark:border-fog/[0.06] dark:bg-fog/[0.02] ${pendingEntry(entry, i) ? PENDING_ROW_CLASS : ""}`}>
           <select value={entry.type} onChange={(e) => updateEntry(i, "type", e.target.value)} className="input-field">
             {/* value stays the English wire value; only the label is localised */}
             {MORE_HOURS_OPTIONS.map((opt) => (
@@ -2465,6 +2614,11 @@ function MoreHoursTab({ initial, onSave, bulk, copy, synced, status, reason, cur
           <button onClick={() => removeEntry(i)} className="text-ink/30 transition hover:text-red-500 dark:text-fog/30">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" /></svg>
           </button>
+          {pendingEntry(entry, i) && (
+            <div className="sm:col-span-5">
+              <PendingDiff {...pendingEntry(entry, i)!} copy={copy} />
+            </div>
+          )}
         </div>
       ))}
       <button onClick={addEntry} className="btn-secondary">{copy.addMoreHours}</button>
@@ -2496,6 +2650,14 @@ function ServiceAreaTab({ initial, onSave, bulk, copy, synced, status, reason, c
   const [areas, setAreas] = useState<string[]>(initial ?? []);
   const [newArea, setNewArea] = useState("");
   const [saving, setSaving] = useState(false);
+
+  const pendingArea = () => {
+    const remote = current?.service_area;
+    if (!isPendingReview(status) || !remote) return null;
+    const was = googleCurrentLines("service_area", remote, copy);
+    if (!valuesDiffer(was, areas)) return null;
+    return { before: was.join(", ") || null, after: areas.join(", ") || copy.notSet };
+  };
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reset form when switching locations
@@ -2544,6 +2706,7 @@ function ServiceAreaTab({ initial, onSave, bulk, copy, synced, status, reason, c
           </span>
         ))}
       </div>
+      {pendingArea() && <PendingDiff {...pendingArea()!} copy={copy} />}
       <div className="grid grid-cols-[1fr_auto] items-center gap-2">
         <input value={newArea} onChange={(e) => setNewArea(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addArea()} placeholder={copy.serviceAreaPlaceholder} className="input-field" />
         <button onClick={addArea} className="btn-secondary">{copy.add}</button>
@@ -2587,6 +2750,12 @@ function AttributesTab({ initial, onSave, bulk, copy, synced, status, reason, cu
   const [newKey, setNewKey] = useState("");
   const [newValue, setNewValue] = useState("yes");
   const [saving, setSaving] = useState(false);
+
+  const pendingAttr = (key: string, value: string) => {
+    const remote = current?.attributes;
+    if (!isPendingReview(status) || !remote || remote[key] === value) return null;
+    return { before: remote[key] ?? null, after: value };
+  };
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reset form when switching locations
@@ -2637,7 +2806,7 @@ function AttributesTab({ initial, onSave, bulk, copy, synced, status, reason, cu
       <div className="space-y-3">
         {Object.entries(attrs).length === 0 && <p className="text-[12px] text-ink/35 dark:text-fog/35">{copy.attributesEmpty}</p>}
         {Object.entries(attrs).map(([key, value]) => (
-          <div key={key} className="grid grid-cols-[1fr_160px_auto] items-center gap-3">
+          <div key={key} className={`grid grid-cols-[1fr_160px_auto] items-center gap-3 rounded-lg p-2 ${pendingAttr(key, value) ? PENDING_ROW_CLASS : ""}`}>
             {/* key is Google's attribute vocabulary (matched against ATTRIBUTE_IDS) � stays English */}
             <span className="truncate text-[13px] font-medium text-ink dark:text-fog" title={key}>{key}</span>
             <input
@@ -2652,6 +2821,11 @@ function AttributesTab({ initial, onSave, bulk, copy, synced, status, reason, cu
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" /></svg>
             </button>
+            {pendingAttr(key, value) && (
+              <div className="col-span-3">
+                <PendingDiff {...pendingAttr(key, value)!} copy={copy} />
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -2695,6 +2869,13 @@ function DescriptionTab({ initial, initialOpeningDate, onSave, bulk, copy, synce
   const [openingDate, setOpeningDate] = useState(initialOpeningDate ?? "");
   const [saving, setSaving] = useState(false);
 
+  const pendingDesc = () => {
+    if (!isPendingReview(status)) return null;
+    const was = current?.description ?? null;
+    if ((was ?? "") === desc) return null;
+    return { before: was, after: desc || copy.notSet };
+  };
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reset form when switching locations
     setDesc(initial ?? "");
@@ -2728,8 +2909,9 @@ function DescriptionTab({ initial, initialOpeningDate, onSave, bulk, copy, synce
         rows={6}
         maxLength={750}
         placeholder={copy.descriptionPlaceholder}
-        className="w-full resize-y rounded-xl border border-ink/[0.08] bg-white p-3 text-[13px] text-ink outline-none transition placeholder:text-ink/25 focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.1] dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+        className={`w-full resize-y rounded-xl border bg-white p-3 text-[13px] text-ink outline-none transition placeholder:text-ink/25 focus:ring-2 dark:bg-ink dark:text-fog ${pendingDesc() ? "border-amber-400 focus:border-amber-400 focus:ring-amber-500/20 dark:border-amber-500/50" : "border-ink/[0.08] focus:border-deep-violet/30 focus:ring-deep-violet/[0.1] dark:border-fog/[0.1]"}`}
       />
+      {pendingDesc() && <PendingDiff {...pendingDesc()!} copy={copy} />}
       <p className="text-right text-[11px] text-ink/30 dark:text-fog/30">
         {copy.descriptionCounter.replace("{count}", String(desc.length))}
       </p>

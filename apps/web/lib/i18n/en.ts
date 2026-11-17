@@ -260,6 +260,8 @@ const en = {
       pendingChangesHint:
         "Changed here, not live on Maps yet — Google is still reviewing.",
       pendingTabHint: "Has changes pending on Google",
+      pendingRowHint:
+        "Google reviews the whole section, not each row. This row differs from what Google shows today, so it will change when the edit is accepted.",
       sectionName: "Business name",
       sectionAddress: "Address",
       syncedViaGoogle: "Synced from your Google Business Profile",

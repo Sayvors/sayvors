@@ -262,6 +262,8 @@ const ar: Dict = {
       pendingChangesHint:
         "عُدّل هنا ولم يُنشر على الخرائط بعد — لا يزال Google يراجعه.",
       pendingTabHint: "توجد تغييرات بانتظار Google",
+      pendingRowHint:
+        "تراجع Google القسم بالكامل لا كل سطر على حدة. يختلف هذا السطر عن المعروض حاليًا على Google، وسيتغير عند الموافقة على التعديل.",
       sectionName: "اسم النشاط",
       sectionAddress: "العنوان",
       syncedViaGoogle: "متزامن من Google Business Profile",
