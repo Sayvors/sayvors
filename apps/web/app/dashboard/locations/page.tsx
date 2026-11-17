@@ -532,6 +532,91 @@ function GoogleStatusBar({
   );
 }
 
+/** Section key (from Google's edit status) → the tab that edits it. */
+const SECTION_TAB: Record<
+  string,
+  { tab: string; label: (c: LocationsCopy) => string }
+> = {
+  name: { tab: "details", label: (c) => c.sectionName },
+  phone: { tab: "details", label: (c) => c.fieldPhone },
+  website: { tab: "details", label: (c) => c.fieldWebsite },
+  address: { tab: "details", label: (c) => c.sectionAddress },
+  categories: { tab: "categories", label: (c) => c.tabCategories },
+  "hours.regular": { tab: "hours", label: (c) => c.tabHours },
+  "hours.special": { tab: "special-hours", label: (c) => c.tabSpecialHours },
+  "hours.more": { tab: "more-hours", label: (c) => c.tabMoreHours },
+  service_area: { tab: "service-area", label: (c) => c.tabServiceArea },
+  attributes: { tab: "attributes", label: (c) => c.tabAttributes },
+  description: { tab: "description", label: (c) => c.tabDescription },
+  opening_date: { tab: "description", label: (c) => c.openingDateLabel },
+  services: { tab: "services", label: (c) => c.tabServices },
+};
+
+/** Tabs in display order, so the pending list reads like the tab bar. */
+const SECTION_TAB_ORDER = [
+  "details",
+  "categories",
+  "hours",
+  "special-hours",
+  "more-hours",
+  "service-area",
+  "attributes",
+  "description",
+  "services",
+];
+
+/** One pending change: the Google section, its label and where to edit it. */
+type PendingChange = { section: string; label: string; tab: string };
+
+/**
+ * The short list of what the merchant changed that Google has not published
+ * yet — only the pending ones. A live change needs no attention, and a
+ * rejected one is already red inside its own tab, so mixing them here would
+ * bury the thing this strip exists to answer: "what of mine is Google still
+ * sitting on?"
+ */
+function PendingChanges({
+  items,
+  copy,
+  onJump,
+}: {
+  items: PendingChange[];
+  copy: LocationsCopy;
+  onJump: (tab: string) => void;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div className="rounded-2xl border border-amber-300/70 bg-amber-50 px-3.5 py-2.5 dark:border-amber-500/30 dark:bg-amber-500/10">
+      <div className="flex flex-wrap items-center gap-2">
+        <span aria-hidden className="h-2 w-2 rounded-full bg-amber-500" />
+        <span className="text-[12px] font-bold text-amber-800 dark:text-amber-300">
+          {copy.pendingChangesTitle}
+        </span>
+        <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-bold text-amber-800 dark:text-amber-300">
+          {items.length}
+        </span>
+        <span className="text-[11.5px] text-amber-800/70 dark:text-amber-200/60">
+          {copy.pendingChangesHint}
+        </span>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {items.map((item) => (
+          <button
+            key={item.section}
+            type="button"
+            onClick={() => onJump(item.tab)}
+            title={copy.pendingTabHint}
+            className="inline-flex min-h-7 items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-[11.5px] font-semibold text-amber-800 outline-none transition hover:bg-amber-100 focus-visible:ring-2 focus-visible:ring-amber-500/50 dark:border-amber-500/30 dark:bg-ink dark:text-amber-300 dark:hover:bg-amber-500/10"
+          >
+            {item.label}
+            <span aria-hidden>&rarr;</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function CompletenessCard({
   profile,
   fullProfile,
@@ -1150,6 +1235,33 @@ const bulk: BulkScope | null = isBulk
     { key: "services", label: copy.tabServices },
   ];
 
+  // Google's review queue for this branch: the sections the merchant changed
+  // that are not live yet. Derived from the polled snapshot, so it keeps up
+  // every minute without another request.
+  const pendingChanges = useMemo<PendingChange[]>(() => {
+    if (isBulk || !fullProfile) return [];
+    const items: PendingChange[] = [];
+    for (const [section, entry] of Object.entries(
+      fullProfile.google_status ?? {},
+    )) {
+      // Drafts are saved but unpublished, so they wait on Google too.
+      if (entry?.stage !== "pending" && entry?.stage !== "draft") continue;
+      const meta = SECTION_TAB[section];
+      if (!meta) continue;
+      items.push({ section, label: meta.label(copy), tab: meta.tab });
+    }
+    items.sort(
+      (a, b) =>
+        SECTION_TAB_ORDER.indexOf(a.tab) - SECTION_TAB_ORDER.indexOf(b.tab),
+    );
+    return items;
+  }, [isBulk, fullProfile, copy]);
+
+  const pendingTabs = useMemo(
+    () => new Set(pendingChanges.map((item) => item.tab)),
+    [pendingChanges],
+  );
+
   // What Google shows today, per branch, for the whole bulk scope. A bulk
   // save changes every branch at once, so the merchant needs to see each
   // branch's live value before they change it.
@@ -1433,6 +1545,13 @@ const bulk: BulkScope | null = isBulk
               copy={copy}
             />
           )}
+          {!isBulk && selectedId && (
+            <PendingChanges
+              items={pendingChanges}
+              copy={copy}
+              onJump={setActiveTab}
+            />
+          )}
           {/* Tabs (google-updates is per-branch, hidden in bulk) */}
           <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1">
             <div role="tablist" className="flex gap-1 rounded-xl bg-ink/[0.03] p-1 dark:bg-fog/[0.04]">
@@ -1442,6 +1561,7 @@ const bulk: BulkScope | null = isBulk
                   role="tab"
                   aria-selected={activeTab === tab.key}
                   onClick={() => setActiveTab(tab.key)}
+                  title={pendingTabs.has(tab.key) ? copy.pendingTabHint : undefined}
                   className={`min-h-9 whitespace-nowrap rounded-lg px-3 py-1.5 text-[12px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
                     activeTab === tab.key
                       ? "bg-white text-deep-violet shadow-sm dark:bg-ink dark:text-fog"
@@ -1449,6 +1569,12 @@ const bulk: BulkScope | null = isBulk
                   }`}
                 >
                   {tab.label}
+                  {pendingTabs.has(tab.key) && (
+                    <span
+                      aria-hidden
+                      className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-amber-500 align-middle"
+                    />
+                  )}
                 </button>
               ))}
             </div>

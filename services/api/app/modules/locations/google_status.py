@@ -3,9 +3,22 @@
 The page shows Google's real per-field edit lifecycle (pending / accepted /
 rejected / updated-by-Google) plus the values live on Maps, and refreshes it
 while the page is open. The Business Information API's default project quota
-is 300 requests per minute and one raw refresh costs up to three calls
-(``:getExtended``, ``attributes:getExtended``, ``serviceItems``), so polling
-has to be mediated. This module is that mediator:
+is 300 requests per minute, so polling has to be mediated. This module is that
+mediator, and it spends as few calls as the API allows:
+
+* ``:getExtended`` carries the merchant values, the consumer values **and**
+  the per-field edit status in one response — and ``serviceItems`` is a
+  top-level Location field, so the service list usually rides along instead
+  of costing its own request.
+* Attributes are the one thing Google keeps on a separate resource
+  (``attributes:getExtended``), so they are the second call — and they are
+  reused for ``GBP_STATUS_ATTRIBUTES_SECONDS`` because they only change when
+  the merchant edits them.
+* A project without the alpha channel is remembered for
+  ``ALPHA_RETRY_SECONDS``: paying for the same 404 every minute would halve
+  the useful budget on exactly the projects with the least to spend.
+
+Layered on top of that:
 
 * ``snapshot()`` serves any snapshot younger than its TTL, so every open tab
   on a branch shares one Google fan-out instead of one per viewer.
@@ -39,6 +52,7 @@ logger = logging.getLogger(__name__)
 CACHE_PREFIX = "gbp:status:"
 LOCK_PREFIX = "gbp:status:lock:"
 BUDGET_PREFIX = "gbp:qpm:"
+ALPHA_OFF_PREFIX = "gbp:status:alpha_off:"
 
 # Cadence the UI polls Sayvors at. The server decides between them: while an
 # edit is in review there is something to watch; once every section is
@@ -50,8 +64,17 @@ IDLE_POLL_SECONDS = 300
 # soon, but not once per open tab in the same minute.
 FAILURE_RETRY_SECONDS = 30
 
-# Cross-worker refresh lock. The holder is doing three HTTP calls, so 10s is
-# generous; a crashed holder must not block refreshes forever.
+# A connection that cannot use the v1alpha channel is remembered for this
+# long. Asking again costs a quota unit each time and the answer only changes
+# when Google enables the API or the merchant reconnects.
+ALPHA_RETRY_SECONDS = 600
+
+# Responses that mean "this project/connection cannot use the alpha channel".
+# Anything else is a real failure and must surface.
+ALPHA_UNAVAILABLE_STATUSES = (400, 403, 404)
+
+# Cross-worker refresh lock. The holder is doing at most two HTTP calls, so
+# 10s is generous; a crashed holder must not block refreshes forever.
 LOCK_TTL_SECONDS = 10
 LOCK_WAIT_SECONDS = 2.0
 LOCK_POLL_INTERVAL_SECONDS = 0.05
@@ -94,6 +117,8 @@ _MAX_LOCKS = 512
 
 _PROCESS_CACHE: dict[str, tuple[float, dict]] = {}
 _PROCESS_BUDGET: dict[str, int] = {}
+# channel key -> (expires_at, status code that proved alpha unavailable)
+_PROCESS_ALPHA_OFF: dict[str, tuple[float, int]] = {}
 _INFLIGHT_LOCKS: dict[tuple[int, str], asyncio.Lock] = {}
 
 
@@ -109,6 +134,7 @@ def reset_process_state() -> None:
     """Drop the per-process cache/counter (tests, and the ``reload`` path)."""
     _PROCESS_CACHE.clear()
     _PROCESS_BUDGET.clear()
+    _PROCESS_ALPHA_OFF.clear()
     _INFLIGHT_LOCKS.clear()
 
 
@@ -165,12 +191,15 @@ async def snapshot(channel, listing_id: str, *, force: bool = False) -> dict:
                 return _view(waited, "cache", now)
 
         try:
-            sections, current, alpha, reason = await _fetch(channel, listing_id)
+            sections, current, attributes_at, alpha, reason = await _fetch(
+                channel, listing_id, cached
+            )
             snap = {
                 "ok": True,
                 "sections": sections,
                 "current": current,
                 "fetched_at": time.time(),
+                "attributes_at": attributes_at,
                 "alpha": alpha,
                 "reason": reason,
                 "ttl": _ttl_for(sections),
@@ -304,10 +333,15 @@ def _iso(ts: float | None) -> str | None:
 # ── Google fetch ─────────────────────────────────────────────────────────
 
 
-async def _fetch(channel, listing_id: str) -> tuple[dict, dict, bool, str | None]:
+async def _fetch(
+    channel, listing_id: str, previous: dict | None = None
+) -> tuple[dict, dict, float | None, bool, str | None]:
     """One refresh: alpha edit status, falling back to the stable v1 masks.
 
-    Returns ``(sections, current, alpha_available, reason)``.
+    Returns ``(sections, current, attributes_at, alpha_available, reason)``.
+    ``previous`` is the snapshot this refresh replaces; it lets the alpha path
+    reuse an attribute reading that is still fresh instead of paying for the
+    same answer again.
     """
     from ..channels.google_business import GoogleBusinessClient
     from ..channels.google_reviews import GoogleReviewsError
@@ -321,34 +355,46 @@ async def _fetch(channel, listing_id: str) -> tuple[dict, dict, bool, str | None
 
     client = GoogleBusinessClient(access or "", refresh)
     try:
+        known = await _alpha_unavailable(channel)
+        if known is not None:
+            # This connection already proved it has no alpha channel. Asking
+            # again would spend a quota unit to re-learn the same 404.
+            sections, current = await _fetch_stable(client, listing_id)
+            return sections, current, None, False, f"alpha_{known}"
         try:
-            sections, current = await _fetch_alpha(client, listing_id)
-            return sections, current, True, None
+            sections, current, attributes_at = await _fetch_alpha(
+                client, listing_id, previous
+            )
+            return sections, current, attributes_at, True, None
         except GoogleReviewsError as e:
             # 400/403/404 mean the alpha channel is not enabled for this
             # project or app; the stable masks still answer "is it pending"
             # and "what differs on Maps".
-            if e.status_code in (400, 403, 404):
+            if e.status_code in ALPHA_UNAVAILABLE_STATUSES:
                 logger.info(
                     "Edit-status alpha unavailable for %s (%s); using stable v1",
                     listing_id,
                     e.status_code,
                 )
+                await _remember_alpha_unavailable(channel, e.status_code)
                 sections, current = await _fetch_stable(client, listing_id)
-                return sections, current, False, f"alpha_{e.status_code}"
+                return sections, current, None, False, f"alpha_{e.status_code}"
             raise
     finally:
         await client.close()
 
 
-async def _fetch_alpha(client, listing_id: str) -> tuple[dict, dict]:
-    """Full per-field lifecycle from the v1alpha endpoints."""
-    from ..channels.google_business import (
-        parse_attribute_edit_status,
-        parse_attribute_values,
-        parse_consumer_values,
-        parse_edit_status,
-    )
+async def _fetch_alpha(
+    client, listing_id: str, previous: dict | None = None
+) -> tuple[dict, dict, float | None]:
+    """Full per-field lifecycle from the v1alpha endpoints.
+
+    ``:getExtended`` answers the merchant values, the live values **and** the
+    per-field status in one response, so the common case is a single call: the
+    service list rides along, and attributes are only re-read when the last
+    reading is old enough to be worth a request.
+    """
+    from ..channels.google_business import parse_consumer_values, parse_edit_status
 
     if not await _take_budget():
         raise BudgetExhausted
@@ -356,25 +402,16 @@ async def _fetch_alpha(client, listing_id: str) -> tuple[dict, dict]:
     sections = parse_edit_status(extended)
     current = parse_consumer_values(extended)
 
-    # Attributes have their own endpoint; their status folds into one
-    # section whose worst attribute wins (a rejected Wi-Fi flag must not be
-    # hidden by an accepted one).
-    if await _take_budget():
-        try:
-            attributes_extended = await client.get_extended_attributes(listing_id)
-        except Exception as e:  # noqa: BLE001 — attributes are optional
-            logger.debug("Attribute edit status unavailable for %s: %s", listing_id, e)
-            attributes_extended = {}
-        folded = _fold_attribute_status(
-            parse_attribute_edit_status(attributes_extended)
-        )
-        if folded:
-            sections["attributes"] = folded
-        attribute_values = parse_attribute_values(attributes_extended)
-        if attribute_values:
-            current["attributes"] = attribute_values
+    attributes_at = await _refresh_attributes(
+        client, listing_id, sections, current, previous
+    )
 
-    if await _take_budget():
+    # ``serviceItems`` is a top-level Location field, so the extended response
+    # usually carries it and a separate request would buy nothing.
+    inline, services = _services_from_extended(extended)
+    if inline:
+        current["services"] = services
+    elif await _take_budget():
         try:
             service_items = await client.get_service_items(listing_id)
         except Exception as e:  # noqa: BLE001 — services are optional
@@ -382,7 +419,95 @@ async def _fetch_alpha(client, listing_id: str) -> tuple[dict, dict]:
             service_items = []
         current["services"] = _service_items_summary(service_items)
 
-    return sections, current
+    return sections, current, attributes_at
+
+
+async def _refresh_attributes(
+    client,
+    listing_id: str,
+    sections: dict,
+    current: dict,
+    previous: dict | None,
+) -> float | None:
+    """Fill the attributes section, reusing the last reading when it is fresh.
+
+    Attributes are the one part of the profile Google keeps on a separate
+    resource, and they change only when the merchant edits them — every push
+    that touches them invalidates this snapshot. Re-reading a clean profile
+    every minute discovers nothing and costs a quota unit, so a settled
+    reading is reused for ``GBP_STATUS_ATTRIBUTES_SECONDS`` while a pending
+    one keeps the one-minute cadence.
+
+    Returns when Google last reported the attributes (None when this refresh
+    has no usable attribute reading).
+    """
+    from ..channels.google_business import (
+        parse_attribute_edit_status,
+        parse_attribute_values,
+    )
+
+    if _attributes_reusable(previous, time.time()):
+        prev = previous or {}
+        prev_sections = prev.get("sections") or {}
+        prev_current = prev.get("current") or {}
+        if "attributes" in prev_sections:
+            sections["attributes"] = prev_sections["attributes"]
+        if "attributes" in prev_current:
+            current["attributes"] = prev_current["attributes"]
+        return prev.get("attributes_at")
+
+    if not await _take_budget():
+        return None
+    try:
+        attributes_extended = await client.get_extended_attributes(listing_id)
+    except Exception as e:  # noqa: BLE001 — attributes are optional
+        logger.debug("Attribute edit status unavailable for %s: %s", listing_id, e)
+        return None
+
+    # One section, worst attribute wins: a rejected Wi-Fi flag must not be
+    # hidden behind an accepted one.
+    folded = _fold_attribute_status(parse_attribute_edit_status(attributes_extended))
+    if folded:
+        sections["attributes"] = folded
+    attribute_values = parse_attribute_values(attributes_extended)
+    if attribute_values:
+        current["attributes"] = attribute_values
+    return time.time()
+
+
+def _attributes_reusable(previous: dict | None, now: float) -> bool:
+    """Whether the previous snapshot's attribute reading still stands.
+
+    A pending attribute keeps the minute cadence — its acceptance is what the
+    merchant is watching for. Anything else is reused for
+    ``GBP_STATUS_ATTRIBUTES_SECONDS``.
+    """
+    if not previous or not previous.get("ok"):
+        return False
+    at = previous.get("attributes_at")
+    if not isinstance(at, (int, float)):
+        return False
+    entry = (previous.get("sections") or {}).get("attributes") or {}
+    pending = entry.get("stage") in ("pending", "draft")
+    ttl = ACTIVE_POLL_SECONDS if pending else settings.GBP_STATUS_ATTRIBUTES_SECONDS
+    return (now - at) < ttl
+
+
+def _services_from_extended(extended: dict) -> tuple[bool, list[dict]]:
+    """The service list carried by the ExtendedLocation payload, if present.
+
+    ``serviceItems`` is a top-level Location field, not a resource of its own,
+    so one extended read normally answers it. Returns ``(found, items)``;
+    ``found`` is False when neither view carries the field, which is **not**
+    proof of an empty list — the caller still asks for it in that case.
+    """
+    extended = extended if isinstance(extended, dict) else {}
+    for view in ("locationProvidedByMerchant", "locationSeenByConsumers"):
+        data = extended.get(view)
+        if isinstance(data, dict) and "serviceItems" in data:
+            items = data.get("serviceItems")
+            return True, _service_items_summary(items if isinstance(items, list) else [])
+    return False, []
 
 
 async def _fetch_stable(client, listing_id: str) -> tuple[dict, dict]:
@@ -493,6 +618,55 @@ async def _take_budget() -> bool:
 
 
 # ── Cache / lock plumbing ────────────────────────────────────────────────
+
+
+def _channel_key(channel) -> str:
+    return str(getattr(channel, "id", None) or "unknown")
+
+
+async def _alpha_unavailable(channel) -> int | None:
+    """The status code that proved this connection has no alpha channel.
+
+    Google only changes that answer when the API gets enabled on the project
+    or the merchant reconnects, so the marker expires rather than latching.
+    """
+    key = _channel_key(channel)
+    redis = await _redis()
+    if redis is not None:
+        try:
+            raw = await redis.get(ALPHA_OFF_PREFIX + key)
+            return int(raw) if raw else None
+        except Exception as e:  # noqa: BLE001 — fall back to the local marker
+            logger.debug("Alpha-unavailable marker unreadable: %s", e)
+    entry = _PROCESS_ALPHA_OFF.get(key)
+    if entry is None:
+        return None
+    expires_at, status = entry
+    if expires_at <= time.time():
+        _PROCESS_ALPHA_OFF.pop(key, None)
+        return None
+    return status
+
+
+async def _remember_alpha_unavailable(channel, status_code: int) -> None:
+    """Stop paying for an alpha call we already know will fail."""
+    key = _channel_key(channel)
+    now = time.time()
+    # The dict is keyed by channel, so drop expired markers before adding
+    # another: a long-lived worker would otherwise keep one per channel.
+    for stale_key, (expires_at, _) in list(_PROCESS_ALPHA_OFF.items()):
+        if expires_at <= now:
+            _PROCESS_ALPHA_OFF.pop(stale_key, None)
+    _PROCESS_ALPHA_OFF[key] = (now + ALPHA_RETRY_SECONDS, status_code)
+    redis = await _redis()
+    if redis is None:
+        return
+    try:
+        await redis.set(
+            ALPHA_OFF_PREFIX + key, str(status_code), ex=ALPHA_RETRY_SECONDS
+        )
+    except Exception as e:  # noqa: BLE001 — the process marker still applies
+        logger.debug("Alpha-unavailable marker write failed: %s", e)
 
 
 def _cache_key(channel, listing_id: str) -> str:

@@ -311,3 +311,119 @@ async def test_get_profile_carries_the_check_timestamp(db, user_id):
     # exactly how the UI distinguishes "not checked" from "checked, clean".
     assert profile["google_status"] == {}
     assert profile["google_checked_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_alpha_unavailable_is_not_retried_every_refresh(monkeypatch):
+    """A project without v1alpha must not pay for the same 404 every minute.
+
+    The 404 is a quota unit too, and the answer only changes when Google
+    enables the API or the merchant reconnects.
+    """
+    fake = _FakeGoogle(
+        alpha_error=GoogleReviewsError("not enabled", 404),
+        updated={"pendingMask": "regularHours"},
+    )
+    _patch_client(monkeypatch, fake)
+    channel = _channel("loc-alpha-cache")
+
+    first = await google_status.snapshot(channel, "loc-alpha-cache")
+    second = await google_status.snapshot(channel, "loc-alpha-cache", force=True)
+
+    assert first["reason"] == "alpha_404"
+    # Same honest reason, remembered rather than re-learned.
+    assert second["reason"] == "alpha_404"
+    assert fake.calls["extended"] == 1
+    assert fake.calls["updated"] == 2
+    assert second["sections"]["hours.regular"]["stage"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_service_items_ride_along_with_the_extended_response(monkeypatch):
+    """serviceItems is a Location field: a separate request buys nothing."""
+    fake = _FakeGoogle(
+        extended={
+            **_extended("pending"),
+            "locationProvidedByMerchant": {
+                "title": "Merchant Name",
+                "serviceItems": [
+                    {"freeFormServiceItem": {"label": {"displayName": "Oil change"}}}
+                ],
+            },
+        }
+    )
+    _patch_client(monkeypatch, fake)
+
+    snap = await google_status.snapshot(_channel("loc-svc"), "loc-svc")
+
+    assert fake.calls["services"] == 0
+    assert snap["current"]["services"] == [{"name": "Oil change", "offered": True}]
+
+
+@pytest.mark.asyncio
+async def test_service_items_are_fetched_when_the_payload_omits_them(monkeypatch):
+    """Absence is not proof of an empty list — ask for the authoritative one."""
+    fake = _FakeGoogle(
+        extended=_extended("pending"),
+        services=[
+            {"structuredServiceItem": {"serviceTypeId": "gcid:plumber"}},
+        ],
+    )
+    _patch_client(monkeypatch, fake)
+
+    snap = await google_status.snapshot(_channel("loc-svc-fetch"), "loc-svc-fetch")
+
+    assert fake.calls["services"] == 1
+    assert snap["current"]["services"] == [{"name": "plumber", "offered": True}]
+
+
+@pytest.mark.asyncio
+async def test_attributes_are_not_refetched_while_fresh(monkeypatch):
+    """Attributes change only when the merchant edits them; polling is waste."""
+    fake = _FakeGoogle(
+        extended=_extended("accepted"),
+        attributes={
+            "extendedAttributes": [
+                {
+                    "attributeProvidedByMerchant": {
+                        "name": "attributes/wheelchair_accessible_entrance"
+                    },
+                    "extendedFieldData": {
+                        "lastEditLifecycleStage": "EDIT_LIFECYCLE_STAGE_ACCEPTED"
+                    },
+                }
+            ]
+        },
+    )
+    _patch_client(monkeypatch, fake)
+    channel = _channel("loc-attrs")
+
+    first = await google_status.snapshot(channel, "loc-attrs")
+    second = await google_status.snapshot(channel, "loc-attrs", force=True)
+
+    assert fake.calls["extended"] == 2
+    assert fake.calls["attributes"] == 1
+    # The reused reading still reaches the page.
+    assert second["sections"]["attributes"]["stage"] == "accepted"
+    assert first["sections"]["attributes"] == second["sections"]["attributes"]
+
+
+def test_pending_attribute_keeps_the_minute_cadence():
+    """A pending attribute is the one case worth re-reading every minute."""
+    now = 1_000_000.0
+    accepted = {
+        "ok": True,
+        "attributes_at": now - 120,
+        "sections": {"attributes": {"stage": "accepted"}},
+    }
+    pending = {
+        "ok": True,
+        "attributes_at": now - 120,
+        "sections": {"attributes": {"stage": "pending"}},
+    }
+
+    assert google_status._attributes_reusable(accepted, now) is True
+    assert google_status._attributes_reusable(pending, now) is False
+    # Nothing to reuse before a successful read.
+    assert google_status._attributes_reusable(None, now) is False
+    assert google_status._attributes_reusable({"ok": False}, now) is False

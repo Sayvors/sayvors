@@ -256,6 +256,12 @@ const en = {
       googleStatusUnavailable: "Live status unavailable",
       googleStatusStale: "quota reached — showing the last check",
       servicesStatusHint: "Google's review state for the service list.",
+      pendingChangesTitle: "Pending on Google",
+      pendingChangesHint:
+        "Changed here, not live on Maps yet — Google is still reviewing.",
+      pendingTabHint: "Has changes pending on Google",
+      sectionName: "Business name",
+      sectionAddress: "Address",
       syncedViaGoogle: "Synced from your Google Business Profile",
       viewOnMaps: "View on Maps",
       addressReadOnlyTitle: "Address is synced from Google — edit it in your Google Business dashboard",

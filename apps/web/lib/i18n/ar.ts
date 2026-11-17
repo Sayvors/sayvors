@@ -258,6 +258,12 @@ const ar: Dict = {
       googleStatusUnavailable: "الحالة المباشرة غير متاحة",
       googleStatusStale: "تم بلوغ الحد — نعرض آخر فحص",
       servicesStatusHint: "حالة مراجعة Google لقائمة الخدمات.",
+      pendingChangesTitle: "بانتظار مراجعة Google",
+      pendingChangesHint:
+        "عُدّل هنا ولم يُنشر على الخرائط بعد — لا يزال Google يراجعه.",
+      pendingTabHint: "توجد تغييرات بانتظار Google",
+      sectionName: "اسم النشاط",
+      sectionAddress: "العنوان",
       syncedViaGoogle: "متزامن من Google Business Profile",
       viewOnMaps: "عرض على الخرائط",
       addressReadOnlyTitle: "العنوان متزامن من Google — عدّله من لوحة Google Business",

@@ -319,6 +319,12 @@ class Settings(BaseSettings):
     # Idle cadence: once every section is accepted there is nothing to watch,
     # so the snapshot lives five minutes and the UI polls five-minute cadence.
     GBP_STATUS_IDLE_SECONDS: int = 300
+    # Attributes live on their own endpoint and change only when the merchant
+    # edits them — and every successful push invalidates the snapshot anyway.
+    # This is how long a clean attribute reading is reused, so a steady
+    # profile stops spending a call a minute to be told nothing changed. A
+    # pending attribute falls back to the 60s cadence on its own.
+    GBP_STATUS_ATTRIBUTES_SECONDS: int = 300
 
     # ── Google Places API (New) ──────────────────────────────────────────
     # Server-side key for two features: resolving free-text service areas to
