@@ -411,7 +411,7 @@ export default function PublishComposer({
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [aiOpen, setAiOpen] = useState(false);
+  const [aiOpen, setAiOpen] = useState(true);
   // Wizard navigation only — every input/handler stays mounted (steps are
   // shown with `hidden`), so no draft state or media preview is ever lost.
   // The step id is derived, never a raw number: the message step disappears
@@ -1182,27 +1182,6 @@ export default function PublishComposer({
             )}
           </section>
 
-          <section aria-labelledby="ai-video-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
-            <button
-              type="button"
-              id="ai-video-h"
-              onClick={() => setAiOpen((v) => !v)}
-              aria-expanded={aiOpen}
-              className={`flex w-full items-center justify-between gap-2 text-left ${INK}`}
-            >
-              <span className="text-[14px] font-bold">{pc.aiTitle}</span>
-              <span className={`text-[12px] font-semibold ${INK2}`}>{aiOpen ? "Hide" : "Show"}</span>
-            </button>
-            {aiOpen && (
-              <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
-                {pc.aiSub}
-              </p>
-            )}
-            <div className={aiOpen ? "" : "hidden"}>
-              <AiVideoCreator googleTargets={googleTargets} />
-            </div>
-          </section>
-
           </div>{/* end media step */}
 
           {/* STEP — message. Only visible when a text format is selected. */}
@@ -1692,6 +1671,27 @@ export default function PublishComposer({
           {/* Persistent preview rail — visible on every step, so the frame
               always mirrors the destination/format it will actually use. */}
           <aside className="order-first min-w-0 lg:order-none lg:sticky lg:top-4 lg:self-start">
+            <section aria-labelledby="ai-video-h" className="clay-panel mb-5 border-deep-violet/20 bg-deep-violet/[0.03] p-4 sm:p-5 dark:border-fog/10 dark:bg-fog/[0.03]">
+              <button
+                type="button"
+                id="ai-video-h"
+                onClick={() => setAiOpen((v) => !v)}
+                aria-expanded={aiOpen}
+                className={`flex w-full items-center justify-between gap-2 text-left ${INK}`}
+              >
+                <span className="flex items-center gap-2 text-[14px] font-bold">
+                  <span aria-hidden>✨</span>
+                  {pc.aiTitle}
+                </span>
+                <span className={`text-[12px] font-semibold ${INK2}`}>{aiOpen ? pc.aiHide : pc.aiShow}</span>
+              </button>
+              <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
+                {pc.aiSub}
+              </p>
+              <div className={aiOpen ? "" : "hidden"}>
+                <AiVideoCreator googleTargets={googleTargets} />
+              </div>
+            </section>
             <section aria-labelledby="publish-preview-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <h2 id="publish-preview-h" className={`text-[15px] font-bold ${INK}`}>

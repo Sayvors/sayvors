@@ -2618,6 +2618,8 @@ const ar: Dict = {
       allTitle: "اختيار كل تنسيقات الخلاصة لهذه الوجهة",
       aiTitle: "✨ أنشئ فيديو لنشاطك",
       aiSub: "بنقرة واحدة. تصوغ Sayvors فيديو إطلاق من نشاطك — دون تحرير.",
+      aiHide: "إخفاء",
+      aiShow: "إظهار",
       aiBusiness: "النشاط",
       aiBusinessPh: "اسم النشاط",
       aiColors: "ألوان العلامة",
