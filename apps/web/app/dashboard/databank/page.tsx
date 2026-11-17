@@ -406,6 +406,7 @@ function BusinessProfileCard() {
 function DatabankPageContent() {
   const { t, locale } = useI18n();
   const d = t.dashboard.databank;
+  const intakeCopy = t.dashboard.businessIntake;
   const badgeLabels = d.badge;
   const fmtDate = (iso: string | null | undefined) =>
     iso ? new Date(iso).toLocaleDateString(locale === "ar" ? "ar-SA" : "en-US") : "";
@@ -641,6 +642,17 @@ function DatabankPageContent() {
                   </p>
                 </div>
               </div>
+              <Link
+                href="/dashboard/business-intake"
+                title={intakeCopy.subtitle}
+                className="inline-flex items-center justify-center gap-1.5 self-start rounded-[2px] border border-white/40 px-4 py-2.5 text-[12px] font-bold text-white transition hover:bg-white/10 active:scale-[0.98] sm:self-auto"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3.5 w-3.5">
+                  <path d="M12 20h9" strokeLinecap="round" />
+                  <path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4 12.5-12.5z" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                {intakeCopy.title}
+              </Link>
               <Link
                 href="/dashboard/databank/new"
                 className="inline-flex items-center justify-center gap-1.5 self-start rounded-[2px] bg-white px-4 py-2.5 text-[12px] font-bold text-deep-violet shadow-sm transition hover:bg-white/90 active:scale-[0.98] sm:self-auto"

@@ -37,7 +37,14 @@ const CARD =
 const FOCUS =
   "focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet";
 
-export default function BusinessIntakeStep({ onComplete }: { onComplete: () => void }) {
+export default function BusinessIntakeStep({
+  onComplete,
+  skipLabel,
+}: {
+  onComplete: () => void;
+  /** Dashboard embedding uses "Cancel"; onboarding uses "Skip for now". */
+  skipLabel?: string;
+}) {
   const { t } = useI18n();
   const c = t.dashboard.businessIntake;
   const [data, setData] = useState<IntakeResponse | null>(null);
@@ -302,7 +309,7 @@ export default function BusinessIntakeStep({ onComplete }: { onComplete: () => v
                 </button>
               )}
               <button type="button" onClick={onComplete} className={`${FOCUS} text-[12px] text-ink/40 underline underline-offset-2`}>
-                {c.skip}
+                {skipLabel ?? c.skip}
               </button>
             </div>
             {/* Picking a tile advances automatically, so there is no Next

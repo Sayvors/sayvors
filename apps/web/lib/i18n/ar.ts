@@ -4402,6 +4402,8 @@ const ar: Dict = {
       next: "التالي",
       save: "حفظ ومتابعة",
       skip: "تخطَّ — سأفعل ذلك لاحقاً",
+      cancel: "إلغاء",
+      backToDatabank: "العودة إلى قاعدة المعرفة",
       notSureHint: "سنعتبرها غير معروفة، وليست حقيقة.",
       googleSuggestion: "تصنّفك Google كـ {name}. هل نستخدم ذلك؟",
       googleConfirm: "نعم، استخدمه",

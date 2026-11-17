@@ -4396,6 +4396,8 @@ const en = {
       next: "Next",
       save: "Save & continue",
       skip: "Skip — I'll do this later",
+      cancel: "Cancel",
+      backToDatabank: "Back to Knowledge Base",
       notSureHint: "We'll treat this as unknown, never as a fact.",
       googleSuggestion: "Google lists you as {name}. Use that?",
       googleConfirm: "Yes, use it",
