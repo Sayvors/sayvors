@@ -21,7 +21,7 @@ from .facts_store import render_locations
 logger = logging.getLogger(__name__)
 
 TOPICS: tuple[str, ...] = (
-    "hours", "locations", "website", "contact", "services", "team", "owner", "all",
+    "hours", "locations", "website", "contact", "services", "details", "team", "owner", "all",
 )
 
 FACTS_TOOL = ToolDefinition(
@@ -29,14 +29,16 @@ FACTS_TOOL = ToolDefinition(
     description=(
         "Read this business's own facts. Use before answering any factual "
         "question: opening hours (per location), address/branches, website, "
-        "services offered, team, owner."
+        "services offered, owner-confirmed business details, team, owner."
     ),
     parameters={
         "topic": ToolParameter(
             type="string",
             description=(
-                "One of: hours, locations, website, contact, services, team, "
-                "owner, all. Use 'hours' for opening/closing times, "
+                "One of: hours, locations, website, contact, services, details, "
+                "team, owner, all. Use 'details' for owner-confirmed facts such "
+                "as menu, dietary, delivery, insurance or parking. Use 'hours' "
+                "for opening/closing times, "
                 "'locations' for branches/addresses."
             ),
         )
@@ -205,6 +207,26 @@ def _contact_text(facts: dict) -> str:
     return "\n".join(lines)
 
 
+def _intake_text(facts: dict) -> str:
+    """Owner-confirmed answers from the business-intake cascade.
+
+    These are facts the merchant explicitly tapped, so they are authoritative
+    and must be available to the reply path. Skipped answers are absent from
+    the facts document entirely.
+    """
+    answers = (facts.get("business") or {}).get("intake") or {}
+    if not isinstance(answers, dict) or not answers:
+        return ""
+    lines = ["BUSINESS DETAILS (confirmed by the owner):"]
+    for key, value in list(answers.items())[:30]:
+        if value in (None, "", [], {}):
+            continue
+        if isinstance(value, list):
+            value = ", ".join(str(v) for v in value)
+        lines.append(f"- {str(key).replace('_', ' ')}: {value}")
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
 def render_topic(facts: dict, topic: str) -> str:
     """The text for one topic. "" when the fact is not configured."""
     topic = _ALIASES.get(str(topic or "").strip().lower(), str(topic or "").strip().lower())
@@ -217,13 +239,15 @@ def render_topic(facts: dict, topic: str) -> str:
             "assistant's availability; the assistant answers 24/7):\n" + text
         )
     if topic == "locations":
-        return _locations_text(facts)
+        return "\n".join(p for p in (_locations_text(facts), _intake_text(facts)) if p)
     if topic == "website":
         return _website_text(facts)
     if topic == "contact":
         return _contact_text(facts)
     if topic == "services":
-        return _services_text(facts)
+        return "\n".join(p for p in (_services_text(facts), _intake_text(facts)) if p)
+    if topic == "details":
+        return _intake_text(facts)
     if topic == "team":
         return _team_text(facts)
     if topic == "owner":
@@ -235,6 +259,7 @@ def render_topic(facts: dict, topic: str) -> str:
             _services_text(facts),
             _team_text(facts),
             render_topic(facts, "hours"),
+            _intake_text(facts),
         ]
         return "\n".join(part for part in parts if part)
     return ""

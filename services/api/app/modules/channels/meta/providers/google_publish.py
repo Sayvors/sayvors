@@ -540,10 +540,27 @@ class GoogleBusinessPublisher:
             media_format="PHOTO",
             fresh_data_ref=_fresh_ref if media_data is not None else None,
         )
+        # Google can accept the bytes and still file the image somewhere else
+        # (or report a fallback). For a banner that means it landed in the
+        # gallery rather than the cover slot — never report success, because
+        # the merchant would believe their banner is live when it is not.
+        actual = str(
+            (data.get("locationAssociation") or {}).get("category") or ""
+        ).upper()
+        # LOGO is a deprecated alias: Google returns PROFILE for it.
+        expected = "PROFILE" if category == "LOGO" else category
+        if data.get("categoryFallback") or actual != expected:
+            raise GoogleReviewsError(
+                "Google accepted the image but filed it as "
+                f"{actual or 'an unspecified category'} instead of {expected}; "
+                "it is not the requested banner/profile",
+                502,
+            )
         return {
             "id": data.get("name", ""),
             "name": data.get("name", ""),
-            "category": (data.get("locationAssociation") or {}).get("category"),
+            "category": actual,
+            "categoryConfirmed": True,
             "googleUrl": data.get("googleUrl", ""),
             "categoryFallback": data.get("categoryFallback"),
         }

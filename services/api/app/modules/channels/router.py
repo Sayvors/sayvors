@@ -3627,6 +3627,14 @@ async def approve_review_reply(
         reply.google_reply_state = state["state"]
         reply.status = "posted"
         reply.error = None
+        # Record which provider reply this is. Without it the next poll saw a
+        # posted row with no `reply_external_id`, treated Google's copy as a
+        # new reply, and re-stamped the review's current rating/text onto the
+        # row — which is how an edited review ended up "answered" by a reply
+        # written for its previous content.
+        if state.get("updated_at") is not None:
+            reply.replied_at = state["updated_at"]
+            reply.reply_external_id = f"google:{state['updated_at'].isoformat()}"
         from .reviews_worker import _store_reply_message
 
         await _store_reply_message(
@@ -4479,6 +4487,22 @@ async def upload_google_media(
         )
         assoc = created.get("locationAssociation") or {}
         fallback = created.get("categoryFallback")
+        # A banner is only a banner if Google actually filed it as COVER.
+        # Other categories may legitimately fall back to ADDITIONAL, but a
+        # silently downgraded cover must never be reported as success.
+        actual_cat = str(assoc.get("category") or "").upper()
+        wanted_cat = "PROFILE" if cat == "LOGO" else cat
+        if cat in ("COVER", "PROFILE", "LOGO") and (
+            fallback or actual_cat != wanted_cat
+        ):
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"Google filed the image as "
+                    f"{actual_cat or 'an unspecified category'} instead of "
+                    f"{wanted_cat}; it is not the requested banner/profile."
+                ),
+            )
         return {
             "created": True,
             "media": {

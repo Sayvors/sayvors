@@ -2,9 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  addEnterpriseRecipient,
   decideBillingRequest,
   fetchBillingRequests,
+  fetchEnterpriseRecipients,
+  removeEnterpriseRecipient,
   type AdminBillingRequest,
+  type EnterpriseRecipient,
 } from "@/lib/admin-api";
 
 type Filter = "pending" | "approved" | "rejected" | "all";
@@ -38,6 +42,14 @@ export default function AdminRequestsPage() {
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
 
+  const [recipients, setRecipients] = useState<EnterpriseRecipient[]>([]);
+  const [maxRecipients, setMaxRecipients] = useState(25);
+  const [recipientsLoading, setRecipientsLoading] = useState(true);
+  const [recipientBusy, setRecipientBusy] = useState<string | null>(null);
+  const [recipientError, setRecipientError] = useState<string | null>(null);
+  const [recipientNotice, setRecipientNotice] = useState<string | null>(null);
+  const [newEmail, setNewEmail] = useState("");
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -53,6 +65,61 @@ export default function AdminRequestsPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const loadRecipients = useCallback(async () => {
+    setRecipientsLoading(true);
+    setRecipientError(null);
+    try {
+      const data = await fetchEnterpriseRecipients();
+      setRecipients(data.items);
+      setMaxRecipients(data.max_recipients);
+    } catch (e) {
+      setRecipientError(
+        e instanceof Error ? e.message : "Could not load the notification list.",
+      );
+    } finally {
+      setRecipientsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadRecipients();
+  }, [loadRecipients]);
+
+  const addRecipient = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const email = newEmail.trim();
+    if (!email) return;
+    setRecipientBusy("add");
+    setRecipientError(null);
+    setRecipientNotice(null);
+    try {
+      const created = await addEnterpriseRecipient(email);
+      setRecipients((prev) => [...prev, created]);
+      setNewEmail("");
+      setRecipientNotice(`${created.email} will now be emailed about Enterprise requests.`);
+    } catch (e) {
+      setRecipientError(e instanceof Error ? e.message : "Could not add the address.");
+    } finally {
+      setRecipientBusy(null);
+    }
+  };
+
+  const removeRecipient = async (row: EnterpriseRecipient) => {
+    if (!window.confirm(`Stop emailing ${row.email} about Enterprise requests?`)) return;
+    setRecipientBusy(row.id);
+    setRecipientError(null);
+    setRecipientNotice(null);
+    try {
+      await removeEnterpriseRecipient(row.id);
+      setRecipients((prev) => prev.filter((item) => item.id !== row.id));
+      setRecipientNotice(`${row.email} was removed from the notification list.`);
+    } catch (e) {
+      setRecipientError(e instanceof Error ? e.message : "Could not remove the address.");
+    } finally {
+      setRecipientBusy(null);
+    }
+  };
 
   const pendingCount = useMemo(
     () => items.filter((request) => request.status === "pending").length,
@@ -124,6 +191,89 @@ export default function AdminRequestsPage() {
           {error ?? notice}
         </p>
       )}
+
+      <section className="panel mt-4 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-[15px] font-bold text-ink">Enterprise request emails</h2>
+            <p className="mt-0.5 max-w-2xl text-[11.5px] leading-relaxed text-ink/50">
+              When a tenant asks for the Enterprise plan, every address on this list
+              receives an email with the tenant&apos;s contact details so sales can follow
+              up by email, phone or a meeting.
+            </p>
+          </div>
+          <span className="rounded-full bg-ink/[0.05] px-2.5 py-1 text-[10.5px] font-bold uppercase tracking-wide text-ink/55">
+            {recipients.length} / {maxRecipients}
+          </span>
+        </div>
+
+        <form onSubmit={addRecipient} className="mt-3 flex flex-wrap items-center gap-2">
+          <input
+            type="email"
+            required
+            value={newEmail}
+            onChange={(e) => setNewEmail(e.target.value)}
+            maxLength={320}
+            placeholder="sales@example.com"
+            aria-label="Email address to add"
+            className="input-field h-9 max-w-sm flex-1"
+          />
+          <button
+            type="submit"
+            disabled={recipientBusy !== null || recipients.length >= maxRecipients}
+            className={`btn-primary !px-3 !py-1.5 disabled:opacity-50 ${FOCUS_RING}`}
+          >
+            {recipientBusy === "add" ? "Adding…" : "Add address"}
+          </button>
+        </form>
+
+        {recipientError && (
+          <p role="alert" className="mt-3 rounded-[2px] border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-medium text-red-700">
+            {recipientError}
+          </p>
+        )}
+        {recipientNotice && (
+          <p role="status" className="mt-3 rounded-[2px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] font-medium text-emerald-800">
+            {recipientNotice}
+          </p>
+        )}
+
+        {recipientsLoading ? (
+          <div className="mt-3 space-y-2" aria-hidden>
+            {[0, 1].map((i) => (
+              <div key={i} className="h-9 animate-pulse rounded-[2px] bg-ink/[0.05]" />
+            ))}
+          </div>
+        ) : recipients.length === 0 ? (
+          <p className="mt-3 rounded-[2px] border border-dashed border-amber-300 bg-amber-50/60 px-3 py-2.5 text-[11.5px] font-medium text-amber-800">
+            No one is emailed yet. Add at least one address so Enterprise requests reach sales.
+          </p>
+        ) : (
+          <ul className="mt-3 divide-y divide-ink/[0.05] rounded-[2px] border border-[var(--ui-line)]">
+            {recipients.map((row) => (
+              <li key={row.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
+                <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-ink/85" title={row.email}>
+                  {row.email}
+                </span>
+                {row.created_at && (
+                  <span className="text-[10.5px] text-ink/40">
+                    added {new Date(row.created_at).toLocaleDateString()}
+                    {row.created_by ? ` by ${row.created_by}` : ""}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void removeRecipient(row)}
+                  disabled={recipientBusy !== null}
+                  className={`rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2 py-1 text-[10.5px] font-semibold text-ink/60 transition hover:border-coral hover:text-coral disabled:opacity-40 ${FOCUS_RING}`}
+                >
+                  {recipientBusy === row.id ? "Removing…" : "Remove"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       {loading ? (
         <div className="mt-6 space-y-2" aria-hidden>

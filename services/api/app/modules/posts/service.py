@@ -876,6 +876,7 @@ async def draft_post_content(
     title: str,
     post_type: str = "update",
     business_name: str | None = None,
+    location_name: str | None = None,
 ) -> dict:
     """AI-draft the composer fields (description + tags + keywords) from a
     title. Model comes from the tenant's enabled list — no default, no
@@ -936,6 +937,8 @@ async def draft_post_content(
     )
     user_msg = (
         f"Business: {(business_name or '').strip() or 'local business'}\n"
+        + (f"Location/branch: {location_name.strip()}\n"
+           if location_name and location_name.strip() else "")
         + ("\n".join(context_parts) + "\n" if context_parts else "")
         + f"{grounding_rule}\n"
         f"Post type: {kind_line}\nTitle: {title}\nWrite the post content."

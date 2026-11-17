@@ -328,6 +328,13 @@ async def build_facts(db, tenant_id: str, user=None) -> dict:
     services = await _services(db, tenant_id)
     team = await _team(db, tenant_id)
     locations = await _locations(db, tenant_id)
+    # Merchant-owned intake answers. Imported lazily: intake.save_intake calls
+    # rebuild_facts, so a module-level import would be circular.
+    from .intake import intake_facts
+
+    intake_answers = await intake_facts(
+        db, tenant_id, getattr(user, "vertical_key", None)
+    )
 
     # Complaints the merchant marked fixed/dismissed. The assistant must know
     # these were addressed instead of repeating them as open problems.
@@ -383,6 +390,7 @@ async def build_facts(db, tenant_id: str, user=None) -> dict:
             "doesnt_sell": (getattr(user, "business_doesnt_sell", None) or "").strip(),
             "owner": owner,
             "addressed_complaints": addressed_complaints,
+            "intake": intake_answers,
         },
         "contact": {
             "address": str(profile.get("address") or "").strip(),

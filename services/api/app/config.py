@@ -241,6 +241,10 @@ class Settings(BaseSettings):
     # normal campaign still fits in one day while a loop cannot drain the domain.
     BULK_EMAIL_DAILY_LIMIT: int = 500
     FRONTEND_URL: str = "http://localhost:3000"
+    # Public origin of the admin console (apps/admin). Operator-facing emails
+    # link here, so it must not be the tenant app's URL. Local dev default
+    # matches `npm run dev` in apps/admin.
+    ADMIN_CONSOLE_URL: str = "http://localhost:3001"
     # Public base URL of THIS API, used to build tracked links that customers
     # click from SMS/email/WhatsApp (e.g. https://api.sayvors.com).
     PUBLIC_API_URL: str = "http://localhost:8000"
@@ -299,6 +303,28 @@ class Settings(BaseSettings):
     # merchant's own zone per publish. UTC here is neutral, never a hardcoded
     # country offset.
     GOOGLE_POST_TIMEZONE: str = "UTC"
+
+    # ── Google Business Profile: edit-status polling ─────────────────────
+    # The Locations page shows Google's real per-field edit lifecycle and
+    # refreshes it while the page is open. Every refresh costs Business
+    # Information API calls, and the default project quota is 300 requests
+    # per minute. This budget caps edit-status refreshes so polling can never
+    # starve publishing, the reviews poller or media. Raise it only after
+    # Google approves a quota increase.
+    GBP_STATUS_QPM_BUDGET: int = 120
+    # A snapshot younger than this is served from cache, so N open tabs on
+    # the same branch share one Google fan-out. This is the number that makes
+    # per-minute polling safe; 0 disables caching (tests only).
+    GBP_STATUS_CACHE_SECONDS: int = 55
+    # Idle cadence: once every section is accepted there is nothing to watch,
+    # so the snapshot lives five minutes and the UI polls five-minute cadence.
+    GBP_STATUS_IDLE_SECONDS: int = 300
+    # Attributes live on their own endpoint and change only when the merchant
+    # edits them — and every successful push invalidates the snapshot anyway.
+    # This is how long a clean attribute reading is reused, so a steady
+    # profile stops spending a call a minute to be told nothing changed. A
+    # pending attribute falls back to the 60s cadence on its own.
+    GBP_STATUS_ATTRIBUTES_SECONDS: int = 300
 
     # ── Google Places API (New) ──────────────────────────────────────────
     # Server-side key for two features: resolving free-text service areas to

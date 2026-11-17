@@ -1,6 +1,6 @@
 # Top-up and plan requests
 
-Last updated: 2026-11-07.
+Last updated: 2026-11-17.
 
 ## Why requests exist
 
@@ -54,3 +54,39 @@ mutation is also captured by the admin audit middleware.
 - Allowances are additive and per-tenant; the plan catalog is untouched.
 - A request can never be applied twice, even by two operators at once.
 - Prices are selected by the operator, not trusted from the browser.
+
+## Enterprise sales notification
+
+Enterprise is sales-assisted, so a new request also emails the people who will
+follow up. The email carries the workspace owner's business name, email and
+phone, the submitting user when it was an employee, the plan, the note, the
+request id/time and a link to Admin -> Requests.
+
+How it is implemented:
+
+- Recipients live in `enterprise_request_recipients` (migration
+  `20261117100000`), platform-level state, not tenant-scoped. Addresses are
+  validated and stored lowercase; a unique index makes duplicates a 400 rather
+  than a second row. The list is capped at 25 on write and again on read, so
+  one request can never fan out without bound.
+- Admin API: `GET`/`POST`/`DELETE`
+  `/api/v1/admin/billing/enterprise-recipients`, behind `require_admin` and the
+  admin rate limit. Mutations are recorded by the existing admin audit
+  middleware. There is no tenant-facing way to read or edit the list.
+- Delivery is outbox-only (`send_notification_email` -> `email_outbox`); the
+  request returns as soon as the rows exist and the worker owns retries. Each
+  row's idempotency key is `enterprise-request:{request_id}:{address}`, so a
+  retried POST cannot mail twice. The 24-hour duplicate guard already returns
+  before the hook.
+- Failures are isolated: one bad address is logged and skipped, the remaining
+  addresses still send. An empty list logs a warning and leaves the in-app
+  admin bell as the fallback; it never fails the tenant's request.
+
+Invariants:
+
+- Tenant contact data goes only to operator-configured, admin-authenticated
+  addresses.
+- A tenant cannot trigger more than one Enterprise notification batch per
+  24 hours (the plan request dedupe key is identical for every Enterprise
+  request).
+- A notification failure never changes the request's status or blocks it.

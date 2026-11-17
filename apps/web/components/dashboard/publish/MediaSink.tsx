@@ -53,7 +53,7 @@ export default function MediaSink({
   const [dropping, setDropping] = useState(false);
   const [urlDraft, setUrlDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [source, setSource] = useState<"upload" | "link" | "library">("upload");
   const [libraryItems, setLibraryItems] = useState<{ id: string; url: string; type: "image" | "video"; label: string; sizeBytes?: number }[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [libraryError, setLibraryError] = useState<string | null>(null);
@@ -69,6 +69,9 @@ export default function MediaSink({
 
   const aspect = thumb && thumb.cropKey !== "orig" ? CROP_ASPECT[thumb.cropKey as Exclude<CropState["key"], "orig">] : null;
   const box = thumbBox(thumb?.cropKey ?? "orig");
+  const cropStyle = aspect
+    ? { transform: `scale(${Math.max(thumb?.zoom ?? 1, 1.08)}) translate(${(thumb?.x ?? 0) / 12}px, ${(thumb?.y ?? 0) / 12}px)` }
+    : undefined;
 
   const acceptFiles = async (files: FileList | null) => {
     setError(null);
@@ -119,8 +122,8 @@ export default function MediaSink({
   };
 
   const openLibrary = async () => {
-    setLibraryOpen(true);
-    setLibraryError(null);
+    setSource("library");
+    setError(null);
     if (libraryItems.length > 0 || libraryLoading) return;
     setLibraryLoading(true);
     try {
@@ -160,7 +163,6 @@ export default function MediaSink({
     } else {
       onPick("video", item.url, item.label, item.sizeBytes);
     }
-    setLibraryOpen(false);
   };
 
   const addUrl = async () => {
@@ -206,12 +208,20 @@ export default function MediaSink({
     setUrlDraft("");
   };
 
+  const tabClass = (active: boolean) =>
+    `flex-1 rounded-[20px] px-3 py-2 text-[12px] font-bold transition duration-200 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+      active
+        ? "bg-[var(--ui-surface)] text-[var(--ui-ink)] shadow-[0_8px_18px_-12px_rgba(61,29,110,0.55)]"
+        : "text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
+    }`;
+
   return (
-    <div>
+    <div className="space-y-3">
       {media ? (
-        <div className="flex flex-wrap items-start gap-3">
+        /* Chosen media: one clear card with the preview, details and actions. */
+        <div className="flex flex-wrap items-center gap-4 rounded-[24px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3.5 shadow-[0_12px_28px_-22px_rgba(61,29,110,0.45)]">
           <div
-            className="relative shrink-0 overflow-hidden rounded-[20px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] shadow-[0_12px_28px_-20px_rgba(61,29,110,0.5)] transition-[width,height] duration-200"
+            className="relative shrink-0 overflow-hidden rounded-[20px] border border-[var(--ui-line)] bg-[var(--ui-surface)] shadow-[0_12px_28px_-20px_rgba(61,29,110,0.5)] transition-[width,height] duration-200"
             style={{ width: box.w, height: box.h }}
           >
             {media.type === "video" ? (
@@ -220,43 +230,18 @@ export default function MediaSink({
                 muted
                 playsInline
                 className="h-full w-full object-cover"
-                style={
-                  aspect
-                    ? {
-                        transform: `scale(${Math.max(thumb?.zoom ?? 1, 1.08)}) translate(${(thumb?.x ?? 0) / 12}px, ${(thumb?.y ?? 0) / 12}px)`,
-                      }
-                    : undefined
-                }
+                style={cropStyle}
               />
             ) : (
               /* eslint-disable-next-line @next/next/no-img-element */
-              <img
-                src={media.url}
-                alt=""
-                className="h-full w-full object-cover"
-                style={
-                  aspect
-                    ? {
-                        transform: `scale(${Math.max(thumb?.zoom ?? 1, 1.08)}) translate(${(thumb?.x ?? 0) / 12}px, ${(thumb?.y ?? 0) / 12}px)`,
-                      }
-                    : undefined
-                }
-              />
+              <img src={media.url} alt="" className="h-full w-full object-cover" style={cropStyle} />
             )}
-            <button
-              type="button"
-              onClick={onClear}
-              aria-label={md.removeMedia}
-              className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-[rgba(0,0,0,0.65)] text-[13px] font-bold text-white outline-none transition hover:bg-black focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-white"
-            >
-              ×
-            </button>
           </div>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-[13px] font-semibold text-[var(--ui-ink)]">
+          <div className="min-w-[9rem] flex-1">
+            <p className="truncate text-[13px] font-bold text-[var(--ui-ink)]">
               {media.fileName ?? media.url}
             </p>
-            <p className="mt-0.5 text-[11px] text-[var(--ui-ink-2)]">
+            <p className="mt-0.5 text-[11.5px] text-[var(--ui-ink-2)]">
               {media.type === "video" ? md.video : md.image}
               {media.sizeBytes ? ` · ${formatBytes(media.sizeBytes)}` : ""}
             </p>
@@ -265,153 +250,159 @@ export default function MediaSink({
                 {fill(md.frameMirrors, { label: thumbLabel })}
               </p>
             )}
-            <button
-              type="button"
-              onClick={() => fileInput.current?.click()}
-              className="clay-btn-secondary mt-2 px-3 py-1.5 text-[11px] font-semibold focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
-            >
-              {md.replace}
-            </button>
+            <div className="mt-2.5 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => fileInput.current?.click()}
+                className="clay-btn-secondary px-3 py-1.5 text-[11px] font-semibold focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+              >
+                {md.replace}
+              </button>
+              <button
+                type="button"
+                onClick={onClear}
+                className="rounded-[20px] px-3 py-1.5 text-[11px] font-semibold text-red-600 outline-none transition hover:bg-red-500/10 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] dark:text-red-400"
+              >
+                {md.removeMedia}
+              </button>
+            </div>
           </div>
         </div>
       ) : (
-        <div
-          onDragEnter={(e) => {
-            e.preventDefault();
-            dragDepth.current += 1;
-            setDropping(true);
-          }}
-          onDragLeave={(e) => {
-            e.preventDefault();
-            dragDepth.current -= 1;
-            if (dragDepth.current <= 0) setDropping(false);
-          }}
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => {
-            e.preventDefault();
-            dragDepth.current = 0;
-            setDropping(false);
-            acceptFiles(e.dataTransfer.files);
-          }}
-          className={`flex flex-col items-center rounded-[28px] border-2 border-dashed bg-[var(--ui-sunken)] px-4 py-9 text-center transition duration-200 ${
-            dropping
-              ? "border-[var(--ui-ink)] bg-[var(--ui-ink)]/[0.04]"
-              : "border-[var(--ui-line-strong)] hover:border-[var(--ui-ink)]/40"
-          }`}
-        >
-          <span className="flex h-14 w-14 items-center justify-center rounded-[20px] bg-[var(--ui-surface)] text-[var(--ui-ink)] shadow-[0_10px_20px_-14px_rgba(61,29,110,0.6)]">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6" aria-hidden>
-              <rect x="3" y="3" width="18" height="18" rx="2" />
-              <circle cx="8.5" cy="8.5" r="1.5" />
-              <path d="M21 15l-5-5L5 21" />
-            </svg>
-          </span>
-          <p className="mt-3 text-[14px] font-bold text-[var(--ui-ink)]">
-            {md.dropTitle}
-          </p>
-          <p className="mt-1 text-[11.5px] text-[var(--ui-ink-2)]">
-            {fill(md.dropSub, { n: fmt(maxMb) })}
-          </p>
-          <button
-            type="button"
-            onClick={() => fileInput.current?.click()}
-            className="clay-btn-primary mt-4 px-5 py-2.5 text-[12px] font-bold focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
-          >
-            {md.browse}
-          </button>
-        </div>
-      )}
+        /* Three standard sources, one tab at a time. */
+        <div>
+          <div className="flex gap-1 rounded-[24px] bg-[var(--ui-sunken)] p-1" role="tablist" aria-label={md.pasteAria}>
+            <button type="button" role="tab" aria-selected={source === "upload"} onClick={() => setSource("upload")} className={tabClass(source === "upload")}>
+              {md.tabUpload}
+            </button>
+            <button type="button" role="tab" aria-selected={source === "link"} onClick={() => setSource("link")} className={tabClass(source === "link")}>
+              {md.tabLink}
+            </button>
+            <button type="button" role="tab" aria-selected={source === "library"} onClick={openLibrary} className={tabClass(source === "library")}>
+              {md.tabLibrary}
+            </button>
+          </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <input
-          type="url"
-          value={urlDraft}
-          onChange={(e) => setUrlDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              addUrl();
-            }
-          }}
-          placeholder={md.pastePh}
-          aria-label={md.pasteAria}
-          className="clay-input min-w-[12rem] flex-1 px-3 py-2 text-[12px] text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]"
-        />
-        <button
-          type="button"
-          onClick={addUrl}
-          disabled={!urlDraft.trim()}
-          className="clay-btn-secondary px-3 py-2 text-[12px] font-semibold disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
-        >
-{md.add}
-        </button>
-      </div>
-
-      {error && (
-        <p role="alert" className="mt-2 text-[12px] font-semibold text-red-600 dark:text-red-400">
-          {error}
-        </p>
-      )}
-
-      <div className="mt-3 flex items-center gap-2 border-t border-[var(--ui-line)] pt-3">
-        <span className="text-[11px] text-[var(--ui-ink-2)]">
-          …or
-        </span>
-        <button
-          type="button"
-          onClick={openLibrary}
-          className="clay-btn-secondary px-3 py-1.5 text-[11px] font-semibold focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
-        >
-          Choose from your library
-        </button>
-        {libraryOpen && (
-          <button
-            type="button"
-            onClick={() => setLibraryOpen(false)}
-            className="text-[11px] font-semibold text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
-          >
-            Close
-          </button>
-        )}
-      </div>
-
-      {libraryOpen && (
-        <div className="mt-3 rounded-[24px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-3 shadow-[0_12px_28px_-22px_rgba(61,29,110,0.45)]">
-          {libraryLoading ? (
-            <p className="py-4 text-center text-[12px] text-[var(--ui-ink-2)]">Loading your library…</p>
-          ) : libraryError ? (
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-[12px] font-medium text-red-600">{libraryError}</p>
-              <button type="button" onClick={openLibrary} className="text-[11px] font-semibold text-[var(--ui-ink)] hover:underline">Retry</button>
+          {source === "upload" && (
+            <div
+              role="tabpanel"
+              onDragEnter={(e) => {
+                e.preventDefault();
+                dragDepth.current += 1;
+                setDropping(true);
+              }}
+              onDragLeave={(e) => {
+                e.preventDefault();
+                dragDepth.current -= 1;
+                if (dragDepth.current <= 0) setDropping(false);
+              }}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                dragDepth.current = 0;
+                setDropping(false);
+                acceptFiles(e.dataTransfer.files);
+              }}
+              className={`mt-3 flex flex-col items-center rounded-[28px] border-2 border-dashed bg-[var(--ui-sunken)] px-4 py-8 text-center transition duration-200 ${
+                dropping
+                  ? "border-[var(--ui-ink)] bg-[var(--ui-ink)]/[0.04]"
+                  : "border-[var(--ui-line-strong)] hover:border-[var(--ui-ink)]/40"
+              }`}
+            >
+              <span className="flex h-14 w-14 items-center justify-center rounded-[20px] bg-[var(--ui-surface)] text-[var(--ui-ink)] shadow-[0_10px_20px_-14px_rgba(61,29,110,0.6)]">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6" aria-hidden>
+                  <rect x="3" y="3" width="18" height="18" rx="2" />
+                  <circle cx="8.5" cy="8.5" r="1.5" />
+                  <path d="M21 15l-5-5L5 21" />
+                </svg>
+              </span>
+              <p className="mt-3 text-[14px] font-bold text-[var(--ui-ink)]">{md.dropTitle}</p>
+              <p className="mt-1 text-[11.5px] text-[var(--ui-ink-2)]">{fill(md.dropSub, { n: fmt(maxMb) })}</p>
+              <button
+                type="button"
+                onClick={() => fileInput.current?.click()}
+                className="clay-btn-primary mt-4 px-5 py-2.5 text-[12px] font-bold focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+              >
+                {md.browse}
+              </button>
             </div>
-          ) : libraryItems.length === 0 ? (
-            <p className="py-4 text-center text-[12px] text-[var(--ui-ink-2)]">
-              Your library is empty yet — upload a photo or video first.
-            </p>
-          ) : (
-            <div className="grid max-h-64 grid-cols-4 gap-2 overflow-y-auto">
-              {libraryItems.map((it) => (
+          )}
+
+          {source === "link" && (
+            <div role="tabpanel" className="mt-3 rounded-[24px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3.5">
+              <p className="mb-2 text-[11.5px] text-[var(--ui-ink-2)]">{md.urlHint}</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="url"
+                  value={urlDraft}
+                  onChange={(e) => setUrlDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addUrl();
+                    }
+                  }}
+                  placeholder={md.pastePh}
+                  aria-label={md.pasteAria}
+                  className="clay-input min-w-[12rem] flex-1 px-3 py-2 text-[12px] text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]"
+                />
                 <button
-                  key={it.id}
                   type="button"
-                  onClick={() => pickFromLibrary(it)}
-                  title={`${it.label} — use this`}
-                  className="group relative aspect-square overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] transition duration-200 hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+                  onClick={addUrl}
+                  disabled={!urlDraft.trim()}
+                  className="clay-btn-primary px-4 py-2 text-[12px] font-bold disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
                 >
-                  {it.type === "video" ? (
-                    <video src={it.url} muted playsInline className="h-full w-full object-cover" />
-                  ) : (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={it.url} alt={it.label} className="h-full w-full object-cover" loading="lazy" />
-                  )}
-                  <span className="absolute inset-x-0 bottom-0 truncate bg-black/50 px-1 py-0.5 text-[9px] font-semibold text-white opacity-0 transition group-hover:opacity-100">
-                    {it.label}
-                  </span>
+                  {md.add}
                 </button>
-              ))}
+              </div>
+            </div>
+          )}
+
+          {source === "library" && (
+            <div role="tabpanel" className="mt-3 rounded-[24px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3.5">
+              {libraryLoading ? (
+                <p className="py-6 text-center text-[12px] text-[var(--ui-ink-2)]">{md.libraryLoading}</p>
+              ) : libraryError ? (
+                <div className="flex items-center justify-between gap-2 py-2">
+                  <p className="text-[12px] font-medium text-red-600 dark:text-red-400">{md.libraryError}</p>
+                  <button type="button" onClick={openLibrary} className="clay-btn-secondary px-3 py-1.5 text-[11px] font-semibold focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]">
+                    {md.libraryRetry}
+                  </button>
+                </div>
+              ) : libraryItems.length === 0 ? (
+                <p className="py-6 text-center text-[12px] text-[var(--ui-ink-2)]">{md.libraryEmpty}</p>
+              ) : (
+                <div className="grid max-h-64 grid-cols-3 gap-2 overflow-y-auto sm:grid-cols-4">
+                  {libraryItems.map((it) => (
+                    <button
+                      key={it.id}
+                      type="button"
+                      onClick={() => pickFromLibrary(it)}
+                      title={`${it.label} — ${md.libraryChoose}`}
+                      className="group relative aspect-square overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-surface)] transition duration-200 hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+                    >
+                      {it.type === "video" ? (
+                        <video src={it.url} muted playsInline className="h-full w-full object-cover" />
+                      ) : (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={it.url} alt={it.label} className="h-full w-full object-cover" loading="lazy" />
+                      )}
+                      <span className="absolute inset-x-0 bottom-0 truncate bg-black/55 px-1 py-0.5 text-[9px] font-semibold text-white opacity-0 transition group-hover:opacity-100">
+                        {it.label}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
+      )}
+
+      {error && (
+        <p role="alert" className="text-[12px] font-semibold text-red-600 dark:text-red-400">
+          {error}
+        </p>
       )}
 
       <input

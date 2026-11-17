@@ -102,6 +102,19 @@ async def require_databank_feature(
     await check_feature(tenant_id_of(user), "databank")
 
 
+async def require_crawler_feature(
+    user: User = Depends(get_current_user),
+):
+    """Gate website discovery and embedding behind the Enterprise plan.
+
+    Reads (source list, page list) stay open so a tenant who loses the
+    entitlement can still inspect and delete what they already crawled.
+    """
+    from ..billing.entitlements import check_feature
+
+    await check_feature(tenant_id_of(user), "crawler")
+
+
 @router.post("/databanks", response_model=DatabankResponse, status_code=status.HTTP_201_CREATED)
 async def create_new_databank(
     body: DatabankCreate,
@@ -288,6 +301,7 @@ async def create_new_scrape_job(
     body: ScrapeRequest,
     user: User = Depends(get_current_user),
     _gate: None = Depends(require_databank_feature),
+    _crawler_gate: None = Depends(require_crawler_feature),
     db: AsyncSession = Depends(get_db),
 ):
     bank = await get_databank(databank_id, user, db)
@@ -375,9 +389,14 @@ async def preview_crawl_candidates_standalone(
 ):
     """Discover candidate pages before a databank exists (create wizard).
 
-    Read-only page discovery (no content stored) so the user can pick which
-    pages to crawl before the databank/source is created.
+    Enterprise only: discovery itself spends no embedding tokens, but it is
+    the entry point to a crawl, so it is gated with the same feature. The
+    global EntitlementDenied handler supplies the upgrade-prompt header.
     """
+    from ..billing.entitlements import check_feature
+
+    await check_feature(tenant_id_of(user), "crawler")
+
     try:
         candidates = await asyncio.get_event_loop().run_in_executor(
             None, preview_candidates, url, scope, max_pages
@@ -408,6 +427,7 @@ async def preview_crawl_candidates(
     scope: str = Query("subtree", pattern="^(single|top|subtree|max_pages)$"),
     max_pages: int = Query(100, ge=1, le=PREVIEW_MAX_PAGES),
     user: User = Depends(get_current_user),
+    _crawler_gate: None = Depends(require_crawler_feature),
     db: AsyncSession = Depends(get_db),
 ):
     """Step 1 of the interactive crawl: list pages the crawler would touch.
@@ -452,6 +472,7 @@ async def create_crawl_source_endpoint(
     body: CrawlSourceCreate,
     user: User = Depends(get_current_user),
     _gate: None = Depends(require_databank_feature),
+    _crawler_gate: None = Depends(require_crawler_feature),
     db: AsyncSession = Depends(get_db),
 ):
     """Step 2: save a source with the user-selected page URLs."""
@@ -586,6 +607,7 @@ async def update_crawl_source_endpoint(
     body: CrawlSourceUpdate,
     user: User = Depends(get_current_user),
     _gate: None = Depends(require_databank_feature),
+    _crawler_gate: None = Depends(require_crawler_feature),
     db: AsyncSession = Depends(get_db),
 ):
     bank = await get_databank(databank_id, user, db)

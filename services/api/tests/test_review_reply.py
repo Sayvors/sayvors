@@ -231,6 +231,66 @@ async def test_english_review_gets_language_match_rule(monkeypatch, db, user_id)
 
 
 @pytest.mark.asyncio
+async def test_process_review_does_not_close_the_callers_session(
+    monkeypatch, db, user_id, channel_id
+):
+    """The engine must never close a session it does not own.
+
+    `process_review` used to call `db.close()` before generation to free the
+    pooled connection. On a caller-owned session that detaches every ORM object
+    and silently drops pending writes: the reviews worker generated an edit
+    follow-up draft, "committed" on the closed session, and the draft never
+    reached the database — while the same close also released the review's
+    admission lock mid-pipeline.
+    """
+    import app.modules.review_engine.generator as gen
+    import app.modules.review_engine.service as eng
+    import app.modules.review_engine.understanding as und
+
+    from app.modules.channels.models import ReviewReply
+    from app.modules.review_engine.schemas import ReviewEngineRequest
+    from sqlalchemy import select
+
+    monkeypatch.setattr("app.config.settings.GOOGLE_REVIEWS_MOCK", False)
+    monkeypatch.setattr(eng, "_async_session", _shim_session_factory(db))
+    await _enable_test_model(db, "groq:oss-120b", provider="groq")
+    monkeypatch.setattr(und, "complete", _AnalysisProvider(_analysis_json()))
+    monkeypatch.setattr(gen, "complete", _ReplyProvider("Thanks for the kind words!"))
+
+    db.add(ReviewReply(
+        id="rr-pending-1", channel_id=channel_id,
+        review_id="accounts/a/locations/l/reviews/pending",
+        rating=4, review_text="old text", reviewer_name="n",
+        reply_text="published text", status="posted",
+    ))
+    await db.flush()  # the caller's queued, uncommitted write
+
+    req = ReviewEngineRequest(
+        review_text="Loved it", rating=5, reviewer_name="Sara",
+        model="groq:oss-120b",
+    )
+    await eng.process_review(req, user_id, db)
+
+    # The row is still attached: read it back through a fresh statement rather
+    # than the identity map, then edit and commit. With the old close() the
+    # flush above was rolled back and the row did not exist at all.
+    stored = (
+        await db.execute(
+            select(ReviewReply).where(ReviewReply.id == "rr-pending-1")
+        )
+    ).scalar_one()
+    stored.reply_text = "written after generation"
+    await db.commit()
+
+    text = (
+        await db.execute(
+            select(ReviewReply.reply_text).where(ReviewReply.id == "rr-pending-1")
+        )
+    ).scalar_one()
+    assert text == "written after generation"
+
+
+@pytest.mark.asyncio
 async def test_mock_mode_arabic_review_returns_arabic_reply(monkeypatch):
     monkeypatch.setattr("app.config.settings.GOOGLE_REVIEWS_MOCK", True)
     config = SimpleNamespace(model="groq:oss-120b", tone="friendly")

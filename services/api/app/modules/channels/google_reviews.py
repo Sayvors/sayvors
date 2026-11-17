@@ -917,13 +917,26 @@ class GoogleReviewsClient:
             reply = (payload or {}).get("reviewReply")
             if reply:
                 state = (reply.get("reviewReplyState") or "APPROVED").lower()
+                updated_at = None
+                if reply.get("updateTime"):
+                    try:
+                        updated_at = datetime.fromisoformat(
+                            reply["updateTime"].replace("Z", "+00:00")
+                        )
+                    except ValueError:
+                        pass
                 return {
                     "state": state,
                     "policy_violation": reply.get("policyViolation"),
+                    # Google's own timestamp for the reply. Callers persist it
+                    # as the row's publish time + `reply_external_id`, which is
+                    # what lets a later poll tell "the reply we already have"
+                    # apart from a merchant edit made in the Business Profile.
+                    "updated_at": updated_at,
                 }
             if attempt < attempts - 1:
                 await asyncio.sleep(3)
-        return {"state": "absent", "policy_violation": None}
+        return {"state": "absent", "policy_violation": None, "updated_at": None}
 
     # ── Questions & Answers (Google Business Profile Q&A v4) ──────────────
 

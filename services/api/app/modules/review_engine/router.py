@@ -35,7 +35,9 @@ async def generate(
 ):
     """Generate an AI reply to a customer review using the strategy engine."""
     try:
-        return await process_review(req, tenant_id_of(user), db)
+        return await process_review(
+            req, tenant_id_of(user), db, release_connection=True
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -59,7 +61,9 @@ async def generate_stream(
 
     async def event_stream() -> AsyncGenerator[str, None]:
         try:
-            async for event in process_review_stream(req, tenant_id_of(user), db):
+            async for event in process_review_stream(
+                req, tenant_id_of(user), db, release_connection=True
+            ):
                 yield f"data: {json.dumps(event, default=str)}\n\n"
         except Exception as e:
             logger.exception("Review engine stream failed")

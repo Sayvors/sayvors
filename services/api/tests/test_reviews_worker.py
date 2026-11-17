@@ -17,11 +17,11 @@ from app.modules.channels.models import AutoReplyConfig, Channel, ChannelMessage
 from app.modules.channels.service import encrypt_token
 
 
-def _review(review_id="ggreview-1", rating=2):
+def _review(review_id="ggreview-1", rating=2, text="Terrible service, never again."):
     return SimpleNamespace(
         review_id=review_id,
         rating=rating,
-        text="Terrible service, never again.",
+        text=text,
         reviewer_name="Angry Customer",
         updated_at=datetime.now(timezone.utc),
     )
@@ -303,13 +303,15 @@ async def test_edited_review_after_posted_reply_queues_followup(db, channel_id, 
 
     assert stats["skipped"] == 1
     rows = await _reply_rows(db, channel_id, "ggreview-1")
-    assert len(rows) == 2
-    posted = [r for r in rows if r.status == "posted"]
-    pending = [r for r in rows if r.status == "pending_approval"]
-    assert len(posted) == 1 and posted[0].reply_text == "live reply"
-    assert len(pending) == 1
-    assert pending[0].review_text == "Terrible service, never again."
-    assert pending[0].reply_text == "fresh AI draft (try 1)"
+    # One live row per (channel, review) — the partial unique index forbids a
+    # second one, so the follow-up is written over the published row instead of
+    # being generated and then discarded on the insert.
+    assert len(rows) == 1
+    followup = rows[0]
+    assert followup.status == "pending_approval"
+    assert followup.review_text == "Terrible service, never again."
+    assert followup.reply_text == "fresh AI draft (try 2)"
+    assert followup.generation_attempt == 2
     # Follow-ups wait for approval — never posted automatically.
     assert FakeGoogleClient.posted == []
 
@@ -338,12 +340,12 @@ async def test_edited_review_followup_autoposts_when_opted_in(db, channel_id, co
 
     assert stats["skipped"] == 1
     # The follow-up went live: rating 5 clears the min_rating_auto gate.
-    assert FakeGoogleClient.posted == [("ggreview-1", "fresh AI draft (try 1)")]
+    assert FakeGoogleClient.posted == [("ggreview-1", "fresh AI draft (try 2)")]
     rows = await _reply_rows(db, channel_id, "ggreview-1")
-    assert len(rows) == 2
-    assert all(r.status == "posted" for r in rows)
-    followup = next(r for r in rows if r.reply_text != "live reply")
-    assert followup.rating == 5
+    assert len(rows) == 1
+    assert rows[0].status == "posted"
+    assert rows[0].rating == 5
+    assert rows[0].reply_text == "fresh AI draft (try 2)"
 
 
 @pytest.mark.asyncio
@@ -403,6 +405,63 @@ async def test_edited_review_followup_autopost_blocked_in_approval_mode(db, chan
 
 
 @pytest.mark.asyncio
+async def test_edited_review_followup_survives_the_next_poll(db, channel_id, config_id, monkeypatch):
+    """The follow-up draft for an edited review is not thrown away by polling.
+
+    Google keeps serving the reply we published for the *old* content. The
+    next poll must not re-adopt it over the follow-up draft, and must not
+    stamp the new rating/text onto the row as if that reply answered it.
+    """
+    review_updated_at = datetime(2026, 9, 30, 10, 28, 52, tzinfo=timezone.utc)
+    await _active_channel(db, channel_id)
+    row = ReviewReply(
+        channel_id=channel_id, review_id="ggreview-1", rating=1,
+        review_text="Terrible service, never again.",
+        reviewer_name="Angry Customer",
+        reply_text="live reply", status="posted",
+        reply_external_id=f"google:{review_updated_at.isoformat()}",
+        replied_at=review_updated_at,
+    )
+    db.add(row)
+    await db.commit()
+
+    def _edited(**overrides):
+        base = dict(
+            review_id="ggreview-1",
+            rating=5,
+            text="Thank you for sorting this out",
+            reviewer_name="Angry Customer",
+            updated_at=datetime.now(timezone.utc),
+            has_reply=True,
+            reply_text="live reply  ",  # Google trimmed the trailing space
+            reply_updated_at=review_updated_at,
+        )
+        base.update(overrides)
+        return SimpleNamespace(**base)
+
+    _install_fakes(monkeypatch, [_edited()])
+    await reviews_worker.process_channel(
+        db, await db.get(Channel, channel_id),
+        await db.get(AutoReplyConfig, config_id),
+    )
+
+    rows = await _reply_rows(db, channel_id, "ggreview-1")
+    assert len(rows) == 1
+    assert rows[0].status == "pending_approval"
+    assert rows[0].rating == 5
+
+    # Second poll: same Google reply, same review. The draft must survive.
+    await reviews_worker.process_channel(
+        db, await db.get(Channel, channel_id),
+        await db.get(AutoReplyConfig, config_id),
+    )
+    rows = await _reply_rows(db, channel_id, "ggreview-1")
+    assert len(rows) == 1
+    assert rows[0].status == "pending_approval"
+    assert rows[0].reply_text == "fresh AI draft (try 2)"
+
+
+@pytest.mark.asyncio
 async def test_edited_review_followup_autopost_failure_saves_failed_row(db, channel_id, config_id, monkeypatch):
     """When the live post fails, the follow-up lands in the failed queue
     (resumable) instead of vanishing — the merchant is notified."""
@@ -434,7 +493,7 @@ async def test_edited_review_followup_autopost_failure_saves_failed_row(db, chan
     rows = await _reply_rows(db, channel_id, "ggreview-1")
     failed = [r for r in rows if r.status == "failed"]
     assert len(failed) == 1
-    assert failed[0].reply_text == "fresh AI draft (try 1)"
+    assert failed[0].reply_text == "fresh AI draft (try 2)"
     assert "503" in (failed[0].error or "")
 
 
@@ -478,6 +537,63 @@ async def test_dismissed_review_not_redrafted(db, channel_id, config_id, monkeyp
     rows = await _reply_rows(db, channel_id, "ggreview-1")
     assert len(rows) == 1
     assert rows[0].status == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_edited_review_clears_dismissal_and_redrafts(
+    db, channel_id, config_id, monkeypatch
+):
+    """A customer edit re-arms drafting after the merchant dismissed a draft.
+
+    The dismissal outlived the content it was about: the merchant said "no
+    reply needed" to a 2-star complaint, the customer rewrote it, and the poll
+    skipped the review forever because nothing compared the two.
+    """
+    from app.modules.analytics.models import ReviewInsight
+
+    await _active_channel(db, channel_id)
+    db.add(ReviewInsight(
+        channel_id=channel_id, review_id="ggreview-1", user_id="u-dismiss-2",
+        rating=2, review_text="Terrible service, never again.",
+        reviewer_name="Angry Customer", draft_dismissed=True,
+    ))
+    db.add(ReviewReply(
+        channel_id=channel_id, review_id="ggreview-1", rating=2,
+        review_text="Terrible service, never again.",
+        reviewer_name="Angry Customer", reply_text="draft the merchant rejected",
+        status="rejected",
+    ))
+    await db.commit()
+
+    _install_fakes(
+        monkeypatch,
+        [_review(rating=5, text="Thank you, all sorted now.")],
+    )
+    stats = await reviews_worker.process_channel(
+        db, await db.get(Channel, channel_id),
+        await db.get(AutoReplyConfig, config_id),
+    )
+
+    # 5 stars + auto approval mode: the re-armed draft is posted, same as any
+    # fresh review at that rating.
+    assert stats["queued"] + stats["replied"] == 1, stats
+    insight = (
+        await db.execute(
+            select(ReviewInsight).where(
+                ReviewInsight.channel_id == channel_id,
+                ReviewInsight.review_id == "ggreview-1",
+            )
+        )
+    ).scalar_one()
+    assert insight.draft_dismissed is False
+
+    rows = await _reply_rows(db, channel_id, "ggreview-1")
+    assert [r.status for r in rows] == ["rejected", "posted"]
+    assert rows[-1].rating == 5
+    assert rows[-1].reply_text == "fresh AI draft (try 1)"
+    assert FakeGoogleClient.posted == [
+        ("ggreview-1", "fresh AI draft (try 1)")
+    ]
 
 
 @pytest.mark.asyncio

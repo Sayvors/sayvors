@@ -1,3 +1,5 @@
+"""Tenant-facing billing routes (wallet, plan, entitlements, requests)."""
+import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -22,6 +24,8 @@ from .schemas import (
 )
 
 router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
+
+logger = logging.getLogger(__name__)
 
 
 @router.get("/budget", response_model=BudgetOut)
@@ -264,6 +268,18 @@ async def create_purchase_request(
                 )
         except Exception:  # noqa: BLE001 — notifications never fail the request
             pass
+    # Enterprise is sales-assisted: email the operator-configured list so a
+    # human can follow up by email, phone or a meeting. Only new requests are
+    # announced; the outbox idempotency key makes a retried request harmless.
+    if not duplicate and request.kind == "plan" and request.plan_slug == "enterprise":
+        try:
+            from .plan_notifications import notify_enterprise_request
+
+            await notify_enterprise_request(db, request=request, requested_by=user)
+        except Exception as e:  # noqa: BLE001 - already committed; never fail here
+            logger.warning(
+                "Enterprise request %s notification failed: %s", request.id, e
+            )
     return {**serialize(request), "duplicate": duplicate}
 
 

@@ -136,6 +136,92 @@ async def test_new_photo_is_downloaded_and_stored(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_new_photo_ignores_the_backend_url(monkeypatch):
+    """S3 hands back a private-bucket object URL that 403s in a browser.
+
+    That URL used to be stored verbatim, so every reviewer photo was
+    invisible. The stored value must be our own served path instead.
+    """
+    from app.modules.analytics import review_media
+
+    monkeypatch.setattr(review_media.settings, "MEDIA_PUBLIC_PATH", "/media-files", raising=False)
+
+    async def fake_download(url):
+        return PNG, ".png"
+
+    def fake_put(user_id, filename, data, content_type):
+        return (
+            f"{user_id}/pic.png",
+            f"https://bucket.s3.eu-north-1.amazonaws.com/media/{user_id}/pic.png",
+        )
+
+    monkeypatch.setattr(review_media, "_download", fake_download)
+    monkeypatch.setattr(review_media, "put_media", fake_put)
+
+    out = await review_media.sync_review_media(
+        "user-1", [{"thumbnail_url": "https://fife/one", "video_url": None,
+                    "label": None, "kind": "image"}], [],
+    )
+    # tenant/key, because /media-files splits them itself and get_media
+    # expects the storage key (which already starts with the tenant).
+    assert out[0]["url"] == "/media-files/user-1/user-1/pic.png"
+    assert out[0]["storage_key"] == "user-1/pic.png"
+
+
+def test_stored_rows_are_repaired_to_served_urls():
+    """Rows written before the rule still hold the S3 object URL."""
+    from app.modules.analytics.review_media import served_media_entry
+
+    legacy = {
+        "url": "https://bucket.s3.eu-north-1.amazonaws.com/media/tenant/file.jpg",
+        "storage_key": "tenant/file.jpg",
+        "kind": "image",
+        "source_url": "https://fife/one",
+    }
+    fixed = served_media_entry(legacy)
+    assert fixed["url"] == "/media-files/tenant/tenant/file.jpg"
+    # The stored dict itself is not mutated: read paths must stay side-effect
+    # free (SQLAlchemy would otherwise see a dirty JSON field on a GET).
+    assert legacy["url"].startswith("https://")
+
+    # A failed download has no key and nothing to serve; leave it alone.
+    marker = {"url": None, "kind": "image", "source_url": "https://fife/gone"}
+    assert served_media_entry(marker) == marker
+
+    # Local disk keys are a bare filename and already carry the served path.
+    local = {"url": "/media-files/u/a.png", "storage_key": "a.png", "kind": "image"}
+    assert served_media_entry(local) == local
+
+
+def test_review_insight_media_is_served_through_our_route():
+    """The reviews API is the boundary that fixes already-stored rows."""
+    from datetime import datetime, timezone
+
+    from app.modules.analytics.schemas import ReviewInsightItem
+
+    item = ReviewInsightItem.model_validate({
+        "id": "i-1",
+        "channel_id": "c-1",
+        "review_id": "r-1",
+        "rating": 5,
+        "sentiment": "positive",
+        "sentiment_score": 0.9,
+        "topics": [],
+        "products": [],
+        "problems": [],
+        "replied": True,
+        "created_at": datetime.now(timezone.utc),
+        "media": [{
+            "url": "https://bucket.s3.eu-north-1.amazonaws.com/media/t/file.jpg",
+            "storage_key": "t/file.jpg",
+            "kind": "image",
+            "source_url": "https://fife/one",
+        }],
+    })
+    assert item.media[0]["url"] == "/media-files/t/t/file.jpg"
+
+
+@pytest.mark.asyncio
 async def test_failed_download_does_not_break_the_sync(monkeypatch):
     from app.modules.analytics import review_media
 

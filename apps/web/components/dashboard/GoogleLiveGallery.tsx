@@ -66,7 +66,8 @@ export default function GoogleLiveGallery() {
       try {
         const data = await apiFetch("/api/v1/channels?limit=100");
         const googleChannels = (data.channels ?? [])
-          .filter((channel: { platform: string }) => channel.platform === "google_reviews")
+          .filter((channel: { platform: string; status?: string }) =>
+            channel.platform === "google_reviews" && channel.status === "active")
           .map((channel: { id: string; display_name: string | null; listing_id?: string | null }) => ({
             id: channel.listing_id ?? channel.id,
             name: channel.display_name ?? "Google location",

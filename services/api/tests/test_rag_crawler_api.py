@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from app.main import app as fastapi_app
 from app.modules.rag.models import CrawlPage, CrawlSource, Databank
-from app.modules.rag.router import require_databank_feature
+from app.modules.rag.router import require_crawler_feature, require_databank_feature
 
 _BANK = "crawl-api-bank-0001"
 _USER = "test-user-0000-0000-0000-000000000001"
@@ -21,17 +21,30 @@ async def _seed_bank(db, user_id=_USER) -> str:
 @pytest.fixture
 def allow_databank_gate(client):
     # Depends on `client` so this override lands AFTER the client fixture
-    # cleared the app's dependency overrides.
+    # cleared the app's dependency overrides. Crawler is now Enterprise-only,
+    # so these tests must also allow that gate to exercise the real endpoints.
     async def _allow():
         return None
 
-    fastapi_app.dependency_overrides[require_databank_feature] = _allow
+    for gate in (require_databank_feature, require_crawler_feature):
+        fastapi_app.dependency_overrides[gate] = _allow
     yield
-    fastapi_app.dependency_overrides.pop(require_databank_feature, None)
+    for gate in (require_databank_feature, require_crawler_feature):
+        fastapi_app.dependency_overrides.pop(gate, None)
+
+
+@pytest.fixture
+def allow_crawler(client, monkeypatch):
+    """The preview endpoints call check_feature directly (no dependency)."""
+    async def _allow(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("app.modules.billing.entitlements.check_feature", _allow)
+    yield
 
 
 @pytest.mark.asyncio
-async def test_preview_lists_candidates_without_writes(client, db, monkeypatch):
+async def test_preview_lists_candidates_without_writes(client, allow_crawler, db, monkeypatch):
     await _seed_bank(db)
 
     def _fake(url, scope="subtree", max_pages=100, fetcher=None):
@@ -54,7 +67,7 @@ async def test_preview_lists_candidates_without_writes(client, db, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_standalone_preview_requires_no_databank(client, db, user_id, monkeypatch):
+async def test_standalone_preview_requires_no_databank(client, allow_crawler, db, user_id, monkeypatch):
     """The wizard previews before the bank exists — /crawl/preview is auth-only."""
     from app.core.deps import get_current_user
     from app.modules.rag import router as rag_router

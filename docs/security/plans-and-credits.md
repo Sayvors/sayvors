@@ -49,9 +49,8 @@ Enforcement points:
 
 ### Enforced feature keys
 
-The admin catalog contains 25 keys. Only the keys below are wired into a
-request path today; the rest are stored and displayed but do not gate
-anything.
+The admin catalog contains 26 keys. The keys below are wired into a request
+path; the rest are stored and displayed but do not gate anything.
 
 | Key | Enforced at | What it actually blocks |
 |---|---|---|
@@ -59,21 +58,35 @@ anything.
 | `messaging` | inbox, template and WhatsApp AI reply paths | Outbound WhatsApp messages |
 | `ai_replies` | `llm/gateway.py` | Every LLM call through the gateway (review replies, assistant, AI analytics, chat) |
 | `benchmark_external` | analytics external-peer endpoints | Fetching/refreshing external competitor peers |
+| `databank` | `rag/router.py` write paths | Creating a databank, uploading files, writing crawl sources |
+| `crawler` | `rag/router.py` crawl write/preview paths | Website discovery, one-shot scrape, creating/updating a crawl source |
+
+`crawler` is Enterprise-only. Migration `20261117120000` sets it false on every
+plan, then true on `enterprise`; a per-tenant `features_override` can grant it
+for a negotiated deal. Reads (source list, page list, delete) deliberately stay
+open so a downgraded tenant can inspect and clean up existing data. The UI
+hides the Website card when the flag is off, but the API denial — including the
+`X-Entitlement-Denied: crawler` header — is the real gate.
 
 The plan limits `max_channels` and `max_messages_per_month` are also enforced
-at those same paths. A per-tenant `features_override` works for the four keys
-above; for every other catalog key it persists but has no runtime effect yet.
+at those same paths. A per-tenant `features_override` works for the enforced
+keys above; for every other catalog key it persists but has no runtime effect
+yet.
 
 `ai_replies` is currently a master AI switch, not a review-only flag. Turning
 it off disables every budgeted LLM call. The separate `assistant`, `reviews`,
 `analytics` and `voice` keys are not independently enforced.
 
-The full catalog keys that are **catalog-only today**:
+The remaining catalog keys are **catalog-only today**:
 
-`reviews`, `posts`, `media`, `analytics`, `automation`, `databank`, `leads`,
-`voice`, `scheduling`, `assistant`, `social_response_style`, `bulk_edit_csv`,
-`benchmarking`, `ai_search`, `verifications`, `growth`, `ticket_assignment`,
-`voice_replies`, `ask_sayvors_premium`, `priority_support`, `sla`.
+`reviews`, `posts`, `media`, `analytics`, `automation`, `leads`, `voice`,
+`scheduling`, `assistant`, `social_response_style`, `bulk_edit_csv`,
+`benchmarking`, `verifications`, `growth`, `ticket_assignment`,
+`voice_replies`.
+
+The phantom keys (`ai_search`, `ask_sayvors_premium`, `priority_support`,
+`sla`) were removed from the catalog and from every plan's features JSONB by
+migration `20261114170000`; they are not catalog-only, they do not exist.
 
 Wiring a key means adding `has_feature`/`check_feature` at the write path and a
 negative test proving the request is denied with the entitlement header. Do

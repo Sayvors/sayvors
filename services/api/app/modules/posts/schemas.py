@@ -142,6 +142,9 @@ class AiDraftRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=500)
     post_type: str = Field("update", pattern="^(update|offer|event)$")
     business_name: str | None = Field(None, max_length=255)
+    # The branch this post is for. Keeps the draft grounded in the right
+    # location when a tenant has many branches, instead of a generic business.
+    location_name: str | None = Field(None, max_length=255)
 
 
 class AiDraftResponse(BaseModel):

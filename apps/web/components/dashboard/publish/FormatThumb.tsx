@@ -7,7 +7,7 @@ import type { CropState, MediaState } from "./types";
 /*
  * FormatThumb — the small crop preview that rides on each format pill.
  *
- * The pill label alone ("Story", "Event", "Profile picture") says which
+ * The pill label alone ("Story", "Promotion", "Profile picture") says which
  * format is on; the thumbnail says what that format will actually look
  * like with the crop the tenant has set. It renders through the same
  * CroppedMedia the live preview uses, at the format's own aspect ratio,

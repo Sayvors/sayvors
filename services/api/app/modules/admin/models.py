@@ -121,6 +121,28 @@ class AdminAuditLog(Base):
     )
 
 
+class EnterpriseRequestRecipient(Base):
+    """Sales inboxes that are emailed when a tenant requests Enterprise.
+
+    Platform-level state, not tenant-scoped: operators own the list and it is
+    managed from the admin console. Addresses are stored normalized (lowercase)
+    and the unique index makes a duplicate add a no-op at the database level,
+    so two operators editing the list at once cannot create two copies.
+    """
+
+    __tablename__ = "enterprise_request_recipients"
+    __table_args__ = (
+        Index("ix_enterprise_request_recipients_email", "email", unique=True),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    email: Mapped[str] = mapped_column(String(320))
+    created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
 class AdminBackupConfig(Base):
     """Single-row scheduler config for automatic database backups.
 

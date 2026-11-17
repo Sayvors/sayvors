@@ -6,6 +6,13 @@ import { INK, INK2 } from "@/components/channels/instagram/ui";
 import { apiFetch } from "@/lib/api-rag";
 import { externalAssetIdFor } from "@/lib/publish-targets";
 import { checkWindow, minLocalInput } from "@/lib/publish-schedule";
+import {
+  MEDIA_ONLY_METHODS,
+  needsMessageStep,
+  stepNav,
+  wizardSteps,
+  type WizardStepId,
+} from "@/lib/publish-wizard";
 import { cropSignature, exportCroppedImage } from "@/lib/crop-image";
 import MediaSink from "./MediaSink";
 import DestinationSelector from "./DestinationSelector";
@@ -41,13 +48,13 @@ function fill(s: string, vars: Record<string, string | number>): string {
 /**
  * A short stable token for a request group, used as the idempotency suffix.
  *
- * The group is identified by its crop plus, for a promotion, the coupon and
- * terms. Those fields alone can reach 364 characters while the publish API
- * caps `idempotency_key` at 200, so the raw group key cannot be sent. FNV-1a
- * is deterministic, so a retry of the same draft produces the same token and
- * the backend still collapses it onto the earlier job. Two different groups
- * can only collide on the same platform/asset/method if they are the same
- * request, so a collision cannot drop a destination.
+ * The group is identified by its crop. A crop signature can reach 364
+ * characters while the publish API caps `idempotency_key` at 200, so the raw
+ * group key cannot be sent. FNV-1a is deterministic, so a retry of the same
+ * draft produces the same token and the backend still collapses it onto the
+ * earlier job. Two different groups can only collide on the same
+ * platform/asset/method if they are the same request, so a collision cannot
+ * drop a destination.
  */
 function groupToken(key: string): string {
   let hash = 0x811c9dc5;
@@ -61,13 +68,6 @@ function groupToken(key: string): string {
 type MethodDict = Dict["publish"]["methods"];
 type ComposerDict = Dict["publish"]["composer"];
 
-/** Formats that cannot be published without an image. Google's What's New /
- * Event / Offer and Meta feed posts allow a text-only post. Gallery,
- * profile and banner are image surfaces. */
-const MEDIA_ONLY_METHODS = new Set<string>([
-  "story", "reel", "status", "gallery", "profile", "banner",
-]);
-
 type CtaValue = "book" | "order" | "shop" | "learn_more" | "sign_up" | "call";
 const CTA_VALUES: CtaValue[] = [
   "book", "order", "shop", "learn_more", "sign_up", "call",
@@ -76,9 +76,12 @@ const CTA_VALUES: CtaValue[] = [
 /*
  * The unified Publish composer.
  *
- * A 3-step wizard (Media & message → Destinations → When & publish) keeps
- * every section mounted — steps are toggled with `hidden` — so no draft
- * state, media preview or open modal is lost while navigating.
+ * A 4-step wizard (Media → Where & how → Message → When) keeps every
+ * section mounted — steps are toggled with `hidden` — so no draft state,
+ * media preview or open modal is lost while navigating. The Message step
+ * is conditional: image-only formats (profile/banner/gallery) skip it, so
+ * the rail shows 3 steps in that case. Step ids and numbering come from
+ * lib/publish-wizard and are covered by unit tests.
  *
  * Confirming uploads locally-picked media to /api/v1/media/upload (the
  * provider must fetch the files from a public URL at publish time), then
@@ -339,8 +342,8 @@ export default function PublishComposer({
     [targets, googleTargets, selected],
   );
   // Several branches of the same platform share one format panel and one
-  // configuration: selecting a format, its crop, a Promotion's code/terms or
-  // a gallery category is entered once and written to every selected branch.
+  // configuration: selecting a format or a gallery category is entered once
+  // and written to every selected branch.
   const sharedMode =
     selectedTargets.length > 1 &&
     selectedTargets.every((t) => t.platform === selectedTargets[0].platform);
@@ -357,6 +360,9 @@ export default function PublishComposer({
   // ── Publishing ──────────────────────────────────────────────────
   const [publishing, setPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
+  /** Description drafting state, local so a retry never loses the draft. */
+  const [descDrafting, setDescDrafting] = useState(false);
+  const [descNotice, setDescNotice] = useState<{ kind: "ok" | "err" | "info"; text: string } | null>(null);
   /**
    * The current publish attempt of this draft. The key stays the same
    * across retries so a partial failure cannot publish the same post twice;
@@ -382,19 +388,10 @@ export default function PublishComposer({
       );
     }
   }, [initialScheduleDate]);
-  // A promotional post has an end date: it goes up now and comes down
-  // on the day the offer lapses.
+  // A scheduled post can also be given an end date: it goes up now and comes
+  // down on the day the offer or announcement lapses.
   const [removeOn, setRemoveOn] = useState(false);
   const [removeAt, setRemoveAt] = useState("");
-
-  // Event/offer window. Google requires an `event` object for EVENT and
-  // OFFER topics, so the composer collects the schedule here; when left
-  // blank the publisher defaults it (now → +7 days).
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-  // Google requires a name for event/offer posts; without one the backend
-  // falls back to the caption's first line.
-  const [eventTitle, setEventTitle] = useState("");
 
   // ── Per-format previews + saved crops ───────────────────────────
   const [crops, setCrops] = useState<Record<string, CropState>>({});
@@ -404,12 +401,6 @@ export default function PublishComposer({
   /** draft crop being edited in the modal (committed on Save) */
   const [draftCrop, setDraftCrop] = useState<CropState>(DEFAULT_CROP);
   const [draftGalleryCategory, setDraftGalleryCategory] = useState<string>("EXTERIOR");
-  /** Coupon code + terms of a Promotion (offer) post, per destination. */
-  const [offerDetails, setOfferDetails] = useState<
-    Record<string, { coupon: string; terms: string }>
-  >({});
-  const [draftCoupon, setDraftCoupon] = useState("");
-  const [draftTerms, setDraftTerms] = useState("");
   /** formats that have been explicitly saved */
   const [configured, setConfigured] = useState<Set<string>>(new Set());
   /** Gallery category per destination+format (gallery only). */
@@ -420,10 +411,12 @@ export default function PublishComposer({
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [aiOpen, setAiOpen] = useState(false);
+  const [aiOpen, setAiOpen] = useState(true);
   // Wizard navigation only — every input/handler stays mounted (steps are
   // shown with `hidden`), so no draft state or media preview is ever lost.
-  const [postStep, setPostStep] = useState<1 | 2 | 3>(1);
+  // The step id is derived, never a raw number: the message step disappears
+  // for image-only formats, so "When" is step 3 or 4 depending on selection.
+  const [postStep, setPostStep] = useState<WizardStepId>("media");
   const { t: tr, locale } = useI18n();
   const pc: ComposerDict = tr.publish.composer;
   const methods = tr.publish.methods as MethodDict;
@@ -465,7 +458,7 @@ export default function PublishComposer({
     setFormats((prev) => {
       if (prev[t.id]?.length) return prev;
       const avail = methodsFor(t.platform, media?.type ?? null);
-      // "all" means every FEED format — the avatar and cover surfaces
+      // "all" means every FEED format - the avatar and promotion surfaces
       // are never seeded, only ever picked one by one.
       const chosen =
         mode === "default" ? avail.slice(0, 1) : avail.filter(isFeedMethod);
@@ -477,6 +470,53 @@ export default function PublishComposer({
   const chosenFor = (t: PublishTarget) => {
     const avail = availableFor(t);
     return (formats[t.id] ?? []).filter((m) => avail.includes(m));
+  };
+
+  const bannerSelected = selectedTargets.some((t) => chosenFor(t).includes("banner"));
+
+  // Write the description from the caption + the selected branch/business.
+  // The endpoint already grounds copy in the tenant's own Databank facts, so
+  // it never invents prices or products; we only supply the context it needs.
+  const writeDescriptionWithAI = async () => {
+    if (!caption.trim()) {
+      setDescNotice({ kind: "info", text: pc.aiDraftNeedTitle });
+      return;
+    }
+    setDescDrafting(true);
+    setDescNotice(null);
+    try {
+      const google = selectedTargets.filter((t) => t.platform === "google_reviews");
+      const branch = google[0]?.name ?? selectedTargets[0]?.name ?? null;
+      const r = await apiFetch("/api/v1/posts/ai-draft", {
+        method: "POST",
+        body: JSON.stringify({
+          title: caption.trim(),
+          post_type: "update",
+          business_name: branch ?? undefined,
+          location_name: google[0]?.name ?? undefined,
+        }),
+      });
+      if (typeof r.description === "string" && r.description.trim()) {
+        setDescription(r.description.trim());
+        setDescNotice({ kind: "ok", text: pc.aiDraftDone });
+      } else {
+        setDescNotice({ kind: "err", text: pc.aiDraftFail });
+      }
+    } catch (e) {
+      // Backend sends {"detail": "..."} — show the message, never raw JSON.
+      let msg = pc.aiDraftFail;
+      if (e instanceof Error) {
+        try {
+          const parsed = JSON.parse(e.message) as { detail?: unknown };
+          if (typeof parsed.detail === "string" && parsed.detail.trim()) {
+            msg = parsed.detail.slice(0, 200);
+          }
+        } catch { /* non-JSON error: keep the friendly fallback */ }
+      }
+      setDescNotice({ kind: "err", text: msg });
+    } finally {
+      setDescDrafting(false);
+    }
   };
 
   const toggleFormat = (t: PublishTarget, m: PostMethod, applyTo?: PublishTarget[]) => {
@@ -501,7 +541,7 @@ export default function PublishComposer({
 
   const toggleAllFormats = (t: PublishTarget, applyTo?: PublishTarget[]) => {
     const targetsToApply = applyTo ?? [t];
-    // "All" covers feed formats only; avatar/cover stay deliberate one-offs.
+    // "All" covers feed formats only; avatar/promotion stay deliberate one-offs.
     const feed = availableFor(targetsToApply[0]).filter(isFeedMethod);
     const turningAll = chosenFor(targetsToApply[0]).filter(isFeedMethod).length < feed.length;
     targetsToApply.forEach((target) => {
@@ -552,8 +592,6 @@ export default function PublishComposer({
     const key = cropKeyFor(t.id, m);
     setDraftCrop(crops[key] ?? defaultCropFor(t.platform, m));
     setDraftGalleryCategory(galleryCategories[key] ?? "EXTERIOR");
-    setDraftCoupon(offerDetails[key]?.coupon ?? "");
-    setDraftTerms(offerDetails[key]?.terms ?? "");
     setModalCtx({ targetId: t.id, method: m, applyToIds: ids });
   };
 
@@ -568,12 +606,6 @@ export default function PublishComposer({
       setCrops((prev) => ({ ...prev, [key]: draftCrop }));
       if (modalCtx.method === "gallery") {
         setGalleryCategories((prev) => ({ ...prev, [key]: draftGalleryCategory }));
-      }
-      if (modalCtx.method === "offer") {
-        setOfferDetails((prev) => ({
-          ...prev,
-          [key]: { coupon: draftCoupon.trim(), terms: draftTerms.trim() },
-        }));
       }
       setConfigured((prev) => new Set(prev).add(key));
     });
@@ -592,17 +624,12 @@ export default function PublishComposer({
   const confirmItems = selectedTargets
     .map((t) => ({ target: t, methods: chosenFor(t) }))
     .filter((i) => i.methods.length > 0 && externalAssetIdFor(i.target) !== null);
-  // Google requires an event window for EVENT and OFFER topics, so the
-  // composer only asks for the dates when one of those is actually chosen.
-  const needsEventWindow = confirmItems.some(({ methods }) =>
-    methods.some((m) => m === "event" || m === "offer"),
-  );
   const cf = tr.publish.confirm;
   const formatCount = confirmItems.reduce((n, i) => n + i.methods.length, 0);
   const destStr = confirmItems.length === 1 ? cf.destOne : fill(cf.destN, { n: fmt(confirmItems.length) });
   const fmtStr = formatCount === 1 ? cf.fmtOne : fill(cf.fmtN, { n: fmt(formatCount) });
-  // A text-only post is valid for Google What's New / Event / Offer and Meta
-  // feed posts. Everything else (and every Instagram post) needs an image.
+  // A text-only post is valid for a Google update and Meta feed posts.
+  // Everything else (and every Instagram post) needs an image.
   const needsMedia = confirmItems.some(({ target, methods }) =>
     methods.some(
       (m) =>
@@ -611,18 +638,18 @@ export default function PublishComposer({
     ),
   );
   const canPublish = confirmItems.length > 0 && (media !== null || !needsMedia);
-  // Required markers follow the selected format, not the step: Google needs
-  // an event window for EVENT/OFFER, and OFFER needs a way to redeem it.
-  const needsOfferFields = confirmItems.some(({ methods }) =>
-    methods.some((m) => m === "offer"),
-  );
   const hasGoogle = confirmItems.some(({ target }) => target.platform === "google_reviews");
+  // The message step exists only when a selected format carries text. The
+  // step list and every number in the rail/nav derive from this one source.
+  const steps = wizardSteps(confirmItems.flatMap(({ methods }) => methods));
+  const showMessage = steps.some((s) => s.id === "message");
+  // A hidden "message" step is never the active step: deriving the effective
+  // step (instead of an effect) avoids a cascading render and a stray state.
+  const step: WizardStepId = !showMessage && postStep === "message" ? "when" : postStep;
+  const nav = stepNav(steps, step);
   // A Google post needs text or an image — the API refuses one with neither.
   const needsText = hasGoogle && confirmItems.some(({ methods }) =>
-    methods.some((m) => m === "update" || m === "event" || m === "offer" || m === "post"),
-  );
-  const hasOfferCoupon = confirmItems.some(({ target }) =>
-    !!offerDetails[cropKeyFor(target.id, "offer")]?.coupon?.trim(),
+    methods.some((m) => m === "update" || m === "post"),
   );
 
   /** Every required field for the current draft, in step order. */
@@ -633,51 +660,44 @@ export default function PublishComposer({
     if (needsText && media === null && !caption.trim() && !description.trim()) {
       problems.push(pc.captionRequired);
     }
-    if (needsEventWindow && !eventTitle.trim()) problems.push(pc.eventTitleRequired);
     if (ctaType && ctaType !== "call" && !ctaUrl.trim()) problems.push(pc.ctaUrlRequired);
-    if (needsOfferFields && !ctaUrl.trim() && !hasOfferCoupon) {
-      problems.push(pc.wizard.offerLinkRequired);
-    }
     const dateProblem = checkWindow({
       scheduleAt: scheduleOn ? scheduleAt : "",
       removeAt: removeOn ? removeAt : "",
-      startDate: needsEventWindow ? startDate : "",
-      endDate: needsEventWindow ? endDate : "",
-      eventRequired: needsEventWindow,
+      startDate: "",
+      endDate: "",
     });
     if (dateProblem) problems.push(tr.publish.dates[dateProblem]);
     return problems;
   };
 
   /** Only the fields owned by the step the merchant is on. */
-  const stepProblems = (step: 1 | 2 | 3): string[] => {
-    if (step === 1) {
+  const stepProblems = (step: WizardStepId): string[] => {
+    if (step === "media") {
+      return needsMedia && media === null ? [pc.needMedia] : [];
+    }
+    if (step === "where") {
+      return confirmItems.length === 0 ? [pc.needDest] : [];
+    }
+    if (step === "message") {
       const p: string[] = [];
-      if (needsMedia && media === null) p.push(pc.needMedia);
       if (needsText && media === null && !caption.trim() && !description.trim()) {
         p.push(pc.captionRequired);
       }
-      return p;
-    }
-    if (step === 2) {
-      const p: string[] = [];
       if (ctaType && ctaType !== "call" && !ctaUrl.trim()) p.push(pc.ctaUrlRequired);
-      if (needsOfferFields && !ctaUrl.trim() && !hasOfferCoupon) {
-        p.push(pc.wizard.offerLinkRequired);
-      }
       return p;
     }
     return draftProblems();
   };
 
   const nextStep = () => {
-    const problems = stepProblems(postStep);
+    const problems = stepProblems(step);
     if (problems.length > 0) {
       setNotice(problems[0]);
       return;
     }
     setNotice(null);
-    setPostStep((s) => Math.min(3, s + 1) as 1 | 2 | 3);
+    if (nav.next) setPostStep(nav.next);
   };
 
   const openConfirm = () => {
@@ -710,8 +730,8 @@ export default function PublishComposer({
     setPublishError(null);
     try {
       // Dates are checked here, with the reason, so the tenant is not met by a
-      // 422 from the API: a schedule must be set and in the future, a removal
-      // must come after the post goes out, and an event must end after it starts.
+      // 422 from the API: a schedule must be set and in the future, and a
+      // removal must come after the post goes out.
       if (scheduleOn && !scheduleAt) {
         throw new Error(tr.publish.dates.scheduleMissing);
       }
@@ -721,9 +741,8 @@ export default function PublishComposer({
       const dateProblem = checkWindow({
         scheduleAt: scheduleOn ? scheduleAt : "",
         removeAt: removeOn ? removeAt : "",
-        startDate: needsEventWindow ? startDate : "",
-        endDate: needsEventWindow ? endDate : "",
-        eventRequired: needsEventWindow,
+        startDate: "",
+        endDate: "",
       });
       if (dateProblem) {
         throw new Error(tr.publish.dates[dateProblem]);
@@ -821,10 +840,9 @@ export default function PublishComposer({
       const attempt = publishAttemptRef.current;
 
       // Two things vary per request: the crop (each format bakes its own
-      // file) and, for a promotion, the coupon/terms (they live in the post
-      // body). Grouping by both is what lets one draft publish a 1:1 avatar,
-      // a 16:9 cover and an uncropped update without shipping one file to
-      // all of them.
+      // file) and the destination. Grouping by crop is what lets one draft
+      // publish a 1:1 avatar, a 16:9 promotion and an uncropped update
+      // without shipping one file to all of them.
       type PostDestination = {
         platform: string;
         external_asset_id: string;
@@ -834,31 +852,22 @@ export default function PublishComposer({
         string,
         {
           destinations: PostDestination[];
-          coupon: string;
-          terms: string;
           crop: CropState;
         }
       >();
       for (const item of confirmItems) {
         const methods = item.methods.filter((m) => m !== "gallery");
         if (methods.length === 0) continue;
-        const details = offerDetails[cropKeyFor(item.target.id, "offer")];
         const assetId = externalAssetIdFor(item.target) as string;
         for (const method of methods) {
           const crop =
             crops[cropKeyFor(item.target.id, method)] ??
             defaultCropFor(item.target.platform, method);
-          const offerSig =
-            method === "offer"
-              ? `${details?.coupon ?? ""}|${details?.terms ?? ""}`
-              : "";
-          const groupKey = `${cropSignature(crop)}::${offerSig}`;
+          const groupKey = cropSignature(crop);
           let group = groups.get(groupKey);
           if (!group) {
             group = {
               destinations: [],
-              coupon: details?.coupon ?? "",
-              terms: details?.terms ?? "",
               crop,
             };
             groups.set(groupKey, group);
@@ -891,15 +900,14 @@ export default function PublishComposer({
               ctaType && ctaType !== "call" ? ctaUrl.trim() || null : null,
             scheduled_at: scheduleOn && scheduleAt ? new Date(scheduleAt).toISOString() : null,
             delete_at: removeOn && removeAt ? new Date(removeAt).toISOString() : null,
-            start_date: startDate ? new Date(startDate).toISOString() : null,
-            end_date: endDate ? new Date(endDate).toISOString() : null,
-            // The wall-clock time the merchant picked is in this zone. Google's
-            // TimeInterval has no timezone field, so the backend renders the
-            // same wall-clock values here before sending them.
-            event_title: eventTitle.trim() || null,
+            // Event and offer fields remain part of the publish API for posts
+            // created elsewhere; the composer no longer sets them.
+            start_date: null,
+            end_date: null,
+            event_title: null,
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-            coupon_code: group.coupon || null,
-            terms_conditions: group.terms || null,
+            coupon_code: null,
+            terms_conditions: null,
             // Google labels the post with the language the merchant wrote
             // it in, so an Arabic post is not published as English.
             language_code: GOOGLE_POST_LANGUAGE[locale] ?? "en-US",
@@ -974,9 +982,17 @@ export default function PublishComposer({
         }
       }
 
+      // A Promotion on Google is a cover photo. Confirm what actually happened
+      // so the merchant is never left guessing whether it went to the gallery.
+      const bannerPublished = confirmItems.some(
+        ({ target, methods }) =>
+          target.platform === "google_reviews" && methods.includes("banner"),
+      );
+
       // Crop fallbacks and category fallbacks are both things the merchant
       // must hear about, so they share one banner.
       const allNotices = [...notices, ...fallbacks];
+      if (bannerPublished) allNotices.push(pc.bannerSetNotice);
       if (galleryErrors.length) {
         // The draft stays open so the merchant can pick another category and
         // retry; the posts are not re-queued (same idempotency key).
@@ -999,11 +1015,8 @@ export default function PublishComposer({
       setRemoveAt("");
       setCtaType("");
       setCtaUrl("");
-      setStartDate("");
-      setEndDate("");
       setFormats({});
       setGalleryCategories({});
-      setOfferDetails({});
       // The draft is done: a new publish starts a new attempt.
       publishAttemptRef.current = null;
       onPublished?.();
@@ -1055,7 +1068,7 @@ export default function PublishComposer({
 
   const openRow = (id: string) => {
     // In shared mode every branch uses one panel, so any chip scrolls there.
-    if (postStep !== 2) setPostStep(2);
+    if (postStep !== "where") setPostStep("where");
     const rowId = sharedMode ? selectedTargets[0].id : id;
     requestAnimationFrame(() => {
       document.getElementById(`dest-row-${rowId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -1091,18 +1104,15 @@ export default function PublishComposer({
         </div>
         {/* Step wizard — visual navigation only; all steps stay mounted. */}
         <ol className="mt-4 flex items-center gap-1 rounded-[24px] bg-[var(--ui-sunken)] p-1.5 sm:gap-2" aria-label="Post steps">
-          {([
-            { id: 1 as const, label: pc.wizard.step1 },
-            { id: 2 as const, label: pc.wizard.step2 },
-            { id: 3 as const, label: pc.wizard.step3 },
-          ]).map((s, index) => {
-            const active = postStep === s.id;
-            const done = postStep > s.id;
+          {steps.map((stepDef, index) => {
+            const position = stepNav(steps, stepDef.id);
+            const active = step === stepDef.id;
+            const done = nav.index > index;
             return (
-              <li key={s.id} className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-2">
+              <li key={stepDef.id} className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-2">
                 <button
                   type="button"
-                  onClick={() => setPostStep(s.id)}
+                  onClick={() => setPostStep(stepDef.id)}
                   aria-current={active ? "step" : undefined}
                   className={`flex min-w-0 items-center gap-1.5 rounded-[20px] px-1 py-1 pr-1.5 transition duration-200 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:gap-2 sm:px-1.5 sm:pr-2.5 ${
                     active
@@ -1117,17 +1127,17 @@ export default function PublishComposer({
                         ? "bg-[var(--ui-ink)]/10 text-[var(--ui-ink)]"
                         : "border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] text-[var(--ui-ink-2)]"
                   }`}>
-                    {done ? "✓" : s.id}
+                    {done ? "✓" : position.number}
                   </span>
-                  <span className="hidden min-w-0 truncate text-[12px] font-semibold sm:inline sm:text-[13px]">{s.label}</span>
+                  <span className="hidden min-w-0 truncate text-[12px] font-semibold sm:inline sm:text-[13px]">{pc.wizard[stepDef.labelKey]}</span>
                 </button>
-                {index < 2 && <span className={`h-px min-w-[6px] flex-1 ${done ? "bg-[var(--ui-ink)]/40" : "bg-[var(--ui-line)]"}`} />}
+                {index < steps.length - 1 && <span className={`h-px min-w-[6px] flex-1 ${done ? "bg-[var(--ui-ink)]/40" : "bg-[var(--ui-line)]"}`} />}
               </li>
             );
           })}
         </ol>
         <p className={`mt-2 text-[11px] ${INK2}`}>
-          {fill(pc.wizard.stepOf, { n: postStep })}
+          {fill(pc.wizard.stepOf, { n: nav.number, total: nav.total })}
           <span className="ml-2 text-coral">* {pc.wizard.requiredHint}</span>
         </p>
       </header>
@@ -1147,8 +1157,8 @@ export default function PublishComposer({
           {/* One working column. Steps use `hidden`, not unmounting: every
               input, ref and preview stays alive while navigating. */}
           <div className="min-w-0 space-y-5">
-          {/* STEP 1 — media + message. */}
-          <div className={postStep === 1 ? "space-y-5" : "hidden"}>
+          {/* STEP — media. */}
+          <div className={step === "media" ? "space-y-5" : "hidden"}>
           <section aria-labelledby="publish-media-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
             <h2 id="publish-media-h" className={`text-[15px] font-bold ${INK}`}>
               {pc.stepMedia}
@@ -1172,27 +1182,10 @@ export default function PublishComposer({
             )}
           </section>
 
-          <section aria-labelledby="ai-video-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
-            <button
-              type="button"
-              id="ai-video-h"
-              onClick={() => setAiOpen((v) => !v)}
-              aria-expanded={aiOpen}
-              className={`flex w-full items-center justify-between gap-2 text-left ${INK}`}
-            >
-              <span className="text-[14px] font-bold">{pc.aiTitle}</span>
-              <span className={`text-[12px] font-semibold ${INK2}`}>{aiOpen ? "Hide" : "Show"}</span>
-            </button>
-            {aiOpen && (
-              <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
-                {pc.aiSub}
-              </p>
-            )}
-            <div className={aiOpen ? "" : "hidden"}>
-              <AiVideoCreator googleTargets={googleTargets} />
-            </div>
-          </section>
+          </div>{/* end media step */}
 
+          {/* STEP — message. Only visible when a text format is selected. */}
+          <div className={step === "message" ? "space-y-5" : "hidden"}>
           <section aria-labelledby="publish-message-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
             <h2 id="publish-message-h" className={`text-[15px] font-bold ${INK}`}>
               {pc.stepMessage}
@@ -1234,11 +1227,26 @@ export default function PublishComposer({
                 )}
               </div>
               <div>
-                <div className="flex items-baseline justify-between">
+                <div className="flex items-baseline justify-between gap-2">
                   <label htmlFor="pub-description" className={`text-[12px] font-semibold ${INK2}`}>
                     {pc.description}
                   </label>
-                  <span className={`text-[11px] ${INK2}`}>{fmt(description.length)}</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={writeDescriptionWithAI}
+                      disabled={descDrafting}
+                      title={pc.aiWriteDescHint}
+                      className="inline-flex items-center gap-1 rounded-[20px] border border-deep-violet/25 bg-deep-violet/[0.06] px-2.5 py-1 text-[11px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.12] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] disabled:opacity-50 dark:border-fog/15 dark:text-fog dark:hover:bg-fog/[0.08]"
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5" aria-hidden>
+                        <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z" strokeLinejoin="round" />
+                        <path d="M18 15l.8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8L18 15z" strokeLinejoin="round" />
+                      </svg>
+                      {descDrafting ? pc.aiDrafting : pc.aiWriteDesc}
+                    </button>
+                    <span className={`text-[11px] ${INK2}`}>{fmt(description.length)}</span>
+                  </div>
                 </div>
                 <textarea
                   id="pub-description"
@@ -1249,14 +1257,68 @@ export default function PublishComposer({
                   placeholder={pc.descPh}
                   className={`${FIELD} mt-1 w-full resize-y`}
                 />
+                {descNotice && (
+                  <p
+                    role="status"
+                    className={`mt-1.5 rounded-[16px] border px-3 py-2 text-[12px] font-medium ${
+                      descNotice.kind === "err"
+                        ? "border-coral/40 bg-coral/10 text-coral"
+                        : descNotice.kind === "ok"
+                          ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                          : "border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                    }`}
+                  >
+                    {descNotice.text}
+                  </p>
+                )}
               </div>
             </div>
           </section>
 
-          </div>{/* end step 1 */}
+          <section aria-labelledby="publish-cta-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
+            <h2 id="publish-cta-h" className={`text-[15px] font-bold ${INK}`}>
+              {pc.wizard.ctaTitle}
+            </h2>
+            <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
+              {pc.ctaHint}
+            </p>
+            <div>
+              <label htmlFor="pub-cta-type" className={`text-[12px] font-semibold ${INK2}`}>
+                {pc.ctaType}
+              </label>
+              <select
+                id="pub-cta-type"
+                value={ctaType}
+                onChange={(e) => {
+                  setCtaType(e.target.value);
+                  if (e.target.value === "call") setCtaUrl("");
+                }}
+                className={`${FIELD} mt-1 w-full`}
+              >
+                <option value="">{pc.ctaTypePh}</option>
+                {CTA_VALUES.map((value) => (
+                  <option key={value} value={value}>
+                    {pc.ctaTypes[value]}
+                  </option>
+                ))}
+              </select>
+              {ctaType && ctaType !== "call" && (
+                <input
+                  type="url"
+                  value={ctaUrl}
+                  onChange={(e) => setCtaUrl(e.target.value)}
+                  placeholder={pc.ctaUrlPh}
+                  aria-label={pc.ctaUrlPh}
+                  className={`${FIELD} mt-1.5 w-full`}
+                />
+              )}
+            </div>
+          </section>
 
-          {/* STEP 3 — schedule. The live preview lives in the persistent rail. */}
-          <div className={postStep === 3 ? "space-y-5" : "hidden"}>
+          </div>{/* end message step */}
+
+          {/* STEP — when: schedule. The live preview lives in the persistent rail. */}
+          <div className={step === "when" ? "space-y-5" : "hidden"}>
           <section aria-labelledby="publish-schedule-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
             <h2 id="publish-schedule-h" className={`text-[15px] font-bold ${INK}`}>
               {pc.stepWhen}
@@ -1293,103 +1355,13 @@ export default function PublishComposer({
                 {pc.removeNote}
               </p>
             )}
-            {needsEventWindow && (
-              <div className="mt-3 border-t border-[var(--ui-line)] pt-3">
-                <p className={`mb-2 text-[12px] font-semibold ${INK2}`}>
-                  {pc.eventWindow}
-                  <span className="ml-1 text-coral" title={pc.wizard.requiredHint}>*</span>
-                </p>
-                <label className={`mb-3 block text-[12px] font-semibold ${INK2}`}>
-                  {pc.eventTitle}<span className="text-coral">*</span>
-                  <input
-                    type="text"
-                    value={eventTitle}
-                    onChange={(e) => setEventTitle(e.target.value)}
-                    maxLength={58}
-                    placeholder={pc.eventTitlePh}
-                    aria-label={pc.eventTitle}
-                    className={`${FIELD} mt-1 w-full`}
-                  />
-                </label>
-                <div className="flex flex-wrap items-center gap-3">
-                  <label className={`flex items-center gap-2 text-[12px] ${INK2}`}>
-                    {pc.eventStart}<span className="text-coral">*</span>
-                    <input
-                      type="datetime-local"
-                      value={startDate}
-                      onChange={(e) => setStartDate(e.target.value)}
-                      aria-label={pc.eventStart}
-                      min={minLocalInput()}
-                      className={`${FIELD} w-full sm:w-56`}
-                    />
-                  </label>
-                  <label className={`flex items-center gap-2 text-[12px] ${INK2}`}>
-                    {pc.eventEnd}<span className="text-coral">*</span>
-                    <input
-                      type="datetime-local"
-                      value={endDate}
-                      onChange={(e) => setEndDate(e.target.value)}
-                      aria-label={pc.eventEnd}
-                      min={startDate || minLocalInput()}
-                      className={`${FIELD} w-full sm:w-56`}
-                    />
-                  </label>
-                </div>
-                <p className={`mt-1.5 text-[11px] ${INK2}`}>{pc.eventWindowHint}</p>
-              </div>
-            )}
           </section>
 
-          </div>{/* end step 3 */}
+          </div>{/* end when step */}
 
-          {/* STEP 2 — destinations + their per-platform configuration */}
-          <div className={postStep === 2 ? "space-y-5" : "hidden"}>
+          {/* STEP — where: destinations + their per-platform configuration */}
+          <div className={step === "where" ? "space-y-5" : "hidden"}>
           <div className="space-y-5">
-          <section aria-labelledby="publish-cta-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
-            <h2 id="publish-cta-h" className={`text-[15px] font-bold ${INK}`}>
-              {pc.wizard.ctaTitle}
-              {needsOfferFields && <span className="ml-1 text-coral" title={pc.wizard.requiredHint}>*</span>}
-            </h2>
-            <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
-              {needsOfferFields ? pc.wizard.offerLinkHint : pc.ctaHint}
-            </p>
-            <div>
-              <label htmlFor="pub-cta-type" className={`text-[12px] font-semibold ${INK2}`}>
-                {pc.ctaType}
-              </label>
-              <select
-                id="pub-cta-type"
-                value={ctaType}
-                onChange={(e) => {
-                  setCtaType(e.target.value);
-                  if (e.target.value === "call") setCtaUrl("");
-                }}
-                className={`${FIELD} mt-1 w-full`}
-              >
-                <option value="">{pc.ctaTypePh}</option>
-                {CTA_VALUES.map((value) => (
-                  <option key={value} value={value}>
-                    {pc.ctaTypes[value]}
-                  </option>
-                ))}
-              </select>
-              {ctaType && ctaType !== "call" && (
-                <>
-                  <input
-                    type="url"
-                    value={ctaUrl}
-                    onChange={(e) => setCtaUrl(e.target.value)}
-                    placeholder={pc.ctaUrlPh}
-                    aria-label={pc.ctaUrlPh}
-                    className={`${FIELD} mt-1.5 w-full`}
-                  />
-                  {needsOfferFields && (
-                    <p className="mt-1 text-[11px] text-coral">{pc.wizard.offerLinkRequired}</p>
-                  )}
-                </>
-              )}
-            </div>
-          </section>
           <section aria-labelledby="publish-dest-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
             <h2 id="publish-dest-h" className={`text-[15px] font-bold ${INK}`}>
               {pc.stepDest}
@@ -1467,6 +1439,32 @@ export default function PublishComposer({
                     {pc.formatsNote} Gallery photos are added to the location&apos;s photo gallery — pick a category when you configure it.
                   </p>
                 </div>
+              )}
+              {bannerSelected && (
+                <details className="group mt-3 rounded-[20px] border border-deep-violet/20 bg-deep-violet/[0.04] px-3.5 py-2.5 dark:border-fog/10 dark:bg-fog/[0.04]">
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-[11.5px] font-bold text-deep-violet outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] dark:text-fog">
+                    <span className="flex items-center gap-2">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4 shrink-0" aria-hidden>
+                        <circle cx="12" cy="12" r="9" />
+                        <path d="M12 16v-4M12 8h.01" strokeLinecap="round" />
+                      </svg>
+                      {pc.bannerTipsTitle}
+                    </span>
+                    <svg viewBox="0 0 12 12" className="h-3 w-3 shrink-0 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                      <path d="M2 4l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </summary>
+                  <ul className="mt-2.5 space-y-1.5 border-t border-deep-violet/10 pt-2.5 dark:border-fog/10">
+                    {pc.bannerTips.map((tip, i) => (
+                      <li key={i} className="flex items-start gap-2 text-[11px] leading-relaxed text-ink/65 dark:text-fog/65">
+                        <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-deep-violet/10 text-[10px] font-bold text-deep-violet dark:bg-fog/10 dark:text-fog">
+                          {fmt(i + 1)}
+                        </span>
+                        <span>{tip}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
               )}
               {sharedMode && (
                 <div className="mt-3 flex items-center gap-2 rounded-[20px] border border-emerald-500/30 bg-emerald-500/[0.07] px-3.5 py-2.5 text-[11.5px] font-semibold text-emerald-700 dark:text-emerald-400">
@@ -1597,12 +1595,12 @@ export default function PublishComposer({
             </section>
           )}
 
-          </div>{/* end step 2 */}
+          </div>{/* end where step */}
 
           {/* Step-local footer: navigation belongs to the step, and the
               publish action only exists on the final step. */}
           <div className="rounded-[24px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)] sm:p-5">
-            {postStep === 3 && galleryFallbacks.length > 0 && (
+            {step === "when" && galleryFallbacks.length > 0 && (
               <div className="mb-3 space-y-1" role="status">
                 {galleryFallbacks.map((f) => (
                   <p key={f} className="text-[12px] font-medium text-amber-700 dark:text-amber-400">
@@ -1611,9 +1609,9 @@ export default function PublishComposer({
                 ))}
               </div>
             )}
-            {stepProblems(postStep).length > 0 && (
+            {stepProblems(step).length > 0 && (
               <div className="mb-3 space-y-1 rounded-[20px] border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5" role="status">
-                {stepProblems(postStep).map((problem) => (
+                {stepProblems(step).map((problem) => (
                   <p key={problem} className="text-[12px] font-semibold text-amber-800 dark:text-amber-300">
                     {problem}
                   </p>
@@ -1622,22 +1620,22 @@ export default function PublishComposer({
             )}
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
-                {postStep > 1 && (
+                {nav.previous && (
                   <button
                     type="button"
-                    onClick={() => setPostStep((s) => Math.max(1, s - 1) as 1 | 2 | 3)}
+                    onClick={() => setPostStep(nav.previous!)}
                     className="clay-btn-secondary px-5 py-2.5 text-[13px] font-bold text-[var(--ui-ink)] transition duration-200 hover:bg-[var(--ui-sunken)] active:translate-y-0.5 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
                   >
                     {pc.wizard.back}
                   </button>
                 )}
-                {postStep < 3 && (
+                {nav.next && (
                   <p className={`text-[12px] font-medium ${INK2}`}>
-                    {fill(pc.wizard.stepOf, { n: postStep })}
+                    {fill(pc.wizard.stepOf, { n: nav.number, total: nav.total })}
                   </p>
                 )}
               </div>
-              {postStep < 3 ? (
+              {nav.next ? (
                 <button
                   type="button"
                   onClick={nextStep}
@@ -1673,6 +1671,27 @@ export default function PublishComposer({
           {/* Persistent preview rail — visible on every step, so the frame
               always mirrors the destination/format it will actually use. */}
           <aside className="order-first min-w-0 lg:order-none lg:sticky lg:top-4 lg:self-start">
+            <section aria-labelledby="ai-video-h" className="clay-panel mb-5 border-deep-violet/20 bg-deep-violet/[0.03] p-4 sm:p-5 dark:border-fog/10 dark:bg-fog/[0.03]">
+              <button
+                type="button"
+                id="ai-video-h"
+                onClick={() => setAiOpen((v) => !v)}
+                aria-expanded={aiOpen}
+                className={`flex w-full items-center justify-between gap-2 text-left ${INK}`}
+              >
+                <span className="flex items-center gap-2 text-[14px] font-bold">
+                  <span aria-hidden>✨</span>
+                  {pc.aiTitle}
+                </span>
+                <span className={`text-[12px] font-semibold ${INK2}`}>{aiOpen ? pc.aiHide : pc.aiShow}</span>
+              </button>
+              <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
+                {pc.aiSub}
+              </p>
+              <div className={aiOpen ? "" : "hidden"}>
+                <AiVideoCreator googleTargets={googleTargets} />
+              </div>
+            </section>
             <section aria-labelledby="publish-preview-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <h2 id="publish-preview-h" className={`text-[15px] font-bold ${INK}`}>
@@ -1751,40 +1770,6 @@ export default function PublishComposer({
                   />
                 </div>
                 <div className="w-full max-w-[320px] shrink-0 space-y-3">
-                  {modalCtx.method === "offer" && (
-                    <div className="space-y-3">
-                      <div>
-                        <label htmlFor="offer-coupon" className="mb-1 block text-[12px] font-semibold text-[var(--ui-ink)]">
-                          {pc.couponLabel}
-                          <span className="ml-1 text-coral" title={pc.wizard.requiredHint}>*</span>
-                        </label>
-                        <input
-                          id="offer-coupon"
-                          type="text"
-                          value={draftCoupon}
-                          onChange={(e) => setDraftCoupon(e.target.value)}
-                          placeholder={pc.couponPh}
-                          maxLength={64}
-                          className="w-full clay-input px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus:border-deep-violet/40"
-                        />
-                        <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">{pc.couponHint}</p>
-                      </div>
-                      <div>
-                        <label htmlFor="offer-terms" className="mb-1 block text-[12px] font-semibold text-[var(--ui-ink)]">
-                          {pc.termsLabel}
-                        </label>
-                        <textarea
-                          id="offer-terms"
-                          value={draftTerms}
-                          onChange={(e) => setDraftTerms(e.target.value)}
-                          placeholder={pc.termsPh}
-                          maxLength={300}
-                          rows={3}
-                          className="w-full clay-input px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus:border-deep-violet/40"
-                        />
-                      </div>
-                    </div>
-                  )}
                   {modalCtx.method === "gallery" && (
                     <div>
                       <label className="mb-1 block text-[12px] font-semibold text-[var(--ui-ink)]">Gallery category</label>

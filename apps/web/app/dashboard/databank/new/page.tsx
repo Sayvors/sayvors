@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   createCrawlSource,
   createDatabank,
@@ -10,6 +10,7 @@ import {
   type CrawlPreviewItem,
   uploadFile,
 } from "@/lib/api-rag";
+import { getEntitlements } from "@/lib/api-billing";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 
 type SourceType = "files" | "crawler" | "empty";
@@ -70,6 +71,9 @@ export default function CreateDatabankPage() {
     { id: 3, label: u.steps.configure },
     { id: 4, label: u.steps.review },
   ] as const;
+  // Website crawling is Enterprise-only. The API enforces this too; hiding
+  // the card avoids offering a path that would 403 on the first preview.
+  const [crawlerAllowed, setCrawlerAllowed] = useState(false);
   const [step, setStep] = useState(1);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -82,6 +86,24 @@ export default function CreateDatabankPage() {
   const [candidates, setCandidates] = useState<CrawlPreviewItem[]>([]);
   const [selectedUrls, setSelectedUrls] = useState<Set<string>>(new Set());
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void getEntitlements()
+      .then((ent) => {
+        if (!alive) return;
+        const allowed = ent.features?.crawler === true;
+        setCrawlerAllowed(allowed);
+        if (!allowed) setSourceType((current) => (current === "crawler" ? null : current));
+      })
+      .catch(() => {
+        // Fail closed: an unreadable entitlement must never expose the gate.
+        if (alive) setCrawlerAllowed(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const urlValidation = useMemo(() => validateCrawlerUrl(crawlerUrl), [crawlerUrl]);
   const urlErrorMessage = useMemo(() => {
@@ -364,7 +386,9 @@ export default function CreateDatabankPage() {
                           />
                         ),
                       },
-                    ] as const).map((option) => {
+                    ] as const)
+                      .filter((option) => option.value !== "crawler" || crawlerAllowed)
+                      .map((option) => {
                       const selected = sourceType === option.value;
                       return (
                         <button

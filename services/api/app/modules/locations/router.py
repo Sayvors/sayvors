@@ -6,6 +6,7 @@ POST   /api/v1/locations/groups          create a group
 PATCH  /api/v1/locations/groups/{id}     rename / change members
 DELETE /api/v1/locations/groups/{id}     delete a group
 GET    /api/v1/locations/{listing_id}    merged profile (Google snapshot + local store)
+GET    /api/v1/locations/{listing_id}/google-status  Google edit lifecycle (cached, polled)
 PUT    /api/v1/locations/{listing_id}    update (description pushes to Google)
 """
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, File
@@ -22,6 +23,7 @@ from .schemas import (
     LocationCategoryOut,
     LocationCreateIn,
     LocationCreateOut,
+    LocationGoogleStatusOut,
     LocationGroupIn,
     LocationGroupOut,
     LocationGroupUpdate,
@@ -280,6 +282,25 @@ async def get_location(
     db: AsyncSession = Depends(get_db),
 ):
     return await service.get_profile(db, tenant_id_of(user), listing_id)
+
+
+@router.get("/{listing_id}/google-status", response_model=LocationGoogleStatusOut)
+async def get_location_google_status(
+    listing_id: str,
+    force: bool = False,
+    ctx: TenantContext = Depends(require_perm("locations.view")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Google's per-field edit lifecycle, cached and quota-budgeted.
+
+    The page polls this every minute while a section is in review. ``force``
+    is the "Check now" button; it bypasses the cache TTL but not the budget,
+    so one user cannot spend the project's quota.
+    """
+    return await service.get_google_status(
+        db, tenant_id_of(user), listing_id, force=force
+    )
 
 
 @router.put("/{listing_id}", response_model=LocationProfileOut)

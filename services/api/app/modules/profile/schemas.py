@@ -172,3 +172,16 @@ class BusinessDetailsIn(BaseModel):
     services: list[str] | None = None
     hours: dict | None = None
     special_hours: list[dict] | None = None
+
+
+class IntakeAnswerIn(BaseModel):
+    question_key: str = Field(..., min_length=1, max_length=80)
+    answer: list[str] | str | None = None
+    skipped: bool = False
+    source: str = Field(default="manual", pattern="^(manual|google_confirmed)$")
+
+
+class IntakeSaveRequest(BaseModel):
+    vertical_key: str | None = Field(default=None, max_length=40)
+    sub_focus: str | None = Field(default=None, max_length=40)
+    answers: list[IntakeAnswerIn] = Field(default_factory=list, max_length=100)
