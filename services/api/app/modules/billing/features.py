@@ -36,6 +36,10 @@ FEATURE_CATALOG: list[FeatureSpec] = [
     FeatureSpec("analytics", "Analytics", "Analytics dashboards and reports.", False),
     FeatureSpec("automation", "Automation", "Automation rules and triggers.", False),
     FeatureSpec("databank", "Knowledge base", "Databank / RAG knowledge base.", False),
+    # Website crawling embeds every discovered page. It is deliberately
+    # enterprise-only: manual business intake and file uploads cover the
+    # free-trial and lower tiers at zero embedding cost.
+    FeatureSpec("crawler", "Website crawler", "Automatically discover and embed pages from a website (Enterprise).", False),
     FeatureSpec("leads", "Leads", "Lead management and pipeline.", False),
     FeatureSpec("voice", "Voice", "Voice messages and TTS.", False),
     FeatureSpec("scheduling", "Scheduling", "Post scheduling.", False),

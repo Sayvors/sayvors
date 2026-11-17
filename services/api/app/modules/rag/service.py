@@ -584,6 +584,37 @@ async def _parse_document(doc: Document) -> str:
     return await parser(content)
 
 
+def _record_embedding_usage(doc: Document, provider, texts: list[str], vectors: list) -> None:
+    """Meter one embedding batch so crawl cost is visible in tenant usage.
+
+    Embedding providers do not return token counts, so tokens are estimated
+    from characters (~4 chars/token). This is a metered estimate, not a
+    provider-reported number, and is recorded under its own purpose
+    (``rag.embed``) so it can never be confused with chat completions.
+    """
+    from types import SimpleNamespace
+
+    from ..llm.usage import record_usage_event
+
+    estimated = max(1, sum(len(t) // 4 for t in texts))
+    req = SimpleNamespace(
+        tenant_id=getattr(doc, "user_id", None),
+        model_id=getattr(provider, "model_tag", None),
+        model=getattr(provider, "model_tag", "") or "",
+        purpose="rag.embed",
+        channel_id=None,
+    )
+    resp = SimpleNamespace(
+        provider=getattr(provider, "provider", None) or "embedding",
+        usage=SimpleNamespace(
+            prompt_tokens=estimated,
+            completion_tokens=0,
+            total_tokens=estimated,
+        ),
+    )
+    record_usage_event(req, resp, 0, status="ok" if vectors else "error")
+
+
 async def _embed_and_store(
     doc: Document, chunks: list[dict], job: IngestJob
 ) -> None:
@@ -609,6 +640,9 @@ async def _embed_and_store(
                     for v in vectors:
                         all_vectors[idx] = v
                         idx += 1
+                    _record_embedding_usage(
+                        doc, provider, batch, vectors
+                    )
                 embedding_model = provider.model_tag
             except Exception as e:
                 logger.warning("Embedding failed for doc %s, storing without vectors: %s", doc.id, e)
