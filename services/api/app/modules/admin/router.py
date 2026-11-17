@@ -406,6 +406,88 @@ async def admin_reject_billing_request(
     return serialize(request)
 
 
+# ---------------------------------------------------------------------------
+# Enterprise request notification recipients
+# ---------------------------------------------------------------------------
+
+class EnterpriseRecipientIn(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+
+
+class EnterpriseRecipientOut(BaseModel):
+    id: str
+    email: str
+    created_by: str | None = None
+    created_at: datetime | None = None
+
+
+class EnterpriseRecipientListOut(BaseModel):
+    items: list[EnterpriseRecipientOut]
+    max_recipients: int
+
+
+@router.get("/billing/enterprise-recipients", response_model=EnterpriseRecipientListOut)
+async def admin_enterprise_recipients(
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Who is emailed when a tenant requests the Enterprise plan."""
+    from .enterprise_recipients import (
+        MAX_RECIPIENTS,
+        list_recipients,
+        serialize_recipient,
+    )
+
+    rows = await list_recipients(db)
+    return {
+        "items": [serialize_recipient(row) for row in rows],
+        "max_recipients": MAX_RECIPIENTS,
+    }
+
+
+@router.post(
+    "/billing/enterprise-recipients",
+    response_model=EnterpriseRecipientOut,
+    status_code=201,
+)
+async def admin_add_enterprise_recipient(
+    body: EnterpriseRecipientIn,
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Add one address to the sales notification list."""
+    from .enterprise_recipients import (
+        RecipientError,
+        add_recipient,
+        serialize_recipient,
+    )
+
+    try:
+        row = await add_recipient(
+            db, email=body.email, operator=_admin.get("username")
+        )
+    except RecipientError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    return serialize_recipient(row)
+
+
+@router.delete("/billing/enterprise-recipients/{recipient_id}", status_code=204)
+async def admin_remove_enterprise_recipient(
+    recipient_id: str,
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove one address from the sales notification list."""
+    from .enterprise_recipients import remove_recipient
+
+    if not await remove_recipient(db, recipient_id):
+        raise HTTPException(status_code=404, detail="Recipient not found.")
+    return Response(status_code=204)
+
+
 @router.get("/tenants/special", response_model=list[SubscriptionOut])
 async def list_special_tenants(_admin=Depends(require_admin)):
     """Tenants with per-feature overrides — the admin "Special list".

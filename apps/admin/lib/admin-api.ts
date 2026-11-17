@@ -521,6 +521,36 @@ export async function decideBillingRequest(
   );
 }
 
+export interface EnterpriseRecipient {
+  id: string;
+  email: string;
+  created_by: string | null;
+  created_at: string | null;
+}
+
+export interface EnterpriseRecipientList {
+  items: EnterpriseRecipient[];
+  max_recipients: number;
+}
+
+export async function fetchEnterpriseRecipients(): Promise<EnterpriseRecipientList> {
+  return adminFetch<EnterpriseRecipientList>("/api/v1/admin/billing/enterprise-recipients");
+}
+
+export async function addEnterpriseRecipient(email: string): Promise<EnterpriseRecipient> {
+  return adminFetch<EnterpriseRecipient>("/api/v1/admin/billing/enterprise-recipients", {
+    method: "POST",
+    body: JSON.stringify({ email: email.trim() }),
+  });
+}
+
+export async function removeEnterpriseRecipient(id: string): Promise<void> {
+  await adminFetch<void>(
+    `/api/v1/admin/billing/enterprise-recipients/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+  );
+}
+
 export interface ConfigHealthItem {
   key: string;
   ok: boolean;

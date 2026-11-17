@@ -241,6 +241,10 @@ class Settings(BaseSettings):
     # normal campaign still fits in one day while a loop cannot drain the domain.
     BULK_EMAIL_DAILY_LIMIT: int = 500
     FRONTEND_URL: str = "http://localhost:3000"
+    # Public origin of the admin console (apps/admin). Operator-facing emails
+    # link here, so it must not be the tenant app's URL. Local dev default
+    # matches `npm run dev` in apps/admin.
+    ADMIN_CONSOLE_URL: str = "http://localhost:3001"
     # Public base URL of THIS API, used to build tracked links that customers
     # click from SMS/email/WhatsApp (e.g. https://api.sayvors.com).
     PUBLIC_API_URL: str = "http://localhost:8000"

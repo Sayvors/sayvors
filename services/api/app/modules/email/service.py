@@ -456,7 +456,14 @@ def _resolve_cta(url: str) -> str:
     return base + (url if url.startswith("/") else f"/{url}")
 
 
-async def send_notification_email(email: str, subject: str, message: str, cta_url: str | None = None) -> str:
+async def send_notification_email(
+    email: str,
+    subject: str,
+    message: str,
+    cta_url: str | None = None,
+    *,
+    idempotency_key: str | None = None,
+) -> str:
     """Send a generic internal notification email to a user.
 
     This is intended for system notifications, alerts, and other non-public
@@ -490,4 +497,5 @@ async def send_notification_email(email: str, subject: str, message: str, cta_ur
         _shell(subject, body),
         text=f"{full_subject}\n{message}" + (f"\n{cta_url}" if cta_url else ""),
         kind="notification",
+        idempotency_key=idempotency_key,
     )
