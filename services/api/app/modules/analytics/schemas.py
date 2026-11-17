@@ -144,6 +144,23 @@ class ReviewInsightItem(BaseModel):
         """
         return [] if v is None else v
 
+    @field_validator("media", mode="before")
+    @classmethod
+    def _served_media_urls(cls, v):
+        """Hand out a URL this API can serve, even for rows stored earlier.
+
+        `put_media` used to persist the backend's own object URL, and on S3
+        that is a private bucket: every reviewer photo rendered as a broken
+        image (403). The storage key is enough to rebuild the served path,
+        so the read path repairs old rows instead of requiring a data
+        migration for every environment.
+        """
+        if not v:
+            return []
+        from .review_media import served_media_entry
+
+        return [served_media_entry(entry) for entry in v]
+
     class Config:
         from_attributes = True
 

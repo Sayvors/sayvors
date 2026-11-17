@@ -56,13 +56,49 @@ def _sniff_image(data: bytes) -> str | None:
 
 
 def _public_path(user_id: str, storage_key: str) -> str:
-    """Relative public path for a locally stored file.
+    """Relative public path for a stored file.
 
     Deliberately relative: the frontend prefixes it with the API origin it
     already uses for every other call, so this keeps working behind any host
     or proxy without the worker needing to know its own public URL.
+
+    ``storage_key`` is backend-shaped: S3/GCS keys already carry the tenant
+    (``{tenant}/{file}``), local-disk keys are the bare filename. Both land
+    on the same route because ``/media-files`` splits tenant from key itself.
     """
     return f"{settings.MEDIA_PUBLIC_PATH.rstrip('/')}/{user_id}/{storage_key}"
+
+
+def served_media_entry(entry: dict) -> dict:
+    """Return a media entry whose ``url`` this API can actually serve.
+
+    ``put_media`` returns whatever the active backend hands back. On S3 that
+    is the object URL of a *private* bucket, so the browser gets 403 and the
+    review photo is invisible — which is exactly what happened to every
+    photo stored before this rule. The storage key is the durable fact; the
+    public URL is derived from it and streamed through ``/media-files``,
+    which works for S3, GCS and local disk alike.
+
+    Applied on write (so new rows are correct), on re-sync (so reusing an
+    existing entry repairs it) and in the reviews schema (so rows written
+    earlier render correctly without a data migration).
+    """
+    if not isinstance(entry, dict):
+        return entry
+    key = str(entry.get("storage_key") or "").strip().lstrip("/")
+    if not key:
+        return entry
+    if key.startswith("media/"):
+        # GCS keeps its object key with the bucket-side prefix.
+        key = key[len("media/"):]
+    tenant, sep, rest = key.partition("/")
+    if not sep or not tenant or not rest:
+        # Local-disk keys are a bare filename; the writer already stored the
+        # relative path, which is the only form that needs a tenant supplied
+        # separately (and it already did).
+        return entry
+    base = settings.MEDIA_PUBLIC_PATH.rstrip("/")
+    return {**entry, "url": f"{base}/{tenant}/{key}"}
 
 
 async def _download(url: str) -> tuple[bytes, str] | None:
@@ -134,7 +170,10 @@ async def sync_review_media(
             continue
         existing = previous.get(source)
         if existing:
-            out.append(existing)
+            # A re-sync of a review stored before the URL rule re-derives the
+            # served path from the storage key; the download itself is still
+            # skipped because the bytes are unchanged.
+            out.append(served_media_entry(existing))
             continue
 
         if item.get("kind") == "video":
@@ -162,20 +201,22 @@ async def sync_review_media(
             continue
         data, ext = got
         try:
-            storage_key, public = put_media(
+            storage_key, _provider_url = put_media(
                 user_id, f"review{ext}", data, f"image/{ext.lstrip('.')}"
             )
         except Exception as e:
             logger.warning("review media store failed: %s", e)
             continue
-        out.append({
-            # GCS hands back an absolute public URL; local disk needs the
-            # relative path the frontend resolves against the API origin.
-            "url": public or _public_path(user_id, storage_key),
+        # `_provider_url` is deliberately ignored: it may be a private-bucket
+        # object URL (S3) that a browser cannot read. Our own served path is
+        # the only URL that works on every backend, and it is relative so the
+        # frontend can resolve it against the API origin.
+        out.append(served_media_entry({
+            "url": _public_path(user_id, storage_key),
             "storage_key": storage_key,
             "kind": "image",
             "label": item.get("label"),
             "source_url": source,
-        })
+        }))
 
     return out
