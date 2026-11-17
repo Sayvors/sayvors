@@ -125,6 +125,17 @@ const en = {
     overview: "Overview",
     benchmark: "Benchmark",
     sections: "Analytics sections",
+    staffChart: {
+      title: "Who's doing great",
+      subtitle: "Ranked by the sentiment of reviews that mention each person — most positive first.",
+      top: "Top",
+      needsAttention: "Needs attention",
+      newHire: "No mentions yet",
+      mentions: "{n} mentions",
+      rating: "★ {n}",
+      noData: "Add employees on the Team page and link past reviews to see their charts here.",
+      aria: "{name}: {positive}% positive, {neutral}% neutral, {negative}% negative",
+    },
     kpis: {
       avgRating: "Avg rating",
       outOfFiveStars: "out of 5 stars",

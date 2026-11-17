@@ -127,6 +127,17 @@ const ar: Dict = {
     overview: "نظرة عامة",
     benchmark: "المقارنة المعيارية",
     sections: "أقسام التحليلات",
+    staffChart: {
+      title: "من يؤدي بشكل رائع",
+      subtitle: "مرتب حسب مشاعر التقييمات التي تذكر كل شخص — الأكثر إيجابية أولاً.",
+      top: "الأفضل",
+      needsAttention: "يحتاج انتباهاً",
+      newHire: "لا توجد ذكريات بعد",
+      mentions: "{n} ذكر",
+      rating: "★ {n}",
+      noData: "أضف موظفين من صفحة الفريق واربط التقييمات السابقة لرؤية رسومهم هنا.",
+      aria: "{name}: {positive}% إيجابي، {neutral}% محايد، {negative}% سلبي",
+    },
     kpis: {
       avgRating: "متوسط التقييم",
       outOfFiveStars: "من 5 نجوم",

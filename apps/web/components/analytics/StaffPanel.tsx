@@ -3,6 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api-rag";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import {
+  rankStaff,
+  sentimentShares,
+  staffVerdict,
+  type StaffSummaryLike,
+} from "@/lib/staff-performance";
 
 /* Staff performance panel (§33): per-employee review cards, the
  * unassigned-names bucket, and the backfill trigger. Cards link to the full
@@ -20,17 +27,35 @@ interface Employee {
   active: boolean;
 }
 
-interface SummaryRow {
-  staff_member_id: string;
-  name: string;
+interface SummaryRow extends StaffSummaryLike {
   listing_id: string;
-  mentions: number;
-  positive: number;
-  neutral: number;
-  negative: number;
-  avg_rating: number | null;
-  prior_mentions: number;
-  trend: "up" | "down" | "flat";
+}
+
+const VERDICT_STYLE: Record<string, string> = {
+  great: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
+  good: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+  mixed: "bg-[var(--ui-sunken)] text-[var(--ui-ink-2)]",
+  watch: "bg-red-500/15 text-red-700 dark:text-red-400",
+  new: "bg-[var(--ui-sunken)] text-[var(--ui-ink-2)]",
+};
+
+function fill(s: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce((out, [key, value]) => out.replaceAll(`{${key}}`, String(value)), s);
+}
+
+/** Monochrome weight-ramp sentiment bar, consistent with the other analytics charts. */
+function MiniSentimentBar({ positive, neutral, negative, aria }: {
+  positive: number; neutral: number; negative: number; aria: string;
+}) {
+  const total = positive + neutral + negative;
+  const seg = (n: number) => (total ? (n / total) * 100 : 0);
+  return (
+    <div className="flex h-2 w-full overflow-hidden rounded-full bg-[var(--ui-sunken)]" role="img" aria-label={aria}>
+      <div className="h-full bg-emerald-500" style={{ width: `${seg(positive)}%` }} />
+      <div className="h-full bg-[var(--ui-line-strong)]" style={{ width: `${seg(neutral)}%` }} />
+      <div className="h-full bg-red-500" style={{ width: `${seg(negative)}%` }} />
+    </div>
+  );
 }
 
 interface UnmatchedName {
@@ -48,6 +73,8 @@ interface ChannelRow {
 }
 
 export default function StaffPanel() {
+  const { t } = useI18n();
+  const sc = t.analytics.staffChart;
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [summary, setSummary] = useState<SummaryRow[]>([]);
   const [unmatched, setUnmatched] = useState<UnmatchedName[]>([]);
@@ -145,6 +172,68 @@ export default function StaffPanel() {
       )}
 
       <div className="space-y-5">
+          {/* Ranked team chart — who is doing great, who needs attention */}
+          {summary.length > 0 && (() => {
+            const ranked = rankStaff(summary);
+            const verdictCopy: Record<string, string> = {
+              great: sc.top,
+              good: "",
+              mixed: "",
+              watch: sc.needsAttention,
+              new: sc.newHire,
+            };
+            return (
+              <section aria-labelledby="staff-chart-h" className="rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4">
+                <h3 id="staff-chart-h" className="text-[14px] font-bold text-[var(--ui-ink)]">{sc.title}</h3>
+                <p className="mt-0.5 text-[12px] text-[var(--ui-ink-2)]">{sc.subtitle}</p>
+                <ul className="mt-4 space-y-3">
+                  {ranked.map((row, i) => {
+                    const s = sentimentShares(row);
+                    const verdict = staffVerdict(row);
+                    const badge = verdictCopy[verdict];
+                    return (
+                      <li key={row.staff_member_id} className="flex items-center gap-3">
+                        <span className="w-5 shrink-0 text-center text-[12px] font-bold tabular-nums text-[var(--ui-ink-2)]">{i + 1}</span>
+                        <div className="min-w-0 flex-1">
+                          <div className="mb-1 flex items-center justify-between gap-2">
+                            <Link
+                              href={`/dashboard/analytics/staff/${row.staff_member_id}`}
+                              className="truncate text-[12.5px] font-bold text-[var(--ui-ink)] hover:underline focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+                            >
+                              {row.name}
+                            </Link>
+                            <span className="flex shrink-0 items-center gap-1.5 text-[11px] font-semibold tabular-nums text-[var(--ui-ink-2)]">
+                              {badge && (
+                                <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${VERDICT_STYLE[verdict]}`}>
+                                  {badge}
+                                </span>
+                              )}
+                              {row.avg_rating !== null ? fill(sc.rating, { n: row.avg_rating }) : ""}
+                            </span>
+                          </div>
+                          <MiniSentimentBar
+                            positive={row.positive}
+                            neutral={row.neutral}
+                            negative={row.negative}
+                            aria={fill(sc.aria, { name: row.name, positive: s.positive, neutral: s.neutral, negative: s.negative })}
+                          />
+                          <div className="mt-1 flex justify-between text-[10px] tabular-nums text-[var(--ui-ink-2)]">
+                            <span className="text-emerald-600 dark:text-emerald-400">{s.positive}%</span>
+                            <span>{s.neutral}%</span>
+                            <span className="text-red-600 dark:text-red-400">{s.negative}%</span>
+                          </div>
+                        </div>
+                        <span className="w-16 shrink-0 text-right text-[10px] text-[var(--ui-ink-2)]">
+                          {fill(sc.mentions, { n: row.mentions })}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            );
+          })()}
+
           {/* Employee cards */}
           {summary.length === 0 ? (
             <p className="rounded-[10px] border border-dashed border-[var(--ui-line)] px-4 py-8 text-center text-[13px] text-[var(--ui-ink-2)]">
@@ -165,12 +254,32 @@ export default function StaffPanel() {
                     </span>
                   </div>
                   <p className="mt-0.5 truncate text-[11px] text-[var(--ui-ink-2)]">{branchName(row.listing_id)}</p>
-                  <div className="mt-3 flex items-center gap-2 text-[11px] text-[var(--ui-ink-2)]">
-                    <span className="font-bold text-[var(--ui-ink)]">{row.mentions}</span> mentions
-                    <span className="text-emerald-600">{row.positive}+</span>
-                    <span>{row.neutral}~</span>
-                    <span className="text-red-600">{row.negative}−</span>
-                  </div>
+                  {(() => {
+                    const s = sentimentShares(row);
+                    return (
+                      <>
+                        <div className="mt-3">
+                          <MiniSentimentBar
+                            positive={row.positive}
+                            neutral={row.neutral}
+                            negative={row.negative}
+                            aria={fill(sc.aria, { name: row.name, positive: s.positive, neutral: s.neutral, negative: s.negative })}
+                          />
+                          <div className="mt-1 flex justify-between text-[10px] tabular-nums text-[var(--ui-ink-2)]">
+                            <span className="text-emerald-600 dark:text-emerald-400">{s.positive}%</span>
+                            <span>{s.neutral}%</span>
+                            <span className="text-red-600 dark:text-red-400">{s.negative}%</span>
+                          </div>
+                        </div>
+                        <div className="mt-2 flex items-center gap-2 text-[11px] text-[var(--ui-ink-2)]">
+                          <span className="font-bold text-[var(--ui-ink)]">{row.mentions}</span> mentions
+                          <span className="text-emerald-600">{row.positive}+</span>
+                          <span>{row.neutral}~</span>
+                          <span className="text-red-600">{row.negative}−</span>
+                        </div>
+                      </>
+                    );
+                  })()}
                   <p className="mt-1.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--ui-ink-2)]">
                     {row.trend === "up" ? "▲ trending up" : row.trend === "down" ? "▼ trending down" : "— steady"} vs previous 30d
                   </p>
