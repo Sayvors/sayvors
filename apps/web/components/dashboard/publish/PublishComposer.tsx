@@ -6,6 +6,13 @@ import { INK, INK2 } from "@/components/channels/instagram/ui";
 import { apiFetch } from "@/lib/api-rag";
 import { externalAssetIdFor } from "@/lib/publish-targets";
 import { checkWindow, minLocalInput } from "@/lib/publish-schedule";
+import {
+  MEDIA_ONLY_METHODS,
+  needsMessageStep,
+  stepNav,
+  wizardSteps,
+  type WizardStepId,
+} from "@/lib/publish-wizard";
 import { cropSignature, exportCroppedImage } from "@/lib/crop-image";
 import MediaSink from "./MediaSink";
 import DestinationSelector from "./DestinationSelector";
@@ -61,13 +68,6 @@ function groupToken(key: string): string {
 type MethodDict = Dict["publish"]["methods"];
 type ComposerDict = Dict["publish"]["composer"];
 
-/** Formats that cannot be published without an image. Google updates and
- * Meta feed posts allow text-only; gallery, profile and banner (shown as
- * Promotion) are image surfaces. */
-const MEDIA_ONLY_METHODS = new Set<string>([
-  "story", "reel", "status", "gallery", "profile", "banner",
-]);
-
 type CtaValue = "book" | "order" | "shop" | "learn_more" | "sign_up" | "call";
 const CTA_VALUES: CtaValue[] = [
   "book", "order", "shop", "learn_more", "sign_up", "call",
@@ -76,9 +76,12 @@ const CTA_VALUES: CtaValue[] = [
 /*
  * The unified Publish composer.
  *
- * A 3-step wizard (Media & message → Destinations → When & publish) keeps
- * every section mounted — steps are toggled with `hidden` — so no draft
- * state, media preview or open modal is lost while navigating.
+ * A 4-step wizard (Media → Where & how → Message → When) keeps every
+ * section mounted — steps are toggled with `hidden` — so no draft state,
+ * media preview or open modal is lost while navigating. The Message step
+ * is conditional: image-only formats (profile/banner/gallery) skip it, so
+ * the rail shows 3 steps in that case. Step ids and numbering come from
+ * lib/publish-wizard and are covered by unit tests.
  *
  * Confirming uploads locally-picked media to /api/v1/media/upload (the
  * provider must fetch the files from a public URL at publish time), then
@@ -411,7 +414,9 @@ export default function PublishComposer({
   const [aiOpen, setAiOpen] = useState(false);
   // Wizard navigation only — every input/handler stays mounted (steps are
   // shown with `hidden`), so no draft state or media preview is ever lost.
-  const [postStep, setPostStep] = useState<1 | 2 | 3>(1);
+  // The step id is derived, never a raw number: the message step disappears
+  // for image-only formats, so "When" is step 3 or 4 depending on selection.
+  const [postStep, setPostStep] = useState<WizardStepId>("media");
   const { t: tr, locale } = useI18n();
   const pc: ComposerDict = tr.publish.composer;
   const methods = tr.publish.methods as MethodDict;
@@ -634,6 +639,14 @@ export default function PublishComposer({
   );
   const canPublish = confirmItems.length > 0 && (media !== null || !needsMedia);
   const hasGoogle = confirmItems.some(({ target }) => target.platform === "google_reviews");
+  // The message step exists only when a selected format carries text. The
+  // step list and every number in the rail/nav derive from this one source.
+  const steps = wizardSteps(confirmItems.flatMap(({ methods }) => methods));
+  const showMessage = steps.some((s) => s.id === "message");
+  // A hidden "message" step is never the active step: deriving the effective
+  // step (instead of an effect) avoids a cascading render and a stray state.
+  const step: WizardStepId = !showMessage && postStep === "message" ? "when" : postStep;
+  const nav = stepNav(steps, step);
   // A Google post needs text or an image — the API refuses one with neither.
   const needsText = hasGoogle && confirmItems.some(({ methods }) =>
     methods.some((m) => m === "update" || m === "post"),
@@ -659,17 +672,18 @@ export default function PublishComposer({
   };
 
   /** Only the fields owned by the step the merchant is on. */
-  const stepProblems = (step: 1 | 2 | 3): string[] => {
-    if (step === 1) {
+  const stepProblems = (step: WizardStepId): string[] => {
+    if (step === "media") {
+      return needsMedia && media === null ? [pc.needMedia] : [];
+    }
+    if (step === "where") {
+      return confirmItems.length === 0 ? [pc.needDest] : [];
+    }
+    if (step === "message") {
       const p: string[] = [];
-      if (needsMedia && media === null) p.push(pc.needMedia);
       if (needsText && media === null && !caption.trim() && !description.trim()) {
         p.push(pc.captionRequired);
       }
-      return p;
-    }
-    if (step === 2) {
-      const p: string[] = [];
       if (ctaType && ctaType !== "call" && !ctaUrl.trim()) p.push(pc.ctaUrlRequired);
       return p;
     }
@@ -677,13 +691,13 @@ export default function PublishComposer({
   };
 
   const nextStep = () => {
-    const problems = stepProblems(postStep);
+    const problems = stepProblems(step);
     if (problems.length > 0) {
       setNotice(problems[0]);
       return;
     }
     setNotice(null);
-    setPostStep((s) => Math.min(3, s + 1) as 1 | 2 | 3);
+    if (nav.next) setPostStep(nav.next);
   };
 
   const openConfirm = () => {
@@ -1054,7 +1068,7 @@ export default function PublishComposer({
 
   const openRow = (id: string) => {
     // In shared mode every branch uses one panel, so any chip scrolls there.
-    if (postStep !== 2) setPostStep(2);
+    if (postStep !== "where") setPostStep("where");
     const rowId = sharedMode ? selectedTargets[0].id : id;
     requestAnimationFrame(() => {
       document.getElementById(`dest-row-${rowId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -1090,18 +1104,15 @@ export default function PublishComposer({
         </div>
         {/* Step wizard — visual navigation only; all steps stay mounted. */}
         <ol className="mt-4 flex items-center gap-1 rounded-[24px] bg-[var(--ui-sunken)] p-1.5 sm:gap-2" aria-label="Post steps">
-          {([
-            { id: 1 as const, label: pc.wizard.step1 },
-            { id: 2 as const, label: pc.wizard.step2 },
-            { id: 3 as const, label: pc.wizard.step3 },
-          ]).map((s, index) => {
-            const active = postStep === s.id;
-            const done = postStep > s.id;
+          {steps.map((stepDef, index) => {
+            const position = stepNav(steps, stepDef.id);
+            const active = step === stepDef.id;
+            const done = nav.index > index;
             return (
-              <li key={s.id} className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-2">
+              <li key={stepDef.id} className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-2">
                 <button
                   type="button"
-                  onClick={() => setPostStep(s.id)}
+                  onClick={() => setPostStep(stepDef.id)}
                   aria-current={active ? "step" : undefined}
                   className={`flex min-w-0 items-center gap-1.5 rounded-[20px] px-1 py-1 pr-1.5 transition duration-200 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:gap-2 sm:px-1.5 sm:pr-2.5 ${
                     active
@@ -1116,17 +1127,17 @@ export default function PublishComposer({
                         ? "bg-[var(--ui-ink)]/10 text-[var(--ui-ink)]"
                         : "border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] text-[var(--ui-ink-2)]"
                   }`}>
-                    {done ? "✓" : s.id}
+                    {done ? "✓" : position.number}
                   </span>
-                  <span className="hidden min-w-0 truncate text-[12px] font-semibold sm:inline sm:text-[13px]">{s.label}</span>
+                  <span className="hidden min-w-0 truncate text-[12px] font-semibold sm:inline sm:text-[13px]">{pc.wizard[stepDef.labelKey]}</span>
                 </button>
-                {index < 2 && <span className={`h-px min-w-[6px] flex-1 ${done ? "bg-[var(--ui-ink)]/40" : "bg-[var(--ui-line)]"}`} />}
+                {index < steps.length - 1 && <span className={`h-px min-w-[6px] flex-1 ${done ? "bg-[var(--ui-ink)]/40" : "bg-[var(--ui-line)]"}`} />}
               </li>
             );
           })}
         </ol>
         <p className={`mt-2 text-[11px] ${INK2}`}>
-          {fill(pc.wizard.stepOf, { n: postStep })}
+          {fill(pc.wizard.stepOf, { n: nav.number, total: nav.total })}
           <span className="ml-2 text-coral">* {pc.wizard.requiredHint}</span>
         </p>
       </header>
@@ -1146,8 +1157,8 @@ export default function PublishComposer({
           {/* One working column. Steps use `hidden`, not unmounting: every
               input, ref and preview stays alive while navigating. */}
           <div className="min-w-0 space-y-5">
-          {/* STEP 1 — media + message. */}
-          <div className={postStep === 1 ? "space-y-5" : "hidden"}>
+          {/* STEP — media. */}
+          <div className={step === "media" ? "space-y-5" : "hidden"}>
           <section aria-labelledby="publish-media-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
             <h2 id="publish-media-h" className={`text-[15px] font-bold ${INK}`}>
               {pc.stepMedia}
@@ -1192,6 +1203,10 @@ export default function PublishComposer({
             </div>
           </section>
 
+          </div>{/* end media step */}
+
+          {/* STEP — message. Only visible when a text format is selected. */}
+          <div className={step === "message" ? "space-y-5" : "hidden"}>
           <section aria-labelledby="publish-message-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
             <h2 id="publish-message-h" className={`text-[15px] font-bold ${INK}`}>
               {pc.stepMessage}
@@ -1281,53 +1296,6 @@ export default function PublishComposer({
             </div>
           </section>
 
-          </div>{/* end step 1 */}
-
-          {/* STEP 3 — schedule. The live preview lives in the persistent rail. */}
-          <div className={postStep === 3 ? "space-y-5" : "hidden"}>
-          <section aria-labelledby="publish-schedule-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
-            <h2 id="publish-schedule-h" className={`text-[15px] font-bold ${INK}`}>
-              {pc.stepWhen}
-            </h2>
-            <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>{pc.whenSub}</p>
-            <div className="flex flex-wrap items-center gap-3">
-              <ScheduleToggle scheduleOn={scheduleOn} setScheduleOn={setScheduleOn} label={pc.scheduleLater} />
-              {scheduleOn && (
-                <input
-                  type="datetime-local"
-                  value={scheduleAt}
-                  onChange={(e) => setScheduleAt(e.target.value)}
-                  aria-label={pc.publishAt}
-                  min={minLocalInput()}
-                  className={`${FIELD} w-full sm:w-64`}
-                />
-              )}
-            </div>
-            <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-[var(--ui-line)] pt-3">
-              <ScheduleToggle scheduleOn={removeOn} setScheduleOn={setRemoveOn} label={pc.removeLater} />
-              {removeOn && (
-                <input
-                  type="datetime-local"
-                  value={removeAt}
-                  onChange={(e) => setRemoveAt(e.target.value)}
-                  aria-label={pc.removeAtAria}
-                  min={minLocalInput()}
-                  className={`${FIELD} w-full sm:w-64`}
-                />
-              )}
-            </div>
-            {removeOn && (
-              <p className={`mt-2 text-[11px] ${INK2}`}>
-                {pc.removeNote}
-              </p>
-            )}
-          </section>
-
-          </div>{/* end step 3 */}
-
-          {/* STEP 2 — destinations + their per-platform configuration */}
-          <div className={postStep === 2 ? "space-y-5" : "hidden"}>
-          <div className="space-y-5">
           <section aria-labelledby="publish-cta-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
             <h2 id="publish-cta-h" className={`text-[15px] font-bold ${INK}`}>
               {pc.wizard.ctaTitle}
@@ -1367,6 +1335,54 @@ export default function PublishComposer({
               )}
             </div>
           </section>
+
+          </div>{/* end message step */}
+
+          {/* STEP — when: schedule. The live preview lives in the persistent rail. */}
+          <div className={step === "when" ? "space-y-5" : "hidden"}>
+          <section aria-labelledby="publish-schedule-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
+            <h2 id="publish-schedule-h" className={`text-[15px] font-bold ${INK}`}>
+              {pc.stepWhen}
+            </h2>
+            <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>{pc.whenSub}</p>
+            <div className="flex flex-wrap items-center gap-3">
+              <ScheduleToggle scheduleOn={scheduleOn} setScheduleOn={setScheduleOn} label={pc.scheduleLater} />
+              {scheduleOn && (
+                <input
+                  type="datetime-local"
+                  value={scheduleAt}
+                  onChange={(e) => setScheduleAt(e.target.value)}
+                  aria-label={pc.publishAt}
+                  min={minLocalInput()}
+                  className={`${FIELD} w-full sm:w-64`}
+                />
+              )}
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-[var(--ui-line)] pt-3">
+              <ScheduleToggle scheduleOn={removeOn} setScheduleOn={setRemoveOn} label={pc.removeLater} />
+              {removeOn && (
+                <input
+                  type="datetime-local"
+                  value={removeAt}
+                  onChange={(e) => setRemoveAt(e.target.value)}
+                  aria-label={pc.removeAtAria}
+                  min={minLocalInput()}
+                  className={`${FIELD} w-full sm:w-64`}
+                />
+              )}
+            </div>
+            {removeOn && (
+              <p className={`mt-2 text-[11px] ${INK2}`}>
+                {pc.removeNote}
+              </p>
+            )}
+          </section>
+
+          </div>{/* end when step */}
+
+          {/* STEP — where: destinations + their per-platform configuration */}
+          <div className={step === "where" ? "space-y-5" : "hidden"}>
+          <div className="space-y-5">
           <section aria-labelledby="publish-dest-h" className="clay-panel bg-[var(--ui-surface)] p-4 sm:p-5">
             <h2 id="publish-dest-h" className={`text-[15px] font-bold ${INK}`}>
               {pc.stepDest}
@@ -1600,12 +1616,12 @@ export default function PublishComposer({
             </section>
           )}
 
-          </div>{/* end step 2 */}
+          </div>{/* end where step */}
 
           {/* Step-local footer: navigation belongs to the step, and the
               publish action only exists on the final step. */}
           <div className="rounded-[24px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)] sm:p-5">
-            {postStep === 3 && galleryFallbacks.length > 0 && (
+            {step === "when" && galleryFallbacks.length > 0 && (
               <div className="mb-3 space-y-1" role="status">
                 {galleryFallbacks.map((f) => (
                   <p key={f} className="text-[12px] font-medium text-amber-700 dark:text-amber-400">
@@ -1614,9 +1630,9 @@ export default function PublishComposer({
                 ))}
               </div>
             )}
-            {stepProblems(postStep).length > 0 && (
+            {stepProblems(step).length > 0 && (
               <div className="mb-3 space-y-1 rounded-[20px] border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5" role="status">
-                {stepProblems(postStep).map((problem) => (
+                {stepProblems(step).map((problem) => (
                   <p key={problem} className="text-[12px] font-semibold text-amber-800 dark:text-amber-300">
                     {problem}
                   </p>
@@ -1625,22 +1641,22 @@ export default function PublishComposer({
             )}
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
-                {postStep > 1 && (
+                {nav.previous && (
                   <button
                     type="button"
-                    onClick={() => setPostStep((s) => Math.max(1, s - 1) as 1 | 2 | 3)}
+                    onClick={() => setPostStep(nav.previous!)}
                     className="clay-btn-secondary px-5 py-2.5 text-[13px] font-bold text-[var(--ui-ink)] transition duration-200 hover:bg-[var(--ui-sunken)] active:translate-y-0.5 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
                   >
                     {pc.wizard.back}
                   </button>
                 )}
-                {postStep < 3 && (
+                {nav.next && (
                   <p className={`text-[12px] font-medium ${INK2}`}>
-                    {fill(pc.wizard.stepOf, { n: postStep })}
+                    {fill(pc.wizard.stepOf, { n: nav.number, total: nav.total })}
                   </p>
                 )}
               </div>
-              {postStep < 3 ? (
+              {nav.next ? (
                 <button
                   type="button"
                   onClick={nextStep}
