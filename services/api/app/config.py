@@ -304,6 +304,22 @@ class Settings(BaseSettings):
     # country offset.
     GOOGLE_POST_TIMEZONE: str = "UTC"
 
+    # ── Google Business Profile: edit-status polling ─────────────────────
+    # The Locations page shows Google's real per-field edit lifecycle and
+    # refreshes it while the page is open. Every refresh costs Business
+    # Information API calls, and the default project quota is 300 requests
+    # per minute. This budget caps edit-status refreshes so polling can never
+    # starve publishing, the reviews poller or media. Raise it only after
+    # Google approves a quota increase.
+    GBP_STATUS_QPM_BUDGET: int = 120
+    # A snapshot younger than this is served from cache, so N open tabs on
+    # the same branch share one Google fan-out. This is the number that makes
+    # per-minute polling safe; 0 disables caching (tests only).
+    GBP_STATUS_CACHE_SECONDS: int = 55
+    # Idle cadence: once every section is accepted there is nothing to watch,
+    # so the snapshot lives five minutes and the UI polls five-minute cadence.
+    GBP_STATUS_IDLE_SECONDS: int = 300
+
     # ── Google Places API (New) ──────────────────────────────────────────
     # Server-side key for two features: resolving free-text service areas to
     # Google Place IDs, and the nearby-competitor peer set. Empty means both

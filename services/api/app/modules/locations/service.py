@@ -17,6 +17,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..channels.models import Channel
+from .google_status import (
+    IDLE_POLL_SECONDS,
+    invalidate as invalidate_google_status,
+    snapshot as google_status_snapshot,
+)
 from .models import LocationGroup, LocationProfile
 
 logger = logging.getLogger(__name__)
@@ -49,18 +54,6 @@ def _known_synced(meta: dict) -> set[str]:
         for section in skipped:
             failed.add("categories" if section.startswith("categories") else section)
     return set(stored) | (set(GOOGLE_SYNCED_FIELDS) - failed)
-
-
-# Edit lifecycle stages, worst first. A section that mixes stages (the
-# attributes section holds one stage per attribute) reports the worst.
-_STAGE_RANK = {
-    "rejected": 0,
-    "pending": 1,
-    "google_updated": 2,
-    "draft": 3,
-    "accepted": 4,
-    "unspecified": 5,
-}
 
 
 def _has_failed(meta: dict, section: str) -> bool:
@@ -249,10 +242,16 @@ async def get_profile(
     # Per-section edit lifecycle from Google (PENDING / REJECTED / ACCEPTED) and
     # the values Google shows today. Best-effort: the alpha endpoint may be
     # disabled; the UI falls back to the stored push report when it is empty.
+    # The snapshot is cached (see google_status), so this GET and the page's
+    # 60-second poll share one Google fan-out.
     google_status: dict[str, dict] = {}
     google_current: dict = {}
+    google_checked_at: str | None = None
     if channel is not None:
-        google_status, google_current = await _google_live_snapshot(channel, listing_id)
+        snap = await google_status_snapshot(channel, listing_id)
+        google_status = snap["sections"]
+        google_current = snap["current"]
+        google_checked_at = snap["checked_at"]
 
     # The category catalog is region-specific. Prefer the region Google
     # returns for this location's storefront; fall back to the account country
@@ -311,6 +310,7 @@ async def get_profile(
         "google_skipped": {},
         "google_status": google_status,
         "google_current": google_current,
+        "google_checked_at": google_checked_at,
         "updated_at": profile.updated_at.isoformat() if profile.updated_at else None,
     }
     if channel is not None:
@@ -399,94 +399,30 @@ async def _push_profile_native(
     return report.get("pushed", []), skipped
 
 
-async def _google_live_snapshot(
-    channel: Channel, listing_id: str
-) -> tuple[dict[str, dict], dict]:
-    """Google's live view of a listing: edit status and the values shown.
+async def get_google_status(
+    db: AsyncSession, user_id: str, listing_id: str, *, force: bool = False
+) -> dict:
+    """Edit-status only: what the page polls every minute.
 
-    Returns ``(status, current)``:
-    - ``status``: per-section edit lifecycle (pending / accepted / rejected).
-    - ``current``: what a customer sees on Google right now, per section.
-
-    Both are best-effort: the alpha endpoint may not be enabled, and every
-    failure leaves the caller with the stored push report instead.
+    Kept separate from ``get_profile`` so a poll does not re-read the profile,
+    the category catalogue or the user's country — those do not change between
+    polls, and the page already holds them.
     """
-    from ..channels.google_business import (
-        GoogleBusinessClient,
-        parse_attribute_edit_status,
-        parse_attribute_values,
-        parse_consumer_values,
-        parse_edit_status,
+    channel = await channel_for_listing(
+        db, user_id, listing_id, statuses=("active", "expired")
     )
-    from ..channels.service import decrypt_token
-
-    access = decrypt_token(channel.access_token) if channel.access_token else None
-    refresh = decrypt_token(channel.refresh_token) if channel.refresh_token else None
-    if not access and not refresh:
-        return {}, {}
-    client = GoogleBusinessClient(access or "", refresh)
-    try:
-        extended = await client.get_extended_location(listing_id)
-        status = parse_edit_status(extended)
-        current = parse_consumer_values(extended)
-        # Attributes have their own endpoint; fold them into one section
-        # status (the worst lifecycle across the attributes wins) and report
-        # the values Google shows today.
-        try:
-            attributes_extended = await client.get_extended_attributes(listing_id)
-        except Exception as e:  # noqa: BLE001 — attributes are optional
-            logger.debug("Google attribute status unavailable for %s: %s", listing_id, e)
-            attributes_extended = {}
-        attrs = parse_attribute_edit_status(attributes_extended)
-        if attrs:
-            stages = [a.get("stage") for a in attrs.values() if a.get("stage")]
-            if stages:
-                worst = min(stages, key=lambda s: _STAGE_RANK.get(s, 9))
-                entry = next(
-                    (a for a in attrs.values() if a.get("stage") == worst), {}
-                )
-                status["attributes"] = {
-                    "stage": worst,
-                    "rejection_reason": entry.get("rejection_reason"),
-                    "update_time": entry.get("update_time"),
-                    "source": entry.get("source"),
-                }
-        attribute_values = parse_attribute_values(attributes_extended)
-        if attribute_values:
-            current["attributes"] = attribute_values
-        # The service list Google holds today — empty is an answer too: it
-        # means the profile declares no services.
-        try:
-            service_items = await client.get_service_items(listing_id)
-        except Exception as e:  # noqa: BLE001 — services are optional
-            logger.debug("Google service items unavailable for %s: %s", listing_id, e)
-            service_items = []
-        current["services"] = _service_items_summary(service_items)
-        return status, current
-    except Exception as e:  # noqa: BLE001 — status is best-effort
-        logger.debug("Google edit status unavailable for %s: %s", listing_id, e)
-        return {}, {}
-    finally:
-        await client.close()
-
-
-def _service_items_summary(items: list[dict]) -> list[dict]:
-    """Google's service items as {name, offered} for the UI."""
-    out: list[dict] = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        free = (item.get("freeFormServiceItem") or {})
-        label = (free.get("label") or {})
-        name = str(label.get("displayName") or "").strip()
-        if name:
-            out.append({"name": name, "offered": True})
-            continue
-        structured = item.get("structuredServiceItem") or {}
-        service_id = str(structured.get("serviceTypeId") or "").strip()
-        if service_id:
-            out.append({"name": service_id.split(":")[-1].replace("_", " "), "offered": True})
-    return out
+    if channel is None:
+        return {
+            "sections": {},
+            "current": {},
+            "checked_at": None,
+            "age_seconds": None,
+            "alpha_available": False,
+            "reason": "not_connected",
+            "source": "unavailable",
+            "next_poll_after": IDLE_POLL_SECONDS,
+        }
+    return await google_status_snapshot(channel, listing_id, force=force)
 
 
 async def update_profile(
@@ -681,6 +617,13 @@ async def update_profile(
         meta["google_skipped"] = skipped
         channel.metadata_json = json.dumps(meta)
         await db.commit()
+
+    # The cached snapshot predates this write, so Google would keep reporting
+    # the previous stage for up to its TTL. Drop it before the response
+    # re-reads, but only when a push actually happened: a no-op save must not
+    # cost a Google call.
+    if pushed and channel is not None:
+        await invalidate_google_status(channel, listing_id)
 
     out = await get_profile(db, user_id, listing_id)
     out["google_pushed"] = pushed

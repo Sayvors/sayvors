@@ -115,8 +115,24 @@ interface FullProfile {
   google_skipped?: Record<string, string> | null;
   google_status?: Record<string, { stage: string; rejection_reason?: string | null; update_time?: string | null; source?: string | null }>;
   google_current?: GoogleCurrent;
+  google_checked_at?: string | null;
   updated_at?: string | null;
 }
+
+/** `GET /locations/{id}/google-status` — the polled edit-status contract. */
+type GoogleStatusResponse = {
+  /** Echoed back by the client so a late poll cannot write into another
+   *  branch's profile while the user is switching locations. */
+  listingId?: string | null;
+  sections: Record<string, { stage: string; rejection_reason?: string | null; update_time?: string | null; source?: string | null }>;
+  current: GoogleCurrent;
+  checked_at: string | null;
+  age_seconds: number | null;
+  alpha_available: boolean;
+  reason?: string | null;
+  source: "live" | "cache" | "stale" | "unavailable";
+  next_poll_after: number;
+};
 
 /** What Google shows today, per section. */
 type GoogleCurrent = {
@@ -135,7 +151,14 @@ type GoogleCurrent = {
   services?: { name: string; offered?: boolean }[];
 };
 
-type BadgeStatus = "accepted" | "pending" | "rejected" | "google_updated" | "draft" | "unspecified";
+type BadgeStatus =
+  | "accepted"
+  | "pending"
+  | "rejected"
+  | "google_updated"
+  | "draft"
+  | "pushed"
+  | "unspecified";
 
 const BADGE_STYLES: Record<BadgeStatus, string> = {
   accepted: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300",
@@ -143,6 +166,7 @@ const BADGE_STYLES: Record<BadgeStatus, string> = {
   rejected: "bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-300",
   google_updated: "bg-sky-100 text-sky-700 dark:bg-sky-500/10 dark:text-sky-300",
   draft: "bg-ink/[0.05] text-ink/45 dark:bg-fog/[0.06] dark:text-fog/45",
+  pushed: "bg-ink/[0.05] text-ink/55 dark:bg-fog/[0.06] dark:text-fog/55",
   unspecified: "bg-ink/[0.05] text-ink/45 dark:bg-fog/[0.06] dark:text-fog/45",
 };
 
@@ -401,11 +425,13 @@ function SourceBadge({
   copy: LocationsCopy;
 }) {
   // Prefer Google's live edit lifecycle (from locations.getExtended); fall
-  // back to the stored push report when the alpha API is unavailable.
+  // back to the stored push report when the alpha API is unavailable. A
+  // successful PATCH is not an approval, so the fallback says "awaiting
+  // Google" rather than claiming the edit is accepted.
   const resolved: BadgeStatus = status
     ? (status as BadgeStatus)
     : google
-      ? "accepted"
+      ? "pushed"
       : "unspecified";
   const label =
     resolved === "accepted"
@@ -418,7 +444,9 @@ function SourceBadge({
             ? copy.updatedByGoogle
             : resolved === "draft"
               ? copy.draftOnGoogle
-              : copy.storedInSayvors;
+              : resolved === "pushed"
+                ? copy.awaitingGoogle
+                : copy.storedInSayvors;
   const title =
     resolved === "pending"
       ? copy.pendingOnGoogleHint
@@ -428,7 +456,9 @@ function SourceBadge({
           ? copy.updatedByGoogleHint
           : resolved === "draft"
             ? copy.draftOnGoogleHint
-            : null;
+            : resolved === "pushed"
+              ? copy.awaitingGoogleHint
+              : null;
   return (
     <span
       title={title ?? undefined}
@@ -436,6 +466,69 @@ function SourceBadge({
     >
       {label}
     </span>
+  );
+}
+
+/** One-line "how fresh is Google's status" bar with a manual refresh. */
+function GoogleStatusBar({
+  data,
+  checking,
+  onCheck,
+  copy,
+}: {
+  data?: GoogleStatusResponse;
+  checking: boolean;
+  onCheck: () => void;
+  copy: LocationsCopy;
+}) {
+  const loading = !data;
+  const unavailable = !loading && data.source === "unavailable";
+  const stale = data?.source === "stale";
+  const age = data?.age_seconds ?? null;
+  const checked = loading
+    ? copy.googleChecking
+    : unavailable
+      ? copy.googleStatusUnavailable
+      : age !== null && age < 60
+        ? copy.googleCheckedNow
+        : copy.googleCheckedAgo.replace(
+            "{count}",
+            String(Math.max(1, Math.round((age ?? 0) / 60)))
+          );
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-ink/[0.06] bg-white px-3.5 py-2 dark:border-fog/[0.06] dark:bg-ink">
+      <div className="flex flex-wrap items-center gap-2 text-[12px]">
+        <span
+          aria-hidden
+          className={`h-2 w-2 rounded-full ${
+            loading
+              ? "bg-ink/15 dark:bg-fog/15"
+              : unavailable
+                ? "bg-ink/25 dark:bg-fog/25"
+                : stale
+                  ? "bg-amber-500"
+                  : "bg-emerald-500"
+          }`}
+        />
+        <span className="font-semibold text-ink dark:text-fog">
+          {copy.googleStatusTitle}
+        </span>
+        <span className="text-ink/50 dark:text-fog/50">{checked}</span>
+        {stale && (
+          <span className="text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+            {copy.googleStatusStale}
+          </span>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={onCheck}
+        disabled={checking}
+        className="rounded-lg px-2.5 py-1 text-[11px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.06] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50 dark:text-fog"
+      >
+        {checking ? copy.googleChecking : copy.googleCheckNow}
+      </button>
+    </div>
   );
 }
 
@@ -968,6 +1061,73 @@ const bulk: BulkScope | null = isBulk
      return () => { cancelled = true; };
    }, [selectedId, isBulk]);
 
+    // Google's edit lifecycle, polled while the page is open. The server
+    // caches the snapshot and picks the cadence (60s while something is in
+    // review, 5 min once everything is live), so open tabs never multiply
+    // the project's Google quota.
+    const statusQuery = useQuery({
+      queryKey: ["locations", "google-status", selectedId],
+      enabled: !!selectedId && !isBulk,
+      queryFn: async () =>
+        ({
+          listingId: selectedId,
+          ...((await apiFetch(
+            `/api/v1/locations/${selectedId}/google-status`
+          )) as GoogleStatusResponse),
+        }) as GoogleStatusResponse,
+      refetchInterval: (query) => {
+        if (
+          typeof document !== "undefined" &&
+          document.visibilityState !== "visible"
+        ) {
+          return false;
+        }
+        const data = query.state.data as GoogleStatusResponse | undefined;
+        return (data?.next_poll_after ?? 60) * 1000;
+      },
+      refetchIntervalInBackground: false,
+      staleTime: 30_000,
+      retry: 1,
+    });
+
+    // Merge each poll into the profile the tabs already read, so every
+    // section badge and "Currently on Google" panel updates in place.
+    useEffect(() => {
+      const data = statusQuery.data;
+      if (!data) return;
+      setFullProfile((prev) =>
+        prev && (!data.listingId || data.listingId === prev.listing_id)
+          ? {
+              ...prev,
+              google_status: data.sections,
+              google_current: data.current,
+              google_checked_at: data.checked_at,
+            }
+          : prev
+      );
+    }, [statusQuery.data]);
+
+    const [checking, setChecking] = useState(false);
+    const checkGoogleNow = async () => {
+      if (!selectedId || isBulk) return;
+      setChecking(true);
+      try {
+        // force=true bypasses the cache TTL on the server but still respects
+        // the per-minute budget, so one user cannot spend the quota.
+        const data = (await apiFetch(
+          `/api/v1/locations/${selectedId}/google-status?force=true`
+        )) as GoogleStatusResponse;
+        queryClient.setQueryData(
+          ["locations", "google-status", selectedId],
+          { ...data, listingId: selectedId }
+        );
+      } catch {
+        /* keep the last known status; the age line still tells the truth */
+      } finally {
+        setChecking(false);
+      }
+    };
+
     // Use fullProfile.name (actual business name) over the list snapshot when available.
     useEffect(() => {
       const name = fullProfile?.name?.trim();
@@ -1264,6 +1424,15 @@ const bulk: BulkScope | null = isBulk
         </div>
       ) : (
         <>
+          {/* Google's real edit status — refreshed on the server's cadence */}
+          {!isBulk && selectedId && (
+            <GoogleStatusBar
+              data={statusQuery.data}
+              checking={checking}
+              onCheck={checkGoogleNow}
+              copy={copy}
+            />
+          )}
           {/* Tabs (google-updates is per-branch, hidden in bulk) */}
           <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1">
             <div role="tablist" className="flex gap-1 rounded-xl bg-ink/[0.03] p-1 dark:bg-fog/[0.04]">
@@ -1471,8 +1640,13 @@ const bulk: BulkScope | null = isBulk
                 initial={isBulk ? "" : fullProfile?.description ?? ""}
                 initialOpeningDate={isBulk ? null : fullProfile?.opening_date ?? null}
                 synced={!isBulk && !!fullProfile?.google_synced?.includes("description")}
-                status={!isBulk ? fullProfile?.google_status?.description?.stage ?? null : null}
-                reason={!isBulk ? fullProfile?.google_status?.description?.rejection_reason ?? null : null}
+                status={!isBulk ? resolveSectionStatus([
+                  fullProfile?.google_status?.description?.stage,
+                  fullProfile?.google_status?.opening_date?.stage,
+                ]) : null}
+                reason={!isBulk ? fullProfile?.google_status?.description?.rejection_reason
+                  ?? fullProfile?.google_status?.opening_date?.rejection_reason
+                  ?? null : null}
                 current={!isBulk ? fullProfile?.google_current : undefined}
                 bulk={bulk}
                 copy={copy}
@@ -1490,21 +1664,37 @@ const bulk: BulkScope | null = isBulk
                 bulkCurrent={bulkCurrent}/>
             )}
             {activeTab === "services" && (
-              <ServicesPanel
-                embedded
-                listingId={isBulk ? undefined : snapshot?.listing_id}
-                scopeId={isBulk ? (selectedId ?? undefined) : undefined}
-                googleCurrent={!isBulk ? fullProfile?.google_current?.services : undefined}
-                bulkGoogleCurrent={isBulk ? bulkServices : undefined}
-                onChanged={() => {
-                  if (!selectedId || isBulk) return;
-                  apiFetch(`/api/v1/locations/${selectedId}`)
-                    .then((refreshed) => setFullProfile(refreshed as FullProfile))
-                    .catch(() => {
-                      /* ignore - the save already landed */
-                    });
-                }}
-              />
+              <div className="space-y-3">
+                {!isBulk && fullProfile?.google_status?.services && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <SourceBadge
+                      google={true}
+                      status={fullProfile.google_status.services.stage}
+                      reason={fullProfile.google_status.services.rejection_reason ?? null}
+                      copy={copy}
+                    />
+                    <span className="text-[11px] text-ink/45 dark:text-fog/45">
+                      {copy.servicesStatusHint}
+                    </span>
+                  </div>
+                )}
+                <ServicesPanel
+                  embedded
+                  listingId={isBulk ? undefined : snapshot?.listing_id}
+                  scopeId={isBulk ? (selectedId ?? undefined) : undefined}
+                  googleCurrent={!isBulk ? fullProfile?.google_current?.services : undefined}
+                  bulkGoogleCurrent={isBulk ? bulkServices : undefined}
+                  onChanged={() => {
+                    if (!selectedId || isBulk) return;
+                    apiFetch(`/api/v1/locations/${selectedId}`)
+                      .then((refreshed) => setFullProfile(refreshed as FullProfile))
+                      .catch(() => {
+                        /* ignore - the save already landed */
+                      });
+                    void statusQuery.refetch();
+                  }}
+                />
+              </div>
             )}
           </div>
 

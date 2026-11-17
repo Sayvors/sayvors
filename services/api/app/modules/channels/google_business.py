@@ -55,6 +55,7 @@ GOOGLE_FIELD_TO_SECTION = {
     "categories": "categories",
     "open_info": "opening_date",
     "storefront_address": "address",
+    "service_items": "services",
 }
 
 # EditLifecycleStage → short status key used by the API/UI.
@@ -84,6 +85,27 @@ def parse_edit_status(extended: dict) -> dict[str, dict]:
         if section is None or not isinstance(data, dict):
             continue
         out[section] = _edit_entry(data)
+    return out
+
+
+def masks_to_sections(mask: str | None) -> set[str]:
+    """FieldMask paths (camelCase) → Sayvors section names.
+
+    Used by the stable-v1 edit-status fallback: ``pendingMask`` and
+    ``diffMask`` carry proto field paths such as "regularHours" or
+    "phoneNumbers". The camel→snake conversion funnels them through the same
+    table the alpha parser uses, so both sources report the same sections.
+    """
+    out: set[str] = set()
+    for raw in str(mask or "").split(","):
+        path = raw.strip()
+        if not path:
+            continue
+        top = path.split(".")[0]
+        snake = re.sub(r"(?<!^)(?=[A-Z])", "_", top).lower()
+        section = GOOGLE_FIELD_TO_SECTION.get(snake)
+        if section is not None:
+            out.add(section)
     return out
 
 
@@ -513,6 +535,28 @@ class GoogleBusinessClient(GoogleReviewsClient):
             raise GoogleReviewsError(
                 f"get_location failed ({resp.status_code}): {resp.text[:300]}",
                 resp.status_code)
+        data = resp.json()
+        return data if isinstance(data, dict) else {}
+
+    async def get_google_updated(self, location_id: str, read_mask: str) -> dict:
+        """Consumer view + ``diffMask`` / ``pendingMask`` (stable v1).
+
+        The fallback when the v1alpha edit-status endpoint is not enabled on
+        the project: ``pendingMask`` lists the merchant fields whose edit is
+        still in flight, ``diffMask`` the fields where the live value differs
+        from the merchant's. It has no per-field stage and no rejection
+        reason — callers must not present it as "accepted".
+        """
+        resp = await self._authed_request(
+            "GET",
+            f"{GBP_BIZINFO_API}/{self._location_name(location_id)}:getGoogleUpdated",
+            params={"readMask": read_mask},
+        )
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"get_google_updated failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
         data = resp.json()
         return data if isinstance(data, dict) else {}
 

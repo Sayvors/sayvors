@@ -157,4 +157,27 @@ class LocationProfileOut(BaseModel):
     # What Google shows today, per section — the values a customer sees now,
     # which can lag the merchant's own submission while Google reviews it.
     google_current: dict = {}
+    # When Google's view was last read (ISO-8601, UTC). None means the status
+    # could not be read at all — distinct from "read it and nothing is
+    # pending", which the UI must not conflate with acceptance.
+    google_checked_at: str | None = None
     updated_at: str | None = None
+
+
+class LocationGoogleStatusOut(BaseModel):
+    """Edit-status only: the response the Locations page polls every minute.
+
+    ``source`` is ``live`` (fresh this request), ``cache`` (shared snapshot),
+    ``stale`` (budget spent or Google unreachable, last known value), or
+    ``unavailable``. ``next_poll_after`` lets the client back off while
+    nothing is in review instead of polling Google's cadence blindly.
+    """
+
+    sections: dict[str, dict] = {}
+    current: dict = {}
+    checked_at: str | None = None
+    age_seconds: int | None = None
+    alpha_available: bool = False
+    reason: str | None = None
+    source: str = "unavailable"
+    next_poll_after: int = 300
