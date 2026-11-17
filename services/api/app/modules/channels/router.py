@@ -3627,6 +3627,14 @@ async def approve_review_reply(
         reply.google_reply_state = state["state"]
         reply.status = "posted"
         reply.error = None
+        # Record which provider reply this is. Without it the next poll saw a
+        # posted row with no `reply_external_id`, treated Google's copy as a
+        # new reply, and re-stamped the review's current rating/text onto the
+        # row — which is how an edited review ended up "answered" by a reply
+        # written for its previous content.
+        if state.get("updated_at") is not None:
+            reply.replied_at = state["updated_at"]
+            reply.reply_external_id = f"google:{state['updated_at'].isoformat()}"
         from .reviews_worker import _store_reply_message
 
         await _store_reply_message(

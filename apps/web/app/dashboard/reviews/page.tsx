@@ -580,6 +580,13 @@ function ReviewsInner() {
   // to bind to, which is why an already-answered review looked like a dead
   // end. Create the draft first, then approve it: the click is the merchant's
   // approval, and this is the only path that can republish over a live reply.
+  //
+  // The same two calls serve an existing response row: `editReply` sends a
+  // posted reply back to pending_approval (the backend never edits Google
+  // behind the merchant's back), and `approveReply` is the click that publishes
+  // it. Without the second call the merchant edited a published reply, was told
+  // to go approve it elsewhere, and the detail screen offered no way to
+  // publish — a dead end.
   async function publishUpdatedReply(item: ReviewItem) {
     const text = responseText.trim();
     if (!text) return;
@@ -594,10 +601,24 @@ function ReviewsInner() {
             reviewer_name: item.reviewer,
             custom_text: text,
           });
-      await approveReply(item.locationId, row.id);
+      const posted = await approveReply(item.locationId, row.id);
+      const publishedText = posted?.reply_text ?? text;
+      const publishedAt = new Date().toISOString();
       setReviews((prev) =>
         prev.map((r) =>
-          r.id === item.id ? { ...r, replyId: row.id, reply_text: text, status: "posted" } : r
+          r.id === item.id
+            ? {
+                ...r,
+                replyId: row.id,
+                reply_text: publishedText,
+                status: "posted",
+                replied: true,
+                google_reply_state: posted?.google_reply_state ?? r.google_reply_state,
+                publishedReplyId: row.id,
+                publishedReplyText: publishedText,
+                publishedReplyAt: publishedAt,
+              }
+            : r
         )
       );
       setResponseText("");
@@ -1800,7 +1821,7 @@ function ReviewsInner() {
                               {dt.approvalHint}
                             </p>
                           )}
-                          <div className="mt-2 flex items-center justify-end gap-2">
+                          <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
                             <button
                               onClick={() => setEditingResponse(null)}
                               disabled={savingResponse}
@@ -1811,11 +1832,31 @@ function ReviewsInner() {
                             <button
                               onClick={() => void saveResponse(active)}
                               disabled={!responseText.trim() || savingResponse}
-                              className="rounded-md bg-[#1A73E8] px-4 py-1.5 text-[12px] font-medium text-white hover:bg-[#1765CC] disabled:opacity-50"
+                              className={`rounded-md px-4 py-1.5 text-[12px] font-medium disabled:opacity-50 ${
+                                active.replyId &&
+                                (active.status === "posted" || active.status === "pending_approval")
+                                  ? "border border-[#DADCE0] text-[#5F6368] hover:bg-ink/[0.04]"
+                                  : "bg-[#1A73E8] text-white hover:bg-[#1765CC]"
+                              }`}
                             >
                               {savingResponse ? dt.saving : dt.saveResponse}
                             </button>
+                            {active.replyId &&
+                              (active.status === "posted" || active.status === "pending_approval") && (
+                                <button
+                                  onClick={() => void publishUpdatedReply(active)}
+                                  disabled={!responseText.trim() || savingResponse}
+                                  className="rounded-md bg-[#1A73E8] px-4 py-1.5 text-[12px] font-medium text-white hover:bg-[#1765CC] disabled:opacity-50"
+                                >
+                                  {savingResponse ? dt.publishing : dt.republish}
+                                </button>
+                              )}
                           </div>
+                          {active.status === "posted" && (
+                            <p className="mt-1.5 text-[11px] leading-4 text-[#5F6368]">
+                              {dt.publishHint}
+                            </p>
+                          )}
                         </>
                       ) : (
                         <p className="mt-1.5 whitespace-pre-wrap break-words text-[13px] leading-5 text-[#202124]">{active.reply_text}</p>

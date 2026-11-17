@@ -363,8 +363,15 @@ async def process_review(
     req: ReviewEngineRequest,
     tenant_id: str,
     db: AsyncSession,
+    *,
+    release_connection: bool = False,
 ) -> ReviewEngineResponse:
-    """Full agent loop: understand -> decide tools -> call tools -> strategies -> generate -> validate -> log."""
+    """Full agent loop: understand -> decide tools -> call tools -> strategies -> generate -> validate -> log.
+
+    ``release_connection`` is opt-in for callers that hold no uncommitted
+    state (the HTTP endpoints). The session belongs to the caller: closing it
+    here detaches every ORM object it holds and silently drops pending writes.
+    """
     t0 = time.monotonic()
     log_id = str(uuid.uuid4())
 
@@ -508,8 +515,14 @@ async def process_review(
     channel_policy = CHANNEL_POLICIES.get(req.channel, CHANNEL_POLICIES["google_review"])
     brand_voice = DEFAULT_BRAND_VOICE
 
-    # Close DB before LLM generation to free connection for other requests
-    await db.close()
+    # Free the pooled connection before the long LLM call — but only for
+    # callers that asked. `db` belongs to the caller: closing it detaches
+    # every object the caller is holding and discards its pending writes
+    # without an error, which is how an edit follow-up draft was generated,
+    # "committed" on a dead session, and lost. Worker callers keep their
+    # transaction (and its admission lock) across generation on purpose.
+    if release_connection:
+        await db.close()
 
     # Step 6: Generate + validate loop (same model, up to MAX_TOOL_ROUNDS tries).
     # Generation errors propagate — no fallback models, no template replies.
@@ -630,8 +643,15 @@ async def process_review_stream(
     req: ReviewEngineRequest,
     tenant_id: str,
     db: AsyncSession,
+    *,
+    release_connection: bool = False,
 ) -> AsyncGenerator[dict, None]:
-    """Yield SSE progress events while processing a review."""
+    """Yield SSE progress events while processing a review.
+
+    ``release_connection`` mirrors :func:`process_review`: only a caller with
+    nothing uncommitted (the HTTP streaming endpoint) may hand the session's
+    connection back before generation.
+    """
     t0 = time.monotonic()
     log_id = str(uuid.uuid4())
 
@@ -756,8 +776,10 @@ async def process_review_stream(
     channel_policy = CHANNEL_POLICIES.get(req.channel, CHANNEL_POLICIES["google_review"])
     brand_voice = DEFAULT_BRAND_VOICE
 
-    # Close DB before LLM generation to free connection for other requests
-    await db.close()
+    # See process_review: the session is the caller's, so only release it when
+    # the caller says it holds nothing uncommitted.
+    if release_connection:
+        await db.close()
 
     yield {"step": "generating", "message": "Generating response...", "progress": 70}
 

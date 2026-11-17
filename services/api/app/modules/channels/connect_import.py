@@ -947,6 +947,9 @@ async def _publish_one(session_id: str, item_id: str, semaphore: asyncio.Semapho
                 reply.google_reply_state = state["state"]
                 reply.status = "posted"
                 reply.error = None
+                if state.get("updated_at") is not None:
+                    reply.replied_at = state["updated_at"]
+                    reply.reply_external_id = f"google:{state['updated_at'].isoformat()}"
                 item.status = "published"
                 item.error = None
                 from .reviews_worker import _store_reply_message

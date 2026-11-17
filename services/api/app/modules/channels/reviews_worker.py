@@ -369,25 +369,55 @@ async def _draft_dismissed(db: AsyncSession, channel_id: str, review_id: str) ->
 
 
 async def _clear_dismissal(db: AsyncSession, channel_id: str, review_id: str) -> None:
-    """New review content re-arms drafting after a dismissal."""
+    """New review content re-arms drafting after a dismissal.
+
+    One UPDATE, no savepoint: a savepoint inside the caller's poll transaction
+    bought nothing (a missing insight row is a no-op, not an error) while
+    swallowing real failures. Errors propagate so the pass is retried and the
+    reason is logged instead of the draft silently never appearing.
+    """
     from ..analytics.models import ReviewInsight
 
-    try:
-        async with db.begin_nested():
-            row = (
-                await db.execute(
-                    select(ReviewInsight).where(
-                        ReviewInsight.channel_id == channel_id,
-                        ReviewInsight.review_id == review_id,
-                    )
-                )
-            ).scalar_one_or_none()
-            if row is not None and row.draft_dismissed:
-                row.draft_dismissed = False
-                db.add(row)
-                await db.flush()
-    except Exception:
-        pass
+    await db.execute(
+        update(ReviewInsight)
+        .where(
+            ReviewInsight.channel_id == channel_id,
+            ReviewInsight.review_id == review_id,
+            ReviewInsight.draft_dismissed.is_(True),
+        )
+        .values(draft_dismissed=False)
+    )
+
+
+async def _dismissal_matches_review(
+    db: AsyncSession, channel_id: str, review
+) -> bool:
+    """Does the dismissal still describe what the customer wrote?
+
+    The merchant dismissed a draft for specific content (stored on the
+    rejected row). If the customer has since edited the review, that decision
+    no longer applies — the earlier comment said an edit clears the marker,
+    but nothing ever did, so an edited review stayed permanently skipped.
+    Without a rejected row there is no baseline: keep the dismissal.
+    """
+    row = (
+        await db.execute(
+            select(ReviewReply)
+            .where(
+                ReviewReply.channel_id == channel_id,
+                ReviewReply.review_id == review.review_id,
+                ReviewReply.status == "rejected",
+            )
+            .order_by(ReviewReply.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        return True
+    return (
+        row.rating == review.rating
+        and (row.review_text or None) == (review.text or None)
+    )
 
 
 async def _resume_failed_row(
@@ -439,8 +469,16 @@ def _save_reply_row(
     status: str,
     error: str | None = None,
     google_reply_state: str | None = None,
-) -> None:
-    """Write `status` onto the resumed failed row in place, or insert a new row."""
+    replied_at: datetime | None = None,
+    reply_external_id: str | None = None,
+) -> ReviewReply:
+    """Write `status` onto the resumed failed row in place, or insert a new row.
+
+    `replied_at`/`reply_external_id` identify the provider-side reply when one
+    went live. Persisting them on publish is what stops the next poll from
+    treating our own reply as a new one (and re-stamping the review's current
+    content onto the row).
+    """
     if row is not None:
         row.reply_text = reply_text
         row.rating = rating
@@ -451,20 +489,26 @@ def _save_reply_row(
         row.generation_attempt = (row.generation_attempt or 1) + 1
         row.error = error
         row.google_reply_state = google_reply_state
-        return
-    db.add(
-        ReviewReply(
-            channel_id=channel_id,
-            review_id=review_id,
-            rating=rating,
-            review_text=review_text,
-            reviewer_name=reviewer_name,
-            reply_text=reply_text,
-            status=status,
-            error=error,
-            google_reply_state=google_reply_state,
-        )
+        if replied_at is not None:
+            row.replied_at = replied_at
+        if reply_external_id is not None:
+            row.reply_external_id = reply_external_id
+        return row
+    row = ReviewReply(
+        channel_id=channel_id,
+        review_id=review_id,
+        rating=rating,
+        review_text=review_text,
+        reviewer_name=reviewer_name,
+        reply_text=reply_text,
+        status=status,
+        error=error,
+        google_reply_state=google_reply_state,
+        replied_at=replied_at,
+        reply_external_id=reply_external_id,
     )
+    db.add(row)
+    return row
 
 
 async def _adopt_existing_reply(db: AsyncSession, channel: Channel, review) -> bool:
@@ -477,7 +521,12 @@ async def _adopt_existing_reply(db: AsyncSession, channel: Channel, review) -> b
     owner edited the reply in GBP, and analytics receives the provider's
     publish time.
 
-    Returns True when a row was created or changed.
+    A reply we already recorded (matching provider update time) is never
+    re-adopted: Google trimming the comment is not a new reply, and stamping
+    the review's current rating/text onto that row would mark an edited review
+    as answered by the response written for its previous content.
+
+    Returns True when the live reply is new to us and becomes the response.
     """
     if not getattr(review, "has_reply", False):
         return False
@@ -499,19 +548,24 @@ async def _adopt_existing_reply(db: AsyncSession, channel: Channel, review) -> b
     ).scalars().all()
     latest = rows[0] if rows else None
 
-    if latest is not None and latest.status == "pending_approval" and external_id is not None:
-        if latest.reply_external_id == external_id:
-            # Google still shows the reply we already recorded (same provider
-            # update time), so there is nothing to adopt. Whatever sits in the
-            # row now is a follow-up draft for an edited review; adopting would
-            # overwrite it with the older published text and the edit would
-            # never be answered.
-            return False
-
-    if latest is not None and latest.status == "posted":
-        same_id = external_id is None or latest.reply_external_id == external_id
-        if same_id and (latest.reply_text or "").strip() == text:
-            return False
+    # What the row answered is NOT the same fact as what the review says now.
+    # `rating`/`review_text` on a reply row describe the content that reply was
+    # written for; Google's reply update time is what identifies which provider
+    # reply we are looking at. When that id matches the one we recorded, Google
+    # is showing our reply — it may have trimmed or re-encoded the comment, but
+    # it is not a new reply and the review's current content must not be stamped
+    # onto the row. Doing that made an edited review look answered by the reply
+    # written for its old content, so no follow-up draft was ever generated.
+    same_provider_reply = (
+        latest is not None
+        and external_id is not None
+        and latest.reply_external_id == external_id
+    )
+    if same_provider_reply and latest.status in ("pending_approval", "posted"):
+        # A pending row is a follow-up draft for an edited review: leave it.
+        # A posted row keeps its stored content so the edit-refresh path can
+        # still detect the mismatch and draft a follow-up.
+        return False
 
     if latest is None:
         latest = ReviewReply(
@@ -1170,6 +1224,8 @@ async def _refresh_edited_review_reply(
     )
     status = "pending_approval"
     reply_state = None
+    replied_at = None
+    reply_external_id = None
     if autopost and client is not None:
         try:
             await client.reply_to_review(review.review_id, reply_text)
@@ -1180,6 +1236,9 @@ async def _refresh_edited_review_reply(
                     "Google rejected the reply"
                     + (f": {state['policy_violation']}" if state["policy_violation"] else "")
                 )
+            replied_at = state.get("updated_at")
+            if replied_at is not None:
+                reply_external_id = f"google:{replied_at.isoformat()}"
         except GoogleReviewsError as e:
             _save_reply_row(
                 db, target_row, channel.id, review.review_id,
@@ -1211,6 +1270,7 @@ async def _refresh_edited_review_reply(
         db, target_row, channel.id, review.review_id,
         review.rating, review.text, review.reviewer_name,
         reply_text, status, google_reply_state=reply_state,
+        replied_at=replied_at, reply_external_id=reply_external_id,
     )
     if status == "posted":
         posted_row = (
@@ -1402,11 +1462,12 @@ async def _handle_fetched_review(
         stats["skipped"] += 1
         return
     if await _draft_dismissed(db, channel.id, review.review_id):
-        # The merchant rejected the draft: don't auto-draft again.
-        # A reviewer edit clears the marker; manual regenerate
-        # bypasses it.
-        stats["skipped"] += 1
-        return
+        # The merchant rejected the draft: don't auto-draft again — unless the
+        # customer edited the review the rejection was written for.
+        if await _dismissal_matches_review(db, channel.id, review):
+            stats["skipped"] += 1
+            return
+        await _clear_dismissal(db, channel.id, review.review_id)
     failed_row = await _resume_failed_row(db, channel.id, review.review_id)
 
     try:
@@ -1456,6 +1517,8 @@ async def _handle_fetched_review(
     )
     if not needs_approval:
         reply_state = None
+        replied_at = None
+        reply_external_id = None
         try:
             await client.reply_to_review(review.review_id, reply_text)
             state = await client.read_reply_state(review.review_id)
@@ -1465,6 +1528,9 @@ async def _handle_fetched_review(
                     "Google rejected the reply"
                     + (f": {state['policy_violation']}" if state["policy_violation"] else "")
                 )
+            replied_at = state.get("updated_at")
+            if replied_at is not None:
+                reply_external_id = f"google:{replied_at.isoformat()}"
             stats["replied"] += 1
         except GoogleReviewsError as e:
             stats["errors"] += 1
@@ -1496,6 +1562,7 @@ async def _handle_fetched_review(
             db, failed_row, channel.id, review.review_id,
             review.rating, review.text, review.reviewer_name,
             reply_text, "posted", google_reply_state=reply_state,
+            replied_at=replied_at, reply_external_id=reply_external_id,
         )
         await notify(
             db, channel.user_id, "reply_posted",

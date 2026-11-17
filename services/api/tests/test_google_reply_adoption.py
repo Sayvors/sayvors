@@ -58,6 +58,36 @@ async def test_adoption_is_idempotent_and_does_not_duplicate(db, channel_id):
 
 
 @pytest.mark.asyncio
+async def test_same_provider_reply_does_not_rebaseline_an_edited_review(db, channel_id):
+    """Google normalising our reply's text is not a new reply.
+
+    The row's rating/review_text describe what that reply answered. Stamping
+    the review's new content onto it marked an edited review as answered by
+    the response written for its old content, so the follow-up draft that
+    should answer the edit could never be detected — saeed's 1-star complaint
+    edited into a 5-star thank-you kept the old apology as its reply.
+    """
+    channel = await db.get(Channel, channel_id)
+    await _adopt_existing_reply(db, channel, _review(rating=1, text="Old complaint"))
+
+    edited = _review(
+        rating=5,
+        text="Thank you for getting in touch",
+        # Same provider update time; Google trimmed the trailing space.
+        reply_text="Thanks for visiting!  ",
+    )
+    assert await _adopt_existing_reply(db, channel, edited) is False
+
+    rows = await _rows(db, channel_id, "accounts/a/locations/l/reviews/r1")
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.status == "posted"
+    assert row.rating == 1
+    assert row.review_text == "Old complaint"
+    assert row.reply_text == "Thanks for visiting!"
+
+
+@pytest.mark.asyncio
 async def test_pending_draft_is_superseded_by_the_live_google_reply(db, channel_id):
     channel = await db.get(Channel, channel_id)
     db.add(ReviewReply(

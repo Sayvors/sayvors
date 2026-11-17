@@ -347,11 +347,19 @@ async def test_list_reviews_parses_reply_moderation_state():
 async def test_read_reply_state_reports_approved():
     """APPROVED -> live; the pre-moderation default (no state) is approved."""
     client = _make_client([
-        (200, {}, _review_payload({"comment": "Thanks", "reviewReplyState": "APPROVED"})),
+        (200, {}, _review_payload({
+            "comment": "Thanks",
+            "reviewReplyState": "APPROVED",
+            "updateTime": "2026-11-11T12:54:36.069494Z",
+        })),
     ])
-    assert await client.read_reply_state("r") == {
-        "state": "approved", "policy_violation": None,
-    }
+    state = await client.read_reply_state("r")
+    assert state["state"] == "approved"
+    assert state["policy_violation"] is None
+    # The reply's own timestamp identifies it for later polls.
+    assert state["updated_at"] == datetime(
+        2026, 11, 11, 12, 54, 36, 69494, tzinfo=timezone.utc
+    )
 
     client = _make_client([
         (200, {}, _review_payload({"comment": "Thanks"})),
@@ -393,7 +401,7 @@ async def test_read_reply_state_absent_when_not_readable(monkeypatch):
         (404, {}, b"Not found"),
     ])
     assert await client.read_reply_state("r", attempts=2) == {
-        "state": "absent", "policy_violation": None,
+        "state": "absent", "policy_violation": None, "updated_at": None,
     }
     assert len(_sleep_stub.slept) == 1
 
