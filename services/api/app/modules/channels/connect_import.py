@@ -215,10 +215,18 @@ async def start_generation(
     cutoff = _cutoff(scope_days)
     items = await session_items(db, session.id)
     for item in items:
-        if item.status != "pending":
+        # `failed` and `outside_scope` rows are re-evaluated too: the merchant
+        # just asked for drafts, and a previous pass that died mid-draft (or a
+        # narrower range chosen on an earlier attempt) must not strand a review
+        # as permanently "nothing to do". Keeping them out made a rerun report
+        # zero work and jump straight to the summary.
+        if item.status not in ("pending", "failed", "outside_scope"):
             continue
         if cutoff is not None and item.review_time is not None and item.review_time < cutoff:
             item.status = "outside_scope"
+        else:
+            item.status = "pending"
+        item.error = None
     session.total_drafts = sum(1 for item in items if item.status == "pending")
     session.drafts_ready = 0
     session.drafts_failed = 0
@@ -511,6 +519,21 @@ async def _fetch_phase(db: AsyncSession, session: ConnectImportSession) -> None:
                 )
             ).scalars().all()
         }
+        # Google is the authority on what still exists. A resumed import keeps
+        # items from earlier passes, and when a reviewer deletes a review the
+        # leftover item would keep asking for a draft that can never be
+        # published. Only channels that returned a complete, non-empty list are
+        # reconciled: a truncated fetch must never blank out a live listing.
+        if reviews:
+            seen_review_ids = {review.review_id for review in reviews}
+            for existing in existing_items.values():
+                if (
+                    existing.review_id not in seen_review_ids
+                    and existing.status
+                    in ("pending", "generating", "failed", "outside_scope")
+                ):
+                    existing.status = "removed"
+                    existing.error = None
         for review in reviews:
             session.total_reviews = (session.total_reviews or 0) + 1
             already_on_google = bool(getattr(review, "has_reply", False))
@@ -524,8 +547,17 @@ async def _fetch_phase(db: AsyncSession, session: ConnectImportSession) -> None:
                     existing.status = "already_replied"
                     existing.reply_id = reply.id if reply is not None else None
                     existing.error = None
-                elif existing.status == "generating":
-                    existing.status = "pending"
+                elif existing.status in ("generating", "removed"):
+                    # Abandoned mid-draft, or previously missing from Google
+                    # and now back: re-derive the row from locally stored work
+                    # instead of leaving it stuck in the transient status.
+                    reply = existing_replies.get(review.review_id)
+                    already = (
+                        reply is not None
+                        and reply.status in ("pending_approval", "posted", "approved")
+                    )
+                    existing.status = "already_replied" if already else "pending"
+                    existing.reply_id = reply.id if already and reply is not None else None
                     existing.error = None
                 session.fetched_reviews = (session.fetched_reviews or 0) + 1
                 continue
@@ -807,7 +839,23 @@ async def _generate_phase(db: AsyncSession, session: ConnectImportSession) -> No
         session.status = "completed"
         session.locked_until = None
         await _write_summary(db, session)
-        await _log(db, session.id, "Every review in this range already has a reply.", "success")
+        needs_attention = int((session.summary or {}).get("failed") or 0)
+        if needs_attention:
+            await _log(
+                db, session.id,
+                (
+                    "Every review in this range already has a reply. "
+                    f"{_plural(needs_attention, 'reply', 'replies')} still "
+                    f"{'needs' if needs_attention == 1 else 'need'} another try."
+                ),
+                "warning",
+            )
+        else:
+            await _log(
+                db, session.id,
+                "Every review in this range already has a reply.",
+                "success",
+            )
         await db.commit()
         return
 
@@ -1009,7 +1057,11 @@ async def _write_summary(db: AsyncSession, session: ConnectImportSession) -> Non
     for item in items:
         counts[item.status] += 1
     already = counts.get("already_replied", 0)
-    total = len(items)
+    removed = counts.get("removed", 0)
+    # Reviews Google no longer returns are neither answered nor waiting.
+    # Counting them made the summary report outstanding work that could never
+    # be done — the "13 reviews, 12 answered" mismatch.
+    total = len(items) - removed
     published = counts.get("published", 0)
     failed = counts.get("failed", 0) + counts.get("publish_failed", 0)
     channel_ids = sorted({item.channel_id for item in items})

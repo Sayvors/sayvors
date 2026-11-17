@@ -151,6 +151,7 @@ function statusLabel(status: string): string {
     failed: "Needs another try",
     published: "Posted",
     publish_failed: "Couldn't post",
+    removed: "No longer on Google",
   };
   return labels[status] ?? status.replaceAll("_", " ");
 }

@@ -204,6 +204,127 @@ async def test_start_generation_applies_scope_only_to_pending_items(db, user_id,
 
 
 @pytest.mark.asyncio
+async def test_fetch_phase_retires_items_google_no_longer_returns(
+    db, user_id, channel_id, monkeypatch
+):
+    """A reviewer deleted their review: the leftover import item must stop
+    asking for a draft that can never be published."""
+    from app.modules.channels.service import encrypt_token
+
+    channel = await db.get(Channel, channel_id)
+    channel.access_token = encrypt_token("token")
+    session = await ci.create_session(db, user_id)
+    deleted = ConnectImportItem(
+        session_id=session.id, channel_id=channel_id, review_id="gone",
+        rating=5, status="failed", error="Generation interrupted",
+        review_time=datetime.now(timezone.utc) - timedelta(days=3),
+    )
+    db.add(deleted)
+    await db.commit()
+
+    async def _fake_fetch(channel):
+        return channel, [_review("alive")], None
+
+    monkeypatch.setattr(ci, "_fetch_channel_reviews", _fake_fetch)
+    await ci._fetch_phase(db, session)
+    await db.refresh(deleted)
+
+    assert deleted.status == "removed"
+    assert deleted.error is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_phase_revives_a_review_that_reappears(
+    db, user_id, channel_id, monkeypatch
+):
+    """A trivially hidden review (or a later moderation reversal) comes back:
+    the item must return to the drafting queue instead of staying retired."""
+    from app.modules.channels.service import encrypt_token
+
+    review_id = "accounts/a/locations/l/reviews/back"
+    channel = await db.get(Channel, channel_id)
+    channel.access_token = encrypt_token("token")
+    session = await ci.create_session(db, user_id)
+    item = ConnectImportItem(
+        session_id=session.id, channel_id=channel_id, review_id=review_id,
+        rating=5, status="removed",
+        review_time=datetime.now(timezone.utc) - timedelta(days=3),
+    )
+    db.add(item)
+    await db.commit()
+
+    async def _fake_fetch(channel):
+        return channel, [_review(review_id)], None
+
+    monkeypatch.setattr(ci, "_fetch_channel_reviews", _fake_fetch)
+    await ci._fetch_phase(db, session)
+    await db.refresh(item)
+
+    assert item.status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_summary_does_not_count_removed_reviews(db, user_id, channel_id):
+    """Removed reviews are neither answered nor waiting: counting them made the
+    summary report work that could never be done."""
+    session = ConnectImportSession(
+        user_id=user_id, status="completed",
+        total_locations=1, fetched_locations=1,
+    )
+    db.add(session)
+    await db.flush()
+    db.add_all([
+        ConnectImportItem(
+            session_id=session.id, channel_id=channel_id, review_id="answered",
+            rating=5, status="already_replied",
+            review_time=datetime.now(timezone.utc) - timedelta(days=1),
+        ),
+        ConnectImportItem(
+            session_id=session.id, channel_id=channel_id, review_id="deleted",
+            rating=5, status="removed",
+            review_time=datetime.now(timezone.utc) - timedelta(days=2),
+        ),
+    ])
+    await db.commit()
+
+    await ci._write_summary(db, session)
+
+    assert session.summary["reviews_total"] == 1
+    assert session.summary["already_answered"] == 1
+    assert session.summary["unanswered_before"] == 0
+
+
+@pytest.mark.asyncio
+async def test_start_generation_retries_failed_items_in_scope(db, user_id, channel_id):
+    """A failed draft must be retried when the merchant picks a range.
+
+    It used to be skipped forever: the run queued zero drafts and the modal
+    jumped straight to the summary even though a review had no reply.
+    """
+    session = ConnectImportSession(
+        user_id=user_id, status="awaiting_scope", scope_days=180,
+        total_locations=1, fetched_locations=1, total_reviews=1, fetched_reviews=1,
+    )
+    db.add(session)
+    await db.flush()
+    failed = ConnectImportItem(
+        session_id=session.id, channel_id=channel_id, review_id="failed",
+        rating=5, status="failed", error="Generation interrupted",
+        review_time=datetime.now(timezone.utc) - timedelta(days=3),
+    )
+    db.add(failed)
+    await db.commit()
+
+    await ci.start_generation(db, session, 180)
+    await db.refresh(session)
+    await db.refresh(failed)
+
+    assert failed.status == "pending"
+    assert failed.error is None
+    assert session.total_drafts == 1
+
+
+@pytest.mark.asyncio
 async def test_publish_selection_marks_only_selected_drafts(db, user_id, channel_id):
     session = ConnectImportSession(user_id=user_id, status="ready")
     db.add(session)

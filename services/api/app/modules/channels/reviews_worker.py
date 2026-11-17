@@ -499,6 +499,15 @@ async def _adopt_existing_reply(db: AsyncSession, channel: Channel, review) -> b
     ).scalars().all()
     latest = rows[0] if rows else None
 
+    if latest is not None and latest.status == "pending_approval" and external_id is not None:
+        if latest.reply_external_id == external_id:
+            # Google still shows the reply we already recorded (same provider
+            # update time), so there is nothing to adopt. Whatever sits in the
+            # row now is a follow-up draft for an edited review; adopting would
+            # overwrite it with the older published text and the edit would
+            # never be answered.
+            return False
+
     if latest is not None and latest.status == "posted":
         same_id = external_id is None or latest.reply_external_id == external_id
         if same_id and (latest.reply_text or "").strip() == text:
@@ -1078,10 +1087,12 @@ async def _refresh_edited_review_reply(
     Google polls return reviews updated since the last pass. When the text
     or rating changed after a reply was queued or posted, the response on
     file answers content that no longer exists: a still-pending draft is
-    regenerated in place, and a posted reply gets a follow-up draft queued
-    behind it. An edit follow-up waits for approval by default; the
-    edited_review_autopost opt-in posts it through the same gates as a
-    fresh reply (approval_mode "auto" + rating at/above min_rating_auto).
+    regenerated in place, and a posted reply is rewritten into a follow-up
+    draft on the same row (the schema allows one live row per review; the
+    published text stays in the review thread). An edit follow-up waits for
+    approval by default; the edited_review_autopost opt-in posts it through
+    the same gates as a fresh reply (approval_mode "auto" + rating at/above
+    min_rating_auto).
     """
     latest = (
         await db.execute(
@@ -1113,13 +1124,20 @@ async def _refresh_edited_review_reply(
     is_pending = latest.status == "pending_approval"
     failed_row = None
     if is_pending:
+        target_row = latest
         attempt = (latest.generation_attempt or 1) + 1
         previous_draft = latest.reply_text
     else:
-        # posted/approved: a fresh follow-up draft cycle (resume a failed row if present).
+        # posted/approved: a fresh follow-up draft cycle. The partial unique
+        # index allows exactly one live row per (channel, review), so the row
+        # Google already shows is rewritten in place — inserting a second row
+        # raises UniqueViolationError, which is why every edit follow-up used
+        # to be generated and then thrown away. The previously published text
+        # stays in channel_messages, so history is not lost.
         failed_row = await _resume_failed_row(db, channel.id, review.review_id)
-        attempt = (failed_row.generation_attempt or 1) + 1 if failed_row else 1
-        previous_draft = failed_row.reply_text if failed_row else None
+        target_row = failed_row or latest
+        attempt = (target_row.generation_attempt or 1) + 1
+        previous_draft = target_row.reply_text
     try:
         reply_text, needs_review = await generate_auto_reply(
             config, channel, review.rating, review.text, review.reviewer_name, db,
@@ -1164,7 +1182,7 @@ async def _refresh_edited_review_reply(
                 )
         except GoogleReviewsError as e:
             _save_reply_row(
-                db, failed_row, channel.id, review.review_id,
+                db, target_row, channel.id, review.review_id,
                 review.rating, review.text, review.reviewer_name,
                 reply_text, "failed", str(e)[:2000],
                 google_reply_state=reply_state,
@@ -1176,11 +1194,21 @@ async def _refresh_edited_review_reply(
                 data={"review_id": review.review_id, "channel_id": channel.id},
                 href="/dashboard/outbox",
             )
-            await db.commit()
+            try:
+                await db.commit()
+            except IntegrityError:
+                # Another worker may have inserted this review's row between
+                # the lookup and the commit. The winner's row is authoritative.
+                await db.rollback()
+                logger.info(
+                    "review reply for %s already created by another worker; skipping",
+                    review.review_id,
+                )
+                return
             return
         status = "posted"
     _save_reply_row(
-        db, failed_row, channel.id, review.review_id,
+        db, target_row, channel.id, review.review_id,
         review.rating, review.text, review.reviewer_name,
         reply_text, status, google_reply_state=reply_state,
     )
@@ -1209,7 +1237,18 @@ async def _refresh_edited_review_reply(
             data={"review_id": review.review_id, "channel_id": channel.id},
             href="/dashboard/reviews",
         )
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # The unique (channel_id, review_id) index can be won by a concurrent
+        # poll between _already_replied and this insert. Roll back so the
+        # session stays usable; the winner's row is the source of truth.
+        await db.rollback()
+        logger.info(
+            "review reply for %s already created by another worker; skipping",
+            review.review_id,
+        )
+        return
     if status == "posted":
         try:
             await _enqueue_review_replied(db, channel, review, "posted")
@@ -1802,10 +1841,14 @@ async def _poll_one_channel(
                     logger.error("Poll failed for channel %s: %s", channel_id, e)
                     stats["errors"] += 1
                     try:
-                        await session.refresh(channel)
-                        await _update_channel_health(
-                            session, channel, False, type(e).__name__
-                        )
+                        # The failed transaction may have detached `channel`
+                        # (refresh() then raises "not persistent within this
+                        # Session"). Re-read it by id to get a live instance.
+                        channel = await session.get(Channel, channel_id)
+                        if channel is not None:
+                            await _update_channel_health(
+                                session, channel, False, type(e).__name__
+                            )
                     except Exception:
                         logger.exception(
                             "Channel health update failed for %s", channel_id

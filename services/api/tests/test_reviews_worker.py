@@ -303,13 +303,15 @@ async def test_edited_review_after_posted_reply_queues_followup(db, channel_id, 
 
     assert stats["skipped"] == 1
     rows = await _reply_rows(db, channel_id, "ggreview-1")
-    assert len(rows) == 2
-    posted = [r for r in rows if r.status == "posted"]
-    pending = [r for r in rows if r.status == "pending_approval"]
-    assert len(posted) == 1 and posted[0].reply_text == "live reply"
-    assert len(pending) == 1
-    assert pending[0].review_text == "Terrible service, never again."
-    assert pending[0].reply_text == "fresh AI draft (try 1)"
+    # One live row per (channel, review) — the partial unique index forbids a
+    # second one, so the follow-up is written over the published row instead of
+    # being generated and then discarded on the insert.
+    assert len(rows) == 1
+    followup = rows[0]
+    assert followup.status == "pending_approval"
+    assert followup.review_text == "Terrible service, never again."
+    assert followup.reply_text == "fresh AI draft (try 2)"
+    assert followup.generation_attempt == 2
     # Follow-ups wait for approval — never posted automatically.
     assert FakeGoogleClient.posted == []
 
@@ -338,12 +340,12 @@ async def test_edited_review_followup_autoposts_when_opted_in(db, channel_id, co
 
     assert stats["skipped"] == 1
     # The follow-up went live: rating 5 clears the min_rating_auto gate.
-    assert FakeGoogleClient.posted == [("ggreview-1", "fresh AI draft (try 1)")]
+    assert FakeGoogleClient.posted == [("ggreview-1", "fresh AI draft (try 2)")]
     rows = await _reply_rows(db, channel_id, "ggreview-1")
-    assert len(rows) == 2
-    assert all(r.status == "posted" for r in rows)
-    followup = next(r for r in rows if r.reply_text != "live reply")
-    assert followup.rating == 5
+    assert len(rows) == 1
+    assert rows[0].status == "posted"
+    assert rows[0].rating == 5
+    assert rows[0].reply_text == "fresh AI draft (try 2)"
 
 
 @pytest.mark.asyncio
@@ -434,7 +436,7 @@ async def test_edited_review_followup_autopost_failure_saves_failed_row(db, chan
     rows = await _reply_rows(db, channel_id, "ggreview-1")
     failed = [r for r in rows if r.status == "failed"]
     assert len(failed) == 1
-    assert failed[0].reply_text == "fresh AI draft (try 1)"
+    assert failed[0].reply_text == "fresh AI draft (try 2)"
     assert "503" in (failed[0].error or "")
 
 

@@ -1282,7 +1282,7 @@ class ConnectImportItem(Base):
     review_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     review_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # pending | generating | draft_ready | already_replied | outside_scope |
-    # failed | published | publish_failed
+    # failed | published | publish_failed | removed
     status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
     # Draft row in review_replies. Kept until publish so the draft survives a
     # closed modal and appears in Outbox.
