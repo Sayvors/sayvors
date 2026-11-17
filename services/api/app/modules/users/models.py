@@ -16,6 +16,11 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(128))
     business_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Canonical vertical key (restaurant, pharmacy, retail, ...). The label in
+    # business_type stays for display; this is what the intake cascade and
+    # review taxonomy resolve against.
+    vertical_key: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    intake_sub_focus: Mapped[str | None] = mapped_column(String(40), nullable=True)
     # Business context for AI grounding (tenant-owned identity):
     # what the company sells, explicitly does NOT sell, and a 1-line summary.
     business_sells: Mapped[str | None] = mapped_column(Text, nullable=True)

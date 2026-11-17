@@ -3,9 +3,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_current_user, get_db
 from ...core.storage import public_media_base
-from . import business_profile, service
+from . import business_profile, intake, service
 from .schemas import (
     AvatarSourceUpdateRequest,
+    IntakeSaveRequest,
     BusinessDetailsIn,
     BusinessDetailsOut,
     BusinessProfileResponse,
@@ -287,3 +288,30 @@ async def save_business_details(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/intake")
+async def read_intake(
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """The business-intake cascade: verticals, sub-focuses and their questions.
+
+    Google-sourced questions are included with ``source: google`` so the UI
+    can show what is already known instead of asking for it again.
+    """
+    return await intake.get_intake(user, db)
+
+
+@router.put("/intake")
+async def save_intake(
+    body: IntakeSaveRequest,
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Save the owner's vertical pick and tapped answers.
+
+    Merchant answers are authoritative: a later Google refresh never
+    overwrites them.
+    """
+    return await intake.save_intake(user, body, db)

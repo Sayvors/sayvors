@@ -42,34 +42,23 @@ ISSUE_STATUSES: tuple[str, ...] = (
     "new", "open", "in_progress", "resolved", "closed",
 )
 
+# Kept as a derived view for any caller that still imports the old constant.
+# The canonical catalog lives in modules/verticals.py so review subcategories,
+# onboarding questions and benchmarks cannot drift apart.
+from ..verticals import VERTICALS, review_subcategories, resolve_vertical  # noqa: E402
+
 DEFAULT_SUBCATEGORIES: dict[str, list[str]] = {
-    "restaurant": ["food_temperature", "food_taste", "wait_time", "service",
-                   "parking", "cleanliness", "portions", "allergen"],
-    "cafe": ["coffee_quality", "wait_time", "service", "seating", "menu"],
-    "pharmacy": ["availability", "price", "service_speed", "consultation", "stock"],
-    "ecommerce": ["shipping_time", "lost_package", "damaged_item", "wrong_item",
-                  "returns_process", "payment_failed", "product_quality"],
-    "bank": ["card_issue", "transaction_error", "account_fees", "queue_time", "app_outage"],
-    "saas": ["billing", "login", "integrations", "performance", "onboarding", "support"],
-    "healthcare": ["wait_time", "diagnosis_quality", "billing", "staff_attitude", "facility"],
-    "beauty": ["service_quality", "wait_time", "smoothness", "staff", "booking"],
-    "education": ["course_content", "scheduling", "instructor", "materials", "billing"],
-    "fitness": ["equipment", "trainers", "cleanliness", "scheduling", "billing"],
-    "media": ["content_quality", "ad_relevance", "functionality", "billing"],
-    "professional": ["communication", "billing", "deliverable_quality", "timeliness"],
-    "agency": ["project_timeline", "deliverable", "billing", "communication"],
-    "non_profit": ["program_quality", "accessibility", "staff", "facility"],
-    "other": ["general"],
+    key: list(v.review_subcategories) for key, v in VERTICALS.items()
 }
 
+
 def default_subcategories(business_type: Optional[str]) -> list[str]:
-    if not business_type:
-        return DEFAULT_SUBCATEGORIES["other"].copy()
-    key = business_type.strip().lower()
-    for k, v in DEFAULT_SUBCATEGORIES.items():
-        if k in key or key in k:
-            return v.copy()
-    return DEFAULT_SUBCATEGORIES["other"].copy()
+    """Resolve a stored label OR a canonical key to review subcategories.
+
+    Exact resolution replaces the old substring match, which sent
+    "E-commerce", "Non-profit" and "Retail & Shops" to ``other``.
+    """
+    return review_subcategories(resolve_vertical(business_type))
 
 @dataclass
 class ReviewClassification:

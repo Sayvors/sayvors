@@ -1,14 +1,14 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...database import Base
 from ..user_feedback.models import UserFeedback
 
-__all__ = ["BusinessProfile", "TenantFacts", "UserFeedback"]
+__all__ = ["BusinessProfile", "TenantFacts", "TenantIntakeAnswer", "UserFeedback"]
 
 
 class BusinessProfile(Base):
@@ -82,6 +82,37 @@ class TenantFacts(Base):
         JSONB, default=dict, server_default=text("'{}'")
     )
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class TenantIntakeAnswer(Base):
+    """Merchant-owned answers from the business-intake cascade.
+
+    This is a source of truth, NOT part of the rebuildable ``TenantFacts``
+    cache — writing intake answers into that row would erase them on the next
+    facts rebuild. A "skipped" row is deliberate: the owner was asked and
+    chose not to answer, which is different from never having been asked.
+    """
+
+    __tablename__ = "tenant_intake_answers"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    tenant_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    vertical_key: Mapped[str] = mapped_column(String(40), nullable=False)
+    question_key: Mapped[str] = mapped_column(String(80), nullable=False)
+    # JSON list of chosen chip labels, or a string for free text.
+    answer: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
+    skipped: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    # "manual" | "google_confirmed" — records how the answer was accepted.
+    source: Mapped[str] = mapped_column(String(20), default="manual", server_default=text("'manual'"))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
