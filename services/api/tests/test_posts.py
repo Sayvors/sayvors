@@ -494,6 +494,7 @@ def _fake_llm_provider(content: str, fail_first: bool = False):
     class _Provider:
         async def complete(self, req):
             calls["n"] += 1
+            calls["request"] = req
             if fail_first and calls["n"] == 1:
                 raise RuntimeError("primary down")
             return _Resp(content)
@@ -539,6 +540,40 @@ async def test_ai_draft_parses_and_caps(monkeypatch, db, user_id):
     assert out["tags"] == ["offer", "weekend sale", "x"]
     assert out["keywords"] == ["pizza", "deals"]
     assert calls["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_ai_draft_grounds_in_the_selected_branch(monkeypatch, db, user_id):
+    """The branch name reaches the prompt so multi-location tenants get a
+    description about the right location, not a generic one."""
+    import json as _json
+
+    from app.modules.posts import service as _svc
+
+    provider, calls = _fake_llm_provider(_json.dumps({
+        "description": "Fresh rolls every morning in our Jeddah branch.",
+        "tags": [], "keywords": [],
+    }))
+    monkeypatch.setattr(
+        "app.modules.llm.providers.registry.get_provider_for_model",
+        lambda mid: provider,
+    )
+    monkeypatch.setattr(
+        "app.modules.llm.service._resolve_model",
+        lambda mid: ("api-x", "groq"),
+    )
+    monkeypatch.setattr(
+        "app.modules.llm.providers.registry.list_tenant_models",
+        _custom_tenant_model,
+    )
+    out = await _svc.draft_post_content(
+        db, user_id, "Morning fresh", "update", "Sayvors Bakery", "Jeddah - Malaz"
+    )
+    assert out["description"].startswith("Fresh rolls")
+    prompt = calls["request"].messages[0].content
+    assert "Business: Sayvors Bakery" in prompt
+    assert "Location/branch: Jeddah - Malaz" in prompt
+    assert "Title: Morning fresh" in prompt
 
 
 @pytest.mark.asyncio

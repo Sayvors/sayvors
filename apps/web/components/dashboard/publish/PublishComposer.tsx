@@ -357,6 +357,9 @@ export default function PublishComposer({
   // ── Publishing ──────────────────────────────────────────────────
   const [publishing, setPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
+  /** Description drafting state, local so a retry never loses the draft. */
+  const [descDrafting, setDescDrafting] = useState(false);
+  const [descNotice, setDescNotice] = useState<{ kind: "ok" | "err" | "info"; text: string } | null>(null);
   /**
    * The current publish attempt of this draft. The key stays the same
    * across retries so a partial failure cannot publish the same post twice;
@@ -462,6 +465,51 @@ export default function PublishComposer({
   const chosenFor = (t: PublishTarget) => {
     const avail = availableFor(t);
     return (formats[t.id] ?? []).filter((m) => avail.includes(m));
+  };
+
+  // Write the description from the caption + the selected branch/business.
+  // The endpoint already grounds copy in the tenant's own Databank facts, so
+  // it never invents prices or products; we only supply the context it needs.
+  const writeDescriptionWithAI = async () => {
+    if (!caption.trim()) {
+      setDescNotice({ kind: "info", text: pc.aiDraftNeedTitle });
+      return;
+    }
+    setDescDrafting(true);
+    setDescNotice(null);
+    try {
+      const google = selectedTargets.filter((t) => t.platform === "google_reviews");
+      const branch = google[0]?.name ?? selectedTargets[0]?.name ?? null;
+      const r = await apiFetch("/api/v1/posts/ai-draft", {
+        method: "POST",
+        body: JSON.stringify({
+          title: caption.trim(),
+          post_type: "update",
+          business_name: branch ?? undefined,
+          location_name: google[0]?.name ?? undefined,
+        }),
+      });
+      if (typeof r.description === "string" && r.description.trim()) {
+        setDescription(r.description.trim());
+        setDescNotice({ kind: "ok", text: pc.aiDraftDone });
+      } else {
+        setDescNotice({ kind: "err", text: pc.aiDraftFail });
+      }
+    } catch (e) {
+      // Backend sends {"detail": "..."} — show the message, never raw JSON.
+      let msg = pc.aiDraftFail;
+      if (e instanceof Error) {
+        try {
+          const parsed = JSON.parse(e.message) as { detail?: unknown };
+          if (typeof parsed.detail === "string" && parsed.detail.trim()) {
+            msg = parsed.detail.slice(0, 200);
+          }
+        } catch { /* non-JSON error: keep the friendly fallback */ }
+      }
+      setDescNotice({ kind: "err", text: msg });
+    } finally {
+      setDescDrafting(false);
+    }
   };
 
   const toggleFormat = (t: PublishTarget, m: PostMethod, applyTo?: PublishTarget[]) => {
@@ -1183,11 +1231,26 @@ export default function PublishComposer({
                 )}
               </div>
               <div>
-                <div className="flex items-baseline justify-between">
+                <div className="flex items-baseline justify-between gap-2">
                   <label htmlFor="pub-description" className={`text-[12px] font-semibold ${INK2}`}>
                     {pc.description}
                   </label>
-                  <span className={`text-[11px] ${INK2}`}>{fmt(description.length)}</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={writeDescriptionWithAI}
+                      disabled={descDrafting}
+                      title={pc.aiWriteDescHint}
+                      className="inline-flex items-center gap-1 rounded-[20px] border border-deep-violet/25 bg-deep-violet/[0.06] px-2.5 py-1 text-[11px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.12] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] disabled:opacity-50 dark:border-fog/15 dark:text-fog dark:hover:bg-fog/[0.08]"
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5" aria-hidden>
+                        <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z" strokeLinejoin="round" />
+                        <path d="M18 15l.8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8L18 15z" strokeLinejoin="round" />
+                      </svg>
+                      {descDrafting ? pc.aiDrafting : pc.aiWriteDesc}
+                    </button>
+                    <span className={`text-[11px] ${INK2}`}>{fmt(description.length)}</span>
+                  </div>
                 </div>
                 <textarea
                   id="pub-description"
@@ -1198,6 +1261,20 @@ export default function PublishComposer({
                   placeholder={pc.descPh}
                   className={`${FIELD} mt-1 w-full resize-y`}
                 />
+                {descNotice && (
+                  <p
+                    role="status"
+                    className={`mt-1.5 rounded-[16px] border px-3 py-2 text-[12px] font-medium ${
+                      descNotice.kind === "err"
+                        ? "border-coral/40 bg-coral/10 text-coral"
+                        : descNotice.kind === "ok"
+                          ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                          : "border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                    }`}
+                  >
+                    {descNotice.text}
+                  </p>
+                )}
               </div>
             </div>
           </section>

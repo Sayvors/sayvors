@@ -141,7 +141,8 @@ async def ai_draft_post(
         raise HTTPException(status_code=429, detail="Too many requests")
     try:
         result = await service.draft_post_content(
-            db, tenant_id_of(user), body.title, body.post_type, body.business_name
+            db, tenant_id_of(user), body.title, body.post_type,
+            body.business_name, body.location_name,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
