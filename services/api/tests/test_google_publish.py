@@ -347,6 +347,45 @@ async def test_banner_is_a_cover_category_media_item():
 
 
 @pytest.mark.asyncio
+async def test_banner_fails_when_google_files_it_in_the_gallery():
+    """A 200 from Google is not success unless the response says COVER.
+
+    This is the guarantee behind "your banner is now your Google cover":
+    if Google silently downgrades the photo to ADDITIONAL, the publish must
+    fail instead of telling the merchant it worked.
+    """
+    publisher = GoogleBusinessPublisher("token", "refresh")
+
+    async def _fake_authed_request(http_method: str, url: str, **kwargs):
+        return _Resp(
+            {
+                "name": "accounts/1/locations/2/media/123",
+                "locationAssociation": {"category": "ADDITIONAL"},
+                "googleUrl": "https://lh3.googleusercontent.com/x",
+            },
+            status_code=200,
+        )
+
+    publisher._client._authed_request = _fake_authed_request
+    with pytest.raises(GoogleReviewsError, match="instead of COVER"):
+        await publisher.set_location_image(
+            token="token",
+            asset_id="locations/2",
+            method="banner",
+            media_url="https://cdn.example/banner.jpg",
+            account_id="accounts/1",
+        )
+
+
+@pytest.mark.asyncio
+async def test_banner_reports_confirmed_category():
+    captured = await _set_location_image("banner")
+    assert captured["result"]["category"] == "COVER"
+    assert captured["result"]["categoryConfirmed"] is True
+    assert captured["result"]["categoryFallback"] is None
+
+
+@pytest.mark.asyncio
 async def test_location_image_uses_the_v4_media_endpoint():
     """Location photos live in the v4.9 API — v1 has no media resource."""
     captured = await _set_location_image("profile")
