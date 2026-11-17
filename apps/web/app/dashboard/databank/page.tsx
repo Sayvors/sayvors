@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState, Fragment, useMemo } from "react";
 import {
+  apiFetch,
   listDatabanks,
   deleteDatabank,
   listDocuments,
@@ -410,6 +411,9 @@ function DatabankPageContent() {
   const badgeLabels = d.badge;
   const fmtDate = (iso: string | null | undefined) =>
     iso ? new Date(iso).toLocaleDateString(locale === "ar" ? "ar-SA" : "en-US") : "";
+  // Business-intake progress. A skipped onboarding answer is never lost:
+  // the card below is the permanent "answer it later" entry point.
+  const [intake, setIntake] = useState<{ answered: number; total: number } | null>(null);
   const [databanks, setDatabanks] = useState<Databank[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -426,6 +430,21 @@ function DatabankPageContent() {
   const [filter, setFilter] = useState<string>("all");
   const [crawlSources, setCrawlSources] = useState<CrawlSourceStatus[]>([]);
   const [activity, setActivity] = useState<ActivityEvent[]>([]);
+
+  useEffect(() => {
+    let alive = true;
+    apiFetch("/api/v1/profile/intake")
+      .then((res) => {
+        if (alive) setIntake({ answered: res?.answered ?? 0, total: res?.total ?? 0 });
+      })
+      .catch(() => {
+        // The card stays visible without a progress number if this fails.
+        if (alive) setIntake(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -643,17 +662,6 @@ function DatabankPageContent() {
                 </div>
               </div>
               <Link
-                href="/dashboard/business-intake"
-                title={intakeCopy.subtitle}
-                className="inline-flex items-center justify-center gap-1.5 self-start rounded-[2px] border border-white/40 px-4 py-2.5 text-[12px] font-bold text-white transition hover:bg-white/10 active:scale-[0.98] sm:self-auto"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3.5 w-3.5">
-                  <path d="M12 20h9" strokeLinecap="round" />
-                  <path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4 12.5-12.5z" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                {intakeCopy.title}
-              </Link>
-              <Link
                 href="/dashboard/databank/new"
                 className="inline-flex items-center justify-center gap-1.5 self-start rounded-[2px] bg-white px-4 py-2.5 text-[12px] font-bold text-deep-violet shadow-sm transition hover:bg-white/90 active:scale-[0.98] sm:self-auto"
               >
@@ -700,6 +708,52 @@ function DatabankPageContent() {
             </span>
           </div>
         </div>
+
+        {/* Business intake — the permanent "answer it later" entry point.
+            Skipping in onboarding must never strand a tenant without a way
+            back, so this card shows progress and a direct CTA. */}
+        <section className="rounded-[32px] border border-card-border bg-card p-5 shadow-[0_18px_40px_-30px_rgba(20,16,31,0.45)] sm:p-6">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-[16px] bg-deep-violet/10 text-deep-violet">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="h-5 w-5">
+                  <path d="M12 20h9" strokeLinecap="round" />
+                  <path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4 12.5-12.5z" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </span>
+              <div className="min-w-0">
+                <h2 className="text-[15px] font-bold text-foreground">{intakeCopy.title}</h2>
+                <p className="mt-0.5 text-[12px] leading-relaxed text-foreground/55">
+                  {intake && intake.answered >= intake.total && intake.total > 0
+                    ? intakeCopy.allDone
+                    : intakeCopy.subtitle}
+                </p>
+              </div>
+            </div>
+            <Link
+              href="/dashboard/business-intake"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-[24px] bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white shadow-sm transition hover:brightness-110 active:translate-y-[2px] active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet"
+            >
+              {intake && intake.total > 0 && intake.answered >= intake.total
+                ? intakeCopy.ctaEdit
+                : intakeCopy.ctaAnswer}
+              <span aria-hidden>→</span>
+            </Link>
+          </div>
+          {intake && intake.total > 0 && (
+            <div className="mt-4">
+              <div className="h-2 overflow-hidden rounded-full bg-[var(--ui-sunken)]" role="progressbar" aria-valuenow={intake.answered} aria-valuemin={0} aria-valuemax={intake.total} aria-label={intakeCopy.title}>
+                <div
+                  className="h-full rounded-full bg-deep-violet transition-all duration-500"
+                  style={{ width: `${Math.min(100, (intake.answered / intake.total) * 100)}%` }}
+                />
+              </div>
+              <p className="mt-1.5 text-[11px] font-semibold tabular-nums text-foreground/45">
+                {fill(intakeCopy.answered, { n: intake.answered, total: intake.total })}
+              </p>
+            </div>
+          )}
+        </section>
 
         {/* Business profile card — AI grounding facts, editable */}
         <BusinessProfileCard />
