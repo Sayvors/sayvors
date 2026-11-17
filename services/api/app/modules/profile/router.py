@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_current_user, get_db
@@ -292,6 +292,8 @@ async def save_business_details(
 
 @router.get("/intake")
 async def read_intake(
+    vertical_key: str | None = Query(default=None, max_length=40),
+    sub_focus: str | None = Query(default=None, max_length=40),
     user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -300,7 +302,7 @@ async def read_intake(
     Google-sourced questions are included with ``source: google`` so the UI
     can show what is already known instead of asking for it again.
     """
-    return await intake.get_intake(user, db)
+    return await intake.get_intake(user, db, vertical_key, sub_focus)
 
 
 @router.put("/intake")

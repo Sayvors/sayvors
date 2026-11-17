@@ -15,7 +15,7 @@ REAL_KEYS = {
     "analytics", "automation", "databank", "leads", "voice", "scheduling",
     "assistant", "social_response_style", "bulk_edit_csv", "benchmarking",
     "benchmark_external", "verifications", "growth", "ticket_assignment",
-    "voice_replies",
+    "voice_replies", "crawler",
 }
 
 

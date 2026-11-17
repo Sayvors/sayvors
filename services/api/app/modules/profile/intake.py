@@ -105,8 +105,17 @@ def _google_value(question_key: str, ctx: dict[str, Any]) -> str | None:
     return None
 
 
-async def get_intake(user, db: AsyncSession) -> dict[str, Any]:
-    """Build the intake view for the owner, including Google confirmations."""
+async def get_intake(
+    user,
+    db: AsyncSession,
+    vertical_key: str | None = None,
+    sub_focus: str | None = None,
+) -> dict[str, Any]:
+    """Build the intake view for the owner, including Google confirmations.
+
+    The optional overrides let the wizard preview a different vertical /
+    sub-focus without saving anything — no extra endpoint needed.
+    """
     tenant_id = str(user.id)
     google = await _google_context(db, tenant_id)
     stored_key = (getattr(user, "vertical_key", None) or "").strip() or None
@@ -124,7 +133,7 @@ async def get_intake(user, db: AsyncSession) -> dict[str, Any]:
                 stored_label = (persisted.business_type or "").strip() or None
         except Exception as e:  # noqa: BLE001
             logger.warning("intake user lookup failed tenant=%s: %s", tenant_id, e)
-    vertical_key = resolve_vertical(stored_key) or resolve_vertical(stored_label)
+    vertical_key = resolve_vertical(vertical_key) or resolve_vertical(stored_key) or resolve_vertical(stored_label)
     suggestion_key = google_vertical(google.get("primary_category"))
     suggestion = None
     if suggestion_key and suggestion_key != vertical_key:
@@ -135,7 +144,7 @@ async def get_intake(user, db: AsyncSession) -> dict[str, Any]:
         }
 
     vertical = VERTICALS.get(vertical_key) if vertical_key else None
-    sub_focus = (getattr(user, "intake_sub_focus", None) or "").strip() or None
+    sub_focus = (sub_focus or (getattr(user, "intake_sub_focus", None) or "")).strip() or None
     if vertical and sub_focus not in {f.key for f in vertical.sub_focuses}:
         sub_focus = vertical.sub_focuses[0].key if vertical.sub_focuses else None
 
@@ -174,7 +183,14 @@ async def get_intake(user, db: AsyncSession) -> dict[str, Any]:
             if vertical else []
         ),
         "verticals": [
-            {"key": k, "label": v.label} for k, v in VERTICALS.items()
+            {
+                "key": k,
+                "label": v.label,
+                "sub_focuses": [
+                    {"key": f.key, "label": f.label} for f in v.sub_focuses
+                ],
+            }
+            for k, v in VERTICALS.items()
         ],
         "questions": questions,
         "answered": answered,

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import OnboardingProgress from "@/components/onboarding/OnboardingProgress";
 import ChannelCard from "@/components/onboarding/ChannelCard";
+import BusinessIntakeStep from "@/components/onboarding/BusinessIntakeStep";
 import DatabankStep from "@/components/onboarding/DatabankStep";
 import AutoReplyToggle from "@/components/onboarding/AutoReplyToggle";
 import { useAuth } from "@/lib/auth-context";
@@ -12,7 +13,7 @@ import { apiFetch } from "@/lib/api-rag";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-const STEPS = ["Welcome", "Connect", "Databank", "Auto-Reply"];
+const STEPS = ["Welcome", "Connect", "Your business", "Databank", "Auto-Reply"];
 const STORAGE_KEY = "onboarding_step";
 
 const channels = [
@@ -232,8 +233,12 @@ export default function OnboardingPage() {
           </div>
         )}
 
-        {/* Step 2: Databank */}
-        {step === 2 && (
+        {/* Step 2: Business intake — pick a category, focus, then tap facts.
+            Comes after Connect so Google's category can pre-fill the choice. */}
+        {step === 2 && <BusinessIntakeStep onComplete={goNext} />}
+
+        {/* Step 3: Databank */}
+        {step === 3 && (
           <div className="space-y-4">
             <div className="mb-6 text-center">
               <h2 className="text-[20px] font-bold text-ink dark:text-fog">Feed your AI brain</h2>
@@ -243,8 +248,8 @@ export default function OnboardingPage() {
           </div>
         )}
 
-        {/* Step 3: Auto-Reply */}
-        {step === 3 && (
+        {/* Step 4: Auto-Reply */}
+        {step === 4 && (
           <div className="space-y-4">
             <div className="mb-6 text-center">
               <h2 className="text-[20px] font-bold text-ink dark:text-fog">Turn on Auto-Reply</h2>
@@ -256,7 +261,7 @@ export default function OnboardingPage() {
       </div>
 
       {/* Bottom buttons */}
-      {step !== 2 && (
+      {step !== 2 && step !== 3 && (
         <div className="mt-8 flex flex-wrap items-center gap-4">
           {step > 0 && (
             <button
@@ -269,7 +274,7 @@ export default function OnboardingPage() {
           <button onClick={skip} className="text-[12px] text-ink/30 hover:text-ink/50 dark:text-fog/30 dark:hover:text-fog/50">
             Skip for now
           </button>
-          {step !== 3 && (
+          {step !== 4 && (
             <button
               onClick={goNext}
               className="ml-auto rounded-xl bg-deep-violet px-6 py-2.5 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90"
