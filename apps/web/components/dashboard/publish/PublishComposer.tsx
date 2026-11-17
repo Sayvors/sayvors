@@ -918,9 +918,17 @@ export default function PublishComposer({
         }
       }
 
+      // A Promotion on Google is a cover photo. Confirm what actually happened
+      // so the merchant is never left guessing whether it went to the gallery.
+      const bannerPublished = confirmItems.some(
+        ({ target, methods }) =>
+          target.platform === "google_reviews" && methods.includes("banner"),
+      );
+
       // Crop fallbacks and category fallbacks are both things the merchant
       // must hear about, so they share one banner.
       const allNotices = [...notices, ...fallbacks];
+      if (bannerPublished) allNotices.push(pc.bannerSetNotice);
       if (galleryErrors.length) {
         // The draft stays open so the merchant can pick another category and
         // retry; the posts are not re-queued (same idempotency key).
