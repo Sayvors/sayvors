@@ -69,7 +69,10 @@ function AnalyticsShell() {
           })}
         </div>
       </div>
-      <div className="mt-3 min-h-0 flex-1">
+      {/* min-h-0 + overflow-hidden keep each tab panel's scroll inside the
+          panel. Without them a tall chart can push the flex row and hand the
+          wheel to the document, which scrolls the whole shell out of view. */}
+      <div className="mt-3 min-h-0 flex-1 overflow-hidden">
         {tab === "overview" && <OverviewPanel />}
         {tab === "insights" && <InsightsPanel embedded />}
         {tab === "growth" && <GrowthPage />}

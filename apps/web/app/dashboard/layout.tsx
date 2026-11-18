@@ -18,7 +18,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <I18nProvider>
           <ToastProvider>
           <TourProvider>
-            <div className="flex h-screen overflow-hidden bg-fog font-sans text-ink dark:bg-ink dark:text-fog">
+            {/* Fixed to the viewport, not just 100vh in flow: an in-flow shell
+                can still grow the document if any descendant escapes clipping
+                (a popup, a tooltip, a tall panel), which gives the dashboard a
+                second scrollbar and a blank strip under the sidebar. A fixed
+                shell cannot contribute to document height at all. */}
+            <div className="fixed inset-0 flex overflow-hidden bg-fog font-sans text-ink dark:bg-ink dark:text-fog">
               <Sidebar />
               <div className="flex flex-1 flex-col overflow-hidden">
                 <Header />
