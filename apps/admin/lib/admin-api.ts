@@ -833,6 +833,62 @@ export async function deleteBackup(
   return adminFetch(`/api/v1/admin/backups?${params.toString()}`, { method: "DELETE" });
 }
 
+// ── Retention policy + archive runs ──────────────────────────────────────
+
+export interface RetentionPolicy {
+  review_log_days: number;
+  connect_event_days: number;
+  backup_lead_days: number;
+  archive_enabled: boolean;
+  last_run_at: string | null;
+}
+
+export interface RetentionRun {
+  id: string;
+  kind: string;
+  action: string;
+  status: string;
+  s3_key: string | null;
+  rows: number;
+  size_bytes: number | null;
+  error: string | null;
+  trigger_type: string;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export const RETENTION_KINDS = [
+  { value: "review_generation", label: "Review generation logs" },
+  { value: "connect_progress", label: "Google connect progress" },
+] as const;
+
+export type RetentionKind = (typeof RETENTION_KINDS)[number]["value"];
+
+export async function fetchRetentionPolicy(): Promise<RetentionPolicy> {
+  return adminFetch<RetentionPolicy>("/api/v1/admin/retention/config");
+}
+
+export async function saveRetentionPolicy(input: Omit<RetentionPolicy, "last_run_at">): Promise<RetentionPolicy> {
+  return adminFetch<RetentionPolicy>("/api/v1/admin/retention/config", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function backupRetentionNow(kind: RetentionKind): Promise<{ kind: string; status: string }> {
+  const params = new URLSearchParams({ kind });
+  return adminFetch(`/api/v1/admin/retention/backup-now?${params.toString()}`, { method: "POST" });
+}
+
+export async function cleanRetentionNow(kind: RetentionKind): Promise<{ kind: string; deleted: number }> {
+  const params = new URLSearchParams({ kind });
+  return adminFetch(`/api/v1/admin/retention/clean-now?${params.toString()}`, { method: "POST" });
+}
+
+export async function fetchRetentionRuns(): Promise<RetentionRun[]> {
+  return adminFetch<RetentionRun[]>("/api/v1/admin/retention/runs");
+}
+
 export async function downloadBackup(key: string, versionId?: string): Promise<string> {
   const params = new URLSearchParams({ key });
   if (versionId) params.set("version_id", versionId);

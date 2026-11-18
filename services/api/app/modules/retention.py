@@ -21,6 +21,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import delete, select
 
 from ..database import async_session
+from .admin.models import RetentionConfig
 from .analytics.models import CompetitorSnapshotHistory
 from .channels.meta.models import MetaWebhookEvent
 from .jobs.models import Job
@@ -50,12 +51,8 @@ JOB_RETENTION_DAYS = 30
 # Failed and dead jobs are what an operator reads when something went wrong,
 # so they are kept three times longer than the successful ones.
 JOB_FAILURE_RETENTION_DAYS = 90
-# One row is written per LLM generation attempt in the review pipeline. It is
-# debugging evidence, not customer data, and otherwise grows forever.
-REVIEW_RESPONSE_LOG_RETENTION_DAYS = 90
-# The connect-import modal's progress feed. A session that ended weeks ago
-# has no console left to read it; its events are pure growth.
-CONNECT_IMPORT_EVENT_RETENTION_DAYS = 30
+# Retention windows for review logs and connect-import events are admin-owned
+# in retention_config (with these values as the migration defaults).
 # Rows deleted per statement. A batch small enough to keep each transaction
 # short and its lock footprint tiny.
 DELETE_BATCH_SIZE = 2000
@@ -173,29 +170,176 @@ async def cleanup_competitor_history() -> int:
         )
 
 
-async def cleanup_review_response_logs() -> int:
-    """Delete per-generation review logs older than the debugging window."""
-    cutoff = datetime.now(timezone.utc) - timedelta(days=REVIEW_RESPONSE_LOG_RETENTION_DAYS)
+async def get_policy(db=None):
+    """Read the single admin-owned policy row, creating it on first use.
+
+    Returns a plain namespace, not the ORM row: the session closes here, and a
+    detached row would make later reads depend on expire_on_commit. HTTP
+    callers pass their request session so tests and prod share one database.
+    """
+    from types import SimpleNamespace
+
+    async def _read(session):
+        row = (
+            await session.execute(
+                select(RetentionConfig).where(RetentionConfig.id == "default")
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            row = RetentionConfig(id="default")
+            session.add(row)
+            await session.commit()
+        return SimpleNamespace(
+            review_log_days=row.review_log_days,
+            connect_event_days=row.connect_event_days,
+            backup_lead_days=row.backup_lead_days,
+            archive_enabled=row.archive_enabled,
+            review_log_archived_through=row.review_log_archived_through,
+            connect_event_archived_through=row.connect_event_archived_through,
+        )
+
+    if db is not None:
+        return await _read(db)
+    async with async_session() as session:
+        return await _read(session)
+
+
+async def update_policy(db=None, **values) -> None:
+    """Admin-only mutation of the policy row. Validated by the API layer."""
+    async def _write(session):
+        row = (
+            await session.execute(
+                select(RetentionConfig).where(RetentionConfig.id == "default")
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            row = RetentionConfig(id="default")
+            session.add(row)
+        for key, value in values.items():
+            setattr(row, key, value)
+        await session.commit()
+
+    if db is not None:
+        await _write(db)
+        return
+    async with async_session() as session:
+        await _write(session)
+
+
+def _s3_put(kind, key, data, content_type):
+    from integrations.storage import s3
+
+    return s3.put(kind, key, data, content_type)
+
+
+async def _archive_before_delete(
+    *,
+    kind: str,
+    model,
+    cutoff,
+    lead_days: int,
+    watermark_field: str,
+    watermark,
+    trigger: str,
+) -> bool:
+    """Archive lead-window rows once, advancing a high-water mark.
+
+    Returns False if S3 failed — the caller must then skip deletion entirely.
+    """
+    from .retention_archive import archive_rows
+
+    archive_until = cutoff + timedelta(days=lead_days)
+    async with async_session() as db:
+        for _ in range(MAX_BATCHES_PER_RUN):
+            stmt = select(model).where(model.created_at < archive_until)
+            if watermark is not None:
+                stmt = stmt.where(model.created_at >= watermark)
+            rows = (
+                (await db.execute(stmt.order_by(model.created_at).limit(DELETE_BATCH_SIZE)))
+                .scalars().all()
+            )
+            if not rows:
+                return True
+            try:
+                await archive_rows(
+                    db, kind=kind, rows=list(rows), trigger=trigger, s3_put=_s3_put
+                )
+            except Exception as e:  # noqa: BLE001 - fail closed on deletion
+                logger.warning("Retention archive failed for %s: %s", kind, e)
+                return False
+            watermark = max(r.created_at for r in rows if r.created_at is not None)
+            await update_policy(**{watermark_field: watermark})
+            if len(rows) < DELETE_BATCH_SIZE:
+                return True
+    return True
+
+
+async def cleanup_review_response_logs(*, trigger: str = "scheduled") -> int:
+    """Delete per-generation review logs older than the admin-set window."""
+    policy = await get_policy()
+    cutoff = datetime.now(timezone.utc) - timedelta(days=policy.review_log_days)
+    if policy.archive_enabled:
+        ok = await _archive_before_delete(
+            kind="review_generation", model=ReviewResponseLog, cutoff=cutoff,
+            lead_days=policy.backup_lead_days,
+            watermark_field="review_log_archived_through",
+            watermark=policy.review_log_archived_through, trigger=trigger,
+        )
+        if not ok:
+            return -1
     async with async_session() as db:
         return await _batched_delete(
             db, ReviewResponseLog, ReviewResponseLog.created_at < cutoff
         )
 
 
-async def cleanup_connect_import_events() -> int:
-    """Delete old connect-import progress events.
-
-    Imported lazily because channels.models pulls in much of the channel
-    module graph, and cleanup_all must stay safe to call from the worker's
-    light hourly loop.
-    """
+async def cleanup_connect_import_events(*, trigger: str = "scheduled") -> int:
+    """Delete old connect-import progress events after archiving them."""
     from .channels.models import ConnectImportEvent
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=CONNECT_IMPORT_EVENT_RETENTION_DAYS)
+    policy = await get_policy()
+    cutoff = datetime.now(timezone.utc) - timedelta(days=policy.connect_event_days)
+    if policy.archive_enabled:
+        ok = await _archive_before_delete(
+            kind="connect_progress", model=ConnectImportEvent, cutoff=cutoff,
+            lead_days=policy.backup_lead_days,
+            watermark_field="connect_event_archived_through",
+            watermark=policy.connect_event_archived_through, trigger=trigger,
+        )
+        if not ok:
+            return -1
     async with async_session() as db:
         return await _batched_delete(
             db, ConnectImportEvent, ConnectImportEvent.created_at < cutoff
         )
+
+
+async def backup_now(kind: str) -> int:
+    """Admin-triggered archive of the lead window, without deleting anything."""
+    from .channels.models import ConnectImportEvent
+
+    policy = await get_policy()
+    if kind == "review_generation":
+        model, mark, field, days = (
+            ReviewResponseLog, policy.review_log_archived_through,
+            "review_log_archived_through", policy.review_log_days,
+        )
+    elif kind == "connect_progress":
+        model, mark, field, days = (
+            ConnectImportEvent, policy.connect_event_archived_through,
+            "connect_event_archived_through", policy.connect_event_days,
+        )
+    else:
+        raise ValueError(f"unknown retention kind: {kind}")
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    ok = await _archive_before_delete(
+        kind=kind, model=model, cutoff=cutoff,
+        lead_days=policy.backup_lead_days, watermark_field=field,
+        watermark=mark, trigger="manual",
+    )
+    if not ok:
+        raise RuntimeError("archive upload failed; nothing was deleted")
+    return 1
 
 
 async def cleanup_all() -> dict[str, int]:

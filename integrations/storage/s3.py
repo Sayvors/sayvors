@@ -23,6 +23,8 @@ def _bucket(kind: str) -> str:
     settings = _settings()
     if kind == "media":
         return (settings.S3_MEDIA_BUCKET or settings.AWS_S3_BUCKET or "").strip()
+    if kind == "archive":
+        return (settings.S3_ARCHIVE_BUCKET or "").strip()
     # Private documents must not silently share the potentially public media
     # bucket. Configure a distinct S3_DOCS_BUCKET when moving docs to S3.
     return (settings.S3_DOCS_BUCKET or "").strip()

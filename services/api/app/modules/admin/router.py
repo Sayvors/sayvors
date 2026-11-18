@@ -3003,3 +3003,133 @@ async def download_backup(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         return {"url": url}
+
+
+# ---------------------------------------------------------------------------
+# Retention policy + archive runs
+# ---------------------------------------------------------------------------
+
+class RetentionPolicyIn(BaseModel):
+    review_log_days: int = Field(default=90, ge=1, le=3650)
+    connect_event_days: int = Field(default=30, ge=1, le=3650)
+    backup_lead_days: int = Field(default=2, ge=0, le=365)
+    archive_enabled: bool = False
+
+
+class RetentionPolicyOut(BaseModel):
+    review_log_days: int
+    connect_event_days: int
+    backup_lead_days: int
+    archive_enabled: bool
+    last_run_at: str | None = None
+
+
+class RetentionRunOut(BaseModel):
+    id: str
+    kind: str
+    action: str
+    status: str
+    s3_key: str | None = None
+    rows: int
+    size_bytes: int | None = None
+    error: str | None = None
+    trigger_type: str
+    started_at: str
+    finished_at: str | None = None
+
+
+@router.get("/retention/config", response_model=RetentionPolicyOut)
+async def get_retention_policy(
+    db: AsyncSession = Depends(get_db), _admin=Depends(require_admin)
+):
+    from ..retention import get_policy
+
+    policy = await get_policy(db)
+    return RetentionPolicyOut(
+        review_log_days=policy.review_log_days,
+        connect_event_days=policy.connect_event_days,
+        backup_lead_days=policy.backup_lead_days,
+        archive_enabled=policy.archive_enabled,
+    )
+
+
+@router.put("/retention/config", response_model=RetentionPolicyOut)
+async def set_retention_policy(
+    body: RetentionPolicyIn,
+    db: AsyncSession = Depends(get_db),
+    _admin=Depends(require_admin),
+):
+    from ..retention import update_policy
+
+    await update_policy(
+        db,
+        review_log_days=body.review_log_days,
+        connect_event_days=body.connect_event_days,
+        backup_lead_days=body.backup_lead_days,
+        archive_enabled=body.archive_enabled,
+    )
+    return RetentionPolicyOut(**body.model_dump())
+
+
+@router.post("/retention/backup-now")
+async def retention_backup_now(
+    kind: str = Query(..., pattern="^(review_generation|connect_progress)$"),
+    _admin=Depends(require_admin),
+):
+    """Archive the lead window once. Never deletes anything."""
+    from ..retention import backup_now
+
+    try:
+        await backup_now(kind)
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"kind": kind, "status": "completed"}
+
+
+@router.post("/retention/clean-now")
+async def retention_clean_now(
+    kind: str = Query(..., pattern="^(review_generation|connect_progress)$"),
+    _admin=Depends(require_admin),
+):
+    """Run one sweep for a kind. Archive failure means nothing is deleted."""
+    from ..retention import cleanup_connect_import_events, cleanup_review_response_logs
+
+    deleted = (
+        await cleanup_review_response_logs(trigger="manual")
+        if kind == "review_generation"
+        else await cleanup_connect_import_events(trigger="manual")
+    )
+    if deleted < 0:
+        raise HTTPException(
+            status_code=502,
+            detail="Archive upload failed; nothing was deleted. Check the run history.",
+        )
+    return {"kind": kind, "deleted": deleted}
+
+
+@router.get("/retention/runs")
+async def list_retention_runs(
+    limit: int = Query(50, ge=1, le=200),
+    _admin=Depends(require_admin),
+):
+    from sqlalchemy import select as _select
+
+    from .backup import get_session_factory
+    from .models import RetentionRun
+
+    async with get_session_factory()() as db:
+        rows = (
+            await db.execute(
+                _select(RetentionRun).order_by(RetentionRun.started_at.desc()).limit(limit)
+            )
+        ).scalars().all()
+    return [
+        RetentionRunOut(
+            id=row.id, kind=row.kind, action=row.action, status=row.status,
+            s3_key=row.s3_key, rows=row.rows, size_bytes=row.size_bytes,
+            error=row.error, trigger_type=row.trigger_type,
+            started_at=row.started_at.isoformat() if row.started_at else "",
+            finished_at=row.finished_at.isoformat() if row.finished_at else None,
+        )
+        for row in rows
+    ]
