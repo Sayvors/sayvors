@@ -103,6 +103,7 @@ async def run(cases: list[dict[str, Any]], top_k: int) -> dict[str, Any]:
                 prompt_block=_render(hits),
                 k=top_k,
             )
+            row["question"] = case["question"]  # review output needs the text
             # Kept even when unlabelled: review mode needs to show a human what
             # actually came back so they can choose the expected chunk/fact.
             row["retrieved"] = [
@@ -137,6 +138,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--golden", required=True, help="path to the golden-set JSON")
     parser.add_argument("--top-k", type=int, default=4, help="retrieval depth to score (default 4)")
     parser.add_argument(
+        "--databank-id",
+        help="override the golden set's databank id (keeps the file environment-agnostic)",
+    )
+    parser.add_argument(
         "--review", action="store_true",
         help="print retrieved chunks per question for labelling instead of metrics JSON",
     )
@@ -150,6 +155,9 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"golden set error: {exc}", file=sys.stderr)
         return 2
+
+    if args.databank_id:
+        cases = [{**case, "databank_id": args.databank_id} for case in cases]
 
     report = asyncio.run(run(cases, args.top_k))
     print(format_review(report) if args.review else json.dumps(report, ensure_ascii=False, indent=2))

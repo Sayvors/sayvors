@@ -59,18 +59,20 @@ def test_loader_rejects_a_wrong_schema_version(tmp_path):
 
 
 def test_review_mode_shows_what_came_back_for_labelling():
-    text = format_review({
-        "cases": [
-            {
-                "id": "q01", "vertical": "food", "question": "كم سعر القهوة؟",
-                "retrieved": [
-                    {"id": "chunk-1", "content": "اللاتيه بـ15 ريال"},
-                    {"id": "chunk-2", "content": "Delivery inside Riyadh"},
-                ],
-            },
-            {"id": "q02", "vertical": "hotel", "question": "غرفة ليلتين", "retrieved": []},
-        ]
-    })
+    # Build the row exactly as run() does: score_case output + question.
+    case = {"id": "q01", "vertical": "food", "question": "كم سعر القهوة؟",
+            "expected_chunk_ids": ["chunk-1"]}
+    row = score_case(case, retrieved=["chunk-1", "chunk-2"], prompt_block="", k=4)
+    row["question"] = case["question"]
+    row["retrieved"] = [
+        {"id": "chunk-1", "content": "اللاتيه بـ15 ريال"},
+        {"id": "chunk-2", "content": "Delivery inside Riyadh"},
+    ]
+    empty = score_case({"id": "q02", "vertical": "hotel", "question": "غرفة"},
+                       retrieved=[], prompt_block="", k=4)
+    empty["question"] = "غرفة"
+    empty["retrieved"] = []
+    text = format_review({"cases": [row, empty]})
     assert "[q01] (food) كم سعر القهوة؟" in text
     assert "1. chunk-1  اللاتيه بـ15 ريال" in text
     assert "2. chunk-2" in text
