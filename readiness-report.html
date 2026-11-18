@@ -187,7 +187,7 @@
 
 <div class="top">
   <span class="name">Sayvors 1M-User Readiness</span>
-  <span class="chip warn"><a href="#pass-2026-11-01">Nov 1 launch audit</a>: 4 open (0 blockers · 3 majors · 1 medium) · INS: 1 open · original audit: 2 open (OPS-1, OPS-4) · 38 resolved · handoff 16/16 fixed</span> <span class="chip warn"><a href="#pass-2026-11-02">Nov 2 facts audit</a>: 6 open (1 high · 3 medium · 2 low)</span> <span class="chip warn"><a href="#infra-8gb">Nov 15 8 GB plan</a>: proposed, not applied</span> <span class="chip ok">deps: 55/55 closed</span> <span class="chip ok">suite: 2,137 passed / 3 skipped (2026-11-03)</span>
+  <p class="note" style="margin:6px 0 0"><strong>Start here:</strong> <a href="#current-status">Current status — what is done, what is pending in code, what is pending infra</a>. The dated passages below are the historical audit trail and may still say "planned" for work later shipped; the dashboard is authoritative.</p>
   <nav class="topnav">
     <a href="#blockers">Blockers</a>
     <a href="#pass-2026-10-25">Oct 25 pass</a>
@@ -217,8 +217,54 @@
     <a href="#rag-retrieval-plan">RAG plan</a>
     <a href="#workers-arch">Workers arch</a>
     <a href="#infra-8gb">8 GB plan</a>
+    <a href="#current-status">Current status</a>
   </nav>
 </div>
+
+<section id="current-status">
+  <div class="eyebrow">Current status — 2026-11-18</div>
+  <h2>What is done, what is pending, and what needs infrastructure</h2>
+  <p class="note">This is the authoritative view. The dated audit entries below are evidence and history; many still carry their original "planned, not started" label even where the work later shipped. Test counts are from the last full backend run on this tree.</p>
+
+  <h3><span class="chip ok">DONE — code</span></h3>
+  <div class="scroll"><table>
+    <tr><th>Area</th><th>What shipped</th></tr>
+    <tr><td>Review security (§30)</td><td>M-1 push email pin mandatory; L-1 <code>sync-now</code> tenant-scoped + <code>channels.edit</code> + rate limit; L-2 <code>verify-posted</code> requires <code>reviews.reply</code> + rate limit; M-2 claim renewal + unique indexes; L-3 test-review rate limit.</td></tr>
+    <tr><td>Review throughput</td><td>Bounded 10-way per-review concurrency with per-task sessions/clients and timer-based claim renewal. ~5–13 min → ~1 min for 100 reviews. Durable job lane deliberately not added.</td></tr>
+    <tr><td>Lost replies</td><td>LAUNCH-B2/B3 tail closed: hourly recovery re-drives dead reply events from their own payload, caps attempts at 2, and flags exhausted rows with tenant + admin bells.</td></tr>
+    <tr><td>Billing requests (§6)</td><td>REQ-1 <code>user.plan</code> sync; REQ-2 10/min + 5-open cap; REQ-3 DB unique index + migration; REQ-4 zero-amount ledger audit row.</td></tr>
+    <tr><td>RAG (§ RAG plan)</td><td>P0 query correctness (Arabic punctuation/folding, stopwords, prefixes, score floor, diversity, term coverage, duplicate collapse). Embedding cache wired; P2 eval harness; P3 archive of tool-call trajectories. P1 still needs a real databank.</td></tr>
+    <tr><td>Retention &amp; archive</td><td>Bounded growth for review logs and connect events; admin-configurable windows, lead-time archive to private S3, fail-closed deletes, console at <code>/retention</code>.</td></tr>
+    <tr><td>Facts (§ Nov 2)</td><td>FACT-2, FACT-3, FACT-6 (Sayvors Regional Index), FACT-7 done. FACT-1 obsolete.</td></tr>
+    <tr><td>Client error leakage</td><td>LAUNCH-S10 Phase 1 (502 paths) plus the Meta provider error split; curated 4xx sites remain for per-site review.</td></tr>
+    <tr><td>Intake &amp; dashboards</td><td>One-question intake with grouped progress and deep links; dashboard scroll fix; second-scrollbar fix; publish wizard and media library rebuilds.</td></tr>
+  </table></div>
+
+  <h3><span class="chip warn">PENDING — code (no infra needed)</span></h3>
+  <div class="scroll"><table>
+    <tr><th>Item</th><th>What remains</th><th>Size</th></tr>
+    <tr><td>LAUNCH-S10 remainder</td><td>Per-site public/private split of the curated 4xx <code>detail=str(...)</code> sites. A blanket replace would break tests and degrade honest errors.</td><td>~1 day</td></tr>
+    <tr><td>LAUNCH-M9 (b)</td><td><code>/metrics</code> counters are per-process globals; with 2 uvicorn workers each scrape sees about half. Multiproc metrics needs a small code change.</td><td>~0.5 day</td></tr>
+    <tr><td>FACT-9</td><td>Review Campaign feature — table, entitlements, CRUD + duplicate/reuse, send-path gating, results card. Most-requested premium upsell.</td><td>4–5 days</td></tr>
+    <tr><td>FACT-8</td><td>Median response time + distribution; score-formula tooltips.</td><td>1 day</td></tr>
+    <tr><td>WA-9 (part)</td><td>WABA conversation analytics endpoint not wired; our own message counters cover volume.</td><td>1–2 days</td></tr>
+    <tr><td>RAG P1 / P3</td><td>P1 (task_type, chunking, query context, attribution) needs a real databank and re-index. P3 context cuts need measurement before touching prompt content.</td><td>blocked on data</td></tr>
+  </table></div>
+
+  <h3><span class="chip crit">PENDING — infrastructure / deploy decisions</span></h3>
+  <div class="scroll"><table>
+    <tr><th>Item</th><th>What remains</th></tr>
+    <tr><td>OPS-1</td><td>Backup restore has never been rehearsed. Scripts and buckets exist; the drill does not.</td></tr>
+    <tr><td>OPS-4 / INS-5</td><td>Single box, no DR. ~2.4 GB of container limits on a 2 GB machine (t3.small). Needs a second box or a managed platform — a spend decision, not a code change.</td></tr>
+    <tr><td>CVE-3 / CVE-4</td><td>Redis 7 and Kafka 3.8 images remain open.</td></tr>
+    <tr><td>LAUNCH-S8 / S9</td><td>Staging Redis (no AUTH/AOF, noeviction 128 MB) and Kafka plaintext + auto-create + RF=1.</td></tr>
+    <tr><td>8 GB plan</td><td>Worker memory/CPU, Redis AOF + auth, Kafka heap, swap — proposed, not applied.</td></tr>
+    <tr><td>Phase 4 load/chaos</td><td>k6 at 10× current peak; explicitly not code.</td></tr>
+  </table></div>
+
+  <h3><span class="chip buy">OPEN — product decisions</span></h3>
+  <p>Trial duration (proposed 30 days), real plan prices, whether the $10 promotion expires, WhatsApp calling (buy, not build), ASK Sayvors gating, and response-style plan gating. FACT-4 (geo-grid rank) is a vendor integration; FACT-5 (AI-answer visibility) is a spike.</p>
+</section>
 
 <div class="verdict">
   <p><strong>Most of the audit is closed — 32 of the 34 findings in the original ledger are resolved; 2 remain open (OPS-1, OPS-4).</strong> Counting the Oct 25 INS pass, 38 of 41 code findings are closed and 3 remain; the two server-image CVEs (Redis 7, Kafka 3.8) are separate and still open. Multi-tenant isolation held up under an adversarial pass — not one missing tenant filter was found across every router. Auth internals are genuinely solid. The unified job-processing design in the repo is enterprise-grade and approved after four review rounds. Production host stood up: EC2 m7i-flex.large (8 GiB, 80 GiB gp3) in eu-north-1 running API + worker + internal Postgres (Docker) + Redis + Kafka; S3 buckets created for backups and media; Vercel hosts both frontends. What still stands between here and 1M users is a short list: backup restore not yet rehearsed (OPS-1), and single-box topology / no DR (OPS-4).</p>
@@ -244,10 +290,10 @@
   <div class="stat"><div class="n calm">32</div><div class="l">of 34 original audit findings <strong>resolved</strong> — SEC 11 · SCALE 6 · OPS 3 · ANL 12; ML-1/BULK-1 are §4 work items, not ledger rows</div></div>
   <div class="stat"><div class="n amber">2</div><div class="l">findings <strong>still open</strong> — OPS-1 (backup restore rehearsal pending), OPS-4 (prod host + SHA-pinned deploys)</div></div>
   <div class="stat"><div class="n amber">Live</div><div class="l">billing &amp; plans — wallet hotfix + durable ledger + 5 plans + admin plan CRUD + tenant grant-plan + entitlements service + enforcement at channel-connect/message-send/LLM; deployed to staging 2026-10-28, schema caught up from 5 migrations behind to <code>h4b5c6d7e8f9</code> head. Plan comparison + request-upgrade UI shipped; purchase requests audited 2026-11-17 with REQ-1..4 open, all four fixed 2026-11-18 (<a href="#billing">§6</a>)</div></div>
-  <div class="stat"><div class="n calm">1,645</div><div class="l">backend tests (2 skipped in CI where pgvector runs; 4 skipped locally without Postgres) — CI gates every staging deploy on them; staging CI run #77 passed on <code>d82d800</code></div></div>
-  <div class="stat"><div class="n amber">1</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new finding still open: INS-5 (INS-1, INS-2, INS-3, INS-4, INS-6, INS-7 fixed)</div></div>
-  <div class="stat"><div class="n">4</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> - 0 blockers · 3 majors · 1 medium batches open. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md. Re-verified 2026-11-08: LAUNCH-S8, S9, S10 and M9 remain open (evidence in that file); none are fixed.</div></div>
-  <div class="stat"><div class="n">6</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — Review Intelligence + Analytics "actual facts" gaps: grid rank, AI-answer visibility, Review Campaign premium gating. Strategy rule: every number a tenant sees must be verifiable on Google Maps or carry a named source</div></div>
+  <div class="stat"><div class="n calm">2,676</div><div class="l">backend tests passed / 3 skipped (last full run 2026-11-18) — CI gates every staging deploy on them; supersedes the older 2,137 figure in the history below</div></div>
+  <div class="stat"><div class="n amber">1</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — INS-5 still open (infra: box overcommitted). INS-1/2/3/4/6/7 fixed</div></div>
+  <div class="stat"><div class="n amber">3</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> — LAUNCH-S8, S9 and M9 still open; S10 Phase 1 + Meta provider split done, curated 4xx remainder pending. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
+  <div class="stat"><div class="n amber">4</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — FACT-4 (buy), FACT-5 (spike), FACT-8, FACT-9 open. FACT-6 and FACT-7 fixed; FACT-1 obsolete</div></div>
 </div>
 
 <section id="model">
@@ -647,8 +693,8 @@
       <td class="num">1-week spike</td>
     </tr>
     <tr>
-      <td class="num">FACT-6</td><td><span class="chip med">Med</span></td>
-      <td><strong>The Saudi Regional Index is not packaged — and it is the moat.</strong> Every published review benchmark is US/UK (BrightLocal: 42% trust reviews as much as personal recommendations, down from 79% in 2020; 31% will only use 4.5★+ businesses in the 2026 survey). The cohort medians that would answer "what's normal for a Riyadh café?" already compute internally — they are just never surfaced as a named, citable index.</td>
+      <td class="num">FACT-6</td><td><span class="chip ok">Fixed</span></td>
+      <td><strong>The Saudi Regional Index is now packaged (2026-11-18).</strong> The cohort medians were already computed but never surfaced as a named, citable fact. <code>analytics/benchmark.py:_regional_index</code> publishes them as the <em>Sayvors Regional Index</em> with sample size, period, scope and a citation string — aggregates only, never a competitor name or tenant id. Withheld below 5 real businesses so one tenant cannot be reverse-engineered from a "regional median". Rendered on the benchmark page with en/ar labels.</td>
       <td class="path">analytics/benchmark.py (cohort medians); analytics/router.py:248 (/market-benchmarks)</td>
       <td>Package cohort stats as the "Sayvors Regional Index" (min cohort size to avoid leaking a single tenant), show it on benchmark cards, publish quarterly. Becomes the cited source = the "actual facts" position.</td>
       <td class="num">2–3 days</td>
