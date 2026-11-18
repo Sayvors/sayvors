@@ -13,6 +13,7 @@ import GoogleReviewCard, { GoogleStars, ReviewAvatar } from "@/components/review
 import { streamReviewReply, type StreamEvent } from "@/lib/api-review-engine";
 import { approveReply, dismissReviewEdit, editReply, generateReply, regenerateReply, rejectReply, verifyPostedReplies, type ReviewInsight, type ReviewReplyDTO } from "@/lib/api-analytics";
 import { clearAbuseFlag, flagReviewAbusive, markAbuseReported, setAbuseVerdict } from "@/lib/api-abuse";
+import { hasPermission } from "@/lib/permissions";
 import MeaningInspector from "@/components/reviews/MeaningInspector";
 import AskForReview from "@/components/dashboard/AskForReview";
 import BulkReviewRequests from "@/components/dashboard/BulkReviewRequests";
@@ -315,7 +316,10 @@ function ReviewsInner() {
 
     // Ask Google directly about stale rows once per channel per page load.
     // The endpoint only heals on definitive evidence (Google shows the reply),
-    // so this is safe to run unattended.
+    // so this is safe to run unattended — but it rewrites reply rows, so it
+    // needs `reviews.reply`. A read-only member would otherwise collect a 403
+    // on every single load, which the catch below would hide.
+    if (!(await hasPermission("reviews.reply"))) return;
     for (const id of ids) {
       if (verifiedChannels.current.has(id)) continue;
       verifiedChannels.current.add(id);

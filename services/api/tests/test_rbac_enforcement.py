@@ -149,6 +149,88 @@ async def test_agent_channel_view_only_cannot_edit_reply(client, db, channel_id)
     assert "edit access" in res.json()["detail"].lower()
 
 
+@pytest.mark.asyncio
+async def test_viewer_cannot_verify_posted_replies(client, db, channel_id):
+    """Verification rewrites reply rows, so reading reviews is not enough."""
+    _member, mu = await _seed_member(db, role_name="Viewer", overrides={CHANNEL: "view"})
+    _auth_as(mu)
+    res = client.post(f"/api/v1/channels/{CHANNEL}/reviews/verify-posted")
+    assert res.status_code == 403
+    assert "reviews.reply" in res.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_agent_can_verify_posted_replies(client, db, channel_id):
+    """The operational role keeps the path: Agents hold reviews.reply, and with
+    nothing stale there is simply nothing to check."""
+    _member, mu = await _seed_member(db, role_name="Agent", overrides={CHANNEL: "edit"})
+    _auth_as(mu)
+    res = client.post(f"/api/v1/channels/{CHANNEL}/reviews/verify-posted")
+    assert res.status_code == 200
+    assert res.json()["checked"] == 0
+
+
+@pytest.mark.asyncio
+async def test_agent_channel_none_cannot_verify_posted_replies(client, db, channel_id):
+    """reviews.reply is role-level; a channel override still hides the row."""
+    _member, mu = await _seed_member(db, role_name="Agent", overrides={CHANNEL: "none"})
+    _auth_as(mu)
+    res = client.post(f"/api/v1/channels/{CHANNEL}/reviews/verify-posted")
+    assert res.status_code == 404
+
+
+# ── manual review sync ────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_viewer_cannot_trigger_review_sync(client, db, channel_id):
+    """sync-now spends Google quota on the tenant's behalf → channels.edit."""
+    _member, mu = await _seed_member(db, role_name="Viewer", overrides={CHANNEL: "view"})
+    _auth_as(mu)
+    res = client.post("/api/v1/channels/google/sync-now")
+    assert res.status_code == 403
+    assert "channels.edit" in res.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_sync_now_polls_only_the_callers_channels(client, db, channel_id, monkeypatch):
+    """Regression: sync-now called poll_once() unscoped.
+
+    That polled every tenant in the deployment and handed the fleet-wide
+    counts back to any `channels.view` caller. The pass must now receive
+    exactly the caller's own channels, and a second tenant's channel must
+    never appear in the scope.
+    """
+    from app.modules.channels import reviews_worker
+    from app.modules.channels.models import Channel
+
+    db.add(Channel(
+        id="other-tenant-channel",
+        user_id="test-user-0000-0000-0000-000000000002",
+        platform="google_reviews",
+        platform_user_id="other-acc",
+        display_name="Someone Else",
+        status="active",
+    ))
+    await db.commit()
+
+    seen: list[set[str] | None] = []
+
+    async def _spy(*, channel_ids=None):
+        seen.append(channel_ids)
+        return {
+            "channels": 0, "reviews": 0, "new": 0, "replied": 0,
+            "queued": 0, "skipped": 0, "adopted": 0, "errors": 0,
+        }
+
+    monkeypatch.setattr(reviews_worker, "poll_once", _spy)
+
+    res = client.post("/api/v1/channels/google/sync-now")
+    assert res.status_code == 200
+    assert seen == [{CHANNEL}]
+    assert res.json()["totals"]["channels"] == 0
+
+
 # ── verification + services ───────────────────────────────
 
 

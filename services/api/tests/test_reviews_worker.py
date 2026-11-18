@@ -1185,3 +1185,62 @@ async def test_google_error_notifies_sync_failed(
     ).scalars().all()
     assert len(rows) == 1
     assert (rows[0].data or {}).get("error") == "google_429"
+
+
+# -- poll scope --------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_poll_once_scope_is_a_hard_sql_filter(db, channel_id, config_id, monkeypatch):
+    """`channel_ids` must exclude other tenants in SQL, not after the fact.
+
+    The manual sync endpoint hands this function the caller's channels. Before
+    the scope existed the pass was fleet-wide, so one tenant's click polled
+    every tenant in the deployment and returned their aggregate counts.
+    """
+    import app.database as database
+    from conftest import TEST_SESSION
+
+    db.add(Channel(
+        id="other-tenant-channel",
+        user_id="test-user-0000-0000-0000-000000000002",
+        platform="google_reviews",
+        platform_user_id="other-acc",
+        display_name="Someone Else",
+        status="active",
+    ))
+    db.add(AutoReplyConfig(
+        id="other-tenant-config",
+        channel_id="other-tenant-channel",
+        enabled=True,
+        tone="friendly",
+        min_rating_auto=4,
+        model="openai:gpt-4o-mini",
+        approval_mode="auto",
+    ))
+    await db.commit()
+
+    # poll_once opens its own session through app.database; point it at the
+    # shared in-memory test engine so it sees these rows.
+    monkeypatch.setattr(database, "async_session", TEST_SESSION)
+
+    polled: list[str] = []
+
+    async def _fake_poll(ch_id, cfg_id, semaphore):
+        polled.append(ch_id)
+        return {
+            "channels": 1, "reviews": 0, "new": 0, "replied": 0,
+            "queued": 0, "skipped": 0, "adopted": 0, "errors": 0,
+        }
+
+    monkeypatch.setattr(reviews_worker, "_poll_one_channel", _fake_poll)
+
+    totals = await reviews_worker.poll_once(channel_ids={channel_id})
+    assert polled == [channel_id]
+    assert totals["channels"] == 1
+
+    # An empty scope is a valid no-op, never a fallback to "everything".
+    polled.clear()
+    totals = await reviews_worker.poll_once(channel_ids=set())
+    assert polled == []
+    assert totals["channels"] == 0

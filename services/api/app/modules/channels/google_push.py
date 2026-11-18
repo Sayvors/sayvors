@@ -6,11 +6,13 @@ Profile notifications as best-effort delivery, so this endpoint only
 *accelerates* discovery — the poll+sweep layers remain the correctness
 guarantee and must never be removed because "the webhook exists".
 
-Verification is fail-closed: without a configured OIDC audience the
-route refuses everything (503), and every accepted request must carry a
-Google-signed OIDC token whose audience matches the push subscription's
-configured audience. A correctly-signed token from an unexpected service
-account is rejected when GOOGLE_PUBSUB_PUSH_EMAIL is set.
+Verification is fail-closed: the route refuses everything (503) until both
+the OIDC audience and the push service account's email are configured, and
+every accepted request must carry a Google-signed OIDC token whose audience
+matches the push subscription and whose email matches that pinned account.
+An audience alone proves only that a token was minted *for* us — any Google
+Cloud project can mint one for a matching audience — so the email pin is what
+proves the token came from our subscription, and it is not optional.
 
 Duplicate pushes are safe: each triggered pull runs through the same
 atomic per-channel claim (``polling_locked_until``) as the background
@@ -56,17 +58,28 @@ _pull_tasks: set[asyncio.Task] = set()
 
 
 def push_configured() -> bool:
-    """True when the push ingress is configured (fail-closed otherwise)."""
-    return bool(settings.GOOGLE_PUBSUB_PUSH_AUDIENCE)
+    """True when the push ingress is fully configured (fail-closed otherwise).
+
+    Both halves are required. The audience only ties a token to a token
+    target; any Google Cloud project can mint a validly-signed token for an
+    audience it knows. Pinning the service account email is what ties the
+    token to *our* push subscription, so a deployment with an audience and no
+    pin is unconfigured, not lenient.
+    """
+    return bool(
+        settings.GOOGLE_PUBSUB_PUSH_AUDIENCE
+        and settings.GOOGLE_PUBSUB_PUSH_EMAIL
+    )
 
 
 def verify_push_oidc(request: Request) -> bool:
     """Verify the Pub/Sub push OIDC bearer token. Returns False on ANY doubt.
 
     ``verify_oauth2_token`` checks Google's signature, the configured
-    audience and expiry; the optional email pin additionally rejects a
-    validly-signed token minted by an identity other than our push
-    subscription's service account.
+    audience and expiry; the email pin then rejects a validly-signed token
+    minted by an identity other than our push subscription's service
+    account. The pin is mandatory — an unset email denies rather than
+    allowing every Google-signed token through.
     """
     audience = settings.GOOGLE_PUBSUB_PUSH_AUDIENCE
     if not audience:
@@ -87,7 +100,13 @@ def verify_push_oidc(request: Request) -> bool:
         logger.warning("Google Pub/Sub push OIDC verification failed: %s: %s", type(e).__name__, e)
         return False
     expected_email = settings.GOOGLE_PUBSUB_PUSH_EMAIL
-    if expected_email and claims.get("email") != expected_email:
+    if not expected_email:
+        # `push_configured()` already gates the route; this second check means
+        # the verifier itself can never answer True without the identity pin,
+        # even if a future caller forgets to ask whether push is configured.
+        logger.error("Google Pub/Sub push rejected: GOOGLE_PUBSUB_PUSH_EMAIL is not set")
+        return False
+    if claims.get("email") != expected_email:
         logger.warning(
             "Google Pub/Sub push from unexpected identity email=%r", claims.get("email")
         )

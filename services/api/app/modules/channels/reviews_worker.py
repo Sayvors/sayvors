@@ -1938,12 +1938,19 @@ async def _poll_one_channel(
     return stats
 
 
-async def poll_once() -> dict:
-    """One polling pass over all due Google Reviews channels. Returns totals.
+async def poll_once(*, channel_ids: set[str] | None = None) -> dict:
+    """One polling pass over due Google Reviews channels. Returns totals.
 
     Channels are polled concurrently (bounded by _POLL_CONCURRENCY) instead
     of serially, so a slow Google response on one channel doesn't block
     all the others.
+
+    ``channel_ids`` is the scope, and it is not optional by accident:
+    ``None`` means the whole fleet and belongs to the background worker
+    alone. A set restricts the pass to exactly those channels, which is what
+    the tenant-facing manual trigger must pass — it previously called this
+    with no argument, polling every tenant and returning their counts.
+    An empty set is a valid no-op and polls nothing.
     """
     from ...database import async_session
 
@@ -1952,20 +1959,23 @@ async def poll_once() -> dict:
     due_before = now - timedelta(seconds=settings.GOOGLE_REVIEWS_POLL_INTERVAL_SECONDS)
 
     async with async_session() as db:
-        rows = (
-            await db.execute(
-                select(Channel, AutoReplyConfig)
-                .join(AutoReplyConfig, AutoReplyConfig.channel_id == Channel.id)
-                .where(
-                    Channel.platform == "google_reviews",
-                    Channel.status == "active",
-                    # No `enabled` filter: the engine always generates and
-                    # queues. Auto Pilot alone decides auto-post vs approval.
-                    (AutoReplyConfig.last_polled_at.is_(None))
-                    | (AutoReplyConfig.last_polled_at < due_before),
-                )
+        stmt = (
+            select(Channel, AutoReplyConfig)
+            .join(AutoReplyConfig, AutoReplyConfig.channel_id == Channel.id)
+            .where(
+                Channel.platform == "google_reviews",
+                Channel.status == "active",
+                # No `enabled` filter: the engine always generates and
+                # queues. Auto Pilot alone decides auto-post vs approval.
+                (AutoReplyConfig.last_polled_at.is_(None))
+                | (AutoReplyConfig.last_polled_at < due_before),
             )
-        ).all()
+        )
+        if channel_ids is not None:
+            # Applied in SQL rather than after the fact so an unscoped row can
+            # never reach the poll loop, whatever else the query returns.
+            stmt = stmt.where(Channel.id.in_(channel_ids))
+        rows = (await db.execute(stmt)).all()
 
     # Per-channel jitter: each channel's effective interval is the base plus a
     # stable 0..JITTER offset derived from its id, so 500 listings never all

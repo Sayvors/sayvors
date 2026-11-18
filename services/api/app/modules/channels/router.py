@@ -96,6 +96,21 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/channels", tags=["channels"])
 
+# Manual review sync is a convenience over the 60s background poll, not a
+# second polling tier. Four triggers a minute covers "it looked stuck, hit it
+# again" for a whole workspace while keeping one tenant's clicks from driving
+# unbounded Google calls. Keyed per tenant, not per user: five teammates on
+# one workspace share the same quota.
+MANUAL_SYNC_RATE_LIMIT = 4
+MANUAL_SYNC_RATE_WINDOW_SECONDS = 60
+
+# Verifying posted replies costs one Google read per stale row (up to 500), so
+# the budget is per channel rather than per user. The reviews page calls this
+# automatically once per channel per load; twelve concurrent page loads is far
+# past normal, and the 60s poll and Pub/Sub path keep converging either way.
+VERIFY_POSTED_RATE_LIMIT = 12
+VERIFY_POSTED_RATE_WINDOW_SECONDS = 60
+
 
 def _channel_source_info(channel: Channel) -> tuple[str | None, str | None]:
     """(source, listing_id) for a channel.
@@ -281,22 +296,56 @@ async def disconnect_google(
 
 @router.post("/google/sync-now")
 async def sync_google_reviews_now(
-    ctx: TenantContext = Depends(require_perm("channels.view")),
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Manually trigger a Google Reviews sync pass immediately.
+    """Trigger an immediate Google Reviews pass for *this tenant's* channels.
 
-    Normally reviews are polled every minute by the background worker.
-    This endpoint runs one polling pass right now over all active
-    Google Reviews channels for the tenant, pulling any new or updated
-    reviews from Google.
+    Normally reviews are polled every minute by the background worker. This
+    endpoint exists for the owner looking at a stale list, so it is a nudge,
+    never a fleet-wide lever: it previously called ``poll_once()`` unscoped,
+    which polled every tenant in the deployment and returned the fleet totals
+    to anyone holding ``channels.view``.
 
-    Returns the poll totals: channels polled, reviews found, replies
-    posted/queued, skipped, adopted, and errors.
+    Scope is enforced twice. The query keeps only channels owned by this
+    tenant, and ``can_edit_channel`` drops any channel a member override
+    hides — a write-shaped action needs ``channels.edit``, not just sight of
+    the list. ``poll_once`` then receives those ids explicitly, so a mistake
+    in either filter cannot widen the pass.
+
+    Channels polled inside the last interval are skipped by the worker's own
+    due-window (with a per-channel jitter), so an immediate repeat can
+    legitimately report zero channels. That is the quota guard working, not
+    a failure.
     """
     from .reviews_worker import poll_once
 
-    totals = await poll_once()
+    tenant_id = tenant_id_of(ctx.user)
+    channel_ids = {
+        str(row)
+        for row in (
+            await db.execute(
+                select(Channel.id).where(
+                    Channel.user_id == tenant_id,
+                    Channel.platform == "google_reviews",
+                    Channel.status == "active",
+                )
+            )
+        ).scalars()
+        if ctx.can_edit_channel(str(row))
+    }
+
+    if not settings.TESTING and not await rate_limit(
+        f"google-sync:{tenant_id}",
+        MANUAL_SYNC_RATE_LIMIT,
+        MANUAL_SYNC_RATE_WINDOW_SECONDS,
+    ):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many sync requests. Reviews also refresh on their own within a minute.",
+        )
+
+    totals = await poll_once(channel_ids=channel_ids)
     return {
         "triggered": True,
         "interval_seconds": settings.GOOGLE_REVIEWS_POLL_INTERVAL_SECONDS,
@@ -3379,7 +3428,7 @@ async def list_review_replies(
 @router.post("/{channel_id}/reviews/verify-posted", response_model=dict)
 async def verify_posted_replies(
     channel_id: str,
-    ctx: TenantContext = Depends(require_perm("reviews.view")),
+    ctx: TenantContext = Depends(require_perm("reviews.reply")),
     db: AsyncSession = Depends(get_db),
 ):
     """Re-check stale reply rows against live Google data, both directions.
@@ -3397,6 +3446,13 @@ async def verify_posted_replies(
 
     Read failures (auth/network) abort without touching anything: we only
     correct on definitive evidence, never on our own errors.
+
+    This rewrites the record of what Sayvors posted, so it costs
+    `reviews.reply` rather than `reviews.view`: a read-only member must not be
+    able to move reply rows between `posted` and `failed`. The role catalog
+    gives Agents `reviews.reply`, so the operational path (the reviews page
+    verifies on load, the outbox has an explicit button) keeps working while
+    Viewer loses it.
     """
     from .google_reviews import GoogleReviewsClient, GoogleReviewsError
     from .service import decrypt_token
@@ -3404,6 +3460,17 @@ async def verify_posted_replies(
     if ctx.channel_level(channel_id) == "none":
         raise HTTPException(status_code=404, detail="Channel not found")
     channel = await _get_owned_channel(channel_id, ctx.user, db)
+    # After the 404 guards so a wrong id cannot spend this channel's budget,
+    # before the Google reads so a loop cannot spend it at all.
+    if not settings.TESTING and not await rate_limit(
+        f"verify-posted:{channel.id}",
+        VERIFY_POSTED_RATE_LIMIT,
+        VERIFY_POSTED_RATE_WINDOW_SECONDS,
+    ):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many verification passes. Reply status also reconciles on its own within a minute.",
+        )
     all_posted = (
         await db.execute(
             select(ReviewReply)
