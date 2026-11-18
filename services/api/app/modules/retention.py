@@ -26,6 +26,7 @@ from .channels.meta.models import MetaWebhookEvent
 from .jobs.models import Job
 from .llm.models import LLMUsageEvent
 from .notifications.models import Notification
+from .review_engine.models import ReviewResponseLog
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,12 @@ JOB_RETENTION_DAYS = 30
 # Failed and dead jobs are what an operator reads when something went wrong,
 # so they are kept three times longer than the successful ones.
 JOB_FAILURE_RETENTION_DAYS = 90
+# One row is written per LLM generation attempt in the review pipeline. It is
+# debugging evidence, not customer data, and otherwise grows forever.
+REVIEW_RESPONSE_LOG_RETENTION_DAYS = 90
+# The connect-import modal's progress feed. A session that ended weeks ago
+# has no console left to read it; its events are pure growth.
+CONNECT_IMPORT_EVENT_RETENTION_DAYS = 30
 # Rows deleted per statement. A batch small enough to keep each transaction
 # short and its lock footprint tiny.
 DELETE_BATCH_SIZE = 2000
@@ -166,6 +173,31 @@ async def cleanup_competitor_history() -> int:
         )
 
 
+async def cleanup_review_response_logs() -> int:
+    """Delete per-generation review logs older than the debugging window."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=REVIEW_RESPONSE_LOG_RETENTION_DAYS)
+    async with async_session() as db:
+        return await _batched_delete(
+            db, ReviewResponseLog, ReviewResponseLog.created_at < cutoff
+        )
+
+
+async def cleanup_connect_import_events() -> int:
+    """Delete old connect-import progress events.
+
+    Imported lazily because channels.models pulls in much of the channel
+    module graph, and cleanup_all must stay safe to call from the worker's
+    light hourly loop.
+    """
+    from .channels.models import ConnectImportEvent
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=CONNECT_IMPORT_EVENT_RETENTION_DAYS)
+    async with async_session() as db:
+        return await _batched_delete(
+            db, ConnectImportEvent, ConnectImportEvent.created_at < cutoff
+        )
+
+
 async def cleanup_all() -> dict[str, int]:
     """Run all retention cleanup jobs. Returns counts deleted."""
     counts = {}
@@ -175,6 +207,8 @@ async def cleanup_all() -> dict[str, int]:
         ("usage_events", cleanup_usage_events),
         ("jobs", cleanup_jobs),
         ("competitor_history", cleanup_competitor_history),
+        ("review_response_logs", cleanup_review_response_logs),
+        ("connect_import_events", cleanup_connect_import_events),
     ]:
         try:
             counts[name] = await fn()
