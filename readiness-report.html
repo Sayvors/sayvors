@@ -235,7 +235,7 @@
     <tr><td>Billing requests (§6)</td><td>REQ-1 <code>user.plan</code> sync; REQ-2 10/min + 5-open cap; REQ-3 DB unique index + migration; REQ-4 zero-amount ledger audit row.</td></tr>
     <tr><td>RAG (§ RAG plan)</td><td>P0 query correctness (Arabic punctuation/folding, stopwords, prefixes, score floor, diversity, term coverage, duplicate collapse). Embedding cache wired; P2 eval harness; P3 archive of tool-call trajectories. P1 still needs a real databank.</td></tr>
     <tr><td>Retention &amp; archive</td><td>Bounded growth for review logs and connect events; admin-configurable windows, lead-time archive to private S3, fail-closed deletes, console at <code>/retention</code>.</td></tr>
-    <tr><td>Facts (§ Nov 2)</td><td>FACT-2, FACT-3, FACT-6 (Sayvors Regional Index), FACT-7 done. FACT-1 obsolete.</td></tr>
+    <tr><td>Facts (§ Nov 2)</td><td>FACT-2, FACT-3, FACT-6 (Sayvors Regional Index), FACT-7 and FACT-8 done. FACT-1 obsolete.</td></tr>
     <tr><td>Client error leakage</td><td>LAUNCH-S10 Phase 1 (502 paths) plus the Meta provider error split; curated 4xx sites remain for per-site review.</td></tr>
     <tr><td>Intake &amp; dashboards</td><td>One-question intake with grouped progress and deep links; dashboard scroll fix; second-scrollbar fix; publish wizard and media library rebuilds.</td></tr>
   </table></div>
@@ -246,7 +246,6 @@
     <tr><td>LAUNCH-S10 remainder</td><td>Per-site public/private split of the curated 4xx <code>detail=str(...)</code> sites. A blanket replace would break tests and degrade honest errors.</td><td>~1 day</td></tr>
     <tr><td>LAUNCH-M9 (b)</td><td><code>/metrics</code> counters are per-process globals; with 2 uvicorn workers each scrape sees about half. Multiproc metrics needs a small code change.</td><td>~0.5 day</td></tr>
     <tr><td>FACT-9</td><td>Review Campaign feature — table, entitlements, CRUD + duplicate/reuse, send-path gating, results card. Most-requested premium upsell.</td><td>4–5 days</td></tr>
-    <tr><td>FACT-8</td><td>Median response time + distribution; score-formula tooltips.</td><td>1 day</td></tr>
     <tr><td>WA-9 (part)</td><td>WABA conversation analytics endpoint not wired; our own message counters cover volume.</td><td>1–2 days</td></tr>
     <tr><td>RAG P1 / P3</td><td>P1 (task_type, chunking, query context, attribution) needs a real databank and re-index. P3 context cuts need measurement before touching prompt content.</td><td>blocked on data</td></tr>
   </table></div>
@@ -290,10 +289,10 @@
   <div class="stat"><div class="n calm">32</div><div class="l">of 34 original audit findings <strong>resolved</strong> — SEC 11 · SCALE 6 · OPS 3 · ANL 12; ML-1/BULK-1 are §4 work items, not ledger rows</div></div>
   <div class="stat"><div class="n amber">2</div><div class="l">findings <strong>still open</strong> — OPS-1 (backup restore rehearsal pending), OPS-4 (prod host + SHA-pinned deploys)</div></div>
   <div class="stat"><div class="n amber">Live</div><div class="l">billing &amp; plans — wallet hotfix + durable ledger + 5 plans + admin plan CRUD + tenant grant-plan + entitlements service + enforcement at channel-connect/message-send/LLM; deployed to staging 2026-10-28, schema caught up from 5 migrations behind to <code>h4b5c6d7e8f9</code> head. Plan comparison + request-upgrade UI shipped; purchase requests audited 2026-11-17 with REQ-1..4 open, all four fixed 2026-11-18 (<a href="#billing">§6</a>)</div></div>
-  <div class="stat"><div class="n calm">2,676</div><div class="l">backend tests passed / 3 skipped (last full run 2026-11-18) — CI gates every staging deploy on them; supersedes the older 2,137 figure in the history below</div></div>
+  <div class="stat"><div class="n calm">2,681</div><div class="l">backend tests passed / 3 skipped (last full run 2026-11-18) — CI gates every staging deploy on them; supersedes the older 2,137 figure in the history below</div></div>
   <div class="stat"><div class="n amber">1</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — INS-5 still open (infra: box overcommitted). INS-1/2/3/4/6/7 fixed</div></div>
   <div class="stat"><div class="n amber">3</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> — LAUNCH-S8, S9 and M9 still open; S10 Phase 1 + Meta provider split done, curated 4xx remainder pending. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
-  <div class="stat"><div class="n amber">4</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — FACT-4 (buy), FACT-5 (spike), FACT-8, FACT-9 open. FACT-6 and FACT-7 fixed; FACT-1 obsolete</div></div>
+  <div class="stat"><div class="n amber">4</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — FACT-4 (buy), FACT-5 (spike), FACT-9 open. FACT-6, FACT-7 and FACT-8 fixed; FACT-1 obsolete</div></div>
 </div>
 
 <section id="model">
@@ -707,10 +706,10 @@
       <td class="num">1 day</td>
     </tr>
     <tr>
-      <td class="num">FACT-8</td><td><span class="chip low">Low</span></td>
-      <td><strong>Response SLA shows average only; scores show no formula.</strong> <code>avg_response_seconds</code> exists but medians and distributions don't (averages lie with outliers), and reputation/health scores render as bare numbers even though their arithmetic is already explicit in code — showing it costs one tooltip.</td>
-      <td class="path">analytics/service.py:25-37, 189</td>
-      <td>Add median response time + distribution to the review metrics; render the score formula in a tooltip/footnote ("50% rating · 25% response · 25% sentiment").</td>
+      <td class="num">FACT-8</td><td><span class="chip ok">Fixed</span></td>
+      <td><strong>Response SLA no longer shows only an average (2026-11-18).</strong> <code>_response_distribution</code> computes median, p90 and four actionable buckets from a bounded 5,000-reply sample; the overview carries <code>response_time</code> and the Analytics overview renders a Response time card with median, "9 in 10 replied within" and a labelled distribution. Negative clock artefacts are clamped and the truncated flag is honest. The reputation formula tooltip already existed on the benchmark page; the health score is not rendered numerically anywhere, so adding a tooltip for it would be dead UI.</td>
+      <td class="path">analytics/service.py; components/analytics/OverviewPanel.tsx; lib/i18n/{en,ar}.ts</td>
+      <td>Done — median + spread visible; average kept alongside with an explanation of why it misleads.</td>
       <td class="num">1 day</td>
     </tr>
     <tr>
