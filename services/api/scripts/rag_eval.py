@@ -87,15 +87,33 @@ async def run(cases: list[dict[str, Any]], top_k: int) -> dict[str, Any]:
                 db=db,
                 query_model=model,
             )
-            scored.append(
-                score_case(
-                    case,
-                    retrieved=[str(hit["id"]) for hit in hits],
-                    prompt_block=_render(hits),
-                    k=top_k,
-                )
+            row = score_case(
+                case,
+                retrieved=[str(hit["id"]) for hit in hits],
+                prompt_block=_render(hits),
+                k=top_k,
             )
+            # Kept even when unlabelled: review mode needs to show a human what
+            # actually came back so they can choose the expected chunk/fact.
+            row["retrieved"] = [
+                {"id": str(hit["id"]), "content": " ".join((hit.get("content") or "").split())[:240]}
+                for hit in hits
+            ]
+            scored.append(row)
     return {"top_k": top_k, **summarize(scored), "cases": scored}
+
+
+def format_review(report: dict[str, Any]) -> str:
+    """Human-readable retrieval dump for labelling an unlabelled golden set."""
+    lines: list[str] = []
+    for case in report["cases"]:
+        lines.append(f"[{case['id']}] ({case['vertical']}) {case['question']}")
+        if not case["retrieved"]:
+            lines.append("    (no hits — check the databank id)")
+        for rank, hit in enumerate(case["retrieved"], 1):
+            lines.append(f"    {rank}. {hit['id']}  {hit['content']}")
+        lines.append("")
+    return "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -108,6 +126,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--golden", required=True, help="path to the golden-set JSON")
     parser.add_argument("--top-k", type=int, default=4, help="retrieval depth to score (default 4)")
+    parser.add_argument(
+        "--review", action="store_true",
+        help="print retrieved chunks per question for labelling instead of metrics JSON",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -117,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     report = asyncio.run(run(cases, args.top_k))
-    print(json.dumps(report, ensure_ascii=False, indent=2))
+    print(format_review(report) if args.review else json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 
 

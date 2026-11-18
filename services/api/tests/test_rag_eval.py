@@ -8,7 +8,7 @@ import json
 import pytest
 
 from app.modules.rag.eval import recall_at_k, score_case, summarize
-from scripts.rag_eval import load_golden
+from scripts.rag_eval import format_review, load_golden
 
 
 def test_recall_at_k_counts_only_the_top_k():
@@ -56,6 +56,25 @@ def test_loader_rejects_a_wrong_schema_version(tmp_path):
     path.write_text(json.dumps({"version": 99, "cases": []}), encoding="utf-8")
     with pytest.raises(ValueError, match="version"):
         load_golden(str(path))
+
+
+def test_review_mode_shows_what_came_back_for_labelling():
+    text = format_review({
+        "cases": [
+            {
+                "id": "q01", "vertical": "food", "question": "كم سعر القهوة؟",
+                "retrieved": [
+                    {"id": "chunk-1", "content": "اللاتيه بـ15 ريال"},
+                    {"id": "chunk-2", "content": "Delivery inside Riyadh"},
+                ],
+            },
+            {"id": "q02", "vertical": "hotel", "question": "غرفة ليلتين", "retrieved": []},
+        ]
+    })
+    assert "[q01] (food) كم سعر القهوة؟" in text
+    assert "1. chunk-1  اللاتيه بـ15 ريال" in text
+    assert "2. chunk-2" in text
+    assert "(no hits — check the databank id)" in text
 
 
 def test_loader_accepts_a_file_level_databank(tmp_path):
