@@ -1,157 +1,277 @@
 {
   "version": 1,
   "databank_id": "REPLACE_WITH_A_REAL_DATABANK_UUID",
-  "note": "30 real support questions supplied 2026-11-18. Verticals are inferred by inspection, not confirmed by the business. expected_chunk_ids / expected_facts are intentionally empty: fill them from the actual databanks before scoring. Several questions are deictic (هالثوب، دا المقاس، الويكند، بكره) and cannot be answered from the current message alone - that is direct evidence for P1's history-aware query.",
+  "note": "30 real support questions supplied 2026-11-18. None of the four local databanks contain restaurant/hotel/retail knowledge - they hold crawled sayvors.com pages and one CSV - so these are currently a DEFLECTION eval: with no relevant evidence, the prompt block must stay empty. When a real business databank exists, set expect_no_evidence=false and add expected chunk ids / facts to each case to score recall instead. Verticals are inferred, not confirmed.",
   "cases": [
     {
-      "id": "q01", "vertical": "food", "question": "وش عندكم عشا يسد الجوع بس ما يكون دسم؟ وتراني ما آكل لحم، الدجاج عادي.",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "two constraints in one question: filling but not greasy, no meat but chicken ok"
+      "id": "q01",
+      "vertical": "food",
+      "question": "وش عندكم عشا يسد الجوع بس ما يكون دسم؟ وتراني ما آكل لحم، الدجاج عادي.",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "two constraints in one question: filling but not greasy, no meat but chicken ok",
+      "expect_no_evidence": true
     },
     {
-      "id": "q02", "vertical": "hotel", "question": "أبي غرفة ليلتين، معي المدام وبنتين صغار، وش أوفر لنا: جناح ولا غرفتين بينها باب؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "comparison requiring two facts (suite capacity, adjoining-room policy)"
+      "id": "q02",
+      "vertical": "hotel",
+      "question": "أبي غرفة ليلتين، معي المدام وبنتين صغار، وش أوفر لنا: جناح ولا غرفتين بينها باب؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "comparison requiring two facts (suite capacity, adjoining-room policy)",
+      "expect_no_evidence": true
     },
     {
-      "id": "q03", "vertical": "payments", "question": "انخصم المبلغ من حسابي، والمحل يقول العملية ما مشت، الحين أراجعكم ولا أراجعه؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "dispute routing; negation ('ما مشت') must not flip the meaning"
+      "id": "q03",
+      "vertical": "payments",
+      "question": "انخصم المبلغ من حسابي، والمحل يقول العملية ما مشت، الحين أراجعكم ولا أراجعه؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "dispute routing; negation ('ما مشت') must not flip the meaning",
+      "expect_no_evidence": true
     },
     {
-      "id": "q04", "vertical": "electronics", "question": "أبي جوال لأبوي، ما تهمه الكاميرا كثر ما يهمه الخط يكون واضح والبطارية تطوّل، وش عندكم؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "ranking by two stated priorities, one explicitly deprioritised"
+      "id": "q04",
+      "vertical": "electronics",
+      "question": "أبي جوال لأبوي، ما تهمه الكاميرا كثر ما يهمه الخط يكون واضح والبطارية تطوّل، وش عندكم؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "ranking by two stated priorities, one explicitly deprioritised",
+      "expect_no_evidence": true
     },
     {
-      "id": "q05", "vertical": "orders", "question": "وشوله تحسبون التوصيل مرتين وأنا طالب من نفس الفرع؟ الطلبين بيجون سوا وإلا كل واحد لحاله؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "fee policy + whether two orders are combined"
+      "id": "q05",
+      "vertical": "orders",
+      "question": "وشوله تحسبون التوصيل مرتين وأنا طالب من نفس الفرع؟ الطلبين بيجون سوا وإلا كل واحد لحاله؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "fee policy + whether two orders are combined",
+      "expect_no_evidence": true
     },
     {
-      "id": "q06", "vertical": "retail", "question": "أبي نفس هالثوب، مير المقاس اللي قبله، مب اللي أكبر منه، موجود عندكم؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "deictic (هالثوب) + relative size with an explicit negation"
+      "id": "q06",
+      "vertical": "retail",
+      "question": "أبي نفس هالثوب، مير المقاس اللي قبله، مب اللي أكبر منه، موجود عندكم؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "deictic (هالثوب) + relative size with an explicit negation",
+      "expect_no_evidence": true
     },
     {
-      "id": "q07", "vertical": "food", "question": "أبغى البرجر من غير بصل، بس الصوص اللي فيه نكهة بصل عادي، تقدروا تسوّوه كذا؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "ingredient substitution with an apparent contradiction; needs menu detail"
+      "id": "q07",
+      "vertical": "food",
+      "question": "أبغى البرجر من غير بصل، بس الصوص اللي فيه نكهة بصل عادي، تقدروا تسوّوه كذا؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "ingredient substitution with an apparent contradiction; needs menu detail",
+      "expect_no_evidence": true
     },
     {
-      "id": "q08", "vertical": "hotel", "question": "دحين لو وصلتكم بعد نص الليل، أحجز بتاريخ اليوم اللي طلعت فيه ولا اليوم اللي أوصل فيه؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "late check-in date policy"
+      "id": "q08",
+      "vertical": "hotel",
+      "question": "دحين لو وصلتكم بعد نص الليل، أحجز بتاريخ اليوم اللي طلعت فيه ولا اليوم اللي أوصل فيه؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "late check-in date policy",
+      "expect_no_evidence": true
     },
     {
-      "id": "q09", "vertical": "clinic", "question": "لو سمحتوا، الوالدة ما تقدر توقف كتير، فين أنزّلها عشان تدخل العيادة على طول؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "accessibility / drop-off point, phrased as a need not a question"
+      "id": "q09",
+      "vertical": "clinic",
+      "question": "لو سمحتوا، الوالدة ما تقدر توقف كتير، فين أنزّلها عشان تدخل العيادة على طول؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "accessibility / drop-off point, phrased as a need not a question",
+      "expect_no_evidence": true
     },
     {
-      "id": "q10", "vertical": "retail", "question": "عندكم دا المقاس في فرع تاني؟ وإذا موجود، تقدروا تحجزوه لي لين أجي بكرة؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "deictic (دا المقاس) + two-step stock and hold policy"
+      "id": "q10",
+      "vertical": "retail",
+      "question": "عندكم دا المقاس في فرع تاني؟ وإذا موجود، تقدروا تحجزوه لي لين أجي بكرة؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "deictic (دا المقاس) + two-step stock and hold policy",
+      "expect_no_evidence": true
     },
     {
-      "id": "q11", "vertical": "orders", "question": "أبي الطلب سفري، بس لا تجهزونه الحين، باقي لي نص ساعة وأوصلكم، متى أطلب منكم تبدون فيه؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "timing instruction with an implicit request for a trigger"
+      "id": "q11",
+      "vertical": "orders",
+      "question": "أبي الطلب سفري، بس لا تجهزونه الحين، باقي لي نص ساعة وأوصلكم، متى أطلب منكم تبدون فيه؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "timing instruction with an implicit request for a trigger",
+      "expect_no_evidence": true
     },
     {
-      "id": "q12", "vertical": "payments", "question": "حوّلت لخويي من أمس وللحين ما جاه شي، والمبلغ طالع من عندي، شالسالفة؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "transfer troubleshooting with two facts and a negation"
+      "id": "q12",
+      "vertical": "payments",
+      "question": "حوّلت لخويي من أمس وللحين ما جاه شي، والمبلغ طالع من عندي، شالسالفة؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "transfer troubleshooting with two facts and a negation",
+      "expect_no_evidence": true
     },
     {
-      "id": "q13", "vertical": "retail", "question": "أبي تمر حق هدية، مب حق استخدام البيت، وش عندكم زين وكم يطلع الكرتون مع التغليف؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "product + packaging + price, with a use-case qualifier"
+      "id": "q13",
+      "vertical": "retail",
+      "question": "أبي تمر حق هدية، مب حق استخدام البيت، وش عندكم زين وكم يطلع الكرتون مع التغليف؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "product + packaging + price, with a use-case qualifier",
+      "expect_no_evidence": true
     },
     {
-      "id": "q14", "vertical": "food", "question": "يا بعد حيي، حنا سبعة ومعنا بزرين، يكفينا نص ذبيحة وإلا نزيد عليه؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "portion sizing for a headcount including children"
+      "id": "q14",
+      "vertical": "food",
+      "question": "يا بعد حيي، حنا سبعة ومعنا بزرين، يكفينا نص ذبيحة وإلا نزيد عليه؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "portion sizing for a headcount including children",
+      "expect_no_evidence": true
     },
     {
-      "id": "q15", "vertical": "hotel", "question": "ودنا نسكن عندكم، بس معنا شايب نومه خفيف، عندكم غرف بعيدة عن المصعد وصجة الشارع؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "quiet-room request phrased via a guest condition"
+      "id": "q15",
+      "vertical": "hotel",
+      "question": "ودنا نسكن عندكم، بس معنا شايب نومه خفيف، عندكم غرف بعيدة عن المصعد وصجة الشارع؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "quiet-room request phrased via a guest condition",
+      "expect_no_evidence": true
     },
     {
-      "id": "q16", "vertical": "food", "question": "وش عندكم من أكل الديرة؟ نبي عريكة، بس العسل والسمن كل واحد لحاله، تضبطونها لنا؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "local dish + customization request"
+      "id": "q16",
+      "vertical": "food",
+      "question": "وش عندكم من أكل الديرة؟ نبي عريكة، بس العسل والسمن كل واحد لحاله، تضبطونها لنا؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "local dish + customization request",
+      "expect_no_evidence": true
     },
     {
-      "id": "q17", "vertical": "auto_service", "question": "الموتر ما به شي وهو بارد، لا مشيت به شوي قام ينتّع، أفحصه عندكم وإلا أودّيه كهربائي؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "symptom-based triage: which service handles it"
+      "id": "q17",
+      "vertical": "auto_service",
+      "question": "الموتر ما به شي وهو بارد، لا مشيت به شوي قام ينتّع، أفحصه عندكم وإلا أودّيه كهربائي؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "symptom-based triage: which service handles it",
+      "expect_no_evidence": true
     },
     {
-      "id": "q18", "vertical": "food", "question": "شنو عندكم قهوة مو مُرّة وايد؟ وأبيها بحليب خالي لاكتوز، مو خالي دسم، عندكم؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "two negations that are easy to collapse incorrectly"
+      "id": "q18",
+      "vertical": "food",
+      "question": "شنو عندكم قهوة مو مُرّة وايد؟ وأبيها بحليب خالي لاكتوز، مو خالي دسم، عندكم؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "two negations that are easy to collapse incorrectly",
+      "expect_no_evidence": true
     },
     {
-      "id": "q19", "vertical": "hotel", "question": "أبغي أحجز عندكم الويكند، وياي ياهل عمره سنتين، تحسبون له فطور بروحه ولا داخل معانا؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "age-based breakfast policy"
+      "id": "q19",
+      "vertical": "hotel",
+      "question": "أبغي أحجز عندكم الويكند، وياي ياهل عمره سنتين، تحسبون له فطور بروحه ولا داخل معانا؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "age-based breakfast policy",
+      "expect_no_evidence": true
     },
     {
-      "id": "q20", "vertical": "payments", "question": "يصير آخذ الجهاز من الفرع وأقسّط من الموقع، لو لازم الطلب كله أونلاين؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "cross-channel purchase and installment eligibility"
+      "id": "q20",
+      "vertical": "payments",
+      "question": "يصير آخذ الجهاز من الفرع وأقسّط من الموقع، لو لازم الطلب كله أونلاين؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "cross-channel purchase and installment eligibility",
+      "expect_no_evidence": true
     },
     {
-      "id": "q21", "vertical": "food", "question": "هو العرض ده على الاتنين بيتزا بأي حجم، ولا الكبيرة بس؟ ولو شلت الجبنة من واحدة السعر بيتغيّر؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "Egyptian dialect; offer terms + modification pricing"
+      "id": "q21",
+      "vertical": "food",
+      "question": "هو العرض ده على الاتنين بيتزا بأي حجم، ولا الكبيرة بس؟ ولو شلت الجبنة من واحدة السعر بيتغيّر؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "Egyptian dialect; offer terms + modification pricing",
+      "expect_no_evidence": true
     },
     {
-      "id": "q22", "vertical": "payments", "question": "أنا مش عايز أقفل الحساب، أنا عايز أوقف الكارت اللي ضاع بس، ينفع أعمل ده من الأبلكيشن؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "explicit negation separates two very different actions"
+      "id": "q22",
+      "vertical": "payments",
+      "question": "أنا مش عايز أقفل الحساب، أنا عايز أوقف الكارت اللي ضاع بس، ينفع أعمل ده من الأبلكيشن؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "explicit negation separates two very different actions",
+      "expect_no_evidence": true
     },
     {
-      "id": "q23", "vertical": "clinic", "question": "عايز أحجز عند دكتور عظام، بس الكشف يكون بعد ستة، وأي يوم غير الخميس، إيه المتاح؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "two constraints plus an excluded day"
+      "id": "q23",
+      "vertical": "clinic",
+      "question": "عايز أحجز عند دكتور عظام، بس الكشف يكون بعد ستة، وأي يوم غير الخميس، إيه المتاح؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "two constraints plus an excluded day",
+      "expect_no_evidence": true
     },
     {
-      "id": "q24", "vertical": "hotel", "question": "إذا منوصل بكير، فينا نترك الشناتي عندكن ونطلع، ومنرجع وقت تصير الأوضة جاهزة؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "early arrival / luggage policy"
+      "id": "q24",
+      "vertical": "hotel",
+      "question": "إذا منوصل بكير، فينا نترك الشناتي عندكن ونطلع، ومنرجع وقت تصير الأوضة جاهزة؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "early arrival / luggage policy",
+      "expect_no_evidence": true
     },
     {
-      "id": "q25", "vertical": "retail", "question": "هالجاكيت طلع ضيّق عليّ، فيني بدّله من فرع غير اللي اشتريته منه؟ الفاتورة معي بس شلت التيكيت.",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "cross-branch exchange without a tag but with a receipt"
+      "id": "q25",
+      "vertical": "retail",
+      "question": "هالجاكيت طلع ضيّق عليّ، فيني بدّله من فرع غير اللي اشتريته منه؟ الفاتورة معي بس شلت التيكيت.",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "cross-branch exchange without a tag but with a receipt",
+      "expect_no_evidence": true
     },
     {
-      "id": "q26", "vertical": "food", "question": "بدي أطلب منسف لعشرة، بس في اتنين ما بوكلوا لحمة، بتقدروا تعملوا إلهم دجاج بنفس الطلب؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "Levantine dialect; bulk order with a partial substitution"
+      "id": "q26",
+      "vertical": "food",
+      "question": "بدي أطلب منسف لعشرة، بس في اتنين ما بوكلوا لحمة، بتقدروا تعملوا إلهم دجاج بنفس الطلب؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "Levantine dialect; bulk order with a partial substitution",
+      "expect_no_evidence": true
     },
     {
-      "id": "q27", "vertical": "pharmacy", "question": "بدي أستلم دوا أبوي، الوصفة باسمه وهو مش قادر ييجي، شو لازم أجيب معي؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "third-party pickup requirements"
+      "id": "q27",
+      "vertical": "pharmacy",
+      "question": "بدي أستلم دوا أبوي، الوصفة باسمه وهو مش قادر ييجي، شو لازم أجيب معي؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "third-party pickup requirements",
+      "expect_no_evidence": true
     },
     {
-      "id": "q28", "vertical": "payments", "question": "هسه إذا أسدّد القسط قبل موعده، ينحسب للقسط الجاي لو بس يقلّل المبلغ اللي بذمّتي؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "early payment allocation policy"
+      "id": "q28",
+      "vertical": "payments",
+      "question": "هسه إذا أسدّد القسط قبل موعده، ينحسب للقسط الجاي لو بس يقلّل المبلغ اللي بذمّتي؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "early payment allocation policy",
+      "expect_no_evidence": true
     },
     {
-      "id": "q29", "vertical": "electronics", "question": "المكيّف ده بضمان الوكيل ولّا ضمان المحل؟ ولو حصلت ليهو مشكلة، إنتو بتجوا تشيلوه ولّا أجيبو ليكم؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "two-part warranty and collection policy"
+      "id": "q29",
+      "vertical": "electronics",
+      "question": "المكيّف ده بضمان الوكيل ولّا ضمان المحل؟ ولو حصلت ليهو مشكلة، إنتو بتجوا تشيلوه ولّا أجيبو ليكم؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "two-part warranty and collection policy",
+      "expect_no_evidence": true
     },
     {
-      "id": "q30", "vertical": "hotel", "question": "بغيت نحجز جوج بيوت حدّ بعضياتهم، واحد ليا ولمراتي وواحد للوليدات، واش تقدروا تضمنوا ليا يكونوا متلاصقين؟",
-      "expected_chunk_ids": [], "expected_facts": [],
-      "challenge": "adjacent-room guarantee, with a party composition detail"
+      "id": "q30",
+      "vertical": "hotel",
+      "question": "بغيت نحجز جوج بيوت حدّ بعضياتهم، واحد ليا ولمراتي وواحد للوليدات، واش تقدروا تضمنوا ليا يكونوا متلاصقين؟",
+      "expected_chunk_ids": [],
+      "expected_facts": [],
+      "challenge": "adjacent-room guarantee, with a party composition detail",
+      "expect_no_evidence": true
     }
   ]
 }

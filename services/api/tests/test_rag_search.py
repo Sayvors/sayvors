@@ -238,7 +238,7 @@ async def test_near_duplicate_chunks_do_not_consume_top_k_slots(db):
 
     hits = await hybrid_search(
         databank_id=_BANK, query_vector=None,
-        query_text="اللاتيه 15 ريال Delivery", top_k=2, db=db,
+        query_text="اللاتيه 15 ريال Delivery Riyadh two days", top_k=2, db=db,
     )
     ids = [hit["id"] for hit in hits]
     assert len(ids) == 2

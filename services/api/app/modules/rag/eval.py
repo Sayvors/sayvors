@@ -47,18 +47,31 @@ def evidence_present(block: str, expected_facts: list[str]) -> bool | None:
     return all(fact in block for fact in expected_facts)
 
 
+def deflected(block: str) -> bool:
+    """True when nothing was injected into the prompt.
+
+    For a question the business has no evidence for, this is the *correct*
+    outcome: with no retrieved facts, the assistant must say it will confirm
+    rather than invent a price, hour or policy.
+    """
+    return block.strip() == ""
+
+
 def score_case(case: dict[str, Any], *, retrieved: list[str], prompt_block: str, k: int) -> dict[str, Any]:
     """Score one golden-set case. Tolerant of missing optional labels."""
     expected_ids = [str(x) for x in case.get("expected_chunk_ids") or []]
     expected_facts = [str(x) for x in case.get("expected_facts") or []]
     recall = recall_at_k(expected_ids, retrieved, k)
     evidence = evidence_present(prompt_block, expected_facts)
+    expects_none = bool(case.get("expect_no_evidence"))
     return {
         "id": case.get("id") or "unlabelled",
         "vertical": case.get("vertical") or "unlabelled",
         "recall_at_k": recall,
         "evidence_in_prompt": evidence,
-        "labelled": recall is not None or evidence is not None,
+        "expect_no_evidence": expects_none,
+        "deflected": deflected(prompt_block) if expects_none else None,
+        "labelled": recall is not None or evidence is not None or expects_none,
     }
 
 
@@ -75,10 +88,15 @@ def summarize(scored: list[dict[str, Any]]) -> dict[str, Any]:
     def _block(rows: list[dict[str, Any]]) -> dict[str, Any]:
         recalls = [r["recall_at_k"] for r in rows if r["recall_at_k"] is not None]
         evidence = [r["evidence_in_prompt"] for r in rows if r["evidence_in_prompt"] is not None]
+        deflections = [r["deflected"] for r in rows if r["deflected"] is not None]
         return {
             "cases": len(rows),
             "recall_at_k": round(sum(recalls) / len(recalls), 4) if recalls else None,
             "evidence_rate": round(sum(1 for x in evidence if x) / len(evidence), 4) if evidence else None,
+            "deflection_rate": (
+                round(sum(1 for x in deflections if x) / len(deflections), 4)
+                if deflections else None
+            ),
         }
 
     return {

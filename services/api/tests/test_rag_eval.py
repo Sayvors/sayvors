@@ -79,6 +79,21 @@ def test_review_mode_shows_what_came_back_for_labelling():
     assert "(no hits — check the databank id)" in text
 
 
+def test_deflection_is_scored_for_no_evidence_cases():
+    good = score_case(
+        {"expect_no_evidence": True}, retrieved=["weak-hit"],
+        prompt_block="", k=4,
+    )
+    bad = score_case(
+        {"expect_no_evidence": True}, retrieved=["weak-hit"],
+        prompt_block="BUSINESS KNOWLEDGE ... 85 SAR", k=4,
+    )
+    assert good["deflected"] is True and good["labelled"] is True
+    assert bad["deflected"] is False
+    report = summarize([good, bad])
+    assert report["overall"]["deflection_rate"] == 0.5
+
+
 def test_loader_accepts_a_file_level_databank(tmp_path):
     path = tmp_path / "golden.json"
     path.write_text(

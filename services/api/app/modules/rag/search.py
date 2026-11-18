@@ -95,6 +95,22 @@ def normalize_term(term: str) -> str:
     )
 
 
+# A single coincidental word must not put marketing text into a customer
+# reply. Under RRF a rank-0 keyword hit scores 0.0164 whether it matched one
+# word or five, so the score floor cannot tell strong from weak. Require two
+# distinct content terms when the question has at least three — short queries
+# keep the single-term behaviour they need.
+KEYWORD_MIN_COVERAGE_TERMS = 2
+KEYWORD_MIN_QUERY_FOR_COVERAGE = 3
+
+
+def _keyword_covers(hit: dict[str, Any], terms: list[str]) -> bool:
+    if len(terms) < KEYWORD_MIN_QUERY_FOR_COVERAGE:
+        return True
+    folded = content_terms(hit.get("content") or "")
+    return sum(1 for term in terms if term in folded) >= KEYWORD_MIN_COVERAGE_TERMS
+
+
 def content_terms(text: str) -> frozenset[str]:
     """Normalized token set for near-duplicate detection in the prompt block."""
     out: set[str] = set()
@@ -429,5 +445,9 @@ async def hybrid_search(
             keyword_hits = await _fallback_keyword_search(
                 db, databank_id, query_text, limit
             )
+        query_term_list = [normalize_term(t) for t in query_terms(query_text)]
+        keyword_hits = [
+            hit for hit in keyword_hits if _keyword_covers(hit, query_term_list)
+        ]
 
     return _rrf_merge(vector_hits, keyword_hits, top_k)
