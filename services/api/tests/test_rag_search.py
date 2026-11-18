@@ -193,3 +193,49 @@ def test_canonical_vector_rejects_a_wrong_width():
     assert canonical_vector(None) is None
     wide = _vector(1.0)
     assert canonical_vector(wide) == wide
+
+
+# -- P0 query-side correctness ----------------------------------------------
+
+
+def test_arabic_punctuation_is_no_longer_part_of_a_term():
+    q = keyword_tsquery("كم سعر الشاورما؟")
+    assert "؟" not in q
+    assert "سعر" in q
+    assert "الشاورما" in q
+
+
+def test_arabic_spelling_variants_fold_to_the_same_term():
+    from app.modules.rag.search import normalize_term
+
+    assert normalize_term("أسعار") == normalize_term("اسعار") == "اسعار"
+    assert normalize_term("الشاورمـة") == normalize_term("الشاورمة")
+    plain = set(keyword_tsquery("اسعار الطعام").split(" | "))
+    hamza = set(keyword_tsquery("أسعار الطعام").split(" | "))
+    assert plain & hamza, "the two spellings must share at least one query term"
+
+
+def test_stopwords_do_not_crowd_out_real_terms():
+    q = keyword_tsquery("what is the price of the beans?")
+    assert "what" not in q and "is" not in q and "the" not in q and "of" not in q
+    assert "price:*" in q and "beans:*" in q
+
+
+def test_long_terms_use_prefix_but_short_terms_do_not():
+    q = keyword_tsquery("hi beans")
+    assert "hi" in q
+    assert "beans:*" in q
+
+
+@pytest.mark.asyncio
+async def test_keyword_search_matches_hamza_query_to_plain_stored_text(db):
+    """The SQLite fallback folds both sides; Postgres emits both variants."""
+    await _seed(db)
+    await _add_chunk(db, "rag-hamza-chunk", content="أسعار القهوة خمسون ريالا", seq=0)
+    await db.commit()
+
+    hits = await hybrid_search(
+        databank_id=_BANK, query_vector=None, query_text="اسعار القهوة",
+        top_k=5, db=db,
+    )
+    assert [hit["id"] for hit in hits] == ["rag-hamza-chunk"]

@@ -26,6 +26,7 @@ import logging
 from sqlalchemy import select
 
 from ...config import settings
+from .search import content_terms, query_terms
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +38,18 @@ GROUNDING_TOP_K = 4
 # ~350 tokens of retrieved text: enough for a price, a policy and a spec,
 # without letting one chunk crowd out the conversation history.
 GROUNDING_MAX_CHARS = 1400
-# "hi", "?" and emoji carry no retrievable intent.
+# "hi", "?" and emoji carry no retrievable intent — and neither does a message
+# made entirely of stopwords once they are filtered out.
 GROUNDING_MIN_QUERY_CHARS = 3
+# RRF scores are 1/(60 + rank + 1): 0.0164 for rank 0, 0.0161 for rank 1,
+# 0.0159 for rank 2. A floor just above rank 2 keeps the two strongest hits
+# of a single retriever and everything a second retriever agreed on (~0.032).
+# Without it, any keyword coincidence reached every reply prompt.
+GROUNDING_MIN_SCORE = 0.016
+# Near-identical passages must not consume the whole character budget. Jaccard
+# overlap above this is treated as the same fact (MMR-style diversity, without
+# a second embedding round trip in the customer's latency path).
+GROUNDING_DIVERSITY_THRESHOLD = 0.8
 # A tenant with many databanks still gets a bounded number of searches.
 _MAX_DATABANKS = 5
 
@@ -144,15 +155,31 @@ async def _retrieve(
 
 
 def _render(hits: list[dict]) -> str:
-    """Prompt block. Deduped and budgeted; empty when nothing useful matched."""
+    """Prompt block. Score-gated, deduped, diverse and budgeted; empty when
+    nothing useful matched."""
     seen: set[str] = set()
+    selected_terms: list[frozenset[str]] = []
     lines: list[str] = []
     used = 0
     for hit in hits:
+        if (hit.get("score") or 0.0) < GROUNDING_MIN_SCORE:
+            continue
         text = " ".join((hit.get("content") or "").split())
         if not text or text in seen:
             continue
+        terms = content_terms(text)
+        if terms and selected_terms:
+            # Jaccard against the already-selected passages: two chunks that
+            # share most tokens are one fact, not two independent sources.
+            overlap = any(
+                len(terms & chosen) / len(terms | chosen) >= GROUNDING_DIVERSITY_THRESHOLD
+                for chosen in selected_terms
+            )
+            if overlap:
+                continue
         seen.add(text)
+        if terms:
+            selected_terms.append(terms)
         if used + len(text) > GROUNDING_MAX_CHARS:
             remaining = GROUNDING_MAX_CHARS - used
             if remaining < 120:
@@ -186,6 +213,10 @@ async def reply_block(
     """
     text = (query or "").strip()
     if len(text) < GROUNDING_MIN_QUERY_CHARS:
+        return ""
+    # A question made only of stopwords would otherwise turn every casual
+    # "what is the ...?" into a retrieval against a real menu or policy doc.
+    if not query_terms(text):
         return ""
     try:
         databank_ids, grounded = await _scope(
