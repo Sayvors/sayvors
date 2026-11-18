@@ -1244,3 +1244,158 @@ async def test_poll_once_scope_is_a_hard_sql_filter(db, channel_id, config_id, m
     totals = await reviews_worker.poll_once(channel_ids=set())
     assert polled == []
     assert totals["channels"] == 0
+
+
+# -- bounded per-review concurrency ---------------------------------------
+
+
+class _FakeTaskSession:
+    """Stand-in for a per-review Postgres session in concurrency tests.
+
+    The real factory uses SQLite's single shared connection, which cannot host
+    two transactions at once. These tests exercise fan-out and stats merging,
+    not the session factory.
+    """
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def get(self, model, ident):
+        return self._rows.get((model, ident))
+
+
+async def _fake_review_session_for(db, channel_id, config_id):
+    ch = await db.get(Channel, channel_id)
+    cfg = await db.get(AutoReplyConfig, config_id)
+    rows = {(Channel, channel_id): ch, (AutoReplyConfig, config_id): cfg}
+
+    def _factory():
+        return _FakeTaskSession(rows)
+
+    return _factory
+
+
+@pytest.mark.asyncio
+async def test_reviews_are_processed_concurrently(db, channel_id, config_id, monkeypatch):
+    """Two reviews must be inside the handler at the same time, not in a
+    serial for loop. The gate releases only once both have entered."""
+    import asyncio
+
+    from app.modules.channels import reviews_worker
+
+    entered = asyncio.Event()
+    active = 0
+    peak = 0
+
+    async def _fake(db_arg, ch, cfg, client, review, stats):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await entered.wait()
+        active -= 1
+        stats["reviews"] += 1
+
+    monkeypatch.setattr(reviews_worker, "_handle_fetched_review", _fake)
+    monkeypatch.setattr(
+        reviews_worker, "_review_session",
+        await _fake_review_session_for(db, channel_id, config_id),
+    )
+    monkeypatch.setitem(
+        reviews_worker._review_semaphores,
+        asyncio.get_running_loop(),
+        asyncio.Semaphore(2),
+    )
+
+    async def _release():
+        while active < 2:
+            await asyncio.sleep(0)
+        entered.set()
+
+    releaser = asyncio.create_task(_release())
+    stats = {
+        "reviews": 0, "new": 0, "replied": 0, "queued": 0,
+        "skipped": 0, "adopted": 0, "errors": 0,
+    }
+    await reviews_worker._process_reviews(
+        db, await db.get(Channel, channel_id), await db.get(AutoReplyConfig, config_id),
+        reviews=[_review("gg-concurrent-1"), _review("gg-concurrent-2")],
+        stats=stats, access_token="tok", refresh_token=None,
+    )
+    await releaser
+    assert peak == 2
+    assert stats["reviews"] == 2
+
+
+@pytest.mark.asyncio
+async def test_review_concurrency_respects_the_global_bound(db, channel_id, config_id, monkeypatch):
+    """The semaphore is the single place that caps LLM fan-out."""
+    import asyncio
+
+    from app.modules.channels import reviews_worker
+
+    monkeypatch.setitem(
+        reviews_worker._review_semaphores,
+        asyncio.get_running_loop(),
+        asyncio.Semaphore(1),
+    )
+    active = 0
+    peak = 0
+
+    async def _fake(db_arg, ch, cfg, client, review, stats):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0)
+        active -= 1
+        stats["reviews"] += 1
+
+    monkeypatch.setattr(reviews_worker, "_handle_fetched_review", _fake)
+    monkeypatch.setattr(
+        reviews_worker, "_review_session",
+        await _fake_review_session_for(db, channel_id, config_id),
+    )
+    stats = {
+        "reviews": 0, "new": 0, "replied": 0, "queued": 0,
+        "skipped": 0, "adopted": 0, "errors": 0,
+    }
+    await reviews_worker._process_reviews(
+        db, await db.get(Channel, channel_id), await db.get(AutoReplyConfig, config_id),
+        reviews=[_review("gg-bound-1"), _review("gg-bound-2")],
+        stats=stats, access_token="tok", refresh_token=None,
+    )
+    assert peak == 1
+    assert stats["reviews"] == 2
+
+
+@pytest.mark.asyncio
+async def test_review_failure_is_counted_without_losing_siblings(db, channel_id, config_id, monkeypatch):
+    """One review raising must not fail the batch or drop the other's stats."""
+    from app.modules.channels import reviews_worker
+
+    async def _fake(db_arg, ch, cfg, client, review, stats):
+        if review.review_id == "gg-bad":
+            raise RuntimeError("provider exploded")
+        stats["replied"] += 1
+
+    monkeypatch.setattr(reviews_worker, "_handle_fetched_review", _fake)
+    monkeypatch.setattr(
+        reviews_worker, "_review_session",
+        await _fake_review_session_for(db, channel_id, config_id),
+    )
+    stats = {
+        "reviews": 0, "new": 0, "replied": 0, "queued": 0,
+        "skipped": 0, "adopted": 0, "errors": 0,
+    }
+    await reviews_worker._process_reviews(
+        db, await db.get(Channel, channel_id), await db.get(AutoReplyConfig, config_id),
+        reviews=[_review("gg-bad"), _review("gg-good")],
+        stats=stats, access_token="tok", refresh_token=None,
+    )
+    assert stats["replied"] == 1
+    assert stats["errors"] == 1

@@ -20,6 +20,9 @@ import asyncio
 import json
 import logging
 import uuid
+import weakref
+from collections.abc import Callable
+from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, text, update
@@ -55,6 +58,49 @@ POLL_OVERLAP = timedelta(minutes=15)
 # pathological channel from monopolizing the pass. Anything above the cap
 # heals on the next daily sweep.
 SWEEP_HEAL_BATCH = 100
+
+# Reviews are processed concurrently within a channel, but the bound is
+# process-wide across all channels and all triggers (poll, push, direct call).
+# The old serial loop handled one review at a time per channel; five channels
+# therefore meant at most five concurrent LLM pipelines. Ten keeps the same
+# order of magnitude of provider spend while cutting a 100-review channel
+# from ~5-13 minutes to roughly one. Raise only with the provider's rate
+# limits and the tenant's LLM budget in view.
+REVIEW_CONCURRENCY = 10
+
+# Per-review sessions must never be the channel's session: _handle_fetched_review
+# commits and rolls back internally. Tests point this at the shared in-memory
+# engine the same way the billing modules do. None means "use the real factory".
+_session_factory: Callable[[], AsyncSession] | None = None
+
+# One semaphore per event loop. A module-level semaphore would bind to the
+# first loop that used it and break under TestClient's portal loops; a
+# WeakKeyDictionary keeps the bound global within a loop without leaking
+# semaphores for loops that have gone away.
+_review_semaphores: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+
+
+def _review_semaphore() -> asyncio.Semaphore:
+    loop = asyncio.get_running_loop()
+    semaphore = _review_semaphores.get(loop)
+    if semaphore is None:
+        semaphore = asyncio.Semaphore(REVIEW_CONCURRENCY)
+        _review_semaphores[loop] = semaphore
+    return semaphore
+
+
+def _review_session():
+    """An async context manager owning exactly one review task's session.
+
+    Synchronous on purpose: callers use `async with _review_session() as db`.
+    Production returns an AsyncSession; tests return a borrowed or fake session
+    with the same context-manager contract.
+    """
+    if _session_factory is not None:
+        return _session_factory()
+    from ...database import async_session
+
+    return async_session()
 
 # Channel ids already reported as having no stored Google credentials, so the
 # poll loop warns once instead of on every cycle. Process-local by design: a
@@ -1609,6 +1655,128 @@ async def _handle_fetched_review(
             logger.warning("review.replied enqueue failed for %s: %s", review.review_id, e)
 
 
+def _make_review_client(
+    *,
+    access_token: str,
+    refresh_token: str | None,
+    expires_at,
+    channel_id: str,
+    db: AsyncSession,
+) -> GoogleReviewsClient:
+    """Build a client whose token persister writes to this task's session.
+
+    The outer channel client keeps its own persister for the list/sweep reads.
+    A per-review client must not write a refreshed token back through the
+    channel's session: concurrent tasks committing on one session is exactly
+    the race this split exists to remove. Refresh tokens are not rotated, so
+    two tasks persisting the same new access token is harmless.
+    """
+    from .service import encrypt_token as _encrypt_token
+
+    client = GoogleReviewsClient(access_token, refresh_token)
+    client.set_known_expiry(expires_at)
+
+    async def _persist(new_access_token: str, new_expires_at) -> None:
+        row = await db.get(Channel, channel_id)
+        if row is None:
+            return
+        row.access_token = _encrypt_token(new_access_token)
+        row.token_expires_at = new_expires_at
+        db.add(row)
+        try:
+            await db.commit()
+        except Exception as e:
+            logger.error("Failed to persist refreshed token for %s: %s", channel_id, e)
+            await db.rollback()
+
+    client.set_token_persister(_persist)
+    return client
+
+
+async def _process_reviews(
+    db: AsyncSession,
+    channel: Channel,
+    config: AutoReplyConfig,
+    *,
+    reviews: list,
+    stats: dict,
+    access_token: str,
+    refresh_token: str | None,
+) -> None:
+    """Run each fetched review through the pipeline with bounded concurrency.
+
+    `_handle_fetched_review` is deliberately untouched: it commits, rolls back
+    and takes advisory locks, so it must receive a session and a client owned
+    by one task. This helper only owns the fan-out, the stats merge and the
+    claim-renewal cadence.
+    """
+    semaphore = _review_semaphore()
+    channel_id = channel.id
+    config_id = config.id
+    expires_at = channel.token_expires_at
+
+    async def _one(review) -> dict:
+        async with semaphore:
+            task_stats = {key: 0 for key in stats}
+            async with _review_session() as review_db:
+                ch = await review_db.get(Channel, channel_id)
+                cfg = await review_db.get(AutoReplyConfig, config_id)
+                if ch is None or cfg is None:
+                    logger.error(
+                        "Review task lost its channel/config rows: channel=%s config=%s",
+                        channel_id, config_id,
+                    )
+                    task_stats["errors"] += 1
+                    return task_stats
+                client = _make_review_client(
+                    access_token=access_token,
+                    refresh_token=refresh_token,
+                    expires_at=expires_at,
+                    channel_id=channel_id,
+                    db=review_db,
+                )
+                await _handle_fetched_review(review_db, ch, cfg, client, review, task_stats)
+                return task_stats
+
+    # Renew on a clock, not every N reviews: with concurrency, "10 reviews"
+    # can finish in a second or take ten minutes. A third of the lease TTL
+    # keeps the claim ours however slow the provider is. The channel session
+    # is idle while the tasks run, so it is safe for this one writer.
+    keep_claim = asyncio.create_task(_keep_claim_alive(db, config_id))
+    try:
+        results = await asyncio.gather(*[_one(r) for r in reviews], return_exceptions=True)
+    finally:
+        keep_claim.cancel()
+        with suppress(asyncio.CancelledError):
+            await keep_claim
+
+    for review, result in zip(reviews, results):
+        if isinstance(result, BaseException):
+            # One bad review must not fail the channel pass; the claim and the
+            # unique indexes make the next poll pick it up again safely.
+            logger.error(
+                "Review task failed for channel %s review %s: %r",
+                channel_id, getattr(review, "review_id", "?"), result,
+                exc_info=result if isinstance(result, Exception) else None,
+            )
+            stats["errors"] += 1
+            continue
+        for key, value in result.items():
+            stats[key] += value
+
+
+async def _keep_claim_alive(db: AsyncSession, config_id: str) -> None:
+    """Renew the channel lease while a concurrent review batch is running."""
+    while True:
+        await asyncio.sleep(max(10, LOCK_SECONDS // 3))
+        try:
+            await _renew_channel_claim(db, config_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning("Review batch claim renewal failed for %s: %s", config_id, e)
+
+
 async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyConfig) -> dict:
     """Poll one Google Reviews channel and auto-reply to new reviews."""
     stats = {"reviews": 0, "new": 0, "replied": 0, "queued": 0, "skipped": 0, "adopted": 0, "errors": 0}
@@ -1735,18 +1903,15 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
 
         await _mark_reviews_seen(db, channel, reviews)
 
-        # Renew the channel claim every 10 reviews so a long pass (many
-        # reviews, each taking seconds for LLM classify + generate + post)
-        # doesn't let the 120s claim TTL expire and let a second replica
-        # claim the channel mid-pass. Double-processing is the race this
-        # prevents; the unique index on (channel_id, review_id) is the
-        # database backstop if renewal ever lapses.
-        _review_count = 0
-        for review in reviews:
-            await _handle_fetched_review(db, channel, config, client, review, stats)
-            _review_count += 1
-            if _review_count % 10 == 0:
-                await _renew_channel_claim(db, config.id)
+        # Reviews are handled concurrently in one bounded batch. Claim renewal
+        # moves to a timer inside _process_reviews: with concurrency, "10
+        # reviews" is not a meaningful duration. The unique index on
+        # (channel_id, review_id) remains the backstop if a lease ever lapses.
+        await _process_reviews(
+            db, channel, config,
+            reviews=reviews, stats=stats,
+            access_token=access_token, refresh_token=refresh_token,
+        )
 
         # A complete sweep is intentionally rare: the normal poll is
         # incremental, so removal detection needs one full read per day.
@@ -1786,8 +1951,13 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                 unseen = [
                     r for r in all_reviews if r.review_id[:200] not in known_ids
                 ][:SWEEP_HEAL_BATCH]
-                for review in unseen:
-                    await _handle_fetched_review(db, channel, config, client, review, stats)
+                # Same bounded fan-out as the incremental path; the sweep is
+                # capped at SWEEP_HEAL_BATCH so this cannot run unbounded.
+                await _process_reviews(
+                    db, channel, config,
+                    reviews=unseen, stats=stats,
+                    access_token=access_token, refresh_token=refresh_token,
+                )
                 if unseen:
                     logger.info(
                         "Sweep healed %d missed review(s) for channel %s",
