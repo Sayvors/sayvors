@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "note": "EXAMPLE SHAPE ONLY - these are not real customer questions. Replace with 50 labelled questions per vertical from support tickets before trusting any score.",
+  "cases": [
+    {
+      "id": "example-price",
+      "vertical": "coffee",
+      "databank_id": "replace-with-a-real-databank-uuid",
+      "question": "how much is the 1kg whole bean?",
+      "expected_chunk_ids": ["replace-with-the-chunk-uuid-that-answers-it"],
+      "expected_facts": ["85 SAR"]
+    },
+    {
+      "id": "example-arabic-price",
+      "vertical": "coffee",
+      "databank_id": "replace-with-a-real-databank-uuid",
+      "question": "كم سعر القهوة؟",
+      "expected_chunk_ids": [],
+      "expected_facts": ["15 ريال"]
+    }
+  ]
+}
