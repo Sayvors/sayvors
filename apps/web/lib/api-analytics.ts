@@ -35,6 +35,14 @@ export interface Overview {
   sentiment: SentimentSplit;
   response_rate: number;
   avg_response_seconds: number | null;
+  /** FACT-8: median + spread, because one slow reply skews the average. */
+  response_time?: {
+    sample_size: number;
+    median_seconds: number | null;
+    p90_seconds: number | null;
+    buckets: { key: string; count: number; pct: number }[];
+    truncated: boolean;
+  } | null;
   unanswered: number;
   reputation_score: number;
   health_score: number;

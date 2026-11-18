@@ -18,6 +18,42 @@ from .scoping import disconnected_channel_ids
 
 logger = logging.getLogger(__name__)
 
+# A median only needs a representative sample, not the full history. Bounded
+# so a tenant with 100k reviews cannot turn a dashboard read into a full scan.
+RESPONSE_SAMPLE_LIMIT = 5000
+# Buckets are chosen around what a merchant can act on, not statistical quantiles.
+RESPONSE_BUCKETS = (
+    ("under_1h", 0, 3600),
+    ("1h_to_24h", 3600, 86400),
+    ("1d_to_7d", 86400, 604800),
+    ("over_7d", 604800, None),
+)
+
+
+def _response_distribution(durations: list[float]) -> dict:
+    """Median, p90 and actionable buckets from a bounded duration sample."""
+    values = sorted(max(0.0, float(v)) for v in durations if v is not None)
+    if not values:
+        return {"sample_size": 0, "median_seconds": None, "p90_seconds": None,
+                "buckets": [], "truncated": False}
+    n = len(values)
+    median = values[n // 2] if n % 2 else (values[n // 2 - 1] + values[n // 2]) / 2
+    p90 = values[min(n - 1, math.ceil(0.9 * n) - 1)]
+    buckets = []
+    for label, low, high in RESPONSE_BUCKETS:
+        count = sum(1 for v in values if v >= low and (high is None or v < high))
+        buckets.append({
+            "key": label, "count": count,
+            "pct": round(count / n * 100, 1),
+        })
+    return {
+        "sample_size": n,
+        "median_seconds": int(round(median)),
+        "p90_seconds": int(round(p90)),
+        "buckets": buckets,
+        "truncated": n >= RESPONSE_SAMPLE_LIMIT,
+    }
+
 
 def _day_bounds(day) -> tuple[datetime, datetime]:
     start = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
@@ -124,6 +160,25 @@ async def get_overview(
     if rt_row is not None:
         response_seconds = int(rt_row)
 
+    sample = (
+        await db.execute(
+            select(
+                func.extract("epoch", ReviewReply.created_at)
+                - func.extract("epoch", func.coalesce(
+                    ReviewInsight.review_updated_at, ReviewInsight.created_at
+                ))
+            )
+            .where(
+                *review_filter,
+                ReviewInsight.replied == True,  # noqa: E712
+                ReviewReply.review_id == ReviewInsight.review_id,
+                ReviewReply.status == "posted",
+            )
+            .limit(RESPONSE_SAMPLE_LIMIT)
+        )
+    ).scalars().all()
+    response_time = _response_distribution(list(sample))
+
     # ── Period vs previous period ──
     async def _period_counts(start: datetime, end: datetime) -> dict:
         bucket = func.coalesce(ReviewInsight.review_updated_at, ReviewInsight.created_at)
@@ -194,6 +249,7 @@ async def get_overview(
         },
         "response_rate": round(response_rate * 100, 1),
         "avg_response_seconds": response_seconds,
+        "response_time": response_time,
         "unanswered": total_reviews - replied_count,
         "reputation_score": reputation,
         "health_score": health,

@@ -11,6 +11,7 @@ import {
   fetchOverview,
   fetchInsights,
   fetchTimeseries,
+  type Overview,
 } from "@/lib/api-analytics";
 import MessagingSection from "@/components/analytics/MessagingSection";
 import { MetricChart, RatingDistribution, SentimentSplitBar } from "@/components/analytics/Charts";
@@ -31,6 +32,66 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
  * ink, surface, sunken — status by weight and inversion, never by hue. */
 
 const RANGES = [7, 30, 90] as const;
+
+function formatDuration(seconds: number | null | undefined, units: {
+  minutes: string; hours: string; days: string;
+}): string {
+  if (seconds == null) return "—";
+  if (seconds < 3600) return units.minutes.replace("{value}", String(Math.round(seconds / 60)));
+  if (seconds < 86400) return units.hours.replace("{value}", String(Math.round(seconds / 3600)));
+  return units.days.replace("{value}", String(Math.round(seconds / 86400)));
+}
+
+/** FACT-8: median and spread for review replies, not a misleading average. */
+function ResponseTimeCard({ responseTime }: {
+  responseTime: NonNullable<Overview["response_time"]>;
+}) {
+  const { t } = useI18n();
+  const k = t.analytics.kpis;
+  if (!responseTime || responseTime.sample_size === 0) return null;
+
+  return (
+    <section className="ui-card p-4 sm:p-5" aria-label={k.responseSla}>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">{k.responseSla}</h3>
+        <span className="text-[11px] text-[var(--ui-ink-2)]">
+          {k.responseSlaSub.replace("{n}", String(responseTime.sample_size))}
+        </span>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-6">
+        <div>
+          <p className="text-[10px] uppercase tracking-wide text-[var(--ui-ink-2)]">{k.responseMedian}</p>
+          <p className="text-[22px] font-bold text-[var(--ui-ink)]">
+            {formatDuration(responseTime.median_seconds, k)}
+          </p>
+        </div>
+        <div>
+          <p className="text-[10px] uppercase tracking-wide text-[var(--ui-ink-2)]">{k.responseP90}</p>
+          <p className="text-[22px] font-bold text-[var(--ui-ink)]">
+            {formatDuration(responseTime.p90_seconds, k)}
+          </p>
+        </div>
+      </div>
+      <div className="mt-4 space-y-1.5">
+        {responseTime.buckets.map((bucket) => (
+          <div key={bucket.key} className="flex items-center gap-2 text-[11px]">
+            <span className="w-28 shrink-0 text-[var(--ui-ink-2)]">
+              {k[`bucket_${bucket.key}` as keyof typeof k] as string}
+            </span>
+            <span className="h-2 flex-1 overflow-hidden rounded-full bg-[var(--ui-sunken)]">
+              <span className="block h-full bg-[var(--ui-ink)]" style={{ width: `${bucket.pct}%` }} />
+            </span>
+            <span className="w-12 shrink-0 text-right font-semibold text-[var(--ui-ink)]">{bucket.pct}%</span>
+          </div>
+        ))}
+      </div>
+      <p className="mt-3 text-[10.5px] leading-relaxed text-[var(--ui-ink-2)]" title={k.responseAvgNote}>
+        {k.responseAvgNote}
+        {responseTime.truncated ? ` ${k.responseTruncated.replace("{n}", String(responseTime.sample_size))}` : ""}
+      </p>
+    </section>
+  );
+}
 
 export default function OverviewPanel() {
   const { t, locale } = useI18n();
@@ -217,6 +278,9 @@ export default function OverviewPanel() {
         <div className="space-y-6">
           {/* Reputation pulse + who is waiting: the two decision cards. */}
           <PulseCards days={days} channelId={channelId} />
+          {overview?.response_time && (
+            <ResponseTimeCard responseTime={overview.response_time} />
+          )}
 
           {edits.length > 0 && (
             <div className="ui-card p-4 sm:p-5">
