@@ -28,15 +28,19 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
 
-from app.config import settings
-from app.database import async_session
 from app.modules.rag.eval import GOLDEN_SCHEMA_VERSION, score_case, summarize
-from app.modules.rag.grounding import _render
-from app.modules.rag.search import hybrid_search
+
+# Settings.env_file is ".env", resolved against the process cwd. The repository
+# root .env carries a few stale keys that strict validation rejects, so pin the
+# working directory to services/api before any app import happens.
+_INVOKED_FROM = Path.cwd()
+_APP_DIR = Path(__file__).resolve().parent.parent
+os.chdir(_APP_DIR)
 
 
 def load_golden(path: str) -> list[dict[str, Any]]:
@@ -63,6 +67,8 @@ def load_golden(path: str) -> list[dict[str, Any]]:
 
 
 async def _vector_for(query: str) -> tuple[list[float] | None, str | None]:
+    from app.config import settings
+
     if not settings.embeddings_enabled:
         return None, None
     try:
@@ -75,6 +81,10 @@ async def _vector_for(query: str) -> tuple[list[float] | None, str | None]:
 
 
 async def run(cases: list[dict[str, Any]], top_k: int) -> dict[str, Any]:
+    from app.database import async_session
+    from app.modules.rag.grounding import _render
+    from app.modules.rag.search import hybrid_search
+
     scored: list[dict[str, Any]] = []
     async with async_session() as db:
         for case in cases:
@@ -132,8 +142,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    golden = Path(args.golden)
+    if not golden.is_absolute():
+        golden = _INVOKED_FROM / golden
     try:
-        cases = load_golden(args.golden)
+        cases = load_golden(str(golden))
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"golden set error: {exc}", file=sys.stderr)
         return 2
