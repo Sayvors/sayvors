@@ -203,6 +203,7 @@ class WhatsAppAdapter(MetaProviderAdapter):
                 f"WhatsApp code exchange failed ({resp.status_code}): "
                 f"{resp.text[:300]}",
                 401,
+                public="WhatsApp rejected the sign-in. Try connecting again.",
             )
         return resp.json()  # {access_token, ...}
 
@@ -837,6 +838,7 @@ class WhatsAppAdapter(MetaProviderAdapter):
             raise MetaAPIError(
                 f"WhatsApp media upload failed ({resp.status_code}): {resp.text[:300]}",
                 resp.status_code,
+                public="The media upload failed. Try again.",
             )
         return resp.json().get("id", "")
 

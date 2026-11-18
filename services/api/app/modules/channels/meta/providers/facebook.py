@@ -52,6 +52,7 @@ class FacebookAdapter(MetaProviderAdapter):
                 f"Facebook code exchange failed ({resp.status_code}): "
                 f"{resp.text[:300]}",
                 401,
+                public="Facebook rejected the sign-in. Try connecting again.",
             )
         return resp.json()
 
