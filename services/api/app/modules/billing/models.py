@@ -189,6 +189,20 @@ class BillingRequest(Base):
     __table_args__ = (
         Index("ix_billing_requests_tenant_created", "tenant_id", "created_at"),
         Index("ix_billing_requests_status_created", "status", "created_at"),
+        # The 24h check in requests.py is a UX nicety (it returns the old row
+        # instead of erroring); this index is the actual invariant. Without
+        # it two concurrent submissions both pass the SELECT and both insert.
+        # Pending only: once a request is decided, the tenant may ask again.
+        Index(
+            "uq_billing_requests_pending_dedupe",
+            "tenant_id",
+            "kind",
+            text("COALESCE(amount, -1)"),
+            text("COALESCE(plan_slug, '')"),
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+            sqlite_where=text("status = 'pending'"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
