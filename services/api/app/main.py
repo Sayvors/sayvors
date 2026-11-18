@@ -91,14 +91,42 @@ def setup_glitchtip():
 
 # ── Request-ID middleware ────────────────────────────────────────────────
 # ── In-process metrics (Prometheus exposition format) ────────────────
-# Kept dependency-free: a small in-memory counter/histogram exposed at /metrics.
-# For multi-replica deploys, Prometheus scrapes each replica individually.
-_METRICS_REQUEST_COUNT = 0
+# Kept dependency-free. uvicorn imports this module *inside* each worker, so
+# multiprocessing.Value would be created separately per worker and still
+# undercount. A shared file keyed by path is inherited by no-one and attached
+# to by everyone: all workers read and update the same bytes under an flock.
+# Linux uses /dev/shm (tmpfs, no disk I/O). Where flock or /dev/shm is missing
+# we fall back to process-local counters — correct for a single worker and no
+# worse than the original behaviour for more.
+try:
+    import fcntl as _fcntl  # type: ignore[import-not-found]
+except ImportError:  # Windows
+    _fcntl = None
+import os as _os
+import struct as _struct
+
 _METRICS_LATENCY_BUCKETS_SECONDS = [
     0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10,
 ]
-_METRICS_LATENCY_COUNTS = [0] * len(_METRICS_LATENCY_BUCKETS_SECONDS)
-_METRICS_LATENCY_SUM = 0.0
+_METRICS_STRUCT = _struct.Struct("q d " + "q" * len(_METRICS_LATENCY_BUCKETS_SECONDS))
+_METRICS_PATH = _os.environ.get(
+    "SAYVORS_METRICS_FILE", "/dev/shm/sayvors_api_metrics.bin"
+)
+try:
+    _METRICS_FD = _os.open(_METRICS_PATH, _os.O_CREAT | _os.O_RDWR, 0o600)
+    _fcntl.flock(_METRICS_FD, _fcntl.LOCK_EX)
+    if _os.fstat(_METRICS_FD).st_size < _METRICS_STRUCT.size:
+        _os.ftruncate(_METRICS_FD, _METRICS_STRUCT.size)
+        _os.pwrite(_METRICS_FD, _METRICS_STRUCT.pack(0, 0.0, *([0] * len(_METRICS_LATENCY_BUCKETS_SECONDS))), 0)
+    _fcntl.flock(_METRICS_FD, _fcntl.LOCK_UN)
+    _METRICS_SHARED = True
+except Exception:  # pragma: no cover - platform dependent
+    _METRICS_FD = None
+    _METRICS_SHARED = False
+    _LOCAL_COUNT = 0
+    _LOCAL_SUM = 0.0
+    _LOCAL_BUCKETS = [0] * len(_METRICS_LATENCY_BUCKETS_SECONDS)
+    _METRICS_SHARED = False
 
 
 class RequestIdMiddleware(BaseHTTPMiddleware):
@@ -148,15 +176,76 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
 
 
 def _observe_request(process_time: float) -> None:
-    global _METRICS_REQUEST_COUNT, _METRICS_LATENCY_SUM
-    _METRICS_REQUEST_COUNT += 1
-    _METRICS_LATENCY_SUM += process_time
-    for i, le in enumerate(_METRICS_LATENCY_BUCKETS_SECONDS):
-        if process_time <= le:
-            _METRICS_LATENCY_COUNTS[i] += 1
-            break
-    else:
-        _METRICS_LATENCY_COUNTS[-1] += 1
+    if not _METRICS_SHARED:  # pragma: no cover - platform dependent
+        global _LOCAL_COUNT, _LOCAL_SUM
+        _LOCAL_COUNT += 1
+        _LOCAL_SUM += process_time
+        for i, le in enumerate(_METRICS_LATENCY_BUCKETS_SECONDS):
+            if process_time <= le:
+                _LOCAL_BUCKETS[i] += 1
+                break
+        else:
+            _LOCAL_BUCKETS[-1] += 1
+        return
+
+    _fcntl.flock(_METRICS_FD, _fcntl.LOCK_EX)
+    try:
+        count, total, *buckets = _METRICS_STRUCT.unpack(
+            _os.pread(_METRICS_FD, _METRICS_STRUCT.size, 0)
+        )
+        count += 1
+        total += process_time
+        for i, le in enumerate(_METRICS_LATENCY_BUCKETS_SECONDS):
+            if process_time <= le:
+                buckets[i] += 1
+                break
+        else:
+            buckets[-1] += 1
+        _os.pwrite(_METRICS_FD, _METRICS_STRUCT.pack(count, total, *buckets), 0)
+    finally:
+        _fcntl.flock(_METRICS_FD, _fcntl.LOCK_UN)
+
+
+def _metrics_snapshot() -> dict:
+    """Read one consistent snapshot; shared across all workers where possible."""
+    if not _METRICS_SHARED:  # pragma: no cover - platform dependent
+        return {"count": _LOCAL_COUNT, "latency_sum": _LOCAL_SUM,
+                "buckets": list(_LOCAL_BUCKETS)}
+    _fcntl.flock(_METRICS_FD, _fcntl.LOCK_EX)
+    try:
+        count, total, *buckets = _METRICS_STRUCT.unpack(
+            _os.pread(_METRICS_FD, _METRICS_STRUCT.size, 0)
+        )
+        return {"count": int(count), "latency_sum": float(total),
+                "buckets": [int(v) for v in buckets]}
+    finally:
+        _fcntl.flock(_METRICS_FD, _fcntl.LOCK_UN)
+
+
+def _histogram_quantile(quantile: float, buckets: list[int]) -> float | None:
+    """Linear interpolation inside a Prometheus-style cumulative histogram.
+
+    Returns the bucket upper bound by default; interpolation between bounds
+    gives a tighter estimate without storing every latency, which would be far
+    too expensive at 1M users.
+    """
+    total = sum(int(v) for v in buckets)
+    if total <= 0:
+        return None
+    target = quantile * total
+    previous_le = 0.0
+    previous_count = 0
+    cumulative = 0
+    for le, count in zip(_METRICS_LATENCY_BUCKETS_SECONDS, buckets):
+        cumulative += count
+        if cumulative >= target:
+            if count <= 0:
+                return le
+            fraction = (target - previous_count) / count
+            return round(previous_le + fraction * (le - previous_le), 4)
+        previous_le = le
+        previous_count = cumulative
+    return _METRICS_LATENCY_BUCKETS_SECONDS[-1]
 
 
 class CSRFMiddleware(BaseHTTPMiddleware):
@@ -690,27 +779,43 @@ async def readyz(request: Request):
 async def metrics():
     """Prometheus exposition format — scrapable by Prometheus / Grafana Cloud.
 
-    Returns in-process request count + latency histogram. One scrape target per
-    replica; aggregate across replicas in Prometheus/Grafana.
+    All workers behind this endpoint share the counters, so one scrape sees the
+    whole process group. Separate pods still aggregate in Prometheus/Grafana.
+    Latency percentiles are exposed directly as well as through the histogram.
     """
-    global _METRICS_REQUEST_COUNT, _METRICS_LATENCY_SUM
-    total_count = sum(_METRICS_LATENCY_COUNTS)
+    snapshot = _metrics_snapshot()
+    total_count = sum(snapshot["buckets"])
     lines: list[str] = [
-        "# HELP sayvors_http_requests_total Total HTTP requests handled by this replica.",
+        "# HELP sayvors_http_requests_total Total HTTP requests handled by this process group.",
         "# TYPE sayvors_http_requests_total counter",
-        f"sayvors_http_requests_total {_METRICS_REQUEST_COUNT}",
+        f"sayvors_http_requests_total {snapshot['count']}",
         "",
         "# HELP sayvors_http_request_duration_seconds HTTP request latency in seconds.",
         "# TYPE sayvors_http_request_duration_seconds histogram",
     ]
     cumulative = 0
-    for le, count in zip(_METRICS_LATENCY_BUCKETS_SECONDS, _METRICS_LATENCY_COUNTS):
+    for le, count in zip(_METRICS_LATENCY_BUCKETS_SECONDS, snapshot["buckets"]):
         cumulative += count
         lines.append(f'sayvors_http_request_duration_seconds_bucket{{le="{le}"}} {cumulative}')
     lines.append(f'sayvors_http_request_duration_seconds_bucket{{le="+Inf"}} {total_count}')
-    lines.append(f"sayvors_http_request_duration_seconds_sum {_METRICS_LATENCY_SUM}")
+    lines.append(f"sayvors_http_request_duration_seconds_sum {snapshot['latency_sum']}")
     lines.append(f"sayvors_http_request_duration_seconds_count {total_count}")
     lines.append("")
+
+    # Direct gauges so a plain curl (or any dashboard without PromQL) can read
+    # the two percentiles people actually ask for.
+    p90 = _histogram_quantile(0.90, snapshot["buckets"])
+    p95 = _histogram_quantile(0.95, snapshot["buckets"])
+    lines.extend([
+        "# HELP sayvors_http_request_p90_seconds Approx. 90th-percentile request latency.",
+        "# TYPE sayvors_http_request_p90_seconds gauge",
+        f"sayvors_http_request_p90_seconds {p90 if p90 is not None else 0}",
+        "",
+        "# HELP sayvors_http_request_p95_seconds Approx. 95th-percentile request latency.",
+        "# TYPE sayvors_http_request_p95_seconds gauge",
+        f"sayvors_http_request_p95_seconds {p95 if p95 is not None else 0}",
+        "",
+    ])
 
     # Job queue metrics (dependency-free, queries Postgres)
     try:
