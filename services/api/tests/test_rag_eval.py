@@ -58,6 +58,19 @@ def test_loader_rejects_a_wrong_schema_version(tmp_path):
         load_golden(str(path))
 
 
+def test_loader_accepts_a_file_level_databank(tmp_path):
+    path = tmp_path / "golden.json"
+    path.write_text(
+        json.dumps({
+            "version": 1,
+            "databank_id": "bank-1",
+            "cases": [{"question": "price?"}],
+        }),
+        encoding="utf-8",
+    )
+    assert load_golden(str(path))[0]["databank_id"] == "bank-1"
+
+
 def test_loader_rejects_a_case_without_a_databank(tmp_path):
     path = tmp_path / "golden.json"
     path.write_text(

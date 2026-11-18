@@ -49,10 +49,17 @@ def load_golden(path: str) -> list[dict[str, Any]]:
     cases = data.get("cases")
     if not isinstance(cases, list) or not cases:
         raise ValueError("golden set needs a non-empty 'cases' list")
+    # A whole set usually belongs to one vertical's databank. Let the business
+    # supply questions without knowing internal UUIDs; a case may still
+    # override the file-level value.
+    default_bank = data.get("databank_id")
+    prepared: list[dict[str, Any]] = []
     for index, case in enumerate(cases):
-        if not isinstance(case, dict) or not case.get("question") or not case.get("databank_id"):
+        bank = case.get("databank_id") or default_bank
+        if not isinstance(case, dict) or not case.get("question") or not bank:
             raise ValueError(f"case {index} needs 'question' and 'databank_id'")
-    return cases
+        prepared.append({**case, "databank_id": bank})
+    return prepared
 
 
 async def _vector_for(query: str) -> tuple[list[float] | None, str | None]:
