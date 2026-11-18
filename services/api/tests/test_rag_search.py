@@ -228,6 +228,25 @@ def test_long_terms_use_prefix_but_short_terms_do_not():
 
 
 @pytest.mark.asyncio
+async def test_near_duplicate_chunks_do_not_consume_top_k_slots(db):
+    """Identical/near-identical passages must collapse before the top_k cut."""
+    await _seed(db)
+    await _add_chunk(db, "rag-dup-a", content="اللاتيه بـ15 ريال وكبير الحجم متوفر", seq=0)
+    await _add_chunk(db, "rag-dup-b", content="اللاتيه بـ15 ريال وكبير الحجم متوفر اليوم", seq=1)
+    await _add_chunk(db, "rag-distinct", content="Delivery inside Riyadh takes two days", seq=2)
+    await db.commit()
+
+    hits = await hybrid_search(
+        databank_id=_BANK, query_vector=None,
+        query_text="اللاتيه 15 ريال Delivery", top_k=2, db=db,
+    )
+    ids = [hit["id"] for hit in hits]
+    assert len(ids) == 2
+    assert "rag-distinct" in ids, "a duplicate must not crowd out a distinct passage"
+    assert not ({"rag-dup-a", "rag-dup-b"} <= set(ids))
+
+
+@pytest.mark.asyncio
 async def test_keyword_search_matches_hamza_query_to_plain_stored_text(db):
     """The SQLite fallback folds both sides; Postgres emits both variants."""
     await _seed(db)

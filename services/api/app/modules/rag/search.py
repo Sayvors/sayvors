@@ -340,6 +340,29 @@ async def _fallback_keyword_search(
     return hits[:limit]
 
 
+# Near-identical chunks in the same databank (the same text ingested twice, or
+# an Arabic and English copy) must not consume several top-k slots. The prompt
+# already dedupes at render time, but by then the budget is spent.
+DEDUP_JACCARD_THRESHOLD = 0.8
+
+
+def _dedupe_hits(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse near-duplicate passages, keeping the highest-ranked copy."""
+    kept: list[dict[str, Any]] = []
+    seen_terms: list[frozenset[str]] = []
+    for hit in hits:
+        terms = content_terms(hit.get("content") or "")
+        if terms and any(
+            len(terms & chosen) / len(terms | chosen) >= DEDUP_JACCARD_THRESHOLD
+            for chosen in seen_terms
+        ):
+            continue
+        kept.append(hit)
+        if terms:
+            seen_terms.append(terms)
+    return kept
+
+
 def _rrf_merge(
     vector_hits: list[dict[str, Any]],
     keyword_hits: list[dict[str, Any]],
@@ -356,7 +379,10 @@ def _rrf_merge(
             existing["score"] += rrf
         else:
             merged[hit["id"]] = {**hit, "score": rrf}
-    return sorted(merged.values(), key=lambda hit: hit["score"], reverse=True)[:top_k]
+    ranked = sorted(merged.values(), key=lambda hit: hit["score"], reverse=True)
+    # Dedup BEFORE the cut: two copies of one fact in top_k means one fewer
+    # distinct passage for the model to use.
+    return _dedupe_hits(ranked)[:top_k]
 
 
 async def hybrid_search(
