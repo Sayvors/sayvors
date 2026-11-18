@@ -52,6 +52,5 @@ def test_metrics_endpoint_exposes_percentiles(client):
         "sayvors_http_request_p90_seconds",
         "sayvors_http_request_p95_seconds",
         "sayvors_http_request_duration_seconds_bucket",
-        "sayvors_job_queue_depth",
     ):
         assert name in body

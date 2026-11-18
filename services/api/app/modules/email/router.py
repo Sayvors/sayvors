@@ -12,6 +12,8 @@ This module exposes the email-related endpoints used by the application:
   Rate-limited; the OTP itself enforces a hard per-code attempt budget (see service).
 """
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, EmailStr, Field
@@ -23,6 +25,21 @@ from ...core.deps import get_db, require_admin
 from ..auth.rate_limit import rate_limit
 from ..users.models import User
 from . import service
+
+logger = logging.getLogger(__name__)
+
+
+def _delivery_unavailable(exc: RuntimeError) -> HTTPException:
+    """Log the real email-provider failure; return a client-safe message.
+
+    The service's RuntimeError names internal configuration (e.g. the Resend
+    key). That belongs in the logs, never in a tenant-facing response.
+    """
+    logger.warning("Email delivery unavailable: %s", exc)
+    return HTTPException(
+        status_code=503,
+        detail="Email delivery is temporarily unavailable. Try again shortly.",
+    )
 
 router = APIRouter(prefix="/api/v1/email", tags=["email"])
 
@@ -99,7 +116,7 @@ async def send_notification(
             str(body.to), body.subject, body.message, body.cta_url
         )
     except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+        raise _delivery_unavailable(e) from e
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     return {"ok": True, "id": msg_id}
@@ -119,7 +136,7 @@ async def request_otp(body: OtpRequest, request: Request):
     try:
         await service.send_otp_email(str(body.email), body.purpose)
     except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+        raise _delivery_unavailable(e) from e
     return {"ok": True, "message": "Code sent (valid 10 minutes)."}
 
 

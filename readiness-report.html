@@ -243,7 +243,7 @@
   <h3><span class="chip warn">PENDING — code (no infra needed)</span></h3>
   <div class="scroll"><table>
     <tr><th>Item</th><th>What remains</th><th>Size</th></tr>
-    <tr><td>LAUNCH-S10 remainder</td><td>Per-site public/private split of the curated 4xx <code>detail=str(...)</code> sites. A blanket replace would break tests and degrade honest errors.</td><td>~1 day</td></tr>
+    <tr><td>LAUNCH-S10 remainder</td><td><span class="chip ok">Done 2026-11-18</span></td><td>AST audit + permanent guardrail; email errors sanitized.</td><td class="chip ok">—</td></tr>
     <tr><td>LAUNCH-M9 (b)</td><td><span class="chip ok">Done 2026-11-18</span></td><td>Shared path-based counters and direct p90/p95 gauges in <code>/metrics</code>. See the LAUNCH-M9 ledger row.</td><td class="chip ok">—</td></tr>
     <tr><td>FACT-9</td><td><span class="chip warn">Core shipped</span></td><td>Plan-limited campaign CRUD, reuse and results are live; send-path gating and recipient-list reuse remain.</td><td>4–5 days total</td></tr>
     <tr><td>WA-9 (part)</td><td>WABA conversation analytics endpoint not wired; our own message counters cover volume.</td><td>1–2 days</td></tr>
@@ -291,7 +291,7 @@
   <div class="stat"><div class="n amber">Live</div><div class="l">billing &amp; plans — wallet hotfix + durable ledger + 5 plans + admin plan CRUD + tenant grant-plan + entitlements service + enforcement at channel-connect/message-send/LLM; deployed to staging 2026-10-28, schema caught up from 5 migrations behind to <code>h4b5c6d7e8f9</code> head. Plan comparison + request-upgrade UI shipped; purchase requests audited 2026-11-17 with REQ-1..4 open, all four fixed 2026-11-18 (<a href="#billing">§6</a>)</div></div>
   <div class="stat"><div class="n calm">2,692</div><div class="l">backend tests passed / 3 skipped (last full run 2026-11-18) — CI gates every staging deploy on them; supersedes the older 2,137 figure in the history below</div></div>
   <div class="stat"><div class="n amber">1</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — INS-5 still open (infra: box overcommitted). INS-1/2/3/4/6/7 fixed</div></div>
-  <div class="stat"><div class="n amber">3</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> — LAUNCH-S8, S9 and M9 still open; S10 Phase 1 + Meta provider split done, curated 4xx remainder pending. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
+  <div class="stat"><div class="n amber">2</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> — LAUNCH-S8 and S9 still open (both infra); M9 and S10 done. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
   <div class="stat"><div class="n amber">4</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — FACT-4 (buy), FACT-5 (spike) open. FACT-6, FACT-7 and FACT-8 fixed; FACT-9 core shipped; FACT-1 obsolete</div></div>
 </div>
 
@@ -505,11 +505,11 @@
       <td class="num">with infra move</td>
     </tr>
     <tr>
-      <td class="num">LAUNCH-S10</td><td><span class="chip warn">Phase 1</span></td>
-      <td><strong><code>str(e)</code> reaches clients — systemic, ~130 sites.</strong> <code>detail=str(</code> across nearly every router; worst are the provider 502 paths carrying raw upstream driver errors. The old S4 spot-list understated it: this is a pattern, not a spot fix. <strong>Phase 1 fixed 2026-11-02:</strong> new <code>upstream_http_error()</code> logs the real exception with its traceback and returns a generic client message (plus a safe permission hint where actionable). Converted every <code>detail=str(e)</code> 502 path across Meta, posts, media, locations, admin model-list, TTS voice catalog, WhatsApp templates, assistant, Localith and review-reply generation. 101 scoped tests pass, including checks that raw provider text never reaches the response. <strong>2026-11-18 follow-up:</strong> the connect/asset endpoints still returned raw <code>str(MetaAPIError)</code>, and four constructors embedded provider <code>resp.text</code>. <code>MetaAPIError</code> now carries a separate <code>public</code> message — raw text stays in logs, routers return <code>e.public</code>. Remaining: the non-Meta <code>detail=str(...)</code> sites, mostly curated 4xx validation/ownership paths that still need a per-site review.</td>
-      <td class="path">core/upstream_errors.py; modules/{channels/meta,posts,media,locations,admin,tts,whatsapp_templates,assistant,localith}/router.py; tests/test_upstream_errors.py</td>
-      <td><span class="chip warn">Phase 1 done</span> — remaining sweep ~1 day.</td>
-      <td class="num">~1 day remaining</td>
+      <td class="num">LAUNCH-S10</td><td><span class="chip ok">Done 2026-11-18</span></td>
+      <td><strong><code>str(e)</code> reaches clients — systemic, ~130 sites.</strong> <code>detail=str(</code> across nearly every router; worst are the provider 502 paths carrying raw upstream driver errors. The old S4 spot-list understated it: this is a pattern, not a spot fix. <strong>Phase 1 fixed 2026-11-02:</strong> new <code>upstream_http_error()</code> logs the real exception with its traceback and returns a generic client message (plus a safe permission hint where actionable). Converted every <code>detail=str(e)</code> 502 path across Meta, posts, media, locations, admin model-list, TTS voice catalog, WhatsApp templates, assistant, Localith and review-reply generation. 101 scoped tests pass, including checks that raw provider text never reaches the response. <strong>2026-11-18 final sweep done:</strong> an AST audit classified every remaining <code>detail=str(...)</code> site — 137 total, of which 113 are <code>ValueError</code> from curated domain validation and the rest are named domain errors (<code>RequestError</code>, <code>CampaignError</code>, <code>RecipientError</code>, <code>AssignmentError</code>, feedback cooldown). They are safe by design: "Choose a plan" is a good client error. The genuinely unsafe residue was two email endpoints returning a <code>RuntimeError</code> that named <code>RESEND_API_KEY</code>; they now log the real failure and return a generic 503. A permanent AST guardrail test fails the suite if any future endpoint raises a 5xx (or an unclassified/general exception) with <code>str(exc)</code> as its detail.</td>
+      <td class="path">core/upstream_errors.py; modules/{channels/meta,posts,media,locations,admin,tts,whatsapp_templates,assistant,localith,email}/router.py; tests/test_upstream_errors.py; tests/test_error_detail_hygiene.py; tests/test_meta_error_public.py</td>
+      <td><span class="chip ok">Done</span> — guardrail test pins the invariant.</td>
+      <td class="num">—</td>
     </tr>
     <tr>
       <td class="num">LAUNCH-S11</td><td><span class="chip ok">Fixed</span></td>
