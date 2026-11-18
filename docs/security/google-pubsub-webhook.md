@@ -33,17 +33,24 @@ because "the webhook exists" would silently lose reviews.
 
 Every request is rejected unless all of these hold:
 
-1. **Configured audience.** `GOOGLE_PUBSUB_PUSH_AUDIENCE` must be set.
-   Without it the endpoint answers `503` to everything — a deployment with
-   no push subscription has no tokens worth trusting.
+1. **Configured audience *and* pinned identity.**
+   `GOOGLE_PUBSUB_PUSH_AUDIENCE` and `GOOGLE_PUBSUB_PUSH_EMAIL` must both be
+   set. Without either, the endpoint answers `503` to everything — a
+   deployment with no push subscription has no tokens worth trusting, and an
+   audience alone is not enough (see 3).
 2. **OIDC bearer token.** The `Authorization: Bearer` JWT is verified with
    `google.oauth2.id_token.verify_oauth2_token` against Google's public
    keys: signature, expiry, and `aud == GOOGLE_PUBSUB_PUSH_AUDIENCE` (the
    audience configured on the push subscription). Any failure ⇒ `403`.
-3. **Identity pin (optional but recommended).** With
-   `GOOGLE_PUBSUB_PUSH_EMAIL` set, a correctly-signed token minted by any
-   other Google identity is rejected. Set it to the dedicated service
-   account attached to the push subscription.
+3. **Identity pin (mandatory).** The token's `email` claim must equal
+   `GOOGLE_PUBSUB_PUSH_EMAIL`, the dedicated service account attached to the
+   push subscription. An unset pin denies the request. The pin is not
+   advisory: an audience proves only that a token was minted *for* this push
+   endpoint, and any Google Cloud project can mint a validly-signed token for
+   an audience it knows — the email is what ties the token to *our*
+   subscription. Both checks live in the route (`push_configured()`) and in
+   the verifier (`verify_push_oidc()`), so a caller cannot bypass the gate by
+   invoking the verifier directly.
 
 Flood control mirrors the Meta webhook posture: a per-IP Redis rate limit
 (600/min, fail-closed) and a 64 KB body cap before the body is read.
@@ -80,7 +87,8 @@ connected that location — no data injection, no cross-tenant write.
 
 ## Invariants
 
-- No configured audience ⇒ no accepted push, ever.
+- No configured audience **or** no pinned service-account email ⇒ no
+  accepted push, ever.
 - Every stored review row traces to a Google API fetch, never to push
   payload content.
 - The endpoint never blocks on the pull: it acks after spawning; a pull
