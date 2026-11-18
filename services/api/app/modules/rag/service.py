@@ -525,7 +525,7 @@ async def search(
     degraded=True means no embedding backend was available and results
     are keyword-only — never a 500.
     """
-    from .embeddings import get_embedding_provider
+    from .embeddings import embed_query
 
     query_vector: list[float] | None = None
     query_model: str | None = None
@@ -534,10 +534,7 @@ async def search(
     degraded = not settings.embeddings_enabled
     if settings.embeddings_enabled:
         try:
-            provider = await get_embedding_provider()
-            vectors = await provider.embed([body.query])
-            query_vector = vectors[0]
-            query_model = provider.model_tag
+            query_vector, query_model = await embed_query(body.query)
         except Exception:
             degraded = True
 

@@ -122,11 +122,9 @@ async def _query_vector(query: str) -> tuple[list[float] | None, str | None]:
     if not settings.embeddings_enabled:
         return None, None
     try:
-        from .embeddings import get_embedding_provider
+        from .embeddings import embed_query
 
-        provider = await get_embedding_provider()
-        vectors = await provider.embed([query])
-        return vectors[0], provider.model_tag
+        return await embed_query(query)
     except Exception as e:  # noqa: BLE001 - keyword still works
         logger.info("grounding embedding unavailable (%s) — keyword only", e)
         return None, None

@@ -612,6 +612,37 @@ async def get_embedding_provider() -> EmbeddingProvider:
     return _provider
 
 
+async def embed_query(text: str) -> tuple[list[float] | None, str | None]:
+    """Embed one retrieval query, reusing the shared Redis cache.
+
+    Every customer message re-embedding "price?" or "hours?" is pure waste at
+    scale. The cache is shared across tenants — an embedding of identical text
+    is identical for everyone — and keyed by model tag, so an admin switching
+    providers cannot silently pair a stale vector with new-model chunks.
+    Returns ``(vector, model_tag)``; on provider failure the caller degrades to
+    keyword search exactly as before.
+    """
+    from .cache import (
+        get_cached_embedding,
+        note_embed_cache_result,
+        set_cached_embedding,
+    )
+
+    provider = await get_embedding_provider()
+    model = provider.model_tag
+    cached = await get_cached_embedding(text, model=model)
+    if cached is not None:
+        await note_embed_cache_result(hit=True)
+        return cached, model
+
+    vectors = await provider.embed([text])
+    vector = vectors[0] if vectors else None
+    await note_embed_cache_result(hit=False)
+    if vector is not None:
+        await set_cached_embedding(text, vector, model=model)
+    return vector, model
+
+
 async def list_available_models(provider: str, api_key: str | None = None, base_url: str | None = None) -> list[str]:
     """Fetch the live model list from a provider's API.
 
