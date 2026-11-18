@@ -7,6 +7,7 @@ import {
   initialSelections,
   isAnswered,
   NOT_SURE,
+  optionChoices,
   toggleChip,
   type IntakeQuestion,
 } from "./business-intake";
@@ -42,6 +43,17 @@ describe("chip semantics", () => {
     expect(chips).toContain("Yes, delivery");
     expect(chips.filter((c) => c === NOT_SURE)).toHaveLength(1);
     expect(chipsFor(q({ options: [], google_value: null }))).toEqual([]);
+  });
+
+  it("tags grid choices so Google and 'Not sure' can be styled differently", () => {
+    const choices = optionChoices(q({ google_value: "Halal" }));
+    expect(choices.map((c) => c.value)).toEqual(["Halal", "Vegan", NOT_SURE]);
+    expect(choices[0].google).toBe(true);
+    expect(choices.at(-1)).toEqual({ value: NOT_SURE, google: false, notSure: true });
+  });
+
+  it("does not append 'Not sure' to a free-text question", () => {
+    expect(optionChoices(q({ options: [], google_value: null }))).toEqual([]);
   });
 });
 

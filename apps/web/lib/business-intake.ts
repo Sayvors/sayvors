@@ -48,6 +48,16 @@ export interface Selection {
 
 export type Selections = Record<string, Selection>;
 
+/** One card in the selectable grid. `tone: notSure` is styled as a decline,
+ *  never as a recorded fact. */
+export interface IntakeChoice {
+  key: string;
+  title: string;
+  description?: string;
+  badge?: string;
+  tone?: "default" | "notSure";
+}
+
 export const NOT_SURE = "Not sure";
 
 /** Initial selections from the server answer + any Google confirmation. */
@@ -90,6 +100,27 @@ export function chipsFor(q: IntakeQuestion): string[] {
   }
   if (options.length && !options.includes(NOT_SURE)) options.push(NOT_SURE);
   return options;
+}
+
+/**
+ * Options for one question as typed grid choices. Google's value is included
+ * once and flagged so the card can carry a "From Google" badge; "Not sure" is
+ * always last and flagged so it can be styled as a decline.
+ */
+export function optionChoices(
+  q: IntakeQuestion,
+): { value: string; google: boolean; notSure: boolean }[] {
+  const values = [...q.options];
+  if (q.google_value && !values.includes(q.google_value)) values.push(q.google_value);
+  const choices = values.map((value) => ({
+    value,
+    google: value === q.google_value,
+    notSure: false,
+  }));
+  if (values.length && !values.includes(NOT_SURE)) {
+    choices.push({ value: NOT_SURE, google: false, notSure: true });
+  }
+  return choices;
 }
 
 export function isAnswered(s: Selection | undefined): boolean {
