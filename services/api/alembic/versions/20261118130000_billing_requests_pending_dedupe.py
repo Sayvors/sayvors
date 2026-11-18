@@ -36,10 +36,10 @@ def upgrade() -> None:
                        PARTITION BY tenant_id, kind,
                                     COALESCE(amount, -1),
                                     COALESCE(plan_slug, '')
-                       WHERE status = 'pending'
                        ORDER BY created_at DESC, id DESC
                    ) AS rn
             FROM billing_requests
+            WHERE status = 'pending'
         )
         UPDATE billing_requests AS br
         SET status = '{DUPLICATE_STATUS}'

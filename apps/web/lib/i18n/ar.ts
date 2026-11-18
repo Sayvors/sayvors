@@ -2978,6 +2978,23 @@ const ar: Dict = {
     },
   },
   growth: {
+    campaigns: {
+      title: "حملات طلب التقييم",
+      subtitle: "طلبات محددة بفترة زمنية. تحدد الخطة عددها ومدتها.",
+      name: "اسم الحملة",
+      from: "من",
+      to: "إلى",
+      template: "الرسالة (استخدم {name} و {link})",
+      create: "إنشاء حملة",
+      empty: "لا توجد حملات بعد.",
+      sent: "مرسلة",
+      clicked: "نقرة",
+      reviewed: "تقييمات",
+      rate: "التحويل",
+      duplicate: "إعادة استخدام",
+      cancel: "إلغاء",
+      cancelled: "ملغاة",
+    },
     stat: {
       noPrior: "لا بيانات سابقة",
     },

@@ -256,6 +256,10 @@ class Plan(Base):
     max_team_members: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Daily manual reply-regeneration cap. Null = unlimited.
     max_regenerations_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Review Campaign limits. Null = unlimited. Defaults mirror the pre-campaign
+    # behaviour (no campaigns can be created until a plan opts in).
+    max_campaigns_per_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_campaign_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Feature flags / arbitrary limits.
     features: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")

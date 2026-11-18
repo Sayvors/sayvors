@@ -2972,6 +2972,23 @@ const en = {
     },
   },
   growth: {
+    campaigns: {
+      title: "Review campaigns",
+      subtitle: "Time-boxed asks. Plan limits apply to how many you run and how long they last.",
+      name: "Campaign name",
+      from: "From",
+      to: "To",
+      template: "Message (use {name} and {link})",
+      create: "Create campaign",
+      empty: "No campaigns yet.",
+      sent: "Sent",
+      clicked: "Clicked",
+      reviewed: "Reviewed",
+      rate: "Conversion",
+      duplicate: "Reuse",
+      cancel: "Cancel",
+      cancelled: "Cancelled",
+    },
     stat: {
       noPrior: "no prior data",
     },

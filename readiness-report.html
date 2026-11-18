@@ -245,7 +245,7 @@
     <tr><th>Item</th><th>What remains</th><th>Size</th></tr>
     <tr><td>LAUNCH-S10 remainder</td><td>Per-site public/private split of the curated 4xx <code>detail=str(...)</code> sites. A blanket replace would break tests and degrade honest errors.</td><td>~1 day</td></tr>
     <tr><td>LAUNCH-M9 (b)</td><td><span class="chip ok">Done 2026-11-18</span></td><td>Shared path-based counters and direct p90/p95 gauges in <code>/metrics</code>. See the LAUNCH-M9 ledger row.</td><td class="chip ok">—</td></tr>
-    <tr><td>FACT-9</td><td>Review Campaign feature — table, entitlements, CRUD + duplicate/reuse, send-path gating, results card. Most-requested premium upsell.</td><td>4–5 days</td></tr>
+    <tr><td>FACT-9</td><td><span class="chip warn">Core shipped</span></td><td>Plan-limited campaign CRUD, reuse and results are live; send-path gating and recipient-list reuse remain.</td><td>4–5 days total</td></tr>
     <tr><td>WA-9 (part)</td><td>WABA conversation analytics endpoint not wired; our own message counters cover volume.</td><td>1–2 days</td></tr>
     <tr><td>RAG P1 / P3</td><td>P1 (task_type, chunking, query context, attribution) needs a real databank and re-index. P3 context cuts need measurement before touching prompt content.</td><td>blocked on data</td></tr>
   </table></div>
@@ -289,10 +289,10 @@
   <div class="stat"><div class="n calm">32</div><div class="l">of 34 original audit findings <strong>resolved</strong> — SEC 11 · SCALE 6 · OPS 3 · ANL 12; ML-1/BULK-1 are §4 work items, not ledger rows</div></div>
   <div class="stat"><div class="n amber">2</div><div class="l">findings <strong>still open</strong> — OPS-1 (backup restore rehearsal pending), OPS-4 (prod host + SHA-pinned deploys)</div></div>
   <div class="stat"><div class="n amber">Live</div><div class="l">billing &amp; plans — wallet hotfix + durable ledger + 5 plans + admin plan CRUD + tenant grant-plan + entitlements service + enforcement at channel-connect/message-send/LLM; deployed to staging 2026-10-28, schema caught up from 5 migrations behind to <code>h4b5c6d7e8f9</code> head. Plan comparison + request-upgrade UI shipped; purchase requests audited 2026-11-17 with REQ-1..4 open, all four fixed 2026-11-18 (<a href="#billing">§6</a>)</div></div>
-  <div class="stat"><div class="n calm">2,685</div><div class="l">backend tests passed / 3 skipped (last full run 2026-11-18) — CI gates every staging deploy on them; supersedes the older 2,137 figure in the history below</div></div>
+  <div class="stat"><div class="n calm">2,692</div><div class="l">backend tests passed / 3 skipped (last full run 2026-11-18) — CI gates every staging deploy on them; supersedes the older 2,137 figure in the history below</div></div>
   <div class="stat"><div class="n amber">1</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — INS-5 still open (infra: box overcommitted). INS-1/2/3/4/6/7 fixed</div></div>
   <div class="stat"><div class="n amber">3</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> — LAUNCH-S8, S9 and M9 still open; S10 Phase 1 + Meta provider split done, curated 4xx remainder pending. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
-  <div class="stat"><div class="n amber">4</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — FACT-4 (buy), FACT-5 (spike), FACT-9 open. FACT-6, FACT-7 and FACT-8 fixed; FACT-1 obsolete</div></div>
+  <div class="stat"><div class="n amber">4</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — FACT-4 (buy), FACT-5 (spike) open. FACT-6, FACT-7 and FACT-8 fixed; FACT-9 core shipped; FACT-1 obsolete</div></div>
 </div>
 
 <section id="model">
@@ -713,10 +713,10 @@
       <td class="num">1 day</td>
     </tr>
     <tr>
-      <td class="num">FACT-9</td><td><span class="chip high">High</span></td>
-      <td><strong>No Review Campaign feature — the most-requested premium upsell.</strong> Tenants want to send a "please review our business" link only to happy customers, after a conversation, as a time-boxed campaign (from/to dates). It should be gated behind plan entitlements: trial gets 1 campaign per week (≤7 days); Growth/Pro gets 14 days/month (2× 7-day or 1× 14-day); Pro+/Enterprise gets 30 days configurable (30/14/7-day windows). Campaign results (sent → clicked → reviewed, per campaign) must be stored and reusable — duplicate any past campaign with one button, including its recipient list, message copy, date window, and results. Nothing in the codebase builds this: no campaign table, no date-window gating, no plan-level campaign limits, no duplicate/reuse flow.</td>
-      <td class="path">analytics/router.py:703 (review-request click); channels/router.py (send path); billing/entitlements.py (plan tiers); new: campaign table, campaign router, duplicate/reuse endpoint</td>
-      <td>Create campaign table (id, tenant_id, name, from_date, to_date, status, message_template, recipient_count, sent_count, clicked_count, reviewed_count, created_at, updated_at); add plan-level campaign limits to entitlements (campaigns_per_month, max_days_per_campaign); build campaign CRUD + duplicate/reuse endpoint; gate the /inbox/send review-request path behind an active campaign; render campaign results card (sent → clicked → reviewed, with rate and trend).</td>
+      <td class="num">FACT-9</td><td><span class="chip warn">Core shipped 2026-11-18</span></td>
+      <td><strong>Review Campaigns shipped (core).</strong> <code>review_campaigns</code> table with tenant, name, window, copy, status and sent/clicked/reviewed counters; <code>ReviewRequest.campaign_id</code> links individual asks; plan columns <code>max_campaigns_per_month</code> and <code>max_campaign_days</code> feed <code>Entitlements.campaign_quota_ok()</code> / <code>campaign_days_ok()</code> (trial 4×7d, starter 2×7d, pro/growth 2×14d, enterprise unlimited×30d). CRUD, duplicate/reuse, cancel, result refresh and a Growth-tab results card are live. <strong>Still open:</strong> gating the existing review-request send path behind an active campaign, and copying a past campaign's recipient list on duplicate — both change existing customer flows and need a product decision, so they were not shipped silently.</td>
+      <td class="path">app/modules/analytics/{campaigns.py,models.py,router.py}; billing/{models.py,entitlements.py}; alembic/versions/20261118160000; components/analytics/CampaignsSection.tsx</td>
+      <td>Done: plan-limited CRUD, reuse, results. Remaining: send-path gating + recipient-list reuse.</td>
       <td class="num">4–5 days</td>
     </tr>
   </table></div>
