@@ -6,6 +6,8 @@ wrong, plus the contract that Google-sourced questions are never asked twice.
 from app.modules.profile.facts_tool import render_topic
 from app.modules.review_engine.classification import default_subcategories
 from app.modules.verticals import (
+    SECTIONS,
+    SECTION_LABELS,
     VERTICALS,
     google_vertical,
     questions_for,
@@ -71,6 +73,34 @@ def test_sub_focus_changes_question_set():
 def test_review_subcategories_never_empty():
     for key in VERTICALS:
         assert review_subcategories(key), key
+
+
+def test_every_shown_question_has_a_known_section():
+    for key in VERTICALS:
+        for focus in VERTICALS[key].sub_focuses:
+            for q in questions_for(key, focus.key):
+                assert q.section in SECTION_LABELS, (key, focus.key, q.key)
+                assert q.section != "", (key, focus.key, q.key)
+
+
+def test_sections_follow_the_canonical_order():
+    keys = [key for key, _ in SECTIONS]
+    assert keys == ["offering", "orders", "payments", "access"]
+    # Spot-check that roles, not question names, decide the section.
+    dine_in = {q.key: q for q in questions_for("restaurant", "dine_in")}
+    assert dine_in["dietary"].section == "offering"
+    assert dine_in["reservations"].section == "orders"
+    assert dine_in["price_range"].section == "payments"
+    assert dine_in["parking"].section == "access"
+
+
+def test_section_grouping_uses_fact_key_when_keys_collide():
+    # Both verticals have a "support" question; the fact keys differ and the
+    # same key must not force them into one bucket.
+    saas = {q.key: q for q in questions_for("saas", "general")}
+    non_profit = {q.key: q for q in questions_for("non_profit", "general")}
+    assert saas["support"].fact_key == "support_channels"
+    assert non_profit["support"].fact_key == "support_options"
 
 
 def test_owner_answers_are_rendered_to_the_reply_path():

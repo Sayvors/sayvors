@@ -17,6 +17,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..verticals import (
+    SECTIONS,
+    SECTION_LABELS,
     VERTICALS,
     google_vertical,
     questions_for,
@@ -167,6 +169,8 @@ async def get_intake(
                 "options": list(q.options),
                 "multiple": q.multiple,
                 "fact_key": q.fact_key,
+                "section": q.section,
+                "section_label": SECTION_LABELS.get(q.section, "What you offer"),
                 "answer": (row.answer or {}) if row else {},
                 "skipped": bool(row.skipped) if row else False,
                 "answer_source": (row.source if row else "manual"),
@@ -175,6 +179,28 @@ async def get_intake(
 
     answered = sum(1 for q in questions if not q["skipped"] and q["answer"])
     skipped = sum(1 for q in questions if q["skipped"])
+
+    # Section totals are computed server-side so the dashboard checklist and
+    # the answers table can never disagree with the question list. A skipped
+    # question is still "remaining": the owner explicitly deferred it.
+    counts: dict[str, dict[str, int]] = {}
+    for q in questions:
+        bucket = counts.setdefault(q["section"], {"answered": 0, "total": 0})
+        bucket["total"] += 1
+        if not q["skipped"] and q["answer"]:
+            bucket["answered"] += 1
+    sections = [
+        {
+            "key": key,
+            "label": label,
+            "answered": counts[key]["answered"],
+            "total": counts[key]["total"],
+            "remaining": counts[key]["total"] - counts[key]["answered"],
+        }
+        for key, label in SECTIONS
+        if key in counts
+    ]
+
     return {
         "vertical_key": effective_vertical,
         "vertical_label": VERTICALS[effective_vertical].label if effective_vertical else None,
@@ -194,6 +220,7 @@ async def get_intake(
             for k, v in VERTICALS.items()
         ],
         "questions": questions,
+        "sections": sections,
         "answered": answered,
         "skipped": skipped,
         "total": len(questions),

@@ -1,38 +1,22 @@
-"use client";
+/* Reads the dashboard's deep-link params on the server and hands plain
+ * strings to the client view. Doing it here (rather than with
+ * `useSearchParams`) keeps the route out of a client-side-render bailout. */
+import BusinessIntakeView from "./BusinessIntakeView";
 
-/* Business intake after onboarding.
- *
- * The cascade is not a one-time wizard — an owner who skipped it, changed
- * business, or opened a second location must be able to answer again. This
- * page reuses the exact onboarding component so the two paths cannot drift.
- */
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import BusinessIntakeStep from "@/components/onboarding/BusinessIntakeStep";
-import { useI18n } from "@/lib/i18n/I18nProvider";
+function first(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
 
-export default function BusinessIntakePage() {
-  const router = useRouter();
-  const { t } = useI18n();
-  const c = t.dashboard.businessIntake;
-
+export default async function BusinessIntakePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ focus?: string | string[]; q?: string | string[] }>;
+}) {
+  const params = await searchParams;
   return (
-    <div className="team-ui h-full overflow-y-auto bg-[#F5F5F5] p-4 sm:p-6">
-      <div className="mx-auto max-w-lg">
-        <Link
-          href="/dashboard/databank"
-          className="mb-4 inline-flex items-center gap-1 text-[12px] font-semibold text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet"
-        >
-          <span aria-hidden>←</span>
-          {c.backToDatabank}
-        </Link>
-        <div className="rounded-[32px] border border-[var(--ui-line)] bg-white p-4 shadow-[0_18px_40px_-30px_rgba(20,16,31,0.5)] sm:p-6">
-          <BusinessIntakeStep
-            skipLabel={c.cancel}
-            onComplete={() => router.push("/dashboard/databank")}
-          />
-        </div>
-      </div>
-    </div>
+    <BusinessIntakeView
+      initialSection={first(params.focus)}
+      initialQuestionKey={first(params.q)}
+    />
   );
 }

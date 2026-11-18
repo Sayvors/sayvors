@@ -86,3 +86,40 @@ async def test_put_intake_persists_answers_outside_the_facts_cache(client, db, u
     assert len(rows) == 3  # the unknown question was rejected
     assert all(r.tenant_id == user_id for r in rows)
     assert all(r.vertical_key == "restaurant" for r in rows)
+
+
+async def test_intake_sections_group_answers_for_the_dashboard(client, db, user_id):
+    """Sections are the dashboard's checklist and deep-link units.
+
+    Totals must add up to the question list, a skipped answer must still count
+    as remaining (the owner deferred it), and the order must be canonical so
+    two clients render the same page.
+    """
+    await _seed_user(db, user_id)
+    resp = client.put(
+        "/api/v1/profile/intake",
+        json={
+            "vertical_key": "retail",
+            "sub_focus": "general",
+            "answers": [
+                {"question_key": "products", "answer": ["Bags"], "skipped": False},
+                {"question_key": "payments", "skipped": True},
+            ],
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    sections = {s["key"]: s for s in body["sections"]}
+    assert [s["key"] for s in body["sections"]] == ["offering", "payments", "access"]
+    assert sum(s["total"] for s in body["sections"]) == body["total"]
+    assert sections["offering"]["answered"] == 1
+    assert sections["payments"]["answered"] == 0
+    assert sections["payments"]["remaining"] == sections["payments"]["total"]
+    assert body["skipped"] == 1
+
+    by_key = {q["key"]: q for q in body["questions"]}
+    assert by_key["products"]["section"] == "offering"
+    assert by_key["payments"]["section"] == "payments"
+    assert by_key["languages_spoken"]["section"] == "access"
+    assert all(q["section_label"] for q in body["questions"])

@@ -13,10 +13,22 @@ export interface IntakeQuestion {
   options: string[];
   multiple: boolean;
   fact_key: string;
+  /** Stable grouping key owned by the backend catalog. */
+  section: string;
+  section_label: string;
   answer: string[] | string | Record<string, unknown>;
   skipped: boolean;
   answer_source: "manual" | "google_confirmed";
   google_value: string | null;
+}
+
+export interface IntakeSection {
+  key: string;
+  label: string;
+  answered: number;
+  total: number;
+  /** Includes skipped questions: a deferral is still work to do. */
+  remaining: number;
 }
 
 export interface IntakeResponse {
@@ -30,6 +42,7 @@ export interface IntakeResponse {
     sub_focuses: { key: string; label: string }[];
   }[];
   questions: IntakeQuestion[];
+  sections: IntakeSection[];
   answered: number;
   skipped: number;
   total: number;
@@ -60,17 +73,28 @@ export interface IntakeChoice {
 
 export const NOT_SURE = "Not sure";
 
+/**
+ * Stored answer shapes vary: a chip array, a free-text string, or a legacy
+ * `{ value }` object. Normalise once so the editor and the read-only table
+ * cannot disagree about whether a question is answered.
+ */
+export function storedValues(answer: unknown): string[] {
+  if (Array.isArray(answer)) return answer.map(String).filter(Boolean);
+  if (typeof answer === "string") return answer.trim() ? [answer.trim()] : [];
+  if (answer && typeof answer === "object") {
+    const value = (answer as { value?: unknown }).value;
+    if (Array.isArray(value)) return value.map(String).filter(Boolean);
+    if (value != null && value !== "") return [String(value)];
+  }
+  return [];
+}
+
 /** Initial selections from the server answer + any Google confirmation. */
 export function initialSelections(questions: IntakeQuestion[]): Selections {
   const out: Selections = {};
   for (const q of questions) {
-    const stored = Array.isArray(q.answer)
-      ? q.answer
-      : typeof q.answer === "string" && q.answer
-        ? [q.answer]
-        : [];
     out[q.key] = {
-      values: stored,
+      values: storedValues(q.answer),
       skipped: Boolean(q.skipped),
       // A Google-confirmed value is stored with its normal source; the UI
       // passes source explicitly on save when the owner taps it.
@@ -86,20 +110,6 @@ export function toggleChip(current: string[], chip: string, multiple: boolean): 
   return current.includes(chip)
     ? current.filter((v) => v !== chip)
     : [...current, chip];
-}
-
-/**
- * Chip set shown for one question. "Not sure" is appended so an owner can
- * honestly decline instead of guessing — it is stored as `skipped`, never
- * as a fact.
- */
-export function chipsFor(q: IntakeQuestion): string[] {
-  const options = [...q.options];
-  if (q.google_value && !options.includes(q.google_value)) {
-    options.push(q.google_value);
-  }
-  if (options.length && !options.includes(NOT_SURE)) options.push(NOT_SURE);
-  return options;
 }
 
 /**
@@ -121,6 +131,63 @@ export function optionChoices(
     choices.push({ value: NOT_SURE, google: false, notSure: true });
   }
   return choices;
+}
+
+/** Render a stored answer as one readable line. `{}` and `[]` mean no answer. */
+export function answerText(answer: unknown): string {
+  return storedValues(answer).join(" · ");
+}
+
+/** A question still needs the owner: never answered, or explicitly deferred. */
+export function isPending(q: IntakeQuestion): boolean {
+  return q.skipped || answerText(q.answer) === "";
+}
+
+/** Unanswered and skipped questions, in catalog order. */
+export function remainingQuestions(questions: IntakeQuestion[]): IntakeQuestion[] {
+  return questions.filter(isPending);
+}
+
+/**
+ * Questions grouped by the backend's section field, preserving catalog order
+ * inside each group. `order` is the backend's canonical section order; keys it
+ * does not mention are appended rather than dropped.
+ */
+export function sectionGroups(
+  questions: IntakeQuestion[],
+  order: string[] = [],
+): { key: string; label: string; questions: IntakeQuestion[] }[] {
+  const groups: { key: string; label: string; questions: IntakeQuestion[] }[] = [];
+  const byKey = new Map<string, (typeof groups)[number]>();
+  for (const q of questions) {
+    const key = q.section || "offering";
+    let group = byKey.get(key);
+    if (!group) {
+      group = { key, label: q.section_label || key, questions: [] };
+      byKey.set(key, group);
+      groups.push(group);
+    }
+    group.questions.push(q);
+  }
+  if (!order.length) return groups;
+  const rank = new Map(order.map((key, i) => [key, i]));
+  return groups
+    .map((group, i) => ({ group, i }))
+    .sort((a, b) => {
+      const ra = rank.get(a.group.key) ?? Number.MAX_SAFE_INTEGER;
+      const rb = rank.get(b.group.key) ?? Number.MAX_SAFE_INTEGER;
+      return ra === rb ? a.i - b.i : ra - rb;
+    })
+    .map(({ group }) => group);
+}
+
+/** Dashboard deep link into the shared flow, optionally at one question. */
+export function intakeHref(section?: string, questionKey?: string): string {
+  const params = new URLSearchParams();
+  if (section) params.set("focus", section);
+  if (questionKey) params.set("q", questionKey);
+  const query = params.toString();
+  return `/dashboard/business-intake${query ? `?${query}` : ""}`;
 }
 
 export function isAnswered(s: Selection | undefined): boolean {

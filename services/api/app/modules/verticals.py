@@ -20,6 +20,77 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 
+# Canonical sections used to group questions on the dashboard and to deep-link
+# back into the flow. Keys are stable; labels are display copy and may change.
+SECTIONS: tuple[tuple[str, str], ...] = (
+    ("offering", "What you offer"),
+    ("orders", "Orders & booking"),
+    ("payments", "Payments & pricing"),
+    ("access", "Access & facilities"),
+)
+SECTION_LABELS: dict[str, str] = dict(SECTIONS)
+
+# Grouping is by ``fact_key``, not question key. ``support`` is support
+# channels for a SaaS but donation options for a non-profit; those belong in
+# different sections, and only the fact key distinguishes them.
+SECTION_BY_FACT_KEY: dict[str, str] = {
+    # What the business sells, serves or does.
+    "menu_highlights": "offering",
+    "dietary": "offering",
+    "products": "offering",
+    "brands": "offering",
+    "extra_services": "offering",
+    "pharmacy_services": "offering",
+    "stock": "offering",
+    "services": "offering",
+    "specialties": "offering",
+    "facilities": "offering",
+    "classes": "offering",
+    "programs": "offering",
+    "age_groups": "offering",
+    "event_types": "offering",
+    "occasions": "offering",
+    "turnaround": "offering",
+    "credentials": "offering",
+    "integrations": "offering",
+    "mission": "offering",
+    "support_options": "offering",
+    "support_channels": "offering",
+    "process": "offering",
+    "about": "offering",
+    # How a customer orders, books or receives.
+    "delivery": "orders",
+    "takeout": "orders",
+    "ordering": "orders",
+    "booking": "orders",
+    "reservations": "orders",
+    "service_area_detail": "orders",
+    "shipping": "orders",
+    "returns": "orders",
+    "min_order": "orders",
+    "walk_in": "orders",
+    "enrollment": "orders",
+    "emergency": "orders",
+    # What it costs and how it is paid for.
+    "payments": "payments",
+    "price_range": "payments",
+    "pricing_model": "payments",
+    "insurance": "payments",
+    "fees": "payments",
+    "membership": "payments",
+    "cash_services": "payments",
+    # Physical and language access.
+    "parking": "access",
+    "accessibility": "access",
+    "outdoor_seating": "access",
+    "workspace": "access",
+    "languages_spoken": "access",
+    "hours": "access",
+    "address": "access",
+    "phone": "access",
+}
+
+
 @dataclass(frozen=True)
 class IntakeQuestion:
     """One question the owner can answer by tapping, never by typing.
@@ -37,6 +108,8 @@ class IntakeQuestion:
     multiple: bool = True
     # Where the answer lands in the materialised facts row.
     fact_key: str = ""
+    # Dashboard grouping. Foreign-key-ish value from SECTION_LABELS.
+    section: str = "offering"
 
 
 @dataclass(frozen=True)
@@ -64,13 +137,15 @@ def _q(
     multiple: bool = True,
     fact_key: str = "",
 ) -> IntakeQuestion:
+    resolved_fact_key = fact_key or key
     return IntakeQuestion(
         key=key,
         label=label,
         source=source,
         options=tuple(options),
         multiple=multiple,
-        fact_key=fact_key or key,
+        fact_key=resolved_fact_key,
+        section=SECTION_BY_FACT_KEY.get(resolved_fact_key, "offering"),
     )
 
 

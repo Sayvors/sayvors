@@ -19,7 +19,7 @@ import IntakeChoiceGrid from "./IntakeChoiceGrid";
 import {
   buildAnswersPayload,
   initialSelections,
-  isAnswered,
+  isPending,
   NOT_SURE,
   optionChoices,
   answeredCount,
@@ -49,10 +49,16 @@ type SaveState = "idle" | "saving" | "saved" | "error";
 export default function BusinessIntakeStep({
   onComplete,
   skipLabel,
+  initialSection,
+  initialQuestionKey,
 }: {
   onComplete: () => void;
   /** Dashboard embedding uses "Cancel"; onboarding uses "Skip for now". */
   skipLabel?: string;
+  /** Deep link from the dashboard checklist: open this section. */
+  initialSection?: string;
+  /** Deep link from an answers-table row: open this exact question. */
+  initialQuestionKey?: string;
 }) {
   const { t } = useI18n();
   const c = t.dashboard.businessIntake;
@@ -69,6 +75,7 @@ export default function BusinessIntakeStep({
   const [error, setError] = useState<string | null>(null);
   const draftTimer = useRef<number | null>(null);
   const savingRef = useRef(false);
+  const deepLinkApplied = useRef(false);
 
   const load = useCallback(async (v: string | null, f: string | null) => {
     setLoading(true);
@@ -113,6 +120,39 @@ export default function BusinessIntakeStep({
   const questions = data?.questions ?? [];
   const question: IntakeQuestion | undefined = questions[questionIndex];
   const done = answeredCount(questions, selections);
+  const sections = data?.sections ?? [];
+  // Live pending state, not the server snapshot: an answer tapped in this
+  // session must stop "Next" from sending the owner back to it.
+  const isUnanswered = (q: IntakeQuestion) => {
+    const s = selections[q.key];
+    return s ? s.skipped || s.values.length === 0 : isPending(q);
+  };
+  const hasLaterPending = questions.some((q, i) => i > questionIndex && isUnanswered(q));
+
+  // Dashboard deep links arrive as ?focus=<section>&q=<question>. Apply them
+  // once, after the first load, and only when this vertical actually has the
+  // question: a stale link must land on the first question, not on a blank
+  // screen. Onboarding passes neither prop, so it still starts at step 1.
+  useEffect(() => {
+    if (deepLinkApplied.current || !data || data.questions.length === 0) return;
+    if (!initialSection && !initialQuestionKey) return;
+    deepLinkApplied.current = true;
+
+    const exact = initialQuestionKey
+      ? data.questions.findIndex((q) => q.key === initialQuestionKey)
+      : -1;
+    let index = exact >= 0 ? exact : 0;
+    if (exact < 0 && initialSection) {
+      const candidates = data.questions
+        .map((q, i) => ({ q, i }))
+        .filter(({ q }) => q.section === initialSection);
+      if (candidates.length) {
+        index = (candidates.find(({ q }) => isPending(q)) ?? candidates[0]).i;
+      }
+    }
+    setQuestionIndex(index);
+    if (data.vertical_key) setPhase(2);
+  }, [data, initialSection, initialQuestionKey]);
 
   const persist = useCallback(async (finish: boolean): Promise<boolean> => {
     // Ref guard, not the `saving` state: using the state here would change this
@@ -225,6 +265,17 @@ export default function BusinessIntakeStep({
     }
   };
 
+  const jumpToSection = (sectionKey: string) => {
+    const candidates = questions
+      .map((q, i) => ({ q, i }))
+      .filter(({ q }) => q.section === sectionKey);
+    if (!candidates.length) return;
+    // Prefer the work that is actually left; fall back to the first question
+    // so "Change" still opens a finished section for review.
+    const target = candidates.find(({ q }) => isUnanswered(q)) ?? candidates[0];
+    setQuestionIndex(target.i);
+  };
+
   const goNext = () => {
     if (phase === 0 && vertical) {
       setPhase(1);
@@ -232,8 +283,13 @@ export default function BusinessIntakeStep({
       setPhase(2);
       setQuestionIndex(0);
     } else if (phase === 2) {
-      if (questionIndex < questions.length - 1) {
-        setQuestionIndex((i) => i + 1);
+      // Skip over questions answered since the last visit, including the ones
+      // answered in this session. A deep link can drop the owner into the
+      // middle of the list, so "Next" means "next thing I still have to
+      // answer", not "index + 1".
+      const next = questions.findIndex((q, i) => i > questionIndex && isUnanswered(q));
+      if (next >= 0) {
+        setQuestionIndex(next);
       } else {
         void persist(true);
       }
@@ -359,9 +415,50 @@ export default function BusinessIntakeStep({
 
           {phase === 2 && question && (
             <div className="space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-[13px] font-bold text-ink dark:text-fog">{question.label}</p>
-                <span className="shrink-0 text-[11px] tabular-nums text-ink/45">
+              {sections.length > 1 && (
+                <div
+                  role="group"
+                  aria-label={c.sectionsLabel}
+                  className="flex flex-wrap items-center gap-1.5"
+                >
+                  {sections.map((s) => {
+                    const active = s.key === question.section;
+                    return (
+                      <button
+                        key={s.key}
+                        type="button"
+                        onClick={() => jumpToSection(s.key)}
+                        aria-current={active ? "step" : undefined}
+                        className={[
+                          FOCUS,
+                          "rounded-full border px-2.5 py-1 text-[11px] font-semibold transition",
+                          active
+                            ? "border-deep-violet bg-deep-violet text-white"
+                            : "border-ink/10 bg-white text-ink/60 hover:border-deep-violet/40 dark:border-white/10 dark:bg-[#241a45] dark:text-fog/60",
+                        ].join(" ")}
+                      >
+                        {s.label}
+                        <span
+                          className={`ms-1 tabular-nums ${active ? "text-white/70" : "text-ink/35 dark:text-fog/35"}`}
+                        >
+                          {s.answered}/{s.total}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-deep-violet/70">
+                    {question.section_label}
+                  </p>
+                  <p className="mt-0.5 text-[15px] font-bold leading-snug text-ink dark:text-fog">
+                    {question.label}
+                  </p>
+                </div>
+                <span className="shrink-0 pt-0.5 text-[11px] tabular-nums text-ink/45">
                   {fill(c.questionOf, { n: questionIndex + 1, total: questions.length })}
                 </span>
               </div>
@@ -478,7 +575,7 @@ export default function BusinessIntakeStep({
               disabled={!canAdvance || saving}
               className={`${FOCUS} rounded-[14px] bg-deep-violet px-5 py-2 text-[13px] font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40`}
             >
-              {phase === 2 && questionIndex === questions.length - 1
+              {phase === 2 && !hasLaterPending
                 ? c.finish
                 : c.next}
             </button>
