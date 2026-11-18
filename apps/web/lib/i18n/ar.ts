@@ -2865,6 +2865,10 @@ const ar: Dict = {
       mktNote: "مجمّع، وليس أبداً بيانات منافس واحد الخاصة",
       top3: "· وسيط الثلاثة الأوائل {r}★",
       youBadge: "أنت",
+      regionalIndexTitle: "مؤشر سايفورز الإقليمي",
+      regionalIndexWait: "لم يُنشر بعد — يحتاج {n} منشآت على الأقل في هذا السوق حتى لا يمكن التعرف على منشأة واحدة.",
+      regionalIndexBasis: "بناءً على {n} منشأة متصلة · نافذة {d} يوم",
+      regionalIndexCite: "المرجع",
     },
     fact: {
       source: "المصدر:",

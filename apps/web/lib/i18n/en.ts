@@ -2859,6 +2859,10 @@ const en = {
       mktNote: "aggregated, never a single competitor's private data",
       top3: "· top-3 median {r}★",
       youBadge: "You",
+      regionalIndexTitle: "Sayvors Regional Index",
+      regionalIndexWait: "Not published yet — needs at least {n} businesses in this market so no single business can be identified.",
+      regionalIndexBasis: "Based on {n} connected businesses · {d}-day window",
+      regionalIndexCite: "Citation",
     },
     fact: {
       source: "Source:",

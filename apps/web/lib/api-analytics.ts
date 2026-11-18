@@ -922,6 +922,27 @@ export interface BenchmarkResponse {
     top3_median_rating: number | null;
     median_response_rate: number | null;
   } | null;
+  /** FACT-6: named, anonymous, citable cohort benchmark. */
+  regional_index?: {
+    name: string;
+    available: boolean;
+    min_businesses: number;
+    sample_size: number;
+    scope: string | null;
+    label: string;
+    period_days: number;
+    generated_at: string;
+    reason: string | null;
+    citation: string | null;
+    metrics: {
+      median_rating: number | null;
+      median_response_rate: number | null;
+      median_positive_pct: number | null;
+      median_reviews: number | null;
+      median_recency_pct: number | null;
+      median_reputation: number | null;
+    } | null;
+  } | null;
   market?: MarketEntry[];
   my_rank?: number | null;
   recency?: {

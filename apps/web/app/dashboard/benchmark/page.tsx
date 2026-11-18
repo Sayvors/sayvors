@@ -824,6 +824,50 @@ export default function BenchmarkPage() {
               {benchmark?.benchmark_text}
             </p>
           )}
+
+          {/* FACT-6: a named, citable index built only from anonymous cohort medians */}
+          {benchmark?.regional_index && (
+            <section aria-label={bp.regionalIndexTitle} className="ui-card p-5">
+              <h3 className="text-[14px] font-bold text-[var(--ui-ink)]">{bp.regionalIndexTitle}</h3>
+              {benchmark.regional_index.available ? (
+                <>
+                  <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">
+                    {fill(bp.regionalIndexBasis, {
+                      n: fmt(benchmark.regional_index.sample_size),
+                      d: fmt(benchmark.regional_index.period_days),
+                    })}
+                  </p>
+                  <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    {([
+                      ["median_rating", "★"],
+                      ["median_response_rate", "%"],
+                      ["median_positive_pct", "%"],
+                    ] as const).map(([key, suffix]) => {
+                      const value = benchmark.regional_index?.metrics?.[key];
+                      return (
+                        <div key={key} className="rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2">
+                          <dt className="text-[10px] uppercase tracking-wide text-[var(--ui-ink-2)]">{key.replace("median_", "")}</dt>
+                          <dd className="text-[15px] font-bold text-[var(--ui-ink)]">
+                            {typeof value === "number" ? `${fmt(Math.round(value * 10) / 10)}${suffix}` : "—"}
+                          </dd>
+                        </div>
+                      );
+                    })}
+                  </dl>
+                  {benchmark.regional_index.citation && (
+                    <p className="mt-3 text-[10.5px] leading-relaxed text-[var(--ui-ink-2)]">
+                      <span className="font-semibold">{bp.regionalIndexCite}: </span>
+                      {benchmark.regional_index.citation}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="mt-2 text-[11px] leading-relaxed text-[var(--ui-ink-2)]">
+                  {fill(bp.regionalIndexWait, { n: fmt(benchmark.regional_index.min_businesses) })}
+                </p>
+              )}
+            </section>
+          )}
         </div>
       )}
     </div>

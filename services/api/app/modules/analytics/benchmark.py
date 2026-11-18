@@ -22,6 +22,12 @@ from .service import get_overview, reputation_score
 
 logger = logging.getLogger(__name__)
 
+# Below this many real businesses, a "regional median" is one tenant's data
+# wearing a stat's costume. The named index is withheld until the cohort is
+# large enough that no single business can be reverse-engineered from it.
+REGIONAL_INDEX_MIN_COHORT = 5
+REGIONAL_INDEX_NAME = "Sayvors Regional Index"
+
 SAUDI_CITIES = (
     "RIYADH", "JEDDAH", "DAMMAM", "MECCA", "MAKKAH", "MEDINA",
     "MADINAH", "KHOBAR", "AL KHOBAR", "DHAHRAN", "TAIF", "BURAIDAH",
@@ -351,6 +357,46 @@ async def _tenant_cohort(
         "median_reputation": int(_median(reputations) or 0) if reputations else None,
         "median_recency_pct": round(_median(recencies) or 0.0, 1) if recencies else None,
     }
+
+
+def _regional_index(cohort: dict, days: int, now: datetime) -> dict:
+    """Package existing cohort medians as a named, citable, anonymous index.
+
+    Only aggregates leave here — no names, no user ids, no individual rows.
+    With a small cohort the index is withheld entirely rather than published
+    as a number that identifies one business.
+    """
+    count = int(cohort.get("count") or 0)
+    base = {
+        "name": REGIONAL_INDEX_NAME,
+        "available": False,
+        "min_businesses": REGIONAL_INDEX_MIN_COHORT,
+        "sample_size": count,
+        "scope": cohort.get("scope"),
+        "label": cohort.get("label") or "Sayvors network",
+        "period_days": days,
+        "generated_at": now.isoformat(),
+    }
+    if count < REGIONAL_INDEX_MIN_COHORT:
+        return {**base, "reason": "cohort_too_small", "citation": None, "metrics": None}
+
+    metrics = {
+        "median_rating": cohort.get("median_rating"),
+        "median_response_rate": cohort.get("median_response_rate"),
+        "median_positive_pct": cohort.get("median_positive_pct"),
+        "median_reviews": cohort.get("median_reviews"),
+        "median_recency_pct": cohort.get("median_recency_pct"),
+        "median_reputation": cohort.get("median_reputation"),
+    }
+    label = base["label"]
+    citation = (
+        f"{REGIONAL_INDEX_NAME} — {label}, n={count}, "
+        f"{days}-day window, generated {now.strftime('%Y-%m')}. "
+        "Aggregated from consenting Sayvors-connected businesses; "
+        "no individual business is identifiable."
+    )
+    return {**base, "available": True, "reason": None,
+            "citation": citation, "metrics": metrics}
 
 
 def _rank_market(mine: list[dict], theirs: list[dict]) -> tuple[list[dict], int | None]:
@@ -746,6 +792,9 @@ async def get_benchmark(
         "competitive_opportunities": opps[:3],
         "industry_trends": common_complaints,
         "cohort": {k: v for k, v in cohort.items() if k != "user_ids"},
+        # Named, citable, anonymous benchmark. Withheld below the minimum
+        # cohort so a single tenant's numbers cannot be published as "normal".
+        "regional_index": _regional_index(cohort, days, now),
         "market": market,
         "my_rank": my_rank,
         "recency": recency,
