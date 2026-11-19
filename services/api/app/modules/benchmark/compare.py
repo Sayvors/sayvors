@@ -29,7 +29,7 @@ from .service import get_saved
 
 logger = logging.getLogger(__name__)
 
-MAX_SUBJECTS = 2
+MAX_SUBJECTS = 6
 # Google returns at most 500 reviews per place; keep our own sample the same
 # size so both sides of the comparison describe the same kind of evidence.
 REVIEW_SAMPLE_LIMIT = 500

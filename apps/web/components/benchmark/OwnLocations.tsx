@@ -107,7 +107,7 @@ export default function OwnLocations() {
             >
               <div className="flex items-start gap-2">
                 <Link
-                  href={`/dashboard/benchmark/compare?left=${encodeURIComponent(`own:${location.id}`)}`}
+                  href={`/dashboard/benchmark/compare?s=${encodeURIComponent(`own:${location.id}`)}`}
                   className="min-w-0 flex-1 truncate text-[14px] font-bold text-[#14101F] hover:underline"
                 >
                   {location.display_name || "Unnamed location"}
@@ -126,7 +126,7 @@ export default function OwnLocations() {
                   {menuId === location.id ? (
                     <div className="absolute right-0 top-full z-20 mt-1 w-44 rounded-[12px] border border-[var(--ui-line)] bg-white p-1 shadow-[0_2px_8px_rgba(20,16,31,0.10)]">
                       <Link
-                        href={`/dashboard/benchmark/compare?left=${encodeURIComponent(`own:${location.id}`)}`}
+                        href={`/dashboard/benchmark/compare?s=${encodeURIComponent(`own:${location.id}`)}`}
                         onClick={() => setMenuId(null)}
                         className={`block w-full rounded-[8px] px-2.5 py-2 text-left text-[11px] font-semibold text-[#14101F] hover:bg-[#F4F2F7] ${FOCUS}`}
                       >
@@ -207,7 +207,7 @@ export default function OwnLocations() {
                   Open
                 </Link>
                 <Link
-                  href={`/dashboard/benchmark/compare?left=${encodeURIComponent(`own:${location.id}`)}`}
+                  href={`/dashboard/benchmark/compare?s=${encodeURIComponent(`own:${location.id}`)}`}
                   className={`rounded-[12px] border border-[#3D1D6E]/25 px-3 py-1.5 text-[11px] font-bold text-[#3D1D6E] ${FOCUS}`}
                 >
                   Compare

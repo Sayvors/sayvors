@@ -11,7 +11,7 @@ from . import compare, places, service
 
 router = APIRouter(prefix="/api/v1/benchmark", tags=["benchmark"])
 
-MAX_COMPARE_SUBJECTS = 2
+MAX_COMPARE_SUBJECTS = 6
 
 
 class SavePlaceIn(BaseModel):
@@ -54,7 +54,7 @@ async def compare_places(
     ctx: TenantContext = Depends(require_perm("benchmark.view")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Normalized facts for one or two comparison subjects.
+    """Normalized facts for up to six comparison subjects.
 
     A subject is ``saved:<place_id>`` (a place on this tenant's bench) or
     ``own:<channel_id>`` (one of the tenant's Google locations). Each side is

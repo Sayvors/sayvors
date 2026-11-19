@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
@@ -8,11 +8,11 @@ import { apiFetch } from "@/lib/api-rag";
 import {
   fetchComparison,
   fetchSavedPlaces,
-  subjectKey,
   type ComparisonSubject,
   type SavedPlace,
 } from "@/lib/api-benchmark";
 import VerificationBadge from "@/components/shared/VerificationBadge";
+import ComparePicker from "@/components/benchmark/ComparePicker";
 
 const FOCUS = "focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[#3D1D6E]";
 
@@ -25,41 +25,68 @@ interface ChannelOption {
 type MetricKey = keyof ComparisonSubject["metrics"];
 type FactKey = keyof ComparisonSubject["facts"];
 
-const METRIC_ROWS: { key: MetricKey; label: string; suffix?: string }[] = [
-  { key: "total_reviews", label: "Total reviews" },
-  { key: "reviews_last_day", label: "Reviews · last day" },
-  { key: "reviews_last_week", label: "Reviews · last week" },
-  { key: "reviews_last_month", label: "Reviews · last month" },
-  { key: "reviews_last_year", label: "Reviews · last year" },
-  { key: "avg_rating", label: "Average rating", suffix: "★" },
-  { key: "total_ratings", label: "Total ratings" },
-  { key: "five_star", label: "5-star ratings" },
-  { key: "four_star", label: "4-star ratings" },
-  { key: "one_star", label: "1-star ratings" },
-  { key: "impressions", label: "Impressions (12 mo)" },
-  { key: "calls", label: "Calls (12 mo)" },
+interface Row<T extends string> {
+  key: T;
+  label: string;
+  render: (subject: ComparisonSubject) => ReactNode;
+  value?: (subject: ComparisonSubject) => number | null;
+  higherIsBetter?: boolean;
+}
+
+const METRIC_ROWS: Row<MetricKey>[] = [
+  { key: "total_reviews", label: "Total reviews", value: (s) => s.metrics.total_reviews, render: (s) => num(s.metrics.total_reviews) },
+  { key: "reviews_last_day", label: "Reviews · last day", value: (s) => s.metrics.reviews_last_day, render: (s) => num(s.metrics.reviews_last_day) },
+  { key: "reviews_last_week", label: "Reviews · last week", value: (s) => s.metrics.reviews_last_week, render: (s) => num(s.metrics.reviews_last_week) },
+  { key: "reviews_last_month", label: "Reviews · last month", value: (s) => s.metrics.reviews_last_month, render: (s) => num(s.metrics.reviews_last_month) },
+  { key: "reviews_last_year", label: "Reviews · last year", value: (s) => s.metrics.reviews_last_year, render: (s) => num(s.metrics.reviews_last_year) },
+  { key: "avg_rating", label: "Average rating", value: (s) => s.metrics.avg_rating, render: (s) => num(s.metrics.avg_rating, "★") },
+  { key: "total_ratings", label: "Total ratings", value: (s) => s.metrics.total_ratings, render: (s) => num(s.metrics.total_ratings) },
+  { key: "five_star", label: "5-star ratings", value: (s) => s.metrics.five_star, render: (s) => num(s.metrics.five_star) },
+  { key: "four_star", label: "4-star ratings", value: (s) => s.metrics.four_star, render: (s) => num(s.metrics.four_star) },
+  { key: "one_star", label: "1-star ratings", value: (s) => s.metrics.one_star, higherIsBetter: false, render: (s) => num(s.metrics.one_star) },
+  { key: "impressions", label: "Impressions (12 mo)", value: (s) => s.metrics.impressions, render: (s) => ownerOnly(s, s.metrics.impressions) },
+  { key: "calls", label: "Calls (12 mo)", value: (s) => s.metrics.calls, render: (s) => ownerOnly(s, s.metrics.calls) },
 ];
 
-const FACT_ROWS: { key: FactKey; label: string; hint?: string }[] = [
-  { key: "positive_pct", label: "Positive sentiment" },
-  { key: "negative_pct", label: "Negative sentiment" },
-  { key: "branch", label: "Branch / location" },
-  { key: "employee_mentions", label: "Team mentioned in reviews" },
-  { key: "working_hard_mentions", label: "Praised for working hard" },
-  { key: "menu_price_mentions", label: "Menu & price mentions" },
-  { key: "parking_praised", label: "Parking · positive mentions" },
-  { key: "parking_criticised", label: "Parking · negative mentions" },
-  { key: "services", label: "Services" },
-  { key: "top_problems", label: "Top problems" },
-  { key: "named_team", label: "Named team members" },
+const FACT_ROWS: Row<FactKey>[] = [
+  { key: "positive_pct", label: "Positive sentiment", value: (s) => s.facts.positive_pct, render: (s) => pct(s.facts.positive_pct) },
+  { key: "negative_pct", label: "Negative sentiment", value: (s) => s.facts.negative_pct, higherIsBetter: false, render: (s) => pct(s.facts.negative_pct) },
+  { key: "branch", label: "Branch / location", render: (s) => s.facts.branch ?? "—" },
+  { key: "employee_mentions", label: "Team mentioned in reviews", value: (s) => s.facts.employee_mentions, render: (s) => num(s.facts.employee_mentions) },
+  { key: "working_hard_mentions", label: "Praised for working hard", value: (s) => s.facts.working_hard_mentions, render: (s) => num(s.facts.working_hard_mentions) },
+  { key: "menu_price_mentions", label: "Menu & price mentions", value: (s) => s.facts.menu_price_mentions, render: (s) => num(s.facts.menu_price_mentions) },
+  { key: "parking_praised", label: "Parking · positive mentions", value: (s) => s.facts.parking_praised, render: (s) => num(s.facts.parking_praised) },
+  { key: "parking_criticised", label: "Parking · negative mentions", value: (s) => s.facts.parking_criticised, higherIsBetter: false, render: (s) => num(s.facts.parking_criticised) },
+  { key: "services", label: "Services", render: (s) => chips(s.facts.services) },
+  { key: "top_problems", label: "Top problems", render: (s) => chips(s.facts.top_problems) },
+  { key: "named_team", label: "Named team members", render: (s) => namedTeam(s.facts.named_team) },
 ];
 
-function number(value: number | null | undefined, suffix = ""): string {
+const NOTE_ROWS: Row<"notes">[] = [
+  {
+    key: "notes",
+    label: "Where these numbers come from",
+    render: (s) => (
+      <ul className="list-disc pl-4 text-[10px] leading-relaxed text-[#3B2D5E]">
+        {s.notes.map((note) => <li key={note}>{note}</li>)}
+      </ul>
+    ),
+  },
+];
+
+function num(value: number | null | undefined, suffix = ""): string {
   return value == null ? "—" : `${value}${suffix}`;
 }
 
-function percent(value: number | null | undefined): string {
+function pct(value: number | null | undefined): string {
   return value == null ? "—" : `${value}%`;
+}
+
+function ownerOnly(subject: ComparisonSubject, value: number | null): ReactNode {
+  if (subject.kind === "saved") {
+    return <span className="text-[10px] text-[#8A8496]">Owner only</span>;
+  }
+  return num(value);
 }
 
 function chips(items: string[] | undefined): ReactNode {
@@ -67,10 +94,7 @@ function chips(items: string[] | undefined): ReactNode {
   return (
     <span className="flex flex-wrap gap-1">
       {items.map((item) => (
-        <span
-          key={item}
-          className="rounded-[8px] bg-[#F4F2F7] px-2 py-0.5 text-[10px] font-semibold text-[#3B2D5E]"
-        >
+        <span key={item} className="rounded-[8px] bg-[#F4F2F7] px-2 py-0.5 text-[10px] font-semibold text-[#3B2D5E]">
           {item}
         </span>
       ))}
@@ -78,116 +102,110 @@ function chips(items: string[] | undefined): ReactNode {
   );
 }
 
-function factNode(subject: ComparisonSubject, key: FactKey): ReactNode {
-  if (!subject.available) return <span className="text-[11px] text-[#8E1230]">{subject.reason}</span>;
-  const facts = subject.facts;
-  switch (key) {
-    case "positive_pct":
-    case "negative_pct":
-      return <span className="font-mono font-bold">{percent(facts[key])}</span>;
-    case "branch":
-      return facts.branch ?? <span className="text-[#8A8496]">—</span>;
-    case "employee_mentions":
-    case "working_hard_mentions":
-    case "menu_price_mentions":
-    case "parking_praised":
-    case "parking_criticised":
-      return <span className="font-mono font-bold">{number(facts[key])}</span>;
-    case "services":
-    case "top_problems":
-      return chips(facts[key]);
-    case "named_team":
-      if (!facts.named_team.length) return <span className="text-[#8A8496]">—</span>;
-      return (
-        <span className="flex flex-col gap-0.5">
-          {facts.named_team.map((member) => (
-            <span key={member.name} className="text-[11px]">
-              <strong className="font-bold">{member.name}</strong>
-              <span className="text-[#3B2D5E]"> · {member.mentions} mentions</span>
-            </span>
-          ))}
-        </span>
-      );
-    default:
-      return "—";
-  }
-}
-
-function Select({
-  side,
-  value,
-  onChange,
-  saved,
-  own,
-}: {
-  side: "left" | "right";
-  value: string;
-  onChange: (value: string) => void;
-  saved: SavedPlace[];
-  own: ChannelOption[];
-}) {
+function namedTeam(members: ComparisonSubject["facts"]["named_team"]): ReactNode {
+  if (!members.length) return <span className="text-[#8A8496]">—</span>;
   return (
-    <label className="flex min-w-0 flex-1 flex-col gap-1.5">
-      <span className="text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]">
-        {side === "left" ? "Business A" : "Business B"}
-      </span>
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        aria-label={`Select ${side === "left" ? "first" : "second"} business`}
-        className={`h-11 w-full rounded-[16px] border border-[var(--ui-line)] bg-white px-3 text-[12px] font-semibold text-[#14101F] ${FOCUS}`}
-      >
-        <option value="">Select a business…</option>
-        <optgroup label="Saved businesses">
-          {saved.map((place) => (
-            <option key={place.id} value={subjectKey("saved", place.place_id)}>
-              {place.label || place.name || place.place_id}
-            </option>
-          ))}
-        </optgroup>
-        <optgroup label="Our own business">
-          {own.map((channel) => (
-            <option key={channel.id} value={subjectKey("own", channel.id)}>
-              {channel.display_name || "Unnamed location"}
-            </option>
-          ))}
-        </optgroup>
-      </select>
-    </label>
+    <span className="flex flex-col gap-0.5">
+      {members.map((member) => (
+        <span key={member.name} className="text-[11px]">
+          <strong className="font-bold">{member.name}</strong>
+          <span className="text-[#3B2D5E]"> · {member.mentions} mentions</span>
+        </span>
+      ))}
+    </span>
   );
 }
 
-function SideHeader({ subject, fallback }: { subject: ComparisonSubject | undefined; fallback: string }) {
-  const name = subject?.name || fallback || "Select a business";
+function MatrixTable<T extends string>({
+  title,
+  description,
+  rows,
+  subjects,
+}: {
+  title: string;
+  description?: string;
+  rows: Row<T>[];
+  subjects: ComparisonSubject[];
+}) {
   return (
-    <div className="min-w-0">
-      <div className="flex min-w-0 items-center gap-2">
-        <h3 className="truncate text-[14px] font-bold text-[#14101F]" title={name}>{name}</h3>
-        {subject?.available ? (
-          <VerificationBadge status={subject.verified ? "verified" : "unstarted"} compact />
-        ) : null}
+    <section className="mt-5 overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-white">
+      <div className="border-b border-[var(--ui-line)] bg-[#F4F2F7] px-4 py-3">
+        <h2 className="text-[14px] font-bold text-[#14101F]">{title}</h2>
+        {description ? <p className="mt-0.5 text-[10px] text-[#3B2D5E]">{description}</p> : null}
       </div>
-      <p className="mt-0.5 truncate text-[10px] text-[#3B2D5E]">
-        {subject?.address
-          ? subject.address
-          : subject
-          ? subject.data_source === "google_places"
-            ? "Google Places listing"
-            : "Your connected location"
-          : "Choose two businesses above"}
-      </p>
-    </div>
+      <div className="overflow-x-auto">
+        <div
+          className="grid"
+          style={{
+            gridTemplateColumns: `minmax(160px, 200px) repeat(${subjects.length}, minmax(160px, 1fr))`,
+            minWidth: `${200 + subjects.length * 170}px`,
+          }}
+        >
+          <div className="border-b border-r border-[var(--ui-line)] bg-white px-4 py-3 text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]">
+            Metric
+          </div>
+          {subjects.map((subject) => (
+            <div key={subject.key} className="min-w-0 border-b border-r border-[var(--ui-line)] px-4 py-3 last:border-r-0">
+              <div className="flex min-w-0 items-center gap-2">
+                <h3 className="truncate text-[13px] font-bold text-[#14101F]" title={subject.name || subject.id}>
+                  {subject.name || subject.id}
+                </h3>
+                {subject.available ? (
+                  <VerificationBadge status={subject.verified ? "verified" : "unstarted"} compact />
+                ) : null}
+              </div>
+              <p className="mt-0.5 truncate text-[10px] text-[#3B2D5E]">
+                {subject.available
+                  ? subject.kind === "saved" ? "Google Places listing" : "Your connected location"
+                  : subject.reason}
+              </p>
+            </div>
+          ))}
+
+          {rows.map((row) => {
+            const values = subjects
+              .filter((subject) => subject.available && row.value)
+              .map((subject) => row.value!(subject))
+              .filter((value): value is number => value != null);
+            const best = values.length > 1
+              ? (row.higherIsBetter === false ? Math.min(...values) : Math.max(...values))
+              : null;
+            return (
+              <Fragment key={row.key}>
+                <div className="border-b border-r border-[var(--ui-line)] px-4 py-2.5 text-[11px] font-semibold text-[#14101F]">
+                  {row.label}
+                </div>
+                {subjects.map((subject) => {
+                  const value = subject.available && row.value ? row.value(subject) : null;
+                  const winning = best != null && value === best;
+                  return (
+                    <div
+                      key={subject.key}
+                      className={`border-b border-r px-4 py-2.5 text-[12px] last:border-r-0 ${
+                        winning ? "font-bold text-[#B0338A]" : "font-mono text-[#3B2D5E]"
+                      } border-[var(--ui-line)]`}
+                    >
+                      {subject.available
+                        ? row.render(subject)
+                        : <span className="text-[10px] text-[#8E1230]">{subject.reason}</span>}
+                    </div>
+                  );
+                })}
+              </Fragment>
+            );
+          })}
+        </div>
+      </div>
+    </section>
   );
 }
 
 export default function ComparePage() {
   const router = useRouter();
   const params = useSearchParams();
-  const leftKey = params.get("left") ?? "";
-  const rightKey = params.get("right") ?? "";
 
   const savedQuery = useQuery({ queryKey: ["benchmark", "saved"], queryFn: fetchSavedPlaces });
-  const saved = savedQuery.data ?? [];
+  const saved: SavedPlace[] = savedQuery.data ?? [];
   const channelsQuery = useQuery({
     queryKey: ["benchmark", "own-locations-list"],
     queryFn: async () => {
@@ -199,20 +217,24 @@ export default function ComparePage() {
   });
   const own = channelsQuery.data ?? [];
 
+  // Card links use ?left=/?right=; the picker uses repeated ?s= params.
+  const selected = params.getAll("s");
+  const selectedKeys = selected.length
+    ? selected
+    : [params.get("left"), params.get("right")].filter((value): value is string => Boolean(value));
+
   const compareQuery = useQuery({
-    queryKey: ["benchmark", "compare", leftKey, rightKey],
-    queryFn: () => fetchComparison([leftKey, rightKey]),
-    enabled: Boolean(leftKey && rightKey),
+    queryKey: ["benchmark", "compare", selectedKeys.join("|")],
+    queryFn: () => fetchComparison(selectedKeys),
+    enabled: selectedKeys.length > 0,
   });
   const subjects = compareQuery.data?.subjects ?? [];
-  const left = subjects[0];
-  const right = subjects[1];
 
-  function update(side: "left" | "right", value: string) {
-    const next = new URLSearchParams(params.toString());
-    if (value) next.set(side, value);
-    else next.delete(side);
-    router.replace(`/dashboard/benchmark/compare?${next.toString()}`, { scroll: false });
+  function update(keys: string[]) {
+    const next = new URLSearchParams();
+    keys.forEach((key) => next.append("s", key));
+    const query = next.toString();
+    router.replace(`/dashboard/benchmark/compare${query ? `?${query}` : ""}`, { scroll: false });
   }
 
   return (
@@ -228,36 +250,33 @@ export default function ComparePage() {
             Benchmark / Compare
           </p>
           <h1 className="mt-2 max-w-lg text-[24px] font-bold leading-tight text-[#14101F] sm:text-[30px]">
-            Two businesses. One honest picture.
+            Every business. One honest table.
           </h1>
           <p className="mt-3 max-w-lg text-[13px] leading-relaxed text-[#3B2D5E]">
-            Put any saved competitor next to any of your own branches. Compare the
-            numbers Google actually publishes, then read what customers say about
-            the team, the menu, parking and service — side by side, with nothing
-            invented to fill the gaps.
+            Put up to six saved competitors and your own branches in a single
+            comparison. Each column is one business, each row a fact — so you
+            can see who leads on reviews, ratings and customer sentiment at a
+            glance, with no invented numbers filling the gaps.
           </p>
         </div>
         <div className="relative hidden min-h-[220px] items-center justify-center lg:flex">
-          <div className="absolute left-[12%] top-[16%] h-24 w-40 rounded-[16px] bg-white shadow-[0_2px_8px_rgba(20,16,31,0.08)]" />
-          <div className="absolute bottom-[16%] right-[12%] h-24 w-40 rounded-[16px] bg-[#B0338A] shadow-[0_2px_8px_rgba(20,16,31,0.12)]" />
-          <div className="relative z-10 flex h-14 w-14 items-center justify-center rounded-full border-[3px] border-white bg-[#3D1D6E] text-[15px] font-extrabold text-white shadow-[0_2px_8px_rgba(20,16,31,0.18)]">
-            VS
-          </div>
+          <div className="absolute left-[10%] top-[14%] h-20 w-32 rounded-[16px] bg-white shadow-[0_2px_8px_rgba(20,16,31,0.08)]" />
+          <div className="absolute bottom-[16%] left-[34%] h-20 w-32 rounded-[16px] bg-[#F6DCEB]" />
+          <div className="absolute right-[10%] top-[18%] h-20 w-32 rounded-[16px] bg-[#D8459F]" />
+          <div className="absolute bottom-[12%] right-[22%] h-20 w-32 rounded-[16px] bg-[#B0338A] shadow-[0_2px_8px_rgba(20,16,31,0.12)]" />
         </div>
       </section>
 
-      {/* Two dropdowns; the second optgroup is the "our own business" divider. */}
       <section className="mt-5 rounded-[16px] border border-[var(--ui-line)] bg-white p-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-          <Select side="left" value={leftKey} onChange={(v) => update("left", v)} saved={saved} own={own} />
-          <span className="mb-3 shrink-0 self-center text-[12px] font-extrabold text-[#B0338A] sm:mb-2">VS</span>
-          <Select side="right" value={rightKey} onChange={(v) => update("right", v)} saved={saved} own={own} />
-        </div>
+        <p className="mb-3 text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]">
+          Choose the businesses to compare
+        </p>
+        <ComparePicker selected={selectedKeys} onChange={update} saved={saved} own={own} />
       </section>
 
-      {!leftKey || !rightKey ? (
+      {selectedKeys.length === 0 ? (
         <p className="mt-6 rounded-[16px] border border-dashed border-[var(--ui-line)] bg-white px-5 py-10 text-center text-[12px] text-[#3B2D5E]">
-          Pick a business on both sides to see the comparison.
+          Tick at least one business above to build the comparison table.
         </p>
       ) : compareQuery.isPending ? (
         <p className="mt-6 text-[12px] text-[#3B2D5E]">Loading comparison…</p>
@@ -265,68 +284,23 @@ export default function ComparePage() {
         <p className="mt-6 text-[12px] text-red-700">Could not load the comparison.</p>
       ) : (
         <>
-          {/* Table 1 — hard numbers from Google. */}
-          <section className="mt-5 overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-white">
-            <div className="grid grid-cols-[minmax(140px,1fr)_1fr_1fr] gap-2 border-b border-[var(--ui-line)] bg-[#F4F2F7] px-4 py-3">
-              <span className="text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]">Metric</span>
-              <SideHeader subject={left} fallback={leftKey} />
-              <SideHeader subject={right} fallback={rightKey} />
-            </div>
-            <div className="divide-y divide-[var(--ui-line)]">
-              {METRIC_ROWS.map((row) => {
-                const a = left?.available ? left.metrics[row.key] : null;
-                const b = right?.available ? right.metrics[row.key] : null;
-                const aWins = a != null && b != null && a > b;
-                const bWins = b != null && a != null && b > a;
-                return (
-                  <div key={row.key} className="grid grid-cols-[minmax(140px,1fr)_1fr_1fr] items-center gap-2 px-4 py-2.5">
-                    <span className="text-[11px] font-semibold text-[#14101F]">{row.label}</span>
-                    <span className={`font-mono text-[12px] ${aWins ? "font-extrabold text-[#B0338A]" : "text-[#3B2D5E]"}`}>
-                      {!left?.available ? left?.reason : number(a, row.suffix)}
-                    </span>
-                    <span className={`font-mono text-[12px] ${bWins ? "font-extrabold text-[#B0338A]" : "text-[#3B2D5E]"}`}>
-                      {!right?.available ? right?.reason : number(b, row.suffix)}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-
-          {/* Table 2 — facts and review-derived signals, with honest gaps. */}
-          <section className="mt-5 overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-white">
-            <div className="border-b border-[var(--ui-line)] bg-[#F4F2F7] px-4 py-3">
-              <h2 className="text-[14px] font-bold text-[#14101F]">What customers say</h2>
-              <p className="mt-0.5 text-[10px] text-[#3B2D5E]">
-                Review-text signals are scanned from the most recent reviews; owner-only facts stay blank for competitors.
-              </p>
-            </div>
-            <div className="grid grid-cols-[minmax(140px,1fr)_1fr_1fr] gap-2 border-b border-[var(--ui-line)] px-4 py-2.5 text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]">
-              <span>Fact</span>
-              <span>{left?.name || "Business A"}</span>
-              <span>{right?.name || "Business B"}</span>
-            </div>
-            <div className="divide-y divide-[var(--ui-line)]">
-              {FACT_ROWS.map((row) => (
-                <div key={row.key} className="grid grid-cols-[minmax(140px,1fr)_1fr_1fr] items-start gap-2 px-4 py-2.5">
-                  <span className="text-[11px] font-semibold text-[#14101F]">{row.label}</span>
-                  <span className="text-[12px] text-[#3B2D5E]">{left ? factNode(left, row.key) : "—"}</span>
-                  <span className="text-[12px] text-[#3B2D5E]">{right ? factNode(right, row.key) : "—"}</span>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="mt-5 grid gap-3 sm:grid-cols-2">
-            {[left, right].filter((s): s is ComparisonSubject => Boolean(s)).map((subject) => (
-              <div key={subject.key} className="rounded-[16px] border border-[var(--ui-line)] bg-white p-4">
-                <h3 className="text-[12px] font-bold text-[#14101F]">{subject.name || subject.id}</h3>
-                <ul className="mt-2 list-disc pl-4 text-[10px] leading-relaxed text-[#3B2D5E]">
-                  {subject.notes.map((note) => <li key={note}>{note}</li>)}
-                </ul>
-              </div>
-            ))}
-          </section>
+          <MatrixTable
+            title="Numbers from Google"
+            description="Reviews, ratings and listing performance. Owner-only figures stay blank for competitors."
+            rows={METRIC_ROWS}
+            subjects={subjects}
+          />
+          <MatrixTable
+            title="What customers say"
+            description="Signals scanned from the most recent reviews, plus services and issues from your own locations."
+            rows={FACT_ROWS}
+            subjects={subjects}
+          />
+          <MatrixTable
+            title="Sources & limits"
+            rows={NOTE_ROWS}
+            subjects={subjects}
+          />
         </>
       )}
     </div>

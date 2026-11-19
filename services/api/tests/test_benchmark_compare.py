@@ -109,6 +109,26 @@ async def test_two_sides_and_bad_side_do_not_break_each_other(db, channel_id, us
     assert results[1]["available"] is False
 
 
+async def test_up_to_six_subjects_allowed(db, monkeypatch):
+    from app.modules.benchmark import places as places_module
+    from app.modules.benchmark import service as bench_service
+
+    for i in range(6):
+        await bench_service.save_place(db, TENANT, place_id=f"multi-{i}")
+
+    async def _fake_get_place(place_id):
+        return {"place_id": place_id, "name": place_id, "address": None,
+                "rating": 4.0, "review_count": 10, "types": [], "reviews": []}
+
+    monkeypatch.setattr(places_module, "get_place", _fake_get_place)
+    keys = [f"saved:multi-{i}" for i in range(6)]
+    results = await compare.compare_subjects(db, TENANT, keys)
+    assert len(results) == 6
+    assert all(result["available"] for result in results)
+    with pytest.raises(compare.CompareError):
+        await compare.compare_subjects(db, TENANT, keys + ["saved:multi-0"])
+
+
 async def test_compare_endpoint(client, monkeypatch):
     from app.modules.benchmark import places as places_module
 
