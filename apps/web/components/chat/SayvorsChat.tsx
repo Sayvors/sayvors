@@ -577,7 +577,11 @@ export default function SayvorsChat() {
     };
 
     try {
-      for await (const ev of streamAssistantChat(text, history, active.id, controller.signal)) {
+      // Tell the assistant which dashboard screen the owner is on and which
+      // businesses are selected (e.g. the benchmark compare page), so
+      // "why are these two better than mine" has real referents.
+      const screenPath = window.location.pathname + window.location.search;
+      for await (const ev of streamAssistantChat(text, history, active.id, controller.signal, screenPath)) {
         if (ev.type === "step" && ev.label) {
           addStep(ev.label, ev.detail, ev.id);
         } else if (ev.type === "delta" && ev.text) {

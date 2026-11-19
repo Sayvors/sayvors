@@ -29,7 +29,8 @@ export async function* streamAssistantChat(
   message: string,
   history: { role: string; content: string }[],
   sessionId?: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  page?: string
 ): AsyncGenerator<AssistantStreamEvent, void, void> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const csrf = getCsrfToken();
@@ -42,6 +43,7 @@ export async function* streamAssistantChat(
       message,
       history: history.slice(-8),
       ...(sessionId ? { session_id: sessionId } : {}),
+      ...(page ? { page } : {}),
     }),
     credentials: "include",
     signal,
