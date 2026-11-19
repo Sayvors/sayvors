@@ -37,6 +37,15 @@ async def search_places(
     return results[:limit]
 
 
+@router.get("/heatmap", response_model=dict)
+async def get_heatmap(
+    weeks: int = Query(12, ge=1, le=52),
+    ctx: TenantContext = Depends(require_perm("benchmark.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.heatmap_matrix(db, tenant_id_of(ctx.user), weeks=weeks)
+
+
 @router.get("/places", response_model=list[dict])
 async def list_saved(
     limit: int = Query(50, ge=1, le=100),

@@ -149,7 +149,7 @@ export default function BenchmarkPage() {
 
       {/* 2 — Heatmap: a grid of colour-coded cards; click for a snapshot modal */}
       <section className="mb-6">
-        <HeatmapGrid places={saved.filter((place) => place.in_heatmap)} />
+        <HeatmapGrid />
       </section>
 
       {/* 3 — Saved business cards */}

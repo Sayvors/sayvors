@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import BenchmarkConfig, BenchmarkPlace
+from .models import BenchmarkConfig, BenchmarkPlace, BenchmarkSnapshot
 
 MAX_LABEL = 120
 MAX_NOTES = 2000
@@ -135,7 +135,69 @@ async def save_place(
             raise BenchError("Could not save this place.") from exc
         return existing
     await db.refresh(row)
+    # The first snapshot is the day-one fact for the heatmap: a saved place
+    # with no history still has a real cell at "now" rather than an empty row.
+    db.add(BenchmarkSnapshot(
+        place_id=row.id, tenant_id=tenant_id,
+        rating=rating, review_count=review_count,
+        fetched_at=datetime.now(timezone.utc),
+    ))
+    await db.commit()
     return row
+
+
+async def heatmap_matrix(db: AsyncSession, tenant_id: str, *, weeks: int = 12) -> dict:
+    """Locations x weeks matrix for the heatmap chart.
+
+    Each cell is the latest review count captured in that ISO week. Weeks are
+    always emitted so the chart has a stable axis even with one saved place.
+    """
+    from datetime import timedelta
+
+    count = max(1, min(int(weeks), 52))
+    today = datetime.now(timezone.utc).date()
+    start = today - timedelta(weeks=count - 1)
+    start = start - timedelta(days=start.weekday())
+    end = today + timedelta(days=6 - today.weekday())
+
+    places = (
+        await db.execute(
+            select(BenchmarkPlace)
+            .where(BenchmarkPlace.tenant_id == tenant_id, BenchmarkPlace.in_heatmap.is_(True))
+            .order_by(BenchmarkPlace.created_at)
+        )
+    ).scalars().all()
+    columns = [(start + timedelta(weeks=i)).isoformat() for i in range(count)]
+    if not places:
+        return {"weeks": columns, "rows": [], "metric": "reviews"}
+
+    place_ids = [p.id for p in places]
+    snapshots = (
+        await db.execute(
+            select(BenchmarkSnapshot)
+            .where(
+                BenchmarkSnapshot.tenant_id == tenant_id,
+                BenchmarkSnapshot.place_id.in_(place_ids),
+                BenchmarkSnapshot.fetched_at >= datetime.combine(start, datetime.min.time()),
+                BenchmarkSnapshot.fetched_at <= datetime.combine(end, datetime.min.time()) + timedelta(days=1),
+            )
+            .order_by(BenchmarkSnapshot.fetched_at)
+        )
+    ).scalars().all()
+
+    latest: dict[tuple[str, str], int | None] = {}
+    for snap in snapshots:
+        week = (snap.fetched_at.date() - timedelta(days=snap.fetched_at.date().weekday())).isoformat()
+        latest[(snap.place_id, week)] = snap.review_count
+
+    rows = [{
+        "place_id": p.id,
+        "external_id": p.place_id,
+        "name": p.label or p.name or p.place_id,
+        "rating": p.rating,
+        "cells": [latest.get((p.id, week)) for week in columns],
+    } for p in places]
+    return {"weeks": columns, "rows": rows, "metric": "reviews"}
 
 
 async def list_saved(

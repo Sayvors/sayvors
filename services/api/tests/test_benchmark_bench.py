@@ -49,6 +49,23 @@ async def test_blank_place_rejected(db):
         await service.save_place(db, TENANT_A, place_id="  ")
 
 
+async def test_save_writes_day_one_snapshot(db):
+    await service.save_place(
+        db, TENANT_A, place_id="p1", rating=4.5, review_count=120
+    )
+    matrix = await service.heatmap_matrix(db, TENANT_A, weeks=2)
+    assert len(matrix["weeks"]) == 2
+    assert len(matrix["rows"]) == 1
+    populated = [v for v in matrix["rows"][0]["cells"] if v is not None]
+    assert populated == [120]
+
+
+async def test_heatmatrix_empty_when_nothing_saved(db):
+    matrix = await service.heatmap_matrix(db, TENANT_B, weeks=4)
+    assert matrix["rows"] == []
+    assert len(matrix["weeks"]) == 4
+
+
 # -- HTTP surface -------------------------------------------------------------
 
 pytestmark = pytest.mark.asyncio

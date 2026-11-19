@@ -1,23 +1,44 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getBenchmarkPlaceDetails, type PlaceDetails, type SavedPlace } from "@/lib/api-benchmark";
-import VerificationBadge from "@/components/shared/VerificationBadge";
+import { useQuery } from "@tanstack/react-query";
+import { apiFetch } from "@/lib/api-rag";
+import { getBenchmarkPlaceDetails, type PlaceDetails } from "@/lib/api-benchmark";
 
 const FOCUS = "focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[#3D1D6E]";
 
-/** Solid heat colour from rating: red < 3.8, amber < 4.4, green otherwise. */
-function heatTone(rating: number | null): { bg: string; text: string; label: string } {
-  if (rating == null) return { bg: "#F4F2F7", text: "#3B2D5E", label: "No rating" };
-  if (rating < 3.8) return { bg: "#FFE3E9", text: "#8E1230", label: "Needs attention" };
-  if (rating < 4.4) return { bg: "#FFF0CF", text: "#7A4B00", label: "Steady" };
-  return { bg: "#DCF5E6", text: "#0E5C36", label: "Strong" };
+interface Matrix {
+  weeks: string[];
+  metric: "reviews";
+  rows: {
+    place_id: string;
+    external_id: string;
+    name: string;
+    rating: number | null;
+    cells: (number | null)[];
+  }[];
 }
 
-export default function HeatmapGrid({ places }: { places: SavedPlace[] }) {
+/** Five-step solid colour scale — no gradients, density by review volume. */
+function cellColor(value: number | null): string {
+  if (value == null) return "#F4F2F7";
+  if (value <= 0) return "#F4F2F7";
+  if (value < 10) return "#FFF0CF";
+  if (value < 50) return "#FFD8A8";
+  if (value < 200) return "#F7A9BD";
+  return "#B0338A";
+}
+
+export default function HeatmapGrid() {
   const [selected, setSelected] = useState<string | null>(null);
   const [details, setDetails] = useState<PlaceDetails | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const matrixQuery = useQuery({
+    queryKey: ["benchmark", "heatmap"],
+    queryFn: () => apiFetch("/api/v1/benchmark/heatmap?weeks=12") as Promise<Matrix>,
+  });
+  const matrix = matrixQuery.data;
 
   useEffect(() => {
     if (!selected) { setDetails(null); return; }
@@ -34,44 +55,71 @@ export default function HeatmapGrid({ places }: { places: SavedPlace[] }) {
     <section aria-label="Market heatmap">
       <div className="mb-3 flex items-baseline justify-between gap-3">
         <h2 className="text-[14px] font-bold text-[#14101F]">Market heatmap</h2>
-        <p className="text-[10px] text-[#3B2D5E]">Colour = rating · darker = more reviews</p>
+        <p className="text-[10px] text-[#3B2D5E]">
+          Each row is a saved business · each column a week · colour = review volume
+        </p>
       </div>
 
-      {places.length === 0 ? (
-        <div className="flex h-48 items-center justify-center rounded-[12px] border border-dashed border-[#3D1D6E]/20 bg-white text-[12px] text-[#3B2D5E]">
-          Save a business to see it on the heatmap.
+      {matrixQuery.isPending ? (
+        <p className="text-[12px] text-[#3B2D5E]">Loading heatmap…</p>
+      ) : !matrix || matrix.rows.length === 0 ? (
+        <div className="flex h-40 items-center justify-center rounded-[12px] border border-dashed border-[#3D1D6E]/20 bg-white text-[12px] text-[#3B2D5E]">
+          No saved businesses on the heatmap yet. Add one from your bench or your own locations.
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
-          {places.map((place) => {
-            const tone = heatTone(place.rating);
-            const volume = Math.min(1, Math.max(0.25, (place.review_count ?? 0) / 500));
-            return (
-              <button
-                key={place.id}
-                type="button"
-                onClick={() => setSelected(place.place_id)}
-                className={`flex min-h-[92px] flex-col justify-between rounded-[10px] border border-[#3D1D6E]/10 px-3 py-2.5 text-left transition hover:-translate-y-0.5 ${FOCUS}`}
-                style={{ backgroundColor: tone.bg, boxShadow: `0 2px 0 rgba(20,16,31,${(volume * 0.12).toFixed(2)})` }}
-                title={`${place.label || place.name || place.place_id} — ${tone.label}`}
-              >
-                <span className="flex items-center justify-between gap-1">
-                  <span className="truncate text-[11px] font-bold" style={{ color: tone.text }}>
-                    {place.label || place.name || place.place_id}
-                  </span>
-                  <VerificationBadge status="unstarted" compact />
-                </span>
-                <span className="font-mono text-[16px] font-bold" style={{ color: tone.text }}>
-                  {place.rating != null ? place.rating.toFixed(1) : "—"}<span className="text-[10px]">★</span>
-                </span>
-                <span className="text-[9px] uppercase tracking-wide" style={{ color: tone.text }}>
-                  {tone.label}
-                </span>
-              </button>
-            );
-          })}
+        <div className="overflow-x-auto rounded-[12px] border border-[var(--ui-line)] bg-white">
+          <table className="w-full min-w-[760px] border-collapse text-[10px]">
+            <thead>
+              <tr>
+                <th className="sticky left-0 z-10 bg-white px-3 py-2 text-left font-semibold text-[#3B2D5E]">
+                  Business
+                </th>
+                {matrix.weeks.map((week) => (
+                  <th key={week} className="px-1 py-2 text-center font-mono font-medium text-[#3B2D5E]">
+                    {week.slice(5)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {matrix.rows.map((row) => (
+                <tr key={row.place_id} className="border-t border-[var(--ui-line)]">
+                  <th className="sticky left-0 z-10 max-w-[180px] truncate bg-white px-3 py-1.5 text-left font-semibold text-[#14101F]">
+                    <button
+                      type="button"
+                      onClick={() => setSelected(row.external_id)}
+                      className={`truncate hover:underline ${FOCUS}`}
+                      title={row.name}
+                    >
+                      {row.name}
+                    </button>
+                  </th>
+                  {row.cells.map((value, index) => (
+                    <td key={index} className="px-1 py-1.5 text-center">
+                      <button
+                        type="button"
+                        onClick={() => setSelected(row.external_id)}
+                        aria-label={`${row.name}, week ${matrix.weeks[index]}: ${value ?? "no data"}`}
+                        title={`${row.name} · ${matrix.weeks[index]} · ${value ?? "no data"}`}
+                        className={`h-6 w-full min-w-[22px] rounded-[4px] border border-[#3D1D6E]/10 ${FOCUS}`}
+                        style={{ backgroundColor: cellColor(value) }}
+                      />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
+
+      <div className="mt-2 flex items-center gap-2 text-[10px] text-[#3B2D5E]">
+        <span>Less</span>
+        {[0, 5, 10, 50, 200].map((v) => (
+          <span key={v} className="h-3 w-5 rounded-[4px] border border-[#3D1D6E]/10" style={{ backgroundColor: cellColor(v) }} />
+        ))}
+        <span>More</span>
+      </div>
 
       {selected ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#14101F]/40 p-4" role="presentation" onClick={() => setSelected(null)}>
@@ -85,20 +133,15 @@ export default function HeatmapGrid({ places }: { places: SavedPlace[] }) {
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <h3 className="truncate text-[16px] font-bold text-[#14101F]">
-                  {details?.name || places.find((p) => p.place_id === selected)?.label || selected}
+                  {details?.name || matrix?.rows.find((r) => r.external_id === selected)?.name || selected}
                 </h3>
                 <p className="mt-0.5 text-[11px] text-[#3B2D5E]">{details?.address}</p>
               </div>
-              <button
-                type="button"
-                onClick={() => setSelected(null)}
-                aria-label="Close"
-                className={`shrink-0 rounded-full border border-[#3D1D6E]/20 px-2.5 py-1 text-[12px] font-bold text-[#3B2D5E] ${FOCUS}`}
-              >
+              <button type="button" onClick={() => setSelected(null)} aria-label="Close"
+                className={`shrink-0 rounded-full border border-[#3D1D6E]/20 px-2.5 py-1 text-[12px] font-bold text-[#3B2D5E] ${FOCUS}`}>
                 ×
               </button>
             </div>
-
             {loading ? (
               <p className="mt-5 text-[12px] text-[#3B2D5E]">Loading current details…</p>
             ) : details ? (
@@ -115,7 +158,6 @@ export default function HeatmapGrid({ places }: { places: SavedPlace[] }) {
                     <p className="font-mono text-[20px] font-bold text-[#14101F]">{details.review_count ?? "—"}</p>
                   </div>
                 </div>
-
                 <h4 className="mt-5 text-[12px] font-bold text-[#14101F]">Current reviews</h4>
                 {details.reviews.length === 0 ? (
                   <p className="mt-2 text-[11px] text-[#3B2D5E]">No reviews returned by Google.</p>
