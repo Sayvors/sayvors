@@ -579,27 +579,6 @@ function GoogleMark({ size = 14 }: { size?: number }) {
   );
 }
 
-/** Business initials as a logo stand-in — no invented image, just initials. */
-function BusinessMark({ name, large = false }: { name: string; large?: boolean }) {
-  const initials =
-    (name || "Business")
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((word) => word[0])
-      .join("")
-      .toUpperCase() || "B";
-  return (
-    <span
-      className={`inline-flex shrink-0 items-center justify-center rounded-[8px] bg-[#3D1D6E] font-bold text-white ${
-        large ? "h-9 w-9 text-[12px]" : "h-5 w-5 text-[8px]"
-      }`}
-    >
-      {initials}
-    </span>
-  );
-}
-
 /**
  * One cell of the reviews table: the first three reviews of the category.
  * The middle one is fully legible; the first and third are faded. No border —
@@ -625,7 +604,7 @@ function FadedCell({
       role="button"
       tabIndex={0}
       onClick={onOpen}
-      className={`h-[72px] cursor-pointer overflow-hidden rounded-[10px] px-1 py-1 transition-colors hover:bg-[#F4F2F7] ${FOCUS}`}
+      className={`h-[132px] cursor-pointer overflow-hidden rounded-[10px] px-1.5 py-1.5 transition-colors hover:bg-[#F4F2F7] ${FOCUS}`}
     >
       <ul className="flex flex-col gap-1.5">
         {shown.map((review, index) => {
@@ -635,20 +614,27 @@ function FadedCell({
           return (
             <li
               key={`${review.time}-${index}`}
-              className={`flex items-center gap-1.5 text-[10px] ${
+              className={`rounded-[8px] border border-[#EFEDF2] bg-white px-2 py-1 ${
                 faded ? "opacity-45" : ""
               }`}
             >
-              <BusinessMark name={subject.name || "Business"} />
-              <span className="shrink-0 font-semibold" style={{ color }}>
-                {review.rating != null ? `${review.rating}★` : "—"}
-              </span>
-              <span className="min-w-0 flex-1 truncate text-[#3B2D5E]">
-                {sentimentCellText(review.text, 60)}
-              </span>
-              <span className="shrink-0 font-mono text-[9px] text-[#8A8496]">
-                {formatWhen(review.time)}
-              </span>
+              <div className="flex items-center gap-1.5 text-[10px]">
+                <GoogleMark size={11} />
+                <span className="shrink-0 font-semibold" style={{ color }}>
+                  {review.rating != null ? `${review.rating}★` : "—"}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[#3B2D5E]">
+                  {sentimentCellText(review.text, 70)}
+                </span>
+              </div>
+              <div className="mt-0.5 flex items-center justify-between gap-1">
+                <span className="font-mono text-[9px] text-[#8A8496]">
+                  {formatWhen(review.time)}
+                </span>
+                <span className="min-w-0 truncate text-[9px] font-semibold text-[#14101F]">
+                  {subject.name}
+                </span>
+              </div>
             </li>
           );
         })}
@@ -679,8 +665,8 @@ function ReviewsPopup({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/50 p-4">
       <div className="flex max-h-[86vh] w-full max-w-[860px] flex-col overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-white shadow-[0_24px_80px_rgba(20,16,31,0.35)]">
         <div className="flex items-start justify-between gap-3 border-b border-[var(--ui-line)] bg-[#FAFAFB] px-4 py-3">
-          <div className="flex items-center gap-3">
-            <BusinessMark name={subject.name || "Business"} large />
+          <div className="flex items-center gap-2.5">
+            <GoogleMark size={22} />
             <div>
               <div className="flex items-center gap-1.5">
                 <GoogleMark size={13} />
@@ -718,44 +704,43 @@ function ReviewsPopup({
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto bg-[#FAFAFB] px-4 py-4">
+        <div className="scroll-smooth max-h-[540px] flex-1 overflow-y-auto bg-[#FAFAFB] px-4 py-4">
           {rows.length === 0 ? (
             <p className="py-10 text-center text-[12px] text-[#8A8496]">
               No reviews in this category.
             </p>
           ) : (
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="flex flex-col gap-3">
               {rows.map((review, index) => (
                 <article
                   key={`${review.time}-${index}`}
-                  className="rounded-[12px] border border-[var(--ui-line)] bg-white p-3 shadow-[0_2px_8px_rgba(20,16,31,0.06)]"
+                  className="rounded-[12px] border border-[#EFEDF2] bg-white p-4 shadow-[0_2px_8px_rgba(20,16,31,0.06)]"
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-1.5">
-                      <GoogleMark size={12} />
-                      <span className="text-[10px] font-semibold text-[#3B2D5E]">
-                        Google review
-                      </span>
+                  <div className="flex items-start gap-2">
+                    <GoogleMark size={14} />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[10px] font-semibold text-[#8A8496]">
+                        Google review · {subject.name}
+                      </p>
+                      <p className="mt-1 text-[13px] leading-relaxed text-[#14101F]">
+                        {review.text}
+                      </p>
                     </div>
-                    <span className="font-mono text-[10px] text-[#8A8496]">
-                      {formatWhen(review.time)}
-                    </span>
-                  </div>
-                  <div className="mt-2 flex items-center gap-2">
-                    <BusinessMark name={subject.name || "Business"} />
-                    <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-[#14101F]">
-                      {subject.name}
-                    </span>
                     <span
-                      className="shrink-0 rounded-[6px] px-1.5 py-0.5 text-[11px] font-bold"
+                      className="shrink-0 rounded-[6px] px-2 py-1 text-[12px] font-bold"
                       style={{ backgroundColor: `${color}1A`, color }}
                     >
                       {review.rating != null ? `${review.rating}★` : "—"}
                     </span>
                   </div>
-                  <p className="mt-2 text-[12px] leading-relaxed text-[#3B2D5E]">
-                    {review.text}
-                  </p>
+                  <div className="mt-3 flex items-center justify-between border-t border-[#EFEDF2] pt-2">
+                    <span className="font-mono text-[10px] text-[#8A8496]">
+                      {formatWhen(review.time)}
+                    </span>
+                    <span className="text-[10px] font-semibold text-[#3B2D5E]">
+                      {subject.name}
+                    </span>
+                  </div>
                   {review.problems && review.problems.length > 0 ? (
                     <div className="mt-2 flex flex-wrap gap-1">
                       {review.problems.map((problem, position) => (
@@ -831,7 +816,7 @@ function SentimentReviewsTable({
       <div className="overflow-x-auto">
         <table
           className="w-full table-fixed border-collapse text-left"
-          style={{ minWidth: 168 + subjects.length * 160 }}
+          style={{ minWidth: 168 + subjects.length * 200 }}
         >
           <colgroup>
             <col style={{ width: 168 }} />
@@ -851,7 +836,7 @@ function SentimentReviewsTable({
                 <th
                   key={subject.key}
                   scope="col"
-                  className="min-w-[140px] border-b border-r border-[var(--ui-line)] bg-[#FAFAFB] px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]"
+                  className="min-w-[180px] border-b border-r border-[var(--ui-line)] bg-[#FAFAFB] px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]"
                 >
                   {subject.name || "—"}
                 </th>
