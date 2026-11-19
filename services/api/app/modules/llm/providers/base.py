@@ -79,6 +79,9 @@ class LLMRequest:
     max_tokens: int = 1000
     stream: bool = False
     tools: list[ToolDefinition] = field(default_factory=list)
+    # Inline images for multimodal calls: (mime_type, bytes), attached to the
+    # last user message. Providers without vision support ignore these.
+    images: list[tuple[str, bytes]] = field(default_factory=list)
     # Metering context (optional — recorded per call, never affects generation).
     tenant_id: str | None = None
     model_id: str | None = None  # catalog id e.g. "groq:oss-120b"

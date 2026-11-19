@@ -295,6 +295,98 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
   );
 }
 
+/** AI suitability verdict for a promotion/banner photo. */
+function BannerCheckCard({
+  check,
+  onRetry,
+}: {
+  check: {
+    state: "idle" | "loading" | "done" | "error";
+    result?: {
+      suitable?: string;
+      confidence?: number;
+      summary?: string;
+      checks?: { key: string; label: string; pass: boolean; severity: string; note: string }[];
+      ai_verdict?: { suitable?: string; confidence?: number; reasons?: string[] } | null;
+    };
+  };
+  onRetry: () => void;
+}) {
+  if (check.state === "idle") return null;
+  if (check.state === "loading") {
+    return (
+      <div className="mt-3 flex items-center gap-2.5 rounded-[20px] border border-deep-violet/20 bg-deep-violet/[0.04] px-3.5 py-2.5 text-[11.5px] font-semibold text-deep-violet dark:border-fog/10 dark:bg-fog/[0.04] dark:text-fog">
+        <svg className="h-4 w-4 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+          <path d="M12 3a9 9 0 1 0 9 9" strokeLinecap="round" />
+        </svg>
+        Sayvors AI is checking this photo for Google…
+      </div>
+    );
+  }
+  if (check.state === "error") {
+    return (
+      <div className="mt-3 flex items-center justify-between gap-2 rounded-[20px] border border-red-500/30 bg-red-500/[0.06] px-3.5 py-2.5">
+        <span className="text-[11.5px] font-semibold text-red-700 dark:text-red-400">
+          The AI check could not run right now.
+        </span>
+        <button type="button" onClick={onRetry} className="text-[11px] font-bold text-red-700 underline dark:text-red-400">
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  const result = check.result ?? {};
+  const suitable = result.suitable ?? "maybe";
+  const confidence = result.confidence ?? 0;
+  const tone =
+    suitable === "yes"
+      ? { border: "border-emerald-500/30", bg: "bg-emerald-500/[0.07]", text: "text-emerald-700 dark:text-emerald-400" }
+      : suitable === "no"
+        ? { border: "border-red-500/30", bg: "bg-red-500/[0.06]", text: "text-red-700 dark:text-red-400" }
+        : { border: "border-amber-500/30", bg: "bg-amber-500/10", text: "text-amber-800 dark:text-amber-300" };
+  const label = suitable === "yes" ? "Suitable" : suitable === "no" ? "Not suitable" : "Probably suitable";
+
+  return (
+    <div className={`mt-3 rounded-[20px] border ${tone.border} ${tone.bg} px-3.5 py-3`}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4 shrink-0" aria-hidden>
+            <path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4z" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          <span className={`text-[11.5px] font-bold ${tone.text}`}>
+            Sayvors AI: {label}
+          </span>
+        </div>
+        <span className={`text-[11.5px] font-bold ${tone.text}`}>{confidence}% confident</span>
+      </div>
+      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+        <div
+          className="h-full rounded-full bg-current transition-all"
+          style={{ width: `${Math.max(2, Math.min(100, confidence))}%`, color: "currentColor" }}
+        />
+      </div>
+      <p className={`mt-2 text-[11px] leading-relaxed ${tone.text}`}>
+        {result.summary ?? "No summary."}
+      </p>
+      {(result.checks ?? []).filter((c) => !c.pass).map((c) => (
+        <p key={c.key} className={`mt-1 text-[10.5px] leading-snug ${tone.text} opacity-80`}>
+          • {c.label}: {c.note}
+        </p>
+      ))}
+      {result.ai_verdict?.reasons?.length ? (
+        <ul className="mt-2 space-y-1 border-t border-current/10 pt-2">
+          {result.ai_verdict.reasons.map((reason, i) => (
+            <li key={i} className={`text-[10.5px] leading-snug ${tone.text} opacity-80`}>
+              • {reason}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 export default function PublishComposer({
   onPublished,
   onCancel,
@@ -473,6 +565,42 @@ export default function PublishComposer({
   };
 
   const bannerSelected = selectedTargets.some((t) => chosenFor(t).includes("banner"));
+
+  // AI suitability check for the promotion/banner photo. Runs only when a
+  // banner destination is selected AND an image file is attached (never for
+  // videos or for other formats). The API returns rule-based advice; a
+  // vision verdict is appended only if a model is configured.
+  const [bannerCheck, setBannerCheck] = useState<{
+    state: "idle" | "loading" | "done" | "error";
+    result?: {
+      suitable?: string;
+      confidence?: number;
+      summary?: string;
+      checks?: { key: string; label: string; pass: boolean; severity: string; note: string }[];
+      ai_verdict?: { suitable?: string; confidence?: number; reasons?: string[] } | null;
+    };
+  }>({ state: "idle" });
+
+  useEffect(() => {
+    if (!bannerSelected || media?.type !== "image" || !media.file) {
+      setBannerCheck({ state: "idle" });
+      return;
+    }
+    let cancelled = false;
+    setBannerCheck({ state: "loading" });
+    const form = new FormData();
+    form.append("file", media.file, media.fileName || "banner.png");
+    apiFetch("/api/v1/media/analyze-banner", { method: "POST", body: form })
+      .then((result) => {
+        if (!cancelled) setBannerCheck({ state: "done", result });
+      })
+      .catch(() => {
+        if (!cancelled) setBannerCheck({ state: "error" });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [bannerSelected, media?.url]);
 
   // Write the description from the caption + the selected branch/business.
   // The endpoint already grounds copy in the tenant's own Databank facts, so
@@ -1175,6 +1303,20 @@ export default function PublishComposer({
               thumbLabel={thumbLabel}
               platforms={confirmItems.map(({ target }) => target.platform)}
             />
+            {bannerSelected && media?.type === "image" && media.file ? (
+              <BannerCheckCard
+                check={bannerCheck}
+                onRetry={() => {
+                  // Re-trigger the effect by forcing a fresh dependency key.
+                  setBannerCheck({ state: "loading" });
+                  const form = new FormData();
+                  form.append("file", media.file!, media.fileName || "banner.png");
+                  apiFetch("/api/v1/media/analyze-banner", { method: "POST", body: form })
+                    .then((result) => setBannerCheck({ state: "done", result }))
+                    .catch(() => setBannerCheck({ state: "error" }));
+                }}
+              />
+            ) : null}
             {needsMedia && media === null && (
               <p className="mt-3 text-[12px] font-semibold text-amber-700 dark:text-amber-400">
                 An image or video is required for the selected destinations.

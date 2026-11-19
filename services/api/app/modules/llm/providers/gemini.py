@@ -32,10 +32,10 @@ class GeminiProvider(LLMProvider):
         contents: list[Content] = []
         for m in req.messages:
             role = "model" if m.role == "assistant" else "user"
-            contents.append(Content(
-                role=role,
-                parts=[Part.from_text(text=m.content)],
-            ))
+            parts = [Part.from_text(text=m.content)]
+            for mime, data in req.images or []:
+                parts.append(Part.from_bytes(data=data, mime_type=mime))
+            contents.append(Content(role=role, parts=parts))
         return contents
 
     def _build_config(self, req: LLMRequest) -> dict:

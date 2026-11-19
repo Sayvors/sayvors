@@ -178,6 +178,10 @@ class Settings(BaseSettings):
     # (RAG uploads/scrapes) is unaffected.
     MEDIA_FORCE_LOCAL: bool = False
     MEDIA_MAX_MB: int = 25
+    # Optional vision model ("provider:model" catalog id) used to give a
+    # multimodal AI verdict on banner/promotion photos. Empty = rule-based
+    # check only (no LLM cost).
+    BANNER_VISION_MODEL: str = ""
     # Storage (optional; empty = local disk). GCS remains supported; S3 can
     # be selected independently for public media and private documents. S3
     # private docs require their own bucket; never reuse the media fallback.

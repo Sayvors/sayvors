@@ -15,11 +15,12 @@ POST   /api/v1/media/sync           publish due + delete expired (admin/ops only
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...config import settings
 from ...core.deps import get_current_user, get_db, require_admin
 from ...core.storage import public_media_base
 from ...core.upstream_errors import upstream_http_error
 from ..users.models import User
-from . import service
+from . import image_check, service
 from .schemas import MediaCreate, MediaOut, MediaPublishResult, MediaSyncResult, MediaUpdate
 from ..team.context import tenant_id_of, require_perm, TenantContext
 
@@ -52,6 +53,74 @@ async def upload_media_file(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/analyze-banner")
+async def analyze_banner(
+    file: UploadFile = File(...),
+    ctx: TenantContext = Depends(require_perm("media.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Score an uploaded image as a Google banner/promotion photo.
+
+    Deterministic rules (format, size, aspect, sharpness, exposure) always
+    run; if a vision model is configured, a multimodal AI verdict is appended.
+    The result is advice — it never blocks publishing.
+    """
+    del db  # read-only; no DB access needed
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file.")
+    max_bytes = max(1, settings.MEDIA_MAX_MB) * 1024 * 1024
+    if len(data) > max_bytes:
+        raise HTTPException(status_code=400, detail="File is too big.")
+    result = image_check.analyze_banner_image(
+        data, filename=file.filename or "", content_type=file.content_type
+    )
+    if settings.BANNER_VISION_MODEL:
+        result["ai_verdict"] = await _vision_verdict(data)
+    return result
+
+
+async def _vision_verdict(data: bytes) -> dict | None:
+    """Multimodal verdict from the configured vision model, best-effort."""
+    try:
+        import json
+
+        from ...llm.gateway import complete
+        from ...llm.providers.base import LLMMessage
+
+        response = await complete(
+            model=settings.BANNER_VISION_MODEL,
+            messages=[LLMMessage(
+                role="user",
+                content=(
+                    "Analyse this photo as a Google Business Profile banner "
+                    "(cover) image. Answer ONLY with JSON: {\"suitable\": "
+                    "\"yes\"|\"maybe\"|\"no\", \"confidence\": 0-100, "
+                    "\"reasons\": [\"...\"]}."
+                ),
+            )],
+            images=[("image/jpeg", data)],
+            purpose="media.banner_verdict",
+            temperature=0.2,
+            max_tokens=300,
+        )
+        text = (response.content or "").strip()
+        # Tolerate a code fence the model may add.
+        if text.startswith("```"):
+            text = text.strip("`")
+            if text.startswith("json"):
+                text = text[4:].strip()
+        verdict = json.loads(text)
+        return {
+            "suitable": str(verdict.get("suitable", "maybe")),
+            "confidence": int(verdict.get("confidence", 0)),
+            "reasons": [str(r) for r in (verdict.get("reasons") or [])][:6],
+        }
+    except Exception:
+        logger.exception("Banner vision verdict failed")
+        return None
 
 
 def _out(result: dict) -> MediaOut:
