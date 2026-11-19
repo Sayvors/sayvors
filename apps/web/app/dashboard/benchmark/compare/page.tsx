@@ -84,15 +84,18 @@ const PERIOD_ROWS: Row<PeriodKey>[] = [
   { key: "period_calls", label: "Calls", render: (s) => ownerOnly(s, s.metrics.period_calls) },
 ];
 
-const RANGE_OPTIONS: { value: CompareRange; label: string; title: string }[] = [
-  { value: "live", label: "Live", title: "Live values from Google, right now" },
-  { value: "30d", label: "30 days", title: "Values for the last 30 days" },
-  { value: "90d", label: "90 days", title: "Values for the last 90 days" },
-  { value: "365d", label: "1 year", title: "Values for the last 12 months" },
+type RangeStatus = "ready" | "coming_soon";
+
+const RANGE_OPTIONS: { value: CompareRange; label: string; title: string; status: RangeStatus }[] = [
+  { value: "live", label: "Live", title: "Live values from Google, right now", status: "ready" },
+  { value: "30d", label: "30 days", title: "Values for the last 30 days", status: "ready" },
+  { value: "90d", label: "90 days", title: "Values for the last 90 days", status: "coming_soon" },
+  { value: "365d", label: "1 year", title: "Values for the last 12 months", status: "coming_soon" },
 ];
 
+/** Disabled ranges fall back to Live so an old link still renders. */
 function normalizeRange(value: string | null): CompareRange {
-  return value === "30d" || value === "90d" || value === "365d" ? value : "live";
+  return value === "30d" ? "30d" : "live";
 }
 
 const FACT_ROWS: Row<FactKey>[] = [  { key: "positive_pct", label: "Positive sentiment", value: (s) => s.facts.positive_pct, render: (s) => pct(s.facts.positive_pct) },
@@ -470,6 +473,9 @@ export default function ComparePage() {
   }
 
   function updateRange(nextRange: CompareRange) {
+    const option = RANGE_OPTIONS.find((item) => item.value === nextRange);
+    // Coming-soon ranges must not be selected; they stay visible as context.
+    if (!option || option.status !== "ready") return;
     applyUrl(selection, nextRange);
   }
 
@@ -513,28 +519,37 @@ export default function ComparePage() {
         </span>
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Comparison period">
           {RANGE_OPTIONS.map((option) => {
-            const active = option.value === range;
+            const active = option.value === range && option.status === "ready";
+            const disabled = option.status !== "ready";
             return (
               <button
                 key={option.value}
                 type="button"
                 title={option.title}
                 aria-pressed={active}
-                onClick={() => updateRange(option.value)}
+                aria-disabled={disabled || undefined}
+                onClick={() => !disabled && updateRange(option.value)}
                 className={`rounded-[8px] border px-3 py-1.5 text-[11px] font-semibold transition-colors ${FOCUS} ${
                   active
                     ? "border-[#3D1D6E] bg-[#3D1D6E] text-white"
-                    : "border-[var(--ui-line)] bg-white text-[#3B2D5E] hover:bg-[#F4F2F7]"
+                    : disabled
+                      ? "border-[#E3E0E9] bg-[#FAFAFB] text-[#A9A3B2] cursor-not-allowed"
+                      : "border-[var(--ui-line)] bg-white text-[#3B2D5E] hover:bg-[#F4F2F7]"
                 }`}
               >
                 {option.label}
+                {disabled ? (
+                  <span className="ml-1.5 rounded-[4px] bg-[#F3F1F5] px-1.2 py-0.1 text-[8px] font-semibold uppercase tracking-wide text-[#A9A3B2]">
+                    coming soon
+                  </span>
+                ) : null}
               </button>
             );
           })}
         </div>
-        <span className="text-[10px] text-[#8A8496]">
-          {range === "live" ? "Live values from Google, right now." : "Values for the selected period."}
-        </span>
+        <p className="text-[10px] text-[#A9A3B2]">
+          Live and 30 days are active. 90 days and 1 year unlock as the scraper fills history.
+        </p>
       </div>
 
       {keys.length === 0 ? (
