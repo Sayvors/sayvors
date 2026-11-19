@@ -240,6 +240,17 @@
     <tr><td>Intake &amp; dashboards</td><td>One-question intake with grouped progress and deep links; dashboard scroll fix; second-scrollbar fix; publish wizard and media library rebuilds.</td></tr>
   </table></div>
 
+  <h3><span class="chip ok">IN PROGRESS — benchmark &amp; history (spec + slice 1 shipped)</span></h3>
+  <div class="scroll"><table>
+    <tr><th>Slice</th><th>Status</th></tr>
+    <tr><td>Design spec</td><td><code>docs/specs/2026-11-19-benchmark-history-design.md</code> — 5 slices, approved.</td></tr>
+    <tr><td>1 — search + bench</td><td><span class="chip ok">Done</span> — Places Text Search, tenant-scoped saved bench, API + web page. Full suite 2708 passed / 4 skipped.</td></tr>
+    <tr><td>2 — bench cards</td><td>live values, colour-coded comparison</td></tr>
+    <tr><td>3 — detail inspection</td><td>reviews, AI analysis, charts</td></tr>
+    <tr><td>4 — collector</td><td>scheduled refresh + snapshots + trends</td></tr>
+    <tr><td>5 — map</td><td>Google Maps markers + density layer</td></tr>
+  </table></div>
+
   <h3><span class="chip warn">PENDING — code (no infra needed)</span></h3>
   <div class="scroll"><table>
     <tr><th>Item</th><th>What remains</th><th>Size</th></tr>
@@ -289,7 +300,7 @@
   <div class="stat"><div class="n calm">32</div><div class="l">of 34 original audit findings <strong>resolved</strong> — SEC 11 · SCALE 6 · OPS 3 · ANL 12; ML-1/BULK-1 are §4 work items, not ledger rows</div></div>
   <div class="stat"><div class="n amber">2</div><div class="l">findings <strong>still open</strong> — OPS-1 (backup restore rehearsal pending), OPS-4 (prod host + SHA-pinned deploys)</div></div>
   <div class="stat"><div class="n amber">Live</div><div class="l">billing &amp; plans — wallet hotfix + durable ledger + 5 plans + admin plan CRUD + tenant grant-plan + entitlements service + enforcement at channel-connect/message-send/LLM; deployed to staging 2026-10-28, schema caught up from 5 migrations behind to <code>h4b5c6d7e8f9</code> head. Plan comparison + request-upgrade UI shipped; purchase requests audited 2026-11-17 with REQ-1..4 open, all four fixed 2026-11-18 (<a href="#billing">§6</a>)</div></div>
-  <div class="stat"><div class="n calm">2,697</div><div class="l">backend tests passed / 3 skipped (last full run 2026-11-18) — CI gates every staging deploy on them; supersedes the older 2,137 figure in the history below</div></div>
+  <div class="stat"><div class="n calm">2,708</div><div class="l">backend tests passed / 3 skipped (last full run 2026-11-18) — CI gates every staging deploy on them; supersedes the older 2,137 figure in the history below</div></div>
   <div class="stat"><div class="n amber">1</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — INS-5 still open (infra: box overcommitted). INS-1/2/3/4/6/7 fixed</div></div>
   <div class="stat"><div class="n amber">2</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> — LAUNCH-S8 and S9 still open (both infra); M9 and S10 done. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
   <div class="stat"><div class="n amber">4</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — FACT-4 (buy), FACT-5 (spike) open. FACT-6, FACT-7 and FACT-8 fixed; FACT-9 core shipped; FACT-1 obsolete</div></div>
