@@ -11,7 +11,6 @@ import {
   type ComparisonSubject,
   type SavedPlace,
 } from "@/lib/api-benchmark";
-import VerificationBadge from "@/components/shared/VerificationBadge";
 import ComparePicker from "@/components/benchmark/ComparePicker";
 
 const FOCUS = "focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[#3D1D6E]";
@@ -116,6 +115,7 @@ function namedTeam(members: ComparisonSubject["facts"]["named_team"]): ReactNode
   );
 }
 
+/** Markdown-style table: one metric column plus one column per business. */
 function MatrixTable<T extends string>({
   title,
   description,
@@ -129,72 +129,61 @@ function MatrixTable<T extends string>({
 }) {
   return (
     <section className="mt-5 overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-white">
-      <div className="border-b border-[var(--ui-line)] bg-[#F4F2F7] px-4 py-3">
+      <div className="border-b border-[var(--ui-line)] px-4 py-3">
         <h2 className="text-[14px] font-bold text-[#14101F]">{title}</h2>
         {description ? <p className="mt-0.5 text-[10px] text-[#3B2D5E]">{description}</p> : null}
       </div>
       <div className="overflow-x-auto">
-        <div
-          className="grid"
-          style={{
-            gridTemplateColumns: `minmax(160px, 200px) repeat(${subjects.length}, minmax(160px, 1fr))`,
-            minWidth: `${200 + subjects.length * 170}px`,
-          }}
-        >
-          <div className="border-b border-r border-[var(--ui-line)] bg-white px-4 py-3 text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]">
-            Metric
-          </div>
-          {subjects.map((subject) => (
-            <div key={subject.key} className="min-w-0 border-b border-r border-[var(--ui-line)] px-4 py-3 last:border-r-0">
-              <div className="flex min-w-0 items-center gap-2">
-                <h3 className="truncate text-[13px] font-bold text-[#14101F]" title={subject.name || subject.id}>
-                  {subject.name || subject.id}
-                </h3>
-                {subject.available ? (
-                  <VerificationBadge status={subject.verified ? "verified" : "unstarted"} compact />
-                ) : null}
-              </div>
-              <p className="mt-0.5 truncate text-[10px] text-[#3B2D5E]">
-                {subject.available
-                  ? subject.kind === "saved" ? "Google Places listing" : "Your connected location"
-                  : subject.reason}
-              </p>
-            </div>
-          ))}
-
-          {rows.map((row) => {
-            const values = subjects
-              .filter((subject) => subject.available && row.value)
-              .map((subject) => row.value!(subject))
-              .filter((value): value is number => value != null);
-            const best = values.length > 1
-              ? (row.higherIsBetter === false ? Math.min(...values) : Math.max(...values))
-              : null;
-            return (
-              <Fragment key={row.key}>
-                <div className="border-b border-r border-[var(--ui-line)] px-4 py-2.5 text-[11px] font-semibold text-[#14101F]">
-                  {row.label}
-                </div>
-                {subjects.map((subject) => {
-                  const value = subject.available && row.value ? row.value(subject) : null;
-                  const winning = best != null && value === best;
-                  return (
-                    <div
-                      key={subject.key}
-                      className={`border-b border-r px-4 py-2.5 text-[12px] last:border-r-0 ${
-                        winning ? "font-bold text-[#B0338A]" : "font-mono text-[#3B2D5E]"
-                      } border-[var(--ui-line)]`}
-                    >
-                      {subject.available
-                        ? row.render(subject)
-                        : <span className="text-[10px] text-[#8E1230]">{subject.reason}</span>}
-                    </div>
-                  );
-                })}
-              </Fragment>
-            );
-          })}
-        </div>
+        <table className="w-full text-left" style={{ borderCollapse: "collapse" }}>
+          <thead>
+            <tr className="border-b border-[var(--ui-line)]">
+              <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]">Metric</th>
+              {subjects.map((subject) => (
+                <th key={subject.key} className="min-w-[150px] px-4 py-2.5">
+                  <div className="max-w-[calc(100vw-48px)] truncate text-[12px] font-bold text-[#14101F]">
+                    {subject.name || subject.id}
+                  </div>
+                  <div className="text-[10px] text-[#3B2D5E]">
+                    {subject.available
+                      ? subject.kind === "saved" ? "Google Places listing" : "Your connected location"
+                      : subject.reason}
+                  </div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const values = subjects
+                .filter((subject) => subject.available && row.value)
+                .map((subject) => row.value!(subject))
+                .filter((value): value is number => value != null);
+              const best = values.length > 1
+                ? (row.higherIsBetter === false ? Math.min(...values) : Math.max(...values))
+                : null;
+              return (
+                <Fragment key={row.key}>
+                  <tr className="border-b border-[var(--ui-line)] last:border-b-0">
+                    <td className="px-4 py-2.5 text-[11px] font-semibold text-[#14101F]">{row.label}</td>
+                    {subjects.map((subject) => {
+                      const value = subject.available && row.value ? row.value(subject) : null;
+                      const winning = best != null && value === best;
+                      return (
+                        <td key={subject.key} className={`px-4 py-2.5 align-top text-[12px] ${
+                          winning ? "font-bold text-[#B0338A]" : "font-mono text-[#3B2D5E]"
+                        }`}>
+                          {subject.available
+                            ? row.render(subject)
+                            : <span className="text-[10px] text-[#8E1230]">{subject.reason}</span>}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </section>
   );
@@ -217,7 +206,7 @@ export default function ComparePage() {
   });
   const own = channelsQuery.data ?? [];
 
-  // Card links use ?left=/?right=; the picker uses repeated ?s= params.
+  // Card links use ?left=/?right=; the picker writes repeated ?s= params.
   const selected = params.getAll("s");
   const selectedKeys = selected.length
     ? selected
@@ -276,7 +265,7 @@ export default function ComparePage() {
 
       {selectedKeys.length === 0 ? (
         <p className="mt-6 rounded-[16px] border border-dashed border-[var(--ui-line)] bg-white px-5 py-10 text-center text-[12px] text-[#3B2D5E]">
-          Tick at least one business above to build the comparison table.
+          Tick at least one business above to build the comparison tables.
         </p>
       ) : compareQuery.isPending ? (
         <p className="mt-6 text-[12px] text-[#3B2D5E]">Loading comparison…</p>
