@@ -95,8 +95,11 @@ function rating(subject: ComparisonSubject): string {
 }
 
 function ownerOnly(subject: ComparisonSubject, value: number | null): ReactNode {
+  // Google releases views and calls only to the listing's owner, so a
+  // competitor column can never have them. A dash keeps the row aligned with
+  // every other unknown fact; the section note explains why.
   if (subject.kind === "saved") {
-    return <span className="text-[10px] text-[#8A8496]">owner only</span>;
+    return <span className="text-[#8A8496]">—</span>;
   }
   return num(value);
 }
@@ -354,7 +357,7 @@ export default function ComparePage() {
         <>
           <MatrixTable
             title="Numbers from Google"
-            description="Reviews, ratings and listing performance."
+            description="Reviews, ratings and listing performance. Views and calls are only released to the listing's owner, so a competitor's column stays blank there."
             rows={METRIC_ROWS}
             subjects={subjects}
             mainKey={selection.main}
