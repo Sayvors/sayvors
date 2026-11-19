@@ -567,10 +567,44 @@ function popupReviews(
   return sorted;
 }
 
+/** Google's G, rendered as-is — the one brand mark allowed in the UI. */
+function GoogleMark({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 48 48" aria-hidden="true" className="shrink-0">
+      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
+      <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
+      <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+    </svg>
+  );
+}
+
+/** Business initials as a logo stand-in — no invented image, just initials. */
+function BusinessMark({ name, large = false }: { name: string; large?: boolean }) {
+  const initials =
+    (name || "Business")
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((word) => word[0])
+      .join("")
+      .toUpperCase() || "B";
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center justify-center rounded-[8px] bg-[#3D1D6E] font-bold text-white ${
+        large ? "h-9 w-9 text-[12px]" : "h-5 w-5 text-[8px]"
+      }`}
+    >
+      {initials}
+    </span>
+  );
+}
+
 /**
  * One cell of the reviews table: the first three reviews of the category.
- * The middle one is fully legible; the first and third are faded so the cell
- * reads as a preview of the longer list in the popup.
+ * The middle one is fully legible; the first and third are faded. No border —
+ * the reviews sit as an open list with breathing room, and the whole cell is
+ * the trigger for the popup.
  */
 function FadedCell({
   subject,
@@ -591,9 +625,9 @@ function FadedCell({
       role="button"
       tabIndex={0}
       onClick={onOpen}
-      className="relative h-[72px] cursor-pointer overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white px-1.5 py-1"
+      className={`h-[72px] cursor-pointer overflow-hidden rounded-[10px] px-1 py-1 transition-colors hover:bg-[#F4F2F7] ${FOCUS}`}
     >
-      <ul>
+      <ul className="flex flex-col gap-1.5">
         {shown.map((review, index) => {
           const faded =
             (index === 0 && shown.length > 1) ||
@@ -601,21 +635,19 @@ function FadedCell({
           return (
             <li
               key={`${review.time}-${index}`}
-              className={`flex items-baseline gap-1 text-[10px] leading-[22px] truncate ${
+              className={`flex items-center gap-1.5 text-[10px] ${
                 faded ? "opacity-45" : ""
               }`}
             >
+              <BusinessMark name={subject.name || "Business"} />
               <span className="shrink-0 font-semibold" style={{ color }}>
                 {review.rating != null ? `${review.rating}★` : "—"}
               </span>
               <span className="min-w-0 flex-1 truncate text-[#3B2D5E]">
-                {sentimentCellText(review.text)}
+                {sentimentCellText(review.text, 60)}
               </span>
-              <span className="shrink-0 font-mono text-[9px] text-[#3B2D5E]">
+              <span className="shrink-0 font-mono text-[9px] text-[#8A8496]">
                 {formatWhen(review.time)}
-              </span>
-              <span className="shrink-0 font-semibold text-[#14101F]">
-                {subject.name}
               </span>
             </li>
           );
@@ -626,8 +658,10 @@ function FadedCell({
 }
 
 /**
- * The full review list behind a cell, in a popup. Filtered by recency and
- * rating; only the Close button closes it — the card is modal on purpose.
+ * The full review list behind a cell, in a big centered modal. Cards carry
+ * the Google mark, the business mark, the rating, time and the verbatim text;
+ * the list scrolls. The backdrop is dimmed but inert — only the Close button
+ * closes this window (no outside click, no Escape).
  */
 function ReviewsPopup({
   subject,
@@ -642,53 +676,108 @@ function ReviewsPopup({
   const rows = popupReviews(subject, category, filter);
   const color = SENTIMENT_CATEGORY_COLORS[category];
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center px-3 pt-[6vh]">
-      <div className="w-full max-w-[640px] overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-white shadow-[0_8px_30px_rgba(20,16,31,0.14)]">
-        <div className="flex items-center justify-between border-b border-[var(--ui-line)] px-3 py-2">
-          <h2 className="text-[13px] font-bold text-[#14101F]">
-            {subject.name || "—"} · {SENTIMENT_CATEGORY_LABELS[category]}
-          </h2>
-          <select
-            value={filter}
-            onChange={(event) => setFilter(event.target.value as PopupFilter)}
-            className="rounded-[6px] border border-[var(--ui-line)] bg-white px-2 py-1 text-[11px]"
-          >
-            <option value="newest">Newest</option>
-            <option value="oldest">Oldest</option>
-            <option value="5">5★</option>
-            <option value="4">4★</option>
-            <option value="all">All</option>
-          </select>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/50 p-4">
+      <div className="flex max-h-[86vh] w-full max-w-[860px] flex-col overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-white shadow-[0_24px_80px_rgba(20,16,31,0.35)]">
+        <div className="flex items-start justify-between gap-3 border-b border-[var(--ui-line)] bg-[#FAFAFB] px-4 py-3">
+          <div className="flex items-center gap-3">
+            <BusinessMark name={subject.name || "Business"} large />
+            <div>
+              <div className="flex items-center gap-1.5">
+                <GoogleMark size={13} />
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-[#3B2D5E]">
+                  Google reviews
+                </span>
+              </div>
+              <h2 className="text-[14px] font-bold text-[#14101F]">
+                {subject.name || "—"}
+              </h2>
+              <p className="text-[10px] text-[#8A8496]">
+                {SENTIMENT_CATEGORY_LABELS[category]} · {rows.length} reviews
+              </p>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <select
+              value={filter}
+              onChange={(event) => setFilter(event.target.value as PopupFilter)}
+              className="rounded-[8px] border border-[var(--ui-line)] bg-white px-2 py-1.5 text-[11px] font-semibold text-[#3B2D5E]"
+            >
+              <option value="newest">Newest</option>
+              <option value="oldest">Oldest</option>
+              <option value="5">5★</option>
+              <option value="4">4★</option>
+              <option value="all">All</option>
+            </select>
+            <button
+              type="button"
+              onClick={close}
+              className={`rounded-[8px] border border-[#3D1D6E]/30 bg-white px-3 py-1.5 text-[11px] font-semibold text-[#3D1D6E] ${FOCUS}`}
+            >
+              Close
+            </button>
+          </div>
         </div>
 
-        <div className="max-h-[60vh] space-y-2 overflow-y-auto px-3 py-3">
+        <div className="flex-1 overflow-y-auto bg-[#FAFAFB] px-4 py-4">
           {rows.length === 0 ? (
-            <p className="text-center text-[12px] text-[#8A8496]">
+            <p className="py-10 text-center text-[12px] text-[#8A8496]">
               No reviews in this category.
             </p>
           ) : (
-            rows.map((review, index) => (
-              <div
-                key={`${review.time}-${index}`}
-                className="border-b border-[var(--ui-line)] py-2 last:border-b-0"
-              >
-                <div className="flex items-baseline gap-2">
-                  <span className="shrink-0 font-semibold" style={{ color }}>
-                    {review.rating != null ? `${review.rating}★` : "—"}
-                  </span>
-                  <span className="font-mono text-[10px] text-[#3B2D5E]">
-                    {formatWhen(review.time)}
-                  </span>
-                </div>
-                <p className="mt-0.5 text-[11px] leading-snug text-[#14101F]">
-                  {review.text}
-                </p>
-              </div>
-            ))
+            <div className="grid gap-3 sm:grid-cols-2">
+              {rows.map((review, index) => (
+                <article
+                  key={`${review.time}-${index}`}
+                  className="rounded-[12px] border border-[var(--ui-line)] bg-white p-3 shadow-[0_2px_8px_rgba(20,16,31,0.06)]"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <GoogleMark size={12} />
+                      <span className="text-[10px] font-semibold text-[#3B2D5E]">
+                        Google review
+                      </span>
+                    </div>
+                    <span className="font-mono text-[10px] text-[#8A8496]">
+                      {formatWhen(review.time)}
+                    </span>
+                  </div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <BusinessMark name={subject.name || "Business"} />
+                    <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-[#14101F]">
+                      {subject.name}
+                    </span>
+                    <span
+                      className="shrink-0 rounded-[6px] px-1.5 py-0.5 text-[11px] font-bold"
+                      style={{ backgroundColor: `${color}1A`, color }}
+                    >
+                      {review.rating != null ? `${review.rating}★` : "—"}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-[12px] leading-relaxed text-[#3B2D5E]">
+                    {review.text}
+                  </p>
+                  {review.problems && review.problems.length > 0 ? (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {review.problems.map((problem, position) => (
+                        <span
+                          key={position}
+                          className="rounded-[6px] bg-[#F4F2F7] px-1.5 py-0.5 text-[10px] text-[#3B2D5E]"
+                        >
+                          {problem}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </article>
+              ))}
+            </div>
           )}
         </div>
 
-        <div className="flex items-center justify-end border-t border-[var(--ui-line)] px-3 py-2">
+        <div className="flex items-center justify-between border-t border-[var(--ui-line)] bg-white px-4 py-2">
+          <span className="text-[10px] text-[#8A8496]">
+            Reviews are shown newest first unless you change the filter.
+          </span>
           <button
             type="button"
             onClick={close}
