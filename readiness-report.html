@@ -246,7 +246,7 @@
     <tr><td>LAUNCH-S10 remainder</td><td><span class="chip ok">Done 2026-11-18</span></td><td>AST audit + permanent guardrail; email errors sanitized.</td><td class="chip ok">—</td></tr>
     <tr><td>LAUNCH-M9 (b)</td><td><span class="chip ok">Done 2026-11-18</span></td><td>Shared path-based counters and direct p90/p95 gauges in <code>/metrics</code>. See the LAUNCH-M9 ledger row.</td><td class="chip ok">—</td></tr>
     <tr><td>FACT-9</td><td><span class="chip warn">Core shipped</span></td><td>Plan-limited campaign CRUD, reuse and results are live; send-path gating and recipient-list reuse remain.</td><td>4–5 days total</td></tr>
-    <tr><td>WA-9 (part)</td><td>WABA conversation analytics endpoint not wired; our own message counters cover volume.</td><td>1–2 days</td></tr>
+    <tr><td>WA-9 (part)</td><td><span class="chip ok">Done 2026-11-19</span></td><td>Meta conversation analytics wired; shown on WhatsApp settings.</td><td class="chip ok">—</td></tr>
     <tr><td>RAG P1 / P3</td><td>P1 (task_type, chunking, query context, attribution) needs a real databank and re-index. P3 context cuts need measurement before touching prompt content.</td><td>blocked on data</td></tr>
   </table></div>
 
@@ -289,7 +289,7 @@
   <div class="stat"><div class="n calm">32</div><div class="l">of 34 original audit findings <strong>resolved</strong> — SEC 11 · SCALE 6 · OPS 3 · ANL 12; ML-1/BULK-1 are §4 work items, not ledger rows</div></div>
   <div class="stat"><div class="n amber">2</div><div class="l">findings <strong>still open</strong> — OPS-1 (backup restore rehearsal pending), OPS-4 (prod host + SHA-pinned deploys)</div></div>
   <div class="stat"><div class="n amber">Live</div><div class="l">billing &amp; plans — wallet hotfix + durable ledger + 5 plans + admin plan CRUD + tenant grant-plan + entitlements service + enforcement at channel-connect/message-send/LLM; deployed to staging 2026-10-28, schema caught up from 5 migrations behind to <code>h4b5c6d7e8f9</code> head. Plan comparison + request-upgrade UI shipped; purchase requests audited 2026-11-17 with REQ-1..4 open, all four fixed 2026-11-18 (<a href="#billing">§6</a>)</div></div>
-  <div class="stat"><div class="n calm">2,692</div><div class="l">backend tests passed / 3 skipped (last full run 2026-11-18) — CI gates every staging deploy on them; supersedes the older 2,137 figure in the history below</div></div>
+  <div class="stat"><div class="n calm">2,697</div><div class="l">backend tests passed / 3 skipped (last full run 2026-11-18) — CI gates every staging deploy on them; supersedes the older 2,137 figure in the history below</div></div>
   <div class="stat"><div class="n amber">1</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — INS-5 still open (infra: box overcommitted). INS-1/2/3/4/6/7 fixed</div></div>
   <div class="stat"><div class="n amber">2</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> — LAUNCH-S8 and S9 still open (both infra); M9 and S10 done. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
   <div class="stat"><div class="n amber">4</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — FACT-4 (buy), FACT-5 (spike) open. FACT-6, FACT-7 and FACT-8 fixed; FACT-9 core shipped; FACT-1 obsolete</div></div>
@@ -2778,7 +2778,7 @@ order by created_at desc limit 5;</code></pre>
     <tr><th>ID</th><th>Gap</th><th>Why it matters</th><th>Effort</th></tr>
     <tr><td class="num">WA-8 <span class="chip ok">Fixed</span></td><td>Request code, verify code, register, deregister and two-step PIN are all in the number card and API.</td><td>Tenants can rotate/verify a number without WhatsApp Manager; only a brand-new number still starts in Embedded Signup.</td><td>M</td></tr>
     <tr><td class="num">WA-10 <span class="chip ok">Fixed</span></td><td>Create/edit/delete templates and see per-template analytics in the Templates panel; Meta review status still comes from sync.</td><td>The WhatsApp Manager detour is removed for the routine template lifecycle.</td><td>M</td></tr>
-    <tr><td class="num">WA-9 (part)</td><td>WABA conversation analytics not wired (quality/limit card shipped; Meta analytics endpoint not).</td><td>No Meta-side cost or volume attribution.</td><td>M</td></tr>
+    <tr><td class="num">WA-9 (part)</td><td><span class="chip ok">Done 2026-11-19</span></td><td>Meta conversation analytics wired via <code>get_conversation_analytics()</code> and <code>GET /channels/{id}/whatsapp/analytics</code>, bounded to 90 days and 400 points. Rendered on WhatsApp settings next to number health; hidden when Meta has no data. Provider failures are logged and returned as a generic 502.</td><td>M</td></tr>
     <tr><td class="num">WA-11</td><td>No catalog / commerce messages (product, multi-product, orders).</td><td>Retail cannot sell inside the chat despite our catalog existing.</td><td>L</td></tr>
     <tr><td class="num">WA-12</td><td>No WhatsApp Flows (forms + response webhook).</td><td>Structured intake stays a long Q&amp;A.</td><td>L</td></tr>
     <tr><td class="num">WA-13</td><td>No Calling API.</td><td>Deferred; needs streaming ASR/TTS and SIP/WebRTC - a separate project.</td><td>XL</td></tr>
