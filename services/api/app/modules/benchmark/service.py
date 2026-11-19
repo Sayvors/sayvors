@@ -46,6 +46,8 @@ def serialize(place: BenchmarkPlace) -> dict:
         "address": getattr(place, "address", None),
         "rating": place.rating,
         "review_count": place.review_count,
+        "latitude": place.latitude,
+        "longitude": place.longitude,
         "reviews": place.reviews,
         "photos": place.photos,
         "fetched_at": place.fetched_at.isoformat() if place.fetched_at else None,
@@ -61,6 +63,8 @@ async def save_place(
     place_id: str,
     label: str | None = None,
     notes: str | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
 ) -> BenchmarkPlace:
     """Save one place to this tenant's bench, idempotent on (tenant, place)."""
     pid = str(place_id or "").strip()[:255]
@@ -82,6 +86,8 @@ async def save_place(
             dup.label = clean_label
         if clean_notes is not None:
             dup.notes = clean_notes
+        if latitude is not None and longitude is not None:
+            dup.latitude, dup.longitude = latitude, longitude
         await db.commit()
         await db.refresh(dup)
         return dup
@@ -102,6 +108,7 @@ async def save_place(
     row = BenchmarkPlace(
         tenant_id=tenant_id, place_id=pid,
         label=clean_label, notes=clean_notes,
+        latitude=latitude, longitude=longitude,
     )
     db.add(row)
     try:

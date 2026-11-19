@@ -7,6 +7,8 @@ export interface PlaceResult {
   address: string | null;
   rating: number | null;
   review_count: number | null;
+  latitude: number | null;
+  longitude: number | null;
   types: string[];
 }
 
@@ -18,6 +20,8 @@ export interface SavedPlace {
   name: string | null;
   rating: number | null;
   review_count: number | null;
+  latitude: number | null;
+  longitude: number | null;
   created_at: string | null;
 }
 
@@ -33,6 +37,8 @@ export function saveBenchmarkPlace(input: {
   place_id: string;
   label?: string | null;
   notes?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
 }): Promise<SavedPlace> {
   return apiFetch("/api/v1/benchmark/places", {
     method: "POST",

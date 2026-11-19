@@ -23,11 +23,11 @@ REQUEST_TIMEOUT_SECONDS = 15.0
 
 SEARCH_FIELD_MASK = (
     "places.id,places.displayName,places.formattedAddress,"
-    "places.rating,places.userRatingCount,places.types"
+    "places.rating,places.userRatingCount,places.types,places.location"
 )
 DETAILS_FIELD_MASK = (
     "id,displayName,formattedAddress,rating,userRatingCount,"
-    "reviews,photos,types"
+    "reviews,photos,types,location"
 )
 
 
@@ -55,13 +55,28 @@ def _text(value: object) -> str | None:
     return str(value)[:255] if value else None
 
 
+def _coordinates(place: dict) -> tuple[float | None, float | None]:
+    location = place.get("location") or {}
+    if not isinstance(location, dict):
+        return None, None
+    lat, lng = location.get("latitude"), location.get("longitude")
+    try:
+        return (float(lat) if lat is not None else None,
+                float(lng) if lng is not None else None)
+    except (TypeError, ValueError):
+        return None, None
+
+
 def _map_search(place: dict) -> dict:
+    lat, lng = _coordinates(place)
     return {
         "place_id": _place_id(str(place.get("id") or "")),
         "name": _text(place.get("displayName")),
         "address": str(place.get("formattedAddress") or "")[:500] or None,
         "rating": place.get("rating"),
         "review_count": place.get("userRatingCount"),
+        "latitude": lat,
+        "longitude": lng,
         "types": [str(t) for t in (place.get("types") or [])][:10],
     }
 

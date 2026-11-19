@@ -41,6 +41,8 @@ def upgrade() -> None:
             name VARCHAR(255),
             rating FLOAT,
             review_count INTEGER,
+            latitude FLOAT,
+            longitude FLOAT,
             reviews JSONB,
             photos JSONB,
             fetched_at TIMESTAMPTZ,

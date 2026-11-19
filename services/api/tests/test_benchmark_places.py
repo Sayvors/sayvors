@@ -52,7 +52,9 @@ async def test_search_maps_fields_and_strips_prefix(monkeypatch, key):
     result = await places.search_places("cafe riyadh")
     assert result == [{
         "place_id": "abc123", "name": "Riyadh Cafe", "address": "Malaz, Riyadh",
-        "rating": 4.5, "review_count": 120, "types": ["cafe"],
+        "rating": 4.5, "review_count": 120,
+        "latitude": None, "longitude": None,
+        "types": ["cafe"],
     }]
     assert client.calls[0][1]["json"]["maxResultCount"] == places.MAX_SEARCH_RESULTS
 
