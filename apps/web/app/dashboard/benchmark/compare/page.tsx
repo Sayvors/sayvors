@@ -896,6 +896,10 @@ function SentimentReviewsTable({
   loading: boolean;
   openPopup: (subject: SubjectReviews, category: SentimentCategory) => void;
 }) {
+  // On small screens the business columns become one dropdown: only the
+  // selected business's category rows are shown, like the other tables.
+  const [mobileIndex, setMobileIndex] = useState(0);
+
   if (loading) {
     return <p className="mt-4 text-[12px] text-[#3B2D5E]">Loading reviews…</p>;
   }
@@ -909,13 +913,66 @@ function SentimentReviewsTable({
 
   return (
     <section className="mt-4 overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-white">
-      <div className="border-b border-[var(--ui-line)] px-3 py-2">
+      <div className="flex items-center justify-between border-b border-[var(--ui-line)] px-3 py-2">
         <h2 className="text-[12px] font-bold uppercase tracking-wide text-[#14101F]">
           Reviews by category
         </h2>
+        <label className="flex items-center gap-2 md:hidden">
+          <span className="text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]">
+            Business
+          </span>
+          <select
+            value={mobileIndex}
+            onChange={(event) => setMobileIndex(Number(event.target.value))}
+            className="rounded-[8px] border border-[var(--ui-line)] bg-white px-2 py-1.5 text-[11px] font-semibold text-[#14101F]"
+          >
+            {subjects.map((subject, index) => (
+              <option key={subject.key} value={index}>
+                {subject.name || "—"}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
-      <div className="overflow-x-auto">
+      {/* Mobile: one business's category rows. */}
+      <div className="md:hidden">
+        {subjects[mobileIndex] ? (
+          <table className="w-full border-collapse text-left">
+            <tbody>
+              {SENTIMENT_CATEGORIES.map((category) => {
+                const subject = subjects[mobileIndex];
+                return (
+                  <tr key={category}>
+                    <th
+                      scope="row"
+                      style={{ color: SENTIMENT_CATEGORY_COLORS[category] }}
+                      className="w-[92px] border-b border-r border-[var(--ui-line)] bg-white px-3 py-2 text-[11px] font-semibold"
+                    >
+                      {SENTIMENT_CATEGORY_LABELS[category]}
+                    </th>
+                    <td className="border-b border-[var(--ui-line)] px-3 py-2 align-top">
+                      <FadedCell
+                        subject={subject}
+                        category={category}
+                        color={SENTIMENT_CATEGORY_COLORS[category]}
+                        onOpen={() => openPopup(subject, category)}
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        ) : (
+          <p className="px-3 py-4 text-center text-[11px] text-[#3B2D5E]">
+            No business selected.
+          </p>
+        )}
+      </div>
+
+      {/* Desktop: the full matrix. */}
+      <div className="hidden overflow-x-auto md:block">
         <table
           className="w-full table-fixed border-collapse text-left"
           style={{ minWidth: 168 + subjects.length * 200 }}
