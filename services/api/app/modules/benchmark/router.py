@@ -18,6 +18,8 @@ class SavePlaceIn(BaseModel):
     notes: str | None = Field(default=None, max_length=2000)
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
+    rating: float | None = Field(default=None, ge=0, le=5)
+    review_count: int | None = Field(default=None, ge=0)
 
 
 @router.get("/search", response_model=list[dict])
@@ -55,6 +57,7 @@ async def save_place(
             db, tenant_id_of(ctx.user),
             place_id=body.place_id, label=body.label, notes=body.notes,
             latitude=body.latitude, longitude=body.longitude,
+            rating=body.rating, review_count=body.review_count,
         )
     except service.BenchError as exc:
         raise HTTPException(status_code=422, detail=str(exc))

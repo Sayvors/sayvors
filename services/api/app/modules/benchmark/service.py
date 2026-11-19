@@ -66,6 +66,8 @@ async def save_place(
     notes: str | None = None,
     latitude: float | None = None,
     longitude: float | None = None,
+    rating: float | None = None,
+    review_count: int | None = None,
 ) -> BenchmarkPlace:
     """Save one place to this tenant's bench, idempotent on (tenant, place)."""
     pid = str(place_id or "").strip()[:255]
@@ -89,6 +91,10 @@ async def save_place(
             dup.notes = clean_notes
         if latitude is not None and longitude is not None:
             dup.latitude, dup.longitude = latitude, longitude
+        if rating is not None:
+            dup.rating = rating
+        if review_count is not None:
+            dup.review_count = review_count
         await db.commit()
         await db.refresh(dup)
         return dup
@@ -110,6 +116,7 @@ async def save_place(
         tenant_id=tenant_id, place_id=pid,
         label=clean_label, notes=clean_notes,
         latitude=latitude, longitude=longitude,
+        rating=rating, review_count=review_count,
     )
     db.add(row)
     try:

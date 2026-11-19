@@ -47,6 +47,8 @@ export function saveBenchmarkPlace(input: {
   notes?: string | null;
   latitude?: number | null;
   longitude?: number | null;
+  rating?: number | null;
+  review_count?: number | null;
 }): Promise<SavedPlace> {
   return apiFetch("/api/v1/benchmark/places", {
     method: "POST",
