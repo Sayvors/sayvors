@@ -33,7 +33,7 @@ type FactKey = keyof ComparisonSubject["facts"];
 interface Row<T extends string> {
   key: T;
   label: string;
-  render: (subject: ComparisonSubject) => ReactNode;
+  render: (subject: ComparisonSubject, subjects: ComparisonSubject[]) => ReactNode;
   /** Present only for rows that can be won; drives the per-row highlight. */
   value?: (subject: ComparisonSubject) => number | null;
   /**
@@ -112,7 +112,7 @@ const FACT_ROWS: Row<FactKey>[] = [  { key: "positive_pct", label: "Positive sen
   { key: "menu_price_mentions", label: "Menu & price mentions", value: (s) => s.facts.menu_price_mentions, render: (s) => num(s.facts.menu_price_mentions) },
   { key: "parking_praised", label: "Parking · positive", value: (s) => s.facts.parking_praised, render: (s) => num(s.facts.parking_praised) },
   { key: "parking_criticised", label: "Parking · negative", value: (s) => s.facts.parking_criticised, higherIsBetter: false, render: (s) => num(s.facts.parking_criticised) },
-  { key: "services", label: "Services", render: (s) => chips(s.facts.services) },
+  { key: "services", label: "Services", render: (s, all) => serviceChips(s.facts.services, all) },
   { key: "top_problems", label: "Top problems", render: (s) => chips(s.facts.top_problems) },
   { key: "named_team", label: "Named team", render: (s) => namedTeam(s.facts.named_team) },
 ];
@@ -121,7 +121,7 @@ const NOTE_ROWS: Row<"notes">[] = [
   {
     key: "notes",
     label: "Where these numbers come from",
-    render: (s) => (
+    render: (s, all) => (
       <ul className="list-disc pl-3.5 text-[10px] leading-relaxed text-[#3B2D5E]">
         {s.notes.map((note) => (
           <li key={note}>{note}</li>
@@ -130,6 +130,66 @@ const NOTE_ROWS: Row<"notes">[] = [
     ),
   },
 ];
+
+/**
+ * Overlap-level colors for the Services row. Green means the service is
+ * carried by everyone in the table (or by four or more), blue by two or
+ * three, red when no other business has it — so you can scan a row and see
+ * which services the businesses actually share.
+ */
+const SERVICE_LEVEL_COLORS: Record<ServiceLevel, string> = {
+  shared: "#10b981",
+  second: "#0ea5e9",
+  unique: "#DC2626",
+};
+
+function serviceOverlapLevel(count: number, total: number): ServiceLevel {
+  if (count >= 4) return "shared";
+  if (count === 2 || count === 3) return "second";
+  return "unique";
+}
+
+type ServiceLevel = "shared" | "second" | "unique";
+
+/**
+ * Service chips colored by how many businesses in the table carry each
+ * service: green when widely carried, blue when only two or three do, red
+ * when it is a lone feature. Duplicates within one business are collapsed.
+ */
+function serviceChips(
+  services: string[] | undefined,
+  subjects: ComparisonSubject[]
+): ReactNode {
+  const list = services ?? [];
+  if (!list.length) return <span className="text-[#8A8496]">—</span>;
+  const total = subjects.filter((subject) => subject.available).length;
+  const counts = new Map<string, number>();
+  for (const subject of subjects) {
+    if (!subject.available) continue;
+    for (const name of new Set(subject.facts.services ?? [])) {
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+  }
+  const seen = new Set<string>();
+  return (
+    <span className="flex flex-wrap gap-1">
+      {list.map((name) => {
+        if (seen.has(name)) return null;
+        seen.add(name);
+        const level = serviceOverlapLevel(counts.get(name) ?? 0, total);
+        return (
+          <span
+            key={name}
+            style={{ backgroundColor: SERVICE_LEVEL_COLORS[level], color: "#FFFFFF" }}
+            className="rounded-[6px] px-1.5 py-0.5 text-[10px] font-semibold"
+          >
+            {name}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
 
 function num(value: number | null | undefined, suffix = ""): string {
   return value == null ? "—" : `${value}${suffix}`;
@@ -333,7 +393,7 @@ function MatrixTable<T extends string>({
                         }}
                       >
                         {subject.available ? (
-                          row.render(subject)
+                          row.render(subject, subjects)
                         ) : (
                           <span>—</span>
                         )}
