@@ -319,6 +319,34 @@ async def test_admin_health_structure(db):
 
 
 @pytest.mark.asyncio
+async def test_admin_health_ignores_superseded_ingest_jobs(db):
+    """A reindex job superseded by a re-crawl must not appear as a failure."""
+    from app.modules.admin import service as admin_service
+    from app.modules.rag.models import Databank, IngestJob
+
+    bank = Databank(id="bank-health", user_id="tenant-health", name="Health")
+    db.add(bank)
+    db.add_all([
+        IngestJob(
+            id="job-superseded", user_id="tenant-health", databank_id=bank.id,
+            job_type="reindex", status="failed", error="superseded by re-crawl",
+        ),
+        IngestJob(
+            id="job-real-fail", user_id="tenant-health", databank_id=bank.id,
+            job_type="scrape", status="failed", error="HTTP 500",
+        ),
+    ])
+    await db.commit()
+
+    health = await admin_service.get_health(db, probe=False)
+    failures = health["recent_failures"]
+    ingest_failures = [f for f in failures if f["source"] == "ingest"]
+    assert ingest_failures, "the real failure must still show"
+    assert all("superseded" not in (f.get("message") or "") for f in ingest_failures)
+    assert ingest_failures[0]["message"] == "HTTP 500"
+
+
+@pytest.mark.asyncio
 async def test_admin_health_http(client, monkeypatch):
     headers = _admin_headers(client, monkeypatch)
     for url in ("/api/v1/admin/health", "/api/v1/admin/health?probe=false"):

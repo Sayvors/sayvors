@@ -482,10 +482,19 @@ async def get_health(db: AsyncSession, probe: bool = False) -> dict:
             .limit(10)
         )
     ).scalars().all()
+    # Jobs superseded by a newer crawl are marked failed, but they are not
+    # real failures — a re-crawl replaced their work. Hide them so the admin
+    # panel doesn't cry "server down" over a cancelled reindex.
     failed_ingest = (
         await db.execute(
             select(IngestJob)
-            .where(IngestJob.status == "failed")
+            .where(
+                IngestJob.status == "failed",
+                or_(
+                    IngestJob.error.is_(None),
+                    ~IngestJob.error.ilike("%superseded%"),
+                ),
+            )
             .order_by(IngestJob.updated_at.desc())
             .limit(10)
         )
