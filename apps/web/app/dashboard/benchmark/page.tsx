@@ -1,7 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import HeatmapGrid from "@/components/benchmark/HeatmapGrid";
+import OwnLocations from "@/components/benchmark/OwnLocations";
 import {
   deleteBenchmarkPlace,
   fetchSavedPlaces,
@@ -10,87 +13,7 @@ import {
   type PlaceResult,
   type SavedPlace,
 } from "@/lib/api-benchmark";
-import { loadGoogleMaps } from "@/lib/google-maps";
-
-const MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
-const FALLBACK = { lat: 24.7136, lng: 46.6753 };
 const FOCUS = "focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]";
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
-/** Google Maps heatmap of the tenant's saved competitors. */
-function BenchmarkHeatmap({ places }: { places: SavedPlace[] }) {
-  const mountRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<any>(null);
-  const heatRef = useRef<any>(null);
-  const [state, setState] = useState<"loading" | "ready" | "nokey" | "error">(
-    MAPS_KEY ? "loading" : "nokey"
-  );
-
-  useEffect(() => {
-    if (!MAPS_KEY) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        await loadGoogleMaps(MAPS_KEY);
-        if (cancelled || !mountRef.current) return;
-        const g = (window as unknown as { google?: any }).google;
-        if (!g?.maps?.Map || !g?.maps?.visualization?.HeatmapLayer) {
-          setState("error");
-          return;
-        }
-        mapRef.current = new g.maps.Map(mountRef.current, {
-          center: FALLBACK,
-          zoom: 10,
-          mapTypeControl: false,
-          streetViewControl: false,
-          fullscreenControl: false,
-        });
-        heatRef.current = new g.maps.visualization.HeatmapLayer({ map: mapRef.current });
-        setState("ready");
-      } catch {
-        if (!cancelled) setState("error");
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  useEffect(() => {
-    if (state !== "ready" || !heatRef.current || !mapRef.current) return;
-    const g = (window as unknown as { google?: any }).google;
-    const points = places
-      .filter((p) => p.latitude != null && p.longitude != null)
-      .map((p) => ({
-        location: new g.maps.LatLng(p.latitude as number, p.longitude as number),
-        weight: Math.min(1, Math.max(0.1, (p.review_count ?? 0) / 1000)),
-      }));
-    heatRef.current.setData(points);
-    if (points.length > 0) {
-      const bounds = new g.maps.LatLngBounds();
-      points.forEach((p: any) => bounds.extend(p.location));
-      mapRef.current.fitBounds(bounds, 64);
-    }
-  }, [places, state]);
-
-  return (
-    <div className="relative h-[420px] w-full overflow-hidden rounded-[32px] border border-[var(--ui-line)] bg-white sm:h-[520px]">
-      <div ref={mountRef} className="h-full w-full" aria-label="Heatmap of saved businesses" />
-      {state !== "ready" ? (
-        <div className="absolute inset-0 flex items-center justify-center bg-white/90 px-6 text-center text-[12px] text-[var(--ui-ink-2)]">
-          {state === "nokey"
-            ? "Add a Google Maps key to show the heatmap."
-            : state === "error"
-            ? "The map could not load. Your saved places are still below."
-            : "Loading map…"}
-        </div>
-      ) : places.every((p) => p.latitude == null) ? (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-[12px] text-[var(--ui-ink-2)]">
-          Save a business to see it on the map.
-        </div>
-      ) : null}
-    </div>
-  );
-}
 
 export default function BenchmarkPage() {
   const queryClient = useQueryClient();
@@ -212,9 +135,9 @@ export default function BenchmarkPage() {
         </div>
       </section>
 
-      {/* 2 — Full-width heatmap */}
-      <section className="mb-6" aria-label="Market heatmap">
-        <BenchmarkHeatmap places={saved} />
+      {/* 2 — Heatmap: a grid of colour-coded cards; click for a snapshot modal */}
+      <section className="mb-6">
+        <HeatmapGrid places={saved} />
       </section>
 
       {/* 3 — Saved business cards */}
@@ -232,9 +155,12 @@ export default function BenchmarkPage() {
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {saved.map((place) => (
               <article key={place.id} className="rounded-[32px] border border-[var(--ui-line)] bg-white p-5">
-                <h3 className="truncate text-[14px] font-bold text-[var(--ui-ink)]">
-                  {place.label || place.name || place.place_id}
-                </h3>
+                <Link
+                href={`/dashboard/benchmark/${encodeURIComponent(place.place_id)}`}
+                className="truncate text-[14px] font-bold text-[#14101F] hover:underline"
+              >
+                {place.label || place.name || place.place_id}
+              </Link>
                 <p className="mt-0.5 truncate text-[11px] text-[var(--ui-ink-2)]">{place.place_id}</p>
                 <p className="mt-4 font-mono text-[18px] font-bold text-[var(--ui-ink)]">
                   {place.rating != null ? place.rating.toFixed(1) : "—"}<span className="text-[12px]">★</span>
@@ -254,6 +180,11 @@ export default function BenchmarkPage() {
             ))}
           </div>
         )}
+      </section>
+
+      {/* 4 — Your own locations, for self-benchmarking */}
+      <section className="mt-8" aria-label="Your own locations">
+        <OwnLocations />
       </section>
     </div>
   );

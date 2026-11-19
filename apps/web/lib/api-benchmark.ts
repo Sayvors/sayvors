@@ -12,6 +12,13 @@ export interface PlaceResult {
   types: string[];
 }
 
+export interface PlaceDetails extends PlaceResult {
+  reviews: { rating: number | null; text: string | null; publish_time: string | null; author: string | null }[];
+  photos: { name: string; width: number | null; height: number | null }[];
+  saved_id: string;
+  label: string | null;
+}
+
 export interface SavedPlace {
   id: string;
   place_id: string;
@@ -44,6 +51,10 @@ export function saveBenchmarkPlace(input: {
     method: "POST",
     body: JSON.stringify(input),
   });
+}
+
+export function getBenchmarkPlaceDetails(placeId: string): Promise<PlaceDetails> {
+  return apiFetch(`/api/v1/benchmark/places/${encodeURIComponent(placeId)}/details`);
 }
 
 export function deleteBenchmarkPlace(placeId: string): Promise<{ deleted: boolean }> {

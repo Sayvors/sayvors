@@ -144,6 +144,18 @@ async def list_saved(
     return [serialize(row) for row in rows]
 
 
+async def get_saved(db: AsyncSession, tenant_id: str, place_id: str) -> BenchmarkPlace | None:
+    """Fetch one saved place, scoped to this tenant. None means not on their bench."""
+    return (
+        await db.execute(
+            select(BenchmarkPlace).where(
+                BenchmarkPlace.tenant_id == tenant_id,
+                BenchmarkPlace.place_id == str(place_id or "")[:255],
+            )
+        )
+    ).scalar_one_or_none()
+
+
 async def delete_saved(db: AsyncSession, tenant_id: str, place_id: str) -> bool:
     row = (
         await db.execute(
