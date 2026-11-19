@@ -22,6 +22,7 @@ interface NavItem {
 const MAIN_ITEMS: NavItem[] = [
   { key: "dashboard", icon: <DashboardIcon />, href: "/dashboard" },
   { key: "analytics", icon: <AnalyticsIcon />, href: "/dashboard/analytics" },
+  { key: "benchmark", icon: <AnalyticsIcon />, href: "/dashboard/benchmark" },
   { key: "locations", icon: <PinIcon />, href: "/dashboard/locations" },
   { key: "postsMedia", icon: <PhotoIcon />, href: "/dashboard/posts-media" },
   { key: "customers", icon: <UsersIcon />, href: "/dashboard/customers" },

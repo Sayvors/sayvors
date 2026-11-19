@@ -13,6 +13,7 @@ import {
 import { getEntitlements } from "@/lib/api-billing";
 import { RangeChannelControls, useGoogleChannels } from "@/components/analytics/Controls";
 import BenchmarkCards from "@/components/analytics/BenchmarkCards";
+import CompetitorBench from "@/components/benchmark/CompetitorBench";
 import { FactSource } from "@/components/analytics/FactSource";
 import { GBP_DASHBOARD_URL } from "@/lib/google-links";
 import { refreshExternalBenchmark } from "@/lib/api-analytics";
@@ -228,6 +229,8 @@ export default function BenchmarkPage() {
           channels={channels}
         />
       </div>
+
+      <CompetitorBench />
 
       <div className="mb-5">
         <BenchmarkCards
