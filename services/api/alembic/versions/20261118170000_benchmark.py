@@ -38,6 +38,7 @@ def upgrade() -> None:
             place_id VARCHAR(255) NOT NULL,
             label VARCHAR(120),
             notes TEXT,
+            in_heatmap BOOLEAN NOT NULL DEFAULT true,
             name VARCHAR(255),
             rating FLOAT,
             review_count INTEGER,

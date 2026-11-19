@@ -10,6 +10,7 @@ import {
   fetchSavedPlaces,
   saveBenchmarkPlace,
   searchPlaces,
+  setBenchmarkHeatmap,
   type PlaceResult,
   type SavedPlace,
 } from "@/lib/api-benchmark";
@@ -22,6 +23,7 @@ export default function BenchmarkPage() {
   const [searching, setSearching] = useState(false);
   const [searched, setSearched] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [menuId, setMenuId] = useState<string | null>(null);
 
   const savedQuery = useQuery({ queryKey: ["benchmark", "saved"], queryFn: fetchSavedPlaces });
   const saved = savedQuery.data ?? [];
@@ -63,6 +65,16 @@ export default function BenchmarkPage() {
     }
   }
 
+  async function toggleHeatmap(place: SavedPlace) {
+    setBusyId(place.place_id);
+    try {
+      await setBenchmarkHeatmap(place.place_id, !place.in_heatmap);
+      await queryClient.invalidateQueries({ queryKey: ["benchmark", "saved"] });
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   async function remove(placeId: string) {
     setBusyId(placeId);
     try {
@@ -93,7 +105,7 @@ export default function BenchmarkPage() {
         </p>
 
         <div className="relative mt-7 w-full max-w-xl">
-          <div className="flex items-center gap-3 rounded-[24px] border border-[var(--ui-line)] bg-white px-4 py-3 shadow-[0_1px_2px_rgba(20,16,31,0.06)]">
+          <div className="flex items-center gap-3 rounded-[16px] border border-[var(--ui-line)] bg-white px-4 py-3 shadow-[0_1px_2px_rgba(20,16,31,0.06)]">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4 shrink-0 text-[#3B2D5E]" aria-hidden>
               <circle cx="11" cy="11" r="7" />
               <path d="M20 20l-3.5-3.5" strokeLinecap="round" />
@@ -112,7 +124,7 @@ export default function BenchmarkPage() {
             <p className="mt-2 text-[11px] text-[#3B2D5E]">No businesses found.</p>
           ) : null}
           {results.length > 0 ? (
-            <ul className="mt-3 max-h-64 overflow-y-auto rounded-[24px] border border-[var(--ui-line)] bg-white text-left">
+            <ul className="mt-3 max-h-64 overflow-y-auto rounded-[16px] border border-[var(--ui-line)] bg-white text-left">
               {results.map((place) => (
                 <li key={place.place_id} className="flex items-center gap-3 border-b border-[var(--ui-line)] px-4 py-2.5 last:border-b-0">
                   <div className="min-w-0 flex-1">
@@ -123,7 +135,7 @@ export default function BenchmarkPage() {
                     type="button"
                     onClick={() => void save(place)}
                     disabled={busyId === place.place_id}
-                    className={`shrink-0 rounded-[24px] bg-[#3D1D6E] px-3 py-1.5 text-[11px] font-bold text-white disabled:opacity-50 ${FOCUS}`}
+                    className={`shrink-0 rounded-[16px] bg-[#3D1D6E] px-3 py-1.5 text-[11px] font-bold text-white disabled:opacity-50 ${FOCUS}`}
                   >
                     Save
                   </button>
@@ -137,7 +149,7 @@ export default function BenchmarkPage() {
 
       {/* 2 — Heatmap: a grid of colour-coded cards; click for a snapshot modal */}
       <section className="mb-6">
-        <HeatmapGrid places={saved} />
+        <HeatmapGrid places={saved.filter((place) => place.in_heatmap)} />
       </section>
 
       {/* 3 — Saved business cards */}
@@ -148,34 +160,75 @@ export default function BenchmarkPage() {
         {savedQuery.isPending ? (
           <p className="text-[12px] text-[var(--ui-ink-2)]">Loading…</p>
         ) : saved.length === 0 ? (
-          <p className="rounded-[32px] border border-dashed border-[var(--ui-line)] bg-white px-5 py-8 text-center text-[12px] text-[var(--ui-ink-2)]">
+          <p className="rounded-[12px] border border-dashed border-[var(--ui-line)] bg-white px-5 py-8 text-center text-[12px] text-[var(--ui-ink-2)]">
             Nothing saved yet. Search above and add the businesses relevant to your market.
           </p>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {saved.map((place) => (
-              <article key={place.id} className="rounded-[32px] border border-[var(--ui-line)] bg-white p-5">
-                <Link
-                href={`/dashboard/benchmark/${encodeURIComponent(place.place_id)}`}
-                className="truncate text-[14px] font-bold text-[#14101F] hover:underline"
-              >
-                {place.label || place.name || place.place_id}
-              </Link>
-                <p className="mt-0.5 truncate text-[11px] text-[var(--ui-ink-2)]">{place.place_id}</p>
-                <p className="mt-4 font-mono text-[18px] font-bold text-[var(--ui-ink)]">
-                  {place.rating != null ? place.rating.toFixed(1) : "—"}<span className="text-[12px]">★</span>
+              <article key={place.id} className="relative rounded-[12px] border border-[var(--ui-line)] bg-white p-4">
+                <div className="flex items-start gap-2">
+                  <Link
+                    href={`/dashboard/benchmark/${encodeURIComponent(place.place_id)}`}
+                    className="min-w-0 flex-1 truncate text-[13px] font-bold text-[#14101F] hover:underline"
+                  >
+                    {place.label || place.name || place.place_id}
+                  </Link>
+                  <div className="relative shrink-0">
+                    <button
+                      type="button"
+                      aria-label={`Actions for ${place.label || place.name || place.place_id}`}
+                      aria-expanded={menuId === place.id}
+                      onClick={() => setMenuId((v) => v === place.id ? null : place.id)}
+                      className={`rounded-[8px] px-2 py-1 text-[15px] leading-none text-[#3B2D5E] hover:bg-[#F4F2F7] ${FOCUS}`}
+                    >
+                      ⋯
+                    </button>
+                    {menuId === place.id ? (
+                      <div className="absolute right-0 top-full z-20 mt-1 w-44 rounded-[12px] border border-[var(--ui-line)] bg-white p-1 shadow-[0_2px_8px_rgba(20,16,31,0.10)]">
+                        <button
+                          type="button"
+                          onClick={() => { setMenuId(null); void toggleHeatmap(place); }}
+                          disabled={busyId === place.place_id}
+                          className={`w-full rounded-[8px] px-2.5 py-2 text-left text-[11px] font-semibold text-[#14101F] hover:bg-[#F4F2F7] ${FOCUS}`}
+                        >
+                          {place.in_heatmap ? "Remove from heatmap" : "Add to heatmap"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setMenuId(null); void remove(place.place_id); }}
+                          disabled={busyId === place.place_id}
+                          className={`w-full rounded-[8px] px-2.5 py-2 text-left text-[11px] font-semibold text-red-600 hover:bg-[#F4F2F7] ${FOCUS}`}
+                        >
+                          Remove from bench
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+                <p className="mt-0.5 truncate text-[10px] text-[#3B2D5E]">{place.place_id}</p>
+                <p className="mt-3 font-mono text-[17px] font-bold text-[#14101F]">
+                  {place.rating != null ? place.rating.toFixed(1) : "—"}<span className="text-[11px]">★</span>
                 </p>
-                <p className="mt-1 font-mono text-[11px] text-[var(--ui-ink-2)]">
-                  {place.review_count ?? "—"} reviews
-                </p>
-                <button
-                  type="button"
-                  onClick={() => void remove(place.place_id)}
-                  disabled={busyId === place.place_id}
-                  className={`mt-4 rounded-[24px] border border-red-400 px-3 py-1.5 text-[11px] font-bold text-red-600 disabled:opacity-50 ${FOCUS}`}
-                >
-                  Remove
-                </button>
+                <p className="font-mono text-[10px] text-[#3B2D5E]">{place.review_count ?? "—"} reviews</p>
+                <div className="mt-3 flex gap-2">
+                  <Link
+                    href={`/dashboard/benchmark/${encodeURIComponent(place.place_id)}`}
+                    className={`rounded-[12px] bg-[#3D1D6E] px-3 py-1.5 text-[11px] font-bold text-white ${FOCUS}`}
+                  >
+                    Open
+                  </Link>
+                  {!place.in_heatmap ? (
+                    <button
+                      type="button"
+                      onClick={() => void toggleHeatmap(place)}
+                      disabled={busyId === place.place_id}
+                      className={`rounded-[12px] border border-[#3D1D6E]/25 px-3 py-1.5 text-[11px] font-bold text-[#3D1D6E] ${FOCUS}`}
+                    >
+                      Add to heatmap
+                    </button>
+                  ) : null}
+                </div>
               </article>
             ))}
           </div>

@@ -46,6 +46,7 @@ class BenchmarkPlace(Base):
     place_id: Mapped[str] = mapped_column(String(255))
     label: Mapped[str | None] = mapped_column(String(120), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    in_heatmap: Mapped[bool] = mapped_column(default=True)
     # Cached provider fields (only written when place_cache_enabled).
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     rating: Mapped[float | None] = mapped_column(Float, nullable=True)

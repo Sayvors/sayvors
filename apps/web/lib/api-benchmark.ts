@@ -29,6 +29,7 @@ export interface SavedPlace {
   review_count: number | null;
   latitude: number | null;
   longitude: number | null;
+  in_heatmap: boolean;
   created_at: string | null;
 }
 
@@ -50,6 +51,13 @@ export function saveBenchmarkPlace(input: {
   return apiFetch("/api/v1/benchmark/places", {
     method: "POST",
     body: JSON.stringify(input),
+  });
+}
+
+export function setBenchmarkHeatmap(placeId: string, enabled?: boolean): Promise<SavedPlace> {
+  const query = enabled === undefined ? "" : `?enabled=${enabled}`;
+  return apiFetch(`/api/v1/benchmark/places/${encodeURIComponent(placeId)}/heatmap${query}`, {
+    method: "POST",
   });
 }
 

@@ -61,6 +61,21 @@ async def save_place(
     return service.serialize(row)
 
 
+@router.post("/places/{place_id}/heatmap", response_model=dict)
+async def set_heatmap(
+    place_id: str,
+    enabled: bool | None = Query(default=None),
+    ctx: TenantContext = Depends(require_perm("benchmark.manage")),
+    db: AsyncSession = Depends(get_db),
+):
+    row = await service.toggle_heatmap(
+        db, tenant_id_of(ctx.user), place_id, enabled=enabled
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Saved place not found")
+    return service.serialize(row)
+
+
 @router.get("/places/{place_id}/details", response_model=dict)
 async def place_details(
     place_id: str,

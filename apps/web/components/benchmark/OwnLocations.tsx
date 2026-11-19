@@ -55,7 +55,7 @@ export default function OwnLocations() {
       {query.isPending ? (
         <p className="text-[12px] text-[#3B2D5E]">Loading…</p>
       ) : locations.length === 0 ? (
-        <p className="rounded-[32px] border border-dashed border-[#3D1D6E]/20 bg-white px-5 py-8 text-center text-[12px] text-[#3B2D5E]">
+        <p className="rounded-[12px] border border-dashed border-[#3D1D6E]/20 bg-white px-5 py-8 text-center text-[12px] text-[#3B2D5E]">
           Connect a Google Business Profile to see your locations here.
         </p>
       ) : (
@@ -63,7 +63,7 @@ export default function OwnLocations() {
           {locations.map((location) => (
             <article
               key={location.id}
-              className={`rounded-[28px] border border-[#3D1D6E]/10 bg-white p-4 ${FOCUS}`}
+              className={`rounded-[12px] border border-[#3D1D6E]/10 bg-white p-4 ${FOCUS}`}
             >
               <h3 className="truncate text-[13px] font-bold text-[#14101F]">
                 {location.display_name || "Unnamed location"}

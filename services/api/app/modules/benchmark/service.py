@@ -42,6 +42,7 @@ def serialize(place: BenchmarkPlace) -> dict:
         "place_id": place.place_id,
         "label": place.label,
         "notes": place.notes,
+        "in_heatmap": place.in_heatmap,
         "name": place.name,
         "address": getattr(place, "address", None),
         "rating": place.rating,
@@ -154,6 +155,19 @@ async def get_saved(db: AsyncSession, tenant_id: str, place_id: str) -> Benchmar
             )
         )
     ).scalar_one_or_none()
+
+
+async def toggle_heatmap(
+    db: AsyncSession, tenant_id: str, place_id: str, *, enabled: bool | None = None
+) -> BenchmarkPlace | None:
+    """Include or exclude a saved place from the heatmap (tenant-scoped)."""
+    row = await get_saved(db, tenant_id, place_id)
+    if row is None:
+        return None
+    row.in_heatmap = (not row.in_heatmap) if enabled is None else bool(enabled)
+    await db.commit()
+    await db.refresh(row)
+    return row
 
 
 async def delete_saved(db: AsyncSession, tenant_id: str, place_id: str) -> bool:
