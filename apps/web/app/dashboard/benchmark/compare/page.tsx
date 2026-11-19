@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
@@ -8,11 +8,13 @@ import { apiFetch } from "@/lib/api-rag";
 import {
   fetchComparison,
   fetchHistory,
+  fetchReviews,
   fetchSavedPlaces,
   RANGE_DAYS,
   type CompareRange,
   type ComparisonSubject,
   type SavedPlace,
+  type SubjectReviews,
 } from "@/lib/api-benchmark";
 import ComparePicker, {
   MAX_COMPETITORS,
@@ -115,20 +117,6 @@ const FACT_ROWS: Row<FactKey>[] = [  { key: "positive_pct", label: "Positive sen
   { key: "services", label: "Services", render: (s, all) => serviceChips(s.facts.services, all) },
   { key: "top_problems", label: "Top problems", render: (s) => chips(s.facts.top_problems) },
   { key: "named_team", label: "Named team", render: (s) => namedTeam(s.facts.named_team) },
-];
-
-const NOTE_ROWS: Row<"notes">[] = [
-  {
-    key: "notes",
-    label: "Where these numbers come from",
-    render: (s, all) => (
-      <ul className="list-disc pl-3.5 text-[10px] leading-relaxed text-[#3B2D5E]">
-        {s.notes.map((note) => (
-          <li key={note}>{note}</li>
-        ))}
-      </ul>
-    ),
-  },
 ];
 
 /**
@@ -414,10 +402,12 @@ function formatWhen(value: string | null): string {
   if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleDateString(undefined, {
+  return date.toLocaleString(undefined, {
     year: "numeric",
     month: "short",
     day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 }
 
@@ -506,6 +496,171 @@ function HistoryTable({
   );
 }
 
+/** Sentiment rows of the sentiment-grouped reviews table. */
+type SentimentKey = "positive" | "negative" | "neutral";
+
+const SENTIMENT_LABELS: Record<SentimentKey, string> = {
+  positive: "Positive",
+  negative: "Negative",
+  neutral: "Neutral",
+};
+
+const SENTIMENT_COLORS: Record<string, string> = {
+  positive: "#B0338A",
+  negative: "#FF4F6E",
+  neutral: "#3B2D5E",
+};
+
+/** Cap a review's text so a list of reviews stays readable in a table cell. */
+function sentimentCellText(text: string, maxLength = 140): string {
+  return text.length > maxLength ? text.slice(0, maxLength) + "…" : text;
+}
+
+/**
+ * Sentiment-grouped reviews table, same design as the data tables above:
+ * sticky label column, business columns, small radii, no gradients.
+ *
+ * Rows are Positive / Negative / Neutral; each business column shows the list
+ * of reviews of that sentiment, up to `perCell` of them with a "Show all"
+ * toggle when more are stored. Cells show rating and time, never more zeros
+ * than the data supports — empty is a dash.
+ */
+function SentimentReviewsTable({
+  subjects,
+  loading,
+}: {
+  subjects: SubjectReviews[];
+  loading: boolean;
+}) {
+  const [perCell, setPerCell] = useState(10);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  if (loading) {
+    return <p className="mt-4 text-[12px] text-[#3B2D5E]">Loading reviews…</p>;
+  }
+  if (!subjects.length) {
+    return (
+      <p className="mt-4 text-[12px] text-[#3B2D5E]">
+        No reviews are stored for these businesses yet.
+      </p>
+    );
+  }
+
+  const toggle = (key: string) =>
+    setExpanded((previous) => ({ ...previous, [key]: !previous[key] }));
+
+  function renderCell(subject: SubjectReviews, sentiment: SentimentKey) {
+    const all = subject.reviews.filter((review) => review.sentiment === sentiment);
+    if (!all.length) return <span className="text-[#8A8496]">—</span>;
+    const key = `${subject.key}:${sentiment}`;
+    const visible = expanded[key] ? all : all.slice(0, perCell);
+    return (
+      <ul className="space-y-0.5">
+        {visible.map((review, index) => (
+          <li
+            key={`${review.time}-${index}`}
+            className="flex gap-1.5 text-[11px] text-[#3B2D5E]"
+          >
+            <span
+              className="w-12 shrink-0 text-right font-semibold"
+              style={{ color: SENTIMENT_COLORS[sentiment] }}
+            >
+              {review.rating != null ? `${review.rating}★` : "—"}
+            </span>
+            <span className="w-36 shrink-0 font-mono">{formatWhen(review.time)}</span>
+            <span className="min-w-0 flex-1 leading-snug">{sentimentCellText(review.text)}</span>
+          </li>
+        ))}
+        {all.length > visible.length && (
+          <li className="text-[10px] font-semibold text-[#3D1D6E]">
+            <button type="button" onClick={() => toggle(key)} className={FOCUS}>
+              Show all ({all.length})
+            </button>
+          </li>
+        )}
+      </ul>
+    );
+  }
+
+  return (
+    <section className="mt-4 overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-white">
+      <div className="flex items-center justify-between border-b border-[var(--ui-line)] px-3 py-2">
+        <h2 className="text-[12px] font-bold uppercase tracking-wide text-[#14101F]">
+          Reviews by sentiment
+        </h2>
+        <label className="text-[10px] font-semibold text-[#3B2D5E]">
+          Per row
+          <select
+            value={perCell}
+            onChange={(event) => setPerCell(Number(event.target.value))}
+            className={`ml-1 rounded-[6px] border border-[var(--ui-line)] px-1.5 py-0.5 text-[10px]`}
+          >
+            {[5, 10, 25, 50].map((count) => (
+              <option key={count} value={count}>
+                {count}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table
+          className="w-full table-fixed border-collapse text-left"
+          style={{ minWidth: 168 + subjects.length * 160 }}
+        >
+          <colgroup>
+            <col style={{ width: 168 }} />
+            {subjects.map((subject) => (
+              <col key={subject.key} />
+            ))}
+          </colgroup>
+          <thead>
+            <tr>
+              <th
+                scope="col"
+                className="sticky left-0 z-10 min-w-[132px] border-b border-r border-[var(--ui-line)] bg-[#FAFAFB] px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]"
+              >
+                Business
+              </th>
+              {subjects.map((subject) => (
+                <th
+                  key={subject.key}
+                  scope="col"
+                  className="min-w-[140px] border-b border-r border-[var(--ui-line)] bg-[#FAFAFB] px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]"
+                >
+                  {subject.name || "—"}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {(["positive", "negative", "neutral"] as SentimentKey[]).map((sentiment) => (
+              <tr key={sentiment}>
+                <th
+                  scope="row"
+                  style={{ color: SENTIMENT_COLORS[sentiment] }}
+                  className="sticky left-0 z-10 border-b border-r border-[var(--ui-line)] bg-white px-3 py-2 text-[11px] font-semibold"
+                >
+                  {SENTIMENT_LABELS[sentiment]}
+                </th>
+                {subjects.map((subject) => (
+                  <td
+                    key={subject.key}
+                    className="border-b border-r border-[var(--ui-line)] px-3 py-2 align-top last:border-r-0"
+                  >
+                    {renderCell(subject, sentiment)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 /** Reads the current selection from the URL, tolerating older link shapes. */
 function readSelection(params: URLSearchParams): CompareSelection {  const main = params.get("main");
   const vs = params.getAll("vs");
@@ -558,6 +713,13 @@ export default function ComparePage() {
     queryFn: () => fetchHistory(keys, days ?? 90, 12),
     enabled: keys.length > 0 && days != null,
   });
+
+  const reviewsQuery = useQuery({
+    queryKey: ["benchmark", "reviews", keys.join("|")],
+    queryFn: () => fetchReviews(keys),
+    enabled: keys.length > 0,
+  });
+  const reviewSubjects: SubjectReviews[] = reviewsQuery.data?.subjects ?? [];
 
   function applyUrl(next: CompareSelection, nextRange: CompareRange) {
     const query = new URLSearchParams();
@@ -685,11 +847,9 @@ export default function ComparePage() {
             subjects={subjects}
             mainKey={selection.main}
           />
-          <MatrixTable
-            title="Sources & limits"
-            rows={NOTE_ROWS}
-            subjects={subjects}
-            mainKey={selection.main}
+          <SentimentReviewsTable
+            subjects={reviewSubjects}
+            loading={reviewsQuery.isPending}
           />
           {days != null ? (
             <HistoryTable

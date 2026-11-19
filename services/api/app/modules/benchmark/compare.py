@@ -31,13 +31,17 @@ from .models import BenchmarkSnapshot
 logger = logging.getLogger(__name__)
 
 MAX_SUBJECTS = 6
+# Newest-first sample of a saved place's reviews for the reviews table.
+REVIEW_SAMPLE_LIMIT = 500
+# How many reviews each subject returns for the reviews table.
+MAX_REVIEWS_PER_SUBJECT = 50
+REVIEW_TEXT_MAX = 600
 # Period filter on the comparison page. "live" reads Google/analytics now; the
 # others ask for the same facts restricted to a window, computed from the
 # scraper's snapshot history plus the current live values.
 RANGES: dict[str, int | None] = {"live": None, "30d": 30, "90d": 90, "365d": 365}
 # Google returns at most 500 reviews per place; keep our own sample the same
 # size so both sides of the comparison describe the same kind of evidence.
-REVIEW_SAMPLE_LIMIT = 500
 WINDOW_DAYS = {
     "reviews_last_day": 1,
     "reviews_last_week": 7,
@@ -761,3 +765,130 @@ async def subject_history(
             logger.exception("History failed for subject: %s", raw)
             out.append({"key": str(raw), "kind": "unknown", "name": None, "points": []})
     return {"days": days, "points": points, "subjects": out}
+
+
+# ── Reviews table ─────────────────────────────────────────────────────────
+
+
+def _sentiment_label(rating: Any) -> str:
+    """Sentiment of a single review for the reviews table.
+
+    Same rule the scan uses for its counts: a rating of 4+ is positive, 3 is
+    neutral, and anything else is negative. Google's own text sentiment is
+    used for our own locations (see `_own_reviews`).
+    """
+    try:
+        value = int(rating)
+    except (TypeError, ValueError):
+        return "neutral"
+    if value >= 4:
+        return "positive"
+    if value == 3:
+        return "neutral"
+    return "negative"
+
+
+async def _saved_reviews(
+    db: AsyncSession, tenant_id: str, place_id: str, *, limit: int
+) -> tuple[str | None, list[dict[str, Any]]]:
+    """Newest cached review sample for a saved place.
+
+    The cached sample wins so the reviews table costs nothing per page load;
+    a live Places call fills it when empty (bounded, and honest).
+    """
+    saved = await service.get_saved(db, tenant_id, place_id)
+    if saved is None:
+        return None, []
+    name = saved.name or saved.label
+    reviews = list(saved.reviews or [])
+    if not reviews:
+        try:
+            details = await places.get_place(saved.place_id)
+        except places.PlacesError:
+            details = {}
+        reviews = list(details.get("reviews") or [])
+    out = []
+    for review in reviews[:limit]:
+        rating = review.get("rating")
+        published = _publish_time(review.get("publish_time") or review.get("created_at"))
+        out.append({
+            "rating": rating,
+            "time": published.isoformat() if published else None,
+            "sentiment": _sentiment_label(rating),
+            "text": str(review.get("text") or "")[:REVIEW_TEXT_MAX],
+        })
+    return name, out
+
+
+async def _own_reviews(
+    db: AsyncSession, tenant_id: str, channel_id: str, *, limit: int
+) -> tuple[str | None, list[dict[str, Any]]]:
+    """Newest stored reviews of one of the tenant's own locations, from analytics."""
+    channel = (
+        await db.execute(
+            select(Channel).where(Channel.id == channel_id, Channel.user_id == tenant_id)
+        )
+    ).scalar_one_or_none()
+    if channel is None:
+        return None, []
+    bucket = func.coalesce(ReviewInsight.review_updated_at, ReviewInsight.created_at)
+    rows = (
+        await db.execute(
+            select(
+                ReviewInsight.rating,
+                ReviewInsight.review_text,
+                ReviewInsight.sentiment,
+                bucket,
+            ).where(
+                ReviewInsight.user_id == tenant_id,
+                ReviewInsight.channel_id == channel_id,
+                ReviewInsight.removed_at.is_(None),
+            ).order_by(bucket.desc()).limit(limit)
+        )
+    ).all()
+    out = []
+    for rating, text, sentiment, published in rows:
+        stored = (
+            sentiment if sentiment in ("positive", "neutral", "negative")
+            else None
+        )
+        out.append({
+            "rating": rating,
+            "time": published.isoformat() if published else None,
+            # Prefer the team-classified sentiment for our own locations.
+            "sentiment": stored or _sentiment_label(rating),
+            "text": str(text or "")[:REVIEW_TEXT_MAX],
+        })
+    return channel.display_name, out
+
+
+async def reviews_for(
+    db: AsyncSession,
+    tenant_id: str,
+    raw_subjects: list[str],
+    *,
+    limit: int = MAX_REVIEWS_PER_SUBJECT,
+) -> dict[str, Any]:
+    """Newest review samples per subject, for the paginated reviews table.
+
+    A bad or inaccessible subject is returned with an empty review list instead
+    of failing the whole table, mirroring `compare_subjects`.
+    """
+    if not raw_subjects or len(raw_subjects) > MAX_SUBJECTS:
+        raise CompareError(f"Ask for reviews of one to {MAX_SUBJECTS} subjects.")
+    limit = max(1, min(int(limit), MAX_REVIEWS_PER_SUBJECT))
+    out = []
+    for raw in raw_subjects:
+        try:
+            kind, ident = parse_subject(raw)
+            if kind == "saved":
+                name, reviews = await _saved_reviews(db, tenant_id, ident, limit=limit)
+            else:
+                name, reviews = await _own_reviews(db, tenant_id, ident, limit=limit)
+        except CompareError:
+            name, reviews = None, []
+        except Exception:
+            logger.exception("Reviews failed for subject: %s", raw)
+            name, reviews = None, []
+        out.append({"key": str(raw), "name": name, "reviews": reviews})
+    return {"subjects": out}

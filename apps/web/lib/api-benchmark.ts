@@ -169,3 +169,21 @@ export function fetchHistory(
   const q = subjects.map((s) => `subjects=${encodeURIComponent(s)}`).join("&");
   return apiFetch(`/api/v1/benchmark/history?${q}&days=${days}&points=${points}`);
 }
+
+/* ── Reviews table ─────────────────────────────────────────────────────── */
+
+export interface SubjectReviews {
+  key: string;
+  name: string | null;
+  reviews: {
+    rating: number | null;
+    time: string | null;
+    sentiment: string;
+    text: string;
+  }[];
+}
+
+export function fetchReviews(subjects: string[]): Promise<{ subjects: SubjectReviews[] }> {
+  const q = subjects.map((s) => `subjects=${encodeURIComponent(s)}`).join("&");
+  return apiFetch(`/api/v1/benchmark/reviews?${q}`);
+}

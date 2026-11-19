@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import func, select, update
 
+from app.modules.analytics.models import ReviewInsight
 from app.modules.benchmark import compare
 from app.modules.benchmark.models import BenchmarkPlace, BenchmarkSnapshot
 
@@ -630,6 +631,71 @@ async def test_scraper_can_be_paused_by_admin(db):
 
 
 # ── HTTP surface ───────────────────────────────────────────────────────────
+
+async def test_reviews_endpoint_own_rows(client, db, channel_id, user_id):
+    """The reviews table reads the tenant's own-location reviews from analytics,
+    newest first, with sentiment, time and rating."""
+    now = datetime.now(timezone.utc)
+    db.add_all([
+        ReviewInsight(
+            id="ri-rev-1", user_id=user_id, channel_id=channel_id,
+            review_id="rv-review-1", rating=5, review_text="staff were great",
+            sentiment="positive", review_updated_at=now - timedelta(days=2),
+        ),
+        ReviewInsight(
+            id="ri-rev-2", user_id=user_id, channel_id=channel_id,
+            review_id="rv-review-2", rating=1, review_text="terrible parking",
+            sentiment="negative", review_updated_at=now - timedelta(days=5),
+        ),
+    ])
+    await db.commit()
+
+    res = client.get(f"/api/v1/benchmark/reviews?subjects=own:{channel_id}&limit=10")
+    assert res.status_code == 200, res.text
+    subj = res.json()["subjects"][0]
+    assert subj["name"] == "Test Burgers"
+    assert len(subj["reviews"]) == 2
+    newest = subj["reviews"][0]
+    assert newest["rating"] == 5
+    assert newest["sentiment"] == "positive"
+    assert newest["time"]
+    assert newest["text"] == "staff were great"
+    oldest = subj["reviews"][1]
+    assert oldest["rating"] == 1
+    assert oldest["sentiment"] == "negative"
+    assert oldest["text"] == "terrible parking"
+
+
+async def test_reviews_endpoint_saved_place_cached_sample(client, db, user_id):
+    from app.modules.benchmark import service as bench_service
+
+    await bench_service.save_place(
+        db, user_id, place_id="reviews-1", label="Rev Rival",
+        rating=4.0, review_count=5,
+    )
+    res = client.get("/api/v1/benchmark/reviews?subjects=saved:reviews-1")
+    assert res.status_code == 200, res.text
+    assert res.json()["subjects"][0]["name"] == "Rev Rival"
+    assert res.json()["subjects"][0]["reviews"] == []
+
+
+async def test_reviews_endpoint_bounds_and_unknown_subject(client):
+    assert client.get(
+        "/api/v1/benchmark/reviews?subjects=own:abc&limit=0"
+    ).status_code == 422
+    subjects = "&".join(["subjects=own:abc"] * 7)
+    assert client.get(f"/api/v1/benchmark/reviews?{subjects}").status_code == 422
+    # Unknown subjects come back empty rather than failing the table.
+    res = client.get("/api/v1/benchmark/reviews?subjects=unknown:zzz")
+    assert res.status_code == 200
+    assert res.json()["subjects"][0]["reviews"] == []
+
+
+async def test_reviews_endpoint_scoped_to_other_tenant(client, other_user_id):
+    res = client.get(f"/api/v1/benchmark/reviews?subjects=own:{other_user_id}")
+    assert res.status_code == 200
+    assert res.json()["subjects"][0]["reviews"] == []
+
 
 async def test_compare_endpoint_accepts_range(client, monkeypatch):
     from app.modules.benchmark import places as places_module

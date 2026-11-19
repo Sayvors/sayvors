@@ -96,6 +96,23 @@ async def benchmark_history(
     )
 
 
+@router.get("/reviews", response_model=dict)
+async def benchmark_reviews(
+    subjects: list[str] = Query(..., min_length=1, max_length=MAX_COMPARE_SUBJECTS),
+    limit: int = Query(10, ge=1, le=50),
+    ctx: TenantContext = Depends(require_perm("benchmark.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Newest review samples per subject, for the paginated reviews table.
+
+    Saved places return their cached review sample (up to 50 rows); own
+    locations return their newest `ReviewInsight` rows, newest first.
+    """
+    return await compare.reviews_for(
+        db, tenant_id_of(ctx.user), subjects, limit=limit
+    )
+
+
 @router.get("/places", response_model=list[dict])
 async def list_saved(
     limit: int = Query(50, ge=1, le=100),
