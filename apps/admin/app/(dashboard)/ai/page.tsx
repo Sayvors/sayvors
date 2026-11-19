@@ -5,27 +5,71 @@ import { adminFetch } from "@/lib/admin-api";
 
 const FOCUS_RING = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet";
 
+interface SavedModel {
+  id: string;
+  name: string;
+  provider: string;
+  api_model: string;
+  enabled: boolean;
+  custom: boolean;
+  tested_ok: boolean | null;
+  tested_at: string | null;
+}
+
 interface AiConfig {
   banner_vision_model: string | null;
   updated_at: string | null;
 }
 
+interface TestResult {
+  ok: boolean;
+  latency_ms: number;
+  detail: string;
+}
+
 export default function AiImageCheckPage() {
+  const [models, setModels] = useState<SavedModel[]>([]);
   const [config, setConfig] = useState<AiConfig | null>(null);
-  const [draft, setDraft] = useState("");
+  const [selected, setSelected] = useState("");
   const [busy, setBusy] = useState(false);
+  const [busyTest, setBusyTest] = useState(false);
+  const [test, setTest] = useState<TestResult | null>(null);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   const load = useCallback(() => {
-    adminFetch<AiConfig>("/api/v1/admin/config/ai")
-      .then((row) => {
-        setConfig(row);
-        setDraft(row.banner_vision_model ?? "");
+    Promise.all([
+      adminFetch<SavedModel[]>("/api/v1/admin/models"),
+      adminFetch<AiConfig>("/api/v1/admin/config/ai"),
+    ])
+      .then(([modelList, cfg]) => {
+        setModels(modelList.filter((m) => m.enabled));
+        setConfig(cfg);
+        setSelected(cfg.banner_vision_model ?? "");
+        setTest(null);
       })
       .catch((e) => setMessage({ ok: false, text: String(e) }));
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const chosen = models.find((m) => m.id === selected) ?? null;
+
+  async function runTest() {
+    if (!chosen) return;
+    setBusyTest(true);
+    setTest(null);
+    try {
+      const res = await adminFetch<TestResult>(
+        `/api/v1/admin/llm/${chosen.provider}/models/${encodeURIComponent(chosen.id)}/test`,
+        { method: "POST" }
+      );
+      setTest(res);
+    } catch (e) {
+      setTest({ ok: false, latency_ms: 0, detail: e instanceof Error ? e.message : "Test failed." });
+    } finally {
+      setBusyTest(false);
+    }
+  }
 
   async function save() {
     setBusy(true);
@@ -33,10 +77,9 @@ export default function AiImageCheckPage() {
     try {
       const saved = await adminFetch<AiConfig>("/api/v1/admin/config/ai", {
         method: "PUT",
-        body: JSON.stringify({ banner_vision_model: draft }),
+        body: JSON.stringify({ banner_vision_model: selected }),
       });
       setConfig(saved);
-      setDraft(saved.banner_vision_model ?? "");
       setMessage({ ok: true, text: "Saved. Tenants will use this model for the photo check." });
     } catch (e) {
       setMessage({ ok: false, text: String(e) });
@@ -61,20 +104,30 @@ export default function AiImageCheckPage() {
 
       <section className="admin-rise panel p-4 sm:p-5" style={{ animationDelay: "60ms" }}>
         <label className="mb-1.5 block text-[12px] font-bold text-ink/70" htmlFor="vision-model">
-          Vision model (provider:model)
+          Vision model
         </label>
-        <input
-          id="vision-model"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder="e.g. gemini:gemini-2.0-flash — leave empty to disable"
-          className={`w-full rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-ink placeholder:text-ink/35 focus:border-deep-violet focus:outline-none ${FOCUS_RING}`}
-        />
-        <p className="mt-1.5 text-[11px] leading-relaxed text-ink/45">
-          Empty = rule-based check only (format, size, shape, sharpness, exposure), no LLM cost.
-          Tenants never see this value.
-        </p>
-        <div className="mt-4 flex items-center gap-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <select
+            id="vision-model"
+            value={selected}
+            onChange={(e) => { setSelected(e.target.value); setTest(null); }}
+            className={`min-w-[280px] flex-1 rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-ink focus:border-deep-violet focus:outline-none ${FOCUS_RING}`}
+          >
+            <option value="">— rule-based check only (no LLM)</option>
+            {models.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name} · {m.provider}/{m.api_model}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={runTest}
+            disabled={!chosen || busyTest}
+            className={`rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-3 py-2 text-[12px] font-bold text-ink/70 transition hover:bg-ink/[0.04] disabled:opacity-50 ${FOCUS_RING}`}
+          >
+            {busyTest ? "Testing…" : "Test model"}
+          </button>
           <button
             type="button"
             onClick={save}
@@ -83,12 +136,28 @@ export default function AiImageCheckPage() {
           >
             {busy ? "Saving…" : "Save"}
           </button>
-          {message ? (
-            <span className={`text-[12px] font-semibold ${message.ok ? "text-emerald-700" : "text-red-700"}`}>
-              {message.text}
-            </span>
-          ) : null}
         </div>
+
+        {test ? (
+          <div className={`mt-3 rounded-[2px] border px-3 py-2 text-[12px] font-semibold ${
+            test.ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-red-200 bg-red-50 text-red-700"
+          }`}>
+            {test.ok
+              ? `Test passed · ${test.latency_ms}ms`
+              : `Test failed · ${test.detail}`}
+          </div>
+        ) : null}
+
+        <p className="mt-2 text-[11px] leading-relaxed text-ink/45">
+          Empty = rule-based check only (format, size, shape, sharpness, exposure), no LLM cost.
+          Tenants never see this value.
+        </p>
+
+        {message ? (
+          <p className={`mt-2 text-[12px] font-semibold ${message.ok ? "text-emerald-700" : "text-red-700"}`}>
+            {message.text}
+          </p>
+        ) : null}
       </section>
 
       <section className="admin-rise panel p-4" style={{ animationDelay: "120ms" }}>
@@ -97,7 +166,14 @@ export default function AiImageCheckPage() {
           <div className="flex gap-2">
             <dt className="w-40 shrink-0 text-ink/45">Vision model</dt>
             <dd className="font-mono text-ink">
-              {config?.banner_vision_model || "— (rule-based only)"}
+              {config?.banner_vision_model ? (
+                <>
+                  {config.banner_vision_model}
+                  <span className="ml-2 text-ink/45">
+                    ({models.find((m) => m.id === config.banner_vision_model)?.name ?? "saved model"})
+                  </span>
+                </>
+              ) : "— (rule-based only)"}
             </dd>
           </div>
           <div className="flex gap-2">
