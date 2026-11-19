@@ -36,6 +36,12 @@ interface Row<T extends string> {
   render: (subject: ComparisonSubject) => ReactNode;
   /** Present only for rows that can be won; drives the per-row highlight. */
   value?: (subject: ComparisonSubject) => number | null;
+  /**
+   * Overrides `value` for the color comparison only. Use when the displayed
+   * value is blank for "no data" but zero is a real measurement — e.g. an
+   * average rating where Google gives no rating and we show "—".
+   */
+  tierValue?: (subject: ComparisonSubject) => number | null;
   higherIsBetter?: boolean;
 }
 
@@ -45,7 +51,7 @@ const METRIC_ROWS: Row<MetricKey>[] = [
   { key: "reviews_last_week", label: "Reviews · last week", value: (s) => s.metrics.reviews_last_week, render: (s) => num(s.metrics.reviews_last_week) },
   { key: "reviews_last_month", label: "Reviews · last month", value: (s) => s.metrics.reviews_last_month, render: (s) => num(s.metrics.reviews_last_month) },
   { key: "reviews_last_year", label: "Reviews · last year", value: (s) => s.metrics.reviews_last_year, render: (s) => num(s.metrics.reviews_last_year) },
-  { key: "avg_rating", label: "Average rating", value: (s) => s.metrics.avg_rating, render: (s) => rating(s) },
+  { key: "avg_rating", label: "Average rating", value: (s) => s.metrics.avg_rating, tierValue: (s) => (s.metrics.total_ratings !== 0 ? s.metrics.avg_rating : null), render: (s) => rating(s) },
   { key: "total_ratings", label: "Ratings total", value: (s) => s.metrics.total_ratings, render: (s) => num(s.metrics.total_ratings) },
   { key: "five_star", label: "5-star ratings", value: (s) => s.metrics.five_star, render: (s) => num(s.metrics.five_star) },
   { key: "four_star", label: "4-star ratings", value: (s) => s.metrics.four_star, render: (s) => num(s.metrics.four_star) },
@@ -145,6 +151,44 @@ function rating(subject: ComparisonSubject): string {
   const { avg_rating, total_ratings } = subject.metrics;
   if (avg_rating == null || total_ratings === 0) return "—";
   return `${avg_rating} ★`;
+}
+
+type CellTier = "best" | "good" | "worst" | "empty";
+
+const CELL_COLORS: Record<CellTier, string> = {
+  best: "#3D1D6E",
+  good: "#B0338A",
+  worst: "#FF4F6E",
+  empty: "#8A8496",
+};
+
+/**
+ * The tier a value's cell gets: deep violet when it is the leader of the row,
+ * coral when it is the worst, magenta in between. "Empty" is a distinct gray —
+ * a cell that shows `—` is one we genuinely don't know (e.g. Google does not
+ * release the number), not one that scored zero.
+ */
+function cellTier<T extends string>(
+  row: Row<T>,
+  subjects: ComparisonSubject[],
+  subject: ComparisonSubject,
+  display: number | null
+): CellTier {
+  const select = row.tierValue ?? row.value;
+  if (!subject.available || !select) return "empty";
+  const value = select(subject);
+  if (value == null) return "empty";
+  const values = subjects
+    .filter((s) => s.available && select)
+    .map((s) => select(s))
+    .filter((v): v is number => v != null);
+  if (values.length <= 1) return "best";
+  const higherIsBetter = row.higherIsBetter !== false;
+  const best = higherIsBetter ? Math.max(...values) : Math.min(...values);
+  const worst = higherIsBetter ? Math.min(...values) : Math.max(...values);
+  if (value === best) return "best";
+  if (value === worst) return "worst";
+  return "good";
 }
 
 function ownerOnly(subject: ComparisonSubject, value: number | null): ReactNode {
@@ -263,17 +307,6 @@ function MatrixTable<T extends string>({
           </thead>
           <tbody>
             {rows.map((row) => {
-              const values = subjects
-                .filter((subject) => subject.available && row.value)
-                .map((subject) => row.value!(subject))
-                .filter((value): value is number => value != null);
-              const best =
-                values.length > 1
-                  ? row.higherIsBetter === false
-                    ? Math.min(...values)
-                    : Math.max(...values)
-                  : null;
-
               return (
                 <tr key={row.key} className="align-top">
                   <th
@@ -284,13 +317,12 @@ function MatrixTable<T extends string>({
                   </th>
                   {subjects.map((subject) => {
                     const value = subject.available && row.value ? row.value(subject) : null;
-                    const winning = best != null && value === best;
+                    const tier = cellTier(row, subjects, subject, value);
                     return (
                       <td
                         key={subject.key}
-                        className={`border-b border-r border-[var(--ui-line)] px-3 py-2 text-[12px] last:border-r-0 ${
-                          winning ? "font-bold text-[#B0338A]" : "font-mono text-[#3B2D5E]"
-                        }`}
+                        className="border-b border-r border-[var(--ui-line)] px-3 py-2 text-[12px] font-mono last:border-r-0"
+                        style={{ color: CELL_COLORS[tier] }}
                       >
                         {subject.available ? (
                           row.render(subject)
