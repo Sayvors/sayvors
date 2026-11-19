@@ -253,7 +253,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 className="mx-auto mb-2 h-px w-6 bg-[var(--ui-line)]"
               />
             ) : (
-              <p className="mb-1.5 px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-ink/40">
+              <p className="mb-2 inline-block rounded-[2px] bg-deep-violet/[0.08] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-deep-violet">
                 {section.title}
               </p>
             )}
