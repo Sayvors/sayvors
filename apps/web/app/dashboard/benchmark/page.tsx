@@ -169,7 +169,7 @@ export default function BenchmarkPage() {
               <article key={place.id} className="relative rounded-[12px] border border-[var(--ui-line)] bg-white p-4">
                 <div className="flex items-start gap-2">
                   <Link
-                    href={`/dashboard/benchmark/compare?s=${encodeURIComponent(`saved:${place.place_id}`)}`}
+                    href={`/dashboard/benchmark/compare?vs=${encodeURIComponent(`saved:${place.place_id}`)}`}
                     className="min-w-0 flex-1 truncate text-[13px] font-bold text-[#14101F] hover:underline"
                   >
                     {place.label || place.name || place.place_id}
@@ -187,7 +187,7 @@ export default function BenchmarkPage() {
                     {menuId === place.id ? (
                       <div className="absolute right-0 top-full z-20 mt-1 w-44 rounded-[12px] border border-[var(--ui-line)] bg-white p-1 shadow-[0_2px_8px_rgba(20,16,31,0.10)]">
                         <Link
-                          href={`/dashboard/benchmark/compare?s=${encodeURIComponent(`saved:${place.place_id}`)}`}
+                          href={`/dashboard/benchmark/compare?vs=${encodeURIComponent(`saved:${place.place_id}`)}`}
                           onClick={() => setMenuId(null)}
                           className={`block w-full rounded-[8px] px-2.5 py-2 text-left text-[11px] font-semibold text-[#14101F] hover:bg-[#F4F2F7] ${FOCUS}`}
                         >

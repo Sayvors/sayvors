@@ -45,7 +45,7 @@ function toneFor(place: SavedPlace): Tone {
 }
 
 function compareHref(place: SavedPlace): string {
-  return `/dashboard/benchmark/compare?left=${encodeURIComponent(`saved:${place.place_id}`)}`;
+  return `/dashboard/benchmark/compare?vs=${encodeURIComponent(`saved:${place.place_id}`)}`;
 }
 
 export default function HeatmapGrid() {
