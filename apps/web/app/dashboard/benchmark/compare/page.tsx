@@ -155,11 +155,16 @@ function rating(subject: ComparisonSubject): string {
 
 type CellTier = "best" | "good" | "worst" | "empty";
 
-const CELL_COLORS: Record<CellTier, string> = {
-  best: "#3D1D6E",
-  good: "#B0338A",
-  worst: "#FF4F6E",
-  empty: "#8A8496",
+/**
+ * Cell backgrounds per tier, with the foreground chosen for contrast against
+ * that background: white on the Deep Violet/Magenta/Coral accents, ink on the
+ * light "empty" tint.
+ */
+const CELL_COLORS: Record<CellTier, { bg: string; fg: string }> = {
+  best: { bg: "#3D1D6E", fg: "#FFFFFF" },
+  good: { bg: "#B0338A", fg: "#FFFFFF" },
+  worst: { bg: "#FF4F6E", fg: "#FFFFFF" },
+  empty: { bg: "#E8E6EC", fg: "#14101F" },
 };
 
 /**
@@ -193,10 +198,10 @@ function cellTier<T extends string>(
 
 function ownerOnly(subject: ComparisonSubject, value: number | null): ReactNode {
   // Google releases views and calls only to the listing's owner, so a
-  // competitor column can never have them. A dash keeps the row aligned with
-  // every other unknown fact; the section note explains why.
+  // competitor column can never have them. The cell renders "—" (the td
+  // carries the empty-tier colors).
   if (subject.kind === "saved") {
-    return <span className="text-[#8A8496]">—</span>;
+    return <span>—</span>;
   }
   return num(value);
 }
@@ -322,12 +327,15 @@ function MatrixTable<T extends string>({
                       <td
                         key={subject.key}
                         className="border-b border-r border-[var(--ui-line)] px-3 py-2 text-[12px] font-mono last:border-r-0"
-                        style={{ color: CELL_COLORS[tier] }}
+                        style={{
+                          backgroundColor: CELL_COLORS[tier].bg,
+                          color: CELL_COLORS[tier].fg,
+                        }}
                       >
                         {subject.available ? (
                           row.render(subject)
                         ) : (
-                          <span className="font-sans text-[#8A8496]">—</span>
+                          <span>—</span>
                         )}
                       </td>
                     );
