@@ -62,25 +62,11 @@ async def _store(
     row = await db.get(BenchmarkPlace, place_pk)
     if row is None:  # removed while the pass was running
         return
-    rating = details.get("rating")
-    review_count = details.get("review_count")
-    row.name = details.get("name") or row.name
-    row.rating = rating if rating is not None else row.rating
-    row.review_count = review_count if review_count is not None else row.review_count
-    row.reviews = details.get("reviews") or row.reviews
-    row.fetched_at = now
-    row.last_scrape_error = None
-    db.add(
-        BenchmarkSnapshot(
-            place_id=place_pk,
-            tenant_id=tenant_id,
-            rating=rating,
-            review_count=review_count,
-            reviews=details.get("reviews") or None,
-            fetched_at=now,
-        )
+    # A fresh snapshot exists by definition of "due"; storing unconditionally
+    # matches `has_recent_snapshot` elsewhere and keeps the pass simple.
+    await service.store_place_details(
+        db, row, details, now=now, append_snapshot=True
     )
-    await db.commit()
 
 
 async def _due_rows(db: AsyncSession, cutoff: datetime, limit: int) -> list[tuple[str, str, str, str | None]]:

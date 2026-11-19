@@ -2,8 +2,10 @@
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from sqlalchemy import func, select, update
 
 from app.modules.benchmark import compare
+from app.modules.benchmark.models import BenchmarkPlace, BenchmarkSnapshot
 
 pytestmark = pytest.mark.asyncio
 
@@ -186,6 +188,130 @@ async def _fake_details(place_id, **overrides):
     }
     payload.update(overrides)
     return payload
+
+
+async def test_period_view_serves_fresh_cache_without_calling_places(db, monkeypatch):
+    """With data newer than the admin cadence, the period views must not hit
+    Places at all — that is the API-cost win."""
+    from app.modules.benchmark import places as places_module
+    from app.modules.benchmark import service as bench_service
+
+    saved = await bench_service.save_place(
+        db, TENANT, place_id="cache-1", label="Cached Rival", rating=4.2, review_count=500
+    )
+    now = datetime.now(timezone.utc)
+    await bench_service.store_place_details(
+        db, saved, {"name": "Cached Rival", "rating": 4.2, "review_count": 500,
+                    "types": ["cafe"], "address": "1 Main St"},
+        now=now, append_snapshot=False,
+    )
+    snapshots_before = (
+        await db.execute(
+            select(func.count()).select_from(BenchmarkSnapshot)
+            .where(BenchmarkSnapshot.place_id == saved.id)
+        )
+    ).scalar()
+
+    async def _must_not_call(place_id):
+        raise AssertionError("Places was called although the cache was fresh")
+
+    monkeypatch.setattr(places_module, "get_place", _must_not_call)
+    result = (await compare.compare_subjects(
+        db, TENANT, ["saved:cache-1"], days=30
+    ))[0]
+    assert result["available"] is True
+    assert result["metrics"]["total_reviews"] == 500
+    assert result["facts"]["services"] == ["Cafe"]
+    assert result["facts"]["branch"] == "Cached Rival"
+    assert result["address"] == "1 Main St"
+    assert any("Google could not be reached" not in note for note in result["notes"])
+    snapshots_after = (
+        await db.execute(
+            select(func.count()).select_from(BenchmarkSnapshot)
+            .where(BenchmarkSnapshot.place_id == saved.id)
+        )
+    ).scalar()
+    assert snapshots_after == snapshots_before
+
+
+async def test_stale_cache_calls_places_and_stores_a_snapshot(db, monkeypatch):
+    """A stale cache refreshes live, and the live read doubles as the
+    periodic scrape when none has run yet."""
+    from app.modules.benchmark import places as places_module
+    from app.modules.benchmark import service as bench_service
+
+    saved = await bench_service.save_place(
+        db, TENANT, place_id="cache-2", label="Stale Rival", rating=4.1, review_count=400
+    )
+    # Older than the default 24h cadence; `save_place` wrote its snapshot at
+    # "now", which counts as a recent snapshot and so is not duplicated.
+    await db.execute(
+        update(BenchmarkPlace).where(BenchmarkPlace.id == saved.id).values(
+            fetched_at=datetime.now(timezone.utc) - timedelta(hours=48)
+        )
+    )
+    await db.commit()
+
+    async def _fake(place_id):
+        return await _fake_details(place_id, rating=4.5, review_count=450, types=["restaurant"])
+
+    monkeypatch.setattr(places_module, "get_place", _fake)
+    result = (await compare.compare_subjects(
+        db, TENANT, ["saved:cache-2"], days=30
+    ))[0]
+    assert result["available"] is True
+    assert result["metrics"]["avg_rating"] == 4.5
+    await db.refresh(saved)
+    assert saved.rating == 4.5
+    assert saved.types == ["restaurant"]
+    # The row's snapshot baseline still counts: compare read the stored row.
+    assert saved.fetched_at and saved.fetched_at.replace(
+        tzinfo=timezone.utc
+    ) > datetime.now(timezone.utc) - timedelta(minutes=5)
+
+
+async def test_live_range_always_calls_places_even_when_fresh(db, monkeypatch):
+    from app.modules.benchmark import places as places_module
+    from app.modules.benchmark import service as bench_service
+
+    saved = await bench_service.save_place(
+        db, TENANT, place_id="cache-3", label="Live Rival", rating=4.0, review_count=100
+    )
+
+    calls = []
+    async def _fake(place_id):
+        calls.append(place_id)
+        return await _fake_details(place_id, rating=4.3, review_count=120)
+
+    monkeypatch.setattr(places_module, "get_place", _fake)
+    result = (await compare.compare_subjects(db, TENANT, ["saved:cache-3"]))[0]
+    assert result["available"] is True
+    assert calls == ["cache-3"]            # "Live" is genuinely live
+    await db.refresh(saved)
+    assert saved.rating == 4.3
+
+
+async def test_cache_disabled_always_calls_places(db, monkeypatch):
+    from app.modules.benchmark import places as places_module
+    from app.modules.benchmark import service as bench_service
+
+    saved = await bench_service.save_place(
+        db, TENANT, place_id="cache-4", label="Uncached Rival", rating=4.0, review_count=100
+    )
+    await bench_service.update_config(db, place_cache_enabled=False)
+
+    async def _fake(place_id):
+        return await _fake_details(place_id, rating=4.6, review_count=150)
+
+    monkeypatch.setattr(places_module, "get_place", _fake)
+    result = (await compare.compare_subjects(
+        db, TENANT, ["saved:cache-4"], days=30
+    ))[0]
+    assert result["available"] is True
+    assert result["metrics"]["avg_rating"] == 4.6
+    await db.refresh(saved)
+    # Cache disabled: the live read still happened, but nothing was written.
+    assert saved.rating == 4.0
 
 
 async def test_saved_subject_period_from_snapshot_delta(db, monkeypatch):

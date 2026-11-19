@@ -45,6 +45,7 @@ def serialize(place: BenchmarkPlace) -> dict:
         "in_heatmap": place.in_heatmap,
         "name": place.name,
         "address": getattr(place, "address", None),
+        "types": getattr(place, "types", None),
         "rating": place.rating,
         "review_count": place.review_count,
         "latitude": place.latitude,
@@ -302,6 +303,65 @@ async def update_config(db: AsyncSession, **values: object) -> BenchmarkConfig:
     await db.commit()
     await db.refresh(row)
     return row
+
+
+async def has_recent_snapshot(
+    db: AsyncSession, place_pk: str, *, hours: int, now: datetime
+) -> bool:
+    """True when this place already has a snapshot inside the freshness window.
+
+    Used to keep history sparse: a live read doubles as the periodic scrape, so
+    it must not append a row on every page view.
+    """
+    cutoff = now - timedelta(hours=max(1, hours))
+    return (
+        await db.execute(
+            select(func.count())
+            .select_from(BenchmarkSnapshot)
+            .where(
+                BenchmarkSnapshot.place_id == place_pk,
+                BenchmarkSnapshot.fetched_at >= cutoff,
+            )
+        )
+    ).scalar() > 0
+
+
+async def store_place_details(
+    db: AsyncSession,
+    place: BenchmarkPlace,
+    details: dict,
+    *,
+    now: datetime | None = None,
+    append_snapshot: bool = False,
+) -> None:
+    """Write a provider payload into the cached bench row.
+
+    `append_snapshot` also records one history point. Callers decide when that
+    is due (see `has_recent_snapshot`), so a cached read never floods history.
+    """
+    moment = now or datetime.now(timezone.utc)
+    place.name = details.get("name") or place.name
+    place.address = details.get("address") or place.address
+    place.types = details.get("types") or place.types
+    rating = details.get("rating")
+    review_count = details.get("review_count")
+    place.rating = rating if rating is not None else place.rating
+    place.review_count = review_count if review_count is not None else place.review_count
+    place.reviews = details.get("reviews") or place.reviews
+    place.fetched_at = moment
+    place.last_scrape_error = None
+    if append_snapshot:
+        db.add(
+            BenchmarkSnapshot(
+                place_id=place.id,
+                tenant_id=place.tenant_id,
+                rating=rating,
+                review_count=review_count,
+                reviews=details.get("reviews") or None,
+                fetched_at=moment,
+            )
+        )
+    await db.commit()
 
 
 async def history_points(

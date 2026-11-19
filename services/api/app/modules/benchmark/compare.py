@@ -25,8 +25,8 @@ from ..analytics.service import get_overview
 from ..analytics.staff_mentions import listing_id_for_channel, staff_summary
 from ..channels.models import BusinessService, Channel, VerificationRecord
 from . import places
+from . import service
 from .models import BenchmarkSnapshot
-from .service import get_saved, history_points
 
 logger = logging.getLogger(__name__)
 
@@ -279,8 +279,10 @@ async def _baseline_snapshot(
 
 async def _saved_subject(db: AsyncSession, tenant_id: str, raw: str,
                          place_id: str, *,
-                         days: int | None = None) -> dict[str, Any]:
-    saved = await get_saved(db, tenant_id, place_id)
+                         days: int | None = None,
+                         max_age_hours: int | None = None,
+                         cache_enabled: bool = True) -> dict[str, Any]:
+    saved = await service.get_saved(db, tenant_id, place_id)
     if saved is None:
         return _subject(raw, "saved", place_id, available=False,
                         reason="This business is not on your bench.")
@@ -289,13 +291,50 @@ async def _saved_subject(db: AsyncSession, tenant_id: str, raw: str,
     # holds the identity (label) and the numbers captured when it was saved.
     # Falling back to that is honest — returning a null column is not, because
     # the user did select a real business.
+    now = datetime.now(timezone.utc)
+    # SQLite drops the timezone on read; compare aware to avoid TypeError.
+    cached_at = saved.fetched_at
+    if cached_at and cached_at.tzinfo is None:
+        cached_at = cached_at.replace(tzinfo=timezone.utc)
+
+    # The period views serve from the cache when it is fresh: a comparison
+    # page that hits Places six times a load just because it can is charging
+    # the merchant for page views. Live (days=None) always calls Google, so
+    # the "Live" button keeps its meaning; the cadence defaults to the admin
+    # configured scrape interval.
+    use_cache = bool(
+        days is not None
+        and cache_enabled
+        and max_age_hours
+        and cached_at
+        and now - cached_at <= timedelta(hours=max_age_hours)
+    )
     live_failed = False
-    try:
-        details = await places.get_place(saved.place_id)
-    except places.PlacesError as exc:
-        logger.warning("Comparison details failed for place %s: %s", saved.place_id, exc)
-        details = {}
-        live_failed = True
+    if use_cache:
+        details = {
+            "name": saved.name,
+            "address": saved.address,
+            "types": saved.types,
+            "rating": saved.rating,
+            "review_count": saved.review_count,
+            "reviews": saved.reviews,
+        }
+    else:
+        try:
+            details = await places.get_place(saved.place_id)
+        except places.PlacesError as exc:
+            logger.warning("Comparison details failed for place %s: %s", saved.place_id, exc)
+            details = {}
+            live_failed = True
+    if not use_cache and not live_failed and cache_enabled:
+        # The live read doubles as the periodic scrape when none has run
+        # yet, so history fills without waiting for the scraper.
+        append = not await service.has_recent_snapshot(
+            db, saved.id, hours=max_age_hours or 24, now=now
+        )
+        await service.store_place_details(
+            db, saved, details, now=now, append_snapshot=append
+        )
 
     name = str(details.get("name") or saved.name or saved.label or "").strip()
     reviews = list(details.get("reviews") or saved.reviews or [])[:REVIEW_SAMPLE_LIMIT]
@@ -588,12 +627,18 @@ async def compare_subjects(db: AsyncSession, tenant_id: str,
     """
     if not raw_subjects or len(raw_subjects) > MAX_SUBJECTS:
         raise CompareError(f"Compare between one and {MAX_SUBJECTS} subjects.")
+    config = await service.get_config(db)
     out = []
     for raw in raw_subjects:
         try:
             kind, ident = parse_subject(raw)
             if kind == "saved":
-                out.append(await _saved_subject(db, tenant_id, raw, ident, days=days))
+                out.append(await _saved_subject(
+                    db, tenant_id, raw, ident,
+                    days=days,
+                    max_age_hours=config.refresh_hours,
+                    cache_enabled=config.place_cache_enabled,
+                ))
             else:
                 out.append(await _own_subject(db, tenant_id, raw, ident, days=days))
         except CompareError as exc:
@@ -616,10 +661,10 @@ async def _saved_history(
     *, days: int, points: int,
 ) -> dict[str, Any]:
     """Snapshot history of one bench place. Empty until the scraper has run."""
-    saved = await get_saved(db, tenant_id, place_id)
+    saved = await service.get_saved(db, tenant_id, place_id)
     if saved is None:
         return {"key": raw, "kind": "saved", "name": None, "points": []}
-    rows = await history_points(db, tenant_id, saved, days=days, points=points)
+    rows = await service.history_points(db, tenant_id, saved, days=days, points=points)
     return {
         "key": raw,
         "kind": "saved",
