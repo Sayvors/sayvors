@@ -304,6 +304,10 @@ function MatrixTable<T extends string>({
   subjects: ComparisonSubject[];
   mainKey: string | null;
 }) {
+  // On small screens the six business columns become one dropdown: the table
+  // shows the fact rows for the selected business only.
+  const [mobileIndex, setMobileIndex] = useState(0);
+
   return (
     <section className="mt-4 overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-white">
       <div className="border-b border-[var(--ui-line)] px-3 py-2">
@@ -311,7 +315,58 @@ function MatrixTable<T extends string>({
         {description ? <p className="mt-0.5 text-[10px] text-[#3B2D5E]">{description}</p> : null}
       </div>
 
-      <div className="overflow-x-auto">
+      {/* Mobile: pick the business column to inspect. */}
+      <div className="flex items-center gap-2 border-b border-[var(--ui-line)] bg-[#FAFAFB] px-3 py-2 md:hidden">
+        <label htmlFor={`mobile-col-${title}`} className="text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]">
+          Business
+        </label>
+        <select
+          id={`mobile-col-${title}`}
+          value={mobileIndex}
+          onChange={(event) => setMobileIndex(Number(event.target.value))}
+          className="min-w-0 flex-1 rounded-[8px] border border-[var(--ui-line)] bg-white px-2 py-1.5 text-[11px] font-semibold text-[#14101F]"
+        >
+          {subjects.map((subject, index) => (
+            <option key={subject.key} value={index}>
+              {subject.name || (subject.kind === "own" ? "Your location" : "Saved business")}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Mobile: one business column, stacked as a fact list. */}
+      <div className="md:hidden">
+        {subjects[mobileIndex] ? (
+          <ul>
+            {rows.map((row) => {
+              const subject = subjects[mobileIndex];
+              const value = subject.available && row.value ? row.value(subject) : null;
+              const tier = cellTier(row, subjects, subject, value);
+              return (
+                <li key={row.key} className="flex items-center justify-between gap-2 border-b border-[var(--ui-line)] px-3 py-2 last:border-b-0">
+                  <span className="text-[11px] font-semibold text-[#14101F]">{row.label}</span>
+                  <span
+                    className="min-w-0 flex-1 text-right text-[12px] font-mono"
+                    style={{
+                      backgroundColor: CELL_COLORS[tier].bg,
+                      color: CELL_COLORS[tier].fg,
+                      padding: "2px 6px",
+                      borderRadius: 6,
+                    }}
+                  >
+                    {subject.available ? row.render(subject, subjects) : <span>—</span>}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="px-3 py-4 text-center text-[11px] text-[#3B2D5E]">No business selected.</p>
+        )}
+      </div>
+
+      {/* Desktop: the full matrix. */}
+      <div className="hidden overflow-x-auto md:block">
         <table
           className="w-full table-fixed border-collapse text-left"
           style={{ minWidth: 168 + subjects.length * 148 }}
@@ -1039,6 +1094,16 @@ export default function ComparePage() {
       <section className="mt-4 rounded-[12px] border border-[var(--ui-line)] bg-white p-3 sm:p-4">
         <ComparePicker selection={selection} onChange={update} saved={saved} own={own} />
       </section>
+
+      <div className="mt-4 flex items-start gap-2 rounded-[12px] border border-[#3D1D6E]/20 bg-[#F3EEFB] px-3 py-2 md:hidden">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="mt-0.5 shrink-0 text-[#3D1D6E]">
+          <path d="M12 2 1 21h22L12 2zm1 14h-2v2h2v-2zm0-7h-2v5h2V9z" fill="currentColor" />
+        </svg>
+        <p className="text-[11px] leading-relaxed text-[#3D1D6E]">
+          Benchmarking works best on a desktop browser. On mobile, each table
+          shows one business at a time — pick it from the Business dropdown.
+        </p>
+      </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[12px] border border-[var(--ui-line)] bg-white px-3 py-2">
         <span className="text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]">
