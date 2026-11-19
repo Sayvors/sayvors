@@ -90,11 +90,19 @@ def _map_details(place: dict) -> dict:
         text_value = review.get("text")
         if isinstance(text_value, dict):
             text_value = text_value.get("text")
+        attribution = review.get("authorAttribution") or {}
+        if isinstance(attribution, dict):
+            author_name = _text(attribution.get("displayName"))
+            author_photo = str(attribution.get("photoUri") or "")[:1024] or None
+        else:
+            author_name = _text(attribution)
+            author_photo = None
         reviews.append({
             "rating": review.get("rating"),
             "text": str(text_value or "")[:4000],
             "publish_time": review.get("publishTime"),
-            "author": _text(review.get("authorAttribution")),
+            "author": author_name,
+            "author_photo": author_photo,
         })
     photos = []
     for photo in (place.get("photos") or [])[:MAX_PHOTOS]:

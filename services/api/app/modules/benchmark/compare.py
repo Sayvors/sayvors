@@ -816,6 +816,11 @@ async def _saved_reviews(
             "time": published.isoformat() if published else None,
             "sentiment": _sentiment_label(rating),
             "text": str(review.get("text") or "")[:REVIEW_TEXT_MAX],
+            # Reviewer attribution is part of the Places reviews payload — no
+            # extra API call. Cached rows written before this field existed
+            # simply have no author, and the UI falls back to initials.
+            "author": review.get("author"),
+            "author_photo": review.get("author_photo"),
             # Places-sourced reviews carry no complaint themes.
             "problems": [],
         })
@@ -841,6 +846,8 @@ async def _own_reviews(
                 ReviewInsight.review_text,
                 ReviewInsight.sentiment,
                 ReviewInsight.problems,
+                ReviewInsight.reviewer_name,
+                ReviewInsight.reviewer_photo_url,
                 bucket,
             ).where(
                 ReviewInsight.user_id == tenant_id,
@@ -850,7 +857,7 @@ async def _own_reviews(
         )
     ).all()
     out = []
-    for rating, text, sentiment, problems, published in rows:
+    for rating, text, sentiment, problems, reviewer, photo, published in rows:
         stored = (
             sentiment if sentiment in ("positive", "neutral", "negative")
             else None
@@ -861,6 +868,9 @@ async def _own_reviews(
             # Prefer the team-classified sentiment for our own locations.
             "sentiment": stored or _sentiment_label(rating),
             "text": str(text or "")[:REVIEW_TEXT_MAX],
+            # Reviewer name/photo are already stored on the review — free to show.
+            "author": str(reviewer)[:255] if reviewer else None,
+            "author_photo": str(photo)[:1024] if photo else None,
             # Genuine complaint themes from the review-engine enrichment — the
             # "Complaining" row groups reviews that carry problems.
             "problems": [str(item)[:120] for item in (problems or [])][:10],

@@ -579,6 +579,46 @@ function GoogleMark({ size = 14 }: { size?: number }) {
   );
 }
 
+/** Reviewer avatar: Google's profile photo, falling back to initials. */
+function ReviewAvatar({
+  name,
+  photo,
+  size,
+}: {
+  name: string | null | undefined;
+  photo: string | null | undefined;
+  size: "sm" | "md";
+}) {
+  const [failed, setFailed] = useState(false);
+  const initials =
+    (name || "")
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0])
+      .join("")
+      .toUpperCase() || "?";
+  const box = size === "md" ? "h-7 w-7 text-[10px]" : "h-5 w-5 text-[9px]";
+  if (photo && !failed) {
+    return (
+      <img
+        src={photo}
+        alt=""
+        referrerPolicy="no-referrer"
+        onError={() => setFailed(true)}
+        className={`shrink-0 rounded-full border border-[#EFEDF2] object-cover ${box}`}
+      />
+    );
+  }
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center justify-center rounded-full bg-[#F4F2F7] font-bold text-[#3D1D6E] ${box}`}
+    >
+      {initials}
+    </span>
+  );
+}
+
 /**
  * One cell of the reviews table: the first three reviews of the category.
  * The middle one is fully legible; the first and third are faded. No border —
@@ -619,7 +659,10 @@ function FadedCell({
               }`}
             >
               <div className="flex items-center gap-1.5 text-[10px]">
-                <GoogleMark size={11} />
+                <ReviewAvatar name={review.author} photo={review.author_photo} size="sm" />
+                <span className="max-w-[62px] shrink-0 truncate font-semibold text-[#14101F]">
+                  {review.author || "Reviewer"}
+                </span>
                 <span className="shrink-0 font-semibold" style={{ color }}>
                   {review.rating != null ? `${review.rating}★` : "—"}
                 </span>
@@ -717,11 +760,15 @@ function ReviewsPopup({
                   className="rounded-[12px] border border-[#EFEDF2] bg-white p-4 shadow-[0_2px_8px_rgba(20,16,31,0.06)]"
                 >
                   <div className="flex items-start gap-2">
-                    <GoogleMark size={14} />
+                    <ReviewAvatar name={review.author} photo={review.author_photo} size="md" />
                     <div className="min-w-0 flex-1">
-                      <p className="text-[10px] font-semibold text-[#8A8496]">
-                        Google review · {subject.name}
-                      </p>
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate text-[11px] font-bold text-[#14101F]">
+                          {review.author || "Reviewer"}
+                        </span>
+                        <GoogleMark size={11} />
+                        <span className="text-[10px] text-[#8A8496]">Google</span>
+                      </div>
                       <p className="mt-1 text-[13px] leading-relaxed text-[#14101F]">
                         {review.text}
                       </p>
