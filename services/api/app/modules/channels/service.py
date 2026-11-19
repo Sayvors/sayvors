@@ -1296,6 +1296,27 @@ async def whatsapp_number_health(
         return await adapter.get_number_health(phone_number_id, token)
 
 
+async def whatsapp_conversation_analytics(
+    channel_id: str, user: User, db: AsyncSession, *, days: int = 30
+) -> dict:
+    """Meta-side conversation categories for this channel's number."""
+    channel = await get_channel(channel_id, user, db)
+    if not channel:
+        raise ValueError("Channel not found")
+    if channel.platform != "whatsapp":
+        raise ValueError("Conversation analytics are only available on WhatsApp")
+    phone_number_id, token, error = await _whatsapp_credentials(db, user, channel)
+    if error:
+        raise ValueError(error)
+    end = datetime.now(timezone.utc).date()
+    start = end - timedelta(days=max(1, min(int(days), 90)) - 1)
+    async with _one_shot_whatsapp_adapter() as adapter:
+        return await adapter.get_conversation_analytics(
+            phone_number_id, token,
+            start=start.isoformat(), end=end.isoformat(),
+        )
+
+
 _QR_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
 _QR_CODE_LENGTH = 8
 

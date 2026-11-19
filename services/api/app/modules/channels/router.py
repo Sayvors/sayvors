@@ -87,6 +87,7 @@ from .service import (
     set_contact_blocked,
     soft_delete_message,
     whatsapp_number_health,
+    whatsapp_conversation_analytics,
     list_whatsapp_qr_codes,
     create_whatsapp_qr_code,
     delete_whatsapp_qr_code,
@@ -1309,6 +1310,34 @@ async def get_whatsapp_health(
             status_code=404 if message == "Channel not found" else 422,
             detail=message,
         )
+
+
+@router.get("/{channel_id}/whatsapp/analytics", response_model=dict)
+async def get_whatsapp_analytics(
+    channel_id: str,
+    days: int = Query(30, ge=1, le=90),
+    ctx: TenantContext = Depends(require_perm("inbox.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Meta-side conversation analytics for this WhatsApp number."""
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    from ...core.upstream_errors import upstream_http_error
+
+    try:
+        return await whatsapp_conversation_analytics(
+            channel_id, ctx.user, db, days=days
+        )
+    except ValueError as exc:
+        message = str(exc)
+        raise HTTPException(
+            status_code=404 if message == "Channel not found" else 422,
+            detail=message,
+        )
+    except Exception as exc:  # noqa: BLE001 - provider error stays in logs
+        raise upstream_http_error(
+            exc, context=f"whatsapp analytics {channel_id[:8]}", status_code=502
+        ) from None
 
 
 @router.get("/{channel_id}/whatsapp/qr-codes", response_model=list[dict])

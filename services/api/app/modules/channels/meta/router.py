@@ -708,6 +708,38 @@ async def _whatsapp_asset_and_token(db, user, phone_number_id: str):
     return asset, token
 
 
+@router.get("/whatsapp/{phone_number_id}/analytics")
+async def whatsapp_conversation_analytics(
+    phone_number_id: str,
+    days: int = Query(30, ge=1, le=90),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Meta-side conversation analytics for a connected WhatsApp number.
+
+    Best-effort: a number with no Meta analytics data returns an empty list,
+    and a provider failure is logged and surfaced as 502 through the shared
+    upstream error helper — never as raw provider text.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from ....core.upstream_errors import upstream_http_error
+
+    _asset, token = await _whatsapp_asset_and_token(db, user, phone_number_id)
+    end = datetime.now(timezone.utc).date()
+    start = end - timedelta(days=days - 1)
+    try:
+        adapter = _service.get_adapter("whatsapp")
+        return await adapter.get_conversation_analytics(
+            phone_number_id, token,
+            start=start.isoformat(), end=end.isoformat(),
+        )
+    except Exception as e:  # noqa: BLE001 - provider error belongs in logs
+        raise upstream_http_error(
+            e, context=f"whatsapp analytics {phone_number_id[:8]}", status_code=502
+        ) from None
+
+
 @router.post("/whatsapp/{phone_number_id}/register")
 async def register_whatsapp_number(
     phone_number_id: str,
