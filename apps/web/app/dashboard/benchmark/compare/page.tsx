@@ -496,45 +496,230 @@ function HistoryTable({
   );
 }
 
-/** Sentiment rows of the sentiment-grouped reviews table. */
-type SentimentKey = "positive" | "negative" | "neutral";
+/** Sentiment categories of the reviews table: one row per category. */
+type SentimentCategory = "natural" | "positive" | "negative" | "complaining";
 
-const SENTIMENT_LABELS: Record<SentimentKey, string> = {
+const SENTIMENT_CATEGORIES: SentimentCategory[] = [
+  "natural",
+  "positive",
+  "negative",
+  "complaining",
+];
+
+const SENTIMENT_CATEGORY_LABELS: Record<SentimentCategory, string> = {
+  natural: "Natural",
   positive: "Positive",
   negative: "Negative",
-  neutral: "Neutral",
+  complaining: "Complaining",
 };
 
-const SENTIMENT_COLORS: Record<string, string> = {
+const SENTIMENT_CATEGORY_COLORS: Record<SentimentCategory, string> = {
+  natural: "#14101F",
   positive: "#B0338A",
   negative: "#FF4F6E",
-  neutral: "#3B2D5E",
+  complaining: "#FF4F6E",
 };
 
-/** Cap a review's text so a list of reviews stays readable in a table cell. */
+/**
+ * Reviews that belong to a category row. "Complaining" means the review
+ * carries complaint themes (our own locations carry the review-engine's
+ * problems); "Negative" is the rest of the negatives. "Natural" is the
+ * neutral bucket.
+ */
+function categoryReviews(
+  subject: SubjectReviews,
+  category: SentimentCategory
+): SubjectReviews["reviews"] {
+  return subject.reviews.filter((review) => {
+    const problems = review.problems ?? [];
+    switch (category) {
+      case "natural":
+        return review.sentiment === "neutral";
+      case "positive":
+        return review.sentiment === "positive";
+      case "complaining":
+        return problems.length > 0;
+      case "negative":
+        return review.sentiment === "negative" && problems.length === 0;
+    }
+  });
+}
+
+/** Cap a review's text so a line stays readable in a table cell. */
 function sentimentCellText(text: string, maxLength = 140): string {
   return text.length > maxLength ? text.slice(0, maxLength) + "…" : text;
+}
+
+type PopupFilter = "newest" | "oldest" | "5" | "4" | "all";
+
+/** All reviews of one category, in the order the popup lists them. */
+function popupReviews(
+  subject: SubjectReviews,
+  category: SentimentCategory,
+  filter: PopupFilter
+): SubjectReviews["reviews"] {
+  const sorted =
+    filter === "oldest"
+      ? [...categoryReviews(subject, category)].reverse()
+      : categoryReviews(subject, category);
+  if (filter === "5") return sorted.filter((review) => review.rating === 5);
+  if (filter === "4") return sorted.filter((review) => review.rating === 4);
+  return sorted;
+}
+
+/**
+ * One cell of the reviews table: the first three reviews of the category.
+ * The middle one is fully legible; the first and third are faded so the cell
+ * reads as a preview of the longer list in the popup.
+ */
+function FadedCell({
+  subject,
+  category,
+  color,
+  onOpen,
+}: {
+  subject: SubjectReviews;
+  category: SentimentCategory;
+  color: string;
+  onOpen: () => void;
+}) {
+  const items = categoryReviews(subject, category);
+  if (!items.length) return <span className="text-[#8A8496]">—</span>;
+  const shown = items.slice(0, 3);
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      className="relative h-[72px] cursor-pointer overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white px-1.5 py-1"
+    >
+      <ul>
+        {shown.map((review, index) => {
+          const faded =
+            (index === 0 && shown.length > 1) ||
+            (index === shown.length - 1 && shown.length > 2);
+          return (
+            <li
+              key={`${review.time}-${index}`}
+              className={`flex items-baseline gap-1 text-[10px] leading-[22px] truncate ${
+                faded ? "opacity-45" : ""
+              }`}
+            >
+              <span className="shrink-0 font-semibold" style={{ color }}>
+                {review.rating != null ? `${review.rating}★` : "—"}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-[#3B2D5E]">
+                {sentimentCellText(review.text)}
+              </span>
+              <span className="shrink-0 font-mono text-[9px] text-[#3B2D5E]">
+                {formatWhen(review.time)}
+              </span>
+              <span className="shrink-0 font-semibold text-[#14101F]">
+                {subject.name}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * The full review list behind a cell, in a popup. Filtered by recency and
+ * rating; only the Close button closes it — the card is modal on purpose.
+ */
+function ReviewsPopup({
+  subject,
+  category,
+  close,
+}: {
+  subject: SubjectReviews;
+  category: SentimentCategory;
+  close: () => void;
+}) {
+  const [filter, setFilter] = useState<PopupFilter>("newest");
+  const rows = popupReviews(subject, category, filter);
+  const color = SENTIMENT_CATEGORY_COLORS[category];
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center px-3 pt-[6vh]">
+      <div className="w-full max-w-[640px] overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-white shadow-[0_8px_30px_rgba(20,16,31,0.14)]">
+        <div className="flex items-center justify-between border-b border-[var(--ui-line)] px-3 py-2">
+          <h2 className="text-[13px] font-bold text-[#14101F]">
+            {subject.name || "—"} · {SENTIMENT_CATEGORY_LABELS[category]}
+          </h2>
+          <select
+            value={filter}
+            onChange={(event) => setFilter(event.target.value as PopupFilter)}
+            className="rounded-[6px] border border-[var(--ui-line)] bg-white px-2 py-1 text-[11px]"
+          >
+            <option value="newest">Newest</option>
+            <option value="oldest">Oldest</option>
+            <option value="5">5★</option>
+            <option value="4">4★</option>
+            <option value="all">All</option>
+          </select>
+        </div>
+
+        <div className="max-h-[60vh] space-y-2 overflow-y-auto px-3 py-3">
+          {rows.length === 0 ? (
+            <p className="text-center text-[12px] text-[#8A8496]">
+              No reviews in this category.
+            </p>
+          ) : (
+            rows.map((review, index) => (
+              <div
+                key={`${review.time}-${index}`}
+                className="border-b border-[var(--ui-line)] py-2 last:border-b-0"
+              >
+                <div className="flex items-baseline gap-2">
+                  <span className="shrink-0 font-semibold" style={{ color }}>
+                    {review.rating != null ? `${review.rating}★` : "—"}
+                  </span>
+                  <span className="font-mono text-[10px] text-[#3B2D5E]">
+                    {formatWhen(review.time)}
+                  </span>
+                </div>
+                <p className="mt-0.5 text-[11px] leading-snug text-[#14101F]">
+                  {review.text}
+                </p>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="flex items-center justify-end border-t border-[var(--ui-line)] px-3 py-2">
+          <button
+            type="button"
+            onClick={close}
+            className={`rounded-[8px] border border-[#3D1D6E]/30 bg-white px-3 py-1.5 text-[11px] font-semibold text-[#3D1D6E] ${FOCUS}`}
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /**
  * Sentiment-grouped reviews table, same design as the data tables above:
  * sticky label column, business columns, small radii, no gradients.
  *
- * Rows are Positive / Negative / Neutral; each business column shows the list
- * of reviews of that sentiment, up to `perCell` of them with a "Show all"
- * toggle when more are stored. Cells show rating and time, never more zeros
- * than the data supports — empty is a dash.
+ * Rows are Natural / Positive / Negative / Complaining; each business column
+ * cell shows the first three reviews of that category — the middle one fully,
+ * the first and third faded. Clicking a cell opens the popup with the full
+ * list, filterable by recency and rating.
  */
 function SentimentReviewsTable({
   subjects,
   loading,
+  openPopup,
 }: {
   subjects: SubjectReviews[];
   loading: boolean;
+  openPopup: (subject: SubjectReviews, category: SentimentCategory) => void;
 }) {
-  const [perCell, setPerCell] = useState(10);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-
   if (loading) {
     return <p className="mt-4 text-[12px] text-[#3B2D5E]">Loading reviews…</p>;
   }
@@ -546,62 +731,12 @@ function SentimentReviewsTable({
     );
   }
 
-  const toggle = (key: string) =>
-    setExpanded((previous) => ({ ...previous, [key]: !previous[key] }));
-
-  function renderCell(subject: SubjectReviews, sentiment: SentimentKey) {
-    const all = subject.reviews.filter((review) => review.sentiment === sentiment);
-    if (!all.length) return <span className="text-[#8A8496]">—</span>;
-    const key = `${subject.key}:${sentiment}`;
-    const visible = expanded[key] ? all : all.slice(0, perCell);
-    return (
-      <ul className="space-y-0.5">
-        {visible.map((review, index) => (
-          <li
-            key={`${review.time}-${index}`}
-            className="flex gap-1.5 text-[11px] text-[#3B2D5E]"
-          >
-            <span
-              className="w-12 shrink-0 text-right font-semibold"
-              style={{ color: SENTIMENT_COLORS[sentiment] }}
-            >
-              {review.rating != null ? `${review.rating}★` : "—"}
-            </span>
-            <span className="w-36 shrink-0 font-mono">{formatWhen(review.time)}</span>
-            <span className="min-w-0 flex-1 leading-snug">{sentimentCellText(review.text)}</span>
-          </li>
-        ))}
-        {all.length > visible.length && (
-          <li className="text-[10px] font-semibold text-[#3D1D6E]">
-            <button type="button" onClick={() => toggle(key)} className={FOCUS}>
-              Show all ({all.length})
-            </button>
-          </li>
-        )}
-      </ul>
-    );
-  }
-
   return (
     <section className="mt-4 overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-white">
-      <div className="flex items-center justify-between border-b border-[var(--ui-line)] px-3 py-2">
+      <div className="border-b border-[var(--ui-line)] px-3 py-2">
         <h2 className="text-[12px] font-bold uppercase tracking-wide text-[#14101F]">
-          Reviews by sentiment
+          Reviews by category
         </h2>
-        <label className="text-[10px] font-semibold text-[#3B2D5E]">
-          Per row
-          <select
-            value={perCell}
-            onChange={(event) => setPerCell(Number(event.target.value))}
-            className={`ml-1 rounded-[6px] border border-[var(--ui-line)] px-1.5 py-0.5 text-[10px]`}
-          >
-            {[5, 10, 25, 50].map((count) => (
-              <option key={count} value={count}>
-                {count}
-              </option>
-            ))}
-          </select>
-        </label>
       </div>
 
       <div className="overflow-x-auto">
@@ -621,7 +756,7 @@ function SentimentReviewsTable({
                 scope="col"
                 className="sticky left-0 z-10 min-w-[132px] border-b border-r border-[var(--ui-line)] bg-[#FAFAFB] px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]"
               >
-                Business
+                Category
               </th>
               {subjects.map((subject) => (
                 <th
@@ -635,21 +770,26 @@ function SentimentReviewsTable({
             </tr>
           </thead>
           <tbody>
-            {(["positive", "negative", "neutral"] as SentimentKey[]).map((sentiment) => (
-              <tr key={sentiment}>
+            {SENTIMENT_CATEGORIES.map((category) => (
+              <tr key={category}>
                 <th
                   scope="row"
-                  style={{ color: SENTIMENT_COLORS[sentiment] }}
+                  style={{ color: SENTIMENT_CATEGORY_COLORS[category] }}
                   className="sticky left-0 z-10 border-b border-r border-[var(--ui-line)] bg-white px-3 py-2 text-[11px] font-semibold"
                 >
-                  {SENTIMENT_LABELS[sentiment]}
+                  {SENTIMENT_CATEGORY_LABELS[category]}
                 </th>
                 {subjects.map((subject) => (
                   <td
                     key={subject.key}
                     className="border-b border-r border-[var(--ui-line)] px-3 py-2 align-top last:border-r-0"
                   >
-                    {renderCell(subject, sentiment)}
+                    <FadedCell
+                      subject={subject}
+                      category={category}
+                      color={SENTIMENT_CATEGORY_COLORS[category]}
+                      onOpen={() => openPopup(subject, category)}
+                    />
                   </td>
                 ))}
               </tr>
@@ -720,6 +860,10 @@ export default function ComparePage() {
     enabled: keys.length > 0,
   });
   const reviewSubjects: SubjectReviews[] = reviewsQuery.data?.subjects ?? [];
+  const [reviewsPopup, setReviewsPopup] = useState<{
+    subject: SubjectReviews;
+    category: SentimentCategory;
+  } | null>(null);
 
   function applyUrl(next: CompareSelection, nextRange: CompareRange) {
     const query = new URLSearchParams();
@@ -850,7 +994,15 @@ export default function ComparePage() {
           <SentimentReviewsTable
             subjects={reviewSubjects}
             loading={reviewsQuery.isPending}
+            openPopup={(subject, category) => setReviewsPopup({ subject, category })}
           />
+          {reviewsPopup ? (
+            <ReviewsPopup
+              subject={reviewsPopup.subject}
+              category={reviewsPopup.category}
+              close={() => setReviewsPopup(null)}
+            />
+          ) : null}
           {days != null ? (
             <HistoryTable
               series={(historyQuery.data?.subjects ?? []).map((item) => ({

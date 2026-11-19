@@ -180,6 +180,7 @@ export interface SubjectReviews {
     time: string | null;
     sentiment: string;
     text: string;
+    problems?: string[];
   }[];
 }
 

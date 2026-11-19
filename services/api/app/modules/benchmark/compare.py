@@ -816,6 +816,8 @@ async def _saved_reviews(
             "time": published.isoformat() if published else None,
             "sentiment": _sentiment_label(rating),
             "text": str(review.get("text") or "")[:REVIEW_TEXT_MAX],
+            # Places-sourced reviews carry no complaint themes.
+            "problems": [],
         })
     return name, out
 
@@ -838,6 +840,7 @@ async def _own_reviews(
                 ReviewInsight.rating,
                 ReviewInsight.review_text,
                 ReviewInsight.sentiment,
+                ReviewInsight.problems,
                 bucket,
             ).where(
                 ReviewInsight.user_id == tenant_id,
@@ -847,7 +850,7 @@ async def _own_reviews(
         )
     ).all()
     out = []
-    for rating, text, sentiment, published in rows:
+    for rating, text, sentiment, problems, published in rows:
         stored = (
             sentiment if sentiment in ("positive", "neutral", "negative")
             else None
@@ -858,6 +861,9 @@ async def _own_reviews(
             # Prefer the team-classified sentiment for our own locations.
             "sentiment": stored or _sentiment_label(rating),
             "text": str(text or "")[:REVIEW_TEXT_MAX],
+            # Genuine complaint themes from the review-engine enrichment — the
+            # "Complaining" row groups reviews that carry problems.
+            "problems": [str(item)[:120] for item in (problems or [])][:10],
         })
     return channel.display_name, out
 
