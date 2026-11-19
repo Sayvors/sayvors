@@ -5,12 +5,14 @@ import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api-rag";
 import { fetchSavedPlaces, saveBenchmarkPlace, type SavedPlace } from "@/lib/api-benchmark";
+import VerificationBadge from "@/components/shared/VerificationBadge";
 
-interface Channel {
+interface LocationWithVerification {
   id: string;
   display_name: string | null;
   platform: string;
   place_id: string | null;
+  verification: string | null;
 }
 
 interface Overview {
@@ -58,19 +60,23 @@ export default function OwnLocations() {
     queryKey: ["benchmark", "own-locations"],
     queryFn: async () => {
       const data = await apiFetch("/api/v1/channels?limit=100");
-      const google = ((data.channels ?? []) as Channel[]).filter(
+      const google = ((data.channels ?? []) as LocationWithVerification[]).filter(
         (c) => c.platform === "google_reviews"
       );
       const withMetrics = await Promise.all(
         google.map(async (channel) => {
-          try {
-            const overview = await apiFetch(
-              `/api/v1/analytics/overview?days=30&channel_id=${encodeURIComponent(channel.id)}`
-            ) as Overview;
-            return { ...channel, overview };
-          } catch {
-            return { ...channel, overview: null };
-          }
+          const [overviewResult, verificationResult] = await Promise.all([
+            apiFetch(`/api/v1/analytics/overview?days=30&channel_id=${encodeURIComponent(channel.id)}`)
+              .catch(() => null),
+            apiFetch(`/api/v1/channels/${encodeURIComponent(channel.id)}/verification`)
+              .then((v: { status?: string }) => v?.status ?? null)
+              .catch(() => null),
+          ]);
+          return {
+            ...channel,
+            overview: overviewResult as Overview | null,
+            verification: verificationResult,
+          };
         })
       );
       return withMetrics;
@@ -100,12 +106,10 @@ export default function OwnLocations() {
               className="relative rounded-[12px] border border-[#3D1D6E]/10 bg-white p-4"
             >
               <div className="flex items-start gap-2">
-                <Link
-                  href={`/dashboard/locations?channel=${encodeURIComponent(location.id)}`}
-                  className="min-w-0 flex-1 truncate text-[14px] font-bold text-[#14101F] hover:underline"
-                >
+                <span className="min-w-0 flex-1 truncate text-[14px] font-bold text-[#14101F]">
                   {location.display_name || "Unnamed location"}
-                </Link>
+                </span>
+                <VerificationBadge status={location.verification} compact />
                 <div className="relative shrink-0">
                   <button
                     type="button"

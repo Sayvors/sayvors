@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { getBenchmarkPlaceDetails, type PlaceDetails, type SavedPlace } from "@/lib/api-benchmark";
+import VerificationBadge from "@/components/shared/VerificationBadge";
 
 const FOCUS = "focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[#3D1D6E]";
 
@@ -54,8 +55,11 @@ export default function HeatmapGrid({ places }: { places: SavedPlace[] }) {
                 style={{ backgroundColor: tone.bg, boxShadow: `0 2px 0 rgba(20,16,31,${(volume * 0.12).toFixed(2)})` }}
                 title={`${place.label || place.name || place.place_id} — ${tone.label}`}
               >
-                <span className="truncate text-[11px] font-bold" style={{ color: tone.text }}>
-                  {place.label || place.name || place.place_id}
+                <span className="flex items-center justify-between gap-1">
+                  <span className="truncate text-[11px] font-bold" style={{ color: tone.text }}>
+                    {place.label || place.name || place.place_id}
+                  </span>
+                  <VerificationBadge status="unstarted" compact />
                 </span>
                 <span className="font-mono text-[16px] font-bold" style={{ color: tone.text }}>
                   {place.rating != null ? place.rating.toFixed(1) : "—"}<span className="text-[10px]">★</span>
