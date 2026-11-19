@@ -7,9 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_db
 from ..team.context import TenantContext, require_perm, tenant_id_of
-from . import places, service
+from . import compare, places, service
 
 router = APIRouter(prefix="/api/v1/benchmark", tags=["benchmark"])
+
+MAX_COMPARE_SUBJECTS = 2
 
 
 class SavePlaceIn(BaseModel):
@@ -44,6 +46,26 @@ async def get_heatmap(
     db: AsyncSession = Depends(get_db),
 ):
     return await service.heatmap_matrix(db, tenant_id_of(ctx.user), weeks=weeks)
+
+
+@router.get("/compare", response_model=dict)
+async def compare_places(
+    subjects: list[str] = Query(..., min_length=1, max_length=MAX_COMPARE_SUBJECTS),
+    ctx: TenantContext = Depends(require_perm("benchmark.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Normalized facts for one or two comparison subjects.
+
+    A subject is ``saved:<place_id>`` (a place on this tenant's bench) or
+    ``own:<channel_id>`` (one of the tenant's Google locations). Each side is
+    scoped to the tenant; an inaccessible side comes back as an unavailable
+    record rather than failing the whole request.
+    """
+    return {
+        "subjects": await compare.compare_subjects(
+            db, tenant_id_of(ctx.user), subjects
+        )
+    }
 
 
 @router.get("/places", response_model=list[dict])

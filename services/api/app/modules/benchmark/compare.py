@@ -1,0 +1,444 @@
+"""Two-sided comparison facts for the benchmark comparison page.
+
+A single bounded request returns everything the page needs for both sides, so
+the browser never fans out into a dozen analytics calls. Each side is either a
+saved competitor (Google Places, through the field-masked client) or one of the
+tenant's own Google locations (Sayvors analytics tables).
+
+Honesty rule: facts Google does not expose for a competitor listing (views,
+calls, menu prices, registered staff) come back as null with a note, never as
+an invented zero. Text-derived facts are scanned from a bounded sample of the
+most recent reviews and labelled as such in the UI.
+"""
+from __future__ import annotations
+
+import logging
+from collections import Counter
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+from sqlalchemy import case, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ..analytics.models import ReviewInsight
+from ..analytics.service import get_overview
+from ..analytics.staff_mentions import listing_id_for_channel, staff_summary
+from ..channels.models import BusinessService, Channel, VerificationRecord
+from . import places
+from .service import get_saved
+
+logger = logging.getLogger(__name__)
+
+MAX_SUBJECTS = 2
+# Google returns at most 500 reviews per place; keep our own sample the same
+# size so both sides of the comparison describe the same kind of evidence.
+REVIEW_SAMPLE_LIMIT = 500
+WINDOW_DAYS = {
+    "reviews_last_day": 1,
+    "reviews_last_week": 7,
+    "reviews_last_month": 30,
+    "reviews_last_year": 365,
+}
+TEXT_FACT_KEYS = (
+    "employee_mentions", "working_hard_mentions", "menu_price_mentions",
+    "parking_praised", "parking_criticised", "parking_mentions",
+)
+
+# Lowercased substrings, English + Arabic. A mention is a review that contains
+# any of them; "working hard" requires both a staff word and an effort word so
+# a five-star review that only says "great food" is never counted as praise for
+# the team.
+STAFF_WORDS = (
+    "staff", "employee", "waiter", "waitress", "cashier", "manager", "team",
+    "موظف", "موظفين", "الموظفين", "فريق", "عامل", "عمال", "مدير", "المدير",
+)
+EFFORT_WORDS = (
+    "hard working", "hard-working", "works hard", "working hard", "dedicated",
+    "goes above", "مجتهد", "مجتهدين", "اجتهاد", "يعمل بجد", "مثابرة", "متميز",
+)
+PARKING_WORDS = (
+    "parking", "car park", "valet", "مواقف", "موقف", "الجراج", "باركينغ",
+)
+MENU_PRICE_WORDS = (
+    "menu", "price", "prices", "pricing", "قائمة الطعام", "القائمة", "اسعار",
+    "أسعار", "السعر", "سعر",
+)
+
+PLACE_TYPE_LABELS = {
+    "restaurant": "Restaurant", "cafe": "Cafe", "coffee_shop": "Coffee shop",
+    "bakery": "Bakery", "fast_food_restaurant": "Fast food", "bar": "Bar",
+    "hotel": "Hotel", "gym": "Gym", "hair_salon": "Hair salon", "spa": "Spa",
+    "clothing_store": "Clothing", "store": "Store", "shopping_mall": "Mall",
+    "gas_station": "Petrol station", "car_wash": "Car wash", "pharmacy": "Pharmacy",
+    "hospital": "Hospital", "dentist": "Dentist", "school": "School",
+    "university": "University", "beauty_salon": "Beauty salon",
+}
+
+
+class CompareError(ValueError):
+    """A subject that cannot be compared (safe to show on that side only)."""
+
+
+def parse_subject(raw: str) -> tuple[str, str]:
+    """Split ``saved:<place_id>`` or ``own:<channel_id>`` into kind and id.
+
+    Raises CompareError on anything else so a malformed deep link cannot be
+    used as a free Places lookup or a cross-tenant channel read.
+    """
+    value = str(raw or "").strip()
+    kind, sep, ident = value.partition(":")
+    if not sep or kind not in {"saved", "own"}:
+        raise CompareError("Unknown comparison subject.")
+    ident = ident.strip()[:255]
+    if not ident:
+        raise CompareError("Comparison subject is missing an id.")
+    return kind, ident
+
+
+def _blank_metrics() -> dict[str, Any]:
+    return {
+        "total_reviews": None,
+        **{key: None for key in WINDOW_DAYS},
+        "avg_rating": None,
+        "total_ratings": None,
+        "five_star": None,
+        "four_star": None,
+        "one_star": None,
+        "impressions": None,
+        "calls": None,
+    }
+
+
+def _blank_facts() -> dict[str, Any]:
+    return {
+        "positive_pct": None,
+        "negative_pct": None,
+        "branch": None,
+        "employee_mentions": None,
+        "working_hard_mentions": None,
+        "menu_price_mentions": None,
+        "parking_praised": None,
+        "parking_criticised": None,
+        "services": [],
+        "top_problems": [],
+        "named_team": [],
+    }
+
+
+def _subject(raw: str, kind: str, ident: str, *, available: bool,
+             reason: str | None = None, **fields: Any) -> dict[str, Any]:
+    return {
+        "key": raw,
+        "kind": kind,
+        "id": ident,
+        "available": available,
+        "reason": reason,
+        "name": None,
+        "address": None,
+        "verified": False,
+        "data_source": "sayvors_analytics" if kind == "own" else "google_places",
+        "metrics": _blank_metrics(),
+        "facts": _blank_facts(),
+        "notes": [],
+        **fields,
+    }
+
+
+def _publish_time(value: Any) -> datetime | None:
+    """Parse an RFC3339 timestamp from Google or a DB datetime."""
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _scan_reviews(reviews: list[dict]) -> dict[str, Any]:
+    """Bounded text scan shared by both sides.
+
+    Returns window/star/sentiment counts from the sample plus the text-fact
+    counts. Callers replace the authoritative counts with their own sources
+    where those exist (Sayvors analytics stores full-history aggregates).
+    """
+    now = datetime.now(timezone.utc)
+    windows = {key: 0 for key in WINDOW_DAYS}
+    stars: Counter[int] = Counter()
+    text_counts = {key: 0 for key in TEXT_FACT_KEYS}
+    pos = neu = neg = 0
+
+    for review in reviews:
+        rating = review.get("rating")
+        try:
+            rating = int(rating) if rating is not None else None
+        except (TypeError, ValueError):
+            rating = None
+        if rating in (1, 2, 3, 4, 5):
+            stars[rating] += 1
+            if rating >= 4:
+                pos += 1
+            elif rating == 3:
+                neu += 1
+            else:
+                neg += 1
+
+        published = _publish_time(review.get("publish_time") or review.get("created_at"))
+        if published:
+            for key, days in WINDOW_DAYS.items():
+                if published >= now - timedelta(days=days):
+                    windows[key] += 1
+
+        low = str(review.get("text") or "").lower()
+        has_staff = any(word in low for word in STAFF_WORDS)
+        if has_staff:
+            text_counts["employee_mentions"] += 1
+            if any(word in low for word in EFFORT_WORDS):
+                text_counts["working_hard_mentions"] += 1
+        if any(word in low for word in MENU_PRICE_WORDS):
+            text_counts["menu_price_mentions"] += 1
+        if any(word in low for word in PARKING_WORDS):
+            if rating is not None and rating >= 4:
+                text_counts["parking_praised"] += 1
+            elif rating is not None and rating <= 2:
+                text_counts["parking_criticised"] += 1
+            else:
+                text_counts["parking_mentions"] += 1
+
+    total = pos + neu + neg
+    return {
+        "windows": windows,
+        "stars": stars,
+        "positive_pct": round(pos / total * 100, 1) if total else None,
+        "negative_pct": round(neg / total * 100, 1) if total else None,
+        "text_counts": text_counts,
+        "sample_size": len(reviews),
+    }
+
+
+def _place_types(types: list[str] | None) -> list[str]:
+    """Map Google's place types to readable service labels, bounded to 10."""
+    out = []
+    for raw in (types or [])[:10]:
+        name = str(raw)
+        out.append(PLACE_TYPE_LABELS.get(name, name.replace("_", " ").title()))
+    return list(dict.fromkeys(out))[:10]
+
+
+async def _saved_subject(db: AsyncSession, tenant_id: str, raw: str,
+                         place_id: str) -> dict[str, Any]:
+    saved = await get_saved(db, tenant_id, place_id)
+    if saved is None:
+        return _subject(raw, "saved", place_id, available=False,
+                        reason="This business is not on your bench.")
+
+    try:
+        details = await places.get_place(saved.place_id)
+    except places.PlacesError as exc:
+        logger.warning("Comparison details failed for place %s: %s", saved.place_id, exc)
+        return _subject(raw, "saved", place_id, available=False,
+                        reason="Live details are temporarily unavailable.")
+
+    reviews = list(details.get("reviews") or [])[:REVIEW_SAMPLE_LIMIT]
+    scan = _scan_reviews(reviews)
+    total = details.get("review_count")
+    if total is None:
+        total = saved.review_count
+    rating = details.get("rating")
+    if rating is None:
+        rating = saved.rating
+
+    metrics = _blank_metrics()
+    metrics.update({
+        "total_reviews": total,
+        **scan["windows"],
+        "avg_rating": rating,
+        "total_ratings": total,
+        "five_star": scan["stars"].get(5, 0) if scan["sample_size"] else None,
+        "four_star": scan["stars"].get(4, 0) if scan["sample_size"] else None,
+        "one_star": scan["stars"].get(1, 0) if scan["sample_size"] else None,
+    })
+    facts = _blank_facts()
+    facts.update({
+        "positive_pct": scan["positive_pct"],
+        "negative_pct": scan["negative_pct"],
+        "branch": details.get("name") or saved.label,
+        "employee_mentions": scan["text_counts"]["employee_mentions"] if scan["sample_size"] else None,
+        "working_hard_mentions": scan["text_counts"]["working_hard_mentions"] if scan["sample_size"] else None,
+        "menu_price_mentions": scan["text_counts"]["menu_price_mentions"] if scan["sample_size"] else None,
+        "parking_praised": scan["text_counts"]["parking_praised"] if scan["sample_size"] else None,
+        "parking_criticised": scan["text_counts"]["parking_criticised"] if scan["sample_size"] else None,
+        "services": _place_types(details.get("types")),
+    })
+    return _subject(
+        raw, "saved", place_id, available=True,
+        name=details.get("name") or saved.label,
+        address=details.get("address"),
+        metrics=metrics, facts=facts,
+        notes=[
+            f"Review-window counts, star counts and review-text facts come from the "
+            f"{scan['sample_size']} most recent reviews Google returns "
+            f"(max {REVIEW_SAMPLE_LIMIT}), not the lifetime total.",
+            "Views, calls, menu prices and registered staff are only available to the listing owner.",
+        ],
+    )
+
+
+async def _own_subject(db: AsyncSession, tenant_id: str, raw: str,
+                       channel_id: str) -> dict[str, Any]:
+    channel = (
+        await db.execute(
+            select(Channel).where(Channel.id == channel_id, Channel.user_id == tenant_id)
+        )
+    ).scalar_one_or_none()
+    if channel is None:
+        return _subject(raw, "own", channel_id, available=False,
+                        reason="This location is not connected to your workspace.")
+    if channel.platform != "google_reviews":
+        return _subject(raw, "own", channel_id, available=False,
+                        reason="Only Google Business Profile locations can be compared.")
+
+    overview = await get_overview(db, tenant_id, channel_id, days=365)
+    bucket = func.coalesce(ReviewInsight.review_updated_at, ReviewInsight.created_at)
+    now = datetime.now(timezone.utc)
+    base = [
+        ReviewInsight.user_id == tenant_id,
+        ReviewInsight.channel_id == channel_id,
+        ReviewInsight.removed_at.is_(None),
+    ]
+    window_row = (
+        await db.execute(
+            select(*[
+                func.sum(case((bucket >= now - timedelta(days=days), 1), else_=0))
+                for days in WINDOW_DAYS.values()
+            ]).where(*base)
+        )
+    ).one()
+    windows = {
+        key: int(window_row[i] or 0) for i, key in enumerate(WINDOW_DAYS)
+    }
+
+    sample_rows = (
+        await db.execute(
+            select(
+                ReviewInsight.review_text, ReviewInsight.rating,
+                ReviewInsight.topics, ReviewInsight.problems,
+            )
+            .where(*base)
+            .order_by(bucket.desc())
+            .limit(REVIEW_SAMPLE_LIMIT)
+        )
+    ).all()
+    sample = [
+        {"text": row[0], "rating": row[1]} for row in sample_rows
+    ]
+    scan = _scan_reviews(sample)
+
+    problems: Counter[str] = Counter()
+    for row in sample_rows:
+        for problem in (row[3] or []) if isinstance(row[3], list) else []:
+            if isinstance(problem, dict) and problem.get("name"):
+                problems[str(problem["name"])[:120]] += 1
+
+    service_rows = (
+        await db.execute(
+            select(BusinessService.name)
+            .where(BusinessService.channel_id == channel_id, BusinessService.is_offered.is_(True))
+            .order_by(BusinessService.name)
+            .limit(20)
+        )
+    ).scalars().all()
+    services = [str(name)[:120] for name in service_rows]
+
+    listing_id = await listing_id_for_channel(db, channel_id)
+    named = await staff_summary(db, user_id=tenant_id, listing_id=listing_id, days=365)
+    named_team = [
+        {"name": item["name"], "mentions": item["mentions"], "positive": item["positive"]}
+        for item in named if item.get("mentions")
+    ][:5]
+
+    verification = (
+        await db.execute(
+            select(VerificationRecord).where(VerificationRecord.channel_id == channel_id)
+        )
+    ).scalar_one_or_none()
+    verified = bool(
+        verification
+        and (verification.status == "verified" or verification.verified_at is not None)
+    )
+
+    distribution = overview.get("rating_distribution") or {}
+    google_perf = overview.get("google_performance") or {}
+    sentiment = overview.get("sentiment") or {}
+    distribution = {str(k): int(v or 0) for k, v in distribution.items()}
+
+    metrics = _blank_metrics()
+    metrics.update({
+        "total_reviews": overview.get("total_reviews"),
+        **windows,
+        "avg_rating": overview.get("avg_rating"),
+        "total_ratings": overview.get("total_reviews"),
+        "five_star": distribution.get("5"),
+        "four_star": distribution.get("4"),
+        "one_star": distribution.get("1"),
+        "impressions": google_perf.get("impressions_maps"),
+        "calls": google_perf.get("call_clicks"),
+    })
+    facts = _blank_facts()
+    facts.update({
+        "positive_pct": sentiment.get("positive_pct"),
+        "negative_pct": sentiment.get("negative_pct"),
+        "branch": channel.display_name,
+        "employee_mentions": scan["text_counts"]["employee_mentions"] if scan["sample_size"] else None,
+        "working_hard_mentions": scan["text_counts"]["working_hard_mentions"] if scan["sample_size"] else None,
+        "menu_price_mentions": scan["text_counts"]["menu_price_mentions"] if scan["sample_size"] else None,
+        "parking_praised": scan["text_counts"]["parking_praised"] if scan["sample_size"] else None,
+        "parking_criticised": scan["text_counts"]["parking_criticised"] if scan["sample_size"] else None,
+        "services": services,
+        "top_problems": [name for name, _ in problems.most_common(5)],
+        "named_team": named_team,
+    })
+    return _subject(
+        raw, "own", channel_id, available=True,
+        name=channel.display_name,
+        address=None,
+        verified=verified,
+        metrics=metrics, facts=facts,
+        notes=[
+            f"Counts come from your connected Google location. Review-text facts are "
+            f"scanned from the {scan['sample_size']} most recent reviews "
+            f"(max {REVIEW_SAMPLE_LIMIT}).",
+            "Views and calls are from the last 12 months of Google Business Profile data.",
+        ],
+    )
+
+
+async def compare_subjects(db: AsyncSession, tenant_id: str,
+                           raw_subjects: list[str]) -> list[dict[str, Any]]:
+    """Return one normalized record per requested subject, in request order.
+
+    A bad or inaccessible side is returned as an unavailable record instead of
+    failing the whole comparison, so the other side still renders.
+    """
+    if not raw_subjects or len(raw_subjects) > MAX_SUBJECTS:
+        raise CompareError(f"Compare between one and {MAX_SUBJECTS} subjects.")
+    out = []
+    for raw in raw_subjects:
+        try:
+            kind, ident = parse_subject(raw)
+            if kind == "saved":
+                out.append(await _saved_subject(db, tenant_id, raw, ident))
+            else:
+                out.append(await _own_subject(db, tenant_id, raw, ident))
+        except CompareError as exc:
+            out.append(_subject(str(raw), "unknown", "", available=False, reason=str(exc)))
+        except Exception:
+            # One side failing must never take the other down; log with context.
+            logger.exception("Comparison subject failed: %s", raw)
+            out.append(_subject(
+                str(raw), "unknown", "", available=False,
+                reason="Could not load this side of the comparison.",
+            ))
+    return out
