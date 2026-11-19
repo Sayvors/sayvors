@@ -98,6 +98,31 @@ def test_verify_push_accepts_valid_token(monkeypatch):
     assert seen["audience"] == "aud-1"
 
 
+def test_verify_push_rejects_valid_token_when_pin_unset(monkeypatch):
+    # The email pin is not optional. An audience-only deployment would accept
+    # any validly-signed token minted for that audience by any Google Cloud
+    # project, so an unset pin must deny even a cryptographically good token.
+    monkeypatch.setattr(google_push.settings, "GOOGLE_PUBSUB_PUSH_AUDIENCE", "aud-1")
+    monkeypatch.setattr(google_push.settings, "GOOGLE_PUBSUB_PUSH_EMAIL", "")
+    monkeypatch.setattr(
+        google_push,
+        "verify_oauth2_token",
+        lambda token, request_obj, audience: {"aud": audience, "email": "sa@project.iam"},
+    )
+    request = type("R", (), {"headers": {"authorization": "Bearer good-token"}})()
+    assert google_push.verify_push_oidc(request) is False
+
+
+def test_push_configured_requires_audience_and_email(monkeypatch):
+    monkeypatch.setattr(google_push.settings, "GOOGLE_PUBSUB_PUSH_AUDIENCE", "aud-1")
+    monkeypatch.setattr(google_push.settings, "GOOGLE_PUBSUB_PUSH_EMAIL", "")
+    assert google_push.push_configured() is False
+    monkeypatch.setattr(google_push.settings, "GOOGLE_PUBSUB_PUSH_EMAIL", "sa@project.iam")
+    assert google_push.push_configured() is True
+    monkeypatch.setattr(google_push.settings, "GOOGLE_PUBSUB_PUSH_AUDIENCE", "")
+    assert google_push.push_configured() is False
+
+
 def test_verify_push_rejects_wrong_identity_and_bad_signature(monkeypatch):
     monkeypatch.setattr(google_push.settings, "GOOGLE_PUBSUB_PUSH_AUDIENCE", "aud-1")
     monkeypatch.setattr(google_push.settings, "GOOGLE_PUBSUB_PUSH_EMAIL", "sa@project.iam.gserviceaccount.com")
@@ -168,7 +193,9 @@ async def test_trigger_pulls_resolves_by_listing_key_and_skips_inactive(
 @pytest.fixture
 def _push_env(monkeypatch):
     monkeypatch.setattr(google_push.settings, "GOOGLE_PUBSUB_PUSH_AUDIENCE", "aud-1")
-    monkeypatch.setattr(google_push.settings, "GOOGLE_PUBSUB_PUSH_EMAIL", "")
+    monkeypatch.setattr(
+        google_push.settings, "GOOGLE_PUBSUB_PUSH_EMAIL", "sa@project.iam.gserviceaccount.com"
+    )
     monkeypatch.setattr(google_push, "verify_push_oidc", lambda request: True)
 
 
@@ -178,8 +205,18 @@ def test_endpoint_disabled_without_audience(client, monkeypatch):
     assert resp.status_code == 503
 
 
+def test_endpoint_disabled_without_email_pin(client, monkeypatch):
+    # Fail closed: an audience with no service-account pin would accept a
+    # token minted by any project that knows the audience.
+    monkeypatch.setattr(google_push.settings, "GOOGLE_PUBSUB_PUSH_AUDIENCE", "aud-1")
+    monkeypatch.setattr(google_push.settings, "GOOGLE_PUBSUB_PUSH_EMAIL", "")
+    resp = client.post("/api/v1/channels/google/pubsub", content=b"{}")
+    assert resp.status_code == 503
+
+
 def test_endpoint_rejects_bad_token(client, monkeypatch):
     monkeypatch.setattr(google_push.settings, "GOOGLE_PUBSUB_PUSH_AUDIENCE", "aud-1")
+    monkeypatch.setattr(google_push.settings, "GOOGLE_PUBSUB_PUSH_EMAIL", "sa@project.iam")
     monkeypatch.setattr(google_push, "verify_push_oidc", lambda request: False)
     resp = client.post(
         "/api/v1/channels/google/pubsub", content=_envelope({"location": "l1"})

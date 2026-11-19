@@ -143,6 +143,63 @@ class EnterpriseRequestRecipient(Base):
     )
 
 
+class RetentionConfig(Base):
+    """Single-row, admin-editable retention policy.
+
+    The hourly sweep and the admin API both read this row. ``default`` values
+    mirror the earlier module constants so an installation that never opens
+    the admin console keeps the same behaviour.
+    """
+
+    __tablename__ = "retention_config"
+
+    id: Mapped[str] = mapped_column(String(16), primary_key=True, default="default")
+    review_log_days: Mapped[int] = mapped_column(Integer, default=90)
+    connect_event_days: Mapped[int] = mapped_column(Integer, default=30)
+    # Archive rows this many days before they become deletable. A slow S3
+    # outage must never force "delete unarchived data" or "keep forever".
+    backup_lead_days: Mapped[int] = mapped_column(Integer, default=2)
+    archive_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # High-water marks: rows older than these were already uploaded. Without
+    # them the hourly sweep would re-archive the same lead-window rows forever.
+    review_log_archived_through: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    connect_event_archived_through: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class RetentionRun(Base):
+    """One archive or clean attempt, manual or scheduled."""
+
+    __tablename__ = "retention_runs"
+    __table_args__ = (
+        Index("ix_retention_runs_started", "started_at"),
+        Index("ix_retention_runs_kind", "kind", "started_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    kind: Mapped[str] = mapped_column(String(32))
+    action: Mapped[str] = mapped_column(String(16))  # backup | clean
+    s3_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    rows: Mapped[int] = mapped_column(Integer, default=0)
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="running")
+    trigger_type: Mapped[str] = mapped_column(String(16), default="manual")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class AdminBackupConfig(Base):
     """Single-row scheduler config for automatic database backups.
 

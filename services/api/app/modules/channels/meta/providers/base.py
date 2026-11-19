@@ -10,9 +10,19 @@ from .....config import settings
 
 
 class MetaAPIError(Exception):
-    def __init__(self, message: str, status_code: int = 502, payload: dict | None = None):
+    """Provider failure with a separate client-safe message.
+
+    Upstream response bodies routinely contain hostnames, IDs or token
+    fragments. ``str(self)`` keeps the full text for logs; ``self.public`` is
+    what routers may put in an HTTP response. Curated errors (rate pacing,
+    missing config) are safe by default and need no override.
+    """
+
+    def __init__(self, message: str, status_code: int = 502, payload: dict | None = None,
+                 *, public: str | None = None):
         self.status_code = status_code
         self.payload = payload or {}
+        self.public = public or message
         super().__init__(message)
 
 
@@ -136,6 +146,7 @@ class MetaProviderAdapter(ABC):
                 f"Meta Graph {method} {path} failed ({resp.status_code}): "
                 f"{resp.text[:300]}",
                 resp.status_code,
+                public="The provider rejected the request. Check the connection and try again.",
             )
         return resp
 

@@ -1,6 +1,6 @@
 # Top-up and plan requests
 
-Last updated: 2026-11-17.
+Last updated: 2026-11-18.
 
 ## Why requests exist
 
@@ -26,6 +26,14 @@ Endpoints:
 
 Duplicate guard: an identical pending request from the same tenant within 24
 hours returns the existing row with `duplicate: true` instead of piling up.
+The read is a convenience, not the invariant: the partial unique index
+`uq_billing_requests_pending_dedupe` on
+`(tenant_id, kind, COALESCE(amount, -1), COALESCE(plan_slug, '')) WHERE status
+= 'pending'` (migration `20261118130000`) is the arbiter. `create_request()`
+locks the tenant's user row so check-then-insert cannot interleave; a losing
+insert is caught at a savepoint and translated into the same duplicate answer.
+Submission is also bounded twice: 10 requests per minute per tenant at the
+route, and at most 5 open requests per tenant in the operator queue.
 
 ## Admin surface
 
@@ -42,7 +50,15 @@ Approval applies:
 | `messages` | Adds the amount to `tenant_subscriptions.message_bonus`. The effective WhatsApp allowance is always `plans.max_messages_per_month + message_bonus`, so a later plan change keeps the pack without pinning the tenant to an old absolute limit. Invalidates the message-usage cache. |
 | `channels` | Adds to `channels_bonus`; effective limit is `plans.max_channels + channels_bonus`. |
 | `ai_credit` | `grant_credit()` with idempotency key `billing-request:{id}` — double approval cannot double-grant. |
-| `plan` | Sets the subscription to the requested plan; no fake charge. |
+| `plan` | Sets the subscription to the requested plan, clears any grant expiry, and writes the same slug to `users.plan` under the same row lock `grant_plan()` uses. Bonus allowances are untouched so they stack on the new base. No fake charge. |
+
+Approving any non-credit kind also writes a zero-amount `BillingEvent` with
+idempotency key `billing-request-decision:{id}` — a dated audit snapshot of
+what was decided, by whom and at what wallet balance. It never moves the
+balance. `ai_credit` already writes its own event through `grant_credit()` with
+the `billing-request:{id}` key; a rejection writes neither. A commit that
+loses that unique key is read back as an already-approved request instead of a
+500.
 
 The row is locked (`FOR UPDATE`), can only be decided once, records the
 operator/time/note, and sends the tenant a bell notification. Every admin
@@ -53,6 +69,9 @@ mutation is also captured by the admin audit middleware.
 - Approval never takes money; it only records an already-agreed sale.
 - Allowances are additive and per-tenant; the plan catalog is untouched.
 - A request can never be applied twice, even by two operators at once.
+- The subscription and `users.plan` cannot disagree after a plan approval.
+- One pending row per (tenant, kind, amount, plan) is a database constraint,
+  not just a read-time courtesy; the operator queue is capped at five.
 - Prices are selected by the operator, not trusted from the browser.
 
 ## Enterprise sales notification

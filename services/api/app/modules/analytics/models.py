@@ -694,6 +694,51 @@ class GoogleQuestionAnswer(Base):
     )
 
 
+class ReviewCampaign(Base):
+    """A time-boxed "please review us" campaign for one tenant.
+
+    A campaign is the planning record (window, copy, plan-limited duration) and
+    the result rollup (sent/clicked/reviewed). Individual sends stay in
+    ReviewRequest with a campaign_id, so the existing delivery and attribution
+    machinery is reused rather than duplicated.
+    """
+
+    __tablename__ = "review_campaigns"
+    __table_args__ = (
+        Index("ix_review_campaigns_tenant_created", "tenant_id", "created_at"),
+        Index("ix_review_campaigns_tenant_status", "tenant_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(120))
+    from_date: Mapped[date] = mapped_column(Date)
+    to_date: Mapped[date] = mapped_column(Date)
+    # scheduled | active | ended | cancelled — derived from the window, stored
+    # for stable listings; cancelled is the only manual terminal state.
+    status: Mapped[str] = mapped_column(String(16), default="scheduled", server_default="scheduled")
+    message_template: Mapped[str | None] = mapped_column(Text, nullable=True)
+    channel_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("channels.id", ondelete="SET NULL"), nullable=True
+    )
+    # The source campaign when this row was created by duplicate/reuse.
+    duplicated_from: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    recipient_count: Mapped[int] = mapped_column(Integer, default=0)
+    sent_count: Mapped[int] = mapped_column(Integer, default=0)
+    clicked_count: Mapped[int] = mapped_column(Integer, default=0)
+    reviewed_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
 class ReviewRequest(Base):
     """One review-request send, recorded when a merchant asks a customer.
 
@@ -720,6 +765,11 @@ class ReviewRequest(Base):
     )
     channel_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("channels.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # Optional parent campaign. NULL keeps every pre-campaign ask working.
+    campaign_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("review_campaigns.id", ondelete="SET NULL"),
+        nullable=True, index=True
     )
     # Hash-safe contact identifier: phone (E.164-ish) or email. No message body.
     contact: Mapped[str | None] = mapped_column(String(255), nullable=True)

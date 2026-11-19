@@ -27,6 +27,17 @@ export async function fetchWhatsAppHealth(channelId: string): Promise<WhatsAppHe
   )) as WhatsAppHealth;
 }
 
+export interface WhatsAppAnalytics {
+  points: { date: string; conversation_type: string | null; direction: string | null; count: number }[];
+  total: number;
+}
+
+export async function fetchWhatsAppAnalytics(channelId: string, days = 30): Promise<WhatsAppAnalytics> {
+  return (await apiFetch(
+    `/api/v1/channels/${encodeURIComponent(channelId)}/whatsapp/analytics?days=${days}`,
+  )) as WhatsAppAnalytics;
+}
+
 export async function fetchWhatsAppQrCodes(channelId: string): Promise<WhatsAppQrCode[]> {
   return (await apiFetch(
     `/api/v1/channels/${encodeURIComponent(channelId)}/whatsapp/qr-codes`,

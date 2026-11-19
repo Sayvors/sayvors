@@ -80,6 +80,23 @@ def _test_billing_sessions(monkeypatch):
     from app.modules.admin import backup as admin_backup
 
     monkeypatch.setattr(admin_backup, "_session_factory", TEST_SESSION, raising=False)
+    # Per-review tasks in the Google Reviews worker open their own sessions
+    # so the channel session is never shared across concurrent tasks. Point
+    # that factory at the same in-memory engine as every other fixture.
+    from app.modules.channels import reviews_worker
+
+    monkeypatch.setattr(reviews_worker, "_session_factory", TEST_SESSION, raising=False)
+    # The benchmark scraper is a worker loop too. Its pass opens its own
+    # session, so without this a test calling `refresh_due_places` would read
+    # and write the dev Postgres database instead of the in-memory fixtures.
+    from app.modules.benchmark import scraper as benchmark_scraper
+
+    monkeypatch.setattr(benchmark_scraper, "async_session", TEST_SESSION, raising=False)
+    # SQLite's StaticPool gives every session the same physical connection, so
+    # genuinely concurrent review sessions would block each other here. Real
+    # Postgres sessions are safe and are what production uses. The concurrency
+    # tests inject a fake session and raise the cap explicitly.
+    monkeypatch.setattr(reviews_worker, "REVIEW_CONCURRENCY", 1, raising=False)
 
 
 @asynccontextmanager
@@ -177,7 +194,30 @@ async def engine():
 @pytest_asyncio.fixture
 async def db(engine):
     async with TEST_SESSION() as session:
-        yield session
+        # The Google Reviews worker gives each review its own session in
+        # production (Postgres). In tests we hand it the fixture session:
+        # otherwise assertions on `db` cannot see rows another session
+        # committed, and SQLite's StaticPool cannot host two transactions.
+        # REVIEW_CONCURRENCY is forced to 1 by the autouse fixture, so no two
+        # review tasks ever hold this session at once.
+        from app.modules.channels import reviews_worker
+
+        class _Borrowed:
+            def __init__(self, real):
+                self._real = real
+
+            async def __aenter__(self):
+                return self._real
+
+            async def __aexit__(self, *exc):
+                return False
+
+        original_factory = reviews_worker._session_factory
+        reviews_worker._session_factory = lambda: _Borrowed(session)
+        try:
+            yield session
+        finally:
+            reviews_worker._session_factory = original_factory
 
 
 @pytest.fixture

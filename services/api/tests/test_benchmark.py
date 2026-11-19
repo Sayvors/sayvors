@@ -183,3 +183,51 @@ async def test_cohort_ranks_me_against_tenants(db, user_id):
     assert out["market"][0]["is_you"] is True
     assert out["market"][1]["name"] == "Rival Diner"
     assert "leading the pack" in out["benchmark_text"]
+
+
+# -- FACT-6: named, anonymous regional index -------------------------------
+
+
+def test_regional_index_packages_only_aggregates():
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 11, 18, 10, 0, tzinfo=timezone.utc)
+    cohort = {
+        "count": 42, "scope": "city_category", "label": "Riyadh cafes",
+        "median_rating": 4.2, "median_response_rate": 71.0,
+        "median_positive_pct": 68.0, "median_reviews": 120,
+        "median_recency_pct": 55.0, "median_reputation": 78,
+        "competitors": [{"name": "Secret Rival"}],
+        "user_ids": ["tenant-secret"],
+    }
+    index = benchmark._regional_index(cohort, 30, now)
+    assert index["available"] is True
+    assert index["name"] == "Sayvors Regional Index"
+    assert index["sample_size"] == 42
+    assert "n=42" in index["citation"] and "Riyadh cafes" in index["citation"]
+    assert index["metrics"]["median_rating"] == 4.2
+    blob = str(index)
+    assert "Secret Rival" not in blob and "tenant-secret" not in blob
+
+
+def test_regional_index_withheld_for_small_cohort():
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 11, 18, 10, 0, tzinfo=timezone.utc)
+    cohort = {"count": 2, "label": "Riyadh cafes", "scope": "city",
+              "median_rating": 4.9, "competitors": [{"name": "One Rival"}]}
+    index = benchmark._regional_index(cohort, 30, now)
+    assert index["available"] is False
+    assert index["reason"] == "cohort_too_small"
+    assert index["citation"] is None and index["metrics"] is None
+    assert "One Rival" not in str(index)
+
+
+@pytest.mark.asyncio
+async def test_benchmark_exposes_regional_index(db, user_id):
+    await _seed_branch(db, user_id, "ch-index", "Index Branch",
+                       [(4, "positive", True), (5, "positive", True)])
+    out = await benchmark.get_benchmark(db, user_id, None, 30)
+    index = out["regional_index"]
+    assert index["name"] == "Sayvors Regional Index"
+    assert index["available"] is False  # no real peers in the fixture

@@ -181,17 +181,14 @@ async def hybrid_lookup(db, bank_ids: list[str], query: str,
     if not bank_ids or not (query or "").strip():
         return []
     try:
-        from ..rag.embeddings import get_embedding_provider
+        from ..rag.embeddings import embed_query
         from ..rag.search import hybrid_search
 
         query_model: str | None = None
         query_vector = None
         if settings.embeddings_enabled:
             try:
-                provider = await get_embedding_provider()
-                vectors = await provider.embed([query[:500]])
-                query_vector = vectors[0]
-                query_model = provider.model_tag
+                query_vector, query_model = await embed_query(query[:500])
             except Exception:
                 query_vector = None
         seen: dict[str, tuple[str, float]] = {}

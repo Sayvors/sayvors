@@ -237,7 +237,7 @@ async def start_connect(
     except ValueError:
         raise HTTPException(status_code=404, detail="Unknown Meta provider")
     except MetaAPIError as e:
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+        raise HTTPException(status_code=e.status_code, detail=e.public)
 
 
 def _connect_enabled(provider: str) -> bool:
@@ -654,7 +654,7 @@ async def whatsapp_session(
             await db.commit()
     except MetaAPIError as e:
         await _oauth.fail_transaction(db, txn.id)
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+        raise HTTPException(status_code=e.status_code, detail=e.public)
 
     needs_pin = (not is_coexistence) and (
         any(
@@ -706,6 +706,38 @@ async def _whatsapp_asset_and_token(db, user, phone_number_id: str):
             status_code=409, detail="Reconnect WhatsApp — the access token is missing"
         )
     return asset, token
+
+
+@router.get("/whatsapp/{phone_number_id}/analytics")
+async def whatsapp_conversation_analytics(
+    phone_number_id: str,
+    days: int = Query(30, ge=1, le=90),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Meta-side conversation analytics for a connected WhatsApp number.
+
+    Best-effort: a number with no Meta analytics data returns an empty list,
+    and a provider failure is logged and surfaced as 502 through the shared
+    upstream error helper — never as raw provider text.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from ....core.upstream_errors import upstream_http_error
+
+    _asset, token = await _whatsapp_asset_and_token(db, user, phone_number_id)
+    end = datetime.now(timezone.utc).date()
+    start = end - timedelta(days=days - 1)
+    try:
+        adapter = _service.get_adapter("whatsapp")
+        return await adapter.get_conversation_analytics(
+            phone_number_id, token,
+            start=start.isoformat(), end=end.isoformat(),
+        )
+    except Exception as e:  # noqa: BLE001 - provider error belongs in logs
+        raise upstream_http_error(
+            e, context=f"whatsapp analytics {phone_number_id[:8]}", status_code=502
+        ) from None
 
 
 @router.post("/whatsapp/{phone_number_id}/register")
@@ -762,7 +794,7 @@ async def register_whatsapp_number(
     try:
         await adapter.register_number(phone_number_id, token, pin=body.pin)
     except _MetaAPIError as e:
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+        raise HTTPException(status_code=e.status_code, detail=e.public)
 
     _remember_pin(asset, body.pin)
     asset.status = "registered"
@@ -795,7 +827,7 @@ async def request_whatsapp_verification_code(
             code_method=body.code_method, language=body.language,
         )
     except MetaAPIError as e:
-        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+        raise HTTPException(status_code=e.status_code, detail=e.public) from e
     return {
         "sent": bool(sent),
         "code_method": body.code_method,
@@ -825,7 +857,7 @@ async def verify_whatsapp_number_code(
             phone_number_id, token, body.code
         )
     except MetaAPIError as e:
-        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+        raise HTTPException(status_code=e.status_code, detail=e.public) from e
     if verified:
         asset.status = "verified"
         await db.commit()
@@ -851,7 +883,7 @@ async def deregister_whatsapp_number(
     try:
         deregistered = await adapter.deregister_number(phone_number_id, token)
     except MetaAPIError as e:
-        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+        raise HTTPException(status_code=e.status_code, detail=e.public) from e
     if deregistered:
         asset.status = "deregistered"
         # A deregistered number cannot send or receive; stop routing to it
@@ -886,7 +918,7 @@ async def set_whatsapp_two_step_pin(
             phone_number_id, token, body.pin
         )
     except MetaAPIError as e:
-        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+        raise HTTPException(status_code=e.status_code, detail=e.public) from e
     if updated:
         _remember_pin(asset, body.pin)
         await db.commit()
@@ -939,7 +971,7 @@ async def get_whatsapp_profile(
                 (asset.asset_metadata or {}).get("business_profile_synced_at"),
                 stale=True,
             )
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+        raise HTTPException(status_code=e.status_code, detail=e.public)
     # An empty live read must never blank the editor (or wipe storage):
     # fall back to the last persisted copy.
     if not data and stored_profile:
@@ -1003,7 +1035,7 @@ async def update_whatsapp_profile(
     try:
         data = await adapter.set_business_profile(phone_number_id, token, fields)
     except _MetaAPIError as e:
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+        raise HTTPException(status_code=e.status_code, detail=e.public)
     # Graph acknowledged the write but the re-read came back empty — keep the
     # stored copy and overlay what we just saved instead of blanking it.
     if not data:
@@ -1099,7 +1131,7 @@ async def get_instagram_profile(
     except _MetaAPIError as e:
         if stored:
             return _out(stored, meta.get("business_profile_synced_at"), stale=True)
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+        raise HTTPException(status_code=e.status_code, detail=e.public)
 
     # An empty live read must never blank the page or wipe the snapshot.
     if not data or not data.get("username"):
@@ -2183,7 +2215,7 @@ async def get_facebook_profile(
     try:
         data = await adapter.get_page_profile(page_id, token)
     except _MetaAPIError as e:
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+        raise HTTPException(status_code=e.status_code, detail=e.public)
 
     await _cache_set("fb_profile", page_id, data, PROFILE_TTL_SECONDS)
     return _out(data)
@@ -2217,7 +2249,7 @@ async def get_facebook_posts(
     try:
         rows = await adapter.get_page_feed(page_id, token)
     except _MetaAPIError as e:
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+        raise HTTPException(status_code=e.status_code, detail=e.public)
 
     out = FacebookPostsOut(posts=[_fb_post_out(p) for p in rows])
     await _cache_set("fb_posts", page_id, out.model_dump(), LIST_TTL_SECONDS)
@@ -2250,7 +2282,7 @@ async def get_facebook_scheduled(
     try:
         rows = await adapter.get_scheduled_posts(page_id, token)
     except _MetaAPIError as e:
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+        raise HTTPException(status_code=e.status_code, detail=e.public)
 
     out = FacebookScheduledOut(
         posts=[
@@ -2762,7 +2794,7 @@ async def upload_profile_photo(
             file_name=file.filename or "profile.jpg",
         )
     except _MetaAPIError as e:
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+        raise HTTPException(status_code=e.status_code, detail=e.public)
 
     stored_profile = (asset.asset_metadata or {}).get("business_profile") or {}
     try:
@@ -2791,7 +2823,7 @@ async def discover_instagram(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except _MetaAPIError as e:
-        raise HTTPException(status_code=e.status_code, detail=str(e))
+        raise HTTPException(status_code=e.status_code, detail=e.public)
     return MetaAssetListResponse(assets=[_asset_out(a) for a in rows])
 
 

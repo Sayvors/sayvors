@@ -1,12 +1,18 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  answerText,
   answeredCount,
   buildAnswersPayload,
-  chipsFor,
   initialSelections,
+  intakeHref,
   isAnswered,
+  isPending,
   NOT_SURE,
+  optionChoices,
+  remainingQuestions,
+  sectionGroups,
+  storedValues,
   toggleChip,
   type IntakeQuestion,
 } from "./business-intake";
@@ -18,6 +24,8 @@ const q = (over: Partial<IntakeQuestion> = {}): IntakeQuestion => ({
   options: ["Halal", "Vegan"],
   multiple: true,
   fact_key: "dietary",
+  section: "offering",
+  section_label: "What you offer",
   answer: [],
   skipped: false,
   answer_source: "manual",
@@ -38,10 +46,21 @@ describe("chip semantics", () => {
   });
 
   it("offers the Google value and 'Not sure' without duplicating them", () => {
-    const chips = chipsFor(q({ google_value: "Yes, delivery" }));
-    expect(chips).toContain("Yes, delivery");
-    expect(chips.filter((c) => c === NOT_SURE)).toHaveLength(1);
-    expect(chipsFor(q({ options: [], google_value: null }))).toEqual([]);
+    const choices = optionChoices(q({ google_value: "Yes, delivery" }));
+    expect(choices.map((c) => c.value)).toContain("Yes, delivery");
+    expect(choices.filter((c) => c.value === NOT_SURE)).toHaveLength(1);
+    expect(optionChoices(q({ options: [], google_value: null }))).toEqual([]);
+  });
+
+  it("tags grid choices so Google and 'Not sure' can be styled differently", () => {
+    const choices = optionChoices(q({ google_value: "Halal" }));
+    expect(choices.map((c) => c.value)).toEqual(["Halal", "Vegan", NOT_SURE]);
+    expect(choices[0].google).toBe(true);
+    expect(choices.at(-1)).toEqual({ value: NOT_SURE, google: false, notSure: true });
+  });
+
+  it("does not append 'Not sure' to a free-text question", () => {
+    expect(optionChoices(q({ options: [], google_value: null }))).toEqual([]);
   });
 });
 
@@ -56,6 +75,72 @@ describe("answer state", () => {
     expect(isAnswered({ values: [], skipped: true, source: "manual" })).toBe(false);
     expect(isAnswered({ values: [], skipped: false, source: "manual" })).toBe(false);
     expect(answeredCount([q()], initialSelections([q()]))).toBe(0);
+  });
+
+  it("normalises every answer shape the API can return", () => {
+    expect(storedValues(["Halal", "Vegan"])).toEqual(["Halal", "Vegan"]);
+    expect(storedValues("Free parking")).toEqual(["Free parking"]);
+    expect(storedValues({ value: ["A", "B"] })).toEqual(["A", "B"]);
+    expect(storedValues({ value: "A" })).toEqual(["A"]);
+    expect(storedValues({})).toEqual([]);
+    expect(storedValues([])).toEqual([]);
+    expect(storedValues(null)).toEqual([]);
+    expect(answerText(["Halal", "Vegan"])).toBe("Halal · Vegan");
+  });
+
+  it("restores a legacy { value } answer into the editor", () => {
+    const s = initialSelections([q({ answer: { value: "Halal" } })]);
+    expect(s.dietary.values).toEqual(["Halal"]);
+    expect(isAnswered(s.dietary)).toBe(true);
+  });
+});
+
+describe("remaining questions and sections", () => {
+  it("counts never-answered and skipped questions as pending", () => {
+    const questions = [
+      q({ key: "dietary", answer: ["Halal"] }),
+      q({ key: "parking", section: "access", section_label: "Access & facilities" }),
+      q({
+        key: "price_range",
+        section: "payments",
+        section_label: "Payments & pricing",
+        skipped: true,
+      }),
+    ];
+    expect(remainingQuestions(questions).map((x) => x.key)).toEqual([
+      "parking",
+      "price_range",
+    ]);
+    expect(isPending(questions[0])).toBe(false);
+  });
+
+  it("groups by the backend section and keeps canonical order", () => {
+    const questions = [
+      q({ key: "dietary", section: "offering", section_label: "What you offer" }),
+      q({ key: "parking", section: "access", section_label: "Access & facilities" }),
+      q({ key: "price_range", section: "payments", section_label: "Payments & pricing" }),
+      q({ key: "payments", section: "payments", section_label: "Payments & pricing" }),
+    ];
+    const groups = sectionGroups(questions, ["offering", "orders", "payments", "access"]);
+    expect(groups.map((g) => g.key)).toEqual(["offering", "payments", "access"]);
+    expect(groups[1].questions.map((x) => x.key)).toEqual(["price_range", "payments"]);
+    expect(groups[1].label).toBe("Payments & pricing");
+  });
+
+  it("never drops an unknown section key", () => {
+    const groups = sectionGroups(
+      [q({ section: "custom", section_label: "Custom" })],
+      ["offering", "orders"],
+    );
+    expect(groups.map((g) => g.key)).toEqual(["custom"]);
+  });
+
+  it("builds deep links with and without a question", () => {
+    expect(intakeHref()).toBe("/dashboard/business-intake");
+    expect(intakeHref("payments")).toBe("/dashboard/business-intake?focus=payments");
+    expect(intakeHref("payments", "price_range")).toBe(
+      "/dashboard/business-intake?focus=payments&q=price_range",
+    );
   });
 });
 

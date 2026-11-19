@@ -117,7 +117,7 @@ def _clip(text: str, limit: int = MAX_OBSERVATION_CHARS) -> str:
 
 
 async def vector_search(ctx: ToolContext, query: str, top_k: int = 5) -> dict:
-    from .embeddings import get_embedding_provider
+    from .embeddings import embed_query
     from .search import hybrid_search
 
     top_k = max(1, min(int(top_k or 5), 10))
@@ -125,10 +125,7 @@ async def vector_search(ctx: ToolContext, query: str, top_k: int = 5) -> dict:
     query_model: str | None = None
     if settings.embeddings_enabled:
         try:
-            provider = await get_embedding_provider()
-            vectors = await provider.embed([query])
-            query_vector = vectors[0]
-            query_model = provider.model_tag
+            query_vector, query_model = await embed_query(query)
         except Exception:
             return {"passages": [], "notice": "vector_unavailable"}
 

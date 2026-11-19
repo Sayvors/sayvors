@@ -236,3 +236,33 @@ async def test_the_reply_prompt_carries_the_grounding(db, monkeypatch):
     assert captured
     assert "85 SAR" in captured[0], "the databank fact must be in the prompt"
     assert "BUSINESS KNOWLEDGE" in captured[0]
+
+
+# -- P0 grounding gates ------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_stopword_only_query_returns_nothing(db):
+    uid, cid, _ = await _seed(db)
+    block = await grounding.reply_block(
+        db, tenant_id=uid, channel_id=cid, query="what is the and of",
+    )
+    assert block == ""
+
+
+def test_low_scoring_hits_never_reach_the_prompt():
+    block = grounding._render([
+        {"content": "A price list with a matching term.", "score": 0.008},
+    ])
+    assert block == ""
+
+
+def test_near_duplicate_chunks_do_not_fill_the_budget():
+    block = grounding._render([
+        {"content": "Ethiopia Guji 1kg whole bean retails for 85 SAR per bag.", "score": 0.0164},
+        {"content": "Ethiopia Guji 1kg whole bean retails for 85 SAR per bag today.", "score": 0.0161},
+        {"content": "Delivery inside Riyadh takes two working days.", "score": 0.0159},
+    ])
+    assert block.count("85 SAR") == 1
+    # Third hit is below the score floor; the second is a near-duplicate.
+    assert "Riyadh" not in block

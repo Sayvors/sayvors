@@ -1,26 +1,31 @@
 "use client";
 
-/* Business-intake cascade (onboarding step 2).
+/* Business-intake cascade, onboarding + dashboard (one shared component).
  *
- * The owner picks a vertical, then a sub-focus, then taps chips. Google's
- * already-known fields never appear as questions; `google_partial` ones are
- * pre-filled as one-tap confirmations. Nothing is typed unless a question
- * genuinely has no preset options.
+ * Phase 0: pick a vertical. Phase 1: pick a sub-focus. Phase 2: answer one
+ * question at a time. Google already knows hours, address and attributes —
+ * those fields are never asked; a `google_partial` value is offered as a
+ * one-tap confirmation instead. "Not sure" is a decline recorded as unknown,
+ * never as a fact. Answers are drafted to the API as the owner goes, so
+ * leaving halfway does not lose work.
  *
  * Style follows the onboarding shell: solid white surfaces, hairlines, no
  * gradients, no glass, 3px focus ring.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api-rag";
 import { useI18n } from "@/lib/i18n/I18nProvider";
+import IntakeChoiceGrid from "./IntakeChoiceGrid";
 import {
   buildAnswersPayload,
-  chipsFor,
   initialSelections,
-  isAnswered,
+  isPending,
   NOT_SURE,
+  optionChoices,
   answeredCount,
   toggleChip,
+  type IntakeChoice,
+  type IntakeQuestion,
   type IntakeResponse,
   type Selections,
 } from "@/lib/business-intake";
@@ -36,25 +41,41 @@ const CARD =
   "rounded-[24px] border border-ink/[0.08] bg-white p-4 shadow-[0_12px_28px_-24px_rgba(20,16,31,0.5)]";
 const FOCUS =
   "focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet";
+const DRAFT_DELAY_MS = 900;
+
+type Phase = 0 | 1 | 2;
+type SaveState = "idle" | "saving" | "saved" | "error";
 
 export default function BusinessIntakeStep({
   onComplete,
   skipLabel,
+  initialSection,
+  initialQuestionKey,
 }: {
   onComplete: () => void;
   /** Dashboard embedding uses "Cancel"; onboarding uses "Skip for now". */
   skipLabel?: string;
+  /** Deep link from the dashboard checklist: open this section. */
+  initialSection?: string;
+  /** Deep link from an answers-table row: open this exact question. */
+  initialQuestionKey?: string;
 }) {
   const { t } = useI18n();
   const c = t.dashboard.businessIntake;
   const [data, setData] = useState<IntakeResponse | null>(null);
-  const [phase, setPhase] = useState<0 | 1 | 2>(0);
+  const [phase, setPhase] = useState<Phase>(0);
+  const [questionIndex, setQuestionIndex] = useState(0);
   const [vertical, setVertical] = useState<string | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
   const [selections, setSelections] = useState<Selections>({});
+  const [googleDismissed, setGoogleDismissed] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [saveState, setSaveState] = useState<SaveState>("idle");
   const [error, setError] = useState<string | null>(null);
+  const draftTimer = useRef<number | null>(null);
+  const savingRef = useRef(false);
+  const deepLinkApplied = useRef(false);
 
   const load = useCallback(async (v: string | null, f: string | null) => {
     setLoading(true);
@@ -86,58 +107,61 @@ export default function BusinessIntakeStep({
     void load(null, null);
   }, [load]);
 
+  useEffect(() => () => {
+    if (draftTimer.current) window.clearTimeout(draftTimer.current);
+  }, []);
+
   const chosen = useMemo(
     () => data?.verticals.find((v) => v.key === vertical) ?? null,
     [data, vertical],
   );
   const focusOptions = chosen?.sub_focuses ?? [];
+  const chosenFocus = focusOptions.find((f) => f.key === focus) ?? null;
   const questions = data?.questions ?? [];
+  const question: IntakeQuestion | undefined = questions[questionIndex];
   const done = answeredCount(questions, selections);
-
-  const chooseVertical = (key: string) => {
-    setVertical(key);
-    setFocus(null);
-    setPhase(1);
-    void load(key, null);
+  const sections = data?.sections ?? [];
+  // Live pending state, not the server snapshot: an answer tapped in this
+  // session must stop "Next" from sending the owner back to it.
+  const isUnanswered = (q: IntakeQuestion) => {
+    const s = selections[q.key];
+    return s ? s.skipped || s.values.length === 0 : isPending(q);
   };
+  const hasLaterPending = questions.some((q, i) => i > questionIndex && isUnanswered(q));
 
-  const chooseFocus = (key: string) => {
-    setFocus(key);
-    setPhase(2);
-    void load(vertical, key);
-  };
+  // Dashboard deep links arrive as ?focus=<section>&q=<question>. Apply them
+  // once, after the first load, and only when this vertical actually has the
+  // question: a stale link must land on the first question, not on a blank
+  // screen. Onboarding passes neither prop, so it still starts at step 1.
+  useEffect(() => {
+    if (deepLinkApplied.current || !data || data.questions.length === 0) return;
+    if (!initialSection && !initialQuestionKey) return;
+    deepLinkApplied.current = true;
 
-  const tapChip = (qKey: string, chip: string, multiple: boolean, googleValue: string | null) => {
-    setSelections((prev) => {
-      const current = prev[qKey] ?? { values: [], skipped: false, source: "manual" };
-      if (chip === NOT_SURE) {
-        return {
-          ...prev,
-          [qKey]: { values: [], skipped: !current.skipped, source: "manual" },
-        };
+    const exact = initialQuestionKey
+      ? data.questions.findIndex((q) => q.key === initialQuestionKey)
+      : -1;
+    let index = exact >= 0 ? exact : 0;
+    if (exact < 0 && initialSection) {
+      const candidates = data.questions
+        .map((q, i) => ({ q, i }))
+        .filter(({ q }) => q.section === initialSection);
+      if (candidates.length) {
+        index = (candidates.find(({ q }) => isPending(q)) ?? candidates[0]).i;
       }
-      const isGoogle = Boolean(googleValue && chip === googleValue);
-      return {
-        ...prev,
-        [qKey]: {
-          values: toggleChip(current.values, chip, multiple),
-          skipped: false,
-          source: isGoogle ? "google_confirmed" : "manual",
-        },
-      };
-    });
-  };
+    }
+    setQuestionIndex(index);
+    if (data.vertical_key) setPhase(2);
+  }, [data, initialSection, initialQuestionKey]);
 
-  const setFreeText = (qKey: string, value: string) => {
-    setSelections((prev) => ({
-      ...prev,
-      [qKey]: { values: value ? [value] : [], skipped: false, source: "manual" },
-    }));
-  };
-
-  const save = async () => {
-    if (!vertical || saving) return;
+  const persist = useCallback(async (finish: boolean): Promise<boolean> => {
+    // Ref guard, not the `saving` state: using the state here would change this
+    // callback's identity when a save finishes and re-arm the draft timer,
+    // creating an endless save loop.
+    if (!vertical || !data || savingRef.current) return false;
+    savingRef.current = true;
     setSaving(true);
+    setSaveState("saving");
     setError(null);
     try {
       await apiFetch("/api/v1/profile/intake", {
@@ -145,16 +169,151 @@ export default function BusinessIntakeStep({
         body: JSON.stringify({
           vertical_key: vertical,
           sub_focus: focus,
-          answers: buildAnswersPayload(questions, selections),
+          answers: buildAnswersPayload(data.questions, selections),
         }),
       });
-      onComplete();
+      setSaveState("saved");
+      if (finish) onComplete();
+      return true;
     } catch {
+      setSaveState("error");
       setError(c.error);
+      return false;
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
+  }, [vertical, focus, data, selections, onComplete, c.error]);
+
+  // Draft autosave. Runs only after the initial load settles, so a tenant who
+  // taps three cards and closes the tab still finds their answers later.
+  useEffect(() => {
+    if (loading || !data || !vertical) return;
+    if (draftTimer.current) window.clearTimeout(draftTimer.current);
+    draftTimer.current = window.setTimeout(() => {
+      void persist(false);
+    }, DRAFT_DELAY_MS);
+    return () => {
+      if (draftTimer.current) window.clearTimeout(draftTimer.current);
+    };
+  }, [loading, data, vertical, persist]);
+
+  const selectVertical = (key: string) => {
+    setVertical(key);
+    setFocus(null);
+    setQuestionIndex(0);
+    void load(key, null);
   };
+
+  const selectFocus = (key: string) => {
+    setFocus(key);
+    setQuestionIndex(0);
+    void load(vertical, key);
+  };
+
+  const tapChoice = (q: IntakeQuestion, value: string) => {
+    if (value === NOT_SURE) {
+      setSelections((prev) => {
+        const current = prev[q.key] ?? { values: [], skipped: false, source: "manual" };
+        return {
+          ...prev,
+          [q.key]: { values: [], skipped: !current.skipped, source: "manual" },
+        };
+      });
+      return;
+    }
+    setSelections((prev) => {
+      const current = prev[q.key] ?? { values: [], skipped: false, source: "manual" };
+      const isGoogle = Boolean(q.google_value && value === q.google_value);
+      return {
+        ...prev,
+        [q.key]: {
+          values: toggleChip(current.values, value, q.multiple),
+          skipped: false,
+          source: isGoogle ? "google_confirmed" : "manual",
+        },
+      };
+    });
+  };
+
+  const confirmGoogle = (q: IntakeQuestion) => {
+    if (!q.google_value) return;
+    setSelections((prev) => ({
+      ...prev,
+      [q.key]: {
+        values: [q.google_value as string],
+        skipped: false,
+        source: "google_confirmed",
+      },
+    }));
+  };
+
+  const setFreeText = (q: IntakeQuestion, value: string) => {
+    setSelections((prev) => ({
+      ...prev,
+      [q.key]: { values: value ? [value] : [], skipped: false, source: "manual" },
+    }));
+  };
+
+  const goBack = () => {
+    if (phase === 2 && questionIndex > 0) {
+      setQuestionIndex((i) => i - 1);
+    } else if (phase === 2) {
+      setPhase(1);
+    } else if (phase === 1) {
+      setPhase(0);
+    }
+  };
+
+  const jumpToSection = (sectionKey: string) => {
+    const candidates = questions
+      .map((q, i) => ({ q, i }))
+      .filter(({ q }) => q.section === sectionKey);
+    if (!candidates.length) return;
+    // Prefer the work that is actually left; fall back to the first question
+    // so "Change" still opens a finished section for review.
+    const target = candidates.find(({ q }) => isUnanswered(q)) ?? candidates[0];
+    setQuestionIndex(target.i);
+  };
+
+  const goNext = () => {
+    if (phase === 0 && vertical) {
+      setPhase(1);
+    } else if (phase === 1 && focus) {
+      setPhase(2);
+      setQuestionIndex(0);
+    } else if (phase === 2) {
+      // Skip over questions answered since the last visit, including the ones
+      // answered in this session. A deep link can drop the owner into the
+      // middle of the list, so "Next" means "next thing I still have to
+      // answer", not "index + 1".
+      const next = questions.findIndex((q, i) => i > questionIndex && isUnanswered(q));
+      if (next >= 0) {
+        setQuestionIndex(next);
+      } else {
+        void persist(true);
+      }
+    }
+  };
+
+  const selection = question ? selections[question.key] : undefined;
+  const choices: IntakeChoice[] = question
+    ? optionChoices(question).map((option) => ({
+        key: option.value,
+        title: option.value,
+        description: option.notSure
+          ? c.notSureCard
+          : option.google
+            ? c.googleOptionHint
+            : c.tapToSelect,
+        badge: option.google ? c.fromGoogle : undefined,
+        tone: option.notSure ? "notSure" : "default",
+      }))
+    : [];
+  const canAdvance =
+    (phase === 0 && Boolean(vertical)) ||
+    (phase === 1 && Boolean(focus)) ||
+    phase === 2;
 
   return (
     <section className="space-y-4">
@@ -176,134 +335,223 @@ export default function BusinessIntakeStep({
 
       {!loading && data && (
         <>
-          {/* Google already knows the category — offer it instead of asking. */}
-          {phase === 0 && data.google_suggestion && (
-            <div className="rounded-[20px] border border-deep-violet/20 bg-deep-violet/[0.04] p-3">
-              <p className="text-[12px] text-ink/70 dark:text-fog/70">
-                {fill(c.googleSuggestion, { name: data.google_suggestion.vertical_label })}
-              </p>
+          {/* Chosen path stays visible, so a tenant never wonders where the
+              questions came from. Either crumb can be changed in one tap. */}
+          {(vertical || focus) && (
+            <div className="flex flex-wrap items-center gap-2 rounded-[16px] border border-ink/[0.08] bg-white px-3 py-2 dark:bg-[#241a45]">
+              <span className="text-[11px] font-semibold text-ink/45 dark:text-fog/45">
+                {c.yourBusiness}
+              </span>
               <button
                 type="button"
-                onClick={() => chooseVertical(data.google_suggestion!.vertical_key)}
-                className={`mt-2 rounded-[14px] bg-deep-violet px-3 py-1.5 text-[12px] font-bold text-white ${FOCUS}`}
+                onClick={() => { setPhase(0); setQuestionIndex(0); }}
+                className={`${FOCUS} rounded-full px-2 py-1 text-[12px] font-bold text-ink underline decoration-ink/20 underline-offset-2 dark:text-fog`}
               >
-                {c.googleConfirm}
+                {chosen?.label ?? c.changeVertical}
+                <span className="ms-1.5 text-[10px] font-semibold text-deep-violet/70">{c.change}</span>
               </button>
+              {focus && (
+                <>
+                  <span aria-hidden className="text-[11px] text-ink/30">›</span>
+                  <button
+                    type="button"
+                    onClick={() => { setPhase(1); setQuestionIndex(0); }}
+                    className={`${FOCUS} rounded-full px-2 py-1 text-[12px] font-bold text-ink underline decoration-ink/20 underline-offset-2 dark:text-fog`}
+                  >
+                    {chosenFocus?.label ?? c.changeFocus}
+                    <span className="ms-1.5 text-[10px] font-semibold text-deep-violet/70">{c.change}</span>
+                  </button>
+                </>
+              )}
             </div>
           )}
 
           {phase === 0 && (
-            <div className="grid gap-2 sm:grid-cols-2">
-              {data.verticals.map((v) => (
-                <button
-                  key={v.key}
-                  type="button"
-                  onClick={() => chooseVertical(v.key)}
-                  className={`${CARD} ${FOCUS} text-left text-[13px] font-semibold text-ink transition hover:border-deep-violet/40 hover:bg-[#fbfaff] dark:text-fog`}
-                >
-                  {v.label}
-                </button>
-              ))}
+            <div className="space-y-3">
+              <p className="text-[13px] font-bold text-ink dark:text-fog">{c.pickVertical}</p>
+              {data.google_suggestion && (
+                <div className="rounded-[20px] border border-deep-violet/20 bg-deep-violet/[0.04] p-3">
+                  <p className="text-[12px] text-ink/70 dark:text-fog/70">
+                    {fill(c.googleSuggestion, { name: data.google_suggestion.vertical_label })}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => selectVertical(data.google_suggestion!.vertical_key)}
+                    className={`mt-2 rounded-[14px] bg-deep-violet px-3 py-1.5 text-[12px] font-bold text-white transition hover:brightness-110 ${FOCUS}`}
+                  >
+                    {c.googleConfirm}
+                  </button>
+                </div>
+              )}
+              <IntakeChoiceGrid
+                label={c.pickVertical}
+                choices={data.verticals.map((v) => ({
+                  key: v.key,
+                  title: v.label,
+                  description: fill(c.verticalHint, { n: v.sub_focuses.length }),
+                }))}
+                selected={vertical ? [vertical] : []}
+                onChoose={selectVertical}
+                columns="three"
+              />
             </div>
           )}
 
           {phase === 1 && (
             <div className="space-y-3">
               <p className="text-[13px] font-bold text-ink dark:text-fog">{c.pickFocus}</p>
-              <div className="flex flex-wrap gap-2">
-                {focusOptions.map((f) => (
-                  <button
-                    key={f.key}
-                    type="button"
-                    onClick={() => chooseFocus(f.key)}
-                    className={`${CARD} ${FOCUS} rounded-[20px] px-4 py-2 text-[13px] font-semibold text-ink transition hover:border-deep-violet/40 dark:text-fog`}
-                  >
-                    {f.label}
-                  </button>
-                ))}
-              </div>
+              <IntakeChoiceGrid
+                label={c.pickFocus}
+                choices={focusOptions.map((f) => ({
+                  key: f.key,
+                  title: f.label,
+                  description: c.focusHint,
+                }))}
+                selected={focus ? [focus] : []}
+                onChoose={selectFocus}
+              />
             </div>
           )}
 
-          {phase === 2 && (
+          {phase === 2 && question && (
             <div className="space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-[13px] font-bold text-ink dark:text-fog">{c.pickDetails}</p>
-                <span className="text-[11px] tabular-nums text-ink/45">
-                  {fill(c.answered, { n: done, total: questions.length })}
+              {sections.length > 1 && (
+                <div
+                  role="group"
+                  aria-label={c.sectionsLabel}
+                  className="flex flex-wrap items-center gap-1.5"
+                >
+                  {sections.map((s) => {
+                    const active = s.key === question.section;
+                    return (
+                      <button
+                        key={s.key}
+                        type="button"
+                        onClick={() => jumpToSection(s.key)}
+                        aria-current={active ? "step" : undefined}
+                        className={[
+                          FOCUS,
+                          "rounded-full border px-2.5 py-1 text-[11px] font-semibold transition",
+                          active
+                            ? "border-deep-violet bg-deep-violet text-white"
+                            : "border-ink/10 bg-white text-ink/60 hover:border-deep-violet/40 dark:border-white/10 dark:bg-[#241a45] dark:text-fog/60",
+                        ].join(" ")}
+                      >
+                        {s.label}
+                        <span
+                          className={`ms-1 tabular-nums ${active ? "text-white/70" : "text-ink/35 dark:text-fog/35"}`}
+                        >
+                          {s.answered}/{s.total}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-deep-violet/70">
+                    {question.section_label}
+                  </p>
+                  <p className="mt-0.5 text-[15px] font-bold leading-snug text-ink dark:text-fog">
+                    {question.label}
+                  </p>
+                </div>
+                <span className="shrink-0 pt-0.5 text-[11px] tabular-nums text-ink/45">
+                  {fill(c.questionOf, { n: questionIndex + 1, total: questions.length })}
                 </span>
               </div>
+              <div
+                className="h-1.5 overflow-hidden rounded-full bg-[var(--ui-sunken)]"
+                role="progressbar"
+                aria-valuenow={done}
+                aria-valuemin={0}
+                aria-valuemax={questions.length}
+                aria-label={c.pickDetails}
+              >
+                <div
+                  className="h-full rounded-full bg-deep-violet transition-[width] duration-300"
+                  style={{ width: `${questions.length ? (done / questions.length) * 100 : 0}%` }}
+                />
+              </div>
+              <p className="text-[11px] tabular-nums text-ink/45">
+                {fill(c.answered, { n: done, total: questions.length })}
+              </p>
 
-              {questions.map((q) => {
-                const sel = selections[q.key];
-                const chips = chipsFor(q);
-                const answered = isAnswered(sel);
-                return (
-                  <div
-                    key={q.key}
-                    className={`${CARD} ${answered ? "border-deep-violet/30" : ""}`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <p className="text-[13px] font-semibold text-ink dark:text-fog">{q.label}</p>
-                      {q.google_value && sel?.source === "google_confirmed" && (
-                        <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-700">
-                          {c.googleConfirmed}
-                        </span>
-                      )}
+              {question.google_value &&
+                selection?.source !== "google_confirmed" &&
+                !googleDismissed[question.key] && (
+                  <div className="rounded-[20px] border border-deep-violet/20 bg-deep-violet/[0.04] p-4">
+                    <p className="text-[13px] font-bold text-ink dark:text-fog">
+                      {fill(c.googleAsk, { value: question.google_value })}
+                    </p>
+                    <p className="mt-1 text-[11px] text-ink/50 dark:text-fog/50">{c.googleConfirmHint}</p>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      <button
+                        type="button"
+                        onClick={() => confirmGoogle(question)}
+                        className={`${FOCUS} rounded-[14px] bg-deep-violet px-3 py-2 text-[12px] font-bold text-white transition hover:brightness-110`}
+                      >
+                        {c.googleUse}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setGoogleDismissed((prev) => ({ ...prev, [question.key]: true }))}
+                        className={`${FOCUS} rounded-[14px] border border-ink/15 bg-white px-3 py-2 text-[12px] font-bold text-ink/70 transition hover:border-deep-violet/40 dark:bg-[#241a45] dark:text-fog/70`}
+                      >
+                        {c.googleDifferent}
+                      </button>
                     </div>
-                    {q.google_value && (
-                      <p className="mt-0.5 text-[11px] text-emerald-700 dark:text-emerald-400">
-                        {fill(c.googleValue, { value: q.google_value })}
-                      </p>
-                    )}
-
-                    {chips.length > 0 ? (
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {chips.map((chip) => {
-                          const active = Boolean(sel?.values.includes(chip));
-                          const skipped = Boolean(sel?.skipped) && chip === NOT_SURE;
-                          return (
-                            <button
-                              key={chip}
-                              type="button"
-                              aria-pressed={active || skipped}
-                              onClick={() => tapChip(q.key, chip, q.multiple, q.google_value)}
-                              className={`${FOCUS} rounded-full border px-3 py-1.5 text-[12px] font-medium transition ${
-                                active || skipped
-                                  ? "border-deep-violet bg-deep-violet text-white"
-                                  : "border-ink/15 bg-white text-ink/70 hover:border-deep-violet/40 dark:text-fog/70"
-                              }`}
-                            >
-                              {chip}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <input
-                        type="text"
-                        value={typeof sel?.values[0] === "string" ? sel.values[0] : ""}
-                        onChange={(e) => setFreeText(q.key, e.target.value)}
-                        placeholder={c.freeTextPlaceholder}
-                        className={`${FOCUS} mt-3 w-full rounded-[20px] border border-ink/15 bg-white px-3 py-2 text-[13px] text-ink`}
-                      />
-                    )}
-                    {sel?.skipped && (
-                      <p className="mt-2 text-[10px] text-ink/40">{c.notSureHint}</p>
-                    )}
                   </div>
-                );
-              })}
+                )}
+
+              {selection?.source === "google_confirmed" && question.google_value && (
+                <p className="rounded-[16px] bg-emerald-50 px-3 py-2 text-[11px] font-semibold text-emerald-700">
+                  {fill(c.googleValue, { value: question.google_value })} · {c.googleConfirmed}
+                </p>
+              )}
+
+              {choices.length > 0 ? (
+                <IntakeChoiceGrid
+                  label={question.label}
+                  choices={choices}
+                  multiple={question.multiple}
+                  selected={selection?.skipped ? [NOT_SURE] : (selection?.values ?? [])}
+                  onChoose={(value) => tapChoice(question, value)}
+                  columns="two"
+                />
+              ) : (
+                <div className={CARD}>
+                  <label htmlFor={`intake-${question.key}`} className="text-[13px] font-semibold text-ink dark:text-fog">
+                    {c.freeTextLabel}
+                  </label>
+                  <input
+                    id={`intake-${question.key}`}
+                    type="text"
+                    value={typeof selection?.values[0] === "string" ? selection.values[0] : ""}
+                    onChange={(e) => setFreeText(question, e.target.value)}
+                    placeholder={c.freeTextPlaceholder}
+                    className={`${FOCUS} mt-2 w-full rounded-[20px] border border-ink/15 bg-white px-3 py-2 text-[13px] text-ink dark:bg-[#241a45] dark:text-fog`}
+                  />
+                </div>
+              )}
+
+              {selection?.skipped && (
+                <p role="status" className="rounded-[16px] bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+                  {c.notSureHint}
+                </p>
+              )}
             </div>
           )}
 
           <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-            <div className="flex items-center gap-3">
-              {phase > 0 && (
+            <div className="flex flex-wrap items-center gap-3">
+              {(phase > 0 || questionIndex > 0) && (
                 <button
                   type="button"
-                  onClick={() => setPhase((p) => (p - 1) as 0 | 1 | 2)}
-                  className={`${FOCUS} rounded-[14px] border border-ink/15 px-4 py-2 text-[12px] font-semibold text-ink/70 dark:text-fog/70`}
+                  onClick={goBack}
+                  className={`${FOCUS} rounded-[14px] border border-ink/15 px-4 py-2 text-[12px] font-semibold text-ink/70 transition hover:border-deep-violet/40 dark:text-fog/70`}
                 >
                   {c.back}
                 </button>
@@ -311,19 +559,26 @@ export default function BusinessIntakeStep({
               <button type="button" onClick={onComplete} className={`${FOCUS} text-[12px] text-ink/40 underline underline-offset-2`}>
                 {skipLabel ?? c.skip}
               </button>
+              <span aria-live="polite" className="text-[11px] text-ink/40">
+                {saveState === "saving"
+                  ? c.savingDraft
+                  : saveState === "saved"
+                    ? c.savedNow
+                    : saveState === "error"
+                      ? c.error
+                      : ""}
+              </span>
             </div>
-            {/* Picking a tile advances automatically, so there is no Next
-                button to bypass the sub-focus choice. */}
-            {phase === 2 && (
-              <button
-                type="button"
-                onClick={() => void save()}
-                disabled={saving || done === 0}
-                className={`${FOCUS} rounded-[14px] bg-deep-violet px-5 py-2 text-[13px] font-bold text-white transition disabled:cursor-not-allowed disabled:opacity-40`}
-              >
-                {saving ? c.saving : c.save}
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={goNext}
+              disabled={!canAdvance || saving}
+              className={`${FOCUS} rounded-[14px] bg-deep-violet px-5 py-2 text-[13px] font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40`}
+            >
+              {phase === 2 && !hasLaterPending
+                ? c.finish
+                : c.next}
+            </button>
           </div>
         </>
       )}

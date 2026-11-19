@@ -133,7 +133,8 @@ Local dev gets pushes through the existing cloudflared tunnel
 | `Google push rate limited` | Burst ceiling (600/min/IP) tripped — expected under outage-recovery replays; Pub/Sub retries. |
 | `spawned_pulls=0` | No active channel has that `listing_key` — the location isn't connected, or the channel is expired/disconnected (reconnect it). |
 | Pushes arrive but reviews lag | The targeted pull lost the claim race to the poll pass — harmless; the review lands on the next poll cycle. |
-| 503 from the endpoint | `GOOGLE_PUBSUB_PUSH_AUDIENCE` unset in that deployment — set it or disable the subscription. |
+| 503 from the endpoint | Unconfigured push ingress: `GOOGLE_PUBSUB_PUSH_AUDIENCE` **or** `GOOGLE_PUBSUB_PUSH_EMAIL` is unset in that deployment. Both are required — an audience alone would accept any Google-signed token. Set both, or delete the push subscription. |
+| `Google Pub/Sub push rejected: GOOGLE_PUBSUB_PUSH_EMAIL is not set` in logs | Same cause, logged by the verifier's own fail-closed check. |
 | PATCH returns 400/403 on registration | Token lacks `business.manage`, or the publisher grant (step 1) is missing — Google's error text names which. |
 
 ## Related

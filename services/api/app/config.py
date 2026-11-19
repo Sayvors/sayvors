@@ -191,6 +191,9 @@ class Settings(BaseSettings):
     AWS_S3_BUCKET: str = ""  # shared default; per-purpose buckets override it
     S3_MEDIA_BUCKET: str = ""
     S3_DOCS_BUCKET: str = ""
+    # Private, cold storage for retention archives. Never falls back to the
+    # public media bucket: these exports contain customer-derived text.
+    S3_ARCHIVE_BUCKET: str = ""
     AWS_REGION: str = "eu-north-1"
     AWS_S3_ENDPOINT_URL: str = ""  # optional for S3-compatible providers
     S3_MEDIA_PUBLIC_BASE_URL: str = ""  # optional CDN/custom public object base

@@ -84,6 +84,9 @@ class Entitlements:
     max_team_members: int | None = None
     # Daily manual reply-regeneration cap (None = unlimited).
     max_regenerations_day: int | None = None
+    # Review Campaign caps (None = unlimited).
+    max_campaigns_per_month: int | None = None
+    max_campaign_days: int | None = None
     # Feature flags.
     features: dict[str, bool] = field(default_factory=dict)
     # The plan's raw baseline before the tenant override is applied.
@@ -122,6 +125,16 @@ class Entitlements:
         if self.max_regenerations_day is None:
             return True
         return used_today < self.max_regenerations_day
+
+    def campaign_quota_ok(self, used_this_month: int) -> bool:
+        if self.max_campaigns_per_month is None:
+            return True
+        return used_this_month < self.max_campaigns_per_month
+
+    def campaign_days_ok(self, days: int) -> bool:
+        if self.max_campaign_days is None:
+            return True
+        return 1 <= days <= self.max_campaign_days
 
 
 def merge_feature_override(
@@ -207,6 +220,8 @@ async def get_entitlements(tenant_id: str, db: AsyncSession) -> Entitlements:
     location_limit = plan.max_locations
     team_member_limit = plan.max_team_members
     regeneration_limit = plan.max_regenerations_day
+    campaign_monthly_limit = plan.max_campaigns_per_month
+    campaign_days_limit = plan.max_campaign_days
     # Top-ups are additive, never an absolute replacement. A plan change or a
     # plan-catalog edit therefore applies immediately without losing the
     # amount the tenant bought.
@@ -224,6 +239,8 @@ async def get_entitlements(tenant_id: str, db: AsyncSession) -> Entitlements:
         max_locations=location_limit,
         max_team_members=team_member_limit,
         max_regenerations_day=regeneration_limit,
+        max_campaigns_per_month=campaign_monthly_limit,
+        max_campaign_days=campaign_days_limit,
         included_credit_cents=plan.included_credit_cents,
         features=merge_feature_override(plan.features, override),
         plan_features={k: bool(v) for k, v in (plan.features or {}).items()},

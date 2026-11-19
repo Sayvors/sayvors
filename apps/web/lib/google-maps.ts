@@ -34,7 +34,7 @@ export function loadGoogleMaps(apiKey: string): Promise<void> {
     const script = document.createElement("script");
     script.id = SCRIPT_ID;
     script.async = true;
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&v=weekly&libraries=marker,geometry`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&v=weekly&libraries=marker,geometry,visualization`;
     script.onload = () => resolve();
     script.onerror = () => {
       scriptPromise = null;

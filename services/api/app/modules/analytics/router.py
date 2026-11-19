@@ -51,10 +51,98 @@ from .schemas import (
     VisibilityResponse,
 )
 from ..team.context import tenant_id_of, require_perm, TenantContext
+from pydantic import BaseModel, Field
+from datetime import date
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["analytics"])
+
+
+# ── Review Campaigns (FACT-9) ────────────────────────────────────────────
+
+class CampaignIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    from_date: date
+    to_date: date
+    message_template: str | None = Field(default=None, max_length=8000)
+    channel_id: str | None = Field(default=None, max_length=36)
+
+
+class CampaignOut(BaseModel):
+    id: str
+    tenant_id: str
+    name: str
+    from_date: str
+    to_date: str
+    status: str
+    message_template: str | None = None
+    channel_id: str | None = None
+    duplicated_from: str | None = None
+    recipient_count: int
+    sent_count: int
+    clicked_count: int
+    reviewed_count: int
+    conversion_rate: float | None = None
+    created_at: str | None = None
+
+
+@router.get("/campaigns", response_model=list[CampaignOut])
+async def list_campaigns(
+    limit: int = Query(50, ge=1, le=100),
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from .campaigns import list_campaigns as _list
+    return await _list(db, tenant_id_of(user), limit=limit)
+
+
+@router.post("/campaigns", response_model=CampaignOut, status_code=201)
+async def create_campaign(body: CampaignIn, user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    from .campaigns import CampaignError, create_campaign as _create, serialize
+
+    try:
+        row = await _create(
+            db, tenant_id=tenant_id_of(user), name=body.name,
+            from_date=body.from_date, to_date=body.to_date,
+            message_template=body.message_template, channel_id=body.channel_id,
+        )
+    except CampaignError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return serialize(row)
+
+
+@router.post("/campaigns/{campaign_id}/duplicate", response_model=CampaignOut, status_code=201)
+async def duplicate_campaign(campaign_id: str, user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    from .campaigns import CampaignError, duplicate_campaign as _duplicate, serialize
+
+    try:
+        row = await _duplicate(db, tenant_id_of(user), campaign_id)
+    except CampaignError as e:
+        raise HTTPException(status_code=404 if "not found" in str(e).lower() else 422, detail=str(e))
+    return serialize(row)
+
+
+@router.post("/campaigns/{campaign_id}/cancel", response_model=CampaignOut)
+async def cancel_campaign(campaign_id: str, user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    from .campaigns import CampaignError, cancel_campaign as _cancel, serialize
+
+    try:
+        row = await _cancel(db, tenant_id_of(user), campaign_id)
+    except CampaignError as e:
+        raise HTTPException(status_code=404 if "not found" in str(e).lower() else 422, detail=str(e))
+    return serialize(row)
+
+
+@router.post("/campaigns/{campaign_id}/refresh", response_model=CampaignOut)
+async def refresh_campaign_results(campaign_id: str, user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    from .campaigns import CampaignError, refresh_results, serialize
+
+    try:
+        row = await refresh_results(db, tenant_id_of(user), campaign_id)
+    except CampaignError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return serialize(row)
 
 
 # ── Tracked issues ─────────────────────────────────────────────

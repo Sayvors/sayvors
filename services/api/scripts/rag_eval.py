@@ -1,0 +1,168 @@
+"""Run a labelled RAG golden set and print retrieval metrics.
+
+Usage (from services/api):
+    python -m scripts.rag_eval --golden scripts/rag_golden.example.json --top-k 4
+
+The golden set is a JSON object with a schema version and a list of cases:
+
+    {
+      "version": 1,
+      "cases": [
+        {
+          "id": "coffee-price-ar",
+          "vertical": "coffee",
+          "databank_id": "<uuid>",
+          "question": "كم سعر القهوة؟",
+          "expected_chunk_ids": ["<chunk uuid>"],
+          "expected_facts": ["15 ريال"]
+        }
+      ]
+    }
+
+Only `question`, `databank_id` and at least one of the `expected_*` fields
+carry a score. This script never writes to the database and never calls the
+chat LLM — it measures retrieval only, so a run is cheap and repeatable.
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import os
+import sys
+from pathlib import Path
+from typing import Any
+
+from app.modules.rag.eval import GOLDEN_SCHEMA_VERSION, score_case, summarize
+
+# Settings.env_file is ".env", resolved against the process cwd. The repository
+# root .env carries a few stale keys that strict validation rejects, so pin the
+# working directory to services/api before any app import happens.
+_INVOKED_FROM = Path.cwd()
+_APP_DIR = Path(__file__).resolve().parent.parent
+os.chdir(_APP_DIR)
+
+
+def load_golden(path: str) -> list[dict[str, Any]]:
+    """Validate the file before touching the database. Fail loudly on drift."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or data.get("version") != GOLDEN_SCHEMA_VERSION:
+        raise ValueError(
+            f"golden set must be an object with version={GOLDEN_SCHEMA_VERSION}"
+        )
+    cases = data.get("cases")
+    if not isinstance(cases, list) or not cases:
+        raise ValueError("golden set needs a non-empty 'cases' list")
+    # A whole set usually belongs to one vertical's databank. Let the business
+    # supply questions without knowing internal UUIDs; a case may still
+    # override the file-level value.
+    default_bank = data.get("databank_id")
+    prepared: list[dict[str, Any]] = []
+    for index, case in enumerate(cases):
+        bank = case.get("databank_id") or default_bank
+        if not isinstance(case, dict) or not case.get("question") or not bank:
+            raise ValueError(f"case {index} needs 'question' and 'databank_id'")
+        prepared.append({**case, "databank_id": bank})
+    return prepared
+
+
+async def _vector_for(query: str) -> tuple[list[float] | None, str | None]:
+    from app.config import settings
+
+    if not settings.embeddings_enabled:
+        return None, None
+    try:
+        from app.modules.rag.embeddings import embed_query
+
+        return await embed_query(query)
+    except Exception as exc:  # keyword side still scores
+        print(f"warning: embedding unavailable ({exc}); keyword-only", file=sys.stderr)
+        return None, None
+
+
+async def run(cases: list[dict[str, Any]], top_k: int) -> dict[str, Any]:
+    from app.database import async_session
+    from app.modules.rag.grounding import _render
+    from app.modules.rag.search import hybrid_search
+
+    scored: list[dict[str, Any]] = []
+    async with async_session() as db:
+        for case in cases:
+            vector, model = await _vector_for(case["question"])
+            hits = await hybrid_search(
+                databank_id=case["databank_id"],
+                query_vector=vector,
+                query_text=case["question"],
+                top_k=top_k,
+                db=db,
+                query_model=model,
+            )
+            row = score_case(
+                case,
+                retrieved=[str(hit["id"]) for hit in hits],
+                prompt_block=_render(hits),
+                k=top_k,
+            )
+            row["question"] = case["question"]  # review output needs the text
+            # Kept even when unlabelled: review mode needs to show a human what
+            # actually came back so they can choose the expected chunk/fact.
+            row["retrieved"] = [
+                {"id": str(hit["id"]), "content": " ".join((hit.get("content") or "").split())[:240]}
+                for hit in hits
+            ]
+            scored.append(row)
+    return {"top_k": top_k, **summarize(scored), "cases": scored}
+
+
+def format_review(report: dict[str, Any]) -> str:
+    """Human-readable retrieval dump for labelling an unlabelled golden set."""
+    lines: list[str] = []
+    for case in report["cases"]:
+        lines.append(f"[{case['id']}] ({case['vertical']}) {case['question']}")
+        if not case["retrieved"]:
+            lines.append("    (no hits — check the databank id)")
+        for rank, hit in enumerate(case["retrieved"], 1):
+            lines.append(f"    {rank}. {hit['id']}  {hit['content']}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def main(argv: list[str] | None = None) -> int:
+    # The golden set contains Arabic; Windows consoles default to cp1252 and
+    # would crash printing either --help or the report. Force UTF-8 at the
+    # boundary, leaving all internal strings untouched.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--golden", required=True, help="path to the golden-set JSON")
+    parser.add_argument("--top-k", type=int, default=4, help="retrieval depth to score (default 4)")
+    parser.add_argument(
+        "--databank-id",
+        help="override the golden set's databank id (keeps the file environment-agnostic)",
+    )
+    parser.add_argument(
+        "--review", action="store_true",
+        help="print retrieved chunks per question for labelling instead of metrics JSON",
+    )
+    args = parser.parse_args(argv)
+
+    golden = Path(args.golden)
+    if not golden.is_absolute():
+        golden = _INVOKED_FROM / golden
+    try:
+        cases = load_golden(str(golden))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"golden set error: {exc}", file=sys.stderr)
+        return 2
+
+    if args.databank_id:
+        cases = [{**case, "databank_id": args.databank_id} for case in cases]
+
+    report = asyncio.run(run(cases, args.top_k))
+    print(format_review(report) if args.review else json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -189,6 +189,20 @@ class BillingRequest(Base):
     __table_args__ = (
         Index("ix_billing_requests_tenant_created", "tenant_id", "created_at"),
         Index("ix_billing_requests_status_created", "status", "created_at"),
+        # The 24h check in requests.py is a UX nicety (it returns the old row
+        # instead of erroring); this index is the actual invariant. Without
+        # it two concurrent submissions both pass the SELECT and both insert.
+        # Pending only: once a request is decided, the tenant may ask again.
+        Index(
+            "uq_billing_requests_pending_dedupe",
+            "tenant_id",
+            "kind",
+            text("COALESCE(amount, -1)"),
+            text("COALESCE(plan_slug, '')"),
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+            sqlite_where=text("status = 'pending'"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -242,6 +256,10 @@ class Plan(Base):
     max_team_members: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Daily manual reply-regeneration cap. Null = unlimited.
     max_regenerations_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Review Campaign limits. Null = unlimited. Defaults mirror the pre-campaign
+    # behaviour (no campaigns can be created until a plan opts in).
+    max_campaigns_per_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_campaign_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Feature flags / arbitrary limits.
     features: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")

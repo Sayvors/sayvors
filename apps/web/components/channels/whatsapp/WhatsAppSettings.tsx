@@ -14,7 +14,9 @@ import {
   createWhatsAppQrCode,
   deleteWhatsAppQrCode,
   fetchWhatsAppHealth,
+  fetchWhatsAppAnalytics,
   fetchWhatsAppQrCodes,
+  type WhatsAppAnalytics,
   type WhatsAppHealth,
   type WhatsAppQrCode,
 } from "@/lib/api-whatsapp-tools";
@@ -95,6 +97,7 @@ export default function WhatsAppSettings({
   // ── Number health + QR codes (Meta-side) ──
   const [health, setHealth] = useState<WhatsAppHealth | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
+  const [analytics, setAnalytics] = useState<WhatsAppAnalytics | null>(null);
   const [qrCodes, setQrCodes] = useState<WhatsAppQrCode[]>([]);
   const [qrError, setQrError] = useState<string | null>(null);
   const [qrMessage, setQrMessage] = useState("");
@@ -153,6 +156,9 @@ export default function WhatsAppSettings({
     fetchWhatsAppQrCodes(channelId)
       .then((rows) => { if (!dead) { setQrCodes(rows); setQrError(null); } })
       .catch((e) => { if (!dead) setQrError(e instanceof Error ? e.message : s.errors.qrLoad); });
+    fetchWhatsAppAnalytics(channelId)
+      .then((data) => { if (!dead) setAnalytics(data); })
+      .catch(() => { if (!dead) setAnalytics(null); });  // best-effort: Meta may not expose it
     return () => { dead = true; };
   }, [channelId]);
 
@@ -331,6 +337,20 @@ export default function WhatsAppSettings({
           </dl>
         )}
       </Card>
+
+      {/* Meta-side conversation analytics — best-effort, hidden when unavailable */}
+      {analytics && analytics.total > 0 && (
+        <Card title="Conversation analytics (Meta)" subtitle="Last 30 days, by conversation type" statusStrings={st}>
+          <p className="mt-2 text-[18px] font-bold text-[var(--wa-text)]">{analytics.total.toLocaleString(locale)}</p>
+          <ul className="mt-2 flex flex-wrap gap-2">
+            {analytics.points.slice(0, 8).map((p, i) => (
+              <li key={`${p.date}-${p.conversation_type}-${i}`} className="rounded-[8px] bg-[var(--wa-panel-2,rgba(0,0,0,0.03))] px-2.5 py-1.5 text-[11px] text-[var(--wa-text-2)]">
+                {p.conversation_type || "Conversation"}: <strong className="text-[var(--wa-text)]">{p.count}</strong>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
 
       {/* QR codes — a zero-cost WhatsApp entry point for counters and print */}
       <Card

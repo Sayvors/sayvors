@@ -7,7 +7,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...config import settings
 from ...core.deps import get_current_user, get_db
+from ..auth.rate_limit import rate_limit
 from ..team.context import tenant_id_of
 from . import service
 from .schemas import (
@@ -26,6 +28,13 @@ from .schemas import (
 router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
 
 logger = logging.getLogger(__name__)
+
+# Submitting a request writes a row, opens an admin notification and can send
+# the Enterprise sales emails. Ten tries a minute per workspace is generous
+# for a genuine buyer and bounds a script hammering the form. Keyed by tenant,
+# not IP, so a team sharing one NAT cannot multiply the budget.
+REQUEST_RATE_MAX = 10
+REQUEST_RATE_WINDOW_SECONDS = 60
 
 
 @router.get("/budget", response_model=BudgetOut)
@@ -238,10 +247,21 @@ async def create_purchase_request(
     a sales-assisted plan. No payment is taken here."""
     from .requests import RequestError, create_request, serialize
 
+    tenant_id = tenant_id_of(user)
+    if not settings.TESTING and not await rate_limit(
+        f"billing-request:{tenant_id}",
+        REQUEST_RATE_MAX,
+        REQUEST_RATE_WINDOW_SECONDS,
+    ):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests. Wait a moment before submitting another.",
+        )
+
     try:
         request, duplicate = await create_request(
             db,
-            tenant_id=tenant_id_of(user),
+            tenant_id=tenant_id,
             created_by=user.id,
             kind=body.kind,
             amount=body.amount,

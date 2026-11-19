@@ -7,7 +7,6 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
 import OverviewPanel from "@/components/analytics/OverviewPanel";
 import InsightsPanel from "@/components/analytics/InsightsPanel";
 import StaffPanel from "@/components/analytics/StaffPanel";
-import BenchmarkPage from "../benchmark/page";
 import GrowthPage from "../growth/page";
 
 /* Analytics shell: header, tab bar, tab switch. The tab panels live in
@@ -18,7 +17,7 @@ import GrowthPage from "../growth/page";
  * so every panel rendered below it can consume the vars. Three colours
  * only: ink, surface, sunken; depth from hairlines, never shadows. */
 
-const TABS = ["overview", "insights", "growth", "benchmark", "staff"] as const;
+const TABS = ["overview", "insights", "growth", "staff"] as const;
 
 type AnalyticsTab = (typeof TABS)[number];
 
@@ -27,7 +26,7 @@ function AnalyticsShell() {
   const params = useSearchParams();
   const raw = params.get("tab");
   const tab: AnalyticsTab =
-    raw === "insights" || raw === "growth" || raw === "benchmark" || raw === "staff"
+    raw === "insights" || raw === "growth" || raw === "staff"
       ? raw
       : "overview";
 
@@ -69,11 +68,13 @@ function AnalyticsShell() {
           })}
         </div>
       </div>
-      <div className="mt-3 min-h-0 flex-1">
+      {/* min-h-0 + overflow-hidden keep each tab panel's scroll inside the
+          panel. Without them a tall chart can push the flex row and hand the
+          wheel to the document, which scrolls the whole shell out of view. */}
+      <div className="mt-3 min-h-0 flex-1 overflow-hidden">
         {tab === "overview" && <OverviewPanel />}
         {tab === "insights" && <InsightsPanel embedded />}
         {tab === "growth" && <GrowthPage />}
-        {tab === "benchmark" && <BenchmarkPage />}
         {tab === "staff" && <StaffPanel />}
       </div>
     </div>

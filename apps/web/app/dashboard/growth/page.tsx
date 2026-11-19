@@ -19,6 +19,7 @@ import { StatCard } from "@/components/analytics/StatCard";
 import { FactSource } from "@/components/analytics/FactSource";
 import { GBP_DASHBOARD_URL } from "@/lib/google-links";
 import GrowthCardsSection from "@/components/analytics/GrowthCards";
+import CampaignsSection from "@/components/analytics/CampaignsSection";
 import FeatureLock from "@/components/billing/FeatureLock";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import type { Dict } from "@/lib/i18n/en";
@@ -254,6 +255,10 @@ function GrowthPageContent() {
           loading={loading}
           googleConnected={channels.length > 0}
         />
+      </div>
+
+      <div className="mb-5">
+        <CampaignsSection />
       </div>
 
       {error && !loading ? (

@@ -203,6 +203,7 @@ class WhatsAppAdapter(MetaProviderAdapter):
                 f"WhatsApp code exchange failed ({resp.status_code}): "
                 f"{resp.text[:300]}",
                 401,
+                public="WhatsApp rejected the sign-in. Try connecting again.",
             )
         return resp.json()  # {access_token, ...}
 
@@ -837,6 +838,7 @@ class WhatsAppAdapter(MetaProviderAdapter):
             raise MetaAPIError(
                 f"WhatsApp media upload failed ({resp.status_code}): {resp.text[:300]}",
                 resp.status_code,
+                public="The media upload failed. Try again.",
             )
         return resp.json().get("id", "")
 
@@ -1045,6 +1047,43 @@ class WhatsAppAdapter(MetaProviderAdapter):
             "code_verification_status": data.get("code_verification_status"),
             "account_mode": data.get("account_mode"),
             "platform_type": data.get("platform_type"),
+        }
+
+    async def get_conversation_analytics(
+        self, phone_number_id: str, token: str, *, start: str, end: str
+    ) -> dict:
+        """Meta-side conversation analytics for one WhatsApp number.
+
+        Our own message counters cover volume; this endpoint adds Meta's
+        conversation categories and direction, which we cannot derive locally.
+        Meta may return an empty `data` array for new numbers or older windows —
+        that is an honest empty result, not an error.
+        """
+        resp = await self._graph(
+            "GET",
+            f"/{phone_number_id}/analytics",
+            token,
+            params={
+                "metric": "CONVERSATION_ANALYTICS",
+                "start": start,
+                "end": end,
+                "granularity": "DAY",
+            },
+        )
+        payload = resp.json() or {}
+        points: list[dict] = []
+        for group in payload.get("data") or []:
+            for point in group.get("data_points") or []:
+                points.append({
+                    "date": str(point.get("start") or "")[:10],
+                    "conversation_type": point.get("conversation_type"),
+                    "direction": point.get("direction"),
+                    "count": int(point.get("count") or 0),
+                })
+        points.sort(key=lambda p: (p["date"], str(p["conversation_type"])))
+        return {
+            "points": points[:400],  # 90 days x few categories; bounded regardless
+            "total": sum(p["count"] for p in points),
         }
 
     async def get_business_profile(self, phone_number_id: str, token: str) -> dict:

@@ -60,6 +60,17 @@ class OutboxWorker:
                     for table, n in counts.items():
                         if n and n > 0:
                             logger.info("Retention cleanup: deleted %d %s", n, table)
+                    # LAUNCH-B2/B3 tail: a reply event that went dead after its
+                    # retry budget still leaves the inbound row pending. Re-drive
+                    # it from the dead event's own payload, or flag it for a human.
+                    try:
+                        from ..channels.reply_recovery import recover_stranded_replies
+
+                        recovered = await recover_stranded_replies()
+                        if recovered["redriven"] or recovered["flagged"]:
+                            logger.info("Reply recovery: %s", recovered)
+                    except Exception:
+                        logger.exception("Reply recovery sweep failed")
                     # 30-day personal-data deletion: day-25 reminders and
                     # due-day anonymization. Workspace business records stay.
                     from ...database import async_session

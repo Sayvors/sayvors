@@ -973,6 +973,12 @@ class ReviewReply(Base):
     """A (candidate or posted) reply to a Google review."""
 
     __tablename__ = "review_replies"
+    # list_review_replies filters by channel + status and orders by created_at
+    # DESC. The single-column channel index still forces a sort over every
+    # reply on a busy listing; this keeps that page flat as history grows.
+    __table_args__ = (
+        Index("ix_review_replies_channel_created", "channel_id", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     channel_id: Mapped[str] = mapped_column(

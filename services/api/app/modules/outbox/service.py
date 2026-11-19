@@ -243,7 +243,9 @@ async def cleanup_outbox_events() -> int:
     now = datetime.now(timezone.utc)
     windows = (
         (["sent"], now - timedelta(hours=SENT_RETENTION_HOURS)),
-        (["dead"], now - timedelta(days=DEAD_RETENTION_DAYS)),
+        # "recovered" rows are terminated by the reply-recovery sweep; they
+        # carry the same failure history as dead events and must age out too.
+        (["dead", "recovered"], now - timedelta(days=DEAD_RETENTION_DAYS)),
     )
     deleted = 0
     async with async_session() as db:

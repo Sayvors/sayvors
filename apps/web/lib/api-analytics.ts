@@ -35,6 +35,14 @@ export interface Overview {
   sentiment: SentimentSplit;
   response_rate: number;
   avg_response_seconds: number | null;
+  /** FACT-8: median + spread, because one slow reply skews the average. */
+  response_time?: {
+    sample_size: number;
+    median_seconds: number | null;
+    p90_seconds: number | null;
+    buckets: { key: string; count: number; pct: number }[];
+    truncated: boolean;
+  } | null;
   unanswered: number;
   reputation_score: number;
   health_score: number;
@@ -872,6 +880,41 @@ export const fetchMarketBenchmarks = (metric?: string): Promise<{
   business_count: number;
 }[]> => apiFetch(`/api/v1/analytics/market-benchmarks${metric ? `?metric=${encodeURIComponent(metric)}` : ""}`);
 
+/* ── Review Campaigns (FACT-9) ────────────────────────────────────────── */
+
+export interface Campaign {
+  id: string;
+  tenant_id: string;
+  name: string;
+  from_date: string;
+  to_date: string;
+  status: "scheduled" | "active" | "ended" | "cancelled";
+  message_template: string | null;
+  channel_id: string | null;
+  duplicated_from: string | null;
+  recipient_count: number;
+  sent_count: number;
+  clicked_count: number;
+  reviewed_count: number;
+  conversion_rate: number | null;
+  created_at: string | null;
+}
+
+export const fetchCampaigns = (): Promise<Campaign[]> =>
+  apiFetch("/api/v1/analytics/campaigns");
+
+export const createCampaign = (input: {
+  name: string; from_date: string; to_date: string;
+  message_template?: string | null; channel_id?: string | null;
+}): Promise<Campaign> =>
+  apiFetch("/api/v1/analytics/campaigns", { method: "POST", body: JSON.stringify(input) });
+
+export const duplicateCampaign = (id: string): Promise<Campaign> =>
+  apiFetch(`/api/v1/analytics/campaigns/${encodeURIComponent(id)}/duplicate`, { method: "POST" });
+
+export const cancelCampaign = (id: string): Promise<Campaign> =>
+  apiFetch(`/api/v1/analytics/campaigns/${encodeURIComponent(id)}/cancel`, { method: "POST" });
+
 /* ── Benchmark pillar ─────────────────────────────────────────────── */
 
 export interface BenchmarkResponse {
@@ -921,6 +964,27 @@ export interface BenchmarkResponse {
     median_reviews: number | null;
     top3_median_rating: number | null;
     median_response_rate: number | null;
+  } | null;
+  /** FACT-6: named, anonymous, citable cohort benchmark. */
+  regional_index?: {
+    name: string;
+    available: boolean;
+    min_businesses: number;
+    sample_size: number;
+    scope: string | null;
+    label: string;
+    period_days: number;
+    generated_at: string;
+    reason: string | null;
+    citation: string | null;
+    metrics: {
+      median_rating: number | null;
+      median_response_rate: number | null;
+      median_positive_pct: number | null;
+      median_reviews: number | null;
+      median_recency_pct: number | null;
+      median_reputation: number | null;
+    } | null;
   } | null;
   market?: MarketEntry[];
   my_rank?: number | null;

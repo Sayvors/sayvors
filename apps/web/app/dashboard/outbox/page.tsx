@@ -15,6 +15,7 @@ import {
   type ReviewInsight,
 } from "@/lib/api-analytics";
 import { useI18n } from "@/lib/i18n/I18nProvider";
+import { hasPermission } from "@/lib/permissions";
 import type { Dict } from "@/lib/i18n/en";
 
 type OutboxDict = Dict["outbox"];
@@ -226,6 +227,9 @@ export default function OutboxPage() {
   const [channelNames, setChannelNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+  // Verification rewrites reply rows, so it takes `reviews.reply`; a read-only
+  // member never sees a button that can only answer 403.
+  const [canVerify, setCanVerify] = useState(false);
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [page, setPage] = useState(1);
   const { t, locale } = useI18n();
@@ -337,6 +341,11 @@ export default function OutboxPage() {
         if (!cancelled) setLoading(false);
       }
     })();
+    // Independent of the channel list: resolves with the shared cached
+    // workspace context, so it costs one request per page load at most.
+    void hasPermission("reviews.reply").then((ok) => {
+      if (!cancelled) setCanVerify(ok);
+    });
     return () => {
       cancelled = true;
     };
@@ -549,7 +558,9 @@ export default function OutboxPage() {
         ))}
       </div>
 
-      {tab === "posted" && counts.posted > 0 && (
+      {/* The strip is legend + action ("Re-check any time"), so a member who
+          cannot re-check is better served by no strip than a dead promise. */}
+      {tab === "posted" && counts.posted > 0 && canVerify && (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-ink/[0.06] bg-white px-4 py-3 dark:border-fog/[0.06] dark:bg-ink">
           <p className="text-[12px] text-ink/55 dark:text-fog/55">
             {ob.postedHint}
