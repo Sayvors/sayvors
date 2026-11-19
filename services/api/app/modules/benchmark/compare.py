@@ -234,14 +234,20 @@ async def _saved_subject(db: AsyncSession, tenant_id: str, raw: str,
         return _subject(raw, "saved", place_id, available=False,
                         reason="This business is not on your bench.")
 
+    # A failed live refresh must not blank the column: the bench row already
+    # holds the identity (label) and the numbers captured when it was saved.
+    # Falling back to that is honest — returning a null column is not, because
+    # the user did select a real business.
+    live_failed = False
     try:
         details = await places.get_place(saved.place_id)
     except places.PlacesError as exc:
         logger.warning("Comparison details failed for place %s: %s", saved.place_id, exc)
-        return _subject(raw, "saved", place_id, available=False,
-                        reason="Live details are temporarily unavailable.")
+        details = {}
+        live_failed = True
 
-    reviews = list(details.get("reviews") or [])[:REVIEW_SAMPLE_LIMIT]
+    name = str(details.get("name") or saved.name or saved.label or "").strip()
+    reviews = list(details.get("reviews") or saved.reviews or [])[:REVIEW_SAMPLE_LIMIT]
     scan = _scan_reviews(reviews)
     total = details.get("review_count")
     if total is None:
@@ -251,9 +257,12 @@ async def _saved_subject(db: AsyncSession, tenant_id: str, raw: str,
         rating = saved.rating
 
     metrics = _blank_metrics()
+    # An empty review sample means the windows are unknown, not zero: a zero
+    # here would claim "no reviews in the last week", which Google never said.
+    windows = scan["windows"] if scan["sample_size"] else {key: None for key in WINDOW_DAYS}
     metrics.update({
         "total_reviews": total,
-        **scan["windows"],
+        **windows,
         "avg_rating": rating,
         "total_ratings": total,
         "five_star": scan["stars"].get(5, 0) if scan["sample_size"] else None,
@@ -264,7 +273,7 @@ async def _saved_subject(db: AsyncSession, tenant_id: str, raw: str,
     facts.update({
         "positive_pct": scan["positive_pct"],
         "negative_pct": scan["negative_pct"],
-        "branch": details.get("name") or saved.label,
+        "branch": name or saved.label,
         "employee_mentions": scan["text_counts"]["employee_mentions"] if scan["sample_size"] else None,
         "working_hard_mentions": scan["text_counts"]["working_hard_mentions"] if scan["sample_size"] else None,
         "menu_price_mentions": scan["text_counts"]["menu_price_mentions"] if scan["sample_size"] else None,
@@ -272,17 +281,34 @@ async def _saved_subject(db: AsyncSession, tenant_id: str, raw: str,
         "parking_criticised": scan["text_counts"]["parking_criticised"] if scan["sample_size"] else None,
         "services": _place_types(details.get("types")),
     })
-    return _subject(
-        raw, "saved", place_id, available=True,
-        name=details.get("name") or saved.label,
-        address=details.get("address"),
-        metrics=metrics, facts=facts,
-        notes=[
+
+    notes: list[str] = []
+    if live_failed:
+        saved_on = saved.created_at.date().isoformat() if saved.created_at else None
+        notes.append(
+            "Google could not be reached for a live refresh just now, so this column "
+            + (f"shows the values stored on {saved_on} when the business was added."
+               if saved_on else "shows the values stored when the business was added.")
+        )
+    if scan["sample_size"]:
+        notes.append(
             f"Review-window counts, star counts and review-text facts come from the "
             f"{scan['sample_size']} most recent reviews Google returns "
-            f"(max {REVIEW_SAMPLE_LIMIT}), not the lifetime total.",
-            "Views, calls, menu prices and registered staff are only available to the listing owner.",
-        ],
+            f"(max {REVIEW_SAMPLE_LIMIT}), not the lifetime total."
+        )
+    else:
+        notes.append(
+            "No reviews were available in this refresh, so review-window, star and "
+            "review-text facts are blank."
+        )
+    notes.append("Views, calls, menu prices and registered staff are only available to the listing owner.")
+
+    return _subject(
+        raw, "saved", place_id, available=True,
+        name=name or "Saved business",
+        address=details.get("address"),
+        metrics=metrics, facts=facts,
+        notes=notes,
     )
 
 

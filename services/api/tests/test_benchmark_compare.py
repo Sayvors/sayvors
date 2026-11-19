@@ -76,6 +76,31 @@ async def test_saved_subject_uses_places_and_flags_hidden_facts(db, monkeypatch)
     assert "only available to the listing owner" in result["notes"][-1]
 
 
+async def test_saved_subject_falls_back_to_stored_values_when_live_fails(db, monkeypatch):
+    """A Places outage must not blank the column: the bench row still has the
+    name and the numbers captured when the business was saved."""
+    from app.modules.benchmark import places as places_module
+    from app.modules.benchmark import service as bench_service
+
+    await bench_service.save_place(
+        db, TENANT, place_id="cmp-down", label="Offline Bakery",
+        rating=4.1, review_count=250,
+    )
+
+    async def _boom(place_id):
+        raise places_module.PlacesError("quota exceeded", status_code=503)
+
+    monkeypatch.setattr(places_module, "get_place", _boom)
+    result = (await compare.compare_subjects(db, TENANT, ["saved:cmp-down"]))[0]
+
+    assert result["available"] is True
+    assert result["name"] == "Offline Bakery"
+    assert result["metrics"]["avg_rating"] == 4.1
+    assert result["metrics"]["total_reviews"] == 250
+    assert result["metrics"]["five_star"] is None  # no review sample available
+    assert any("could not be reached" in note for note in result["notes"])
+
+
 async def test_saved_subject_not_on_bench_is_unavailable(db):
     result = (await compare.compare_subjects(db, TENANT, ["saved:not-mine"]))[0]
     assert result["available"] is False

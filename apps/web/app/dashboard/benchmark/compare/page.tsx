@@ -42,7 +42,7 @@ const METRIC_ROWS: Row<MetricKey>[] = [
   { key: "reviews_last_week", label: "Reviews · last week", value: (s) => s.metrics.reviews_last_week, render: (s) => num(s.metrics.reviews_last_week) },
   { key: "reviews_last_month", label: "Reviews · last month", value: (s) => s.metrics.reviews_last_month, render: (s) => num(s.metrics.reviews_last_month) },
   { key: "reviews_last_year", label: "Reviews · last year", value: (s) => s.metrics.reviews_last_year, render: (s) => num(s.metrics.reviews_last_year) },
-  { key: "avg_rating", label: "Average rating", value: (s) => s.metrics.avg_rating, render: (s) => num(s.metrics.avg_rating, " ★") },
+  { key: "avg_rating", label: "Average rating", value: (s) => s.metrics.avg_rating, render: (s) => rating(s) },
   { key: "total_ratings", label: "Ratings total", value: (s) => s.metrics.total_ratings, render: (s) => num(s.metrics.total_ratings) },
   { key: "five_star", label: "5-star ratings", value: (s) => s.metrics.five_star, render: (s) => num(s.metrics.five_star) },
   { key: "four_star", label: "4-star ratings", value: (s) => s.metrics.four_star, render: (s) => num(s.metrics.four_star) },
@@ -85,6 +85,13 @@ function num(value: number | null | undefined, suffix = ""): string {
 
 function pct(value: number | null | undefined): string {
   return value == null ? "—" : `${value}%`;
+}
+
+/** A listing with no ratings has no average; 0.0 would read as a real score. */
+function rating(subject: ComparisonSubject): string {
+  const { avg_rating, total_ratings } = subject.metrics;
+  if (avg_rating == null || total_ratings === 0) return "—";
+  return `${avg_rating} ★`;
 }
 
 function ownerOnly(subject: ComparisonSubject, value: number | null): ReactNode {
@@ -152,7 +159,16 @@ function MatrixTable<T extends string>({
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full border-collapse text-left">
+        <table
+          className="w-full table-fixed border-collapse text-left"
+          style={{ minWidth: 168 + subjects.length * 148 }}
+        >
+          <colgroup>
+            <col style={{ width: 168 }} />
+            {subjects.map((subject) => (
+              <col key={subject.key} />
+            ))}
+          </colgroup>
           <thead>
             <tr>
               <th
@@ -173,9 +189,9 @@ function MatrixTable<T extends string>({
                   >
                     <span
                       className="block truncate text-[12px] font-bold text-[#14101F]"
-                      title={subject.name || subject.id}
+                      title={subject.name || undefined}
                     >
-                      {subject.name || subject.id}
+                      {subject.name || (subject.kind === "own" ? "Your location" : "Saved business")}
                     </span>
                     <span className="mt-0.5 block truncate text-[10px] font-normal text-[#3B2D5E]">
                       {subject.available
@@ -223,7 +239,7 @@ function MatrixTable<T extends string>({
                         {subject.available ? (
                           row.render(subject)
                         ) : (
-                          <span className="font-sans text-[10px] text-[#8E1230]">{subject.reason}</span>
+                          <span className="font-sans text-[#8A8496]">—</span>
                         )}
                       </td>
                     );
