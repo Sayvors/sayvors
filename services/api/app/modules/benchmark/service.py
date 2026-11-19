@@ -6,7 +6,7 @@ construction rather than by convention.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -52,8 +52,19 @@ def serialize(place: BenchmarkPlace) -> dict:
         "reviews": place.reviews,
         "photos": place.photos,
         "fetched_at": place.fetched_at.isoformat() if place.fetched_at else None,
+        "last_scrape_error": place.last_scrape_error,
         "created_at": place.created_at.isoformat() if place.created_at else None,
         "updated_at": place.updated_at.isoformat() if place.updated_at else None,
+    }
+
+
+def serialize_config(row: BenchmarkConfig) -> dict:
+    return {
+        "refresh_hours": row.refresh_hours,
+        "retention_days": row.retention_days,
+        "place_cache_enabled": row.place_cache_enabled,
+        "max_saved_places": row.max_saved_places,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
 
 
@@ -253,3 +264,92 @@ async def delete_saved(db: AsyncSession, tenant_id: str, place_id: str) -> bool:
     await db.delete(row)
     await db.commit()
     return True
+
+
+# Admin-editable settings. Bounds are deliberately wide but finite: an interval
+# of 0 would scrape on every tick, and a retention of 0 would delete the
+# history the comparison page reads.
+CONFIG_BOUNDS: dict[str, tuple[int, int]] = {
+    "refresh_hours": (1, 168),
+    "retention_days": (7, 3650),
+    "max_saved_places": (1, 500),
+}
+
+
+async def update_config(db: AsyncSession, **values: object) -> BenchmarkConfig:
+    """Apply admin changes to the single benchmark config row.
+
+    Unknown keys are rejected rather than ignored: a typo'd field must not look
+    like it saved. `place_cache_enabled` doubles as the scraper switch.
+    """
+    row = await get_config(db)
+    for key, value in values.items():
+        if key == "place_cache_enabled":
+            row.place_cache_enabled = bool(value)
+            continue
+        if key not in CONFIG_BOUNDS:
+            raise BenchError(f"Unknown benchmark setting: {key}")
+        if value is None:
+            continue
+        low, high = CONFIG_BOUNDS[key]
+        try:
+            number = int(value)
+        except (TypeError, ValueError) as exc:
+            raise BenchError(f"{key} must be a whole number.") from exc
+        if not low <= number <= high:
+            raise BenchError(f"{key} must be between {low} and {high}.")
+        setattr(row, key, number)
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
+async def history_points(
+    db: AsyncSession,
+    tenant_id: str,
+    place: BenchmarkPlace,
+    *,
+    days: int,
+    points: int,
+) -> list[dict]:
+    """Snapshot history for one saved place, oldest first, downsampled.
+
+    Only the selected window is returned: history from before it belongs to a
+    different range and must not appear here. Reading every snapshot of a year
+    would put hundreds of rows into a table nobody can read, so the caller asks
+    for at most `points` evenly spaced rows and the scan is bounded before that.
+    """
+    since = datetime.now(timezone.utc) - timedelta(days=max(1, days))
+    points = max(points, 1)
+    rows = (
+        await db.execute(
+            select(
+                BenchmarkSnapshot.fetched_at,
+                BenchmarkSnapshot.rating,
+                BenchmarkSnapshot.review_count,
+            )
+            .where(
+                BenchmarkSnapshot.tenant_id == tenant_id,
+                BenchmarkSnapshot.place_id == place.id,
+                BenchmarkSnapshot.fetched_at >= since,
+            )
+            .order_by(BenchmarkSnapshot.fetched_at.desc())
+            .limit(points * 4)
+        )
+    ).all()
+    if not rows:
+        return []
+    if len(rows) <= points:
+        selected = rows
+    else:
+        step = len(rows) / float(points)
+        selected = [rows[min(len(rows) - 1, int(index * step))] for index in range(points)]
+    # Oldest first: a history table reads top-to-bottom in time order.
+    return [
+        {
+            "at": row[0].isoformat() if row[0] else None,
+            "rating": row[1],
+            "reviews": row[2],
+        }
+        for row in reversed(selected)
+    ]

@@ -22,7 +22,7 @@ class BenchmarkConfig(Base):
 
     id: Mapped[str] = mapped_column(String(16), primary_key=True, default="default")
     place_cache_enabled: Mapped[bool] = mapped_column(default=True)
-    retention_days: Mapped[int] = mapped_column(Integer, default=2)
+    retention_days: Mapped[int] = mapped_column(Integer, default=730)
     refresh_hours: Mapped[int] = mapped_column(Integer, default=24)
     max_saved_places: Mapped[int] = mapped_column(Integer, default=50)
     updated_at: Mapped[datetime] = mapped_column(
@@ -56,6 +56,9 @@ class BenchmarkPlace(Base):
     reviews: Mapped[list | None] = mapped_column(JSON, nullable=True)
     photos: Mapped[list | None] = mapped_column(JSON, nullable=True)
     fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Last scraper failure, so an outage is visible to the admin instead of
+    # silently freezing the history at an old date.
+    last_scrape_error: Mapped[str | None] = mapped_column(String(300), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

@@ -19,6 +19,7 @@ from ...core.upstream_errors import upstream_http_error
 from ...security import create_admin_token, hash_password, verify_password
 from ..auth.rate_limit import rate_limit
 from ..auth.router import get_client_ip
+from ..benchmark import service as benchmark_service
 # SubscriptionOut is needed at import time by the `/tenants/special` decorator,
 # which must be declared before `/tenants/{user_id}` or FastAPI shadows it.
 from ..billing.schemas import SubscriptionOut, TenantFeaturesIn
@@ -296,6 +297,46 @@ async def admin_rate_limit(request: Request):
 @router.get("/me")
 async def admin_me(_admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit)):
     return {"admin": True}
+
+
+class BenchmarkConfigIn(BaseModel):
+    """Partial update of the scheduled benchmark scrape.
+
+    Every field is optional so the admin UI can save one control without
+    re-sending the rest. Bounds live in `benchmark.service.update_config`, which
+    also rejects unknown keys.
+    """
+
+    refresh_hours: int | None = Field(default=None, ge=1, le=168)
+    retention_days: int | None = Field(default=None, ge=7, le=3650)
+    max_saved_places: int | None = Field(default=None, ge=1, le=500)
+    place_cache_enabled: bool | None = None
+
+
+@router.get("/benchmark/config")
+async def admin_benchmark_config(
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Current scrape cadence, history retention and scraper switch."""
+    row = await benchmark_service.get_config(db)
+    return benchmark_service.serialize_config(row)
+
+
+@router.put("/benchmark/config")
+async def admin_update_benchmark_config(
+    body: BenchmarkConfigIn,
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Change the scrape cadence or retention. Applies on the next worker tick."""
+    try:
+        row = await benchmark_service.update_config(
+            db, **body.model_dump(exclude_unset=True)
+        )
+    except benchmark_service.BenchError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return benchmark_service.serialize_config(row)
 
 
 @router.get("/overview", response_model=AdminOverview)

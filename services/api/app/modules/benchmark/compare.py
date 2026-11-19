@@ -20,16 +20,21 @@ from typing import Any
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..analytics.models import ReviewInsight
+from ..analytics.models import LocationDailyMetric, ReviewInsight
 from ..analytics.service import get_overview
 from ..analytics.staff_mentions import listing_id_for_channel, staff_summary
 from ..channels.models import BusinessService, Channel, VerificationRecord
 from . import places
-from .service import get_saved
+from .models import BenchmarkSnapshot
+from .service import get_saved, history_points
 
 logger = logging.getLogger(__name__)
 
 MAX_SUBJECTS = 6
+# Period filter on the comparison page. "live" reads Google/analytics now; the
+# others ask for the same facts restricted to a window, computed from the
+# scraper's snapshot history plus the current live values.
+RANGES: dict[str, int | None] = {"live": None, "30d": 30, "90d": 90, "365d": 365}
 # Google returns at most 500 reviews per place; keep our own sample the same
 # size so both sides of the comparison describe the same kind of evidence.
 REVIEW_SAMPLE_LIMIT = 500
@@ -106,6 +111,12 @@ def _blank_metrics() -> dict[str, Any]:
         "one_star": None,
         "impressions": None,
         "calls": None,
+        # Period-only facts; null when the filter is "live".
+        "period_reviews": None,
+        "period_avg_rating": None,
+        "rating_change": None,
+        "period_impressions": None,
+        "period_calls": None,
     }
 
 
@@ -227,8 +238,48 @@ def _place_types(types: list[str] | None) -> list[str]:
     return list(dict.fromkeys(out))[:10]
 
 
+def _sample_period_rating(reviews: list[dict], days: int) -> float | None:
+    """Average rating of the sampled reviews published inside the window.
+
+    Google only returns the most recent reviews, so this is a sample average,
+    not the listing's official period rating. It is null rather than 0 when the
+    sample holds nothing from the window.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    ratings: list[int] = []
+    for review in reviews:
+        try:
+            rating = int(review.get("rating"))
+        except (TypeError, ValueError):
+            continue
+        published = _publish_time(review.get("publish_time") or review.get("created_at"))
+        if published and published >= cutoff and 1 <= rating <= 5:
+            ratings.append(rating)
+    return round(sum(ratings) / len(ratings), 2) if ratings else None
+
+
+async def _baseline_snapshot(
+    db: AsyncSession, tenant_id: str, place_pk: str, days: int
+) -> BenchmarkSnapshot | None:
+    """Newest snapshot taken at or before the start of the requested window."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    return (
+        await db.execute(
+            select(BenchmarkSnapshot)
+            .where(
+                BenchmarkSnapshot.tenant_id == tenant_id,
+                BenchmarkSnapshot.place_id == place_pk,
+                BenchmarkSnapshot.fetched_at <= cutoff,
+            )
+            .order_by(BenchmarkSnapshot.fetched_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
 async def _saved_subject(db: AsyncSession, tenant_id: str, raw: str,
-                         place_id: str) -> dict[str, Any]:
+                         place_id: str, *,
+                         days: int | None = None) -> dict[str, Any]:
     saved = await get_saved(db, tenant_id, place_id)
     if saved is None:
         return _subject(raw, "saved", place_id, available=False,
@@ -284,12 +335,28 @@ async def _saved_subject(db: AsyncSession, tenant_id: str, raw: str,
 
     notes: list[str] = []
     if live_failed:
-        saved_on = saved.created_at.date().isoformat() if saved.created_at else None
         notes.append(
-            "Google could not be reached for a live refresh just now, so this column "
-            + (f"shows the values stored on {saved_on} when the business was added."
-               if saved_on else "shows the values stored when the business was added.")
+            "Google could not be reached just now, so this column shows the last known values."
         )
+    if days is not None:
+        baseline = await _baseline_snapshot(db, tenant_id, saved.id, days)
+        metrics["period_avg_rating"] = _sample_period_rating(reviews, days)
+        if baseline is None:
+            metrics["period_reviews"] = None
+            metrics["rating_change"] = None
+            notes.insert(0, (
+                "There is not enough data for this period yet, so reviews added "
+                "and the rating change are blank."
+            ))
+        else:
+            if total is not None and baseline.review_count is not None:
+                metrics["period_reviews"] = max(0, int(total) - int(baseline.review_count))
+            if rating is not None and baseline.rating is not None:
+                metrics["rating_change"] = round(float(rating) - float(baseline.rating), 2)
+            notes.insert(0, (
+                "Reviews added and the rating change compare the latest values "
+                "with the start of this period."
+            ))
     if scan["sample_size"]:
         notes.append(
             f"Review-window counts, star counts and review-text facts come from the "
@@ -313,7 +380,8 @@ async def _saved_subject(db: AsyncSession, tenant_id: str, raw: str,
 
 
 async def _own_subject(db: AsyncSession, tenant_id: str, raw: str,
-                       channel_id: str) -> dict[str, Any]:
+                       channel_id: str, *,
+                       days: int | None = None) -> dict[str, Any]:
     channel = (
         await db.execute(
             select(Channel).where(Channel.id == channel_id, Channel.user_id == tenant_id)
@@ -426,24 +494,94 @@ async def _own_subject(db: AsyncSession, tenant_id: str, raw: str,
         "top_problems": [name for name, _ in problems.most_common(5)],
         "named_team": named_team,
     })
+
+    notes = [
+        f"Counts come from your connected Google location. Review-text facts are "
+        f"scanned from the {scan['sample_size']} most recent reviews "
+        f"(max {REVIEW_SAMPLE_LIMIT}).",
+        "Views and calls are from the last 12 months of Google Business Profile data.",
+    ]
+    if days is not None:
+        cutoff = now - timedelta(days=days)
+        # Review facts come from the review rows themselves: a review published
+        # inside the window is a fact, not an estimate. The rating change is the
+        # lifetime average now against the lifetime average on the day the
+        # window opened — the same definition used for a saved competitor.
+        period_row = (
+            await db.execute(
+                select(
+                    func.sum(case((bucket >= cutoff, 1), else_=0)),
+                    func.avg(case((bucket >= cutoff, ReviewInsight.rating))),
+                    func.avg(case((bucket < cutoff, ReviewInsight.rating))),
+                ).where(*base)
+            )
+        ).one()
+        period_reviews = int(period_row[0] or 0)
+        period_avg = (
+            round(float(period_row[1]), 2) if period_row[1] is not None else None
+        )
+        before_avg = (
+            round(float(period_row[2]), 2) if period_row[2] is not None else None
+        )
+        current_avg = overview.get("avg_rating")
+        rating_change = None
+        if (
+            int(overview.get("total_reviews") or 0) > 0
+            and current_avg is not None
+            and before_avg is not None
+        ):
+            rating_change = round(float(current_avg) - before_avg, 2)
+
+        # No rows means Google has not synced performance for this window yet.
+        # A zero would claim the location was never seen, which we do not know.
+        perf_row = (
+            await db.execute(
+                select(
+                    func.count(),
+                    func.sum(LocationDailyMetric.impressions_maps_desktop),
+                    func.sum(LocationDailyMetric.impressions_maps_mobile),
+                    func.sum(LocationDailyMetric.call_clicks),
+                ).where(
+                    LocationDailyMetric.user_id == tenant_id,
+                    LocationDailyMetric.channel_id == channel_id,
+                    LocationDailyMetric.date >= cutoff.date(),
+                )
+            )
+        ).one()
+        has_perf = int(perf_row[0] or 0) > 0
+        metrics.update({
+            "period_reviews": period_reviews,
+            "period_avg_rating": period_avg,
+            "rating_change": rating_change,
+            "period_impressions": (
+                int(perf_row[1] or 0) + int(perf_row[2] or 0) if has_perf else None
+            ),
+            "period_calls": int(perf_row[3] or 0) if has_perf else None,
+        })
+        notes.insert(
+            0,
+            f"Reviews added, average rating, views and calls cover the last "
+            f"{days} days of your connected location.",
+        )
+
     return _subject(
         raw, "own", channel_id, available=True,
         name=channel.display_name,
         address=None,
         verified=verified,
         metrics=metrics, facts=facts,
-        notes=[
-            f"Counts come from your connected Google location. Review-text facts are "
-            f"scanned from the {scan['sample_size']} most recent reviews "
-            f"(max {REVIEW_SAMPLE_LIMIT}).",
-            "Views and calls are from the last 12 months of Google Business Profile data.",
-        ],
+        notes=notes,
     )
 
 
 async def compare_subjects(db: AsyncSession, tenant_id: str,
-                           raw_subjects: list[str]) -> list[dict[str, Any]]:
+                           raw_subjects: list[str], *,
+                           days: int | None = None) -> list[dict[str, Any]]:
     """Return one normalized record per requested subject, in request order.
+
+    `days` switches the period facts from null to a window: saved places get
+    them from snapshot history, own locations from their review and performance
+    rows. `None` means "live" — only the current values.
 
     A bad or inaccessible side is returned as an unavailable record instead of
     failing the whole comparison, so the other side still renders.
@@ -455,9 +593,9 @@ async def compare_subjects(db: AsyncSession, tenant_id: str,
         try:
             kind, ident = parse_subject(raw)
             if kind == "saved":
-                out.append(await _saved_subject(db, tenant_id, raw, ident))
+                out.append(await _saved_subject(db, tenant_id, raw, ident, days=days))
             else:
-                out.append(await _own_subject(db, tenant_id, raw, ident))
+                out.append(await _own_subject(db, tenant_id, raw, ident, days=days))
         except CompareError as exc:
             out.append(_subject(str(raw), "unknown", "", available=False, reason=str(exc)))
         except Exception:
@@ -468,3 +606,113 @@ async def compare_subjects(db: AsyncSession, tenant_id: str,
                 reason="Could not load this side of the comparison.",
             ))
     return out
+
+
+MAX_HISTORY_POINTS = 24
+
+
+async def _saved_history(
+    db: AsyncSession, tenant_id: str, raw: str, place_id: str,
+    *, days: int, points: int,
+) -> dict[str, Any]:
+    """Snapshot history of one bench place. Empty until the scraper has run."""
+    saved = await get_saved(db, tenant_id, place_id)
+    if saved is None:
+        return {"key": raw, "kind": "saved", "name": None, "points": []}
+    rows = await history_points(db, tenant_id, saved, days=days, points=points)
+    return {
+        "key": raw,
+        "kind": "saved",
+        "name": saved.name or saved.label,
+        "points": rows,
+    }
+
+
+async def _own_history(
+    db: AsyncSession, tenant_id: str, raw: str, channel_id: str,
+    *, days: int, points: int,
+) -> dict[str, Any]:
+    """Cumulative review totals for one own location, sampled across the window.
+
+    One aggregate query covers every checkpoint, so a year of history costs the
+    same as a month. Checkpoints with no reviews are dropped rather than shown
+    as zeroes.
+    """
+    channel = (
+        await db.execute(
+            select(Channel).where(Channel.id == channel_id, Channel.user_id == tenant_id)
+        )
+    ).scalar_one_or_none()
+    if channel is None or channel.platform != "google_reviews":
+        return {"key": raw, "kind": "own", "name": None, "points": []}
+
+    count = max(2, points)
+    now = datetime.now(timezone.utc)
+    step = timedelta(days=max(1, days)) / count
+    checkpoints = [now - step * (count - index - 1) for index in range(count)]
+    bucket = func.coalesce(ReviewInsight.review_updated_at, ReviewInsight.created_at)
+    result = (
+        await db.execute(
+            select(
+                *[
+                    func.sum(case((bucket <= when, 1), else_=0))
+                    for when in checkpoints
+                ],
+                *[
+                    func.avg(case((bucket <= when, ReviewInsight.rating)))
+                    for when in checkpoints
+                ],
+            ).where(
+                ReviewInsight.user_id == tenant_id,
+                ReviewInsight.channel_id == channel_id,
+                ReviewInsight.removed_at.is_(None),
+            )
+        )
+    ).one()
+
+    rows = []
+    for index, when in enumerate(checkpoints):
+        total = int(result[index] or 0)
+        if total == 0:
+            continue
+        average = result[count + index]
+        rows.append({
+            "at": when.isoformat(),
+            "rating": round(float(average), 2) if average is not None else None,
+            "reviews": total,
+        })
+    return {
+        "key": raw,
+        "kind": "own",
+        "name": channel.display_name,
+        "points": rows,
+    }
+
+
+async def subject_history(
+    db: AsyncSession, tenant_id: str, raw_subjects: list[str],
+    *, days: int, points: int,
+) -> dict[str, Any]:
+    """Bounded history for each requested subject, oldest point first."""
+    if not raw_subjects or len(raw_subjects) > MAX_SUBJECTS:
+        raise CompareError(f"Ask for history of one to {MAX_SUBJECTS} subjects.")
+    points = max(2, min(int(points), MAX_HISTORY_POINTS))
+    days = max(1, int(days))
+    out = []
+    for raw in raw_subjects:
+        try:
+            kind, ident = parse_subject(raw)
+            if kind == "saved":
+                out.append(await _saved_history(
+                    db, tenant_id, raw, ident, days=days, points=points
+                ))
+            else:
+                out.append(await _own_history(
+                    db, tenant_id, raw, ident, days=days, points=points
+                ))
+        except CompareError:
+            out.append({"key": str(raw), "kind": "unknown", "name": None, "points": []})
+        except Exception:
+            logger.exception("History failed for subject: %s", raw)
+            out.append({"key": str(raw), "kind": "unknown", "name": None, "points": []})
+    return {"days": days, "points": points, "subjects": out}

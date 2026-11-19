@@ -98,7 +98,7 @@ async def test_saved_subject_falls_back_to_stored_values_when_live_fails(db, mon
     assert result["metrics"]["avg_rating"] == 4.1
     assert result["metrics"]["total_reviews"] == 250
     assert result["metrics"]["five_star"] is None  # no review sample available
-    assert any("could not be reached" in note for note in result["notes"])
+    assert any("last known values" in note for note in result["notes"])
 
 
 async def test_saved_subject_not_on_bench_is_unavailable(db):
@@ -175,3 +175,373 @@ async def test_compare_endpoint(client, monkeypatch):
     assert len(body["subjects"]) == 1
     assert body["subjects"][0]["name"] == "HTTP Rival"
     assert body["subjects"][0]["metrics"]["total_reviews"] == 42
+
+
+# ── Period filter: snapshot history + live values ──────────────────────────
+
+async def _fake_details(place_id, **overrides):
+    payload = {
+        "place_id": place_id, "name": place_id, "address": None,
+        "rating": 4.4, "review_count": 900, "types": [], "reviews": [],
+    }
+    payload.update(overrides)
+    return payload
+
+
+async def test_saved_subject_period_from_snapshot_delta(db, monkeypatch):
+    from app.modules.benchmark import places as places_module
+    from app.modules.benchmark import service as bench_service
+    from app.modules.benchmark.models import BenchmarkSnapshot
+
+    saved = await bench_service.save_place(
+        db, TENANT, place_id="period-1", label="Period Rival",
+        rating=4.0, review_count=800,
+    )
+    now = datetime.now(timezone.utc)
+    db.add(BenchmarkSnapshot(
+        place_id=saved.id, tenant_id=TENANT, rating=4.0, review_count=800,
+        fetched_at=now - timedelta(days=35),
+    ))
+    await db.commit()
+
+    async def _fake(place_id):
+        return await _fake_details(
+            place_id, rating=4.4, review_count=900,
+            reviews=[{
+                "rating": 5, "text": "great",
+                "publish_time": (now - timedelta(days=5)).isoformat(),
+            }],
+        )
+
+    monkeypatch.setattr(places_module, "get_place", _fake)
+    result = (await compare.compare_subjects(
+        db, TENANT, ["saved:period-1"], days=30
+    ))[0]
+
+    metrics = result["metrics"]
+    assert metrics["period_reviews"] == 100          # 900 now - 800 at baseline
+    assert metrics["period_avg_rating"] == 5.0       # sample average in window
+    assert metrics["rating_change"] == 0.4           # 4.4 now - 4.0 at baseline
+    assert metrics["period_impressions"] is None     # never exposed for competitors
+    assert any("start of this period" in note for note in result["notes"])
+
+
+async def test_saved_subject_period_without_history_is_null(db, monkeypatch):
+    from app.modules.benchmark import places as places_module
+    from app.modules.benchmark import service as bench_service
+
+    await bench_service.save_place(db, TENANT, place_id="period-2", label="No History")
+
+    async def _fake(place_id):
+        return await _fake_details(place_id)
+
+    monkeypatch.setattr(places_module, "get_place", _fake)
+    result = (await compare.compare_subjects(
+        db, TENANT, ["saved:period-2"], days=90
+    ))[0]
+
+    assert result["metrics"]["period_reviews"] is None
+    assert result["metrics"]["rating_change"] is None
+    assert any(
+        "not enough data" in note for note in result["notes"]
+    )
+
+
+async def test_own_subject_period_uses_review_and_performance_rows(
+    db, channel_id, user_id
+):
+    from app.modules.analytics.models import LocationDailyMetric, ReviewInsight
+
+    now = datetime.now(timezone.utc)
+    db.add_all([
+        ReviewInsight(
+            id="ri-recent", user_id=user_id, channel_id=channel_id,
+            review_id="r-recent", rating=5, review_text="great",
+            review_updated_at=now - timedelta(days=5),
+        ),
+        ReviewInsight(
+            id="ri-old", user_id=user_id, channel_id=channel_id,
+            review_id="r-old", rating=3, review_text="ok",
+            review_updated_at=now - timedelta(days=90),
+        ),
+        LocationDailyMetric(
+            id="ldm-in", user_id=user_id, channel_id=channel_id,
+            date=(now - timedelta(days=3)).date(),
+            impressions_maps_desktop=70, impressions_maps_mobile=30,
+            call_clicks=4,
+        ),
+        LocationDailyMetric(
+            id="ldm-out", user_id=user_id, channel_id=channel_id,
+            date=(now - timedelta(days=40)).date(),
+            impressions_maps_desktop=1000, impressions_maps_mobile=0,
+            call_clicks=9,
+        ),
+    ])
+    await db.commit()
+
+    result = (await compare.compare_subjects(
+        db, user_id, [f"own:{channel_id}"], days=30
+    ))[0]
+    metrics = result["metrics"]
+
+    assert metrics["total_reviews"] == 2             # live totals untouched
+    assert metrics["period_reviews"] == 1
+    assert metrics["period_avg_rating"] == 5.0
+    assert metrics["rating_change"] == 1.0           # 4.0 now vs 3.0 before window
+    assert metrics["period_impressions"] == 100      # 40-day row is outside
+    assert metrics["period_calls"] == 4
+    assert any("last 30 days" in note for note in result["notes"])
+
+
+async def test_own_period_performance_is_null_without_synced_rows(
+    db, channel_id, user_id
+):
+    result = (await compare.compare_subjects(
+        db, user_id, [f"own:{channel_id}"], days=30
+    ))[0]
+    # No rows means "not synced yet" — a zero would claim zero views.
+    assert result["metrics"]["period_impressions"] is None
+    assert result["metrics"]["period_calls"] is None
+
+
+# ── History endpoint data ──────────────────────────────────────────────────
+
+async def test_saved_history_is_sampled_oldest_first_and_tenant_scoped(db):
+    from app.modules.benchmark import service as bench_service
+    from app.modules.benchmark.models import BenchmarkSnapshot
+
+    saved = await bench_service.save_place(
+        db, TENANT, place_id="hist-1", label="History Rival"
+    )
+    now = datetime.now(timezone.utc)
+    for offset in (1, 5, 10, 20, 40):
+        db.add(BenchmarkSnapshot(
+            place_id=saved.id, tenant_id=TENANT, rating=4.0,
+            review_count=100 + offset, fetched_at=now - timedelta(days=offset),
+        ))
+    await db.commit()
+
+    body = await compare.subject_history(
+        db, TENANT, ["saved:hist-1"], days=90, points=3
+    )
+    series = body["subjects"][0]
+    assert series["name"] == "History Rival"
+    assert 1 <= len(series["points"]) <= 3
+    ats = [point["at"] for point in series["points"]]
+    assert ats == sorted(ats), "history reads oldest first"
+
+    other = await compare.subject_history(
+        db, "other-tenant", ["saved:hist-1"], days=90, points=3
+    )
+    assert other["subjects"][0]["points"] == []
+
+
+async def test_saved_history_only_returns_the_selected_window(db):
+    """History outside the selected period is not shown in it."""
+    from app.modules.benchmark import service as bench_service
+    from app.modules.benchmark.models import BenchmarkSnapshot
+
+    saved = await bench_service.save_place(
+        db, TENANT, place_id="hist-window", label="Window Rival"
+    )
+    now = datetime.now(timezone.utc)
+    for offset in (40, 10):
+        db.add(BenchmarkSnapshot(
+            place_id=saved.id, tenant_id=TENANT, rating=4.1,
+            review_count=100 + offset, fetched_at=now - timedelta(days=offset),
+        ))
+    await db.commit()
+
+    body = await compare.subject_history(
+        db, TENANT, ["saved:hist-window"], days=30, points=12
+    )
+    points = body["subjects"][0]["points"]
+    assert any(point["reviews"] == 110 for point in points)
+    # The 40-day snapshot is outside the window and must not leak into it.
+    oldest = min(datetime.fromisoformat(point["at"]).replace(tzinfo=timezone.utc) for point in points)
+    assert oldest >= now - timedelta(days=30)
+
+
+async def test_own_history_is_cumulative(db, channel_id, user_id):
+    from app.modules.analytics.models import ReviewInsight
+
+    now = datetime.now(timezone.utc)
+    db.add_all([
+        ReviewInsight(
+            id="ri-h1", user_id=user_id, channel_id=channel_id,
+            review_id="r-h1", rating=5,
+            review_updated_at=now - timedelta(days=5),
+        ),
+        ReviewInsight(
+            id="ri-h2", user_id=user_id, channel_id=channel_id,
+            review_id="r-h2", rating=3,
+            review_updated_at=now - timedelta(days=90),
+        ),
+    ])
+    await db.commit()
+
+    body = await compare.subject_history(
+        db, user_id, [f"own:{channel_id}"], days=30, points=4
+    )
+    series = body["subjects"][0]
+    assert series["name"] == "Test Burgers"
+    assert series["points"], "at least one checkpoint must be returned"
+    assert series["points"][-1]["reviews"] == 2       # lifetime total by now
+    assert series["points"][-1]["rating"] == 4.0
+
+
+# ── Admin-editable scraper settings ────────────────────────────────────────
+
+async def test_config_changes_are_bounded_and_persist(db):
+    from app.modules.benchmark import service as bench_service
+
+    for bad in (
+        {"refresh_hours": 0},
+        {"refresh_hours": 169},
+        {"retention_days": 6},
+        {"retention_days": 3651},
+        {"nonsense": 5},
+    ):
+        with pytest.raises(bench_service.BenchError):
+            await bench_service.update_config(db, **bad)
+
+    row = await bench_service.update_config(
+        db, refresh_hours=6, retention_days=90, place_cache_enabled=False
+    )
+    assert (row.refresh_hours, row.retention_days) == (6, 90)
+    assert row.place_cache_enabled is False
+
+    reloaded = await bench_service.get_config(db)
+    assert (reloaded.refresh_hours, reloaded.retention_days) == (6, 90)
+    assert bench_service.serialize_config(reloaded)["place_cache_enabled"] is False
+
+
+# ── Scheduled scraper ──────────────────────────────────────────────────────
+
+async def test_scraper_scrapes_due_places_records_failures_and_prunes(db, monkeypatch):
+    from sqlalchemy import func, select
+
+    from app.modules.benchmark import places as places_module
+    from app.modules.benchmark import scraper
+    from app.modules.benchmark import service as bench_service
+    from app.modules.benchmark.models import BenchmarkPlace, BenchmarkSnapshot
+
+    await bench_service.update_config(
+        db, refresh_hours=1, retention_days=7, place_cache_enabled=True
+    )
+
+    # Created directly, not through save_place: saving writes a snapshot at
+    # "now", which would make every place look freshly scraped.
+    ok = BenchmarkPlace(id="pk-scrape-ok", tenant_id=TENANT, place_id="scrape-ok", label="OK")
+    bad = BenchmarkPlace(id="pk-scrape-bad", tenant_id=TENANT, place_id="scrape-bad", label="Bad")
+    fresh = BenchmarkPlace(id="pk-scrape-fresh", tenant_id=TENANT, place_id="scrape-fresh", label="Fresh")
+    old = BenchmarkPlace(id="pk-scrape-old", tenant_id=TENANT, place_id="scrape-old", label="Old")
+    db.add_all([ok, bad, fresh, old])
+
+    now = datetime.now(timezone.utc)
+    db.add_all([
+        # Scraped ten minutes ago: not due at a one-hour cadence.
+        BenchmarkSnapshot(
+            place_id=fresh.id, tenant_id=TENANT, rating=4.0,
+            review_count=10, fetched_at=now - timedelta(minutes=10),
+        ),
+        # Due, and its only snapshot is older than the 7-day retention.
+        BenchmarkSnapshot(
+            place_id=old.id, tenant_id=TENANT, rating=4.0,
+            review_count=5, fetched_at=now - timedelta(days=30),
+        ),
+    ])
+    await db.commit()
+
+    seen: list[str] = []
+
+    async def _fake(place_id):
+        seen.append(place_id)
+        if place_id == "scrape-bad":
+            raise places_module.PlacesError("quota exceeded", status_code=500)
+        return await _fake_details(place_id, rating=4.6, review_count=12)
+
+    monkeypatch.setattr(places_module, "get_place", _fake)
+    result = await scraper.refresh_due_places(now=now)
+
+    assert result["scraped"] == 2       # ok + old
+    assert result["failed"] == 1        # bad
+    assert result["pruned"] >= 1
+    assert "scrape-fresh" not in seen   # not due
+
+    await db.refresh(ok)
+    await db.refresh(bad)
+    assert ok.review_count == 12 and ok.last_scrape_error is None
+    assert bad.last_scrape_error == "quota exceeded"
+
+    stored = (
+        await db.execute(
+            select(func.count()).select_from(BenchmarkSnapshot).where(
+                BenchmarkSnapshot.place_id == ok.id
+            )
+        )
+    ).scalar()
+    assert stored == 1
+    # The 30-day-old snapshot fell outside retention.
+    ancient = (
+        await db.execute(
+            select(func.count()).select_from(BenchmarkSnapshot).where(
+                BenchmarkSnapshot.fetched_at < now - timedelta(days=7)
+            )
+        )
+    ).scalar()
+    assert ancient == 0
+
+
+async def test_scraper_can_be_paused_by_admin(db):
+    from app.modules.benchmark import scraper
+    from app.modules.benchmark import service as bench_service
+
+    await bench_service.update_config(db, place_cache_enabled=False)
+    result = await scraper.refresh_due_places()
+    assert result["scraped"] == 0
+    assert result["reason"] == "scraping disabled"
+
+
+# ── HTTP surface ───────────────────────────────────────────────────────────
+
+async def test_compare_endpoint_accepts_range(client, monkeypatch):
+    from app.modules.benchmark import places as places_module
+
+    created = client.post(
+        "/api/v1/benchmark/places", json={"place_id": "http-range", "label": "Range Rival"}
+    )
+    assert created.status_code == 201, created.text
+
+    async def _fake_get_place(place_id):
+        return await _fake_details(place_id, rating=4.2, review_count=42)
+
+    monkeypatch.setattr(places_module, "get_place", _fake_get_place)
+    res = client.get(
+        "/api/v1/benchmark/compare?subjects=saved%3Ahttp-range&range=90d"
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["range"] == "90d"
+    assert body["days"] == 90
+    assert body["subjects"][0]["metrics"]["period_reviews"] is None
+
+    bad = client.get(
+        "/api/v1/benchmark/compare?subjects=saved%3Ahttp-range&range=week"
+    )
+    assert bad.status_code == 422
+
+
+async def test_history_endpoint_is_bounded_and_tenant_scoped(client):
+    res = client.get(
+        "/api/v1/benchmark/history?subjects=saved%3Amissing&days=30&points=5"
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["days"] == 30
+    assert body["subjects"][0]["points"] == []
+
+    too_many = client.get(
+        "/api/v1/benchmark/history?subjects=saved%3Amissing&days=30&points=99"
+    )
+    assert too_many.status_code == 422

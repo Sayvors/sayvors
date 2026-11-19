@@ -105,6 +105,12 @@ export interface ComparisonSubject {
     one_star: number | null;
     impressions: number | null;
     calls: number | null;
+    /* Period-only facts; null when the range is "live". */
+    period_reviews: number | null;
+    period_avg_rating: number | null;
+    rating_change: number | null;
+    period_impressions: number | null;
+    period_calls: number | null;
   };
   facts: {
     positive_pct: number | null;
@@ -122,7 +128,44 @@ export interface ComparisonSubject {
   notes: string[];
 }
 
-export function fetchComparison(subjects: string[]): Promise<{ subjects: ComparisonSubject[] }> {
+/** Period filter: live reads now; the others compute a window from history. */
+export type CompareRange = "live" | "30d" | "90d" | "365d";
+
+export const RANGE_DAYS: Record<CompareRange, number | null> = {
+  live: null,
+  "30d": 30,
+  "90d": 90,
+  "365d": 365,
+};
+
+export function fetchComparison(
+  subjects: string[],
+  range: CompareRange = "live"
+): Promise<{ range: CompareRange; days: number | null; subjects: ComparisonSubject[] }> {
   const q = subjects.map((s) => `subjects=${encodeURIComponent(s)}`).join("&");
-  return apiFetch(`/api/v1/benchmark/compare?${q}`);
+  return apiFetch(`/api/v1/benchmark/compare?${q}&range=${range}`);
+}
+
+/* ── Stored history ───────────────────────────────────────────────────── */
+
+export interface HistoryPoint {
+  at: string | null;
+  rating: number | null;
+  reviews: number | null;
+}
+
+export interface SubjectHistory {
+  key: string;
+  kind: CompareKind | "unknown";
+  name: string | null;
+  points: HistoryPoint[];
+}
+
+export function fetchHistory(
+  subjects: string[],
+  days: number,
+  points = 12
+): Promise<{ days: number; points: number; subjects: SubjectHistory[] }> {
+  const q = subjects.map((s) => `subjects=${encodeURIComponent(s)}`).join("&");
+  return apiFetch(`/api/v1/benchmark/history?${q}&days=${days}&points=${points}`);
 }

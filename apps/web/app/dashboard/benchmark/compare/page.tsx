@@ -7,7 +7,10 @@ import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api-rag";
 import {
   fetchComparison,
+  fetchHistory,
   fetchSavedPlaces,
+  RANGE_DAYS,
+  type CompareRange,
   type ComparisonSubject,
   type SavedPlace,
 } from "@/lib/api-benchmark";
@@ -51,8 +54,48 @@ const METRIC_ROWS: Row<MetricKey>[] = [
   { key: "calls", label: "Calls · 12 mo", value: (s) => s.metrics.calls, render: (s) => ownerOnly(s, s.metrics.calls) },
 ];
 
-const FACT_ROWS: Row<FactKey>[] = [
-  { key: "positive_pct", label: "Positive sentiment", value: (s) => s.facts.positive_pct, render: (s) => pct(s.facts.positive_pct) },
+type PeriodKey =
+  | "period_reviews"
+  | "period_avg_rating"
+  | "rating_change"
+  | "period_impressions"
+  | "period_calls";
+
+/**
+ * The period table answers "what changed in this window", never re-labels a
+ * lifetime number as a window number. Saved places compute it from snapshot
+ * history plus today's live values; own locations from their stored reviews.
+ */
+const PERIOD_ROWS: Row<PeriodKey>[] = [
+  { key: "period_reviews", label: "Reviews added", value: (s) => s.metrics.period_reviews, render: (s) => num(s.metrics.period_reviews) },
+  {
+    key: "period_avg_rating",
+    label: "Average rating in period",
+    value: (s) => s.metrics.period_avg_rating,
+    render: (s) => (s.metrics.period_avg_rating == null ? "—" : `${s.metrics.period_avg_rating} ★`),
+  },
+  {
+    key: "rating_change",
+    label: "Rating change",
+    value: (s) => s.metrics.rating_change,
+    render: (s) => signed(s.metrics.rating_change),
+  },
+  { key: "period_impressions", label: "Impressions", render: (s) => ownerOnly(s, s.metrics.period_impressions) },
+  { key: "period_calls", label: "Calls", render: (s) => ownerOnly(s, s.metrics.period_calls) },
+];
+
+const RANGE_OPTIONS: { value: CompareRange; label: string; title: string }[] = [
+  { value: "live", label: "Live", title: "Live values from Google, right now" },
+  { value: "30d", label: "30 days", title: "Values for the last 30 days" },
+  { value: "90d", label: "90 days", title: "Values for the last 90 days" },
+  { value: "365d", label: "1 year", title: "Values for the last 12 months" },
+];
+
+function normalizeRange(value: string | null): CompareRange {
+  return value === "30d" || value === "90d" || value === "365d" ? value : "live";
+}
+
+const FACT_ROWS: Row<FactKey>[] = [  { key: "positive_pct", label: "Positive sentiment", value: (s) => s.facts.positive_pct, render: (s) => pct(s.facts.positive_pct) },
   { key: "negative_pct", label: "Negative sentiment", value: (s) => s.facts.negative_pct, higherIsBetter: false, render: (s) => pct(s.facts.negative_pct) },
   { key: "branch", label: "Branch / location", render: (s) => s.facts.branch ?? "—" },
   { key: "employee_mentions", label: "Team mentioned", value: (s) => s.facts.employee_mentions, render: (s) => num(s.facts.employee_mentions) },
@@ -85,6 +128,13 @@ function num(value: number | null | undefined, suffix = ""): string {
 
 function pct(value: number | null | undefined): string {
   return value == null ? "—" : `${value}%`;
+}
+
+/** A rating movement: sign is the message, so keep it visible. */
+function signed(value: number | null | undefined): string {
+  if (value == null) return "—";
+  if (value === 0) return "0.00";
+  return `${value > 0 ? "+" : ""}${value.toFixed(2)}`;
 }
 
 /** A listing with no ratings has no average; 0.0 would read as a real score. */
@@ -257,9 +307,104 @@ function MatrixTable<T extends string>({
   );
 }
 
+function formatWhen(value: string | null): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+/**
+ * The stored history behind the period table. Kept separate on purpose: the
+ * period table answers "what changed", this one answers "what was recorded",
+ * date by date, newest first.
+ */
+function HistoryTable({
+  series,
+  days,
+  loading,
+  error,
+}: {
+  series: { key: string; name: string | null; points: { at: string | null; rating: number | null; reviews: number | null }[] }[];
+  days: number;
+  loading: boolean;
+  error: boolean;
+}) {
+  const rows = series
+    .flatMap((subject) =>
+      subject.points.map((point) => ({ ...point, subject }))
+    )
+    .sort((a, b) => (b.at ?? "").localeCompare(a.at ?? ""));
+
+  return (
+    <section className="mt-4 overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-white">
+      <div className="border-b border-[var(--ui-line)] px-3 py-2">
+        <h2 className="text-[12px] font-bold uppercase tracking-wide text-[#14101F]">
+          History · last {days} days
+        </h2>
+        <p className="mt-0.5 text-[10px] text-[#3B2D5E]">
+          Rating and review count at the start and end of the selected period.
+        </p>
+      </div>
+
+      {loading ? (
+        <p className="px-3 py-4 text-[12px] text-[#3B2D5E]">Loading history…</p>
+      ) : error ? (
+        <p className="px-3 py-4 text-[12px] text-[#8E1230]">Could not load history.</p>
+      ) : rows.length === 0 ? (
+        <p className="px-3 py-4 text-[12px] text-[#3B2D5E]">
+          No data for this period yet.
+        </p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-left">
+            <thead>
+              <tr>
+                {["Business", "Date", "Rating", "Reviews"].map((label) => (
+                  <th
+                    key={label}
+                    scope="col"
+                    className="border-b border-[var(--ui-line)] bg-[#FAFAFB] px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]"
+                  >
+                    {label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={`${row.subject.key}-${row.at ?? "unknown"}`}>
+                  <th
+                    scope="row"
+                    className="border-b border-[var(--ui-line)] px-3 py-2 text-[11px] font-semibold text-[#14101F]"
+                  >
+                    {row.subject.name || "Saved business"}
+                  </th>
+                  <td className="border-b border-[var(--ui-line)] px-3 py-2 font-mono text-[11px] text-[#3B2D5E]">
+                    {formatWhen(row.at)}
+                  </td>
+                  <td className="border-b border-[var(--ui-line)] px-3 py-2 font-mono text-[11px] text-[#3B2D5E]">
+                    {row.rating == null ? "—" : `${row.rating} ★`}
+                  </td>
+                  <td className="border-b border-[var(--ui-line)] px-3 py-2 font-mono text-[11px] text-[#3B2D5E]">
+                    {row.reviews == null ? "—" : row.reviews}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
 /** Reads the current selection from the URL, tolerating older link shapes. */
-function readSelection(params: URLSearchParams): CompareSelection {
-  const main = params.get("main");
+function readSelection(params: URLSearchParams): CompareSelection {  const main = params.get("main");
   const vs = params.getAll("vs");
   if (main || vs.length) {
     return { main: main || null, competitors: vs.slice(0, MAX_COMPETITORS) };
@@ -292,23 +437,40 @@ export default function ComparePage() {
   const own = channelsQuery.data ?? [];
 
   const selection = readSelection(params);
+  const range = normalizeRange(params.get("range"));
+  const days = RANGE_DAYS[range];
   const keys = [selection.main, ...selection.competitors].filter(
     (key): key is string => Boolean(key)
   );
 
   const compareQuery = useQuery({
-    queryKey: ["benchmark", "compare", keys.join("|")],
-    queryFn: () => fetchComparison(keys),
+    queryKey: ["benchmark", "compare", keys.join("|"), range],
+    queryFn: () => fetchComparison(keys, range),
     enabled: keys.length > 0,
   });
   const subjects = compareQuery.data?.subjects ?? [];
 
-  function update(next: CompareSelection) {
+  const historyQuery = useQuery({
+    queryKey: ["benchmark", "history", keys.join("|"), days],
+    queryFn: () => fetchHistory(keys, days ?? 90, 12),
+    enabled: keys.length > 0 && days != null,
+  });
+
+  function applyUrl(next: CompareSelection, nextRange: CompareRange) {
     const query = new URLSearchParams();
     if (next.main) query.set("main", next.main);
     next.competitors.forEach((key) => query.append("vs", key));
+    if (nextRange !== "live") query.set("range", nextRange);
     const suffix = query.toString();
     router.replace(`/dashboard/benchmark/compare${suffix ? `?${suffix}` : ""}`, { scroll: false });
+  }
+
+  function update(next: CompareSelection) {
+    applyUrl(next, range);
+  }
+
+  function updateRange(nextRange: CompareRange) {
+    applyUrl(selection, nextRange);
   }
 
   return (
@@ -345,6 +507,36 @@ export default function ComparePage() {
         <ComparePicker selection={selection} onChange={update} saved={saved} own={own} />
       </section>
 
+      <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[12px] border border-[var(--ui-line)] bg-white px-3 py-2">
+        <span className="text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]">
+          Period
+        </span>
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Comparison period">
+          {RANGE_OPTIONS.map((option) => {
+            const active = option.value === range;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                title={option.title}
+                aria-pressed={active}
+                onClick={() => updateRange(option.value)}
+                className={`rounded-[8px] border px-3 py-1.5 text-[11px] font-semibold transition-colors ${FOCUS} ${
+                  active
+                    ? "border-[#3D1D6E] bg-[#3D1D6E] text-white"
+                    : "border-[var(--ui-line)] bg-white text-[#3B2D5E] hover:bg-[#F4F2F7]"
+                }`}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+        <span className="text-[10px] text-[#8A8496]">
+          {range === "live" ? "Live values from Google, right now." : "Values for the selected period."}
+        </span>
+      </div>
+
       {keys.length === 0 ? (
         <p className="mt-5 rounded-[12px] border border-dashed border-[var(--ui-line)] bg-white px-5 py-9 text-center text-[12px] text-[#3B2D5E]">
           Pick a business in either dropdown to build the table.
@@ -355,6 +547,15 @@ export default function ComparePage() {
         <p className="mt-5 text-[12px] text-red-700">Could not load the comparison.</p>
       ) : (
         <>
+          {days != null ? (
+            <MatrixTable
+              title={`Period · last ${days} days`}
+              description="Reviews added, rating movement, views and calls for the selected period. Blank means the data is not available, never a zero."
+              rows={PERIOD_ROWS}
+              subjects={subjects}
+              mainKey={selection.main}
+            />
+          ) : null}
           <MatrixTable
             title="Numbers from Google"
             description="Reviews, ratings and listing performance. Views and calls are only released to the listing's owner, so a competitor's column stays blank there."
@@ -375,6 +576,21 @@ export default function ComparePage() {
             subjects={subjects}
             mainKey={selection.main}
           />
+          {days != null ? (
+            <HistoryTable
+              series={(historyQuery.data?.subjects ?? []).map((item) => ({
+                key: item.key,
+                name:
+                  item.name ??
+                  subjects.find((subject) => subject.key === item.key)?.name ??
+                  null,
+                points: item.points,
+              }))}
+              days={days}
+              loading={historyQuery.isPending}
+              error={historyQuery.isError}
+            />
+          ) : null}
         </>
       )}
     </div>

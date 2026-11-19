@@ -1,6 +1,8 @@
 """Benchmark API: search Places and manage the tenant's saved bench."""
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,6 +53,7 @@ async def get_heatmap(
 @router.get("/compare", response_model=dict)
 async def compare_places(
     subjects: list[str] = Query(..., min_length=1, max_length=MAX_COMPARE_SUBJECTS),
+    period: Literal["live", "30d", "90d", "365d"] = Query("live", alias="range"),
     ctx: TenantContext = Depends(require_perm("benchmark.view")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -60,12 +63,37 @@ async def compare_places(
     ``own:<channel_id>`` (one of the tenant's Google locations). Each side is
     scoped to the tenant; an inaccessible side comes back as an unavailable
     record rather than failing the whole request.
+
+    ``range`` selects the period table: ``live`` leaves the period facts null,
+    the others ask for a window that saved places compute from snapshot history
+    and own locations compute from their review and performance rows.
     """
     return {
+        "range": period,
+        "days": compare.RANGES[period],
         "subjects": await compare.compare_subjects(
-            db, tenant_id_of(ctx.user), subjects
-        )
+            db, tenant_id_of(ctx.user), subjects, days=compare.RANGES[period]
+        ),
     }
+
+
+@router.get("/history", response_model=dict)
+async def benchmark_history(
+    subjects: list[str] = Query(..., min_length=1, max_length=MAX_COMPARE_SUBJECTS),
+    days: int = Query(90, ge=1, le=3650),
+    points: int = Query(12, ge=2, le=compare.MAX_HISTORY_POINTS),
+    ctx: TenantContext = Depends(require_perm("benchmark.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Dated history behind the period filter.
+
+    Saved places return their scraped snapshots; own locations return cumulative
+    review counts and average ratings sampled across the window. Each series is
+    bounded to `points` rows and always tenant-scoped.
+    """
+    return await compare.subject_history(
+        db, tenant_id_of(ctx.user), subjects, days=days, points=points
+    )
 
 
 @router.get("/places", response_model=list[dict])

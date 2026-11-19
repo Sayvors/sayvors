@@ -86,6 +86,12 @@ def _test_billing_sessions(monkeypatch):
     from app.modules.channels import reviews_worker
 
     monkeypatch.setattr(reviews_worker, "_session_factory", TEST_SESSION, raising=False)
+    # The benchmark scraper is a worker loop too. Its pass opens its own
+    # session, so without this a test calling `refresh_due_places` would read
+    # and write the dev Postgres database instead of the in-memory fixtures.
+    from app.modules.benchmark import scraper as benchmark_scraper
+
+    monkeypatch.setattr(benchmark_scraper, "async_session", TEST_SESSION, raising=False)
     # SQLite's StaticPool gives every session the same physical connection, so
     # genuinely concurrent review sessions would block each other here. Real
     # Postgres sessions are safe and are what production uses. The concurrency
