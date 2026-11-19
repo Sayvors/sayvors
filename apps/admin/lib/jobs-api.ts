@@ -5,6 +5,7 @@ import { adminFetch } from "@/lib/admin-api";
 export interface AdminJob {
   id: string;
   tenant_id: string;
+  tenant_email?: string | null;
   job_type: string;
   lane: string;
   status: string;

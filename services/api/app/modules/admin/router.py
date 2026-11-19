@@ -313,6 +313,41 @@ class BenchmarkConfigIn(BaseModel):
     place_cache_enabled: bool | None = None
 
 
+class PlatformConfigIn(BaseModel):
+    """Admin-set platform AI config. The model id is never exposed to tenants."""
+
+    banner_vision_model: str | None = Field(default=None, max_length=160)
+
+
+@router.get("/config/ai")
+async def admin_ai_config(
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """The admin-configured AI/vision settings (banner photo check)."""
+    row = await admin_service.get_platform_config(db)
+    return {
+        "banner_vision_model": row.banner_vision_model,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@router.put("/config/ai")
+async def admin_update_ai_config(
+    body: PlatformConfigIn,
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set the vision model used by the banner/promotion photo check."""
+    row = await admin_service.update_platform_config(
+        db, banner_vision_model=body.banner_vision_model
+    )
+    return {
+        "banner_vision_model": row.banner_vision_model,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
 @router.get("/benchmark/config")
 async def admin_benchmark_config(
     _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),

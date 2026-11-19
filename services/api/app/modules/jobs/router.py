@@ -145,8 +145,14 @@ async def admin_list_jobs(
     _admin: dict = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all jobs (admin). Filter by status, lane, tenant."""
+    """List all jobs (admin). Filter by status, lane, tenant.
+
+    Tenant email/business name is joined in so the queue is readable without
+    decoding raw ids.
+    """
     from sqlalchemy import select
+
+    from ..users.models import User
 
     stmt = select(Job).order_by(Job.created_at.desc()).limit(limit)
     if status:
@@ -155,8 +161,22 @@ async def admin_list_jobs(
         stmt = stmt.where(Job.lane == lane)
     if tenant_id:
         stmt = stmt.where(Job.tenant_id == tenant_id)
-    result = await db.execute(stmt)
-    return [_job_to_dict(j) for j in result.scalars().all()]
+    jobs = (await db.execute(stmt)).scalars().all()
+
+    tenant_ids = {j.tenant_id for j in jobs}
+    emails: dict[str, str] = {}
+    if tenant_ids:
+        user_rows = (
+            await db.execute(select(User.id, User.email).where(User.id.in_(tenant_ids)))
+        ).all()
+        emails = {str(uid): str(email) for uid, email in user_rows}
+
+    out = []
+    for job in jobs:
+        d = _job_to_dict(job)
+        d["tenant_email"] = emails.get(job.tenant_id)
+        out.append(d)
+    return out
 
 
 @admin_router.get("/jobs/{job_id}")

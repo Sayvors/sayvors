@@ -64,10 +64,10 @@ async def analyze_banner(
     """Score an uploaded image as a Google banner/promotion photo.
 
     Deterministic rules (format, size, aspect, sharpness, exposure) always
-    run; if a vision model is configured, a multimodal AI verdict is appended.
-    The result is advice — it never blocks publishing.
+    run. If the admin has configured a vision model, a multimodal AI verdict
+    is appended — the model id itself is never returned to the tenant, only
+    the verdict. The result is advice; it never blocks publishing.
     """
-    del db  # read-only; no DB access needed
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Empty file.")
@@ -77,12 +77,17 @@ async def analyze_banner(
     result = image_check.analyze_banner_image(
         data, filename=file.filename or "", content_type=file.content_type
     )
-    if settings.BANNER_VISION_MODEL:
-        result["ai_verdict"] = await _vision_verdict(data)
+
+    from ..admin.service import get_platform_config
+
+    config = await get_platform_config(db)
+    model = (config.banner_vision_model or "").strip() or settings.BANNER_VISION_MODEL
+    if model:
+        result["ai_verdict"] = await _vision_verdict(data, model)
     return result
 
 
-async def _vision_verdict(data: bytes) -> dict | None:
+async def _vision_verdict(data: bytes, model: str) -> dict | None:
     """Multimodal verdict from the configured vision model, best-effort."""
     try:
         import json
@@ -91,7 +96,7 @@ async def _vision_verdict(data: bytes) -> dict | None:
         from ...llm.providers.base import LLMMessage
 
         response = await complete(
-            model=settings.BANNER_VISION_MODEL,
+            model=model,
             messages=[LLMMessage(
                 role="user",
                 content=(
