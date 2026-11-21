@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PlatformMark from "@/components/channels/PlatformMark";
 import { INK, INK2 } from "@/components/channels/instagram/ui";
 import { apiFetch, apiFetchBlob } from "@/lib/api-rag";
@@ -301,6 +301,8 @@ function BannerCheckCard({
   check,
   onRetry,
   onReplace,
+  onRun,
+  required = false,
 }: {
   check: {
     state: "idle" | "loading" | "done" | "error";
@@ -316,8 +318,33 @@ function BannerCheckCard({
   onRetry: () => void;
   /** Opens the file picker directly — the fix for every failed check. */
   onReplace: () => void;
+  /** Starts the queued AI analysis. */
+  onRun: () => void;
+  /** When true, an idle state is surfaced as a required step, not hidden. */
+  required?: boolean;
 }) {
-  if (check.state === "idle") return null;
+  if (check.state === "idle") {
+    if (!required) return null;
+    return (
+      <div className="mt-3 rounded-[20px] border border-deep-violet/25 bg-deep-violet/[0.04] px-3.5 py-3">
+        <p className="text-[12px] font-bold text-deep-violet dark:text-fog">
+          AI photo check required
+        </p>
+        <p className="mt-1 text-[11px] leading-relaxed text-ink/60 dark:text-fog/60">
+          A Promotion must pass through the AI photo check before it can be
+          published — it measures size, shape, sharpness and exposure the way
+          Google judges a cover photo.
+        </p>
+        <button
+          type="button"
+          onClick={onRun}
+          className="clay-btn-primary mt-2.5 px-4 py-2 text-[11px] font-bold focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+        >
+          Run AI check
+        </button>
+      </div>
+    );
+  }
   if (check.state === "loading") {
     return (
       <div className="mt-3 flex items-center gap-2.5 rounded-[20px] border border-deep-violet/20 bg-deep-violet/[0.04] px-3.5 py-2.5 text-[11.5px] font-semibold text-deep-violet dark:border-fog/10 dark:bg-fog/[0.04] dark:text-fog">
@@ -604,10 +631,12 @@ export default function PublishComposer({
     setReplaceSignal((n) => n + 1);
   };
 
-  // AI suitability check for the promotion/banner photo. Runs only when a
-  // banner destination is selected AND an image file is attached (never for
-  // videos or for other formats). The API returns rule-based advice; a
-  // vision verdict is appended only if a model is configured.
+  // AI suitability check for the promotion/banner photo. Publication of a
+  // banner REQUIRES a completed check, so the merchant runs it explicitly
+  // (media step or the banner crop modal) and the result is reused. The
+  // analysis runs on the realtime job lane — the same queue that drives
+  // publishing — because publication waits on it; the composer polls the
+  // check row until it is done or failed.
   const [bannerCheck, setBannerCheck] = useState<{
     state: "idle" | "loading" | "done" | "error";
     result?: {
@@ -620,26 +649,52 @@ export default function PublishComposer({
     };
   }>({ state: "idle" });
 
+  // A new photo invalidates the previous check — the gate closes again.
   useEffect(() => {
-    if (!bannerSelected || media?.type !== "image" || !media.file) {
-      setBannerCheck({ state: "idle" });
+    setBannerCheck({ state: "idle" });
+  }, [media?.url, bannerSelected]);
+
+  const runBannerCheck = useCallback(async () => {
+    if (!media?.file) {
+      setBannerCheck({ state: "error" });
       return;
     }
-    let cancelled = false;
     setBannerCheck({ state: "loading" });
-    const form = new FormData();
-    form.append("file", media.file, media.fileName || "banner.png");
-    apiFetch("/api/v1/media/analyze-banner", { method: "POST", body: form })
-      .then((result) => {
-        if (!cancelled) setBannerCheck({ state: "done", result });
-      })
-      .catch(() => {
-        if (!cancelled) setBannerCheck({ state: "error" });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [bannerSelected, media?.url]);
+    try {
+      const form = new FormData();
+      form.append("file", media.file, media.fileName || "banner.png");
+      const queued = await apiFetch("/api/v1/media/banner-checks", {
+        method: "POST",
+        body: form,
+      }) as { id: string };
+      // Publication is blocked while this runs, so poll briskly but give the
+      // vision/decision models their headroom before declaring a timeout.
+      const deadline = Date.now() + 45_000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 1200));
+        const row = await apiFetch(`/api/v1/media/banner-checks/${encodeURIComponent(queued.id)}`) as {
+          status: "queued" | "running" | "done" | "failed";
+          suitable?: string;
+          confidence?: number;
+          summary?: string;
+          checks?: { key: string; label: string; pass: boolean; severity: string; note: string }[];
+          ai_verdict?: { suitable?: string; confidence?: number; reasons?: string[] } | null;
+          decision?: { suitable?: string; confidence?: number; summary?: string; reasons?: string[] } | null;
+        };
+        if (row.status === "done") {
+          setBannerCheck({ state: "done", result: row });
+          return;
+        }
+        if (row.status === "failed") {
+          setBannerCheck({ state: "error" });
+          return;
+        }
+      }
+      setBannerCheck({ state: "error" });
+    } catch {
+      setBannerCheck({ state: "error" });
+    }
+  }, [media?.file, media?.fileName]);
 
   // Write the description from the caption + the selected branch/business.
   // The endpoint already grounds copy in the tenant's own Databank facts, so
@@ -871,6 +926,20 @@ export default function PublishComposer({
     const problems = draftProblems();
     if (problems.length > 0) {
       setNotice(problems[0]);
+      return;
+    }
+    // A Promotion publishes the photo as the Google cover image, so the AI
+    // photo check is a required step: no completed check, no confirm dialog.
+    // The verdict itself stays advice — a "Not suitable" result shows on the
+    // check card, but the merchant decides.
+    if (bannerSelected && bannerCheck.state !== "done") {
+      setNotice(
+        bannerCheck.state === "loading"
+          ? "The AI photo check is still running — it finishes in a few seconds."
+          : "Run the AI photo check before publishing a Promotion. Open the photo's crop settings or the media step and press \"Run AI check\".",
+      );
+      setConfirmOpen(false);
+      setPostStep(bannerCheck.state === "loading" ? postStep : "media");
       return;
     }
     if (media && media.type === "image" && media.width && media.height) {
@@ -1419,16 +1488,10 @@ export default function PublishComposer({
             {bannerSelected && media?.type === "image" && media.file ? (
               <BannerCheckCard
                 check={bannerCheck}
-                onRetry={() => {
-                  // Re-trigger the effect by forcing a fresh dependency key.
-                  setBannerCheck({ state: "loading" });
-                  const form = new FormData();
-                  form.append("file", media.file!, media.fileName || "banner.png");
-                  apiFetch("/api/v1/media/analyze-banner", { method: "POST", body: form })
-                    .then((result) => setBannerCheck({ state: "done", result }))
-                    .catch(() => setBannerCheck({ state: "error" }));
-                }}
+                onRetry={() => void runBannerCheck()}
                 onReplace={requestPhotoReplace}
+                onRun={() => void runBannerCheck()}
+                required
               />
             ) : null}
             {needsMedia && media === null && (
@@ -2041,6 +2104,24 @@ export default function PublishComposer({
                       <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">Choose where this photo appears in the location gallery on Google.</p>
                     </div>
                   )}
+                  {modalCtx.method === "banner" && media?.type === "image" && (
+                    <div>
+                      <p className="text-[12px] font-bold text-[var(--ui-ink)]">AI photo check</p>
+                      <p className="mt-0.5 text-[11px] leading-relaxed text-[var(--ui-ink-2)]">
+                        Required before this Promotion can be published. It runs on Sayvors servers —
+                        keep this dialog open while it works.
+                      </p>
+                    </div>
+                  )}
+                  {modalCtx.method === "banner" && media?.type === "image" && media.file ? (
+                    <BannerCheckCard
+                      check={bannerCheck}
+                      onRetry={() => void runBannerCheck()}
+                      onReplace={requestPhotoReplace}
+                      onRun={() => void runBannerCheck()}
+                      required
+                    />
+                  ) : null}
                   <CropFrame
                     key={`${modalCtx.targetId}-${modalCtx.method}`}
                     url={media?.url ?? null}

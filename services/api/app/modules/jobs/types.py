@@ -18,6 +18,7 @@ class JobType(str, Enum):
     # ── realtime lane ── customer-facing, latency-critical
     meta_send_reply = "meta.send_reply"      # WhatsApp / IG / FB AI reply
     meta_send_template = "meta.send_template"  # template message send
+    media_banner_check = "media.banner_check"  # AI photo check; publication waits on it
 
     # ── publishing lane ── provider-quota-bound
     post_publish = "post.publish"            # Google Business Profile post
@@ -46,6 +47,7 @@ class JobType(str, Enum):
 _LANE_MAP: dict[JobType, JobLane] = {
     JobType.meta_send_reply: JobLane.realtime,
     JobType.meta_send_template: JobLane.realtime,
+    JobType.media_banner_check: JobLane.realtime,
     JobType.post_publish: JobLane.publishing,
     JobType.post_delete: JobLane.publishing,
     JobType.media_publish: JobLane.publishing,

@@ -12,6 +12,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from typing import Any
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,7 +26,8 @@ from ..scheduling import (
     retry_delay as _retry_delay,
     take_lock,
 )
-from .models import LocationMedia
+from . import image_check
+from .models import BannerCheck, LocationMedia
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +133,256 @@ async def save_upload(
         "type": detect_media_type(filename, expected_type),
         "size": len(data),
         "content_type": expected_type,
+    }
+
+
+async def vision_verdict(data: bytes, model: str) -> dict | None:
+    """Multimodal verdict from the configured vision model, best-effort."""
+    try:
+        import json
+
+        from ..llm.gateway import complete
+        from ..llm.providers.base import LLMMessage
+
+        response = await complete(
+            model=model,
+            messages=[LLMMessage(
+                role="user",
+                content=(
+                    "Analyse this photo as a Google Business Profile banner "
+                    "(cover) image. Answer ONLY with JSON: {\"suitable\": "
+                    "\"yes\"|\"maybe\"|\"no\", \"confidence\": 0-100, "
+                    "\"reasons\": [\"...\"]}."
+                ),
+            )],
+            images=[("image/jpeg", data)],
+            purpose="media.banner_verdict",
+            temperature=0.2,
+            max_tokens=300,
+        )
+        text = (response.content or "").strip()
+        # Tolerate a code fence the model may add.
+        if text.startswith("```"):
+            text = text.strip("`")
+            if text.startswith("json"):
+                text = text[4:].strip()
+        verdict = json.loads(text)
+        return {
+            "suitable": str(verdict.get("suitable", "maybe")),
+            "confidence": int(verdict.get("confidence", 0)),
+            "reasons": [str(r) for r in (verdict.get("reasons") or [])][:6],
+        }
+    except Exception:
+        logger.exception("Banner vision verdict failed")
+        return None
+
+
+async def decision_verdict(result: dict, model: str) -> dict | None:
+    """Plain-language suitability call from a text model, best-effort.
+
+    The rule layer supplies facts and the vision layer (when configured)
+    supplies observations; this model weighs them the way a human reviewer
+    would and answers in the merchant's language. A failure here must never
+    break the check — the deterministic summary simply stands.
+    """
+    try:
+        import json
+
+        from ..llm.gateway import complete
+        from ..llm.providers.base import LLMMessage
+
+        checks = [
+            {"check": c["label"], "pass": bool(c["pass"]), "note": c["note"]}
+            for c in result.get("checks", [])
+        ]
+        vision_reasons = ((result.get("ai_verdict") or {}).get("reasons")) or []
+        prompt = (
+            "You decide whether a photo is good enough to serve as a Google "
+            "Business Profile banner (cover) image.\n"
+            f"Automated measurements: {json.dumps(checks)}\n"
+            f"Vision model observations: {json.dumps(vision_reasons)}\n"
+            "Google prefers wide (around 16:9), bright, sharp photos that show "
+            "the real business; text-heavy, blurry or stock-looking images "
+            "perform poorly and Google may replace them.\n"
+            "Answer ONLY with JSON: {\"suitable\": \"yes\"|\"maybe\"|\"no\", "
+            "\"confidence\": 0-100, \"summary\": \"one plain sentence for the "
+            "business owner\", \"reasons\": [\"short plain reason\"]}."
+        )
+        response = await complete(
+            model=model,
+            messages=[LLMMessage(role="user", content=prompt)],
+            purpose="media.banner_decision",
+            temperature=0.1,
+            max_tokens=300,
+        )
+        text = (response.content or "").strip()
+        # Tolerate a code fence the model may add.
+        if text.startswith("```"):
+            text = text.strip("`")
+            if text.startswith("json"):
+                text = text[4:].strip()
+        verdict = json.loads(text)
+        suitable = str(verdict.get("suitable", "maybe")).lower()
+        if suitable not in ("yes", "maybe", "no"):
+            suitable = "maybe"
+        try:
+            confidence = max(0, min(100, int(verdict.get("confidence", 0))))
+        except (TypeError, ValueError):
+            confidence = 0
+        return {
+            "suitable": suitable,
+            "confidence": confidence,
+            "summary": str(verdict.get("summary") or "").strip()[:300],
+            "reasons": [str(r) for r in (verdict.get("reasons") or [])][:6],
+        }
+    except Exception:
+        logger.exception("Banner decision verdict failed")
+        return None
+
+
+async def full_banner_analysis(
+    db, data: bytes, *, vision_verdict_fn=None, decision_verdict_fn=None
+) -> dict:
+    """The complete banner check: rules → optional vision → optional decision.
+
+    Shared by the synchronous endpoint and the queued job so the two paths
+    cannot drift. The verdict callables are injectable so callers (and tests)
+    can substitute them without touching the pipeline.
+    """
+    result = image_check.analyze_banner_image(data)
+
+    from ..admin.service import get_platform_config
+
+    config = await get_platform_config(db)
+    vision_fn = vision_verdict_fn or vision_verdict
+    decision_fn = decision_verdict_fn or decision_verdict
+
+    model = (config.banner_vision_model or "").strip() or settings.BANNER_VISION_MODEL
+    if model:
+        result["ai_verdict"] = await vision_fn(data, model)
+
+    # Optional plain-text decision model: it reads the measurements (and the
+    # vision observations, when present) and writes the final call. Best-
+    # effort: when it is unset or fails, the deterministic score stands.
+    decision_model = (config.banner_decision_model or "").strip()
+    if decision_model:
+        decision = await decision_fn(result, decision_model)
+        if decision:
+            result["decision"] = decision
+            result["suitable"] = decision["suitable"]
+            result["confidence"] = decision["confidence"]
+            if decision["summary"]:
+                result["summary"] = decision["summary"]
+    return result
+
+
+async def enqueue_banner_check(
+    db, *, user_id: str, filename: str, content_type: str | None,
+    data: bytes, base_url: str,
+) -> "BannerCheck":
+    """Store the photo, create a queued check row, and submit the realtime job.
+
+    The row id doubles as the job's idempotency key, so a double-clicked
+    button cannot queue two analyses for the same upload.
+    """
+    upload = await save_upload(user_id, filename, content_type, data, base_url)
+    row = BannerCheck(
+        tenant_id=user_id,
+        media_key=upload.get("key"),
+        media_url=upload["image_url"],
+    )
+    db.add(row)
+    await db.flush()
+
+    from ..jobs.service import submit_job
+
+    await submit_job(
+        db,
+        tenant_id=user_id,
+        job_type="media.banner_check",
+        payload={"check_id": row.id},
+        subject_type="banner_check",
+        subject_id=row.id,
+        idempotency_key=f"banner_check:{row.id}",
+    )
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
+async def run_banner_check(db, *, check_id: str, tenant_id: str) -> dict:
+    """Execute one queued check (the realtime-lane handler core).
+
+    Analysis failures are terminal and stored on the row — a bad image must
+    not spin the retry machinery; the merchant simply runs the check again.
+    """
+    import json
+
+    row = (
+        await db.execute(
+            select(BannerCheck).where(
+                BannerCheck.id == check_id,
+                BannerCheck.tenant_id == tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        return {"skipped": "check not found", "check_id": check_id}
+    if row.status == "done":
+        return {"check_id": row.id, "status": "done"}
+
+    row.status = "running"
+    await db.commit()
+    try:
+        from ...core.storage import media_bytes_from_url
+
+        data, _ct = media_bytes_from_url(tenant_id, row.media_url or "")
+        result = await full_banner_analysis(db, data)
+        row.suitable = result.get("suitable")
+        row.confidence = result.get("confidence")
+        row.summary = result.get("summary")
+        row.checks_json = json.dumps(result.get("checks") or [])
+        row.ai_verdict_json = (
+            json.dumps(result["ai_verdict"]) if result.get("ai_verdict") is not None else None
+        )
+        row.decision_json = (
+            json.dumps(result["decision"]) if result.get("decision") is not None else None
+        )
+        row.error = None
+        row.status = "done"
+    except Exception as e:  # noqa: BLE001 - stored, never silent
+        row.status = "failed"
+        row.error = str(e)[:300]
+        await db.commit()
+        return {"check_id": row.id, "status": "failed", "error": row.error}
+    await db.commit()
+    await db.refresh(row)
+    return {"check_id": row.id, "status": row.status}
+
+
+def _load_json(value: str | None) -> Any | None:
+    import json
+
+    if not value:
+        return None
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def serialize_banner_check(row: "BannerCheck") -> dict:
+    """Same shape as the synchronous /analyze-banner payload, plus status."""
+    return {
+        "id": row.id,
+        "status": row.status,
+        "suitable": row.suitable,
+        "confidence": row.confidence,
+        "summary": row.summary,
+        "checks": _load_json(row.checks_json) or [],
+        "ai_verdict": _load_json(row.ai_verdict_json),
+        "decision": _load_json(row.decision_json),
+        "error": row.error,
     }
 
 

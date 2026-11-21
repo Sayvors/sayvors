@@ -95,3 +95,87 @@ async def test_analyze_banner_endpoint_rejects_garbage(client):
     )
     assert res.status_code == 200
     assert res.json()["suitable"] == "no"
+
+
+async def test_banner_check_queue_end_to_end(client, db, monkeypatch, tmp_path):
+    """Enqueue → realtime-lane handler → polled payload, the full path."""
+    from sqlalchemy import select
+
+    from app.config import settings
+    from app.modules.jobs.models import Job
+    from app.modules.media import service
+    from app.modules.media.models import BannerCheck
+
+    monkeypatch.setattr(settings, "MEDIA_DIR", str(tmp_path))
+    monkeypatch.setattr(settings, "S3_MEDIA_BUCKET", "")
+    monkeypatch.setattr(settings, "AWS_S3_BUCKET", "")
+    monkeypatch.setattr(settings, "GCS_PUBLIC_BUCKET", "")
+
+    res = client.post(
+        "/api/v1/media/banner-checks",
+        files={"file": ("banner.png", _good_banner_png(), "image/png")},
+        headers={"host": "localhost"},
+    )
+    assert res.status_code == 200, res.text
+    check_id = res.json()["id"]
+    assert res.json()["status"] == "queued"
+
+    # The durable job row exists on the realtime lane, idempotent per check.
+    jobs = (
+        await db.execute(
+            select(Job).where(
+                Job.subject_type == "banner_check",
+                Job.subject_id == check_id,
+            )
+        )
+    ).scalars().all()
+    assert len(jobs) == 1
+    assert jobs[0].job_type == "media.banner_check"
+    assert jobs[0].lane == "realtime"
+
+    # The handler (what the realtime runner executes) completes the check.
+    outcome = await service.run_banner_check(
+        db, check_id=check_id, tenant_id=jobs[0].tenant_id,
+    )
+    assert outcome["status"] == "done"
+
+    row = await db.get(BannerCheck, check_id)
+    assert row.status == "done"
+    assert row.suitable == "yes"
+
+    # The poll payload matches the synchronous endpoint's shape.
+    poll = client.get(f"/api/v1/media/banner-checks/{check_id}", headers={"host": "localhost"})
+    assert poll.status_code == 200, poll.text
+    body = poll.json()
+    assert body["status"] == "done"
+    assert body["suitable"] == "yes"
+    assert len(body["checks"]) == 5
+    assert body["ai_verdict"] is None
+
+    # Idempotent: a retried job never re-analyses a finished check.
+    outcome2 = await service.run_banner_check(
+        db, check_id=check_id, tenant_id=jobs[0].tenant_id,
+    )
+    assert outcome2["status"] == "done"
+
+
+async def test_banner_check_queue_rejects_lying_file(client, tmp_path, monkeypatch):
+    """The picker normalises; a lying file that slips through is rejected here."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "MEDIA_DIR", str(tmp_path))
+    monkeypatch.setattr(settings, "S3_MEDIA_BUCKET", "")
+    monkeypatch.setattr(settings, "AWS_S3_BUCKET", "")
+    monkeypatch.setattr(settings, "GCS_PUBLIC_BUCKET", "")
+    res = client.post(
+        "/api/v1/media/banner-checks",
+        files={"file": ("photo.jpg", b"definitely-not-jpeg-bytes", "image/jpeg")},
+        headers={"host": "localhost"},
+    )
+    assert res.status_code == 400
+    assert "file type" in res.json()["detail"].lower()
+
+
+async def test_banner_check_poll_unknown_id(client):
+    res = client.get("/api/v1/media/banner-checks/nope", headers={"host": "localhost"})
+    assert res.status_code == 404

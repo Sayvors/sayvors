@@ -145,135 +145,79 @@ async def analyze_banner(
     max_bytes = max(1, settings.MEDIA_MAX_MB) * 1024 * 1024
     if len(data) > max_bytes:
         raise HTTPException(status_code=400, detail="File is too big.")
-    result = image_check.analyze_banner_image(
-        data, filename=file.filename or "", content_type=file.content_type
+    # Same pipeline the queued job runs; the verdict functions are module
+    # aliases so tests (and callers) can substitute them in one place.
+    return await service.full_banner_analysis(
+        db, data, vision_verdict_fn=_vision_verdict, decision_verdict_fn=_decision_verdict,
     )
-
-    from ..admin.service import get_platform_config
-
-    config = await get_platform_config(db)
-    model = (config.banner_vision_model or "").strip() or settings.BANNER_VISION_MODEL
-    if model:
-        result["ai_verdict"] = await _vision_verdict(data, model)
-
-    # Optional plain-text decision model: it reads the measurements (and the
-    # vision observations, when present) and writes the final call. Any
-    # enabled model qualifies — no vision capability needed. Best-effort:
-    # when it is unset or fails, the deterministic score stands.
-    decision_model = (config.banner_decision_model or "").strip()
-    if decision_model:
-        decision = await _decision_verdict(result, decision_model)
-        if decision:
-            result["decision"] = decision
-            result["suitable"] = decision["suitable"]
-            result["confidence"] = decision["confidence"]
-            if decision["summary"]:
-                result["summary"] = decision["summary"]
-    return result
-
-
-async def _decision_verdict(result: dict, model: str) -> dict | None:
-    """Plain-language suitability call from a text model, best-effort.
-
-    The rule layer supplies facts and the vision layer (when configured)
-    supplies observations; this model weighs them the way a human reviewer
-    would and answers in the merchant's language. A failure here must never
-    break the check — the deterministic summary simply stands.
-    """
-    try:
-        import json
-
-        from ..llm.gateway import complete
-        from ..llm.providers.base import LLMMessage
-
-        checks = [
-            {"check": c["label"], "pass": bool(c["pass"]), "note": c["note"]}
-            for c in result.get("checks", [])
-        ]
-        vision_reasons = ((result.get("ai_verdict") or {}).get("reasons")) or []
-        prompt = (
-            "You decide whether a photo is good enough to serve as a Google "
-            "Business Profile banner (cover) image.\n"
-            f"Automated measurements: {json.dumps(checks)}\n"
-            f"Vision model observations: {json.dumps(vision_reasons)}\n"
-            "Google prefers wide (around 16:9), bright, sharp photos that show "
-            "the real business; text-heavy, blurry or stock-looking images "
-            "perform poorly and Google may replace them.\n"
-            "Answer ONLY with JSON: {\"suitable\": \"yes\"|\"maybe\"|\"no\", "
-            "\"confidence\": 0-100, \"summary\": \"one plain sentence for the "
-            "business owner\", \"reasons\": [\"short plain reason\"]}."
-        )
-        response = await complete(
-            model=model,
-            messages=[LLMMessage(role="user", content=prompt)],
-            purpose="media.banner_decision",
-            temperature=0.1,
-            max_tokens=300,
-        )
-        text = (response.content or "").strip()
-        # Tolerate a code fence the model may add.
-        if text.startswith("```"):
-            text = text.strip("`")
-            if text.startswith("json"):
-                text = text[4:].strip()
-        verdict = json.loads(text)
-        suitable = str(verdict.get("suitable", "maybe")).lower()
-        if suitable not in ("yes", "maybe", "no"):
-            suitable = "maybe"
-        try:
-            confidence = max(0, min(100, int(verdict.get("confidence", 0))))
-        except (TypeError, ValueError):
-            confidence = 0
-        return {
-            "suitable": suitable,
-            "confidence": confidence,
-            "summary": str(verdict.get("summary") or "").strip()[:300],
-            "reasons": [str(r) for r in (verdict.get("reasons") or [])][:6],
-        }
-    except Exception:
-        logger.exception("Banner decision verdict failed")
-        return None
 
 
 async def _vision_verdict(data: bytes, model: str) -> dict | None:
-    """Multimodal verdict from the configured vision model, best-effort."""
+    """Alias kept for the publish composer's test seams; body lives in service."""
+    return await service.vision_verdict(data, model)
+
+
+async def _decision_verdict(result: dict, model: str) -> dict | None:
+    return await service.decision_verdict(result, model)
+
+
+@router.post("/banner-checks")
+async def enqueue_banner_check(
+    request: Request,
+    file: UploadFile = File(...),
+    ctx: TenantContext = Depends(require_perm("media.manage")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Queue the AI photo check on the realtime lane (publication waits on it).
+
+    Returns the check id for polling. The photo is stored through the same
+    validation path as /upload, so a lying-extension file is rejected here
+    with the same message the picker already showed.
+    """
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file.")
+    max_bytes = max(1, settings.MEDIA_MAX_MB) * 1024 * 1024
+    if len(data) > max_bytes:
+        raise HTTPException(status_code=400, detail="File is too big.")
     try:
-        import json
-
-        from ..llm.gateway import complete
-        from ..llm.providers.base import LLMMessage
-
-        response = await complete(
-            model=model,
-            messages=[LLMMessage(
-                role="user",
-                content=(
-                    "Analyse this photo as a Google Business Profile banner "
-                    "(cover) image. Answer ONLY with JSON: {\"suitable\": "
-                    "\"yes\"|\"maybe\"|\"no\", \"confidence\": 0-100, "
-                    "\"reasons\": [\"...\"]}."
-                ),
-            )],
-            images=[("image/jpeg", data)],
-            purpose="media.banner_verdict",
-            temperature=0.2,
-            max_tokens=300,
+        row = await service.enqueue_banner_check(
+            db,
+            user_id=tenant_id_of(user),
+            filename=file.filename or "banner.png",
+            content_type=file.content_type,
+            data=data,
+            base_url=public_media_base(str(request.base_url)),
         )
-        text = (response.content or "").strip()
-        # Tolerate a code fence the model may add.
-        if text.startswith("```"):
-            text = text.strip("`")
-            if text.startswith("json"):
-                text = text[4:].strip()
-        verdict = json.loads(text)
-        return {
-            "suitable": str(verdict.get("suitable", "maybe")),
-            "confidence": int(verdict.get("confidence", 0)),
-            "reasons": [str(r) for r in (verdict.get("reasons") or [])][:6],
-        }
-    except Exception:
-        logger.exception("Banner vision verdict failed")
-        return None
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"id": row.id, "status": row.status}
+
+
+@router.get("/banner-checks/{check_id}")
+async def get_banner_check(
+    check_id: str,
+    ctx: TenantContext = Depends(require_perm("media.view")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Poll one queued check. Payload shape matches /analyze-banner."""
+    from sqlalchemy import select as _select
+
+    from .models import BannerCheck
+
+    row = (
+        await db.execute(
+            _select(BannerCheck).where(
+                BannerCheck.id == check_id,
+                BannerCheck.tenant_id == tenant_id_of(user),
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Check not found.")
+    return service.serialize_banner_check(row)
 
 
 def _out(result: dict) -> MediaOut:

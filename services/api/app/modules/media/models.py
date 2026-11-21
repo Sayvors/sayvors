@@ -68,3 +68,40 @@ class LocationMedia(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+
+
+class BannerCheck(Base):
+    """One AI suitability analysis of a banner/promotion photo.
+
+    Runs on the realtime job lane because a publication is waiting on it; the
+    row is what the composer polls, so a worker crash surfaces as "failed"
+    instead of a hung publish dialog. Payload columns mirror the synchronous
+    /analyze-banner response so the UI consumes either identically.
+    """
+
+    __tablename__ = "banner_checks"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    # queued | running | done | failed
+    status: Mapped[str] = mapped_column(String(12), default="queued", index=True)
+    media_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    media_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    suitable: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    confidence: Mapped[int | None] = mapped_column(nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    checks_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ai_verdict_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decision_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(String(300), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
