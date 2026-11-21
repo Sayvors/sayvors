@@ -63,6 +63,45 @@ _LOCATION_IMAGE_CATEGORY = {
     "banner": "COVER",
 }
 
+# Google Business Profile media endpoints accept JPEG/PNG reliably. WEBP and
+# other browser formats are valid uploads on our side but can be rejected by
+# Google's create_media/local post media ingestion ("Image format is not
+# supported"). Normalize before any byte upload to Google.
+_GOOGLE_SAFE_IMAGE_TYPES = {"image/jpeg", "image/png"}
+
+
+def _google_safe_image(data: bytes, content_type: str | None) -> tuple[bytes, str]:
+    """Return (bytes, mime) that Google media endpoints accept.
+
+    JPEG/PNG pass through unchanged. Everything else (WEBP, GIF, HEIC-after-
+    decode, etc.) is re-encoded as JPEG, flattening alpha onto white so cover
+    photos never get a black/transparent background.
+    """
+    from io import BytesIO
+
+    from PIL import Image, ImageOps
+
+    ctype = (content_type or "").split(";")[0].strip().lower()
+    if ctype in _GOOGLE_SAFE_IMAGE_TYPES:
+        return data, ctype
+    try:
+        with Image.open(BytesIO(data)) as img:
+            img.load()
+            img = ImageOps.exif_transpose(img)
+            if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+                rgba = img.convert("RGBA")
+                bg = Image.new("RGB", rgba.size, (255, 255, 255))
+                bg.paste(rgba, mask=rgba.split()[-1])
+                out_img = bg
+            else:
+                out_img = img.convert("RGB")
+            buf = BytesIO()
+            out_img.save(buf, format="JPEG", quality=92, optimize=True)
+            return buf.getvalue(), "image/jpeg"
+    except Exception:
+        logger.warning("Could not transcode image for Google; sending original bytes", exc_info=True)
+        return data, ctype or "image/jpeg"
+
 
 def _require_post_name(post_name: str) -> None:
     if not post_name or "/localPosts/" not in post_name:
@@ -390,6 +429,7 @@ class GoogleBusinessPublisher:
         not delete it immediately — Google may fetch the URL asynchronously,
         and deleting the source before that fetch breaks the post image.
         """
+        data, content_type = _google_safe_image(data, content_type)
         ref = await self.start_media_upload(account, location)
         await self.upload_media_bytes(ref, data, content_type)
         url = f"{GBP_MEDIA_API}/{account}/{location}/media"
@@ -475,6 +515,10 @@ class GoogleBusinessPublisher:
             "locationAssociation": {"category": category},
         }
         if media_data is not None:
+            # Google rejects WEBP/other formats on some media endpoints with
+            # "Image format is not supported" — normalize before validation so
+            # the size check applies to the bytes we actually upload.
+            media_data, content_type = _google_safe_image(media_data, content_type)
             # Validate image dimensions before uploading — Google rejects
             # images smaller than 250x250 with a cryptic 400 INVALID_ARGUMENT.
             try:
