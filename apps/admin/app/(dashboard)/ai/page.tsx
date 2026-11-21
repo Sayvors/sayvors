@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { adminFetch } from "@/lib/admin-api";
+import LlmsPage from "../llms/page";
 
 const FOCUS_RING = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet";
 
@@ -11,9 +12,6 @@ interface SavedModel {
   provider: string;
   api_model: string;
   enabled: boolean;
-  custom: boolean;
-  tested_ok: boolean | null;
-  tested_at: string | null;
 }
 
 interface AiConfig {
@@ -21,10 +19,12 @@ interface AiConfig {
   updated_at: string | null;
 }
 
-interface TestResult {
+interface ModelTestResult {
+  model_id: string;
   ok: boolean;
   latency_ms: number;
   detail: string;
+  reply: string;
 }
 
 export default function AiImageCheckPage() {
@@ -33,7 +33,7 @@ export default function AiImageCheckPage() {
   const [selected, setSelected] = useState("");
   const [busy, setBusy] = useState(false);
   const [busyTest, setBusyTest] = useState(false);
-  const [test, setTest] = useState<TestResult | null>(null);
+  const [test, setTest] = useState<ModelTestResult | null>(null);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   const load = useCallback(() => {
@@ -59,13 +59,16 @@ export default function AiImageCheckPage() {
     setBusyTest(true);
     setTest(null);
     try {
-      const res = await adminFetch<TestResult>(
+      const res = await adminFetch<ModelTestResult>(
         `/api/v1/admin/llm/${chosen.provider}/models/${encodeURIComponent(chosen.id)}/test`,
         { method: "POST" }
       );
       setTest(res);
     } catch (e) {
-      setTest({ ok: false, latency_ms: 0, detail: e instanceof Error ? e.message : "Test failed." });
+      setTest({
+        model_id: chosen.id, ok: false, latency_ms: 0,
+        detail: e instanceof Error ? e.message : "Test failed.", reply: "",
+      });
     } finally {
       setBusyTest(false);
     }
@@ -90,28 +93,29 @@ export default function AiImageCheckPage() {
 
   return (
     <div className="space-y-5">
-      <div className="admin-rise flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-ink/40">Intelligence · AI image check</p>
-          <h1 className="mt-1 text-[26px] font-bold leading-none tracking-tight text-ink">Banner &amp; promotion photo check</h1>
-          <p className="mt-2 max-w-[680px] text-[13px] font-medium leading-relaxed text-ink/60">
-            Choose the vision model used when a tenant uploads a Promotion (banner) photo to their
-            Google Business Profile. The model id is never shown to tenants — they only see the
-            suitability verdict and confidence.
-          </p>
-        </div>
+      <div>
+        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-ink/40">Intelligence · AI image check</p>
+        <h1 className="mt-1 text-[26px] font-bold leading-none tracking-tight text-ink">Banner &amp; promotion photo check</h1>
+        <p className="mt-2 max-w-[680px] text-[13px] font-medium leading-relaxed text-ink/60">
+          Pick the vision model used when a tenant uploads a Promotion (banner) photo. Add or replace
+          provider keys and models on the LLMs page below — they are the same catalog.
+        </p>
       </div>
 
-      <section className="admin-rise panel p-4 sm:p-5" style={{ animationDelay: "60ms" }}>
-        <label className="mb-1.5 block text-[12px] font-bold text-ink/70" htmlFor="vision-model">
-          Vision model
-        </label>
-        <div className="flex flex-wrap items-end gap-3">
+      <section className="panel p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-[16px] font-bold text-ink">Vision model</h2>
+            <p className="mt-0.5 text-[12px] text-ink/50">
+              Only enabled, saved models can be chosen. Leave empty for rule-based only.
+            </p>
+          </div>
+        </div>
+        <div className="mt-3 flex flex-wrap items-end gap-3">
           <select
-            id="vision-model"
             value={selected}
             onChange={(e) => { setSelected(e.target.value); setTest(null); }}
-            className={`min-w-[280px] flex-1 rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-ink focus:border-deep-violet focus:outline-none ${FOCUS_RING}`}
+            className="input-field min-w-[320px] flex-1"
           >
             <option value="">— rule-based check only (no LLM)</option>
             {models.map((m) => (
@@ -119,52 +123,40 @@ export default function AiImageCheckPage() {
                 {m.name} · {m.provider}/{m.api_model}
               </option>
             ))}
+            {selected && !models.some((m) => m.id === selected) ? (
+              <option value={selected}>{selected} (disabled / missing)</option>
+            ) : null}
           </select>
           <button
             type="button"
-            onClick={runTest}
+            onClick={() => void runTest()}
             disabled={!chosen || busyTest}
-            className={`rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-3 py-2 text-[12px] font-bold text-ink/70 transition hover:bg-ink/[0.04] disabled:opacity-50 ${FOCUS_RING}`}
+            className="btn-primary !px-3 !py-1.5 disabled:opacity-50"
           >
-            {busyTest ? "Testing…" : "Test model"}
+            {busyTest ? "Testing…" : "Test"}
           </button>
           <button
             type="button"
-            onClick={save}
+            onClick={() => void save()}
             disabled={busy}
-            className={`rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:opacity-90 disabled:opacity-50 ${FOCUS_RING}`}
+            className="btn-primary !px-3 !py-1.5 disabled:opacity-50"
           >
             {busy ? "Saving…" : "Save"}
           </button>
         </div>
-
         {test ? (
-          <div className={`mt-3 rounded-[2px] border px-3 py-2 text-[12px] font-semibold ${
-            test.ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-red-200 bg-red-50 text-red-700"
-          }`}>
-            {test.ok
-              ? `Test passed · ${test.latency_ms}ms`
-              : `Test failed · ${test.detail}`}
-          </div>
+          <p className={`mt-2 text-[12px] font-semibold ${test.ok ? "text-emerald-600" : "text-coral"}`}>
+            {test.ok ? `✓ ${test.detail} (${test.latency_ms}ms)` : `✗ ${test.detail}`}
+          </p>
         ) : null}
-
-        <p className="mt-2 text-[11px] leading-relaxed text-ink/45">
-          Empty = rule-based check only (format, size, shape, sharpness, exposure), no LLM cost.
-          Tenants never see this value.
-        </p>
-
         {message ? (
-          <p className={`mt-2 text-[12px] font-semibold ${message.ok ? "text-emerald-700" : "text-red-700"}`}>
+          <p className={`mt-2 text-[12px] font-semibold ${message.ok ? "text-emerald-600" : "text-coral"}`}>
             {message.text}
           </p>
         ) : null}
-      </section>
-
-      <section className="admin-rise panel p-4" style={{ animationDelay: "120ms" }}>
-        <h2 className="text-[12px] font-bold uppercase tracking-[0.12em] text-ink/45">Current</h2>
-        <dl className="mt-2 space-y-1.5 text-[13px]">
+        <dl className="mt-3 space-y-1 text-[12px]">
           <div className="flex gap-2">
-            <dt className="w-40 shrink-0 text-ink/45">Vision model</dt>
+            <dt className="w-32 shrink-0 text-ink/45">Current</dt>
             <dd className="font-mono text-ink">
               {config?.banner_vision_model ? (
                 <>
@@ -177,13 +169,19 @@ export default function AiImageCheckPage() {
             </dd>
           </div>
           <div className="flex gap-2">
-            <dt className="w-40 shrink-0 text-ink/45">Last updated</dt>
+            <dt className="w-32 shrink-0 text-ink/45">Last updated</dt>
             <dd className="text-ink/70">
               {config?.updated_at ? new Date(config.updated_at).toLocaleString() : "—"}
             </dd>
           </div>
         </dl>
+        <p className="mt-2 text-[11px] text-ink/45">
+          Empty = rule-based check only (format, size, shape, sharpness, exposure), no LLM cost.
+          Tenants never see this value.
+        </p>
       </section>
+
+      <LlmsPage />
     </div>
   );
 }
