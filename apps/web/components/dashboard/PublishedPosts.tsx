@@ -217,7 +217,7 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
     <div className="flex flex-col">
       {/* ── Header ── */}
       <div className="shrink-0 border-b border-ink/[0.06] bg-white px-6 py-5 dark:border-fog/[0.06] dark:bg-ink">
-        <div className="mx-auto flex max-w-[1280px] flex-wrap items-end justify-between gap-4">
+        <div className="mx-auto flex max-w-[1280px] flex-wrap items-end justify-between gap-4 xl:max-w-[1600px] 2xl:max-w-[1800px]">
           <div className="min-w-0">
             <h1 className="text-[22px] font-bold tracking-[-0.02em] text-ink dark:text-fog">{p.feedTitle}</h1>
             <p className="mt-1 max-w-xl text-[13px] leading-relaxed text-ink/50 dark:text-fog/50">
@@ -257,7 +257,7 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
 
       {notice && (
         <div className="px-6 pt-4">
-          <div className="mx-auto max-w-[1280px]">
+          <div className="mx-auto max-w-[1280px] xl:max-w-[1600px] 2xl:max-w-[1800px]">
             <p
               role={notice.kind === "err" ? "alert" : "status"}
               className={`flex items-start gap-2.5 rounded-[8px] border px-4 py-3 text-[13px] font-medium shadow-[0_12px_28px_-22px_rgba(61,29,110,0.45)] ${
@@ -274,13 +274,13 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
 
       {/* ── Feed ── */}
       <div className="px-6 pt-5">
-        <div className="mx-auto max-w-[1280px]">
+        <div className="mx-auto max-w-[1280px] xl:max-w-[1600px] 2xl:max-w-[1800px]">
           <ScheduledPostsCalendar items={scheduledEntries} onScheduleDate={onPublish} />
         </div>
       </div>
 
       <div className="px-6 pb-6 pt-5">
-        <div className="mx-auto max-w-[1280px]">
+        <div className="mx-auto max-w-[1280px] xl:max-w-[1600px] 2xl:max-w-[1800px]">
           {jobs === null && legacyPosts === null && !feedError && (
             <div className="flex h-56 items-center justify-center"><LogoLoader size={28} /></div>
           )}
@@ -311,7 +311,7 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
             </div>
           )}
           {list.length > 0 && (
-            <div className="grid grid-cols-1 gap-5 lg:grid-cols-2 2xl:grid-cols-3">
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(360px,1fr))] gap-5">
               {list.map((entry) =>
                 entry.kind === "job" ? (
                   <PostCard

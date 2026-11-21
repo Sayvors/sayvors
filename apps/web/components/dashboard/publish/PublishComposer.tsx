@@ -1453,7 +1453,7 @@ export default function PublishComposer({
 
       {notice && (
         <div className="shrink-0 px-4 pt-3 sm:px-6">
-          <div className="mx-auto max-w-[1280px]">
+          <div className="mx-auto max-w-[1280px] xl:max-w-[1600px] 2xl:max-w-[1800px]">
             <p role="alert" className="rounded-[8px] border border-red-500/40 bg-red-50 px-4 py-3 text-[13px] font-semibold text-red-700 shadow-[0_12px_28px_-22px_rgba(61,29,110,0.45)] dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-300">
               {notice}
             </p>
@@ -1462,7 +1462,7 @@ export default function PublishComposer({
       )}
 
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto grid max-w-[1280px] gap-5 px-4 pb-8 pt-5 sm:px-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="mx-auto grid max-w-[1280px] gap-5 px-4 pb-8 pt-5 sm:px-6 lg:grid-cols-[minmax(0,1fr)_360px] xl:max-w-[1600px] 2xl:max-w-[1800px]">
           {/* One working column. Steps use `hidden`, not unmounting: every
               input, ref and preview stays alive while navigating. */}
           <div className="min-w-0 space-y-5">

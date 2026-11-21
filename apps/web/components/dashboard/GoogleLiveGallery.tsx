@@ -326,7 +326,7 @@ export default function GoogleLiveGallery() {
       )}
 
       {galleryLoading && items.length === 0 ? (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4">
           {Array.from({ length: 8 }).map((_, i) => <div key={i} className="aspect-[4/3] animate-pulse rounded-[8px] bg-ink/[0.06]" />)}
         </div>
       ) : items.length === 0 ? (
@@ -338,7 +338,7 @@ export default function GoogleLiveGallery() {
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4">
           {items.map((m) => {
             const key = itemKey(m);
             const isSelected = selected.has(key);

@@ -240,7 +240,7 @@ export function FeedGrid({ entries, onOpenPost, onOpenMedia }: {
   onOpenMedia: (id: string) => void;
 }) {
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
       {entries.map((e) =>
         e.kind === "post" ? (
           <PostCard key={e.key} post={e.post} onOpen={() => onOpenPost(e.post.id)} />
