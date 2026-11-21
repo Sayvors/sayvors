@@ -38,13 +38,22 @@ async def get_platform_config(db: AsyncSession) -> "PlatformConfig":
 
 
 async def update_platform_config(
-    db: AsyncSession, *, banner_vision_model: str | None = None
+    db: AsyncSession,
+    *,
+    banner_vision_model: str | None = None,
+    banner_decision_model: str | None = None,
 ) -> "PlatformConfig":
-    """Save admin changes to platform-wide AI settings."""
+    """Save admin changes to platform-wide AI settings.
+
+    ``None`` means "leave untouched"; an empty string clears the setting.
+    """
     row = await get_platform_config(db)
     if banner_vision_model is not None:
         model = (banner_vision_model or "").strip()
         row.banner_vision_model = model or None
+    if banner_decision_model is not None:
+        model = (banner_decision_model or "").strip()
+        row.banner_decision_model = model or None
     await db.commit()
     await db.refresh(row)
     return row

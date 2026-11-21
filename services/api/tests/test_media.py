@@ -268,6 +268,47 @@ async def test_upload_from_computer_returns_public_url(monkeypatch, tmp_path, db
     assert res["media"]["status"] == "draft"
 
 
+@pytest.mark.asyncio
+async def test_convert_reencodes_browser_undecodable_image(client):
+    """CMYK JPEGs render as an empty frame in Chrome; the server re-encodes them."""
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("CMYK", (800, 450), (90, 120, 60, 10)).save(buf, format="JPEG", quality=90)
+    r = client.post(
+        "/api/v1/media/convert",
+        files={"file": ("print.jpg", buf.getvalue(), "image/jpeg")},
+        headers={"host": "localhost"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("image/jpeg")
+    assert r.headers["x-image-size"] == "800x450"
+    check = Image.open(io.BytesIO(r.content))
+    assert check.mode == "RGB"
+
+    # An oversized scan comes back capped at the browser-friendly edge.
+    huge = io.BytesIO()
+    Image.new("RGB", (6000, 2000), (255, 0, 0)).save(huge, format="JPEG", quality=85)
+    r2 = client.post(
+        "/api/v1/media/convert",
+        files={"file": ("scan.jpg", huge.getvalue(), "image/jpeg")},
+        headers={"host": "localhost"},
+    )
+    assert r2.status_code == 200, r2.text
+    assert r2.headers["x-image-size"] == "4096x1365"
+
+    # Bytes no decoder can open fail with the merchant-facing reason.
+    r3 = client.post(
+        "/api/v1/media/convert",
+        files={"file": ("junk.jpg", b"not-an-image-at-all", "image/jpeg")},
+        headers={"host": "localhost"},
+    )
+    assert r3.status_code == 400
+    assert "not a readable image" in r3.json()["detail"]
+
+
 def test_generic_storage_routes_upload_get_list_update_delete(monkeypatch, tmp_path, client, user_id):
     from app.config import settings
 

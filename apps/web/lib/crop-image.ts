@@ -67,17 +67,26 @@ export function cropSourceRect(
   // stored pan offset (which is in editor pixels) and the zoom.
   const cover = Math.max(boxW / width, boxH / height);
   const scale = Math.max(1e-6, cover * Math.max(0.01, crop.zoom));
-  const left = (boxW - width * scale) / 2 + crop.x;
-  const top = (boxH - height * scale) / 2 + crop.y;
+  let left = (boxW - width * scale) / 2 + crop.x;
+  let top = (boxH - height * scale) / 2 + crop.y;
 
   // The visible source rectangle. Clamped so drawImage can never read
   // outside the bitmap when an offset sits at the edge.
-  const x = Math.max(0, -left / scale);
-  const y = Math.max(0, -top / scale);
-  const w = Math.min(width - x, boxW / scale);
-  const h = Math.min(height - y, boxH / scale);
+  let x = Math.max(0, -left / scale);
+  let y = Math.max(0, -top / scale);
+  let w = Math.min(width - x, boxW / scale);
+  let h = Math.min(height - y, boxH / scale);
   if (w <= 0 || h <= 0) {
-    throw new Error("the crop landed outside the image");
+    // A stored offset can land the frame entirely outside the image (the
+    // media was replaced but the per-format pan was not). CropFrame clamps
+    // that offset in the editor, so the bake must clamp too — falling back
+    // to the centered cover crop beats publishing uncropped.
+    left = (boxW - width * scale) / 2;
+    top = (boxH - height * scale) / 2;
+    x = Math.max(0, -left / scale);
+    y = Math.max(0, -top / scale);
+    w = Math.min(width - x, boxW / scale);
+    h = Math.min(height - y, boxH / scale);
   }
   return { x, y, w, h };
 }

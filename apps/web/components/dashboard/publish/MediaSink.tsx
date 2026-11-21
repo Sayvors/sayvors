@@ -3,9 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { CROP_ASPECT } from "./CropFrame";
 import { MAX_MEDIA_MB, type CropState } from "./types";
-import { inspectImageFile, probeImageUrl, normalizePickedFile, ALLOWED_IMAGE_EXT, ALLOWED_VIDEO_EXT } from "@/lib/media-validation";
+import { inspectImageFile, probeImageUrl, normalizePickedFile, canDecodeInBrowser, ALLOWED_IMAGE_EXT, ALLOWED_VIDEO_EXT } from "@/lib/media-validation";
 import { useI18n } from "@/lib/i18n/I18nProvider";
-import { apiFetch } from "@/lib/api-rag";
+import { apiFetch, apiFetchBlob } from "@/lib/api-rag";
 
 function fill(s: string, vars: Record<string, string | number>): string {
   return Object.entries(vars).reduce(
@@ -59,6 +59,7 @@ export default function MediaSink({
   const [urlDraft, setUrlDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [scanning, setScanning] = useState<string | null>(null);
   const [source, setSource] = useState<"upload" | "link" | "library">("upload");
   const [libraryItems, setLibraryItems] = useState<{ id: string; url: string; type: "image" | "video"; label: string; sizeBytes?: number }[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
@@ -87,6 +88,7 @@ export default function MediaSink({
   const acceptFiles = async (files: FileList | null) => {
     setError(null);
     setInfo(null);
+    setScanning(null);
     const file = files?.[0];
     if (!file) return;
     if (file.size > maxMb * 1024 * 1024) {
@@ -119,13 +121,50 @@ export default function MediaSink({
     // Downloads from WhatsApp/phones often carry a lying extension or a
     // format Google refuses (HEIC/AVIF). Fix or convert NOW, at pick time,
     // so it can never surface as a publish failure after everything is set.
-    const norm = await normalizePickedFile(file);
+    // Every stage announces itself: a silent pipeline reads as broken.
+    const norm = await (async () => {
+      setScanning("Checking the file…");
+      try {
+        return await normalizePickedFile(file);
+      } finally {
+        setScanning(null);
+      }
+    })();
     if (!norm.ok) {
       setError(norm.error);
       return;
     }
     if (norm.note) setInfo(norm.note);
-    const picked = norm.file;
+    let picked = norm.file;
+    // A valid file the browser still cannot rasterise (CMYK JPEG, oversized
+    // scan) would show an empty crop frame and publish uncropped. Pillow
+    // decodes what browsers cannot, so ask the server for a usable copy.
+    if (kind === "image" && !(await canDecodeInBrowser(picked))) {
+      setScanning("Preparing the photo…");
+      try {
+        const form = new FormData();
+        form.append("file", picked);
+        const blob = await apiFetchBlob("/api/v1/media/convert", { method: "POST", body: form });
+        const ext = blob.type === "image/png" ? "png" : "jpg";
+        picked = new File(
+          [blob],
+          `${(picked.name.replace(/\.[^.]+$/, "") || "photo")}-ready.${ext}`,
+          { type: blob.type },
+        );
+        setInfo(
+          "Prepared on Sayvors servers — your browser can't display the original file, but this copy previews, crops and publishes normally.",
+        );
+      } catch (e) {
+        setError(
+          e instanceof Error
+            ? e.message
+            : "That photo can't be prepared for publishing. Export it as JPG or PNG and try again.",
+        );
+        return;
+      } finally {
+        setScanning(null);
+      }
+    }
     let width: number | undefined;
     let height: number | undefined;
     if (kind === "image") {
@@ -421,12 +460,20 @@ export default function MediaSink({
         </div>
       )}
 
+      {scanning && (
+        <p role="status" className="flex items-center gap-2 text-[12px] font-semibold text-deep-violet dark:text-fog">
+          <svg className="h-3.5 w-3.5 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+            <path d="M12 3a9 9 0 1 0 9 9" strokeLinecap="round" />
+          </svg>
+          {scanning}
+        </p>
+      )}
       {error && (
         <p role="alert" className="text-[12px] font-semibold text-red-600 dark:text-red-400">
           {error}
         </p>
       )}
-      {info && !error && (
+      {info && !error && !scanning && (
         <p role="status" className="text-[12px] font-semibold text-deep-violet dark:text-fog">
           {info}
         </p>

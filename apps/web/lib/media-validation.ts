@@ -308,6 +308,23 @@ export type NormalizedMedia =
   | { ok: false; error: string };
 
 /**
+ * Whether the browser can rasterise this file at all.
+ *
+ * The crop editor and the publish-time bake both need a decodable image;
+ * CMYK JPEGs and a few exotic codecs render as an empty frame in Chrome and
+ * then publish uncropped. Undecodable files get converted server-side.
+ */
+export async function canDecodeInBrowser(file: File): Promise<boolean> {
+  try {
+    const bitmap = await createImageBitmap(file);
+    bitmap.close();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Make a picked file safe to upload: correct a lying extension, or convert
  * a format Google cannot store (HEIC/AVIF/BMP) into JPEG. Runs at pick time
  * so a mismatch never surfaces as a publish failure several steps later.

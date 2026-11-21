@@ -12,10 +12,15 @@ DELETE /api/v1/media/{media_id}     delete permanently
 POST   /api/v1/media/{media_id}/publish   publish a draft/scheduled/failed photo now
 POST   /api/v1/media/sync           publish due + delete expired (admin/ops only)
 """
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import settings
+
+logger = logging.getLogger(__name__)
 from ...core.deps import get_current_user, get_db, require_admin
 from ...core.storage import public_media_base
 from ...core.upstream_errors import upstream_http_error
@@ -55,6 +60,32 @@ async def upload_media_file(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.post("/convert")
+async def convert_media_for_browser(
+    file: UploadFile = File(...),
+    ctx: TenantContext = Depends(require_perm("media.manage")),
+    user: User = Depends(get_current_user),
+):
+    """Re-encode a photo the browser cannot decode (CMYK JPEG, huge scans).
+
+    Returns the raw converted bytes (image/jpeg or image/png). The composer
+    swaps them in for preview, crop and publish, so an undecodable original
+    never becomes an empty crop frame or an uncropped publish. The model id
+    and storage details stay server-side; only pixels travel back.
+    """
+    _ = ctx, user
+    data = await file.read()
+    try:
+        out, mime, width, height = service.reencode_for_browser(data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return Response(
+        content=out,
+        media_type=mime,
+        headers={"X-Image-Size": f"{width}x{height}"},
+    )
+
+
 @router.post("/analyze-banner")
 async def analyze_banner(
     file: UploadFile = File(...),
@@ -84,7 +115,84 @@ async def analyze_banner(
     model = (config.banner_vision_model or "").strip() or settings.BANNER_VISION_MODEL
     if model:
         result["ai_verdict"] = await _vision_verdict(data, model)
+
+    # Optional plain-text decision model: it reads the measurements (and the
+    # vision observations, when present) and writes the final call. Any
+    # enabled model qualifies — no vision capability needed. Best-effort:
+    # when it is unset or fails, the deterministic score stands.
+    decision_model = (config.banner_decision_model or "").strip()
+    if decision_model:
+        decision = await _decision_verdict(result, decision_model)
+        if decision:
+            result["decision"] = decision
+            result["suitable"] = decision["suitable"]
+            result["confidence"] = decision["confidence"]
+            if decision["summary"]:
+                result["summary"] = decision["summary"]
     return result
+
+
+async def _decision_verdict(result: dict, model: str) -> dict | None:
+    """Plain-language suitability call from a text model, best-effort.
+
+    The rule layer supplies facts and the vision layer (when configured)
+    supplies observations; this model weighs them the way a human reviewer
+    would and answers in the merchant's language. A failure here must never
+    break the check — the deterministic summary simply stands.
+    """
+    try:
+        import json
+
+        from ..llm.gateway import complete
+        from ..llm.providers.base import LLMMessage
+
+        checks = [
+            {"check": c["label"], "pass": bool(c["pass"]), "note": c["note"]}
+            for c in result.get("checks", [])
+        ]
+        vision_reasons = ((result.get("ai_verdict") or {}).get("reasons")) or []
+        prompt = (
+            "You decide whether a photo is good enough to serve as a Google "
+            "Business Profile banner (cover) image.\n"
+            f"Automated measurements: {json.dumps(checks)}\n"
+            f"Vision model observations: {json.dumps(vision_reasons)}\n"
+            "Google prefers wide (around 16:9), bright, sharp photos that show "
+            "the real business; text-heavy, blurry or stock-looking images "
+            "perform poorly and Google may replace them.\n"
+            "Answer ONLY with JSON: {\"suitable\": \"yes\"|\"maybe\"|\"no\", "
+            "\"confidence\": 0-100, \"summary\": \"one plain sentence for the "
+            "business owner\", \"reasons\": [\"short plain reason\"]}."
+        )
+        response = await complete(
+            model=model,
+            messages=[LLMMessage(role="user", content=prompt)],
+            purpose="media.banner_decision",
+            temperature=0.1,
+            max_tokens=300,
+        )
+        text = (response.content or "").strip()
+        # Tolerate a code fence the model may add.
+        if text.startswith("```"):
+            text = text.strip("`")
+            if text.startswith("json"):
+                text = text[4:].strip()
+        verdict = json.loads(text)
+        suitable = str(verdict.get("suitable", "maybe")).lower()
+        if suitable not in ("yes", "maybe", "no"):
+            suitable = "maybe"
+        try:
+            confidence = max(0, min(100, int(verdict.get("confidence", 0))))
+        except (TypeError, ValueError):
+            confidence = 0
+        return {
+            "suitable": suitable,
+            "confidence": confidence,
+            "summary": str(verdict.get("summary") or "").strip()[:300],
+            "reasons": [str(r) for r in (verdict.get("reasons") or [])][:6],
+        }
+    except Exception:
+        logger.exception("Banner decision verdict failed")
+        return None
 
 
 async def _vision_verdict(data: bytes, model: str) -> dict | None:
@@ -92,8 +200,8 @@ async def _vision_verdict(data: bytes, model: str) -> dict | None:
     try:
         import json
 
-        from ...llm.gateway import complete
-        from ...llm.providers.base import LLMMessage
+        from ..llm.gateway import complete
+        from ..llm.providers.base import LLMMessage
 
         response = await complete(
             model=model,

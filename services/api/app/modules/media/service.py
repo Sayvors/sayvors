@@ -133,6 +133,63 @@ async def save_upload(
     }
 
 
+# Browsers refuse to decode some perfectly valid photos — CMYK JPEGs from
+# print shops, oversized scans, exotic codecs. The composer's crop editor and
+# the publish-time rasteriser both run in the browser, so such a file shows an
+# empty frame and then publishes uncropped. Pillow decodes what browsers
+# cannot, so the conversion happens here and the composer swaps the bytes in.
+MAX_BROWSER_EDGE = 4096
+
+
+def reencode_for_browser(data: bytes) -> tuple[bytes, str, int, int]:
+    """Re-encode any readable image into a browser-friendly sRGB JPEG/PNG.
+
+    Returns (bytes, mime, width, height). Raises ValueError with a
+    merchant-facing reason when the file is empty, oversized or not an image.
+    """
+    import io
+
+    from PIL import Image
+
+    if not data:
+        raise ValueError("Empty file.")
+    max_bytes = max(1, settings.MEDIA_MAX_MB) * 1024 * 1024
+    if len(data) > max_bytes:
+        raise ValueError(f"File is too big — max {settings.MEDIA_MAX_MB}MB.")
+    try:
+        image = Image.open(io.BytesIO(data))
+        image.load()
+    except Exception:
+        raise ValueError("That file is not a readable image.")
+
+    # Palette/alpha modes keep PNG (logos with transparency); everything
+    # else flattens to sRGB JPEG, which is what photos should ship as.
+    has_alpha = image.mode in ("RGBA", "LA", "PA") or (
+        image.mode == "P" and "transparency" in image.info
+    )
+    if has_alpha:
+        image = image.convert("RGBA")
+        mime = "image/png"
+    else:
+        image = image.convert("RGB")
+        mime = "image/jpeg"
+
+    longest = max(image.size)
+    if longest > MAX_BROWSER_EDGE:
+        scale = MAX_BROWSER_EDGE / longest
+        image = image.resize(
+            (max(1, round(image.width * scale)), max(1, round(image.height * scale))),
+            Image.LANCZOS,
+        )
+
+    buf = io.BytesIO()
+    if mime == "image/png":
+        image.save(buf, format="PNG", optimize=True)
+    else:
+        image.save(buf, format="JPEG", quality=88, optimize=True)
+    return buf.getvalue(), mime, image.width, image.height
+
+
 def _serialize(m: LocationMedia) -> dict:
     return {
         "id": m.id,

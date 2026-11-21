@@ -48,6 +48,10 @@ class PlatformConfig(Base):
     # "provider:model" catalog id used for the banner/promotion photo check.
     # Empty disables the multimodal verdict (rule-based check only).
     banner_vision_model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Optional plain-text model that reads the rule measurements (and the
+    # vision verdict, when present) and writes the final suitability call.
+    # Any enabled model qualifies; NULL keeps the built-in weighted scoring.
+    banner_decision_model: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

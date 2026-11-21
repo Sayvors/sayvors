@@ -309,6 +309,7 @@ function BannerCheckCard({
       summary?: string;
       checks?: { key: string; label: string; pass: boolean; severity: string; note: string }[];
       ai_verdict?: { suitable?: string; confidence?: number; reasons?: string[] } | null;
+      decision?: { suitable?: string; confidence?: number; summary?: string; reasons?: string[] } | null;
     };
   };
   onRetry: () => void;
@@ -380,6 +381,15 @@ function BannerCheckCard({
       {result.ai_verdict?.reasons?.length ? (
         <ul className="mt-2 space-y-1 border-t border-current/10 pt-2">
           {result.ai_verdict.reasons.map((reason, i) => (
+            <li key={i} className={`text-[10.5px] leading-snug ${tone.text} opacity-80`}>
+              • {reason}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {result.decision?.reasons?.length ? (
+        <ul className="mt-2 space-y-1 border-t border-current/10 pt-2">
+          {result.decision.reasons.map((reason, i) => (
             <li key={i} className={`text-[10.5px] leading-snug ${tone.text} opacity-80`}>
               • {reason}
             </li>
@@ -605,6 +615,7 @@ export default function PublishComposer({
       summary?: string;
       checks?: { key: string; label: string; pass: boolean; severity: string; note: string }[];
       ai_verdict?: { suitable?: string; confidence?: number; reasons?: string[] } | null;
+      decision?: { suitable?: string; confidence?: number; summary?: string; reasons?: string[] } | null;
     };
   }>({ state: "idle" });
 

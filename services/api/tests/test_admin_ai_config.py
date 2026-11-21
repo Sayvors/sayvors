@@ -81,3 +81,81 @@ async def test_analyze_banner_calls_vision_with_admin_model(client, db, monkeypa
     assert calls.get("model") == "test:vision"
     assert body["ai_verdict"]["suitable"] == "yes"
     assert "test:vision" not in str(body)  # model id never leaks to the tenant
+
+
+async def test_admin_ai_config_decision_model_roundtrip(client, db, admin_headers):
+    res = client.get("/api/v1/admin/config/ai", headers=admin_headers)
+    assert res.json()["banner_decision_model"] is None
+
+    put = client.put(
+        "/api/v1/admin/config/ai", headers=admin_headers,
+        json={"banner_decision_model": "openrouter:deepseek/deepseek-v4.1-flash"},
+    )
+    assert put.status_code == 200, put.text
+    assert put.json()["banner_decision_model"] == "openrouter:deepseek/deepseek-v4.1-flash"
+    # Vision untouched by a decision-only update.
+    assert put.json()["banner_vision_model"] is None
+
+    clear = client.put(
+        "/api/v1/admin/config/ai", headers=admin_headers,
+        json={"banner_decision_model": ""},
+    )
+    assert clear.json()["banner_decision_model"] is None
+
+
+async def test_analyze_banner_decision_model_writes_verdict(client, db, monkeypatch, admin_headers):
+    """A configured decision model overrides the deterministic summary."""
+    from app.modules.llm import gateway
+
+    client.put(
+        "/api/v1/admin/config/ai", headers=admin_headers,
+        json={"banner_decision_model": "test:decider"},
+    )
+
+    class _Resp:
+        content = (
+            '{"suitable": "no", "confidence": 82, '
+            '"summary": "Too small for a Google cover.", '
+            '"reasons": ["Width is under 600px"]}'
+        )
+
+    async def _fake_complete(*args, **kwargs):
+        assert kwargs.get("model") == "test:decider"
+        return _Resp()
+
+    monkeypatch.setattr(gateway, "complete", _fake_complete)
+    res = client.post(
+        "/api/v1/media/analyze-banner",
+        files={"file": ("banner.png", _png_bytes(474, 335), "image/png")},
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["suitable"] == "no"
+    assert body["confidence"] == 82
+    assert body["summary"] == "Too small for a Google cover."
+    assert body["decision"]["reasons"] == ["Width is under 600px"]
+    assert "test:decider" not in str(body)
+
+
+async def test_analyze_banner_decision_failure_keeps_rules(client, db, monkeypatch, admin_headers):
+    """A dead decision model must degrade to the deterministic score."""
+    from app.modules.llm import gateway
+
+    client.put(
+        "/api/v1/admin/config/ai", headers=admin_headers,
+        json={"banner_decision_model": "test:decider"},
+    )
+
+    async def _boom(*args, **kwargs):
+        raise RuntimeError("provider down")
+
+    monkeypatch.setattr(gateway, "complete", _boom)
+    res = client.post(
+        "/api/v1/media/analyze-banner",
+        files={"file": ("banner.png", _png_bytes(474, 335), "image/png")},
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert "decision" not in body
+    # The rule layer still reports the size failure in its own words.
+    assert any(c["key"] == "dimensions" and not c["pass"] for c in body["checks"])

@@ -68,10 +68,14 @@ describe("cropSourceRect", () => {
     expect(cropSourceRect(900, 600, { ...square, key: "orig" })).toBeNull();
   });
 
-  it("refuses an offset that puts the whole frame outside the image", () => {
-    expect(() => cropSourceRect(900, 600, { ...square, x: -9999 })).toThrow(
-      "outside the image",
-    );
+  it("falls back to the centered crop when a stale offset leaves the frame", () => {
+    // Replacing the media does not reset per-format pans, so an offset that
+    // was valid for the previous image can put the frame fully outside the
+    // new one. The editor clamps that offset, and the bake must agree —
+    // otherwise the merchant's configured crop is silently dropped at
+    // publish ("published uncropped").
+    const rect = cropSourceRect(900, 600, { ...square, x: -9999 });
+    expect(rect).toEqual({ x: 150, y: 0, w: 600, h: 600 });
   });
 });
 
