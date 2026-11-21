@@ -1,15 +1,19 @@
 """Review-request delivery, click tracking, and per-request attribution."""
 import json
+import secrets
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from sqlalchemy import select
 
-from app.modules.analytics.models import ReviewRequest
+from app.modules.analytics.models import ReviewCampaign, ReviewRequest
 from app.modules.analytics.review_requests import (
     attribute_reviews,
     create_and_deliver,
     create_queued,
     deliver_request,
+    prepare_assistant_ask,
+    record_assistant_ask,
     render_template,
     resolve_review_url,
     track_click,
@@ -66,6 +70,66 @@ def test_render_template_placeholders():
     assert render_template("Hi {name}, review: {link}", "Sara", "https://x") == "Hi Sara, review: https://x"
     assert render_template("Hi {name}", None, None) == "Hi there"
     assert render_template(None, "Sara", "x") is None
+
+
+@pytest.mark.asyncio
+async def test_prepare_assistant_ask_empty_without_listing(db, user_id):
+    """No Google listing → no link, and the assistant must invent nothing."""
+    block, token = await prepare_assistant_ask(db, user_id)
+    assert block == ""
+    assert token == ""
+
+
+@pytest.mark.asyncio
+async def test_assistant_ask_attaches_active_campaign_and_dedupes(db, user_id, channel_id):
+    channel = await db.get(Channel, channel_id)
+    channel.metadata_json = json.dumps({"place_id": "ChIJnative"})
+    await db.commit()
+
+    today = datetime.now(timezone.utc).date()
+    campaign = ReviewCampaign(
+        tenant_id=user_id, name="Ask", from_date=today, to_date=today, status="active",
+    )
+    db.add(campaign)
+    await db.commit()
+
+    block, token = await prepare_assistant_ask(db, user_id)
+    assert "review-requests/" in block
+    assert token
+
+    # Preparing makes no promise yet: no row until the reply was actually sent.
+    rows = (await db.execute(select(ReviewRequest))).scalars().all()
+    assert rows == []
+
+    row = await record_assistant_ask(
+        db, user_id, token=token, contact="+966500000001", contact_name="Syed",
+    )
+    assert row is not None
+    assert row.trigger == "assistant"
+    assert row.channel == "whatsapp"
+    assert row.status == "sent"
+    assert row.campaign_id == campaign.id
+    assert row.review_url == "https://search.google.com/local/writereview?placeid=ChIJnative"
+
+    # One contact cannot inflate the funnel: a second ask inside the window
+    # is skipped even though the customer received a fresh link.
+    again = await record_assistant_ask(
+        db, user_id, token=secrets.token_urlsafe(24),
+        contact="+966500000001", contact_name="Syed",
+    )
+    assert again is None
+
+
+@pytest.mark.asyncio
+async def test_record_assistant_ask_without_listing_is_honest(db, user_id):
+    """No listing → the row records the ask with a null review_url."""
+    row = await record_assistant_ask(
+        db, user_id, token=secrets.token_urlsafe(24),
+        contact="+966500000002", contact_name=None,
+    )
+    assert row is not None
+    assert row.review_url is None
+    assert row.trigger == "assistant"
 
 
 @pytest.mark.asyncio

@@ -14,7 +14,7 @@ POST   /api/v1/media/sync           publish due + delete expired (admin/ops only
 """
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile, File
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -84,6 +84,46 @@ async def convert_media_for_browser(
         media_type=mime,
         headers={"X-Image-Size": f"{width}x{height}"},
     )
+
+
+@router.post("/crop")
+async def crop_media_server_side(
+    file: UploadFile | None = File(default=None),
+    url: str | None = Form(default=None),
+    x: int = Form(...),
+    y: int = Form(...),
+    w: int = Form(...),
+    h: int = Form(...),
+    ctx: TenantContext = Depends(require_perm("media.manage")),
+    user: User = Depends(get_current_user),
+):
+    """Crop with Pillow when the browser cannot (canvas taint, CORS, exotic codecs).
+
+    Accepts an uploaded file or an http(s) media URL (SSRF-guarded, pinned-DNS
+    fetch). The rect is in DISPLAYED pixel coordinates — the browser applies
+    EXIF orientation before drawing, so the server transposes first. Returns
+    raw cropped bytes; the composer uploads them like any other file, so the
+    merchant's framing survives even when their browser could not bake it.
+    """
+    _ = ctx, user
+    if file is not None and (file.filename or file.content_type):
+        data = await file.read()
+    elif url:
+        if not (url.startswith("https://") or url.startswith("http://")):
+            raise HTTPException(status_code=400, detail="Only http(s) URLs.")
+        from ...core.pinned_http import fetch_pinned_bytes
+
+        try:
+            data = await fetch_pinned_bytes(url)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Could not fetch that image: {e}")
+    else:
+        raise HTTPException(status_code=400, detail="Provide a file or a url.")
+    try:
+        out, mime = service.crop_for_browser(data, x=x, y=y, w=w, h=h)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return Response(content=out, media_type=mime)
 
 
 @router.post("/analyze-banner")

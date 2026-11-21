@@ -309,6 +309,39 @@ async def test_convert_reencodes_browser_undecodable_image(client):
     assert "not a readable image" in r3.json()["detail"]
 
 
+@pytest.mark.asyncio
+async def test_server_side_crop_clamps_and_returns_image(client):
+    """The Pillow crop rescue honours the editor's rect and never 500s on drift."""
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (900, 600), (10, 200, 30)).save(buf, format="JPEG", quality=90)
+    r = client.post(
+        "/api/v1/media/crop",
+        files={"file": ("photo.jpg", buf.getvalue(), "image/jpeg")},
+        data={"x": "100", "y": "50", "w": "400", "h": "300"},
+        headers={"host": "localhost"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("image/jpeg")
+    check = Image.open(io.BytesIO(r.content))
+    assert check.size == (400, 300)
+
+    # A rect that drifts outside the image (dims probed before a re-encode)
+    # is clamped to a sane crop, not rejected.
+    r2 = client.post(
+        "/api/v1/media/crop",
+        files={"file": ("photo.jpg", buf.getvalue(), "image/jpeg")},
+        data={"x": "800", "y": "500", "w": "500", "h": "500"},
+        headers={"host": "localhost"},
+    )
+    assert r2.status_code == 200, r2.text
+    check2 = Image.open(io.BytesIO(r2.content))
+    assert check2.size[0] <= 100 and check2.size[1] <= 100
+
+
 def test_generic_storage_routes_upload_get_list_update_delete(monkeypatch, tmp_path, client, user_id):
     from app.config import settings
 

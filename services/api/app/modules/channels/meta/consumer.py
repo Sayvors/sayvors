@@ -2910,6 +2910,26 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                 if index < len(messages) - 1:
                     await asyncio.sleep(_MESSAGE_GAP_SECONDS)
 
+        # Review attribution: when the reply carried the tracked review link,
+        # record the ask (contact + active campaign) so clicks and reviews
+        # attribute honestly — including to a running campaign. Best-effort:
+        # a bookkeeping failure must never break the reply flow.
+        if messages and any("review-requests/" in part for part in messages):
+            try:
+                from ...analytics.review_requests import record_assistant_ask
+
+                await record_assistant_ask(
+                    db, tenant_id,
+                    contact=from_wa,
+                    contact_name=data.get("profile_name"),
+                    sent_text="\n".join(messages),
+                )
+            except Exception as e:  # noqa: BLE001 - never cost the reply
+                logger.warning(
+                    "review ask attribution failed tenant=%s contact=%s: %s",
+                    tenant_id, (from_wa or "")[-6:], e,
+                )
+
         # Item photo the model asked for, after the text so the answer never
         # waits on an image host.
         if send_item_id:

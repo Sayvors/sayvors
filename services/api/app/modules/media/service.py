@@ -190,6 +190,66 @@ def reencode_for_browser(data: bytes) -> tuple[bytes, str, int, int]:
     return buf.getvalue(), mime, image.width, image.height
 
 
+# Matches lib/crop-image.ts MAX_EXPORT_EDGE: the client bake caps exports at
+# this edge, so the server fallback must produce the same envelope.
+MAX_CROP_EDGE = 2048
+
+
+def crop_for_browser(data: bytes, *, x: int, y: int, w: int, h: int) -> tuple[bytes, str]:
+    """Crop an image with Pillow when the browser cannot rasterise it.
+
+    The rect arrives in DISPLAYED pixel coordinates — browsers apply EXIF
+    orientation before drawing, so the transposition is applied here too or
+    the crop lands in the wrong place on rotated photos. A rect that drifts
+    outside the image (dims probed before a re-encode) is clamped to a sane
+    crop rather than failing: an imperfect crop still beats an uncropped one.
+    """
+    import io
+
+    from PIL import Image, ImageOps
+
+    if not data:
+        raise ValueError("Empty file.")
+    try:
+        image = Image.open(io.BytesIO(data))
+        image = ImageOps.exif_transpose(image)
+        image.load()
+    except Exception:
+        raise ValueError("That file is not a readable image.")
+
+    x = max(0, min(int(x), image.width - 1))
+    y = max(0, min(int(y), image.height - 1))
+    w = max(1, min(int(w), image.width - x))
+    h = max(1, min(int(h), image.height - y))
+    region = image.crop((x, y, x + w, y + h))
+
+    has_alpha = region.mode in ("RGBA", "LA", "PA") or (
+        region.mode == "P" and "transparency" in region.info
+    )
+    if has_alpha:
+        region = region.convert("RGBA")
+        mime = "image/png"
+    else:
+        region = region.convert("RGB")
+        mime = "image/jpeg"
+    longest = max(region.size)
+    if longest > MAX_CROP_EDGE:
+        scale = MAX_CROP_EDGE / longest
+        region = region.resize(
+            (
+                max(1, round(region.width * scale)),
+                max(1, round(region.height * scale)),
+            ),
+            Image.LANCZOS,
+        )
+    buf = io.BytesIO()
+    if mime == "image/png":
+        region.save(buf, format="PNG", optimize=True)
+    else:
+        region.save(buf, format="JPEG", quality=88, optimize=True)
+    return buf.getvalue(), mime
+
+
 def _serialize(m: LocationMedia) -> dict:
     return {
         "id": m.id,

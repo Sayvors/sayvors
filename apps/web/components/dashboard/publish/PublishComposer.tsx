@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import PlatformMark from "@/components/channels/PlatformMark";
 import { INK, INK2 } from "@/components/channels/instagram/ui";
-import { apiFetch } from "@/lib/api-rag";
+import { apiFetch, apiFetchBlob } from "@/lib/api-rag";
 import { externalAssetIdFor } from "@/lib/publish-targets";
 import { checkWindow, minLocalInput } from "@/lib/publish-schedule";
 import {
@@ -13,7 +13,8 @@ import {
   wizardSteps,
   type WizardStepId,
 } from "@/lib/publish-wizard";
-import { cropSignature, exportCroppedImage } from "@/lib/crop-image";
+import { cropSignature, cropSourceRect, exportCroppedImage } from "@/lib/crop-image";
+import { inspectImageFile, probeImageUrl } from "@/lib/media-validation";
 import MediaSink from "./MediaSink";
 import DestinationSelector from "./DestinationSelector";
 import DestinationPreview from "./DestinationPreview";
@@ -958,6 +959,54 @@ export default function PublishComposer({
       // One upload per distinct crop, reused by every format that shares it.
       const notices = new Set<string>();
       const cropUploads = new Map<string, { url: string | null; key: string | null }>();
+      // Server-side rescue: when the browser cannot bake the crop (canvas
+      // tainted by a cross-origin/library image, undecodable bytes), the
+      // crop rect — computed with the same canonical function as the editor
+      // preview — is sent to Pillow, which crops and returns usable bytes.
+      // The merchant's framing survives; the notice stays a last resort.
+      // `asFile` returns the bytes un-uploaded (gallery sends bytes directly
+      // to the location-media endpoint, which takes a file, not a URL).
+      const serverCrop = async (
+        crop: CropState,
+        asFile = false,
+      ): Promise<{ url: string | null; key: string | null } | File | null> => {
+        if (!media || crop.key === "orig") return null;
+        let width = media.width ?? 0;
+        let height = media.height ?? 0;
+        try {
+          if ((!width || !height) && media.file) {
+            const d = await inspectImageFile(media.file);
+            width = d.width; height = d.height;
+          } else if ((!width || !height) && mediaUrl && !media.url.startsWith("blob:")) {
+            const d = await probeImageUrl(mediaUrl);
+            width = d.width; height = d.height;
+          }
+        } catch { /* dims unknown: the server still clamps a partial rect */ }
+        if (!width || !height) return null;
+        const rect = cropSourceRect(width, height, crop);
+        if (!rect) return null;
+        const form = new FormData();
+        form.append("x", String(Math.round(rect.x)));
+        form.append("y", String(Math.round(rect.y)));
+        form.append("w", String(Math.round(rect.w)));
+        form.append("h", String(Math.round(rect.h)));
+        if (media.file) {
+          form.append("file", media.file);
+        } else if (mediaUrl && !media.url.startsWith("blob:")) {
+          form.append("url", mediaUrl);
+        } else {
+          return null;
+        }
+        const blob = await apiFetchBlob("/api/v1/media/crop", { method: "POST", body: form });
+        const ext = blob.type === "image/png" ? "png" : "jpg";
+        const cropped = new File([blob], `crop-${Date.now()}.${ext}`, { type: blob.type });
+        if (asFile) return cropped;
+        const up = new FormData();
+        up.append("file", cropped);
+        const uploaded = await apiFetch("/api/v1/media/upload", { method: "POST", body: up });
+        if (!uploaded.image_url) throw new Error(pc.uploadEmptyErr);
+        return { url: uploaded.image_url, key: uploaded.key ?? null };
+      };
       const mediaForCrop = async (crop: CropState) => {
         if (!media || crop.key === "orig") {
           return { url: mediaUrl, key: mediaKey };
@@ -984,7 +1033,21 @@ export default function PublishComposer({
             if (!up.image_url) throw new Error(pc.uploadEmptyErr);
             out = { url: up.image_url, key: up.key ?? null };
           }
-        } catch {
+        } catch (err) {
+          // Browser bake failed. Try the server crop before giving up: an
+          // uncropped publish is the outcome we are trying to avoid, so the
+          // notice is only shown when BOTH paths failed. The underlying
+          // error is logged for support ("why was it uncropped?").
+          console.warn("crop bake failed; trying server crop:", err);
+          try {
+            const rescued = await serverCrop(crop);
+            if (rescued && !(rescued instanceof File)) {
+              cropUploads.set(sig, rescued);
+              return rescued;
+            }
+          } catch (serverErr) {
+            console.warn("server crop fallback failed:", serverErr);
+          }
           // A pasted image on another origin can refuse to be read into a
           // canvas. Publishing the original beats failing the whole draft,
           // but the merchant is told the crop was not applied.
@@ -1099,8 +1162,19 @@ export default function PublishComposer({
             { url: mediaUrl ?? media.url, file: media.file, type: mediaType },
             crop,
           );
-        } catch {
-          notices.add(pc.cropFallback);
+        } catch (err) {
+          // Same rescue as the post pipeline: when the browser cannot bake
+          // the crop, Pillow crops server-side so the framing survives.
+          console.warn("gallery crop bake failed; trying server crop:", err);
+          try {
+            const rescued = await serverCrop(crop, true);
+            if (rescued instanceof File) {
+              file = rescued;
+            }
+          } catch (serverErr) {
+            console.warn("gallery server crop fallback failed:", serverErr);
+          }
+          if (!file) notices.add(pc.cropFallback);
         }
         galleryCrops.set(sig, file);
         return file;
