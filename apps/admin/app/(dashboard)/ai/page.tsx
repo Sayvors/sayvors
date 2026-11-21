@@ -32,12 +32,9 @@ interface ModelTestResult {
 
 export default function AiImageCheckPage() {
   const [models, setModels] = useState<SavedModel[]>([]);
-  const [allModels, setAllModels] = useState<SavedModel[]>([]);
   const [config, setConfig] = useState<AiConfig | null>(null);
   const [savedId, setSavedId] = useState("");
   const [selectedId, setSelectedId] = useState("");
-  const [savedDecisionId, setSavedDecisionId] = useState("");
-  const [selectedDecisionId, setSelectedDecisionId] = useState("");
   const [loading, setLoading] = useState(true);
   const [busySave, setBusySave] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
@@ -69,23 +66,14 @@ export default function AiImageCheckPage() {
         }))
         .filter((m) => m.enabled && m.supports_vision);
       setModels(visionModels);
-      setAllModels(modelList.filter((m) => m.enabled));
       setConfig(cfg);
       const activeId = cfg.banner_vision_model ?? "";
-      const activeDecision = cfg.banner_decision_model ?? "";
       setSavedId(activeId);
-      setSavedDecisionId(activeDecision);
       setSelectedId((prev) => {
         if (keepSelection && prev && visionModels.some((m) => m.id === prev)) {
           return prev;
         }
         return activeId;
-      });
-      setSelectedDecisionId((prev) => {
-        if (keepSelection && prev && modelList.some((m) => m.id === prev && m.enabled)) {
-          return prev;
-        }
-        return activeDecision;
       });
     } catch (e) {
       setMessage({ ok: false, text: e instanceof Error ? e.message : "Could not load the model list." });
@@ -99,7 +87,7 @@ export default function AiImageCheckPage() {
   const savedModel = models.find((m) => m.id === savedId) ?? null;
   const selectedModel = models.find((m) => m.id === selectedId) ?? null;
   const savedUnavailable = Boolean(savedId) && !savedModel;
-  const dirty = selectedId !== savedId || selectedDecisionId !== savedDecisionId;
+  const dirty = selectedId !== savedId;
 
   async function runTest(m: SavedModel) {
     setTestingId(m.id);
@@ -130,12 +118,10 @@ export default function AiImageCheckPage() {
         method: "PUT",
         body: JSON.stringify({
           banner_vision_model: selectedId,
-          banner_decision_model: selectedDecisionId,
         }),
       });
       setConfig(saved);
       setSavedId(saved.banner_vision_model ?? "");
-      setSavedDecisionId(saved.banner_decision_model ?? "");
       setMessage({
         ok: true,
         text: selectedId
@@ -337,46 +323,12 @@ export default function AiImageCheckPage() {
           })}
         </div>
 
-        <div className="mt-5 border-t border-[var(--ui-line)] pt-4">
-          <h3 className="text-[13px] font-bold text-ink">Who writes the verdict?</h3>
-          <p className="mt-0.5 text-[12px] text-ink/50">
-            Optional. A model reads the measurements above (and the vision notes) and writes the plain-language
-            verdict. Any enabled model works — text-only is fine. Decision models (Jev, d1, Clef) will plug in
-            here once the System-One adapter lands.
-          </p>
-          <select
-            value={selectedDecisionId}
-            onChange={(e) => setSelectedDecisionId(e.target.value)}
-            className="input-field mt-2 w-full max-w-[480px]"
-            aria-label="Decision model"
-          >
-            <option value="">— built-in scoring (no model)</option>
-            {allModels.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name} · {m.provider}/{m.api_model}
-              </option>
-            ))}
-            {selectedDecisionId && !allModels.some((m) => m.id === selectedDecisionId) ? (
-              <option value={selectedDecisionId}>{selectedDecisionId} (disabled / missing)</option>
-            ) : null}
-          </select>
-          <p className="mt-1.5 text-[11px] text-ink/45">
-            In use:{" "}
-            <span className="font-semibold text-ink/70">
-              {savedDecisionId
-                ? allModels.find((m) => m.id === savedDecisionId)?.name ?? savedDecisionId
-                : "built-in scoring"}
-            </span>
-            . If the model is unreachable, the built-in scoring stands — the check never fails closed.
-          </p>
-        </div>
-
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--ui-line)] pt-3">
           <p className="text-[11px] text-ink/45">{saveHint}</p>
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => { setSelectedId(savedId); setSelectedDecisionId(savedDecisionId); }}
+              onClick={() => setSelectedId(savedId)}
               disabled={!dirty || busySave}
               className="btn-secondary !px-3 !py-1.5 disabled:opacity-40"
             >

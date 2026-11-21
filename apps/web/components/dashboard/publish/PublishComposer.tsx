@@ -311,6 +311,7 @@ function BannerCheckCard({
       suitable?: string;
       confidence?: number;
       summary?: string;
+      reasons?: string[];
       checks?: { key: string; label: string; pass: boolean; severity: string; note: string }[];
       ai_verdict?: { suitable?: string; confidence?: number; reasons?: string[] } | null;
       decision?: { suitable?: string; confidence?: number; summary?: string; reasons?: string[] } | null;
@@ -329,19 +330,17 @@ function BannerCheckCard({
     return (
       <div className="mt-3 rounded-[8px] border border-deep-violet/25 bg-deep-violet/[0.04] px-3.5 py-3">
         <p className="text-[12px] font-bold text-deep-violet dark:text-fog">
-          AI photo check required
+          Photo check required
         </p>
         <p className="mt-1 text-[11px] leading-relaxed text-ink/60 dark:text-fog/60">
-          A Promotion must pass through the AI photo check before it can be
-          published — it measures size, shape, sharpness and exposure the way
-          Google judges a cover photo.
+          Check this photo before publishing it as your Google cover. It looks at size, shape, sharpness, and whether it fits a Google banner.
         </p>
         <button
           type="button"
           onClick={onRun}
           className="clay-btn-primary mt-2.5 px-4 py-2 text-[11px] font-bold focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
         >
-          Run AI check
+          Check photo
         </button>
       </div>
     );
@@ -352,7 +351,7 @@ function BannerCheckCard({
         <svg className="h-4 w-4 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
           <path d="M12 3a9 9 0 1 0 9 9" strokeLinecap="round" />
         </svg>
-        Sayvors AI is checking this photo for Google…
+        Checking this photo for Google…
       </div>
     );
   }
@@ -360,7 +359,7 @@ function BannerCheckCard({
     return (
       <div className="mt-3 flex items-start justify-between gap-2 rounded-[8px] border border-red-500/30 bg-red-500/[0.06] px-3.5 py-2.5">
         <span className="text-[11.5px] font-semibold text-red-700 dark:text-red-400">
-          {check.error || "The AI check could not run right now."}
+          {check.error || "The photo check could not run right now."}
         </span>
         <button type="button" onClick={onRetry} className="shrink-0 text-[11px] font-bold text-red-700 underline dark:text-red-400">
           Retry
@@ -371,14 +370,20 @@ function BannerCheckCard({
 
   const result = check.result ?? {};
   const suitable = result.suitable ?? "maybe";
-  const confidence = result.confidence ?? 0;
+  const confidence = Math.max(0, Math.min(100, Number(result.confidence ?? 0)));
   const tone =
     suitable === "yes"
       ? { border: "border-emerald-500/30", bg: "bg-emerald-500/[0.07]", text: "text-emerald-700 dark:text-emerald-400" }
       : suitable === "no"
         ? { border: "border-red-500/30", bg: "bg-red-500/[0.06]", text: "text-red-700 dark:text-red-400" }
         : { border: "border-amber-500/30", bg: "bg-amber-500/10", text: "text-amber-800 dark:text-amber-300" };
-  const label = suitable === "yes" ? "Suitable" : suitable === "no" ? "Not suitable" : "Probably suitable";
+  const label = suitable === "yes" ? "Good for a Google cover" : suitable === "no" ? "Not a good Google cover" : "Might work as a Google cover";
+  const aiLooked = Boolean(result.ai_verdict);
+  const reasons = (result.reasons && result.reasons.length > 0)
+    ? result.reasons
+    : (result.ai_verdict?.reasons?.length
+      ? result.ai_verdict.reasons
+      : (result.checks ?? []).filter((c) => !c.pass).map((c) => (c.note ? `${c.label}: ${c.note}` : c.label)));
 
   return (
     <div className={`mt-3 rounded-[8px] border ${tone.border} ${tone.bg} px-3.5 py-3`}>
@@ -387,9 +392,7 @@ function BannerCheckCard({
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4 shrink-0" aria-hidden>
             <path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4z" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-          <span className={`text-[11.5px] font-bold ${tone.text}`}>
-            Sayvors AI: {label}
-          </span>
+          <span className={`text-[11.5px] font-bold ${tone.text}`}>{label}</span>
         </div>
         <span className={`text-[11.5px] font-bold ${tone.text}`}>{confidence}% confident</span>
       </div>
@@ -403,27 +406,11 @@ function BannerCheckCard({
         {result.summary ?? "No summary."}
       </p>
       <p className={`mt-1 text-[10px] font-bold uppercase tracking-wide ${tone.text} opacity-70`}>
-        {result.ai_verdict || result.decision
-          ? "An AI model looked at this photo."
-          : "Automated measurements only — no AI vision model is configured."}
+        {aiLooked ? "Checked by AI" : "Checked by photo rules"}
       </p>
-      {(result.checks ?? []).filter((c) => !c.pass).map((c) => (
-        <p key={c.key} className={`mt-1 text-[10.5px] leading-snug ${tone.text} opacity-80`}>
-          • {c.label}: {c.note}
-        </p>
-      ))}
-      {result.ai_verdict?.reasons?.length ? (
+      {reasons.length > 0 ? (
         <ul className="mt-2 space-y-1 border-t border-current/10 pt-2">
-          {result.ai_verdict.reasons.map((reason, i) => (
-            <li key={i} className={`text-[10.5px] leading-snug ${tone.text} opacity-80`}>
-              • {reason}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      {result.decision?.reasons?.length ? (
-        <ul className="mt-2 space-y-1 border-t border-current/10 pt-2">
-          {result.decision.reasons.map((reason, i) => (
+          {reasons.slice(0, 5).map((reason, i) => (
             <li key={i} className={`text-[10.5px] leading-snug ${tone.text} opacity-80`}>
               • {reason}
             </li>
@@ -651,6 +638,7 @@ export default function PublishComposer({
       confidence?: number;
       summary?: string;
       checks?: { key: string; label: string; pass: boolean; severity: string; note: string }[];
+      reasons?: string[];
       ai_verdict?: { suitable?: string; confidence?: number; reasons?: string[] } | null;
       decision?: { suitable?: string; confidence?: number; summary?: string; reasons?: string[] } | null;
     };
@@ -706,6 +694,7 @@ export default function PublishComposer({
           confidence?: number;
           summary?: string;
           checks?: { key: string; label: string; pass: boolean; severity: string; note: string }[];
+          reasons?: string[];
           ai_verdict?: { suitable?: string; confidence?: number; reasons?: string[] } | null;
           decision?: { suitable?: string; confidence?: number; summary?: string; reasons?: string[] } | null;
         };
@@ -966,8 +955,8 @@ export default function PublishComposer({
     if (bannerSelected && bannerCheck.state !== "done") {
       setNotice(
         bannerCheck.state === "loading"
-          ? "The AI photo check is still running — it finishes in a few seconds."
-          : "Run the AI photo check before publishing a Promotion. Open the photo's crop settings or the media step and press \"Run AI check\".",
+          ? "The photo check is still running — it finishes in a few seconds."
+          : "Check the photo before publishing this Promotion. Open the photo crop settings or the media step and press \"Check photo\".",
       );
       setConfirmOpen(false);
       setPostStep(bannerCheck.state === "loading" ? postStep : "media");
@@ -2137,10 +2126,9 @@ export default function PublishComposer({
                   )}
                   {modalCtx.method === "banner" && media?.type === "image" && (
                     <div>
-                      <p className="text-[12px] font-bold text-[var(--ui-ink)]">AI photo check</p>
+                      <p className="text-[12px] font-bold text-[var(--ui-ink)]">Photo check</p>
                       <p className="mt-0.5 text-[11px] leading-relaxed text-[var(--ui-ink-2)]">
-                        Required before this Promotion can be published. It runs on Sayvors servers —
-                        keep this dialog open while it works.
+                        Required before publishing this Promotion. Keep this dialog open while the check runs.
                       </p>
                     </div>
                   )}

@@ -103,59 +103,25 @@ async def test_admin_ai_config_decision_model_roundtrip(client, db, admin_header
     assert clear.json()["banner_decision_model"] is None
 
 
-async def test_analyze_banner_decision_model_writes_verdict(client, db, monkeypatch, admin_headers):
-    """A configured decision model overrides the deterministic summary."""
-    from app.modules.llm import gateway
+async def test_analyze_banner_vision_failure_degrades_to_rules(client, db, monkeypatch, admin_headers):
+    """If the AI model fails, the photo still gets a rule-based verdict."""
+    from app.modules.media import router as media_router
 
     client.put(
         "/api/v1/admin/config/ai", headers=admin_headers,
-        json={"banner_decision_model": "test:decider"},
-    )
-
-    class _Resp:
-        content = (
-            '{"suitable": "no", "confidence": 82, '
-            '"summary": "Too small for a Google cover.", '
-            '"reasons": ["Width is under 600px"]}'
-        )
-
-    async def _fake_complete(*args, **kwargs):
-        assert kwargs.get("model") == "test:decider"
-        return _Resp()
-
-    monkeypatch.setattr(gateway, "complete", _fake_complete)
-    res = client.post(
-        "/api/v1/media/analyze-banner",
-        files={"file": ("banner.png", _png_bytes(474, 335), "image/png")},
-    )
-    assert res.status_code == 200, res.text
-    body = res.json()
-    assert body["suitable"] == "no"
-    assert body["confidence"] == 82
-    assert body["summary"] == "Too small for a Google cover."
-    assert body["decision"]["reasons"] == ["Width is under 600px"]
-    assert "test:decider" not in str(body)
-
-
-async def test_analyze_banner_decision_failure_keeps_rules(client, db, monkeypatch, admin_headers):
-    """A dead decision model must degrade to the deterministic score."""
-    from app.modules.llm import gateway
-
-    client.put(
-        "/api/v1/admin/config/ai", headers=admin_headers,
-        json={"banner_decision_model": "test:decider"},
+        json={"banner_vision_model": "test:vision"},
     )
 
     async def _boom(*args, **kwargs):
         raise RuntimeError("provider down")
 
-    monkeypatch.setattr(gateway, "complete", _boom)
+    monkeypatch.setattr(media_router, "_vision_verdict", _boom)
     res = client.post(
         "/api/v1/media/analyze-banner",
         files={"file": ("banner.png", _png_bytes(474, 335), "image/png")},
     )
     assert res.status_code == 200, res.text
     body = res.json()
-    assert "decision" not in body
-    # The rule layer still reports the size failure in its own words.
+    assert body["ai_verdict"] is None
+    assert body["reasons"]  # failed checks surfaced as plain reasons
     assert any(c["key"] == "dimensions" and not c["pass"] for c in body["checks"])

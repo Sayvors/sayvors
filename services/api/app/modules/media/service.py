@@ -169,41 +169,71 @@ async def save_upload(
     }
 
 
-async def vision_verdict(data: bytes, model: str) -> dict | None:
-    """Multimodal verdict from the configured vision model, best-effort."""
+async def vision_verdict(
+    data: bytes, model: str, checks: list[dict] | None = None
+) -> dict | None:
+    """One AI verdict: the model looks at the photo and judges it as a Google
+    Business Profile cover/banner. The deterministic measurements are passed as
+    facts so the model can be concrete; the model still has to look at the
+    actual image. Best-effort — a failure degrades to the rule result."""
     try:
         import json
 
         from ..llm.gateway import complete
         from ..llm.providers.base import LLMMessage
 
+        facts = [
+            {"check": c.get("label"), "pass": bool(c.get("pass")), "note": c.get("note")}
+            for c in (checks or [])
+        ]
+        prompt = (
+            "You check whether a photo is good enough to be a Google Business Profile "
+            "cover/banner image. Look at the photo and use these measurements as facts:\n"
+            f"{json.dumps(facts)}\n"
+            "Google prefers a wide photo (around 16:9), bright, sharp, and showing the "
+            "real business. Text-heavy, blurry, dark, tiny, or stock-looking photos "
+            "perform poorly and Google may replace them.\n"
+            "Answer ONLY with JSON: {\"suitable\": \"yes\"|\"maybe\"|\"no\", "
+            "\"confidence\": 0-100, \"summary\": \"one plain sentence for the business owner\", "
+            "\"reasons\": [\"short plain reason\"]}. Give at most 5 reasons. "
+            "Do not repeat the same point twice."
+        )
         response = await complete(
             model=model,
-            messages=[LLMMessage(
-                role="user",
-                content=(
-                    "Analyse this photo as a Google Business Profile banner "
-                    "(cover) image. Answer ONLY with JSON: {\"suitable\": "
-                    "\"yes\"|\"maybe\"|\"no\", \"confidence\": 0-100, "
-                    "\"reasons\": [\"...\"]}."
-                ),
-            )],
+            messages=[LLMMessage(role="user", content=prompt)],
             images=[(_mime_for_bytes(data), data)],
             purpose="media.banner_verdict",
             temperature=0.2,
-            max_tokens=300,
+            max_tokens=350,
         )
         text = (response.content or "").strip()
-        # Tolerate a code fence the model may add.
         if text.startswith("```"):
             text = text.strip("`")
             if text.startswith("json"):
                 text = text[4:].strip()
         verdict = json.loads(text)
+        suitable = str(verdict.get("suitable", "maybe")).lower()
+        if suitable not in ("yes", "maybe", "no"):
+            suitable = "maybe"
+        try:
+            confidence = max(0, min(100, int(verdict.get("confidence", 0))))
+        except (TypeError, ValueError):
+            confidence = 0
+        reasons = []
+        seen = set()
+        for r in verdict.get("reasons") or []:
+            s = str(r).strip()
+            key = s.lower()
+            if s and key not in seen:
+                seen.add(key)
+                reasons.append(s[:180])
+            if len(reasons) >= 5:
+                break
         return {
-            "suitable": str(verdict.get("suitable", "maybe")),
-            "confidence": int(verdict.get("confidence", 0)),
-            "reasons": [str(r) for r in (verdict.get("reasons") or [])][:6],
+            "suitable": suitable,
+            "confidence": confidence,
+            "summary": str(verdict.get("summary") or "").strip()[:300],
+            "reasons": reasons,
         }
     except Exception:
         logger.exception("Banner vision verdict failed")
@@ -294,11 +324,13 @@ async def decision_verdict(
 async def full_banner_analysis(
     db, data: bytes, *, vision_verdict_fn=None, decision_verdict_fn=None
 ) -> dict:
-    """The complete banner check: rules → optional vision → optional decision.
+    """Check whether a photo is worth using as a Google Business Profile cover.
 
-    Shared by the synchronous endpoint and the queued job so the two paths
-    cannot drift. The verdict callables are injectable so callers (and tests)
-    can substitute them without touching the pipeline.
+    Rules always run (size, shape, sharpness, brightness). If an admin-configured
+    AI model is available, it looks at the actual photo and gives the final
+    plain-language verdict. One verdict, one reason list — no internal layers
+    leak into the tenant payload. `decision_verdict_fn` is accepted for backward
+    compatibility and ignored.
     """
     result = image_check.analyze_banner_image(data)
 
@@ -306,35 +338,41 @@ async def full_banner_analysis(
 
     config = await get_platform_config(db)
     vision_fn = vision_verdict_fn or vision_verdict
-    decision_fn = decision_verdict_fn or decision_verdict
 
     model = (config.banner_vision_model or "").strip() or settings.BANNER_VISION_MODEL
+    ai = None
     if model:
-        result["ai_verdict"] = await vision_fn(data, model)
-
-    # Optional decision model: it reads the measurements (and the vision
-    # observations, when present) and writes the final call. When the chosen
-    # model is vision-capable it ALSO gets the photo, so the final verdict is
-    # made by something that actually saw the image. Best-effort: when it is
-    # unset or fails, the deterministic score stands.
-    decision_model = (config.banner_decision_model or "").strip()
-    if decision_model:
-        decision_images = None
         try:
-            from ..llm.providers.registry import get_effective_model
+            try:
+                ai = await vision_fn(data, model, result.get("checks") or [])
+            except TypeError:
+                # Back-compat: older/fake verdict fns accept (data, model) only.
+                ai = await vision_fn(data, model)
+        except Exception:
+            logger.exception("Banner vision verdict failed")
+            ai = None
 
-            info = get_effective_model(decision_model)
-            if info is not None and getattr(info, "supports_vision", False):
-                decision_images = [(_mime_for_bytes(data), data)]
-        except Exception as e:  # noqa: BLE001 - vision is a bonus, not a requirement
-            logger.warning("decision-model vision probe failed: %s", e)
-        decision = await decision_fn(result, decision_model, decision_images)
-        if decision:
-            result["decision"] = decision
-            result["suitable"] = decision["suitable"]
-            result["confidence"] = decision["confidence"]
-            if decision["summary"]:
-                result["summary"] = decision["summary"]
+    if ai:
+        result["ai_verdict"] = ai
+        result["suitable"] = ai.get("suitable") or result.get("suitable")
+        result["confidence"] = int(ai.get("confidence") or result.get("confidence") or 0)
+        if ai.get("summary"):
+            result["summary"] = ai["summary"]
+        result["reasons"] = list(ai.get("reasons") or [])
+    else:
+        # Rule-only: surface failed checks as plain reasons, no repetition.
+        result["ai_verdict"] = None
+        reasons = []
+        for c in result.get("checks") or []:
+            if c.get("pass"):
+                continue
+            note = str(c.get("note") or "").strip()
+            label = str(c.get("label") or "").strip()
+            if note and note.lower() not in {label.lower()}:
+                reasons.append(f"{label}: {note}" if label else note)
+            elif label:
+                reasons.append(label)
+        result["reasons"] = reasons[:5]
     return result
 
 
@@ -433,17 +471,36 @@ def _load_json(value: str | None) -> Any | None:
         return None
 
 
+def _reasons_from_check(checks: list, ai_verdict: dict | None) -> list[str]:
+    if ai_verdict and ai_verdict.get("reasons"):
+        return [str(r) for r in ai_verdict["reasons"]][:5]
+    reasons = []
+    for c in checks or []:
+        if c.get("pass"):
+            continue
+        note = str(c.get("note") or "").strip()
+        label = str(c.get("label") or "").strip()
+        if note and note.lower() not in {label.lower()}:
+            reasons.append(f"{label}: {note}" if label else note)
+        elif label:
+            reasons.append(label)
+    return reasons[:5]
+
+
 def serialize_banner_check(row: "BannerCheck") -> dict:
     """Same shape as the synchronous /analyze-banner payload, plus status."""
+    checks = _load_json(row.checks_json) or []
+    ai_verdict = _load_json(row.ai_verdict_json)
     return {
         "id": row.id,
         "status": row.status,
         "suitable": row.suitable,
         "confidence": row.confidence,
         "summary": row.summary,
-        "checks": _load_json(row.checks_json) or [],
-        "ai_verdict": _load_json(row.ai_verdict_json),
+        "checks": checks,
+        "ai_verdict": ai_verdict,
         "decision": _load_json(row.decision_json),
+        "reasons": _reasons_from_check(checks, ai_verdict),
         "error": row.error,
     }
 
