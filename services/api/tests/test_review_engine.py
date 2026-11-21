@@ -2664,3 +2664,30 @@ async def test_update_strategy_requires_admin(client, db):
                     json={"enabled": False}, headers=admin_headers)
     assert r2.status_code == 200
     assert r2.json()["enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_review_engine_context_includes_owner_branch_facts(db, monkeypatch):
+    """A review asking about branches must see the owner's location facts.
+
+    Regression: the engine only read databank documents, so "do you have
+    other branches?" was answered with "we don't have details" even though
+    the owner's facts list every location.
+    """
+    from app.modules.profile import facts_store
+    from app.modules.review_engine.service import _business_facts_block
+
+    async def _fake_facts(db_, tenant_id, **kw):
+        return {
+            "business": {"name": "Sayvors", "type": "services"},
+            "locations": [
+                {"name": "Sayvors Company Branch-Al Malqa", "city": "Riyadh"},
+                {"name": "Sayvors Company Branch-Makkah", "city": "Makkah"},
+            ],
+        }
+
+    monkeypatch.setattr(facts_store, "get_facts", _fake_facts)
+    block = await _business_facts_block(db, "tenant-x")
+    assert "Al Malqa" in block
+    assert "Makkah" in block
+    assert "BUSINESS IDENTITY" in block

@@ -320,6 +320,35 @@ async def _channel_databank_id(channel_id: str | None, tenant_id: str, db: Async
         return None
 
 
+async def _business_facts_block(db: AsyncSession, tenant_id: str) -> str:
+    """The owner's structured business facts (branches, hours, contact, services).
+
+    This is the same store the WhatsApp assistant answers from. The review
+    engine previously saw only databank documents, so a review asking "do you
+    have other branches?" was answered with "we don't have details" even
+    though the owner's facts list every location. Facts are owner-verified,
+    so the validator may ground claims in them. Best-effort: an empty or
+    unreadable store must never cost the reply.
+    """
+    try:
+        from ..profile.facts_store import get_facts, render_core
+        from ..profile.facts_tool import render_topic
+
+        facts = await get_facts(db, tenant_id)
+        parts = [render_core(facts)]
+        # render_core is identity-only; branches/hours/contact live in topic
+        # slices — a review asking "do you have other branches?" needs them.
+        for topic in ("locations", "hours", "contact", "website", "services"):
+            parts.append(render_topic(facts, topic))
+        block = "\n\n".join(p for p in parts if p)
+        return block or ""
+    except Exception as e:  # noqa: BLE001 - never cost the reply
+        logger.warning(
+            "business facts skipped in review engine tenant=%s: %s", tenant_id, e
+        )
+        return ""
+
+
 async def _gather_evidence(needs, tenant_id: str | None, channel_id: str | None,
                      db: AsyncSession, bank_id: str | None = None):
     """Fulfill evidence needs via the Retrieval Layer.
@@ -419,7 +448,12 @@ async def process_review(
     (evidence_parts, has_offer_data, offer_texts, has_product_data,
      evidence_calls) = await _gather_evidence(
         needs, tenant_id, req.channel_id, db, bank_id=channel_bank)
-    business_context_parts: list[str] = ([_identity] if _identity else []) + evidence_parts
+    _facts_block = await _business_facts_block(db, tenant_id)
+    business_context_parts: list[str] = (
+        ([_identity] if _identity else [])
+        + ([_facts_block] if _facts_block else [])
+        + evidence_parts
+    )
     all_tool_calls: list[ToolCall] = []
     all_tool_calls.extend(evidence_calls)
 
@@ -699,6 +733,9 @@ async def process_review_stream(
     except Exception:
         _identity = ""
     business_context_parts: list[str] = [_identity] if _identity else []
+    _facts_block = await _business_facts_block(db, tenant_id)
+    if _facts_block:
+        business_context_parts.append(_facts_block)
     all_tool_calls: list[ToolCall] = []
 
     evidence_results = await retrieve_evidence(
