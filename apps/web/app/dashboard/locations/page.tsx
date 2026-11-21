@@ -214,7 +214,7 @@ function TemplatePicker({
   const nameOf = (key: string) =>
     (copy as unknown as Record<string, string>)[key] ?? key;
   return (
-    <div className="flex flex-wrap items-end gap-2 rounded-[2px] border border-ink/[0.08] bg-ink/[0.02] p-3 dark:border-fog/[0.08] dark:bg-fog/[0.02]">
+    <div className="flex flex-wrap items-end gap-2 rounded-[8px] border border-ink/[0.08] bg-ink/[0.02] p-3 dark:border-fog/[0.08] dark:bg-fog/[0.02]">
       <label className="min-w-[200px] flex-1">
         <span className="mb-1 block text-[10px] font-bold uppercase tracking-[0.12em] text-ink/45 dark:text-fog/45">
           {copy.templatesLabel}
@@ -284,7 +284,7 @@ function GoogleCurrentPanel({
   const lines = googleCurrentLines(section, value, copy);
   if (!lines.length) return null;
   return (
-    <div className="rounded-[2px] border border-sky-500/20 bg-sky-500/[0.05] p-3">
+    <div className="rounded-[8px] border border-sky-500/20 bg-sky-500/[0.05] p-3">
       <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-sky-700 dark:text-sky-300">
         {copy.currentOnGoogle}
       </p>
@@ -329,7 +329,7 @@ function BulkGoogleCurrentPanel({
 }) {
   if (!rows || rows.length === 0) return null;
   return (
-    <div className="rounded-[2px] border border-sky-500/20 bg-sky-500/[0.05] p-3">
+    <div className="rounded-[8px] border border-sky-500/20 bg-sky-500/[0.05] p-3">
       <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-sky-700 dark:text-sky-300">
         {copy.currentOnGoogle}
       </p>
@@ -496,7 +496,7 @@ function GoogleStatusBar({
             String(Math.max(1, Math.round((age ?? 0) / 60)))
           );
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-ink/[0.06] bg-white px-3.5 py-2 dark:border-fog/[0.06] dark:bg-ink">
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-[8px] border border-ink/[0.06] bg-white px-3.5 py-2 dark:border-fog/[0.06] dark:bg-ink">
       <div className="flex flex-wrap items-center gap-2 text-[12px]">
         <span
           aria-hidden
@@ -586,13 +586,13 @@ function PendingChanges({
 }) {
   if (items.length === 0) return null;
   return (
-    <div className="rounded-2xl border border-amber-300/70 bg-amber-50 px-3.5 py-2.5 dark:border-amber-500/30 dark:bg-amber-500/10">
+    <div className="rounded-[8px] border border-amber-300/70 bg-amber-50 px-3.5 py-2.5 dark:border-amber-500/30 dark:bg-amber-500/10">
       <div className="flex flex-wrap items-center gap-2">
         <span aria-hidden className="h-2 w-2 rounded-full bg-amber-500" />
         <span className="text-[12px] font-bold text-amber-800 dark:text-amber-300">
           {copy.pendingChangesTitle}
         </span>
-        <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-bold text-amber-800 dark:text-amber-300">
+        <span className="rounded-[8px] bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-bold text-amber-800 dark:text-amber-300">
           {items.length}
         </span>
         <span className="text-[11.5px] text-amber-800/70 dark:text-amber-200/60">
@@ -703,7 +703,7 @@ function CompletenessCard({
   const done = essentials.filter((e) => e.done).length;
   if (done >= essentials.length) return null;
   return (
-    <div className="rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
+    <div className="rounded-[8px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-[14px] font-bold text-ink dark:text-fog">{copy.completeness}</h2>
         <p className="text-[11px] font-semibold text-ink/45 dark:text-fog/45">
@@ -1415,7 +1415,7 @@ const bulk: BulkScope | null = isBulk
           </div>
           <p className="text-[13px] text-ink/45 dark:text-fog/45">{copy.subtitle}</p>
           {hasExpired && (
-            <p className="rounded-xl border border-amber-500/20 bg-amber-50 px-3.5 py-2 text-[12px] text-amber-800 dark:border-amber-400/20 dark:bg-amber-900/20 dark:text-amber-200">
+            <p className="rounded-[8px] border border-amber-500/20 bg-amber-50 px-3.5 py-2 text-[12px] text-amber-800 dark:border-amber-400/20 dark:bg-amber-900/20 dark:text-amber-200">
               {copy.reconnectGoogle}
             </p>
           )}
@@ -1430,7 +1430,7 @@ const bulk: BulkScope | null = isBulk
                 setSelectedId(e.target.value);
                 setLastBulkFail(null);
               }}
-              className="rounded-xl border border-ink/[0.08] bg-white py-2 pl-3 pr-9 text-[13px] text-ink dark:border-fog/[0.08] dark:bg-ink dark:text-fog"
+              className="rounded-[8px] border border-ink/[0.08] bg-white py-2 pl-3 pr-9 text-[13px] text-ink dark:border-fog/[0.08] dark:bg-ink dark:text-fog"
             >
               {locations.length > 1 && (
                 <option value={ALL}>{copy.allBranches.replace("{count}", String(locations.length))}</option>
@@ -1447,7 +1447,7 @@ const bulk: BulkScope | null = isBulk
             </select>
             <button
               onClick={() => setGroupsOpen(true)}
-              className="rounded-xl border border-ink/[0.08] bg-white px-3.5 py-2 text-[12px] font-semibold text-ink/70 transition hover:bg-ink/[0.04] dark:border-fog/[0.08] dark:bg-ink dark:text-fog/70"
+              className="rounded-[8px] border border-ink/[0.08] bg-white px-3.5 py-2 text-[12px] font-semibold text-ink/70 transition hover:bg-ink/[0.04] dark:border-fog/[0.08] dark:bg-ink dark:text-fog/70"
             >
               {copy.manageGroups}
               {groups.length > 0 && (
@@ -1462,14 +1462,14 @@ const bulk: BulkScope | null = isBulk
               onClick={() => router.push("/dashboard/locations/new")}
               title={copy.createLocationTitle}
               data-tour="add-location"
-              className="rounded-xl bg-deep-violet px-3.5 py-2 text-[12px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90"
+              className="rounded-[8px] bg-deep-violet px-3.5 py-2 text-[12px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90"
             >
               {copy.createLocation}
             </button>
             <button
               onClick={() => setBulkEditOpen(true)}
               title="Bulk edit locations via CSV"
-              className="rounded-xl border border-ink/[0.08] bg-white px-3.5 py-2 text-[12px] font-semibold text-ink/70 transition hover:bg-ink/[0.04] dark:border-fog/[0.08] dark:bg-ink dark:text-fog/70"
+              className="rounded-[8px] border border-ink/[0.08] bg-white px-3.5 py-2 text-[12px] font-semibold text-ink/70 transition hover:bg-ink/[0.04] dark:border-fog/[0.08] dark:bg-ink dark:text-fog/70"
             >
               Bulk edit (CSV)
             </button>
@@ -1479,14 +1479,14 @@ const bulk: BulkScope | null = isBulk
 
       {/* Multi-location hint */}
       {locations.length > 0 && !isBulk && (
-        <p className="rounded-xl border border-ink/[0.06] bg-white/60 p-3 text-[12px] text-ink/50 dark:border-fog/[0.06] dark:bg-ink/60 dark:text-fog/50">
+        <p className="rounded-[8px] border border-ink/[0.06] bg-white/60 p-3 text-[12px] text-ink/50 dark:border-fog/[0.06] dark:bg-ink/60 dark:text-fog/50">
           {copy.multiLocationHint}
         </p>
       )}
 
       {/* Bulk scope banner � unmissable: button labels and receipts repeat it */}
       {isBulk && locations.length > 0 && (
-        <div className="rounded-xl border-2 border-amber-300 bg-amber-50 p-3 text-[12.5px] dark:border-amber-500/40 dark:bg-amber-500/[0.08]">
+        <div className="rounded-[8px] border-2 border-amber-300 bg-amber-50 p-3 text-[12.5px] dark:border-amber-500/40 dark:bg-amber-500/[0.08]">
           <p className="font-bold text-amber-800 dark:text-amber-200">
             {copy.bulkEditingAll
               .replace("{count}", String(locations.length))
@@ -1500,7 +1500,7 @@ const bulk: BulkScope | null = isBulk
 
       {/* Banner */}
       {banner && (
-        <div className={`rounded-xl border p-3 text-[13px] ${banner.kind === "ok" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-red-200 bg-red-50 text-red-700"}`}>
+        <div className={`rounded-[8px] border p-3 text-[13px] ${banner.kind === "ok" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-red-200 bg-red-50 text-red-700"}`}>
           <div className="flex items-center justify-between gap-3">
             <span>{banner.text}</span>
             <button className="shrink-0 text-[12px] underline underline-offset-2" onClick={() => setBanner(null)}>{copy.dismiss}</button>
@@ -1510,7 +1510,7 @@ const bulk: BulkScope | null = isBulk
 
       {/* Bulk retry � re-runs the same save for failed branches only */}
       {lastBulkFail && (
-        <div className="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 p-3 text-[13px] text-red-700">
+        <div className="flex items-center justify-between gap-3 rounded-[8px] border border-red-200 bg-red-50 p-3 text-[13px] text-red-700">
           <span>
             {lastBulkFail.label} failed on: {lastBulkFail.failed.map((f) => f.name).join(", ")}.
           </span>
@@ -1531,7 +1531,7 @@ const bulk: BulkScope | null = isBulk
           aria-label="Confirm bulk edit"
           className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-sm"
         >
-          <div className="w-full max-w-md rounded-2xl border border-ink/[0.06] bg-white p-5 shadow-2xl dark:border-fog/[0.08] dark:bg-ink">
+          <div className="w-full max-w-md rounded-[8px] border border-ink/[0.06] bg-white p-5 shadow-2xl dark:border-fog/[0.08] dark:bg-ink">
             <h2 className="text-[15px] font-bold text-ink dark:text-fog">
               {confirmBulk.title}
             </h2>
@@ -1539,7 +1539,7 @@ const bulk: BulkScope | null = isBulk
               Applies to {confirmBulk.branches.length} branches:{" "}
               {confirmBulk.branches.map((b) => b.name).join(", ")}
             </p>
-            <ul className="mt-3 max-h-48 space-y-1.5 overflow-y-auto rounded-xl bg-ink/[0.03] p-3 text-[12.5px] text-ink/70 dark:bg-fog/[0.04] dark:text-fog/70">
+            <ul className="mt-3 max-h-48 space-y-1.5 overflow-y-auto rounded-[8px] bg-ink/[0.03] p-3 text-[12.5px] text-ink/70 dark:bg-fog/[0.04] dark:text-fog/70">
               {confirmBulk.lines.map((line, i) => (
                 <li key={i} className="flex gap-2">
                   <span aria-hidden className="text-deep-violet">�</span>
@@ -1621,7 +1621,7 @@ const bulk: BulkScope | null = isBulk
           )}
           {/* Tabs (google-updates is per-branch, hidden in bulk) */}
           <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1">
-            <div role="tablist" className="flex gap-1 rounded-xl bg-ink/[0.03] p-1 dark:bg-fog/[0.04]">
+            <div role="tablist" className="flex gap-1 rounded-[8px] bg-ink/[0.03] p-1 dark:bg-fog/[0.04]">
               {tabs.map((tab) => (
                 <button
                   key={tab.key}
@@ -1647,7 +1647,7 @@ const bulk: BulkScope | null = isBulk
             </div>
           </div>
           {!isBulk && locations.length > 1 && (
-            <p className="rounded-xl border border-deep-violet/15 bg-deep-violet/[0.04] px-3.5 py-2 text-[12px] text-ink/55 dark:text-fog/55">
+            <p className="rounded-[8px] border border-deep-violet/15 bg-deep-violet/[0.04] px-3.5 py-2 text-[12px] text-ink/55 dark:text-fog/55">
               ?? {copy.bulkTipBefore}{" "}
               <button
                 onClick={() => setSelectedId(ALL)}
@@ -1660,7 +1660,7 @@ const bulk: BulkScope | null = isBulk
           )}
 
           {/* Tab content */}
-          <div className="rounded-2xl border border-ink/[0.06] bg-white p-4 sm:p-5 dark:border-fog/[0.06] dark:bg-ink">
+          <div className="rounded-[8px] border border-ink/[0.06] bg-white p-4 sm:p-5 dark:border-fog/[0.06] dark:bg-ink">
             {activeTab === "details" && (
               <DetailsTab
                 location={selectedLocation}
@@ -2910,7 +2910,7 @@ function DescriptionTab({ initial, initialOpeningDate, onSave, bulk, copy, synce
         rows={6}
         maxLength={750}
         placeholder={copy.descriptionPlaceholder}
-        className={`w-full resize-y rounded-xl border bg-white p-3 text-[13px] text-ink outline-none transition placeholder:text-ink/25 focus:ring-2 dark:bg-ink dark:text-fog ${pendingDesc() ? "border-amber-400 focus:border-amber-400 focus:ring-amber-500/20 dark:border-amber-500/50" : "border-ink/[0.08] focus:border-deep-violet/30 focus:ring-deep-violet/[0.1] dark:border-fog/[0.1]"}`}
+        className={`w-full resize-y rounded-[8px] border bg-white p-3 text-[13px] text-ink outline-none transition placeholder:text-ink/25 focus:ring-2 dark:bg-ink dark:text-fog ${pendingDesc() ? "border-amber-400 focus:border-amber-400 focus:ring-amber-500/20 dark:border-amber-500/50" : "border-ink/[0.08] focus:border-deep-violet/30 focus:ring-deep-violet/[0.1] dark:border-fog/[0.1]"}`}
       />
       {pendingDesc() && <PendingDiff {...pendingDesc()!} copy={copy} />}
       <p className="text-right text-[11px] text-ink/30 dark:text-fog/30">
@@ -2925,7 +2925,7 @@ function DescriptionTab({ initial, initialOpeningDate, onSave, bulk, copy, synce
           type="date"
           value={openingDate}
           onChange={(e) => setOpeningDate(e.target.value)}
-          className="w-full max-w-xs rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[13px] text-ink outline-none transition focus:border-deep-violet/30 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+          className="w-full max-w-xs rounded-[8px] border border-ink/[0.08] bg-white px-3 py-2 text-[13px] text-ink outline-none transition focus:border-deep-violet/30 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
         />
       </div>
       {(bulk || current) && (
@@ -3051,7 +3051,7 @@ function GroupsModal({
         aria-modal="true"
         aria-label={copy.manageGroupsTitle}
         onClick={(e) => e.stopPropagation()}
-        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.06] dark:bg-ink"
+        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-[8px] border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.06] dark:bg-ink"
       >
         <div className="flex items-start justify-between gap-3">
           <SectionTitle title={copy.manageGroupsTitle} subtitle={copy.manageGroupsSubtitle} />
@@ -3065,7 +3065,7 @@ function GroupsModal({
             {groups.map((g) => {
               const live = g.listing_ids.filter((id) => locations.some((l) => l.id === id));
               return (
-                <li key={g.id} className="flex items-center gap-2 rounded-xl border border-ink/[0.06] px-3 py-2 dark:border-fog/[0.06]">
+                <li key={g.id} className="flex items-center gap-2 rounded-[8px] border border-ink/[0.06] px-3 py-2 dark:border-fog/[0.06]">
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[13px] font-semibold text-ink dark:text-fog">{g.name}</p>
                     <p className="text-[11px] text-ink/45 dark:text-fog/45">
@@ -3100,7 +3100,7 @@ function GroupsModal({
             {locations.length === 0 ? (
               <p className="text-[12px] text-ink/45 dark:text-fog/45">{copy.groupNoLocationsYet}</p>
             ) : (
-              <ul className="max-h-56 space-y-1 overflow-y-auto rounded-xl border border-ink/[0.06] p-2 dark:border-fog/[0.06]">
+              <ul className="max-h-56 space-y-1 overflow-y-auto rounded-[8px] border border-ink/[0.06] p-2 dark:border-fog/[0.06]">
                 {locations.map((l) => (
                   <li key={l.id}>
                     <label className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 transition hover:bg-ink/[0.03] dark:hover:bg-fog/[0.04]">
@@ -3130,7 +3130,7 @@ function GroupsModal({
               {editing ? copy.groupSave : copy.newGroup}
             </button>
             {editing && (
-              <button onClick={reset} className="rounded-xl px-3 py-2 text-[12px] font-semibold text-ink/55 transition hover:bg-ink/[0.04] dark:text-fog/55">
+              <button onClick={reset} className="rounded-[8px] px-3 py-2 text-[12px] font-semibold text-ink/55 transition hover:bg-ink/[0.04] dark:text-fog/55">
                 {copy.groupCancel}
               </button>
             )}

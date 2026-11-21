@@ -46,7 +46,7 @@ const GOOGLE_TEXT_METHODS = new Set<string>(["update", "event", "offer"]);
 const EVENT_METHODS = new Set<string>(["event", "offer"]);
 const CTA_VALUES = ["book", "order", "shop", "learn_more", "sign_up", "call"] as const;
 const FIELD =
-  "rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]";
+  "rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]";
 
 function editRights(job: PublishJob) {
   const queued = QUEUED_STATUSES.has(job.status);
@@ -235,7 +235,7 @@ export default function PostDetailDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="post-detail-title"
-        className="flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-[28px] bg-white shadow-[0_40px_80px_-32px_rgba(20,16,31,0.65)] dark:bg-ink"
+        className="flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-[8px] bg-white shadow-[0_40px_80px_-32px_rgba(20,16,31,0.65)] dark:bg-ink"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3 border-b border-ink/[0.06] px-5 py-4 dark:border-fog/[0.06]">
@@ -260,7 +260,7 @@ export default function PostDetailDialog({
             onClick={onClose}
             autoFocus
             aria-label={d.close}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[20px] text-ink/45 transition hover:bg-ink/[0.04] hover:text-ink focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:text-fog/45"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] text-ink/45 transition hover:bg-ink/[0.04] hover:text-ink focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:text-fog/45"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden>
               <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
@@ -274,14 +274,14 @@ export default function PostDetailDialog({
             <img
               src={job.media_url}
               alt=""
-              className="max-h-72 w-full rounded-[20px] bg-ink/[0.04] object-contain dark:bg-fog/[0.06]"
+              className="max-h-72 w-full rounded-[8px] bg-ink/[0.04] object-contain dark:bg-fog/[0.06]"
             />
           ) : (
             <p className="text-[12px] text-ink/45 dark:text-fog/45">{d.noImage}</p>
           )}
 
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className={`rounded-[20px] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${chip.cls}`}>
+            <span className={`rounded-[8px] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${chip.cls}`}>
               {chip.label}
             </span>
           </div>
@@ -466,7 +466,7 @@ export default function PostDetailDialog({
                 type="button"
                 onClick={() => void save()}
                 disabled={saving}
-                className="rounded-[20px] bg-deep-violet px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90 disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40"
+                className="rounded-[8px] bg-deep-violet px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90 disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40"
               >
                 {saving ? d.saving : d.save}
               </button>
@@ -477,7 +477,7 @@ export default function PostDetailDialog({
                   setError(null);
                 }}
                 disabled={saving}
-                className="rounded-[20px] border border-ink/[0.1] px-4 py-2 text-[13px] font-semibold text-ink/60 transition hover:bg-ink/[0.04] disabled:opacity-50 dark:border-fog/[0.12] dark:text-fog/60"
+                className="rounded-[8px] border border-ink/[0.1] px-4 py-2 text-[13px] font-semibold text-ink/60 transition hover:bg-ink/[0.04] disabled:opacity-50 dark:border-fog/[0.12] dark:text-fog/60"
               >
                 {d.discard}
               </button>
@@ -488,7 +488,7 @@ export default function PostDetailDialog({
                 <button
                   type="button"
                   onClick={startEdit}
-                  className="rounded-[20px] bg-deep-violet px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40"
+                  className="rounded-[8px] bg-deep-violet px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40"
                 >
                   {d.edit}
                 </button>
@@ -498,7 +498,7 @@ export default function PostDetailDialog({
                   type="button"
                   onClick={() => void checkGoogle()}
                   disabled={checking}
-                  className="rounded-[20px] border border-ink/[0.1] px-4 py-2 text-[13px] font-semibold text-ink/60 transition hover:bg-ink/[0.04] disabled:opacity-50 dark:border-fog/[0.12] dark:text-fog/60"
+                  className="rounded-[8px] border border-ink/[0.1] px-4 py-2 text-[13px] font-semibold text-ink/60 transition hover:bg-ink/[0.04] disabled:opacity-50 dark:border-fog/[0.12] dark:text-fog/60"
                 >
                   {checking ? d.checking : d.checkGoogle}
                 </button>
@@ -507,7 +507,7 @@ export default function PostDetailDialog({
                 <button
                   type="button"
                   onClick={() => onRemove(job.job_id)}
-                  className="ms-auto rounded-[20px] border border-red-500/40 px-4 py-2 text-[13px] font-semibold text-red-700 transition hover:bg-red-500/10 dark:text-red-400"
+                  className="ms-auto rounded-[8px] border border-red-500/40 px-4 py-2 text-[13px] font-semibold text-red-700 transition hover:bg-red-500/10 dark:text-red-400"
                 >
                   {queued ? t.publish.cancel : d.removeNow}
                 </button>

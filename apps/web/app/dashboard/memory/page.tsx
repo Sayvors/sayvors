@@ -87,7 +87,7 @@ function MemoryCard({
   };
 
   return (
-    <article className="rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4">
+    <article className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4">
       <div className="flex flex-wrap items-center gap-2">
         <StatusChip status={memory.status} />
         {memory.outcome && (
@@ -157,7 +157,7 @@ function MemoryCard({
             {memory.summary}
           </p>
           {memory.facts.length > 0 && (
-            <div className="mt-3 rounded-xl bg-[var(--ui-sunken)] p-3">
+            <div className="mt-3 rounded-[8px] bg-[var(--ui-sunken)] p-3">
               <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
                 {mm.factsTitle}
               </p>
@@ -307,13 +307,13 @@ export default function MemoryPage() {
         {(error || loadError) && (
           <p
             role="alert"
-            className="mt-4 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-[13px] font-medium text-red-800"
+            className="mt-4 rounded-[8px] border border-red-300 bg-red-50 px-4 py-3 text-[13px] font-medium text-red-800"
           >
             {error ?? loadError}
           </p>
         )}
 
-        <div className="mt-5 flex flex-wrap items-center gap-1 rounded-xl bg-[var(--ui-sunken)] p-1">
+        <div className="mt-5 flex flex-wrap items-center gap-1 rounded-[8px] bg-[var(--ui-sunken)] p-1">
           {TABS.map((tb) => (
             <button
               key={tb.key}
@@ -333,7 +333,7 @@ export default function MemoryPage() {
         </div>
 
         {!enabled && (
-          <p className="mt-4 rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-3 text-[12px] text-[var(--ui-ink-2)]">
+          <p className="mt-4 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-3 text-[12px] text-[var(--ui-ink-2)]">
             {mm.offNote}
           </p>
         )}
@@ -343,7 +343,7 @@ export default function MemoryPage() {
             <LogoLoader size={28} />
           </div>
         ) : memories.length === 0 ? (
-          <div className="mt-4 rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-6 py-12 text-center">
+          <div className="mt-4 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-6 py-12 text-center">
             <p className="text-[14px] font-bold text-[var(--ui-ink)]">
               {tab === "pending" ? mm.emptyPending : mm.emptyElse}
             </p>

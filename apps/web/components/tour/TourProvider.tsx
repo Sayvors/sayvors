@@ -238,7 +238,7 @@ export default function TourProvider({ children }: { children: React.ReactNode }
       {/* Welcome (first visit) */}
       {phase === "welcome" && (
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-ink/50 p-4" role="dialog" aria-modal="true" aria-label="Welcome to Sayvors">
-          <div className="w-full max-w-sm rounded-3xl border-2 border-white bg-white p-6 text-center shadow-[0_18px_50px_rgba(58,39,120,0.25)] dark:border-fog/[0.1] dark:bg-ink">
+          <div className="w-full max-w-sm rounded-[8px] border-2 border-white bg-white p-6 text-center shadow-[0_18px_50px_rgba(58,39,120,0.25)] dark:border-fog/[0.1] dark:bg-ink">
             <div className="flex items-center justify-center gap-2.5">
               <Image src="/Sayvors_Icon.png" alt="" width={40} height={40} className="h-10 w-auto" />
               <Image
@@ -264,13 +264,13 @@ export default function TourProvider({ children }: { children: React.ReactNode }
             <div className="mt-5 flex items-center justify-center gap-2">
               <button
                 onClick={skip}
-                className="rounded-xl px-4 py-2.5 text-[12.5px] font-semibold text-ink/50 outline-none transition hover:bg-ink/[0.04] hover:text-ink focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:text-fog/50 dark:hover:bg-fog/[0.06] dark:hover:text-fog"
+                className="rounded-[8px] px-4 py-2.5 text-[12.5px] font-semibold text-ink/50 outline-none transition hover:bg-ink/[0.04] hover:text-ink focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:text-fog/50 dark:hover:bg-fog/[0.06] dark:hover:text-fog"
               >
                 Skip & exit
               </button>
               <button
                 onClick={startTour}
-                className="rounded-xl bg-deep-violet px-5 py-2.5 text-[12.5px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98]"
+                className="rounded-[8px] bg-deep-violet px-5 py-2.5 text-[12.5px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98]"
               >
                 Next
               </button>

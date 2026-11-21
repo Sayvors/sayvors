@@ -35,7 +35,7 @@ function Field({
 }
 
 const inputCls =
-  "w-full rounded-xl border-2 border-white bg-ink/[0.03] px-3.5 py-2 text-[13px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/40";
+  "w-full rounded-[8px] border-2 border-white bg-ink/[0.03] px-3.5 py-2 text-[13px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/40";
 
 export default function DatabaseTab({
   databankId,
@@ -238,21 +238,21 @@ export default function DatabaseTab({
         </div>
         <button
           onClick={() => setShowForm((v) => !v)}
-          className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white shadow-md transition hover:bg-deep-violet/90"
+          className="rounded-[8px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white shadow-md transition hover:bg-deep-violet/90"
         >
           {showForm ? "Close" : "+ Connect database"}
         </button>
       </div>
 
       {notice && (
-        <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-[12px] font-medium text-emerald-700">
+        <div role="status" className="rounded-[8px] border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-[12px] font-medium text-emerald-700">
           {notice}
         </div>
       )}
 
       {/* New connection form */}
       {showForm && (
-        <div className="space-y-3 rounded-xl border-2 border-deep-violet/20 bg-white/70 p-4">
+        <div className="space-y-3 rounded-[8px] border-2 border-deep-violet/20 bg-white/70 p-4">
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Connection name">
               <input value={connName} onChange={(e) => setConnName(e.target.value)} placeholder="e.g. Production Postgres" className={inputCls} />
@@ -265,7 +265,7 @@ export default function DatabaseTab({
                     key={t}
                     type="button"
                     onClick={() => { setDbType(t); setTestResult(null); }}
-                    className={`flex-1 rounded-xl px-3 py-2 text-[12px] font-bold transition ${
+                    className={`flex-1 rounded-[8px] px-3 py-2 text-[12px] font-bold transition ${
                       dbType === t ? "bg-deep-violet text-white shadow-md" : "bg-ink/[0.04] text-ink/50 hover:bg-ink/[0.08]"
                     }`}
                   >
@@ -294,12 +294,12 @@ export default function DatabaseTab({
           </div>
 
           {testResult && (
-            <div role="status" className={`rounded-xl px-3 py-2.5 text-[12px] font-medium ${testResult.ok ? "bg-emerald-50 text-emerald-700" : "bg-coral/[0.07] text-coral"}`}>
+            <div role="status" className={`rounded-[8px] px-3 py-2.5 text-[12px] font-medium ${testResult.ok ? "bg-emerald-50 text-emerald-700" : "bg-coral/[0.07] text-coral"}`}>
               {testResult.ok ? `Connected — ${testResult.version}` : testResult.error}
             </div>
           )}
 
-          <details className="rounded-xl border border-ink/[0.06] bg-ink/[0.02]">
+          <details className="rounded-[8px] border border-ink/[0.06] bg-ink/[0.02]">
             <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-ink/50 hover:text-ink/70">
               Why connect a live database?
             </summary>
@@ -317,7 +317,7 @@ export default function DatabaseTab({
             <button
               onClick={handleTest}
               disabled={testing || !database.trim()}
-              className="flex items-center gap-2 rounded-xl border-2 border-ink/10 px-4 py-2 text-[12px] font-bold text-ink/60 transition hover:border-deep-violet/30 hover:text-deep-violet disabled:opacity-40"
+              className="flex items-center gap-2 rounded-[8px] border-2 border-ink/10 px-4 py-2 text-[12px] font-bold text-ink/60 transition hover:border-deep-violet/30 hover:text-deep-violet disabled:opacity-40"
             >
               {testing && <LogoLoader size={14} />} Test connection
             </button>
@@ -325,7 +325,7 @@ export default function DatabaseTab({
               onClick={handleSave}
               disabled={saving || !testResult?.ok}
               title={!testResult?.ok ? "Test the connection first" : undefined}
-              className="flex items-center gap-2 rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white shadow-md transition hover:bg-deep-violet/90 disabled:opacity-40"
+              className="flex items-center gap-2 rounded-[8px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white shadow-md transition hover:bg-deep-violet/90 disabled:opacity-40"
             >
               {saving && <LogoLoader size={14} />} Save connection
             </button>
@@ -339,7 +339,7 @@ export default function DatabaseTab({
           <LogoLoader size={32} />
         </div>
       ) : sources.length === 0 && !showForm ? (
-        <div className="rounded-xl bg-ink/[0.02] px-4 py-8 text-center">
+        <div className="rounded-[8px] bg-ink/[0.02] px-4 py-8 text-center">
           <p className="text-[13px] font-semibold text-ink/40">No databases connected</p>
           <p className="mt-1 text-[11px] text-ink/30">Connect PostgreSQL or MySQL to query live data.</p>
         </div>
@@ -348,12 +348,12 @@ export default function DatabaseTab({
           {sources.map((s) => (
             <div
               key={s.id}
-              className={`group flex items-center gap-2 rounded-xl border-2 px-3 py-2 transition ${
+              className={`group flex items-center gap-2 rounded-[8px] border-2 px-3 py-2 transition ${
                 selectedId === s.id ? "border-deep-violet/40 bg-deep-violet/[0.04]" : "border-white bg-white/60 hover:border-ink/10"
               }`}
             >
               <button onClick={() => setSelectedId(s.id)} className="flex items-center gap-2 text-left">
-                <span className={`rounded-md px-1.5 py-0.5 text-[9px] font-bold uppercase ${s.db_type === "postgres" ? "bg-sky-100 text-sky-700" : "bg-orange-100 text-orange-700"}`}>
+                <span className={`rounded-[8px] px-1.5 py-0.5 text-[9px] font-bold uppercase ${s.db_type === "postgres" ? "bg-sky-100 text-sky-700" : "bg-orange-100 text-orange-700"}`}>
                   {s.db_type === "postgres" ? "PG" : "MySQL"}
                 </span>
                 <span>
@@ -376,7 +376,7 @@ export default function DatabaseTab({
       {/* Schema browser + query lab */}
       {selected && (
         <div className="grid gap-4 lg:grid-cols-5">
-          <div className="rounded-xl border-2 border-white bg-white/60 p-4 lg:col-span-2">
+          <div className="rounded-[8px] border-2 border-white bg-white/60 p-4 lg:col-span-2">
             <div className="mb-2 flex items-center justify-between">
               <p className="text-[12px] font-bold text-ink">Tables</p>
               <button onClick={loadSchema} className="text-[11px] font-semibold text-deep-violet hover:underline">
@@ -417,7 +417,7 @@ export default function DatabaseTab({
             )}
           </div>
 
-          <div className="rounded-xl border-2 border-white bg-white/60 p-4 lg:col-span-3">
+          <div className="rounded-[8px] border-2 border-white bg-white/60 p-4 lg:col-span-3">
             <p className="mb-2 text-[12px] font-bold text-ink">Query lab <span className="font-medium text-ink/35">— read-only (SELECT / WITH)</span></p>
             <textarea
               value={sql}
@@ -425,14 +425,14 @@ export default function DatabaseTab({
               rows={5}
               spellCheck={false}
               placeholder="SELECT * FROM users LIMIT 50"
-              className="w-full resize-y rounded-xl border-2 border-ink/[0.08] bg-ink/[0.02] p-3 font-mono text-[12px] leading-relaxed text-ink outline-none transition placeholder:text-ink/25 focus:border-deep-violet/40"
+              className="w-full resize-y rounded-[8px] border-2 border-ink/[0.08] bg-ink/[0.02] p-3 font-mono text-[12px] leading-relaxed text-ink outline-none transition placeholder:text-ink/25 focus:border-deep-violet/40"
             />
             {queryError && <p role="alert" className="mt-2 break-words text-[12px] font-medium text-coral">{queryError}</p>}
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <button
                 onClick={handleRun}
                 disabled={running || !sql.trim()}
-                className="flex items-center gap-2 rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white shadow-md transition hover:bg-deep-violet/90 disabled:opacity-40"
+                className="flex items-center gap-2 rounded-[8px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white shadow-md transition hover:bg-deep-violet/90 disabled:opacity-40"
               >
                 {running && <LogoLoader size={14} />} Run query
               </button>
@@ -440,13 +440,13 @@ export default function DatabaseTab({
                 value={ingestName}
                 onChange={(e) => setIngestName(e.target.value)}
                 placeholder="Snapshot name (optional)"
-                className="min-w-0 flex-1 rounded-xl border-2 border-ink/[0.08] bg-ink/[0.02] px-3 py-2 text-[12px] text-ink outline-none transition placeholder:text-ink/25 focus:border-deep-violet/40"
+                className="min-w-0 flex-1 rounded-[8px] border-2 border-ink/[0.08] bg-ink/[0.02] px-3 py-2 text-[12px] text-ink outline-none transition placeholder:text-ink/25 focus:border-deep-violet/40"
               />
               <button
                 onClick={handleIngest}
                 disabled={ingesting || !result || result.row_count === 0}
                 title="Store the last result set as a document and embed it"
-                className="flex items-center gap-2 rounded-xl border-2 border-emerald-200 bg-emerald-50 px-4 py-2 text-[12px] font-bold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-40"
+                className="flex items-center gap-2 rounded-[8px] border-2 border-emerald-200 bg-emerald-50 px-4 py-2 text-[12px] font-bold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-40"
               >
                 {ingesting && <LogoLoader size={14} />} Ingest results
               </button>

@@ -169,7 +169,7 @@ function serviceChips(
           <span
             key={name}
             style={{ backgroundColor: SERVICE_LEVEL_COLORS[level], color: "#FFFFFF" }}
-            className="rounded-[6px] px-1.5 py-0.5 text-[10px] font-semibold"
+            className="rounded-[8px] px-1.5 py-0.5 text-[10px] font-semibold"
           >
             {name}
           </span>
@@ -261,7 +261,7 @@ function chips(items: string[] | undefined): ReactNode {
       {items.map((item) => (
         <span
           key={item}
-          className="rounded-[6px] bg-[#F4F2F7] px-1.5 py-0.5 text-[10px] font-semibold text-[#3B2D5E]"
+          className="rounded-[8px] bg-[#F4F2F7] px-1.5 py-0.5 text-[10px] font-semibold text-[#3B2D5E]"
         >
           {item}
         </span>
@@ -309,7 +309,7 @@ function MatrixTable<T extends string>({
   const [mobileIndex, setMobileIndex] = useState(0);
 
   return (
-    <section className="mt-4 overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-white">
+    <section className="mt-4 overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white">
       <div className="border-b border-[var(--ui-line)] px-3 py-2">
         <h2 className="text-[12px] font-bold uppercase tracking-wide text-[#14101F]">{title}</h2>
         {description ? <p className="mt-0.5 text-[10px] text-[#3B2D5E]">{description}</p> : null}
@@ -489,7 +489,7 @@ function HistoryTable({
     .sort((a, b) => (b.at ?? "").localeCompare(a.at ?? ""));
 
   return (
-    <section className="mt-4 overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-white">
+    <section className="mt-4 overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white">
       <div className="border-b border-[var(--ui-line)] px-3 py-2">
         <h2 className="text-[12px] font-bold uppercase tracking-wide text-[#14101F]">
           History · last {days} days
@@ -699,7 +699,7 @@ function FadedCell({
       role="button"
       tabIndex={0}
       onClick={onOpen}
-      className={`h-[132px] cursor-pointer overflow-hidden rounded-[10px] px-1.5 py-1.5 transition-colors hover:bg-[#F4F2F7] ${FOCUS}`}
+      className={`h-[132px] cursor-pointer overflow-hidden rounded-[8px] px-1.5 py-1.5 transition-colors hover:bg-[#F4F2F7] ${FOCUS}`}
     >
       <ul className="flex flex-col gap-1.5">
         {shown.map((review, index) => {
@@ -761,7 +761,7 @@ function ReviewsPopup({
   const color = SENTIMENT_CATEGORY_COLORS[category];
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/50 p-4">
-      <div className="flex max-h-[86vh] w-full max-w-[860px] flex-col overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-white shadow-[0_24px_80px_rgba(20,16,31,0.35)]">
+      <div className="flex max-h-[86vh] w-full max-w-[860px] flex-col overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white shadow-[0_24px_80px_rgba(20,16,31,0.35)]">
         <div className="flex items-start justify-between gap-3 border-b border-[var(--ui-line)] bg-[#FAFAFB] px-4 py-3">
           <div className="flex items-center gap-2.5">
             <GoogleMark size={22} />
@@ -812,7 +812,7 @@ function ReviewsPopup({
               {rows.map((review, index) => (
                 <article
                   key={`${review.time}-${index}`}
-                  className="rounded-[12px] border border-[#EFEDF2] bg-white p-4 shadow-[0_2px_8px_rgba(20,16,31,0.06)]"
+                  className="rounded-[8px] border border-[#EFEDF2] bg-white p-4 shadow-[0_2px_8px_rgba(20,16,31,0.06)]"
                 >
                   <div className="flex items-start gap-2">
                     <ReviewAvatar name={review.author} photo={review.author_photo} size="md" />
@@ -829,7 +829,7 @@ function ReviewsPopup({
                       </p>
                     </div>
                     <span
-                      className="shrink-0 rounded-[6px] px-2 py-1 text-[12px] font-bold"
+                      className="shrink-0 rounded-[8px] px-2 py-1 text-[12px] font-bold"
                       style={{ backgroundColor: `${color}1A`, color }}
                     >
                       {review.rating != null ? `${review.rating}★` : "—"}
@@ -848,7 +848,7 @@ function ReviewsPopup({
                       {review.problems.map((problem, position) => (
                         <span
                           key={position}
-                          className="rounded-[6px] bg-[#F4F2F7] px-1.5 py-0.5 text-[10px] text-[#3B2D5E]"
+                          className="rounded-[8px] bg-[#F4F2F7] px-1.5 py-0.5 text-[10px] text-[#3B2D5E]"
                         >
                           {problem}
                         </span>
@@ -912,7 +912,7 @@ function SentimentReviewsTable({
   }
 
   return (
-    <section className="mt-4 overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-white">
+    <section className="mt-4 overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white">
       <div className="flex items-center justify-between border-b border-[var(--ui-line)] px-3 py-2">
         <h2 className="text-[12px] font-bold uppercase tracking-wide text-[#14101F]">
           Reviews by category
@@ -1125,7 +1125,7 @@ export default function ComparePage() {
       </Link>
 
       {/* Half hero: the benchmarking sentence lives in the left half. */}
-      <section className="mt-4 grid overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-[#F1F2F5] lg:grid-cols-2">
+      <section className="mt-4 grid overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-[#F1F2F5] lg:grid-cols-2">
         <div className="px-6 py-7 sm:px-8 sm:py-9">
           <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#B0338A]">
             Benchmark / Compare
@@ -1141,18 +1141,18 @@ export default function ComparePage() {
           </p>
         </div>
         <div className="relative hidden min-h-[200px] items-center justify-center lg:flex">
-          <div className="absolute left-[8%] top-[16%] h-16 w-24 rounded-[10px] bg-white shadow-[0_2px_8px_rgba(20,16,31,0.08)]" />
-          <div className="absolute left-[38%] top-[38%] h-16 w-24 rounded-[10px] bg-[#F6DCEB]" />
-          <div className="absolute right-[34%] top-[14%] h-16 w-24 rounded-[10px] bg-[#D8459F]" />
-          <div className="absolute right-[8%] top-[40%] h-16 w-24 rounded-[10px] bg-[#B0338A] shadow-[0_2px_8px_rgba(20,16,31,0.12)]" />
+          <div className="absolute left-[8%] top-[16%] h-16 w-24 rounded-[8px] bg-white shadow-[0_2px_8px_rgba(20,16,31,0.08)]" />
+          <div className="absolute left-[38%] top-[38%] h-16 w-24 rounded-[8px] bg-[#F6DCEB]" />
+          <div className="absolute right-[34%] top-[14%] h-16 w-24 rounded-[8px] bg-[#D8459F]" />
+          <div className="absolute right-[8%] top-[40%] h-16 w-24 rounded-[8px] bg-[#B0338A] shadow-[0_2px_8px_rgba(20,16,31,0.12)]" />
         </div>
       </section>
 
-      <section className="mt-4 rounded-[12px] border border-[var(--ui-line)] bg-white p-3 sm:p-4">
+      <section className="mt-4 rounded-[8px] border border-[var(--ui-line)] bg-white p-3 sm:p-4">
         <ComparePicker selection={selection} onChange={update} saved={saved} own={own} />
       </section>
 
-      <div className="mt-4 flex items-start gap-2 rounded-[12px] border border-[#3D1D6E]/20 bg-[#F3EEFB] px-3 py-2 md:hidden">
+      <div className="mt-4 flex items-start gap-2 rounded-[8px] border border-[#3D1D6E]/20 bg-[#F3EEFB] px-3 py-2 md:hidden">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="mt-0.5 shrink-0 text-[#3D1D6E]">
           <path d="M12 2 1 21h22L12 2zm1 14h-2v2h2v-2zm0-7h-2v5h2V9z" fill="currentColor" />
         </svg>
@@ -1162,7 +1162,7 @@ export default function ComparePage() {
         </p>
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[12px] border border-[var(--ui-line)] bg-white px-3 py-2">
+      <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[8px] border border-[var(--ui-line)] bg-white px-3 py-2">
         <span className="text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]">
           Period
         </span>
@@ -1188,7 +1188,7 @@ export default function ComparePage() {
               >
                 {option.label}
                 {disabled ? (
-                  <span className="ml-1.5 rounded-[4px] bg-[#F3F1F5] px-1.2 py-0.1 text-[8px] font-semibold uppercase tracking-wide text-[#A9A3B2]">
+                  <span className="ml-1.5 rounded-[8px] bg-[#F3F1F5] px-1.2 py-0.1 text-[8px] font-semibold uppercase tracking-wide text-[#A9A3B2]">
                     coming soon
                   </span>
                 ) : null}
@@ -1202,7 +1202,7 @@ export default function ComparePage() {
       </div>
 
       {keys.length === 0 ? (
-        <p className="mt-5 rounded-[12px] border border-dashed border-[var(--ui-line)] bg-white px-5 py-9 text-center text-[12px] text-[#3B2D5E]">
+        <p className="mt-5 rounded-[8px] border border-dashed border-[var(--ui-line)] bg-white px-5 py-9 text-center text-[12px] text-[#3B2D5E]">
           Pick a business in either dropdown to build the table.
         </p>
       ) : compareQuery.isPending ? (

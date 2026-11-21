@@ -60,7 +60,7 @@ type BadgeLabels = {
 };
 
 function StatusBadge({ status, labels }: { status?: string; labels: BadgeLabels }) {
-  const base = "inline-flex items-center gap-1.5 rounded-[2px] px-2.5 py-1 text-[10px] font-bold tracking-wide";
+  const base = "inline-flex items-center gap-1.5 rounded-[8px] px-2.5 py-1 text-[10px] font-bold tracking-wide";
   if (status === "ready" || status === "completed" || status === "processed") {
     return (
       <span className={`${base} bg-emerald/10 text-emerald ring-1 ring-emerald/30`}>
@@ -107,7 +107,7 @@ function FileIcon({ type }: { type?: string }) {
   const t = (type || "").toLowerCase();
   if (t.includes("pdf")) {
     return (
-      <span className="flex h-8 w-8 items-center justify-center rounded-[2px] bg-coral/10 text-coral ring-1 ring-coral/30">
+      <span className="flex h-8 w-8 items-center justify-center rounded-[8px] bg-coral/10 text-coral ring-1 ring-coral/30">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-4 w-4">
           <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
           <path d="M14 2v6h6" />
@@ -118,7 +118,7 @@ function FileIcon({ type }: { type?: string }) {
   }
   if (t.includes("csv") || t.includes("xls")) {
     return (
-      <span className="flex h-8 w-8 items-center justify-center rounded-[2px] bg-emerald/10 text-emerald ring-1 ring-emerald/30">
+      <span className="flex h-8 w-8 items-center justify-center rounded-[8px] bg-emerald/10 text-emerald ring-1 ring-emerald/30">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-4 w-4">
           <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
           <path d="M14 2v6h6" />
@@ -129,7 +129,7 @@ function FileIcon({ type }: { type?: string }) {
   }
   if (t.includes("doc")) {
     return (
-      <span className="flex h-8 w-8 items-center justify-center rounded-[2px] bg-sky/10 text-sky ring-1 ring-sky/30">
+      <span className="flex h-8 w-8 items-center justify-center rounded-[8px] bg-sky/10 text-sky ring-1 ring-sky/30">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-4 w-4">
           <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
           <path d="M14 2v6h6" />
@@ -139,7 +139,7 @@ function FileIcon({ type }: { type?: string }) {
     );
   }
   return (
-    <span className="flex h-8 w-8 items-center justify-center rounded-[2px] bg-accent-soft text-foreground/40">
+    <span className="flex h-8 w-8 items-center justify-center rounded-[8px] bg-accent-soft text-foreground/40">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-4 w-4">
         <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
         <path d="M14 2v6h6" />
@@ -235,10 +235,10 @@ function BusinessProfileCard() {
   const busy = saving || regenerating;
 
   return (
-    <div className="rounded-[2px] border border-card-border bg-card shadow-sm">
+    <div className="rounded-[8px] border border-card-border bg-card shadow-sm">
       <div className="flex flex-col gap-3 border-b border-card-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-[2px] bg-gradient-to-br from-deep-violet to-violet-light text-white shadow-sm">
+          <div className="flex h-9 w-9 items-center justify-center rounded-[8px] bg-gradient-to-br from-deep-violet to-violet-light text-white shadow-sm">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="h-4.5 w-4.5">
               <path d="M4 19.5A2.5 2.5 0 016.5 17H20" />
               <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" />
@@ -250,7 +250,7 @@ function BusinessProfileCard() {
               {profile && (
                 <span
                   title={isEdited ? d.editedTitle : d.autoTitle}
-                  className={`inline-flex items-center gap-1 rounded-[2px] px-2 py-0.5 text-[10px] font-bold ${
+                  className={`inline-flex items-center gap-1 rounded-[8px] px-2 py-0.5 text-[10px] font-bold ${
                     isEdited
                       ? "bg-sky/10 text-sky ring-1 ring-sky/30"
                       : "bg-accent-soft text-deep-violet ring-1 ring-violet-light/30 dark:text-violet-light"
@@ -272,7 +272,7 @@ function BusinessProfileCard() {
               onClick={() => void handleRegenerate()}
               disabled={busy}
               title={d.regenTitle}
-              className="inline-flex items-center gap-1.5 rounded-[2px] border border-card-border bg-card px-3 py-2 text-[11px] font-bold text-foreground/60 transition hover:bg-foreground/[0.04] disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-[8px] border border-card-border bg-card px-3 py-2 text-[11px] font-bold text-foreground/60 transition hover:bg-foreground/[0.04] disabled:opacity-50"
             >
               {regenerating ? (
                 <>
@@ -294,7 +294,7 @@ function BusinessProfileCard() {
                 type="button"
                 onClick={startEdit}
                 disabled={busy}
-                className="inline-flex items-center gap-1.5 rounded-[2px] bg-deep-violet px-3.5 py-2 text-[11px] font-bold text-white shadow-sm transition hover:bg-deep-violet/90 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-[8px] bg-deep-violet px-3.5 py-2 text-[11px] font-bold text-white shadow-sm transition hover:bg-deep-violet/90 disabled:opacity-50"
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className="h-3.5 w-3.5">
                   <path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z" />
@@ -307,7 +307,7 @@ function BusinessProfileCard() {
       </div>
 
       {error && (
-        <p className="mx-5 mt-3 rounded-[2px] bg-coral/10 px-3 py-2 text-[12px] font-medium text-coral ring-1 ring-coral/30">
+        <p className="mx-5 mt-3 rounded-[8px] bg-coral/10 px-3 py-2 text-[12px] font-medium text-coral ring-1 ring-coral/30">
           {error}
         </p>
       )}
@@ -321,7 +321,7 @@ function BusinessProfileCard() {
               onChange={(e) => setForm({ ...form, summary: e.target.value })}
               rows={3}
               placeholder={d.summaryPh}
-              className="mt-1 w-full resize-none rounded-[2px] border border-card-border bg-foreground/[0.03] px-3 py-2 text-[12px] font-medium text-foreground placeholder:text-foreground/30 outline-none focus:border-deep-violet/40 focus:bg-card"
+              className="mt-1 w-full resize-none rounded-[8px] border border-card-border bg-foreground/[0.03] px-3 py-2 text-[12px] font-medium text-foreground placeholder:text-foreground/30 outline-none focus:border-deep-violet/40 focus:bg-card"
             />
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -334,14 +334,14 @@ function BusinessProfileCard() {
                     onChange={(e) => setForm({ ...form, [f.key]: e.target.value })}
                     rows={2}
                     placeholder={f.placeholder}
-                    className="mt-1 w-full resize-none rounded-[2px] border border-card-border bg-foreground/[0.03] px-3 py-2 text-[12px] font-medium text-foreground placeholder:text-foreground/30 outline-none focus:border-deep-violet/40 focus:bg-card"
+                    className="mt-1 w-full resize-none rounded-[8px] border border-card-border bg-foreground/[0.03] px-3 py-2 text-[12px] font-medium text-foreground placeholder:text-foreground/30 outline-none focus:border-deep-violet/40 focus:bg-card"
                   />
                 ) : (
                   <input
                     value={form[f.key] ?? ""}
                     onChange={(e) => setForm({ ...form, [f.key]: e.target.value })}
                     placeholder={f.placeholder}
-                    className="mt-1 w-full rounded-[2px] border border-card-border bg-foreground/[0.03] px-3 py-2 text-[12px] font-medium text-foreground placeholder:text-foreground/30 outline-none focus:border-deep-violet/40 focus:bg-card"
+                    className="mt-1 w-full rounded-[8px] border border-card-border bg-foreground/[0.03] px-3 py-2 text-[12px] font-medium text-foreground placeholder:text-foreground/30 outline-none focus:border-deep-violet/40 focus:bg-card"
                   />
                 )}
               </div>
@@ -352,7 +352,7 @@ function BusinessProfileCard() {
               type="button"
               onClick={() => setEditing(false)}
               disabled={saving}
-              className="rounded-[2px] px-4 py-2 text-[12px] font-semibold text-foreground/50 transition hover:bg-foreground/[0.04] disabled:opacity-50"
+              className="rounded-[8px] px-4 py-2 text-[12px] font-semibold text-foreground/50 transition hover:bg-foreground/[0.04] disabled:opacity-50"
             >
               {t.common.cancel}
             </button>
@@ -360,7 +360,7 @@ function BusinessProfileCard() {
               type="button"
               onClick={() => void handleSave()}
               disabled={saving}
-              className="inline-flex items-center gap-1.5 rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white shadow-sm transition hover:bg-deep-violet/90 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-[8px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white shadow-sm transition hover:bg-deep-violet/90 disabled:opacity-50"
             >
               {saving && <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white" />}
               {d.save}
@@ -369,8 +369,8 @@ function BusinessProfileCard() {
         </div>
       ) : loading ? (
         <div className="space-y-2 px-5 py-5">
-          <div className="h-4 w-3/4 animate-pulse rounded-[2px] bg-foreground/[0.06]" />
-          <div className="h-4 w-1/2 animate-pulse rounded-[2px] bg-foreground/[0.04]" />
+          <div className="h-4 w-3/4 animate-pulse rounded-[8px] bg-foreground/[0.06]" />
+          <div className="h-4 w-1/2 animate-pulse rounded-[8px] bg-foreground/[0.04]" />
         </div>
       ) : profile ? (
         <div className="px-5 py-4">
@@ -383,7 +383,7 @@ function BusinessProfileCard() {
             {PROFILE_FIELD_META.map((f) => {
               const value = (profile[f.key] as string) ?? "";
               return (
-                <div key={f.key} className="rounded-[2px] bg-foreground/[0.03] px-3 py-2.5">
+                <div key={f.key} className="rounded-[8px] bg-foreground/[0.03] px-3 py-2.5">
                   <div className="text-[10px] font-bold uppercase tracking-widest text-foreground/35">{profileFieldLabel(f.key, d.fields)}</div>
                   <div className={`mt-0.5 text-[12px] leading-relaxed ${value ? "text-foreground/75" : "italic text-foreground/30"}`}>
                     {value || d.notSet}
@@ -624,11 +624,11 @@ function DatabankPageContent() {
     <div className="h-full overflow-y-auto bg-background">
       <div className="space-y-6 p-4 sm:p-6">
         {/* Company Header */}
-        <div className="overflow-hidden rounded-[2px] border border-card-border bg-card shadow-sm">
+        <div className="overflow-hidden rounded-[8px] border border-card-border bg-card shadow-sm">
           <div className="bg-gradient-to-r from-deep-violet via-[#4c2a8a] to-violet-light px-6 py-5">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-4">
-                <div className="flex h-11 w-11 items-center justify-center rounded-[2px] bg-white/15 text-white backdrop-blur ring-1 ring-white/20">
+                <div className="flex h-11 w-11 items-center justify-center rounded-[8px] bg-white/15 text-white backdrop-blur ring-1 ring-white/20">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="h-6 w-6">
                     <ellipse cx="12" cy="5" rx="9" ry="3" />
                     <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
@@ -644,7 +644,7 @@ function DatabankPageContent() {
               </div>
               <Link
                 href="/dashboard/databank/new"
-                className="inline-flex items-center justify-center gap-1.5 self-start rounded-[2px] bg-white px-4 py-2.5 text-[12px] font-bold text-deep-violet shadow-sm transition hover:bg-white/90 active:scale-[0.98] sm:self-auto"
+                className="inline-flex items-center justify-center gap-1.5 self-start rounded-[8px] bg-white px-4 py-2.5 text-[12px] font-bold text-deep-violet shadow-sm transition hover:bg-white/90 active:scale-[0.98] sm:self-auto"
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" className="h-3.5 w-3.5">
                   <path d="M12 5v14M5 12h14" strokeLinecap="round" />
@@ -653,19 +653,19 @@ function DatabankPageContent() {
               </Link>
             </div>
             <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <div className="rounded-[2px] bg-white/10 px-3 py-3 ring-1 ring-white/10 backdrop-blur">
+              <div className="rounded-[8px] bg-white/10 px-3 py-3 ring-1 ring-white/10 backdrop-blur">
                 <div className="text-[10px] font-bold uppercase tracking-widest text-white/60">{d.stats.databanks}</div>
                 <div className="mt-1 text-[20px] font-bold text-white">{databanks.length}</div>
               </div>
-              <div className="rounded-[2px] bg-white/10 px-3 py-3 ring-1 ring-white/10 backdrop-blur">
+              <div className="rounded-[8px] bg-white/10 px-3 py-3 ring-1 ring-white/10 backdrop-blur">
                 <div className="text-[10px] font-bold uppercase tracking-widest text-white/60">{d.stats.documents}</div>
                 <div className="mt-1 text-[20px] font-bold text-white">{totalDocs}</div>
               </div>
-              <div className="rounded-[2px] bg-white/10 px-3 py-3 ring-1 ring-white/10 backdrop-blur">
+              <div className="rounded-[8px] bg-white/10 px-3 py-3 ring-1 ring-white/10 backdrop-blur">
                 <div className="text-[10px] font-bold uppercase tracking-widest text-white/60">{d.stats.storage}</div>
                 <div className="mt-1 text-[20px] font-bold text-white">{formatBytes(totalSize)}</div>
               </div>
-              <div className="rounded-[2px] bg-white/10 px-3 py-3 ring-1 ring-white/10 backdrop-blur">
+              <div className="rounded-[8px] bg-white/10 px-3 py-3 ring-1 ring-white/10 backdrop-blur">
                 <div className="text-[10px] font-bold uppercase tracking-widest text-white/60">{d.stats.aiReady}</div>
                 <div className="mt-1 flex items-baseline gap-1.5 text-[20px] font-bold text-white">
                   {readyDocs}
@@ -707,10 +707,10 @@ function DatabankPageContent() {
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
             {loading
               ? Array.from({ length: 4 }).map((_, i) => (
-                  <div key={i} className="animate-pulse rounded-[2px] border border-card-border bg-card p-5">
-                    <div className="h-10 w-10 rounded-[2px] bg-foreground/[0.06]" />
-                    <div className="mt-4 h-4 w-32 rounded-[2px] bg-foreground/[0.06]" />
-                    <div className="mt-2 h-3 w-20 rounded-[2px] bg-foreground/[0.04]" />
+                  <div key={i} className="animate-pulse rounded-[8px] border border-card-border bg-card p-5">
+                    <div className="h-10 w-10 rounded-[8px] bg-foreground/[0.06]" />
+                    <div className="mt-4 h-4 w-32 rounded-[8px] bg-foreground/[0.06]" />
+                    <div className="mt-2 h-3 w-20 rounded-[8px] bg-foreground/[0.04]" />
                   </div>
                 ))
               : databanks.map((db) => {
@@ -728,7 +728,7 @@ function DatabankPageContent() {
                         }
                       }}
                       className={[
-                        "group relative overflow-hidden rounded-[2px] border bg-card p-5 text-left transition-all",
+                        "group relative overflow-hidden rounded-[8px] border bg-card p-5 text-left transition-all",
                         isSelected
                           ? "border-deep-violet shadow-lg shadow-deep-violet/10 ring-1 ring-deep-violet/10"
                           : "border-card-border hover:border-deep-violet/20 hover:shadow-md",
@@ -737,7 +737,7 @@ function DatabankPageContent() {
                       {isSelected && <div className="absolute inset-x-0 top-0 h-1 bg-deep-violet" />}
                       <div className="flex items-start justify-between gap-3">
                         <div
-                          className="flex h-11 w-11 items-center justify-center rounded-[2px] text-white shadow-sm"
+                          className="flex h-11 w-11 items-center justify-center rounded-[8px] text-white shadow-sm"
                           style={{ backgroundColor: db.accent_color || "var(--color-deep-violet)" }}
                         >
                           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="h-5 w-5">
@@ -760,7 +760,7 @@ function DatabankPageContent() {
                               e.stopPropagation();
                               setConfirmDeleteId(db.id);
                             }}
-                            className="rounded-[2px] p-1.5 text-foreground/20 opacity-0 transition hover:bg-coral/10 hover:text-coral group-hover:opacity-100"
+                            className="rounded-[8px] p-1.5 text-foreground/20 opacity-0 transition hover:bg-coral/10 hover:text-coral group-hover:opacity-100"
                             title={d.deleteAria}
                           >
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5">
@@ -774,7 +774,7 @@ function DatabankPageContent() {
                         {db.description || d.noDesc}
                       </div>
                       <div className="mt-4 flex items-center gap-2">
-                        <span className="inline-flex items-center gap-1 rounded-[2px] bg-foreground/[0.06] px-2.5 py-1 text-[11px] font-semibold text-foreground/60">
+                        <span className="inline-flex items-center gap-1 rounded-[8px] bg-foreground/[0.06] px-2.5 py-1 text-[11px] font-semibold text-foreground/60">
                           <span className="h-1.5 w-1.5 rounded-full bg-deep-violet" />
                           {fill(d.docs, { count: db.doc_count ?? 0 })}
                         </span>
@@ -788,8 +788,8 @@ function DatabankPageContent() {
         </div>
 
         {!loading && databanks.length === 0 && (
-          <div className="flex flex-col items-center justify-center rounded-[2px] border-2 border-dashed border-deep-violet/15 bg-card px-6 py-16 text-center shadow-sm">
-            <div className="flex h-16 w-16 items-center justify-center rounded-[2px] bg-gradient-to-br from-deep-violet to-violet-light text-white shadow-lg shadow-deep-violet/20">
+          <div className="flex flex-col items-center justify-center rounded-[8px] border-2 border-dashed border-deep-violet/15 bg-card px-6 py-16 text-center shadow-sm">
+            <div className="flex h-16 w-16 items-center justify-center rounded-[8px] bg-gradient-to-br from-deep-violet to-violet-light text-white shadow-lg shadow-deep-violet/20">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="h-8 w-8">
                 <ellipse cx="12" cy="5" rx="9" ry="3" />
                 <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
@@ -802,7 +802,7 @@ function DatabankPageContent() {
             </p>
             <Link
               href="/dashboard/databank/new"
-              className="mt-6 inline-flex items-center gap-1.5 rounded-[2px] bg-deep-violet px-6 py-2.5 text-[13px] font-bold text-white shadow-md shadow-deep-violet/20 transition hover:bg-deep-violet/90 active:scale-[0.98]"
+              className="mt-6 inline-flex items-center gap-1.5 rounded-[8px] bg-deep-violet px-6 py-2.5 text-[13px] font-bold text-white shadow-md shadow-deep-violet/20 transition hover:bg-deep-violet/90 active:scale-[0.98]"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" className="h-4 w-4">
                 <path d="M12 5v14M5 12h14" strokeLinecap="round" />
@@ -814,11 +814,11 @@ function DatabankPageContent() {
 
         {/* Selected databank detail */}
         {selected && (
-          <div className="overflow-hidden rounded-[2px] border border-card-border bg-card shadow-sm">
+          <div className="overflow-hidden rounded-[8px] border border-card-border bg-card shadow-sm">
             <div className="flex flex-col gap-3 border-b border-card-border bg-foreground/[0.02] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
                 <div
-                  className="flex h-10 w-10 items-center justify-center rounded-[2px] text-white shadow-sm"
+                  className="flex h-10 w-10 items-center justify-center rounded-[8px] text-white shadow-sm"
                   style={{ backgroundColor: selected.accent_color || "var(--color-deep-violet)" }}
                 >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-5 w-5">
@@ -833,12 +833,12 @@ function DatabankPageContent() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <span className="hidden items-center gap-1.5 rounded-[2px] bg-emerald/10 px-3 py-1 text-[11px] font-bold text-emerald ring-1 ring-emerald/30 sm:inline-flex">
+                <span className="hidden items-center gap-1.5 rounded-[8px] bg-emerald/10 px-3 py-1 text-[11px] font-bold text-emerald ring-1 ring-emerald/30 sm:inline-flex">
                   <span className="h-1.5 w-1.5 rounded-full bg-emerald" /> {d.detail.live}
                 </span>
                 <Link
                   href="/dashboard/databank/new"
-                  className="inline-flex items-center gap-1.5 rounded-[2px] bg-deep-violet px-3.5 py-2 text-[12px] font-bold text-white shadow-sm transition hover:bg-deep-violet/90"
+                  className="inline-flex items-center gap-1.5 rounded-[8px] bg-deep-violet px-3.5 py-2 text-[12px] font-bold text-white shadow-sm transition hover:bg-deep-violet/90"
                 >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3.5 w-3.5">
                     <path d="M12 5v14M5 12h14" strokeLinecap="round" />
@@ -860,7 +860,7 @@ function DatabankPageContent() {
                   const pct = total > 0 ? Math.round((crawled / total) * 100) : 0;
                   const busy = s.last_status === "running";
                   return (
-                    <div key={s.id} className="rounded-[2px] border border-card-border bg-card px-3.5 py-3">
+                    <div key={s.id} className="rounded-[8px] border border-card-border bg-card px-3.5 py-3">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex min-w-0 items-center gap-2">
                           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="h-4 w-4 shrink-0 text-deep-violet">
@@ -869,28 +869,28 @@ function DatabankPageContent() {
                           </svg>
                           <span className="truncate text-[12px] font-bold text-foreground">{s.start_url}</span>
                           {s.sync_enabled && (
-                            <span className="rounded-[2px] bg-emerald/10 px-2 py-0.5 text-[10px] font-bold text-emerald ring-1 ring-emerald/30">
+                            <span className="rounded-[8px] bg-emerald/10 px-2 py-0.5 text-[10px] font-bold text-emerald ring-1 ring-emerald/30">
                               {fill(d.crawler.autoSync, { n: s.sync_interval_minutes })}
                             </span>
                           )}
                         </div>
                         <div className="flex items-center gap-2 text-[11px] font-semibold">
                           {busy ? (
-                            <span className="inline-flex items-center gap-1.5 rounded-[2px] bg-deep-violet/10 px-2 py-0.5 text-deep-violet">
+                            <span className="inline-flex items-center gap-1.5 rounded-[8px] bg-deep-violet/10 px-2 py-0.5 text-deep-violet">
                               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-deep-violet" />
                               {d.crawler.crawling}
                             </span>
                           ) : s.last_status === "success" ? (
-                            <span className="rounded-[2px] bg-emerald/10 px-2 py-0.5 text-emerald">{d.crawler.done}</span>
+                            <span className="rounded-[8px] bg-emerald/10 px-2 py-0.5 text-emerald">{d.crawler.done}</span>
                           ) : s.last_status === "failed" ? (
-                            <span className="rounded-[2px] bg-coral/10 px-2 py-0.5 text-coral">{d.crawler.failed}</span>
+                            <span className="rounded-[8px] bg-coral/10 px-2 py-0.5 text-coral">{d.crawler.failed}</span>
                           ) : s.last_status === "idle" && discovered > 0 ? (
-                            <span className="inline-flex items-center gap-1.5 rounded-[2px] bg-deep-violet/10 px-2 py-0.5 text-deep-violet">
+                            <span className="inline-flex items-center gap-1.5 rounded-[8px] bg-deep-violet/10 px-2 py-0.5 text-deep-violet">
                               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-deep-violet" />
                               {d.crawler.queued}
                             </span>
                           ) : (
-                            <span className="rounded-[2px] bg-foreground/[0.06] px-2 py-0.5 text-foreground/50">
+                            <span className="rounded-[8px] bg-foreground/[0.06] px-2 py-0.5 text-foreground/50">
                               {s.last_status === "running" ? d.crawler.running : d.crawler.idle}
                             </span>
                           )}
@@ -934,11 +934,11 @@ function DatabankPageContent() {
                       ev.type === "ingest" ? d.activity.ingest :
                       d.activity.error;
                     return (
-                      <div key={`${ev.type}-${ev.at ?? i}-${i}`} className="flex items-start gap-2.5 rounded-[2px] bg-card px-3 py-2 ring-1 ring-card-border">
+                      <div key={`${ev.type}-${ev.at ?? i}-${i}`} className="flex items-start gap-2.5 rounded-[8px] bg-card px-3 py-2 ring-1 ring-card-border">
                         <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
-                            <span className="rounded-[2px] bg-foreground/[0.05] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-foreground/45">{label}</span>
+                            <span className="rounded-[8px] bg-foreground/[0.05] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-foreground/45">{label}</span>
                             <span className="truncate text-[12px] font-semibold text-foreground/85">{ev.title}</span>
                           </div>
                           {ev.detail && (
@@ -1007,13 +1007,13 @@ function DatabankPageContent() {
                     value={q}
                     onChange={(e) => setQ(e.target.value)}
                     placeholder={d.detail.searchPh}
-                    className="w-full rounded-[2px] border border-card-border bg-foreground/[0.03] py-2 pl-8 pr-3 text-[12px] font-medium text-foreground placeholder:text-foreground/30 outline-none transition focus:border-deep-violet/30 focus:bg-card"
+                    className="w-full rounded-[8px] border border-card-border bg-foreground/[0.03] py-2 pl-8 pr-3 text-[12px] font-medium text-foreground placeholder:text-foreground/30 outline-none transition focus:border-deep-violet/30 focus:bg-card"
                   />
                 </div>
                 <select
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
-                  className="rounded-[2px] border border-card-border bg-card px-2.5 py-2 text-[12px] font-semibold text-foreground/60 outline-none focus:border-deep-violet/30"
+                  className="rounded-[8px] border border-card-border bg-card px-2.5 py-2 text-[12px] font-semibold text-foreground/60 outline-none focus:border-deep-violet/30"
                 >
                   <option value="all">{d.detail.statuses.all}</option>
                   <option value="ready">{d.detail.statuses.ready}</option>
@@ -1031,7 +1031,7 @@ function DatabankPageContent() {
                     type="button"
                     onClick={() => void handleRetryAll()}
                     disabled={processing === "all"}
-                    className="inline-flex items-center gap-1.5 rounded-[2px] bg-deep-violet px-3.5 py-2 text-[11px] font-bold text-white shadow-sm transition hover:bg-deep-violet/90 disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 rounded-[8px] bg-deep-violet px-3.5 py-2 text-[11px] font-bold text-white shadow-sm transition hover:bg-deep-violet/90 disabled:opacity-50"
                   >
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3">
                       <path d="M21 12a9 9 0 11-9-9" strokeLinecap="round" />
@@ -1047,12 +1047,12 @@ function DatabankPageContent() {
             {docsLoading ? (
               <div className="space-y-2 p-4">
                 {Array.from({ length: 3 }).map((_, i) => (
-                  <div key={i} className="h-14 animate-pulse rounded-[2px] bg-foreground/[0.04]" />
+                  <div key={i} className="h-14 animate-pulse rounded-[8px] bg-foreground/[0.04]" />
                 ))}
               </div>
             ) : filteredDocs.length === 0 ? (
               <div className="flex flex-col items-center px-6 py-12 text-center">
-                <div className="flex h-12 w-12 items-center justify-center rounded-[2px] bg-foreground/[0.04] text-foreground/20">
+                <div className="flex h-12 w-12 items-center justify-center rounded-[8px] bg-foreground/[0.04] text-foreground/20">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-6 w-6">
                     <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" strokeLinecap="round" strokeLinejoin="round" />
                     <path d="M14 2v6h6" />
@@ -1065,7 +1065,7 @@ function DatabankPageContent() {
                   {q || filter !== "all" ? d.detail.trySearch : d.detail.uploadCsv}
                 </p>
                 {!q && filter === "all" && (
-                  <Link href="/dashboard/databank/new" className="mt-4 inline-flex items-center gap-1.5 rounded-[2px] bg-accent-soft px-4 py-2 text-[12px] font-bold text-deep-violet transition hover:bg-deep-violet/15 dark:text-violet-light">
+                  <Link href="/dashboard/databank/new" className="mt-4 inline-flex items-center gap-1.5 rounded-[8px] bg-accent-soft px-4 py-2 text-[12px] font-bold text-deep-violet transition hover:bg-deep-violet/15 dark:text-violet-light">
                     {d.detail.addFirst}
                   </Link>
                 )}
@@ -1095,14 +1095,14 @@ function DatabankPageContent() {
                                     <span className="truncate text-[12px] font-semibold text-foreground">{doc.filename || doc.name || doc.id}</span>
                                     {doc.lang && (
                                       <span
-                                        className="shrink-0 rounded-[2px] bg-deep-violet/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-deep-violet"
+                                        className="shrink-0 rounded-[8px] bg-deep-violet/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-deep-violet"
                                         title={doc.variant_group ? `Language variant of ${doc.variant_group}` : doc.lang}
                                       >
                                         {doc.lang}
                                       </span>
                                     )}
                                     {doc.intent && (
-                                      <span className="shrink-0 rounded-[2px] bg-foreground/[0.06] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-foreground/45">
+                                      <span className="shrink-0 rounded-[8px] bg-foreground/[0.06] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-foreground/45">
                                         {doc.intent}
                                       </span>
                                     )}
@@ -1122,7 +1122,7 @@ function DatabankPageContent() {
                               </div>
                             </td>
                             <td className="hidden px-3 py-3 sm:table-cell">
-                              <span className="inline-flex rounded-[2px] bg-foreground/[0.06] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-foreground/50">
+                              <span className="inline-flex rounded-[8px] bg-foreground/[0.06] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-foreground/50">
                                 {doc.file_type || "—"}
                               </span>
                             </td>
@@ -1135,7 +1135,7 @@ function DatabankPageContent() {
                                 <button
                                   type="button"
                                   onClick={() => togglePreview(doc.id)}
-                                  className={`rounded-[2px] px-2.5 py-1 text-[11px] font-semibold transition ${previewDocId === doc.id ? "bg-foreground text-background" : "border border-card-border bg-card text-foreground/60 hover:bg-foreground/[0.04]"}`}
+                                  className={`rounded-[8px] px-2.5 py-1 text-[11px] font-semibold transition ${previewDocId === doc.id ? "bg-foreground text-background" : "border border-card-border bg-card text-foreground/60 hover:bg-foreground/[0.04]"}`}
                                 >
                                   {previewDocId === doc.id ? d.detail.hide : d.detail.view}
                                 </button>
@@ -1144,7 +1144,7 @@ function DatabankPageContent() {
                                     type="button"
                                     onClick={() => void handleRetryDoc(doc.id)}
                                     disabled={processing === doc.id}
-                                    className="rounded-[2px] bg-accent-soft px-2.5 py-1 text-[11px] font-bold text-deep-violet transition hover:bg-deep-violet/15 disabled:opacity-50 dark:text-violet-light"
+                                    className="rounded-[8px] bg-accent-soft px-2.5 py-1 text-[11px] font-bold text-deep-violet transition hover:bg-deep-violet/15 disabled:opacity-50 dark:text-violet-light"
                                   >
                                     {processing === doc.id ? "…" : d.detail.retryShort}
                                   </button>
@@ -1158,13 +1158,13 @@ function DatabankPageContent() {
                                 {previewLoading ? (
                                   <div className="space-y-2">
                                     {Array.from({ length: 3 }).map((_, i) => (
-                                      <div key={i} className="h-10 animate-pulse rounded-[2px] bg-foreground/[0.05]" />
+                                      <div key={i} className="h-10 animate-pulse rounded-[8px] bg-foreground/[0.05]" />
                                     ))}
                                   </div>
                                 ) : !preview ? (
                                   <p className="py-2 text-center text-[12px] text-foreground/40">{d.detail.previewFail}</p>
                                 ) : preview.kind === "table" ? (
-                                  <div className="overflow-hidden rounded-[2px] border border-card-border bg-card shadow-sm">
+                                  <div className="overflow-hidden rounded-[8px] border border-card-border bg-card shadow-sm">
                                     <div className="flex items-center justify-between border-b border-card-border bg-foreground/[0.02] px-3 py-2">
                                       <span className="text-[11px] font-bold text-foreground/60">
                                         {fill(d.detail.rowsCols, { rows: preview.total, cols: preview.columns?.length ?? 0 })}
@@ -1201,7 +1201,7 @@ function DatabankPageContent() {
                                           type="button"
                                           disabled={previewPage <= 1 || previewLoading}
                                           onClick={() => void loadPreview(doc.id, previewPage - 1)}
-                                          className="rounded-[2px] border border-card-border bg-card px-3 py-1.5 text-[11px] font-semibold text-foreground/60 transition hover:bg-foreground/[0.03] disabled:opacity-30"
+                                          className="rounded-[8px] border border-card-border bg-card px-3 py-1.5 text-[11px] font-semibold text-foreground/60 transition hover:bg-foreground/[0.03] disabled:opacity-30"
                                         >
                                           {d.detail.prev}
                                         </button>
@@ -1212,7 +1212,7 @@ function DatabankPageContent() {
                                           type="button"
                                           disabled={previewPage >= Math.ceil(preview.total / preview.page_size) || previewLoading}
                                           onClick={() => void loadPreview(doc.id, previewPage + 1)}
-                                          className="rounded-[2px] border border-card-border bg-card px-3 py-1.5 text-[11px] font-semibold text-foreground/60 transition hover:bg-foreground/[0.03] disabled:opacity-30"
+                                          className="rounded-[8px] border border-card-border bg-card px-3 py-1.5 text-[11px] font-semibold text-foreground/60 transition hover:bg-foreground/[0.03] disabled:opacity-30"
                                         >
                                           {d.detail.next}
                                         </button>
@@ -1220,13 +1220,13 @@ function DatabankPageContent() {
                                     )}
                                   </div>
                                 ) : (
-                                  <div className="rounded-[2px] border border-card-border bg-card p-4 shadow-sm">
+                                  <div className="rounded-[8px] border border-card-border bg-card p-4 shadow-sm">
                                     <p className="mb-3 text-[11px] font-bold uppercase tracking-wide text-foreground/40">
                                       {fill(d.detail.chunks, { count: preview.total })}
                                     </p>
                                     <div className="space-y-2">
                                       {(preview.chunks ?? []).map((c, i) => (
-                                        <p key={i} className="rounded-[2px] bg-foreground/[0.03] px-3 py-2.5 text-[12px] leading-relaxed text-foreground/65">
+                                        <p key={i} className="rounded-[8px] bg-foreground/[0.03] px-3 py-2.5 text-[12px] leading-relaxed text-foreground/65">
                                           {c}
                                         </p>
                                       ))}
@@ -1260,10 +1260,10 @@ function DatabankPageContent() {
           onClick={() => !deleting && setConfirmDeleteId(null)}
         >
           <div
-            className="w-full max-w-md rounded-[2px] border border-card-border bg-card p-5 shadow-2xl"
+            className="w-full max-w-md rounded-[8px] border border-card-border bg-card p-5 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex h-10 w-10 items-center justify-center rounded-[2px] bg-coral/10 text-coral">
+            <div className="flex h-10 w-10 items-center justify-center rounded-[8px] bg-coral/10 text-coral">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
                 <path d="M12 9v6M12 17h.01M10.3 3.3l-7 12A2 2 0 005 18h14a2 2 0 001.7-3l-7-12a2 2 0 00-3.4 0z" />
               </svg>
@@ -1275,7 +1275,7 @@ function DatabankPageContent() {
               {d.deleteModal.desc}
             </p>
             {confirmDeleteDb && (confirmDeleteDb.doc_count ?? 0) > 0 && (
-              <p className="mt-2 rounded-[2px] bg-amber/10 px-3 py-2 text-[11px] font-medium text-amber ring-1 ring-amber/30">
+              <p className="mt-2 rounded-[8px] bg-amber/10 px-3 py-2 text-[11px] font-medium text-amber ring-1 ring-amber/30">
                 {(confirmDeleteDb.doc_count ?? 0) === 1
                   ? fill(d.deleteModal.lostOne, { count: confirmDeleteDb.doc_count ?? 0, size: formatBytes(confirmDeleteDb.total_size ?? 0) })
                   : fill(d.deleteModal.lostMany, { count: confirmDeleteDb.doc_count ?? 0, size: formatBytes(confirmDeleteDb.total_size ?? 0) })}
@@ -1285,14 +1285,14 @@ function DatabankPageContent() {
               <button
                 onClick={() => setConfirmDeleteId(null)}
                 disabled={deleting}
-                className="rounded-[2px] px-4 py-2 text-[12px] font-semibold text-foreground/60 transition hover:bg-foreground/[0.04] disabled:opacity-50"
+                className="rounded-[8px] px-4 py-2 text-[12px] font-semibold text-foreground/60 transition hover:bg-foreground/[0.04] disabled:opacity-50"
               >
                 {t.common.cancel}
               </button>
               <button
                 onClick={() => void confirmDelete()}
                 disabled={deleting}
-                className="inline-flex items-center gap-1.5 rounded-[2px] bg-coral px-4 py-2 text-[12px] font-bold text-white shadow-sm transition hover:bg-coral/90 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-[8px] bg-coral px-4 py-2 text-[12px] font-bold text-white shadow-sm transition hover:bg-coral/90 disabled:opacity-50"
               >
                 {deleting ? (
                   <>

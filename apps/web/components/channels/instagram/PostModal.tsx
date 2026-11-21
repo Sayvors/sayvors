@@ -226,7 +226,7 @@ export default function PostModal({
       `}</style>
 
       <div
-        className="flex h-[min(88vh,720px)] w-full max-w-[960px] flex-col overflow-hidden rounded-[16px] bg-[var(--ui-surface)] shadow-2xl md:flex-row"
+        className="flex h-[min(88vh,720px)] w-full max-w-[960px] flex-col overflow-hidden rounded-[8px] bg-[var(--ui-surface)] shadow-2xl md:flex-row"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Media side — black like Instagram's viewer, media fit inside. */}

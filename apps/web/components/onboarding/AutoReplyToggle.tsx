@@ -135,7 +135,7 @@ export default function AutoReplyToggle({ onComplete }: AutoReplyToggleProps) {
         </p>
         <button
           onClick={onComplete}
-          className="rounded-xl bg-deep-violet px-6 py-2.5 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90"
+          className="rounded-[8px] bg-deep-violet px-6 py-2.5 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90"
         >
           Got it
         </button>
@@ -155,7 +155,7 @@ export default function AutoReplyToggle({ onComplete }: AutoReplyToggleProps) {
               <button
                 key={ch.id}
                 onClick={() => toggleChannel(ch.id)}
-                className={`flex w-full items-center justify-between rounded-xl border px-4 py-3 text-left transition ${
+                className={`flex w-full items-center justify-between rounded-[8px] border px-4 py-3 text-left transition ${
                   enabled
                     ? "border-deep-violet/30 bg-deep-violet/5 dark:border-deep-violet/40"
                     : "border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink"
@@ -178,7 +178,7 @@ export default function AutoReplyToggle({ onComplete }: AutoReplyToggleProps) {
             <button
               key={t.value}
               onClick={() => setTone(t.value)}
-              className={`rounded-xl border px-3 py-3 text-center transition ${
+              className={`rounded-[8px] border px-3 py-3 text-center transition ${
                 tone === t.value
                   ? "border-deep-violet/30 bg-deep-violet/5 dark:border-deep-violet/40"
                   : "border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink"
@@ -196,7 +196,7 @@ export default function AutoReplyToggle({ onComplete }: AutoReplyToggleProps) {
       <button
         onClick={handleSave}
         disabled={saving}
-        className="rounded-xl bg-deep-violet px-6 py-2.5 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90 disabled:opacity-30 disabled:cursor-not-allowed"
+        className="rounded-[8px] bg-deep-violet px-6 py-2.5 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90 disabled:opacity-30 disabled:cursor-not-allowed"
       >
         {saving ? (
           <span className="inline-flex items-center gap-2"><LogoLoader size={16} /> Saving…</span>

@@ -101,7 +101,7 @@ function Section({
   const danger = tone === "danger";
   return (
     <section
-      className={`rounded-[3px] border bg-white dark:bg-ink ${
+      className={`rounded-[8px] border bg-white dark:bg-ink ${
         danger ? "border-red-500/30" : "border-ink/[0.08] dark:border-fog/[0.08]"
       }`}
     >
@@ -159,7 +159,7 @@ function Field({
 }
 
 const controlCls =
-  "w-full max-w-md rounded-[2px] border border-ink/[0.10] bg-white px-2.5 py-1.5 text-[13px] text-ink outline-none transition focus:border-deep-violet/40 disabled:opacity-50 dark:border-fog/[0.12] dark:bg-ink dark:text-fog";
+  "w-full max-w-md rounded-[8px] border border-ink/[0.10] bg-white px-2.5 py-1.5 text-[13px] text-ink outline-none transition focus:border-deep-violet/40 disabled:opacity-50 dark:border-fog/[0.12] dark:bg-ink dark:text-fog";
 
 const selectCls = controlCls;
 
@@ -656,7 +656,7 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
                 type="button"
                 onClick={() => setTab(tb.key)}
                 aria-current={tab === tb.key ? "page" : undefined}
-                className={`rounded-[2px] border px-3 py-1.5 text-[12px] font-semibold transition focus-visible:outline focus-visible:outline-[2px] focus-visible:outline-offset-[-1px] focus-visible:outline-[var(--ui-ink)] ${
+                className={`rounded-[8px] border px-3 py-1.5 text-[12px] font-semibold transition focus-visible:outline focus-visible:outline-[2px] focus-visible:outline-offset-[-1px] focus-visible:outline-[var(--ui-ink)] ${
                   tab === tb.key
                     ? "border-ink/15 bg-ink/[0.06] text-ink dark:border-fog/20 dark:bg-fog/[0.08] dark:text-fog"
                     : "border-transparent text-ink/55 hover:bg-ink/[0.04] dark:text-fog/55 dark:hover:bg-fog/[0.06]"
@@ -676,7 +676,7 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
       {banner && (
         <div
           role="status"
-          className={`flex items-center justify-between gap-3 rounded-[2px] border px-3 py-2 text-[13px] ${
+          className={`flex items-center justify-between gap-3 rounded-[8px] border px-3 py-2 text-[13px] ${
             banner.kind === "ok"
               ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300"
               : "border-red-300 bg-red-50 text-red-600 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300"
@@ -698,7 +698,7 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
           are account-wide, so leaving it above every tab told people their
           lead cadence was about to be written to two branches. */}
       {tab === "google" && isBulk && channels.length > 0 && (
-        <div className="rounded-[2px] border-2 border-amber-300 bg-amber-50 p-3 text-[12.5px] dark:border-amber-500/40 dark:bg-amber-500/[0.08]">
+        <div className="rounded-[8px] border-2 border-amber-300 bg-amber-50 p-3 text-[12.5px] dark:border-amber-500/40 dark:bg-amber-500/[0.08]">
           <p className="font-bold text-amber-800 dark:text-amber-200">
             {fill(st.bulkAll, { n: fmt(channels.length), names: channels.map((c) => c.display_name || st.locationFallback).join(", ") })}
           </p>
@@ -710,13 +710,13 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
 
       {/* Bulk retry — re-runs the same save for failed branches only */}
       {tab === "google" && lastBulkFail && (
-        <div className="flex items-center justify-between gap-3 rounded-[2px] border border-red-200 bg-red-50 p-3 text-[13px] text-red-700">
+        <div className="flex items-center justify-between gap-3 rounded-[8px] border border-red-200 bg-red-50 p-3 text-[13px] text-red-700">
           <span>
             {fill(st.bulkFail, { label: lastBulkFail.label, names: lastBulkFail.failed.map((f) => f.name).join(", ") })}
           </span>
           <button
             onClick={lastBulkFail.onRetry}
-            className="shrink-0 rounded-[2px] bg-red-600 px-3 py-1.5 text-[12px] font-semibold text-white transition hover:bg-red-700"
+            className="shrink-0 rounded-[8px] bg-red-600 px-3 py-1.5 text-[12px] font-semibold text-white transition hover:bg-red-700"
           >
             {fill(st.retryFailed, { n: fmt(lastBulkFail.failed.length) })}
           </button>
@@ -731,14 +731,14 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
           aria-label={st.confirmTitle}
           className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-sm"
         >
-          <div className="w-full max-w-md rounded-[3px] border border-ink/[0.06] bg-white p-5 shadow-2xl dark:border-fog/[0.08] dark:bg-ink">
+          <div className="w-full max-w-md rounded-[8px] border border-ink/[0.06] bg-white p-5 shadow-2xl dark:border-fog/[0.08] dark:bg-ink">
             <h2 className="text-[15px] font-bold text-ink dark:text-fog">
               {confirmBulk.title}
             </h2>
             <p className="mt-1 text-[12px] text-ink/50 dark:text-fog/50">
               {fill(st.confirmApplies, { n: fmt(confirmBulk.branches.length), names: confirmBulk.branches.map((b) => b.name).join(", ") })}
             </p>
-            <ul className="mt-3 max-h-48 space-y-1.5 overflow-y-auto rounded-[2px] bg-ink/[0.03] p-3 text-[12.5px] text-ink/70 dark:bg-fog/[0.04] dark:text-fog/70">
+            <ul className="mt-3 max-h-48 space-y-1.5 overflow-y-auto rounded-[8px] bg-ink/[0.03] p-3 text-[12.5px] text-ink/70 dark:bg-fog/[0.04] dark:text-fog/70">
               {confirmBulk.lines.map((line, i) => (
                 <li key={i} className="flex gap-2">
                   <span aria-hidden className="text-deep-violet">•</span>
@@ -750,14 +750,14 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
               <button
                 onClick={() => setConfirmBulk(null)}
                 disabled={confirmBulk.busy}
-                className="rounded-[2px] px-3.5 py-2 text-[12px] font-semibold text-ink/60 transition hover:bg-ink/[0.04] dark:text-fog/60 disabled:opacity-50"
+                className="rounded-[8px] px-3.5 py-2 text-[12px] font-semibold text-ink/60 transition hover:bg-ink/[0.04] dark:text-fog/60 disabled:opacity-50"
               >
                 {st.cancel}
               </button>
               <button
                 onClick={confirmBulk.onConfirm}
                 disabled={confirmBulk.busy}
-                className="rounded-[2px] bg-amber-500 px-3.5 py-2 text-[12px] font-bold text-white shadow-sm transition hover:bg-amber-600 disabled:opacity-50"
+                className="rounded-[8px] bg-amber-500 px-3.5 py-2 text-[12px] font-bold text-white shadow-sm transition hover:bg-amber-600 disabled:opacity-50"
               >
                 {confirmBulk.busy
                   ? st.applying
@@ -794,7 +794,7 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
             <button
               onClick={() => void saveCountry()}
               disabled={busy !== null || country === (savedCountry ?? "")}
-              className="rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
+              className="rounded-[8px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
             >
               {busy === "country" ? st.saving : st.account.saveCountry}
               </button>
@@ -859,7 +859,7 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
             <button
               onClick={() => void saveBizContext()}
               disabled={busy !== null || !bizDirty}
-              className="rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
+              className="rounded-[8px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
             >
               {busy === "bizctx" ? st.saving : st.account.saveCtx}
               </button>
@@ -873,7 +873,7 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
               {/* The location picker lives HERE, not in the page header: it
                   only ever governed Google-scoped settings, so putting it up
                   top implied it governed everything. */}
-              <div className="flex flex-wrap items-end justify-between gap-3 rounded-[3px] border border-ink/[0.08] bg-white px-5 py-4 dark:border-fog/[0.08] dark:bg-ink">
+              <div className="flex flex-wrap items-end justify-between gap-3 rounded-[8px] border border-ink/[0.08] bg-white px-5 py-4 dark:border-fog/[0.08] dark:bg-ink">
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-ink/35 dark:text-fog/35">
                     {st.configuring}
@@ -891,7 +891,7 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
                         setSelectedId(e.target.value || null);
                         setLastBulkFail(null);
                       }}
-                      className="mt-1 block w-64 rounded-[2px] border border-ink/[0.10] bg-white px-2.5 py-1.5 text-[13px] text-ink outline-none focus:border-deep-violet/40 dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                      className="mt-1 block w-64 rounded-[8px] border border-ink/[0.10] bg-white px-2.5 py-1.5 text-[13px] text-ink outline-none focus:border-deep-violet/40 dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
                     >
                       {channels.length > 1 && (
                         <option value={ALL}>{fill(st.allLocations, { n: fmt(channels.length) })}</option>
@@ -928,7 +928,7 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
 { id: "ur", label: st.lang.urLabel, hint: st.lang.urHint },
 { id: "ur-Latn", label: st.lang.urLatnLabel, hint: st.lang.urLatnHint },
                     ].map((l) => (
-                      <label key={l.id} className="flex cursor-pointer items-start gap-2.5 rounded-[2px] border border-ink/[0.06] px-3 py-2 transition hover:border-deep-violet/25 dark:border-fog/[0.06]">
+                      <label key={l.id} className="flex cursor-pointer items-start gap-2.5 rounded-[8px] border border-ink/[0.06] px-3 py-2 transition hover:border-deep-violet/25 dark:border-fog/[0.06]">
                         <input
                           type="radio"
                           name="reply-lang"
@@ -976,7 +976,7 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
                     );
                   }}
                   disabled={busy !== null}
-                  className="rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
+                  className="rounded-[8px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
                 >
                   {busy === "lang" ? st.saving : bulk ? fill(st.applyN, { n: fmt(bulk.branches.length) }) : st.lang.save}
                 </button>
@@ -1010,7 +1010,7 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
                     );
                   }}
                   disabled={busy !== null}
-                  className="rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
+                  className="rounded-[8px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
                 >
                   {busy === "tone" ? st.saving : bulk ? fill(st.applyN, { n: fmt(bulk.branches.length) }) : st.tone.save}
                 </button>
@@ -1086,7 +1086,7 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
                     );
                   }}
                   disabled={busy !== null}
-                  className="rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
+                  className="rounded-[8px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
                 >
                   {busy === "marketing" ? st.saving : bulk ? fill(st.applyN, { n: fmt(bulk.branches.length) }) : st.marketing.save}
                 </button>
@@ -1131,7 +1131,7 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
                     );
                   }}
                   disabled={busy !== null}
-                  className="rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
+                  className="rounded-[8px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
                 >
                   {busy === "editedReview" ? st.saving : bulk ? fill(st.applyN, { n: fmt(bulk.branches.length) }) : st.edited.save}
                 </button>
@@ -1176,7 +1176,7 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
                     );
                   }}
                   disabled={busy !== null}
-                  className="rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
+                  className="rounded-[8px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
                 >
                   {busy === "handoffLink" ? st.saving : bulk ? fill(st.applyN, { n: fmt(bulk.branches.length) }) : st.handoff.save}
                 </button>
@@ -1219,14 +1219,14 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
                       );
                     }}
                     disabled={busy !== null}
-                    className="mt-2 rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
+                    className="mt-2 rounded-[8px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
                   >
                     {busy === "handoffTtl" ? st.saving : bulk ? fill(st.applyN, { n: fmt(bulk.branches.length) }) : st.handoff.saveLifetime}
                   </button>
                 </div>
               </Section>
 
-              <p className="rounded-[2px] border border-ink/[0.06] bg-white/60 px-4 py-3 text-[12px] text-ink/55 dark:border-fog/[0.06] dark:bg-ink/60 dark:text-fog/55">
+              <p className="rounded-[8px] border border-ink/[0.06] bg-white/60 px-4 py-3 text-[12px] text-ink/55 dark:border-fog/[0.06] dark:bg-ink/60 dark:text-fog/55">
                 {st.recap.repliesIn} <strong>{langName}</strong>
                 {langName !== st.recap.langEn && <> ({dialectName(dialect)})</>} · {st.recap.tone} <strong className="capitalize">{tone}</strong> · {st.recap.country}{" "}
                 <strong>{countryName}</strong> {st.recap.promo}{" "}
@@ -1236,7 +1236,7 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
               </p>
             </>
           ) : (
-            <div className="rounded-[3px] border border-dashed border-ink/[0.12] bg-white/60 p-10 text-center dark:border-fog/[0.12] dark:bg-ink/60">
+            <div className="rounded-[8px] border border-dashed border-ink/[0.12] bg-white/60 p-10 text-center dark:border-fog/[0.12] dark:bg-ink/60">
               <p className="text-[14px] font-semibold text-ink/70 dark:text-fog/70">
                 {st.emptyGoogleTitle}
               </p>
@@ -1298,7 +1298,7 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
             metaConnections.map((c) => (
               <div
                 key={c.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-[2px] border border-ink/[0.06] bg-white px-3 py-2.5 dark:border-fog/[0.08] dark:bg-ink"
+                className="flex flex-wrap items-center justify-between gap-2 rounded-[8px] border border-ink/[0.06] bg-white px-3 py-2.5 dark:border-fog/[0.08] dark:bg-ink"
               >
                 <div className="min-w-0">
                   <p className="text-[13px] font-semibold text-ink dark:text-fog">
@@ -1317,7 +1317,7 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
                     setDangerTarget(c);
                   }}
                   disabled={dangerBusy !== null}
-                  className="rounded-[2px] border border-red-500/40 px-3 py-1.5 text-[12px] font-semibold text-red-600 transition hover:bg-red-500/10 disabled:opacity-50 dark:text-red-400"
+                  className="rounded-[8px] border border-red-500/40 px-3 py-1.5 text-[12px] font-semibold text-red-600 transition hover:bg-red-500/10 disabled:opacity-50 dark:text-red-400"
                 >
                   {st.danger.disconnect}
                 </button>
@@ -1336,7 +1336,7 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
         subtitle={st.privacy.sub}
       >
         <div className="space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-[2px] border border-ink/[0.06] bg-white px-4 py-3 dark:border-fog/[0.08] dark:bg-ink">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-[8px] border border-ink/[0.06] bg-white px-4 py-3 dark:border-fog/[0.08] dark:bg-ink">
             <div className="min-w-0">
               <p className="text-[13px] font-semibold text-ink dark:text-fog">{st.privacy.exportTitle}</p>
               <p className="text-[11px] text-ink/40 dark:text-fog/40">
@@ -1352,13 +1352,13 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
                 a.click();
                 document.body.removeChild(a);
               }}
-              className="rounded-[2px] border border-ink/[0.12] bg-white px-3 py-1.5 text-[12px] font-semibold text-ink transition hover:bg-ink/[0.04] dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+              className="rounded-[8px] border border-ink/[0.12] bg-white px-3 py-1.5 text-[12px] font-semibold text-ink transition hover:bg-ink/[0.04] dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
             >
               {st.privacy.exportBtn}
             </button>
           </div>
           {deletion?.status === "pending" ? (
-            <div className="rounded-[2px] border border-amber-500/30 bg-amber-500/[0.06] px-4 py-3">
+            <div className="rounded-[8px] border border-amber-500/30 bg-amber-500/[0.06] px-4 py-3">
               <p className="text-[13px] font-semibold text-amber-800 dark:text-amber-300">
                 {st.privacy.delScheduled}
               </p>
@@ -1386,14 +1386,14 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
                     }
                   }}
                   disabled={deletionBusy}
-                  className="rounded-[2px] border border-[var(--ui-line)] px-3 py-1.5 text-[12px] font-semibold text-ink transition hover:bg-ink/[0.04] disabled:opacity-50 dark:text-fog"
+                  className="rounded-[8px] border border-[var(--ui-line)] px-3 py-1.5 text-[12px] font-semibold text-ink transition hover:bg-ink/[0.04] disabled:opacity-50 dark:text-fog"
                 >
                   {deletionBusy ? st.privacy.cancelling : st.privacy.keepAccount}
                 </button>
               </div>
             </div>
           ) : (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-[2px] border border-red-500/20 bg-red-500/[0.04] px-4 py-3 dark:border-red-500/20 dark:bg-red-500/[0.06]">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-[8px] border border-red-500/20 bg-red-500/[0.04] px-4 py-3 dark:border-red-500/20 dark:bg-red-500/[0.06]">
               <div className="min-w-0">
                 <p className="text-[13px] font-semibold text-red-600 dark:text-red-400">
                   {st.privacy.delTitle}
@@ -1407,7 +1407,7 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
                   setDeletionConfirm("");
                   setDeletionModal(true);
                 }}
-                className="rounded-[2px] border border-red-500/40 px-3 py-1.5 text-[12px] font-semibold text-red-600 transition hover:bg-red-500/10 disabled:opacity-50 dark:text-red-400"
+                className="rounded-[8px] border border-red-500/40 px-3 py-1.5 text-[12px] font-semibold text-red-600 transition hover:bg-red-500/10 disabled:opacity-50 dark:text-red-400"
               >
                 {st.privacy.delTitle}
               </button>
@@ -1427,7 +1427,7 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
           role="dialog"
           aria-modal="true"
         >
-          <div className="w-full max-w-md rounded-[3px] border border-red-500/30 bg-white p-5 shadow-xl dark:border-fog/[0.08] dark:bg-ink">
+          <div className="w-full max-w-md rounded-[8px] border border-red-500/30 bg-white p-5 shadow-xl dark:border-fog/[0.08] dark:bg-ink">
             <p className="text-[15px] font-bold text-red-600 dark:text-red-400">
               {st.privacy.modalTitle}
             </p>
@@ -1436,7 +1436,7 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
               <strong>{st.privacy.modalDays}</strong>
               {st.privacy.modalBodyPost}
             </p>
-            <details className="mt-3 rounded-[2px] border border-ink/[0.08] px-3 py-2 dark:border-fog/[0.1]">
+            <details className="mt-3 rounded-[8px] border border-ink/[0.08] px-3 py-2 dark:border-fog/[0.1]">
               <summary className="cursor-pointer text-[11px] font-semibold text-ink/60 dark:text-fog/60">
                 {st.privacy.modalDetails}
               </summary>
@@ -1450,14 +1450,14 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
                 value={deletionConfirm}
                 onChange={(e) => setDeletionConfirm(e.target.value)}
                 placeholder="DELETE"
-                className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] tracking-widest text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                className="mt-1 w-full rounded-[8px] border border-ink/[0.1] bg-white px-3 py-2 text-[12px] tracking-widest text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
               />
             </label>
             <div className="mt-4 flex justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setDeletionModal(false)}
-                className="rounded-[2px] border border-[var(--ui-line)] px-3 py-1.5 text-[12px] font-medium text-ink/70 dark:text-fog/70"
+                className="rounded-[8px] border border-[var(--ui-line)] px-3 py-1.5 text-[12px] font-medium text-ink/70 dark:text-fog/70"
               >
                 {st.privacy.keepAccount}
               </button>
@@ -1480,7 +1480,7 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
                     setDeletionBusy(false);
                   }
                 }}
-                className="rounded-[2px] bg-red-600 px-3 py-1.5 text-[12px] font-bold text-white disabled:opacity-40"
+                className="rounded-[8px] bg-red-600 px-3 py-1.5 text-[12px] font-bold text-white disabled:opacity-40"
               >
                 {deletionBusy ? st.privacy.scheduling : st.privacy.delTitle}
               </button>
@@ -1501,7 +1501,7 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
             }
           }}
         >
-          <div className="w-full max-w-md rounded-[3px] border border-red-500/30 bg-white p-5 shadow-xl dark:border-fog/[0.08] dark:bg-ink">
+          <div className="w-full max-w-md rounded-[8px] border border-red-500/30 bg-white p-5 shadow-xl dark:border-fog/[0.08] dark:bg-ink">
             <p className="text-[15px] font-bold text-red-600 dark:text-red-400">
               {fill(st.dangerModal.title, { provider: PROVIDER_LABELS[dangerTarget.provider] ?? dangerTarget.provider })}
             </p>
@@ -1517,7 +1517,7 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
                 onChange={(e) => setDangerPhrase(e.target.value)}
                 placeholder="DELETE MY DATA"
                 disabled={dangerBusy !== null}
-                className="mt-1.5 w-full rounded-[2px] border border-ink/[0.08] bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-red-500/50 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+                className="mt-1.5 w-full rounded-[8px] border border-ink/[0.08] bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-red-500/50 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
               />
             </label>
             <div className="mt-4 flex justify-end gap-2">
@@ -1527,14 +1527,14 @@ export default function SettingsPage() {  const queryClient = useQueryClient();
                   setDangerPhrase("");
                 }}
                 disabled={dangerBusy !== null}
-                className="rounded-[2px] px-3 py-1.5 text-[12px] font-semibold text-ink/50 transition hover:bg-ink/[0.04] disabled:opacity-50 dark:text-fog/50"
+                className="rounded-[8px] px-3 py-1.5 text-[12px] font-semibold text-ink/50 transition hover:bg-ink/[0.04] disabled:opacity-50 dark:text-fog/50"
               >
                 {st.dangerModal.cancel}
               </button>
               <button
                 onClick={() => void deleteMetaConnection(dangerTarget)}
                 disabled={dangerPhrase !== "DELETE MY DATA" || dangerBusy !== null}
-                className="rounded-[2px] bg-red-600 px-3.5 py-1.5 text-[12px] font-semibold text-white transition hover:bg-red-700 disabled:opacity-40"
+                className="rounded-[8px] bg-red-600 px-3.5 py-1.5 text-[12px] font-semibold text-white transition hover:bg-red-700 disabled:opacity-40"
               >
                 {dangerBusy === dangerTarget.id ? st.dangerModal.deleting : st.dangerModal.deleteAll}
               </button>

@@ -153,7 +153,7 @@ function AiReplyControls({
                   key={m.key}
                   onClick={() => onApproval(m.key)}
                   aria-pressed={approvalDraft === m.key}
-                  className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
+                  className={`flex-1 rounded-[8px] px-2 py-1.5 text-[11px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
                     approvalDraft === m.key
                       ? "bg-white text-deep-violet shadow-sm dark:bg-ink"
                       : "text-ink/45 hover:text-ink/70 dark:text-fog/45"
@@ -441,7 +441,7 @@ function ConnectHub() {
 
       {activeBanner && (
         <div
-          className={`rounded-xl border p-3 text-[13px] ${
+          className={`rounded-[8px] border p-3 text-[13px] ${
             activeBanner.kind === "ok"
               ? "border-emerald-200 bg-emerald-50 text-emerald-700"
               : "border-red-200 bg-red-50 text-red-700"
@@ -460,9 +460,9 @@ function ConnectHub() {
         <h2 className="text-[11px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">
           {ch.hub.googleSection}
         </h2>
-        <div className="rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
+        <div className="rounded-[8px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
           <div className="flex flex-wrap items-center gap-4">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-ink/[0.06] bg-white dark:border-fog/[0.08] dark:bg-ink">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[8px] border border-ink/[0.06] bg-white dark:border-fog/[0.08] dark:bg-ink">
               <PlatformMark platform="google_reviews" size={24} />
             </div>
             <div className="min-w-0 flex-1">
@@ -529,7 +529,7 @@ function ConnectHub() {
           <div className="space-y-3">
             <h3 className="text-[13px] font-semibold text-ink dark:text-fog">{ch.hub.locationsTitle}</h3>
             {googleActive.map((c) => (
-              <div key={c.id} className="rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
+              <div key={c.id} className="rounded-[8px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
                 <p className="mb-2 text-[14px] font-semibold text-ink dark:text-fog">
                   {c.display_name || ch.hub.businessLocation}
                 </p>
@@ -575,7 +575,7 @@ function ConnectHub() {
           aria-label="Confirm Google disconnect"
           className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4"
         >
-          <div className="w-full max-w-md rounded-2xl border border-ink/[0.06] bg-white p-4 shadow-2xl dark:border-fog/[0.08] dark:bg-ink sm:p-5">
+          <div className="w-full max-w-md rounded-[8px] border border-ink/[0.06] bg-white p-4 shadow-2xl dark:border-fog/[0.08] dark:bg-ink sm:p-5">
             <h2 className="text-[15px] font-bold text-ink dark:text-fog">{ch.hub.disconnectTitle}</h2>
             <p className="mt-2 text-[13px] leading-relaxed text-ink/60 dark:text-fog/60">
               {ch.hub.disconnectDesc}

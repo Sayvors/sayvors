@@ -351,7 +351,7 @@ export default function InstagramConnectFlow() {
             title={g.doneTitle}
             body={g.doneBody}
           />
-          <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-500/25 dark:bg-emerald-500/10">
+          <div className="mt-4 rounded-[8px] border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-500/25 dark:bg-emerald-500/10">
             <p className="text-[12px] font-semibold text-emerald-800 dark:text-emerald-300">
               {fill(g.activeN, { count: picked.length })}
             </p>

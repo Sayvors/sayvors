@@ -193,7 +193,7 @@ export default function OverviewPanel() {
   const hasData = !!overview && overview.total_reviews > 0;
   const hasPresence = !!presence;
   const rangeBtn = (active: boolean) =>
-    `rounded-[2px] px-2.5 py-1 text-[11px] font-semibold outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+    `rounded-[8px] px-2.5 py-1 text-[11px] font-semibold outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
       active
         ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
         : "text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
@@ -210,7 +210,7 @@ export default function OverviewPanel() {
                 setChannelId(e.target.value || null);
               }}
               aria-label="Filter by location"
-              className="h-8 w-full rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2 text-[12px] text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:w-auto"
+              className="h-8 w-full rounded-[8px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2 text-[12px] text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:w-auto"
             >
               <option value="">All locations</option>
               {channels.map((c) => (
@@ -218,7 +218,7 @@ export default function OverviewPanel() {
               ))}
             </select>
           )}
-          <div className="flex rounded-[2px] bg-[var(--ui-sunken)] p-0.5" role="group" aria-label="Time range">
+          <div className="flex rounded-[8px] bg-[var(--ui-sunken)] p-0.5" role="group" aria-label="Time range">
             {RANGES.map((r) => (
               <button
                 key={r}
@@ -257,7 +257,7 @@ export default function OverviewPanel() {
       ) : !hasData && !hasPresence && messagingHasData === false && !loading ? (
         /* Empty state — no reviews and no connected listing */
         <div className="ui-card flex flex-col items-center gap-3 py-16 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-[2px] bg-[var(--ui-ink)] text-[var(--ui-on-ink)]">
+          <div className="flex h-12 w-12 items-center justify-center rounded-[8px] bg-[var(--ui-ink)] text-[var(--ui-on-ink)]">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-6 w-6" aria-hidden>
               <path d="M21 21H5a2 2 0 01-2-2V5a2 2 0 012-2h14a2 2 0 012 2v16z" strokeLinecap="round" strokeLinejoin="round" />
               <path d="M7 14l3-3 2 2 4-5" strokeLinecap="round" strokeLinejoin="round" />
@@ -353,7 +353,7 @@ export default function OverviewPanel() {
           <div className="grid grid-cols-1 gap-5 sm:gap-6 lg:grid-cols-3">
             <div className="lg:col-span-2">
               {loading ? (
-                <div className="h-48 animate-pulse rounded-[2px] bg-[var(--ui-sunken)] sm:h-72" aria-hidden />
+                <div className="h-48 animate-pulse rounded-[8px] bg-[var(--ui-sunken)] sm:h-72" aria-hidden />
               ) : (
                 <MetricChart
                   points={points}

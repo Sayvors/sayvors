@@ -53,7 +53,7 @@ export default function FeatureLock({
         </p>
         <Link
           href="/dashboard/plans"
-          className="mt-1 rounded-2xl bg-deep-violet px-5 py-2.5 text-[13px] font-bold text-white transition hover:bg-deep-violet/90 active:translate-y-[2px] active:scale-[0.98] focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-deep-violet"
+          className="mt-1 rounded-[8px] bg-deep-violet px-5 py-2.5 text-[13px] font-bold text-white transition hover:bg-deep-violet/90 active:translate-y-[2px] active:scale-[0.98] focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-deep-violet"
         >
           {t.dashboard.plans.viewPremiumPlans}
         </Link>

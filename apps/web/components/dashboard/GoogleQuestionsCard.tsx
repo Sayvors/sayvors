@@ -82,7 +82,7 @@ export default function GoogleQuestionsCard() {
     : null);
 
   return (
-    <section className="rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.08] dark:bg-ink">
+    <section className="rounded-[8px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.08] dark:bg-ink">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -108,13 +108,13 @@ export default function GoogleQuestionsCard() {
       </div>
 
       {QA_RETIRED && (
-        <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-medium text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
+        <p className="mt-3 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-medium text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
           {qa.retiredNote}
         </p>
       )}
 
       {error && (
-        <p role="alert" className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-medium text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+        <p role="alert" className="mt-3 rounded-[8px] border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-medium text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
           {error}
         </p>
       )}
@@ -153,7 +153,7 @@ export default function GoogleQuestionsCard() {
                     </p>
 
                     {q.is_answered && q.answer_text ? (
-                      <p className="mt-2 rounded-xl bg-emerald-50 px-3 py-2 text-[11.5px] text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">
+                      <p className="mt-2 rounded-[8px] bg-emerald-50 px-3 py-2 text-[11.5px] text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">
                         {q.answer_text}
                       </p>
                     ) : isEditing || q.draft_status === "pending_approval" ? (

@@ -24,8 +24,8 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           {/* Illustration */}
           <div className="mb-auto flex justify-center">
             <div className="relative w-full max-w-sm">
-              <div className="absolute inset-0 rounded-3xl bg-gradient-to-br from-white/8 to-transparent blur-xl" />
-              <div className="relative rounded-3xl border border-white/10 bg-white/[0.04] p-4 shadow-2xl backdrop-blur-sm">
+              <div className="absolute inset-0 rounded-[8px] bg-gradient-to-br from-white/8 to-transparent blur-xl" />
+              <div className="relative rounded-[8px] border border-white/10 bg-white/[0.04] p-4 shadow-2xl backdrop-blur-sm">
                 <Image
                   src="/undraw-chatting.svg"
                   alt=""

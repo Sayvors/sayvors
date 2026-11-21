@@ -188,16 +188,16 @@ export default function UsagePage() {
         {loading ? (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="h-24 animate-pulse rounded-2xl border-2 border-white bg-white/60 dark:border-fog/[0.06] dark:bg-fog/[0.04]" />
+              <div key={i} className="h-24 animate-pulse rounded-[8px] border-2 border-white bg-white/60 dark:border-fog/[0.06] dark:bg-fog/[0.04]" />
             ))}
           </div>
         ) : error ? (
-          <div className="rounded-2xl border-2 border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636] p-10 text-center">
+          <div className="rounded-[8px] border-2 border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636] p-10 text-center">
             <p className="text-[13px] font-medium text-ink/60 dark:text-fog/60">{error}</p>
             <button
               type="button"
               onClick={() => void summaryQuery.refetch()}
-              className="mt-3 rounded-xl bg-deep-violet px-5 py-2 text-[12px] font-bold text-white"
+              className="mt-3 rounded-[8px] bg-deep-violet px-5 py-2 text-[12px] font-bold text-white"
             >
               {u.retry}
             </button>
@@ -212,7 +212,7 @@ export default function UsagePage() {
                 { label: u.statSplit, value: `${formatTokens(totals.prompt_tokens, dateLocale)} / ${formatTokens(totals.completion_tokens, dateLocale)}` },
                 { label: u.statLatency, value: formatMs(totals.avg_latency_ms, dateLocale) },
               ].map((c) => (
-                <div key={c.label} className="rounded-2xl border-2 border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636] p-4">
+                <div key={c.label} className="rounded-[8px] border-2 border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636] p-4">
                   <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/45 dark:text-fog/45">{c.label}</div>
                   <div className="mt-2 text-[22px] font-bold tabular-nums text-ink dark:text-fog">{c.value}</div>
                 </div>
@@ -222,7 +222,7 @@ export default function UsagePage() {
             {/* Daily + purpose breakdown */}
             <div className="grid gap-3 lg:grid-cols-2">
               {/* Daily trend */}
-              <div className="rounded-2xl border-2 border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636] p-4 text-ink dark:text-fog">
+              <div className="rounded-[8px] border-2 border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636] p-4 text-ink dark:text-fog">
                 <h2 className="text-[16px] font-bold text-ink dark:text-fog">{u.trendTitle}</h2>
                 <p className="text-[12px] text-ink/50 dark:text-fog/50">{u.trendSub}</p>
                 {daily.length === 0 ? (
@@ -233,7 +233,7 @@ export default function UsagePage() {
               </div>
 
               {/* Prompt vs completion */}
-              <div className="rounded-2xl border-2 border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636] p-4 text-ink dark:text-fog">
+              <div className="rounded-[8px] border-2 border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636] p-4 text-ink dark:text-fog">
                 <h2 className="text-[16px] font-bold text-ink dark:text-fog">{u.splitTitle}</h2>
                 <p className="text-[12px] text-ink/50 dark:text-fog/50">{u.splitSub}</p>
                 <div className="mt-3">
@@ -249,7 +249,7 @@ export default function UsagePage() {
 
             <div className="grid gap-3 lg:grid-cols-2">
               {/* By purpose */}
-              <div className="rounded-2xl border-2 border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636] p-4">
+              <div className="rounded-[8px] border-2 border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636] p-4">
                 <h2 className="text-[16px] font-bold text-ink dark:text-fog">{u.featTitle}</h2>
                 <p className="text-[12px] text-ink/50 dark:text-fog/50">{u.featSub}</p>
                 {byPurpose.length === 0 ? (
@@ -274,7 +274,7 @@ export default function UsagePage() {
             </div>
 
             {/* Per day usage */}
-            <div className="rounded-2xl border-2 border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636] p-4">
+            <div className="rounded-[8px] border-2 border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636] p-4">
               <h2 className="text-[16px] font-bold text-ink dark:text-fog">{u.dayTitle}</h2>
               <p className="text-[12px] text-ink/50 dark:text-fog/50">{u.daySub}</p>
               {daily.length === 0 ? (
@@ -309,7 +309,7 @@ export default function UsagePage() {
                 </div>
                 <div className="mt-3 space-y-2 sm:hidden">
                   {pageRows.map((d) => (
-                    <div key={d.day} className="rounded-xl border border-ink/[0.06] bg-white px-3 py-2.5 dark:border-fog/[0.08] dark:bg-[#1d1636]">
+                    <div key={d.day} className="rounded-[8px] border border-ink/[0.06] bg-white px-3 py-2.5 dark:border-fog/[0.08] dark:bg-[#1d1636]">
                       <div className="flex items-center justify-between gap-2">
                         <p className="text-[12px] font-semibold tabular-nums text-ink dark:text-fog">{dayLabel(d.day, dateLocale)}</p>
                         <p className="text-[12px] font-bold tabular-nums text-ink dark:text-fog">{formatTokens(d.total_tokens, dateLocale)}</p>

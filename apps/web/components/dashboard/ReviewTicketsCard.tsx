@@ -126,7 +126,7 @@ export default function ReviewTicketsCard() {
   return (
     <section
       aria-label="Review tickets"
-      className="rounded-[2px] border border-ink/[0.08] bg-white p-4 shadow-sm shadow-ink/[0.04] dark:border-fog/[0.08] dark:bg-[#1d1636] dark:shadow-none"
+      className="rounded-[8px] border border-ink/[0.08] bg-white p-4 shadow-sm shadow-ink/[0.04] dark:border-fog/[0.08] dark:bg-[#1d1636] dark:shadow-none"
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
         <button
@@ -147,7 +147,7 @@ export default function ReviewTicketsCard() {
           }
           aria-expanded={!collapsed}
           aria-controls="review-tickets-body"
-          className="flex w-full min-w-0 flex-1 items-start gap-2 rounded-[2px] text-left outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40 sm:w-auto"
+          className="flex w-full min-w-0 flex-1 items-start gap-2 rounded-[8px] text-left outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40 sm:w-auto"
         >
           <span className="min-w-0 flex-1">
             <span className="flex flex-wrap items-center gap-2">
@@ -155,7 +155,7 @@ export default function ReviewTicketsCard() {
                 Review tickets
               </span>
               {collapsed && (
-                <span className="rounded-[2px] bg-ink/[0.05] px-2 py-0.5 text-[10px] font-bold tabular-nums text-ink/50 dark:bg-fog/[0.08] dark:text-fog/50">
+                <span className="rounded-[8px] bg-ink/[0.05] px-2 py-0.5 text-[10px] font-bold tabular-nums text-ink/50 dark:bg-fog/[0.08] dark:text-fog/50">
                   {stats.unresolved} unresolved · {stats.waiting} waiting on you
                 </span>
               )}
@@ -178,7 +178,7 @@ export default function ReviewTicketsCard() {
         </button>
         <Link
           href="/dashboard/reviews/issues"
-          className="inline-flex w-full shrink-0 items-center justify-center rounded-[2px] bg-deep-violet px-3.5 py-2 text-center text-[12px] font-bold text-white shadow-sm shadow-deep-violet/20 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] dark:focus-visible:ring-violet-soft/40 sm:w-auto"
+          className="inline-flex w-full shrink-0 items-center justify-center rounded-[8px] bg-deep-violet px-3.5 py-2 text-center text-[12px] font-bold text-white shadow-sm shadow-deep-violet/20 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] dark:focus-visible:ring-violet-soft/40 sm:w-auto"
         >
           Open ticket queue
         </Link>
@@ -194,7 +194,7 @@ export default function ReviewTicketsCard() {
         )}
 
         {!loading && !errorMessage && stats.total === 0 && (
-          <p className="mt-3 rounded-[2px] border border-dashed border-ink/10 bg-ink/[0.02] px-4 py-4 text-center text-[12px] text-ink/55 dark:border-fog/10 dark:bg-fog/[0.03] dark:text-fog/55">
+          <p className="mt-3 rounded-[8px] border border-dashed border-ink/10 bg-ink/[0.02] px-4 py-4 text-center text-[12px] text-ink/55 dark:border-fog/10 dark:bg-fog/[0.03] dark:text-fog/55">
             No review tickets yet. They appear after a review needs attention.
           </p>
         )}

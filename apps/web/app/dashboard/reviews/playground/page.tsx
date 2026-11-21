@@ -233,7 +233,7 @@ export default function ReviewPlaygroundPage() {
             <button
               type="button"
               onClick={() => abortRef.current?.abort()}
-              className="rounded-xl border border-ink/10 bg-white px-4 py-2 text-[12px] font-semibold text-coral"
+              className="rounded-[8px] border border-ink/10 bg-white px-4 py-2 text-[12px] font-semibold text-coral"
             >
               {pl.stop}
             </button>
@@ -241,7 +241,7 @@ export default function ReviewPlaygroundPage() {
         </div>
 
         {/* Input card */}
-        <div className="rounded-3xl border border-white bg-white/80 p-5 shadow-[0_12px_30px_rgba(58,39,120,0.08)]">
+        <div className="rounded-[8px] border border-white bg-white/80 p-5 shadow-[0_12px_30px_rgba(58,39,120,0.08)]">
           <div className="mb-3 flex flex-wrap gap-2">
             {PRESETS.map((p, pi) => (
               <button
@@ -268,7 +268,7 @@ export default function ReviewPlaygroundPage() {
             onChange={(e) => setReviewText(e.target.value)}
             rows={3}
             disabled={running}
-            className="mt-1.5 w-full rounded-xl border border-ink/10 bg-white px-3 py-2.5 text-[13px] text-ink outline-none transition focus:border-deep-violet/40 disabled:opacity-60"
+            className="mt-1.5 w-full rounded-[8px] border border-ink/10 bg-white px-3 py-2.5 text-[13px] text-ink outline-none transition focus:border-deep-violet/40 disabled:opacity-60"
           />
 
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -280,7 +280,7 @@ export default function ReviewPlaygroundPage() {
                 value={channelId}
                 onChange={(e) => setChannelId(e.target.value)}
                 disabled={running}
-                className="mt-1.5 w-full rounded-xl border border-ink/10 bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-deep-violet/40 disabled:opacity-60"
+                className="mt-1.5 w-full rounded-[8px] border border-ink/10 bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-deep-violet/40 disabled:opacity-60"
               >
                 <option value="">{pl.selectLocation}</option>
                 {channels.map((c) => (
@@ -304,7 +304,7 @@ export default function ReviewPlaygroundPage() {
                 value={modelPick}
                 onChange={(e) => setModelPick(e.target.value)}
                 disabled={running || models.length === 0}
-                className="mt-1.5 w-full rounded-xl border border-ink/10 bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-deep-violet/40 disabled:opacity-60"
+                className="mt-1.5 w-full rounded-[8px] border border-ink/10 bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-deep-violet/40 disabled:opacity-60"
               >
                 <option value="">
                   {linkedModel ? fill(pl.locDefaultModel, { m: linkedModel }) : pl.locDefaultTenant}
@@ -327,7 +327,7 @@ export default function ReviewPlaygroundPage() {
                 value={bankPick}
                 onChange={(e) => setBankPick(e.target.value)}
                 disabled={running || banks.length === 0}
-                className="mt-1.5 w-full rounded-xl border border-ink/10 bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-deep-violet/40 disabled:opacity-60"
+                className="mt-1.5 w-full rounded-[8px] border border-ink/10 bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-deep-violet/40 disabled:opacity-60"
               >
                 <option value="">
                   {linkedBank ? fill(pl.bankDefault, { b: bankNameOf(linkedBank) }) : pl.bankDefaultEmpty}
@@ -371,7 +371,7 @@ export default function ReviewPlaygroundPage() {
                 onChange={(e) => setReviewerName(e.target.value)}
                 disabled={running}
                 placeholder={pl.reviewerPh}
-                className="mt-1.5 w-full rounded-xl border border-ink/10 bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-deep-violet/40 disabled:opacity-60"
+                className="mt-1.5 w-full rounded-[8px] border border-ink/10 bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-deep-violet/40 disabled:opacity-60"
               />
             </div>
             <div>
@@ -380,7 +380,7 @@ export default function ReviewPlaygroundPage() {
                 value={channel}
                 onChange={(e) => setChannel(e.target.value)}
                 disabled={running}
-                className="mt-1.5 w-full rounded-xl border border-ink/10 bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-deep-violet/40 disabled:opacity-60"
+                className="mt-1.5 w-full rounded-[8px] border border-ink/10 bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-deep-violet/40 disabled:opacity-60"
               >
                 {CHANNELS.map((c) => (
                   <option key={c} value={c}>{c}</option>
@@ -394,15 +394,15 @@ export default function ReviewPlaygroundPage() {
             onClick={() => void handleRun()}
             disabled={running || !reviewText.trim() || !channelId}
             title={!channelId ? pl.runTitle : undefined}
-            className="mt-4 w-full rounded-xl bg-deep-violet px-4 py-3 text-[13px] font-bold text-white shadow-md transition hover:bg-deep-violet/90 disabled:opacity-50 sm:w-auto sm:px-8"
+            className="mt-4 w-full rounded-[8px] bg-deep-violet px-4 py-3 text-[13px] font-bold text-white shadow-md transition hover:bg-deep-violet/90 disabled:opacity-50 sm:w-auto sm:px-8"
           >
             {running ? pl.running : pl.runBtn}
           </button>
           {error && (
-            <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-[12px] font-medium text-red-600">{error}</p>
+            <p className="mt-3 rounded-[8px] bg-red-50 px-3 py-2 text-[12px] font-medium text-red-600">{error}</p>
           )}
           {errorEvent?.message && (
-            <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-[12px] font-medium text-red-600">
+            <p className="mt-3 rounded-[8px] bg-red-50 px-3 py-2 text-[12px] font-medium text-red-600">
               {fill(pl.engineError, { msg: errorEvent.message })}
             </p>
           )}
@@ -410,7 +410,7 @@ export default function ReviewPlaygroundPage() {
 
         {/* Live progress */}
         {events.length > 0 && (
-          <div className="rounded-3xl border border-white bg-white/80 p-5 shadow-[0_12px_30px_rgba(58,39,120,0.08)]">
+          <div className="rounded-[8px] border border-white bg-white/80 p-5 shadow-[0_12px_30px_rgba(58,39,120,0.08)]">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-[14px] font-bold text-ink">{pl.liveTrace}</h2>
             </div>
@@ -453,7 +453,7 @@ export default function ReviewPlaygroundPage() {
             {relevanceEvent?.relevance && relevanceEvent.relevance.verdict !== "uncertain" && (
               <div
                 className={[
-                  "mt-4 rounded-2xl p-4",
+                  "mt-4 rounded-[8px] p-4",
                   relevanceEvent.relevance.verdict === "off_topic"
                     ? "bg-amber-50/70"
                     : "bg-emerald-50/60",
@@ -470,7 +470,7 @@ export default function ReviewPlaygroundPage() {
             )}
 
             {analysisEvent?.analysis && (
-              <div className="mt-4 rounded-2xl bg-ink/[0.02] p-4">
+              <div className="mt-4 rounded-[8px] bg-ink/[0.02] p-4">
                 <h3 className="text-[12px] font-bold uppercase tracking-[0.1em] text-ink/45">{pl.analysis}</h3>
                 <div className="mt-2 flex flex-wrap gap-2 text-[12px]">
                   {Object.entries(analysisEvent.analysis).map(([k, v]) => (
@@ -485,13 +485,13 @@ export default function ReviewPlaygroundPage() {
 
             {/* Issues extracted */}
             {issuesEvent?.issues && issuesEvent.issues.length > 0 && (
-              <div className="mt-4 rounded-2xl bg-ink/[0.02] p-4">
+              <div className="mt-4 rounded-[8px] bg-ink/[0.02] p-4">
                 <h3 className="text-[12px] font-bold uppercase tracking-[0.1em] text-ink/45">
                   {fill(pl.issuesTitle, { n: fmt(issuesEvent.issues.length) })}
                 </h3>
                 <div className="mt-2 space-y-1.5">
                   {issuesEvent.issues.map((iss, i) => (
-                    <div key={i} className="rounded-xl bg-white px-3 py-2 text-[12px] shadow-sm">
+                    <div key={i} className="rounded-[8px] bg-white px-3 py-2 text-[12px] shadow-sm">
                       <span className="font-bold text-ink">{iss.label}</span>
                       <span className="ml-2 text-ink/60">{iss.detail}</span>
                       <div className="mt-1 flex flex-wrap gap-1">
@@ -509,13 +509,13 @@ export default function ReviewPlaygroundPage() {
 
             {/* Strategies */}
             {strategies.length > 0 && (
-              <div className="mt-4 rounded-2xl bg-ink/[0.02] p-4">
+              <div className="mt-4 rounded-[8px] bg-ink/[0.02] p-4">
                 <h3 className="text-[12px] font-bold uppercase tracking-[0.1em] text-ink/45">
                   {fill(pl.stratTitle, { n: fmt(strategies.length) })}
                 </h3>
                 <div className="mt-2 space-y-1.5">
                   {strategies.map((e, i) => (
-                    <div key={i} className="rounded-xl bg-white px-3 py-2 text-[12px] shadow-sm">
+                    <div key={i} className="rounded-[8px] bg-white px-3 py-2 text-[12px] shadow-sm">
                       <span className="font-bold text-deep-violet">{e.strategy?.name}</span>
                       {e.strategy?.conditional && (
                         <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
@@ -534,13 +534,13 @@ export default function ReviewPlaygroundPage() {
 
             {/* Suppressed */}
             {suppressedEvents.length > 0 && (
-              <div className="mt-4 rounded-2xl bg-red-50/60 p-4">
+              <div className="mt-4 rounded-[8px] bg-red-50/60 p-4">
                 <h3 className="text-[12px] font-bold uppercase tracking-[0.1em] text-red-400">
                   {fill(pl.suppTitle, { n: fmt(suppressedEvents.length) })}
                 </h3>
                 <div className="mt-2 space-y-1.5">
                   {suppressedEvents.map((e, i) => (
-                    <div key={i} className="rounded-xl bg-white px-3 py-2 text-[12px] shadow-sm">
+                    <div key={i} className="rounded-[8px] bg-white px-3 py-2 text-[12px] shadow-sm">
                       <span className="font-bold text-ink/40 line-through">{e.strategy?.name}</span>
                       <p className="mt-0.5 text-[11px] text-ink/50">{e.strategy?.reason}</p>
                     </div>
@@ -551,13 +551,13 @@ export default function ReviewPlaygroundPage() {
 
             {/* Deferred — eligible but unused */}
             {deferredEvents.length > 0 && (
-              <div className="mt-4 rounded-2xl bg-amber-50/60 p-4">
+              <div className="mt-4 rounded-[8px] bg-amber-50/60 p-4">
                 <h3 className="text-[12px] font-bold uppercase tracking-[0.1em] text-amber-600">
                   {fill(pl.defTitle, { n: fmt(deferredEvents.length) })}
                 </h3>
                 <div className="mt-2 space-y-1.5">
                   {deferredEvents.map((e, i) => (
-                    <div key={i} className="rounded-xl bg-white px-3 py-2 text-[12px] shadow-sm">
+                    <div key={i} className="rounded-[8px] bg-white px-3 py-2 text-[12px] shadow-sm">
                       <span className="font-bold text-ink/60">{e.strategy?.name}</span>
                       <p className="mt-0.5 text-[11px] text-ink/50">{e.strategy?.reason}</p>
                     </div>
@@ -568,7 +568,7 @@ export default function ReviewPlaygroundPage() {
 
             {/* Requirements */}
             {requirementsEvent?.requirements && requirementsEvent.requirements.length > 0 && (
-              <div className="mt-4 rounded-2xl bg-ink/[0.02] p-4">
+              <div className="mt-4 rounded-[8px] bg-ink/[0.02] p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-[12px] font-bold uppercase tracking-[0.1em] text-ink/45">
                     {fill(pl.reqTitle, { n: fmt(requirementsEvent.requirements.length) })}
@@ -589,7 +589,7 @@ export default function ReviewPlaygroundPage() {
 
             {/* Tool calls */}
             {(toolCalls.length > 0 || toolResults.length > 0) && (
-              <div className="mt-4 rounded-2xl bg-ink/[0.02] p-4">
+              <div className="mt-4 rounded-[8px] bg-ink/[0.02] p-4">
                 <h3 className="text-[12px] font-bold uppercase tracking-[0.1em] text-ink/45">
                   {fill(pl.toolsTitle, { n: fmt(toolCalls.length) })}
                 </h3>
@@ -608,7 +608,7 @@ export default function ReviewPlaygroundPage() {
                       }
                     }
                     return (
-                      <div key={i} className="rounded-xl bg-white px-3 py-2 text-[12px] shadow-sm">
+                      <div key={i} className="rounded-[8px] bg-white px-3 py-2 text-[12px] shadow-sm">
                         <span className="font-mono font-bold text-emerald-700">
                           🔧 {e.tool ?? (e.need ? `evidence:${e.need}` : "evidence")}
                         </span>
@@ -635,7 +635,7 @@ export default function ReviewPlaygroundPage() {
 
             {/* Fulfillment attempts */}
             {fulfillmentEvents.length > 0 && (
-              <div className="mt-4 rounded-2xl bg-ink/[0.02] p-4">
+              <div className="mt-4 rounded-[8px] bg-ink/[0.02] p-4">
                 <h3 className="text-[12px] font-bold uppercase tracking-[0.1em] text-ink/45">
                   {fulfillmentEvents.length === 1 ? pl.fulfilOne : fill(pl.fulfilN, { n: fmt(fulfillmentEvents.length) })}
                 </h3>
@@ -644,7 +644,7 @@ export default function ReviewPlaygroundPage() {
                     <p className="text-[11px] font-semibold text-ink/50">{fill(pl.attemptN, { n: fmt(ai + 1) })}</p>
                     <div className="mt-1 space-y-1.5">
                       {(e.fulfillment ?? []).map((f, i) => (
-                        <div key={i} className="rounded-xl bg-white px-3 py-2 text-[12px] shadow-sm">
+                        <div key={i} className="rounded-[8px] bg-white px-3 py-2 text-[12px] shadow-sm">
                           <span
                             className={[
                               "mr-2 inline-block rounded px-1.5 py-0.5 text-[10px] font-bold",
@@ -696,7 +696,7 @@ export default function ReviewPlaygroundPage() {
 
             {/* Final response */}
             {doneEvent?.response && (
-              <div className="mt-4 rounded-2xl border-2 border-deep-violet/20 bg-deep-violet/[0.03] p-4">
+              <div className="mt-4 rounded-[8px] border-2 border-deep-violet/20 bg-deep-violet/[0.03] p-4">
                 <div className="flex items-center justify-between">
                   <h3 className="text-[12px] font-bold uppercase tracking-[0.1em] text-ink/45">{pl.finalTitle}</h3>
                   <span
@@ -724,7 +724,7 @@ export default function ReviewPlaygroundPage() {
                   <span>{pl.strategies} <b>{doneEvent.response.strategies_used.join(", ") || "—"}</b></span>
                 </div>
                 {doneEvent.response.validation.issues.length > 0 && (
-                  <div className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-[12px] text-amber-700">
+                  <div className="mt-2 rounded-[8px] bg-amber-50 px-3 py-2 text-[12px] text-amber-700">
                     {doneEvent.response.validation.issues.join(" · ")}
                   </div>
                 )}
@@ -733,7 +733,7 @@ export default function ReviewPlaygroundPage() {
                     <span
                       key={k}
                       className={[
-                        "rounded-md px-2 py-0.5 text-[10px] font-semibold",
+                        "rounded-[8px] px-2 py-0.5 text-[10px] font-semibold",
                         v ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-600",
                       ].join(" ")}
                     >
@@ -748,11 +748,11 @@ export default function ReviewPlaygroundPage() {
 
         {/* Recent logs */}
         {logs.length > 0 && (
-          <div className="rounded-3xl border border-white bg-white/80 p-5 shadow-[0_12px_30px_rgba(58,39,120,0.08)]">
+          <div className="rounded-[8px] border border-white bg-white/80 p-5 shadow-[0_12px_30px_rgba(58,39,120,0.08)]">
             <h2 className="text-[14px] font-bold text-ink">{pl.recentTitle}</h2>
             <div className="mt-3 space-y-2">
               {logs.map((l) => (
-                <div key={l.id} className="rounded-xl border border-ink/[0.06] bg-white px-3 py-2.5">
+                <div key={l.id} className="rounded-[8px] border border-ink/[0.06] bg-white px-3 py-2.5">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[12px] font-semibold text-ink">
                       {l.reviewer_name || pl.anonFallback} · {"★".repeat(l.rating ?? 0)}

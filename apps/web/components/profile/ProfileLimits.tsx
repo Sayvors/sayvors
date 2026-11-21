@@ -17,7 +17,7 @@ function fill(s: string, vars: Record<string, string | number>): string {
 const BAR = ["bg-deep-violet", "bg-magenta", "bg-sky-500", "bg-emerald-500"];
 
 const CARD =
-  "rounded-[32px] bg-white p-5 shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)] ring-1 ring-ink/[0.06] dark:bg-[#1b1530] dark:ring-white/[0.08] sm:p-7";
+  "rounded-[8px] bg-white p-5 shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)] ring-1 ring-ink/[0.06] dark:bg-[#1b1530] dark:ring-white/[0.08] sm:p-7";
 
 export default function ProfileLimits({
   items,
@@ -48,7 +48,7 @@ export default function ProfileLimits({
           type="button"
           onClick={onRefresh}
           disabled={loading}
-          className="rounded-[20px] border border-ink/[0.12] px-3.5 py-2 text-[11.5px] font-bold text-ink/65 transition hover:border-deep-violet/40 hover:text-deep-violet focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 active:translate-y-0.5 active:scale-[0.98] disabled:opacity-50 dark:border-white/[0.12] dark:text-fog/65"
+          className="rounded-[8px] border border-ink/[0.12] px-3.5 py-2 text-[11.5px] font-bold text-ink/65 transition hover:border-deep-violet/40 hover:text-deep-violet focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 active:translate-y-0.5 active:scale-[0.98] disabled:opacity-50 dark:border-white/[0.12] dark:text-fog/65"
         >
           {loading ? pf.usageRefreshing : pf.usageRefresh}
         </button>
@@ -57,7 +57,7 @@ export default function ProfileLimits({
       {loading && items.length === 0 ? (
         <div className="space-y-4" aria-label={pf.usageLoading}>
           {[0, 1, 2].map((i) => (
-            <div key={i} className="h-12 animate-pulse rounded-[16px] bg-ink/[0.05] dark:bg-white/[0.05]" />
+            <div key={i} className="h-12 animate-pulse rounded-[8px] bg-ink/[0.05] dark:bg-white/[0.05]" />
           ))}
         </div>
       ) : (

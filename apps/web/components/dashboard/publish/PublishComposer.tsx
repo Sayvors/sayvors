@@ -196,17 +196,17 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
           <div>
             <span className={`block text-[10px] ${INK2} mb-1`}>{pc.aiPrimary}</span>
             <input type="color" value={primary} onChange={(e) => setPrimary(e.target.value)}
-              className="h-9 w-full cursor-pointer rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
+              className="h-9 w-full cursor-pointer rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
           </div>
           <div>
             <span className={`block text-[10px] ${INK2} mb-1`}>{pc.aiAccent}</span>
             <input type="color" value={accent} onChange={(e) => setAccent(e.target.value)}
-              className="h-9 w-full cursor-pointer rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
+              className="h-9 w-full cursor-pointer rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
           </div>
           <div>
             <span className={`block text-[10px] ${INK2} mb-1`}>{pc.aiBg}</span>
             <input type="color" value={bg} onChange={(e) => setBg(e.target.value)}
-              className="h-9 w-full cursor-pointer rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
+              className="h-9 w-full cursor-pointer rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
           </div>
         </div>
         <div className="mt-2 flex flex-wrap gap-1.5">
@@ -229,7 +229,7 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
       </div>
 
       {/* file name */}
-      <div className={`rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] px-3 py-2 text-[11px] ${INK2}`}>
+      <div className={`rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] px-3 py-2 text-[11px] ${INK2}`}>
         {fill(pc.aiFile, { name: fileName })}
       </div>
 
@@ -245,7 +245,7 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
       </div>
 
       {/* video player / preview */}
-      <div className="overflow-hidden rounded-[24px] border border-[var(--ui-line)] bg-[var(--ui-sunken)]">
+      <div className="overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)]">
         <div className="flex items-center gap-2 border-b border-[var(--ui-line)] px-3 py-2">
           <span className={`text-[11px] font-bold uppercase tracking-widest ${INK2}`}>{pc.aiPreview}</span>
           <span className={`ml-auto text-[10px] ${INK2}`}>{generated ? pc.aiReady : pc.aiEmpty}</span>
@@ -288,7 +288,7 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
         type="button"
         disabled
         title={fill(pc.aiPublishSoonTitle, { name: business })}
-        className="w-full rounded-[16px] border border-dashed border-[var(--ui-line-strong)] bg-[var(--ui-sunken)] px-3 py-2 text-[12px] font-semibold text-[var(--ui-ink-2)] opacity-60 cursor-not-allowed"
+        className="w-full rounded-[8px] border border-dashed border-[var(--ui-line-strong)] bg-[var(--ui-sunken)] px-3 py-2 text-[12px] font-semibold text-[var(--ui-ink-2)] opacity-60 cursor-not-allowed"
       >
         {pc.aiPublishSoon}
       </button>
@@ -326,7 +326,7 @@ function BannerCheckCard({
   if (check.state === "idle") {
     if (!required) return null;
     return (
-      <div className="mt-3 rounded-[20px] border border-deep-violet/25 bg-deep-violet/[0.04] px-3.5 py-3">
+      <div className="mt-3 rounded-[8px] border border-deep-violet/25 bg-deep-violet/[0.04] px-3.5 py-3">
         <p className="text-[12px] font-bold text-deep-violet dark:text-fog">
           AI photo check required
         </p>
@@ -347,7 +347,7 @@ function BannerCheckCard({
   }
   if (check.state === "loading") {
     return (
-      <div className="mt-3 flex items-center gap-2.5 rounded-[20px] border border-deep-violet/20 bg-deep-violet/[0.04] px-3.5 py-2.5 text-[11.5px] font-semibold text-deep-violet dark:border-fog/10 dark:bg-fog/[0.04] dark:text-fog">
+      <div className="mt-3 flex items-center gap-2.5 rounded-[8px] border border-deep-violet/20 bg-deep-violet/[0.04] px-3.5 py-2.5 text-[11.5px] font-semibold text-deep-violet dark:border-fog/10 dark:bg-fog/[0.04] dark:text-fog">
         <svg className="h-4 w-4 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
           <path d="M12 3a9 9 0 1 0 9 9" strokeLinecap="round" />
         </svg>
@@ -357,7 +357,7 @@ function BannerCheckCard({
   }
   if (check.state === "error") {
     return (
-      <div className="mt-3 flex items-center justify-between gap-2 rounded-[20px] border border-red-500/30 bg-red-500/[0.06] px-3.5 py-2.5">
+      <div className="mt-3 flex items-center justify-between gap-2 rounded-[8px] border border-red-500/30 bg-red-500/[0.06] px-3.5 py-2.5">
         <span className="text-[11.5px] font-semibold text-red-700 dark:text-red-400">
           The AI check could not run right now.
         </span>
@@ -380,7 +380,7 @@ function BannerCheckCard({
   const label = suitable === "yes" ? "Suitable" : suitable === "no" ? "Not suitable" : "Probably suitable";
 
   return (
-    <div className={`mt-3 rounded-[20px] border ${tone.border} ${tone.bg} px-3.5 py-3`}>
+    <div className={`mt-3 rounded-[8px] border ${tone.border} ${tone.bg} px-3.5 py-3`}>
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4 shrink-0" aria-hidden>
@@ -432,7 +432,7 @@ function BannerCheckCard({
           <button
             type="button"
             onClick={onReplace}
-            className="shrink-0 rounded-[14px] bg-white px-3 py-1.5 text-[11px] font-bold text-deep-violet shadow-[0_8px_16px_-10px_rgba(61,29,110,0.55)] transition duration-200 hover:bg-fog/60 active:translate-y-[2px] active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] dark:bg-[var(--ui-surface)] dark:text-fog"
+            className="shrink-0 rounded-[8px] bg-white px-3 py-1.5 text-[11px] font-bold text-deep-violet shadow-[0_8px_16px_-10px_rgba(61,29,110,0.55)] transition duration-200 hover:bg-fog/60 active:translate-y-[2px] active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] dark:bg-[var(--ui-surface)] dark:text-fog"
           >
             Replace photo
           </button>
@@ -1395,7 +1395,7 @@ export default function PublishComposer({
           <button
             type="button"
             onClick={onCancel}
-            className="mb-3 inline-flex items-center gap-1.5 rounded-[20px] border border-[var(--ui-line)] px-3 py-1.5 text-[12px] font-bold text-[var(--ui-ink-2)] transition duration-200 hover:bg-[var(--ui-sunken)] hover:text-[var(--ui-ink)] active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+            className="mb-3 inline-flex items-center gap-1.5 rounded-[8px] border border-[var(--ui-line)] px-3 py-1.5 text-[12px] font-bold text-[var(--ui-ink-2)] transition duration-200 hover:bg-[var(--ui-sunken)] hover:text-[var(--ui-ink)] active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
           >
             <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
               <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
@@ -1412,7 +1412,7 @@ export default function PublishComposer({
           </div>
         </div>
         {/* Step wizard — visual navigation only; all steps stay mounted. */}
-        <ol className="mt-4 flex items-center gap-1 rounded-[24px] bg-[var(--ui-sunken)] p-1.5 sm:gap-2" aria-label="Post steps">
+        <ol className="mt-4 flex items-center gap-1 rounded-[8px] bg-[var(--ui-sunken)] p-1.5 sm:gap-2" aria-label="Post steps">
           {steps.map((stepDef, index) => {
             const position = stepNav(steps, stepDef.id);
             const active = step === stepDef.id;
@@ -1423,13 +1423,13 @@ export default function PublishComposer({
                   type="button"
                   onClick={() => setPostStep(stepDef.id)}
                   aria-current={active ? "step" : undefined}
-                  className={`flex min-w-0 items-center gap-1.5 rounded-[20px] px-1 py-1 pr-1.5 transition duration-200 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:gap-2 sm:px-1.5 sm:pr-2.5 ${
+                  className={`flex min-w-0 items-center gap-1.5 rounded-[8px] px-1 py-1 pr-1.5 transition duration-200 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:gap-2 sm:px-1.5 sm:pr-2.5 ${
                     active
                       ? "bg-[var(--ui-surface)] text-[var(--ui-ink)] shadow-[0_8px_18px_-12px_rgba(61,29,110,0.55)]"
                       : done ? "text-[var(--ui-ink-2)]" : "text-[var(--ui-ink-2)] opacity-70"
                   }`}
                 >
-                  <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[16px] text-[12px] font-bold transition ${
+                  <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] text-[12px] font-bold transition ${
                     active
                       ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
                       : done
@@ -1454,7 +1454,7 @@ export default function PublishComposer({
       {notice && (
         <div className="shrink-0 px-4 pt-3 sm:px-6">
           <div className="mx-auto max-w-[1280px]">
-            <p role="alert" className="rounded-[20px] border border-red-500/40 bg-red-50 px-4 py-3 text-[13px] font-semibold text-red-700 shadow-[0_12px_28px_-22px_rgba(61,29,110,0.45)] dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-300">
+            <p role="alert" className="rounded-[8px] border border-red-500/40 bg-red-50 px-4 py-3 text-[13px] font-semibold text-red-700 shadow-[0_12px_28px_-22px_rgba(61,29,110,0.45)] dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-300">
               {notice}
             </p>
           </div>
@@ -1539,7 +1539,7 @@ export default function PublishComposer({
                 {showCaptionWarn && (
                   <p
                     role="status"
-                    className="mt-1.5 rounded-[16px] border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-[12px] font-medium text-amber-700 dark:text-amber-400"
+                    className="mt-1.5 rounded-[8px] border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-[12px] font-medium text-amber-700 dark:text-amber-400"
                   >
                     {fill(pc.truncates, { names: captionOver.map((t) => fill(pc.truncName, { name: PLATFORM_META[t.platform].label, max: fmt(PLATFORM_META[t.platform].captionMax) })).join(" · ") })}
                   </p>
@@ -1556,7 +1556,7 @@ export default function PublishComposer({
                       onClick={writeDescriptionWithAI}
                       disabled={descDrafting}
                       title={pc.aiWriteDescHint}
-                      className="inline-flex items-center gap-1 rounded-[20px] border border-deep-violet/25 bg-deep-violet/[0.06] px-2.5 py-1 text-[11px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.12] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] disabled:opacity-50 dark:border-fog/15 dark:text-fog dark:hover:bg-fog/[0.08]"
+                      className="inline-flex items-center gap-1 rounded-[8px] border border-deep-violet/25 bg-deep-violet/[0.06] px-2.5 py-1 text-[11px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.12] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] disabled:opacity-50 dark:border-fog/15 dark:text-fog dark:hover:bg-fog/[0.08]"
                     >
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5" aria-hidden>
                         <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z" strokeLinejoin="round" />
@@ -1579,7 +1579,7 @@ export default function PublishComposer({
                 {descNotice && (
                   <p
                     role="status"
-                    className={`mt-1.5 rounded-[16px] border px-3 py-2 text-[12px] font-medium ${
+                    className={`mt-1.5 rounded-[8px] border px-3 py-2 text-[12px] font-medium ${
                       descNotice.kind === "err"
                         ? "border-coral/40 bg-coral/10 text-coral"
                         : descNotice.kind === "ok"
@@ -1710,7 +1710,7 @@ export default function PublishComposer({
                       type="button"
                       onClick={() => openRow(target.id)}
                       title={hasFormat ? fill(pc.reviewRow, { name: target.name }) : fill(pc.noFormatRow, { name: target.name })}
-                      className={`inline-flex max-w-full items-center gap-1.5 rounded-[20px] border px-2.5 py-1.5 text-[11px] font-bold transition duration-200 hover:bg-[var(--ui-sunken)] active:scale-[0.97] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+                      className={`inline-flex max-w-full items-center gap-1.5 rounded-[8px] border px-2.5 py-1.5 text-[11px] font-bold transition duration-200 hover:bg-[var(--ui-sunken)] active:scale-[0.97] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
                         hasFormat
                           ? "border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink)]"
                           : "border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-400"
@@ -1741,14 +1741,14 @@ export default function PublishComposer({
                     {pc.formatsSub}
                   </p>
                 </div>
-                <span className="rounded-[20px] bg-[var(--ui-sunken)] px-3 py-1 text-[11px] font-bold text-[var(--ui-ink)]">
+                <span className="rounded-[8px] bg-[var(--ui-sunken)] px-3 py-1 text-[11px] font-bold text-[var(--ui-ink)]">
                   {fmt(formatCount)} selected
                 </span>
               </div>
               {selectedTargets.some((t) =>
                 availableFor(t).some((m) => m === "profile" || m === "banner" || m === "gallery"),
               ) && (
-                <div className="mt-3 flex items-start gap-2.5 rounded-[20px] border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5">
+                <div className="mt-3 flex items-start gap-2.5 rounded-[8px] border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5">
                   <svg className="mt-0.5 h-4 w-4 shrink-0 text-amber-700 dark:text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
                     <circle cx="12" cy="12" r="9" />
                     <path d="M12 11v5" strokeLinecap="round" />
@@ -1760,7 +1760,7 @@ export default function PublishComposer({
                 </div>
               )}
               {bannerSelected && (
-                <details className="group mt-3 rounded-[20px] border border-deep-violet/20 bg-deep-violet/[0.04] px-3.5 py-2.5 dark:border-fog/10 dark:bg-fog/[0.04]">
+                <details className="group mt-3 rounded-[8px] border border-deep-violet/20 bg-deep-violet/[0.04] px-3.5 py-2.5 dark:border-fog/10 dark:bg-fog/[0.04]">
                   <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-[11.5px] font-bold text-deep-violet outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] dark:text-fog">
                     <span className="flex items-center gap-2">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4 shrink-0" aria-hidden>
@@ -1786,7 +1786,7 @@ export default function PublishComposer({
                 </details>
               )}
               {sharedMode && (
-                <div className="mt-3 flex items-center gap-2 rounded-[20px] border border-emerald-500/30 bg-emerald-500/[0.07] px-3.5 py-2.5 text-[11.5px] font-semibold text-emerald-700 dark:text-emerald-400">
+                <div className="mt-3 flex items-center gap-2 rounded-[8px] border border-emerald-500/30 bg-emerald-500/[0.07] px-3.5 py-2.5 text-[11.5px] font-semibold text-emerald-700 dark:text-emerald-400">
                   <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
                     <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" strokeLinecap="round" />
                     <circle cx="9" cy="7" r="4" />
@@ -1831,13 +1831,13 @@ export default function PublishComposer({
                           }
                         }}
                         aria-pressed={isOn}
-                        className={`flex items-center gap-3 rounded-[20px] border p-2.5 text-left transition duration-200 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+                        className={`flex items-center gap-3 rounded-[8px] border p-2.5 text-left transition duration-200 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
                           isOn
                             ? "border-emerald-500/70 bg-[var(--ui-surface)] shadow-[0_12px_26px_-16px_rgba(16,185,129,0.85)]"
                             : "border-[var(--ui-line)] bg-[var(--ui-sunken)] hover:border-[var(--ui-ink)]/30 hover:bg-[var(--ui-surface)]"
                         }`}
                       >
-                        <FormatThumb media={media} crop={crop} size={40} className="rounded-[12px]" />
+                        <FormatThumb media={media} crop={crop} size={40} className="rounded-[8px]" />
                         <span className="min-w-0 flex-1">
                           <span className="flex items-center gap-1.5">
                             <span className={`truncate text-[12px] font-bold ${INK}`}>{methodLabel(m)}</span>
@@ -1867,10 +1867,10 @@ export default function PublishComposer({
                     );
                   };
                   return (
-                    <div key={t.id} id={`dest-row-${t.id}`} className="overflow-hidden rounded-[24px] border border-[var(--ui-line)] bg-[var(--ui-sunken)]">
+                    <div key={t.id} id={`dest-row-${t.id}`} className="overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)]">
                       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--ui-line)] px-4 py-3">
                         <div className="flex items-center gap-3">
-                          <span className="flex h-10 w-10 items-center justify-center rounded-[16px] bg-[var(--ui-surface)] shadow-[0_8px_18px_-12px_rgba(61,29,110,0.6)]">
+                          <span className="flex h-10 w-10 items-center justify-center rounded-[8px] bg-[var(--ui-surface)] shadow-[0_8px_18px_-12px_rgba(61,29,110,0.6)]">
                             <PlatformMark platform={t.platform} size={16} />
                           </span>
                           <div className="min-w-0">
@@ -1888,7 +1888,7 @@ export default function PublishComposer({
                           type="button"
                           onClick={() => toggleAllFormats(t, applyTargets)}
                           title={pc.allTitle}
-                          className="rounded-[20px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-1.5 text-[11px] font-bold text-[var(--ui-ink-2)] transition duration-200 hover:bg-[var(--ui-sunken)] active:scale-[0.97] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+                          className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-1.5 text-[11px] font-bold text-[var(--ui-ink-2)] transition duration-200 hover:bg-[var(--ui-sunken)] active:scale-[0.97] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
                         >
                           {pc.allPill}
                         </button>
@@ -1918,7 +1918,7 @@ export default function PublishComposer({
 
           {/* Step-local footer: navigation belongs to the step, and the
               publish action only exists on the final step. */}
-          <div className="rounded-[24px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)] sm:p-5">
+          <div className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)] sm:p-5">
             {step === "when" && galleryFallbacks.length > 0 && (
               <div className="mb-3 space-y-1" role="status">
                 {galleryFallbacks.map((f) => (
@@ -1929,7 +1929,7 @@ export default function PublishComposer({
               </div>
             )}
             {stepProblems(step).length > 0 && (
-              <div className="mb-3 space-y-1 rounded-[20px] border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5" role="status">
+              <div className="mb-3 space-y-1 rounded-[8px] border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5" role="status">
                 {stepProblems(step).map((problem) => (
                   <p key={problem} className="text-[12px] font-semibold text-amber-800 dark:text-amber-300">
                     {problem}
@@ -2054,7 +2054,7 @@ export default function PublishComposer({
           }}
           className="fixed inset-0 z-50 bg-[rgba(0,0,0,0.45)] sm:flex sm:items-center sm:justify-center sm:p-4"
         >
-          <div className="flex h-[100dvh] w-full flex-col overflow-hidden bg-[var(--ui-surface)] sm:h-auto sm:max-h-[90dvh] sm:max-w-5xl sm:rounded-[32px] sm:border sm:border-[var(--ui-line)] sm:shadow-2xl">
+          <div className="flex h-[100dvh] w-full flex-col overflow-hidden bg-[var(--ui-surface)] sm:h-auto sm:max-h-[90dvh] sm:max-w-5xl sm:rounded-[8px] sm:border sm:border-[var(--ui-line)] sm:shadow-2xl">
             <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--ui-line)] p-4 sm:border-0 sm:p-5 sm:pb-0">
               <div>
                 <h2 className="text-[15px] font-bold text-[var(--ui-ink)] sm:text-[16px]">

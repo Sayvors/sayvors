@@ -249,7 +249,7 @@ export default function LocationsMap({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={resetView} className="rounded-[2px] border border-[var(--ui-line)] px-2.5 py-1.5 text-[10px] font-semibold text-[var(--ui-ink)] hover:bg-[var(--ui-sunken)]">
+          <button onClick={resetView} className="rounded-[8px] border border-[var(--ui-line)] px-2.5 py-1.5 text-[10px] font-semibold text-[var(--ui-ink)] hover:bg-[var(--ui-sunken)]">
             Reset view
           </button>
           <span className="hidden text-[10px] text-[var(--ui-ink-2)] sm:inline">Drag to pan · scroll to zoom · right-drag to rotate</span>

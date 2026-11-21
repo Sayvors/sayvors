@@ -54,7 +54,7 @@ export default function DatabankStep({ onComplete }: DatabankStepProps) {
           value={databankName}
           onChange={(e) => setDatabankName(e.target.value)}
           placeholder="e.g. Product Knowledge Base"
-          className="mt-1.5 w-full rounded-xl border border-ink/[0.08] bg-white px-4 py-2.5 text-[13px] text-ink placeholder:text-ink/30 focus:border-deep-violet focus:outline-none focus:ring-1 focus:ring-deep-violet dark:border-fog/[0.08] dark:bg-ink dark:text-fog dark:placeholder:text-fog/30"
+          className="mt-1.5 w-full rounded-[8px] border border-ink/[0.08] bg-white px-4 py-2.5 text-[13px] text-ink placeholder:text-ink/30 focus:border-deep-violet focus:outline-none focus:ring-1 focus:ring-deep-violet dark:border-fog/[0.08] dark:bg-ink dark:text-fog dark:placeholder:text-fog/30"
         />
       </div>
 
@@ -63,7 +63,7 @@ export default function DatabankStep({ onComplete }: DatabankStepProps) {
           Upload documents <span className="text-ink/40 dark:text-fog/40 font-normal">(optional)</span>
         </label>
         <p className="text-[12px] text-ink/40 dark:text-fog/40 mt-0.5">PDF, TXT, MD, DOCX — these power your AI&apos;s answers</p>
-        <label className="mt-2 flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-ink/[0.12] bg-ink/[0.02] p-8 transition hover:border-deep-violet/30 dark:border-fog/[0.12] dark:bg-fog/[0.02]">
+        <label className="mt-2 flex cursor-pointer flex-col items-center justify-center rounded-[8px] border-2 border-dashed border-ink/[0.12] bg-ink/[0.02] p-8 transition hover:border-deep-violet/30 dark:border-fog/[0.12] dark:bg-fog/[0.02]">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="mb-2 h-8 w-8 text-ink/20 dark:text-fog/20">
             <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
             <polyline points="17 8 12 3 7 8" />
@@ -96,7 +96,7 @@ export default function DatabankStep({ onComplete }: DatabankStepProps) {
       <button
         onClick={handleCreate}
         disabled={!databankName.trim() || submitting}
-        className="rounded-xl bg-deep-violet px-6 py-2.5 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90 disabled:opacity-30 disabled:cursor-not-allowed"
+        className="rounded-[8px] bg-deep-violet px-6 py-2.5 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90 disabled:opacity-30 disabled:cursor-not-allowed"
       >
         {submitting ? (
           <span className="inline-flex items-center gap-2"><LogoLoader size={16} /> Creating…</span>

@@ -27,7 +27,7 @@ export default function DatabankCard({
   return (
     <div
       onClick={onSelect}
-      className={`cursor-pointer rounded-2xl border-2 bg-white/80 p-4 transition-all hover:shadow-md ${
+      className={`cursor-pointer rounded-[8px] border-2 bg-white/80 p-4 transition-all hover:shadow-md ${
         isSelected
           ? "border-deep-violet shadow-lg shadow-deep-violet/10"
           : "border-white hover:border-deep-violet/30"
@@ -35,7 +35,7 @@ export default function DatabankCard({
     >
       <div className="flex items-start gap-3">
         <div
-          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-white shadow-md"
+          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[8px] text-white shadow-md"
           style={{ backgroundColor: accentColor || "#3d1d6e" }}
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">

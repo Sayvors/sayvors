@@ -69,7 +69,7 @@ export default function Modal({ open, onClose, title, subtitle, labelledBy, widt
         aria-modal="true"
         aria-labelledby={labelledBy ?? (title ? "modal-title" : undefined)}
         tabIndex={-1}
-        className={`flex max-h-[92vh] w-full ${width} flex-col overflow-hidden rounded-[32px] bg-white shadow-[0_40px_80px_-40px_rgba(20,16,31,0.55)] ring-1 ring-ink/[0.08] outline-none dark:bg-[#1b1530] dark:ring-white/[0.08]`}
+        className={`flex max-h-[92vh] w-full ${width} flex-col overflow-hidden rounded-[8px] bg-white shadow-[0_40px_80px_-40px_rgba(20,16,31,0.55)] ring-1 ring-ink/[0.08] outline-none dark:bg-[#1b1530] dark:ring-white/[0.08]`}
       >
         {(title || subtitle) && (
           <div className="flex items-start justify-between gap-3 border-b border-ink/[0.06] px-6 py-5 dark:border-white/[0.08]">

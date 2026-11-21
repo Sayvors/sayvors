@@ -38,7 +38,7 @@ function Stock({ item }: { item: PublicCatalogItem }) {
 function Card({ item }: { item: PublicCatalogItem }) {
   const [imageFailed, setImageFailed] = useState(false);
   return (
-    <article className="overflow-hidden rounded-[28px] border border-ink/[0.06] bg-white shadow-[0_1px_2px_rgba(20,16,31,0.04),0_12px_28px_-18px_rgba(20,16,31,0.25)] dark:border-fog/[0.08] dark:bg-ink">
+    <article className="overflow-hidden rounded-[8px] border border-ink/[0.06] bg-white shadow-[0_1px_2px_rgba(20,16,31,0.04),0_12px_28px_-18px_rgba(20,16,31,0.25)] dark:border-fog/[0.08] dark:bg-ink">
       {item.image_url && !imageFailed ? (
         // Plain img: the catalog stores arbitrary tenant URLs, which next/image
         // would need every remote host pre-registered for.
@@ -130,7 +130,7 @@ export default function PublicCatalogPage() {
             Loading catalog…
           </div>
         ) : state === "missing" ? (
-          <div className="rounded-[28px] bg-white p-10 text-center shadow-[0_1px_2px_rgba(20,16,31,0.04),0_18px_40px_-24px_rgba(20,16,31,0.3)] dark:bg-ink">
+          <div className="rounded-[8px] bg-white p-10 text-center shadow-[0_1px_2px_rgba(20,16,31,0.04),0_18px_40px_-24px_rgba(20,16,31,0.3)] dark:bg-ink">
             <h1 className="text-[18px] font-semibold text-ink dark:text-fog">
               This catalog link is not available
             </h1>
@@ -162,7 +162,7 @@ export default function PublicCatalogPage() {
                 ))}
               </div>
             ) : (
-              <div className="rounded-[28px] bg-white p-10 text-center text-[13px] text-ink/50 shadow-[0_1px_2px_rgba(20,16,31,0.04),0_18px_40px_-24px_rgba(20,16,31,0.3)] dark:bg-ink dark:text-fog/50">
+              <div className="rounded-[8px] bg-white p-10 text-center text-[13px] text-ink/50 shadow-[0_1px_2px_rgba(20,16,31,0.04),0_18px_40px_-24px_rgba(20,16,31,0.3)] dark:bg-ink dark:text-fog/50">
                 No items are listed yet.
               </div>
             )}

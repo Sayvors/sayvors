@@ -79,7 +79,7 @@ export default function OnboardingShell({
         />
 
         <header className="mt-3 flex items-start gap-3">
-          <span className="mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-ink/[0.04] dark:bg-fog/[0.06]">
+          <span className="mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-[8px] bg-ink/[0.04] dark:bg-fog/[0.06]">
             <PlatformMark platform={platform} size={24} />
           </span>
           <div className="min-w-0">
@@ -154,7 +154,7 @@ export default function OnboardingShell({
         </ol>
 
         <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
-          <section className="rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink sm:p-5">
+          <section className="rounded-[8px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink sm:p-5">
             {children}
           </section>
           {aside && <aside className="space-y-3">{aside}</aside>}
@@ -173,7 +173,7 @@ export function BenefitList({
   items: { icon: string; label: string; body: string }[];
 }) {
   return (
-    <div className="rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
+    <div className="rounded-[8px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
       <p className="text-[11px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">
         {title}
       </p>
@@ -198,7 +198,7 @@ export function BenefitList({
 export function RequirementList({ items }: { items: string[] }) {
   const { t } = useI18n();
   return (
-    <div className="rounded-xl border border-ink/[0.06] bg-ink/[0.02] p-4 dark:border-fog/[0.06] dark:bg-fog/[0.03]">
+    <div className="rounded-[8px] border border-ink/[0.06] bg-ink/[0.02] p-4 dark:border-fog/[0.06] dark:bg-fog/[0.03]">
       <p className="text-[11px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">
         {t.dashboard.connect.whatNeed}
       </p>
@@ -246,7 +246,7 @@ export function GuidelineNote({
   lines: string[];
 }) {
   return (
-    <div className="rounded-xl border border-amber-300/60 bg-amber-50 p-3 dark:border-amber-500/25 dark:bg-amber-500/10">
+    <div className="rounded-[8px] border border-amber-300/60 bg-amber-50 p-3 dark:border-amber-500/25 dark:bg-amber-500/10">
       <p className="text-[11px] font-bold uppercase tracking-wide text-amber-800 dark:text-amber-300">
         {title}
       </p>

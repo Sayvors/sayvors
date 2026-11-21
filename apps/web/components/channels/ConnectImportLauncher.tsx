@@ -176,7 +176,7 @@ export default function ConnectImportLauncher() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed right-4 top-1/2 z-[60] flex -translate-y-1/2 flex-col items-center gap-1 rounded-[28px] border border-ink/10 bg-white p-2 shadow-[0_1px_0_rgba(255,255,255,0.9)_inset,0_10px_30px_rgba(20,16,31,0.14)] transition active:translate-y-[calc(-50%+2px)] active:scale-[0.98]"
+        className="fixed right-4 top-1/2 z-[60] flex -translate-y-1/2 flex-col items-center gap-1 rounded-[8px] border border-ink/10 bg-white p-2 shadow-[0_1px_0_rgba(255,255,255,0.9)_inset,0_10px_30px_rgba(20,16,31,0.14)] transition active:translate-y-[calc(-50%+2px)] active:scale-[0.98]"
         aria-label={`Open Google import progress: ${label}, ${pct}%`}
       >
         <span className="relative flex h-12 w-12 items-center justify-center">

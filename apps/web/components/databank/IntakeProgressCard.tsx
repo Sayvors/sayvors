@@ -96,11 +96,11 @@ export default function IntakeProgressCard() {
   return (
     <section
       aria-labelledby="intake-card-title"
-      className="rounded-[32px] border border-card-border bg-card p-5 shadow-[0_18px_40px_-30px_rgba(20,16,31,0.45)] sm:p-6"
+      className="rounded-[8px] border border-card-border bg-card p-5 shadow-[0_18px_40px_-30px_rgba(20,16,31,0.45)] sm:p-6"
     >
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex min-w-0 items-start gap-3">
-          <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-[16px] bg-deep-violet/10 text-deep-violet">
+          <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-deep-violet/10 text-deep-violet">
             <svg
               viewBox="0 0 24 24"
               fill="none"
@@ -128,7 +128,7 @@ export default function IntakeProgressCard() {
         </div>
         <Link
           href={ctaHref}
-          className={`inline-flex shrink-0 items-center gap-1.5 rounded-[24px] bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white shadow-sm transition hover:brightness-110 active:translate-y-[2px] active:scale-[0.98] ${FOCUS}`}
+          className={`inline-flex shrink-0 items-center gap-1.5 rounded-[8px] bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white shadow-sm transition hover:brightness-110 active:translate-y-[2px] active:scale-[0.98] ${FOCUS}`}
         >
           {ctaLabel}
           <span aria-hidden>→</span>
@@ -175,7 +175,7 @@ export default function IntakeProgressCard() {
       )}
 
       {preview.length > 0 && (
-        <div className="mt-4 rounded-[20px] border border-card-border bg-[var(--ui-sunken)]/50 p-3">
+        <div className="mt-4 rounded-[8px] border border-card-border bg-[var(--ui-sunken)]/50 p-3">
           <div className="flex items-center justify-between gap-2">
             <p className="text-[10px] font-bold uppercase tracking-widest text-foreground/40">
               {c.stillToAnswer}
@@ -191,7 +191,7 @@ export default function IntakeProgressCard() {
               <li key={q.key}>
                 <Link
                   href={intakeHref(q.section, q.key)}
-                  className={`group flex items-center gap-3 rounded-[14px] border border-card-border bg-card px-3 py-2 transition hover:border-deep-violet/40 hover:bg-white ${FOCUS}`}
+                  className={`group flex items-center gap-3 rounded-[8px] border border-card-border bg-card px-3 py-2 transition hover:border-deep-violet/40 hover:bg-white ${FOCUS}`}
                 >
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[12px] font-semibold text-foreground/85">
@@ -229,7 +229,7 @@ export default function IntakeProgressCard() {
       {showAnswers && questions.length > 0 && (
         <div
           id="intake-answers"
-          className="mt-4 overflow-hidden rounded-[20px] border border-card-border"
+          className="mt-4 overflow-hidden rounded-[8px] border border-card-border"
         >
           <table className="w-full text-left text-[12px]">
             <caption className="sr-only">{c.viewAnswers}</caption>
@@ -301,7 +301,7 @@ export default function IntakeProgressCard() {
                           <td className="px-3 py-2 text-end">
                             <Link
                               href={intakeHref(q.section, q.key)}
-                              className={`rounded-[10px] px-1.5 py-1 text-[11px] font-bold text-deep-violet underline underline-offset-2 ${FOCUS}`}
+                              className={`rounded-[8px] px-1.5 py-1 text-[11px] font-bold text-deep-violet underline underline-offset-2 ${FOCUS}`}
                             >
                               {c.change}
                             </Link>

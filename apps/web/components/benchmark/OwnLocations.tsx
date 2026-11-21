@@ -95,7 +95,7 @@ export default function OwnLocations() {
       {query.isPending ? (
         <p className="text-[12px] text-[#3B2D5E]">Loading…</p>
       ) : locations.length === 0 ? (
-        <p className="rounded-[12px] border border-dashed border-[#3D1D6E]/20 bg-white px-5 py-8 text-center text-[12px] text-[#3B2D5E]">
+        <p className="rounded-[8px] border border-dashed border-[#3D1D6E]/20 bg-white px-5 py-8 text-center text-[12px] text-[#3B2D5E]">
           Connect a Google Business Profile to see your locations here.
         </p>
       ) : (
@@ -103,7 +103,7 @@ export default function OwnLocations() {
           {locations.map((location) => (
             <article
               key={location.id}
-              className="relative rounded-[12px] border border-[#3D1D6E]/10 bg-white p-4"
+              className="relative rounded-[8px] border border-[#3D1D6E]/10 bg-white p-4"
             >
               <div className="flex items-start gap-2">
                 <Link
@@ -124,7 +124,7 @@ export default function OwnLocations() {
                     ⋯
                   </button>
                   {menuId === location.id ? (
-                    <div className="absolute right-0 top-full z-20 mt-1 w-44 rounded-[12px] border border-[var(--ui-line)] bg-white p-1 shadow-[0_2px_8px_rgba(20,16,31,0.10)]">
+                    <div className="absolute right-0 top-full z-20 mt-1 w-44 rounded-[8px] border border-[var(--ui-line)] bg-white p-1 shadow-[0_2px_8px_rgba(20,16,31,0.10)]">
                       <Link
                         href={`/dashboard/benchmark/compare?main=${encodeURIComponent(`own:${location.id}`)}`}
                         onClick={() => setMenuId(null)}
@@ -202,13 +202,13 @@ export default function OwnLocations() {
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <Link
                   href={`/dashboard/locations?channel=${encodeURIComponent(location.id)}`}
-                  className={`rounded-[12px] bg-[#3D1D6E] px-3 py-1.5 text-[11px] font-bold text-white ${FOCUS}`}
+                  className={`rounded-[8px] bg-[#3D1D6E] px-3 py-1.5 text-[11px] font-bold text-white ${FOCUS}`}
                 >
                   Open
                 </Link>
                 <Link
                   href={`/dashboard/benchmark/compare?main=${encodeURIComponent(`own:${location.id}`)}`}
-                  className={`rounded-[12px] border border-[#3D1D6E]/25 px-3 py-1.5 text-[11px] font-bold text-[#3D1D6E] ${FOCUS}`}
+                  className={`rounded-[8px] border border-[#3D1D6E]/25 px-3 py-1.5 text-[11px] font-bold text-[#3D1D6E] ${FOCUS}`}
                 >
                   Compare
                 </Link>
@@ -218,7 +218,7 @@ export default function OwnLocations() {
                       type="button"
                       onClick={() => void addToHeatmap(location)}
                       disabled={busyId === location.id}
-                      className={`rounded-[12px] border border-[#3D1D6E]/25 px-3 py-1.5 text-[11px] font-bold text-[#3D1D6E] ${FOCUS}`}
+                      className={`rounded-[8px] border border-[#3D1D6E]/25 px-3 py-1.5 text-[11px] font-bold text-[#3D1D6E] ${FOCUS}`}
                     >
                       Add to heatmap
                     </button>

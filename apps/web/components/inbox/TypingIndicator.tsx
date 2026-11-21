@@ -51,7 +51,7 @@ export default function TypingIndicator({
 
   return (
     <div className="mb-2 flex justify-start" role="status" aria-live="polite">
-      <div className="flex items-center gap-2 rounded-2xl bg-ink/[0.05] px-3.5 py-2.5 text-[13px] text-ink dark:bg-fog/[0.08] dark:text-fog">
+      <div className="flex items-center gap-2 rounded-[8px] bg-ink/[0.05] px-3.5 py-2.5 text-[13px] text-ink dark:bg-fog/[0.08] dark:text-fog">
         <LogoMark />
         <Typewriter
           phrases={phrases}

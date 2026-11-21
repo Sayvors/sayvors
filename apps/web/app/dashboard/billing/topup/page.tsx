@@ -149,7 +149,7 @@ export default function TopUpPage() {
           </div>
           <Link
             href="/dashboard/plans"
-            className="rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12px] font-semibold text-ink/60 transition hover:border-deep-violet/30 hover:text-deep-violet dark:border-fog/[0.1] dark:bg-ink dark:text-fog/60"
+            className="rounded-[8px] border border-ink/[0.08] bg-white px-3 py-2 text-[12px] font-semibold text-ink/60 transition hover:border-deep-violet/30 hover:text-deep-violet dark:border-fog/[0.1] dark:bg-ink dark:text-fog/60"
           >
             {u.viewPlans}
           </Link>
@@ -158,7 +158,7 @@ export default function TopUpPage() {
         {(error || notice) && (
           <p
             role="status"
-            className={`mt-4 rounded-xl px-3.5 py-2.5 text-[12px] leading-relaxed ${
+            className={`mt-4 rounded-[8px] px-3.5 py-2.5 text-[12px] leading-relaxed ${
               error ? "bg-coral/10 text-coral" : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
             }`}
           >
@@ -168,7 +168,7 @@ export default function TopUpPage() {
 
         {/* current usage */}
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
-          <div className="rounded-2xl border border-ink/[0.07] bg-white p-4 dark:border-fog/[0.08] dark:bg-ink/60">
+          <div className="rounded-[8px] border border-ink/[0.07] bg-white p-4 dark:border-fog/[0.08] dark:bg-ink/60">
             <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40 dark:text-fog/40">{u.msgsThisMonth}</p>
             <p className="mt-1 text-[18px] font-bold tabular-nums text-ink dark:text-fog">
               {fmtNum(usedMessages, locale)}
@@ -178,7 +178,7 @@ export default function TopUpPage() {
               </span>
             </p>
           </div>
-          <div className="rounded-2xl border border-ink/[0.07] bg-white p-4 dark:border-fog/[0.08] dark:bg-ink/60">
+          <div className="rounded-[8px] border border-ink/[0.07] bg-white p-4 dark:border-fog/[0.08] dark:bg-ink/60">
             <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40 dark:text-fog/40">{u.aiBalance}</p>
             <div className="mt-1 flex items-center gap-2">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -189,7 +189,7 @@ export default function TopUpPage() {
               </p>
             </div>
           </div>
-          <div className="rounded-2xl border border-ink/[0.07] bg-white p-4 dark:border-fog/[0.08] dark:bg-ink/60">
+          <div className="rounded-[8px] border border-ink/[0.07] bg-white p-4 dark:border-fog/[0.08] dark:bg-ink/60">
             <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40 dark:text-fog/40">{u.plan}</p>
             <p className="mt-1 text-[18px] font-bold text-ink dark:text-fog">{planDisplay(planSlug) || "—"}</p>
             <p className="mt-1 text-[10.5px] leading-snug text-ink/40 dark:text-fog/40">
@@ -205,7 +205,7 @@ export default function TopUpPage() {
 
         <div className="mt-6 grid gap-4 lg:grid-cols-2">
           {/* AI credit */}
-          <section className="rounded-2xl border border-ink/[0.07] bg-white p-4 dark:border-fog/[0.08] dark:bg-ink/60">
+          <section className="rounded-[8px] border border-ink/[0.07] bg-white p-4 dark:border-fog/[0.08] dark:bg-ink/60">
             <h2 className="text-[14px] font-bold text-ink dark:text-fog">{u.creditTitle}</h2>
             <p className="mt-1 text-[12px] leading-relaxed text-ink/50 dark:text-fog/50">
               {u.creditDesc}
@@ -216,7 +216,7 @@ export default function TopUpPage() {
                   key={cents}
                   type="button"
                   onClick={() => { setCreditPack(cents); setCreditCustom(""); }}
-                  className={`rounded-xl px-3 py-2 text-[12px] font-semibold transition ${
+                  className={`rounded-[8px] px-3 py-2 text-[12px] font-semibold transition ${
                     creditPack === cents && !creditCustom
                       ? "bg-deep-violet text-white"
                       : "border border-ink/[0.08] bg-white text-ink/60 hover:border-deep-violet/40 hover:text-deep-violet dark:border-fog/[0.1] dark:bg-ink dark:text-fog/60"
@@ -231,7 +231,7 @@ export default function TopUpPage() {
                 inputMode="decimal"
                 placeholder={u.customCredit}
                 aria-label={u.customCreditAria}
-                className="w-28 rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12px] text-ink outline-none focus:border-deep-violet/40 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+                className="w-28 rounded-[8px] border border-ink/[0.08] bg-white px-3 py-2 text-[12px] text-ink outline-none focus:border-deep-violet/40 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
               />
             </div>
             <button
@@ -241,7 +241,7 @@ export default function TopUpPage() {
                 void submit("ai_credit", custom ? Math.round(custom * 100) : creditPack);
               }}
               disabled={busy !== null}
-              className="mt-3 w-full rounded-xl bg-deep-violet px-3 py-2.5 text-[12.5px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-50"
+              className="mt-3 w-full rounded-[8px] bg-deep-violet px-3 py-2.5 text-[12.5px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-50"
             >
               {busy === "ai_credit"
                 ? u.sending
@@ -250,7 +250,7 @@ export default function TopUpPage() {
           </section>
 
           {/* channels */}
-          <section className="rounded-2xl border border-ink/[0.07] bg-white p-4 dark:border-fog/[0.08] dark:bg-ink/60">
+          <section className="rounded-[8px] border border-ink/[0.07] bg-white p-4 dark:border-fog/[0.08] dark:bg-ink/60">
             <h2 className="text-[14px] font-bold text-ink dark:text-fog">{u.channelsTitle}</h2>
             <p className="mt-1 text-[12px] leading-relaxed text-ink/50 dark:text-fog/50">
               {u.channelsDesc}
@@ -261,7 +261,7 @@ export default function TopUpPage() {
                   key={pack}
                   type="button"
                   onClick={() => { setChannelPack(pack); setChannelCustom(""); }}
-                  className={`rounded-xl px-3 py-2 text-[12px] font-semibold transition ${
+                  className={`rounded-[8px] px-3 py-2 text-[12px] font-semibold transition ${
                     channelPack === pack && !channelCustom
                       ? "bg-deep-violet text-white"
                       : "border border-ink/[0.08] bg-white text-ink/60 hover:border-deep-violet/40 hover:text-deep-violet dark:border-fog/[0.1] dark:bg-ink dark:text-fog/60"
@@ -276,14 +276,14 @@ export default function TopUpPage() {
                 inputMode="numeric"
                 placeholder={u.custom}
                 aria-label={u.customChannelAria}
-                className="w-28 rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12px] text-ink outline-none focus:border-deep-violet/40 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+                className="w-28 rounded-[8px] border border-ink/[0.08] bg-white px-3 py-2 text-[12px] text-ink outline-none focus:border-deep-violet/40 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
               />
             </div>
             <button
               type="button"
               onClick={() => void submit("channels", parseCustom(channelCustom) ?? channelPack)}
               disabled={busy !== null}
-              className="mt-3 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2.5 text-[12.5px] font-bold text-ink/70 transition hover:border-deep-violet/40 hover:text-deep-violet disabled:opacity-50 dark:border-fog/[0.12] dark:bg-ink dark:text-fog/70"
+              className="mt-3 w-full rounded-[8px] border border-ink/[0.1] bg-white px-3 py-2.5 text-[12.5px] font-bold text-ink/70 transition hover:border-deep-violet/40 hover:text-deep-violet disabled:opacity-50 dark:border-fog/[0.12] dark:bg-ink dark:text-fog/70"
             >
               {busy === "channels"
                 ? u.sending
@@ -292,7 +292,7 @@ export default function TopUpPage() {
           </section>
 
           {/* enterprise */}
-          <section className="rounded-2xl border border-ink/[0.07] bg-white p-4 dark:border-fog/[0.08] dark:bg-ink/60">
+          <section className="rounded-[8px] border border-ink/[0.07] bg-white p-4 dark:border-fog/[0.08] dark:bg-ink/60">
             <h2 className="text-[14px] font-bold text-ink dark:text-fog">{u.entTitle}</h2>
             <p className="mt-1 text-[12px] leading-relaxed text-ink/50 dark:text-fog/50">
               {u.entDesc}
@@ -302,7 +302,7 @@ export default function TopUpPage() {
               type="button"
               onClick={() => void submit("plan", null, "enterprise")}
               disabled={busy !== null || planSlug === "enterprise"}
-              className="mt-3 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2.5 text-[12.5px] font-bold text-ink/70 transition hover:border-deep-violet/40 hover:text-deep-violet disabled:opacity-50 dark:border-fog/[0.12] dark:bg-ink dark:text-fog/70"
+              className="mt-3 w-full rounded-[8px] border border-ink/[0.1] bg-white px-3 py-2.5 text-[12.5px] font-bold text-ink/70 transition hover:border-deep-violet/40 hover:text-deep-violet disabled:opacity-50 dark:border-fog/[0.12] dark:bg-ink dark:text-fog/70"
             >
               {busy === "plan" ? u.sending : planSlug === "enterprise" ? u.currentPlan : u.requestEnt}
             </button>
@@ -310,7 +310,7 @@ export default function TopUpPage() {
         </div>
 
         {/* note + history */}
-        <section className="mt-6 rounded-2xl border border-ink/[0.07] bg-white p-4 dark:border-fog/[0.08] dark:bg-ink/60">
+        <section className="mt-6 rounded-[8px] border border-ink/[0.07] bg-white p-4 dark:border-fog/[0.08] dark:bg-ink/60">
           <label className="block text-[11px] font-bold uppercase tracking-[0.12em] text-ink/45 dark:text-fog/45">
             {u.noteLabel}
           </label>
@@ -320,7 +320,7 @@ export default function TopUpPage() {
             maxLength={500}
             rows={2}
             placeholder={u.notePh}
-            className="mt-1.5 w-full resize-none rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12.5px] text-ink outline-none focus:border-deep-violet/40 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+            className="mt-1.5 w-full resize-none rounded-[8px] border border-ink/[0.08] bg-white px-3 py-2 text-[12.5px] text-ink outline-none focus:border-deep-violet/40 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
           />
         </section>
 
@@ -329,7 +329,7 @@ export default function TopUpPage() {
           {requests.isLoading ? (
             <p className="mt-2 text-[12px] text-ink/40 dark:text-fog/40">{u.historyLoading}</p>
           ) : (requests.data ?? []).length === 0 ? (
-            <p className="mt-2 rounded-2xl border border-dashed border-ink/[0.1] p-5 text-center text-[12px] text-ink/45 dark:border-fog/[0.12] dark:text-fog/45">
+            <p className="mt-2 rounded-[8px] border border-dashed border-ink/[0.1] p-5 text-center text-[12px] text-ink/45 dark:border-fog/[0.12] dark:text-fog/45">
               {u.historyEmpty}
             </p>
           ) : (
@@ -337,7 +337,7 @@ export default function TopUpPage() {
               {(requests.data ?? []).map((request) => (
                 <li
                   key={request.id}
-                  className="flex flex-wrap items-center gap-2 rounded-xl border border-ink/[0.07] bg-white px-3.5 py-2.5 text-[12px] dark:border-fog/[0.08] dark:bg-ink/60"
+                  className="flex flex-wrap items-center gap-2 rounded-[8px] border border-ink/[0.07] bg-white px-3.5 py-2.5 text-[12px] dark:border-fog/[0.08] dark:bg-ink/60"
                 >
                   <span className="font-semibold text-ink dark:text-fog">{(u.kinds as Record<string, string>)[request.kind] ?? request.kind}</span>
                   <span className="text-ink/55 dark:text-fog/55">{requestSummary(request, u.kinds, planDisplay, locale)}</span>

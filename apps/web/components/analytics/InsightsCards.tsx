@@ -13,7 +13,7 @@ function Trend({ value }: { value: number | null }) {
   const up = value > 0;
   return (
     <span
-      className={`inline-flex items-center gap-0.5 rounded-[2px] px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${
+      className={`inline-flex items-center gap-0.5 rounded-[8px] px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${
         up
           ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
           : "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
@@ -283,7 +283,7 @@ export default function InsightsCardsSection({
                     key={index}
                     className="flex items-start gap-2 text-[12px] text-[var(--ui-ink)]"
                   >
-                    <span className="mt-0.5 shrink-0 rounded-[2px] bg-[var(--ui-sunken)] px-1.5 py-0.5 text-[9px] font-bold tabular-nums text-[var(--ui-ink)]">
+                    <span className="mt-0.5 shrink-0 rounded-[8px] bg-[var(--ui-sunken)] px-1.5 py-0.5 text-[9px] font-bold tabular-nums text-[var(--ui-ink)]">
                       n={bullet.n}
                     </span>
                     <span>{bullet.text}</span>
@@ -320,7 +320,7 @@ export default function InsightsCardsSection({
             </div>
             <Link
               href="/dashboard/reviews/issues"
-              className="ui-btn shrink-0 rounded-[2px] bg-[var(--ui-ink)] px-2.5 py-1.5 text-[10px] font-bold text-[var(--ui-on-ink)]"
+              className="ui-btn shrink-0 rounded-[8px] bg-[var(--ui-ink)] px-2.5 py-1.5 text-[10px] font-bold text-[var(--ui-on-ink)]"
             >
               All issues
             </Link>
@@ -332,7 +332,7 @@ export default function InsightsCardsSection({
                 className="flex flex-wrap items-center gap-2 py-2.5 first:pt-0 last:pb-0"
               >
                 <span
-                  className={`shrink-0 rounded-[2px] px-1.5 py-0.5 text-[9px] font-bold uppercase ${
+                  className={`shrink-0 rounded-[8px] px-1.5 py-0.5 text-[9px] font-bold uppercase ${
                     action.status === "in_progress"
                       ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
                       : "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"

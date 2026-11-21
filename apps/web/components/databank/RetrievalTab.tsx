@@ -79,14 +79,14 @@ export default function RetrievalTab({ databankId }: { databankId: string }) {
               : "Gemini reasons over 6 tools (docs + live databases) and answers with citations."}
           </p>
         </div>
-        <div className="flex rounded-xl bg-ink/[0.04] p-0.5" role="tablist" aria-label="Retrieval mode">
+        <div className="flex rounded-[8px] bg-ink/[0.04] p-0.5" role="tablist" aria-label="Retrieval mode">
           {(["search", "ask"] as const).map((m) => (
             <button
               key={m}
               role="tab"
               aria-selected={mode === m}
               onClick={() => setMode(m)}
-              className={`rounded-[10px] px-3 py-1.5 text-[12px] font-bold transition ${
+              className={`rounded-[8px] px-3 py-1.5 text-[12px] font-bold transition ${
                 mode === m ? "bg-white text-deep-violet shadow-sm" : "text-ink/45 hover:text-ink/70"
               }`}
             >
@@ -104,7 +104,7 @@ export default function RetrievalTab({ databankId }: { databankId: string }) {
             if (e.key === "Enter") handleSearch();
           }}
           placeholder="e.g. How do I reset my password?"
-          className="flex-1 rounded-xl border-2 border-white bg-ink/[0.03] px-4 py-2.5 text-[13px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/40"
+          className="flex-1 rounded-[8px] border-2 border-white bg-ink/[0.03] px-4 py-2.5 text-[13px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/40"
         />
         <div className="flex items-center gap-2">
           {mode === "search" && (
@@ -126,7 +126,7 @@ export default function RetrievalTab({ databankId }: { databankId: string }) {
           <button
             onClick={handleSearch}
             disabled={searching || asking || !query.trim()}
-            className="flex items-center gap-2 rounded-xl bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white shadow-md transition hover:bg-deep-violet/90 disabled:opacity-40"
+            className="flex items-center gap-2 rounded-[8px] bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white shadow-md transition hover:bg-deep-violet/90 disabled:opacity-40"
           >
             {(searching || asking) && <LogoLoader size={14} />}
             {mode === "search" ? "Search" : "Ask"}
@@ -159,14 +159,14 @@ export default function RetrievalTab({ databankId }: { databankId: string }) {
             {elapsed !== null ? ` in ${elapsed}ms` : ""}
           </p>
           {hits.length === 0 ? (
-            <div className="rounded-xl bg-ink/[0.02] px-4 py-8 text-center">
+            <div className="rounded-[8px] bg-ink/[0.02] px-4 py-8 text-center">
               <p className="text-[13px] font-semibold text-ink/40">No relevant chunks found</p>
               <p className="mt-1 text-[11px] text-ink/30">Try different wording, or process more documents first.</p>
             </div>
           ) : (
             <ol className="space-y-2">
               {hits.map((h, i) => (
-                <li key={`${h.document_id}-${i}`} className="rounded-xl border-2 border-white bg-white/60 p-3.5">
+                <li key={`${h.document_id}-${i}`} className="rounded-[8px] border-2 border-white bg-white/60 p-3.5">
                   <div className="mb-1.5 flex flex-wrap items-center gap-2">
                     <span className="flex h-5 w-5 items-center justify-center rounded-full bg-deep-violet text-[10px] font-bold text-white">
                       {i + 1}
@@ -226,7 +226,7 @@ function AskPanel({
 
       {result && !asking && (
         <div className="space-y-3">
-          <div className="rounded-xl border-2 border-deep-violet/15 bg-white/70 p-4">
+          <div className="rounded-[8px] border-2 border-deep-violet/15 bg-white/70 p-4">
             <p className="whitespace-pre-line text-[13px] leading-relaxed text-ink">{result.answer}</p>
             <p className="mt-2 text-[10px] text-ink/35">
               {result.model} · {result.steps_used} step{result.steps_used === 1 ? "" : "s"}

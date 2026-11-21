@@ -123,16 +123,16 @@ export default function QRCodeGenerator() {
 
   if (loading) {
     return (
-      <section aria-label={r.sectionAria} className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+      <section aria-label={r.sectionAria} className="rounded-[8px] border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
         <div className="h-3 w-32 animate-pulse rounded bg-ink/[0.07]" />
-        <div className="mt-3 h-64 animate-pulse rounded-xl bg-ink/[0.05]" />
+        <div className="mt-3 h-64 animate-pulse rounded-[8px] bg-ink/[0.05]" />
       </section>
     );
   }
 
   if (error) {
     return (
-      <section aria-label={r.sectionAria} className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+      <section aria-label={r.sectionAria} className="rounded-[8px] border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
         <p className="text-[12px] font-medium text-coral">{error}</p>
       </section>
     );
@@ -140,9 +140,9 @@ export default function QRCodeGenerator() {
 
   if (profiles.length === 0) {
     return (
-      <section aria-label={r.sectionAria} className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+      <section aria-label={r.sectionAria} className="rounded-[8px] border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
         <div className="flex items-center gap-2">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-deep-violet to-magenta text-white shadow-sm">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-gradient-to-br from-deep-violet to-magenta text-white shadow-sm">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
               <rect x="3" y="3" width="7" height="7" rx="1" />
               <rect x="14" y="3" width="7" height="7" rx="1" />
@@ -161,9 +161,9 @@ export default function QRCodeGenerator() {
   }
 
   return (
-    <section aria-label={r.sectionAria} className="rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm sm:p-5">
+    <section aria-label={r.sectionAria} className="rounded-[8px] border-2 border-white bg-white/80 p-4 backdrop-blur-sm sm:p-5">
       <div className="flex items-center gap-2">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-deep-violet to-magenta text-white shadow-sm">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-gradient-to-br from-deep-violet to-magenta text-white shadow-sm">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
             <rect x="3" y="3" width="7" height="7" rx="1" />
             <rect x="14" y="3" width="7" height="7" rx="1" />
@@ -198,7 +198,7 @@ export default function QRCodeGenerator() {
           </div>
 
           {selected && (
-            <div className="min-w-0 rounded-xl border border-ink/[0.06] bg-ink/[0.02] p-3">
+            <div className="min-w-0 rounded-[8px] border border-ink/[0.06] bg-ink/[0.02] p-3">
               <div className="flex items-center gap-2">
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-deep-violet/10 text-deep-violet">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
@@ -228,7 +228,7 @@ export default function QRCodeGenerator() {
           <button
             onClick={handleDownload}
             disabled={!selected || downloading}
-            className="w-full rounded-xl bg-deep-violet px-3 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.99] disabled:opacity-50"
+            className="w-full rounded-[8px] bg-deep-violet px-3 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.99] disabled:opacity-50"
           >
             {downloading ? r.generating : r.download}
           </button>
@@ -238,7 +238,7 @@ export default function QRCodeGenerator() {
           <div className="order-1 flex flex-col items-center gap-2 sm:order-2">
             <div
               ref={qrRef}
-              className="w-fit rounded-2xl border-2 border-ink/[0.06] bg-white p-3 shadow-sm sm:p-4"
+              className="w-fit rounded-[8px] border-2 border-ink/[0.06] bg-white p-3 shadow-sm sm:p-4"
             >
               <QRCodeSVG
                 value={getReviewUrl(selected)}

@@ -190,7 +190,7 @@ export default function GlanceStrip() {
       {/* Messages card. Distinguishes "connected, nothing received yet" from
           "not connected" — a bare 0 next to a channel icon reads as the second
           when it is usually the first. */}
-      <div className="rounded-[2px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-[#1d1636]">
+      <div className="rounded-[8px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-[#1d1636]">
         <div className="flex items-center justify-between">
           <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">Messages</p>
           <Image src="/meta.png" alt="Meta" width={32} height={32} />
@@ -201,7 +201,7 @@ export default function GlanceStrip() {
             const linked = channels.filter((c) => c.platform === key);
             const count = platformMsgs[key] ?? 0;
             return (
-              <div key={key} className={`rounded-[2px] border ${linked.length ? `${border} ${bg}` : "border-ink/[0.06] dark:border-fog/[0.06]"} px-2.5 py-1.5`}>
+              <div key={key} className={`rounded-[8px] border ${linked.length ? `${border} ${bg}` : "border-ink/[0.06] dark:border-fog/[0.06]"} px-2.5 py-1.5`}>
                 <div className="flex items-center gap-2">
                   <span className={linked.length ? text : "opacity-40"}><PlatformIcon name={key} /></span>
                   <span className="flex-1 text-[12px] font-medium text-ink/70 dark:text-fog/70">{label}</span>
@@ -225,7 +225,7 @@ export default function GlanceStrip() {
           from inbound messages, so a zero with no messages is an explanation,
           not a failure. */}
       <Link href="/dashboard/leads" aria-label="Open leads">
-        <div className="h-full rounded-[2px] border border-ink/[0.06] bg-white p-4 transition hover:border-deep-violet/30 dark:border-fog/[0.06] dark:bg-[#1d1636] dark:hover:border-violet-soft/30">
+        <div className="h-full rounded-[8px] border border-ink/[0.06] bg-white p-4 transition hover:border-deep-violet/30 dark:border-fog/[0.06] dark:bg-[#1d1636] dark:hover:border-violet-soft/30">
           <div className="flex items-center justify-between">
             <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">Leads</p>
             <Image src="/leads.png" alt="Leads" width={32} height={32} />
@@ -259,7 +259,7 @@ export default function GlanceStrip() {
       </Link>
 
       <Link href="/dashboard/reviews" aria-label="Open reviews">
-        <div className="h-full rounded-[2px] border border-ink/[0.06] bg-white p-4 transition hover:border-deep-violet/30 dark:border-fog/[0.06] dark:bg-[#1d1636] dark:hover:border-violet-soft/30">
+        <div className="h-full rounded-[8px] border border-ink/[0.06] bg-white p-4 transition hover:border-deep-violet/30 dark:border-fog/[0.06] dark:bg-[#1d1636] dark:hover:border-violet-soft/30">
           <div className="flex items-center justify-between">
             <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">Reviews</p>
             <Image src="/google-review.png" alt="Google Reviews" width={32} height={32} />
@@ -267,7 +267,7 @@ export default function GlanceStrip() {
           <p className="mt-1 text-[22px] font-bold text-ink dark:text-fog">{totalReviews ?? "-"}</p>
           <div className="mt-3 space-y-2">
             {biz.slice(0, 4).map((b) => (
-              <div key={b.id} className="flex items-center gap-2 rounded-[2px] border border-amber-500/20 bg-amber-500/10 px-2.5 py-1.5">
+              <div key={b.id} className="flex items-center gap-2 rounded-[8px] border border-amber-500/20 bg-amber-500/10 px-2.5 py-1.5">
                 <span className="text-amber-400">
                   <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
                     <path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 16.8l-6.2 4.5 2.4-7.4L2 9.4h7.6z" />
@@ -281,7 +281,7 @@ export default function GlanceStrip() {
         </div>
       </Link>
 
-      <div className="rounded-[2px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-[#1d1636]">
+      <div className="rounded-[8px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-[#1d1636]">
         <div className="flex items-center justify-between">
           <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">Avg rating</p>
           <Image src="/google-business.png" alt="Google Business" width={32} height={32} />
@@ -289,7 +289,7 @@ export default function GlanceStrip() {
         <p className="mt-1 text-[22px] font-bold text-amber-500">{avgRating != null ? avgRating.toFixed(1) : "-"}</p>
         <div className="mt-3 space-y-2">
           {biz.slice(0, 4).map((b) => (
-            <div key={b.id} className="flex items-center gap-2 rounded-[2px] border border-amber-500/20 bg-amber-500/10 px-2.5 py-1.5">
+            <div key={b.id} className="flex items-center gap-2 rounded-[8px] border border-amber-500/20 bg-amber-500/10 px-2.5 py-1.5">
               <span className="text-amber-400">
                 <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
                   <path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 16.8l-6.2 4.5 2.4-7.4L2 9.4h7.6z" />
@@ -304,7 +304,7 @@ export default function GlanceStrip() {
 
       {/* Posts card — everything in one view */}
       <Link href="/dashboard/posts-media" aria-label="Open posts and media">
-        <div className="h-full rounded-[2px] border border-ink/[0.06] bg-white p-4 transition hover:border-deep-violet/30 dark:border-fog/[0.06] dark:bg-[#1d1636] dark:hover:border-violet-soft/30">
+        <div className="h-full rounded-[8px] border border-ink/[0.06] bg-white p-4 transition hover:border-deep-violet/30 dark:border-fog/[0.06] dark:bg-[#1d1636] dark:hover:border-violet-soft/30">
           <div className="flex items-center justify-between">
             <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">Posts</p>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-5 w-5 text-deep-violet/70 dark:text-violet-soft/70" aria-hidden>

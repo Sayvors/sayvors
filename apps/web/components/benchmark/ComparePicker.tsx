@@ -173,7 +173,7 @@ function SidePicker({
         aria-expanded={open}
         aria-haspopup="true"
         onClick={() => setOpen((value) => !value)}
-        className={`mt-1 flex h-11 w-full items-center justify-between gap-2 rounded-[12px] border bg-white px-3 text-left text-[12px] font-semibold ${FOCUS} ${
+        className={`mt-1 flex h-11 w-full items-center justify-between gap-2 rounded-[8px] border bg-white px-3 text-left text-[12px] font-semibold ${FOCUS} ${
           selected.length ? "border-[#3D1D6E]/30 text-[#14101F]" : "border-[var(--ui-line)] text-[#8A8496]"
         }`}
       >
@@ -195,7 +195,7 @@ function SidePicker({
                 type="button"
                 aria-label={`Remove ${labelOf(options, key)}`}
                 onClick={() => onToggle(key)}
-                className={`rounded-[4px] px-0.5 leading-none text-[#3B2D5E] hover:bg-white ${FOCUS}`}
+                className={`rounded-[8px] px-0.5 leading-none text-[#3B2D5E] hover:bg-white ${FOCUS}`}
               >
                 ×
               </button>
@@ -205,7 +205,7 @@ function SidePicker({
       ) : null}
 
       {open ? (
-        <div className="absolute left-0 right-0 top-full z-30 mt-1.5 max-h-[300px] overflow-y-auto rounded-[12px] border border-[var(--ui-line)] bg-white p-1.5 shadow-[0_6px_20px_rgba(20,16,31,0.14)]">
+        <div className="absolute left-0 right-0 top-full z-30 mt-1.5 max-h-[300px] overflow-y-auto rounded-[8px] border border-[var(--ui-line)] bg-white p-1.5 shadow-[0_6px_20px_rgba(20,16,31,0.14)]">
           {options.length === 0 ? (
             <p className="px-2 py-3 text-[11px] text-[#3B2D5E]">
               Save a business or connect a Google location first.

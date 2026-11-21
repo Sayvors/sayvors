@@ -62,12 +62,12 @@ function severityStyle(severity: string): string {
 
 function DeltaChip({ value, suffix = "" }: { value: number | null; suffix?: string }) {
   if (value === null || value === undefined) {
-    return <span className="rounded-[2px] bg-[var(--ui-sunken)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--ui-ink-2)]">no prior data</span>;
+    return <span className="rounded-[8px] bg-[var(--ui-sunken)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--ui-ink-2)]">no prior data</span>;
   }
   const up = value > 0;
   const flat = value === 0;
   return (
-    <span className={`inline-flex items-center gap-0.5 rounded-[2px] px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${flat ? "bg-[var(--ui-sunken)] text-[var(--ui-ink-2)]" : up ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]" : "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"}`}>
+    <span className={`inline-flex items-center gap-0.5 rounded-[8px] px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${flat ? "bg-[var(--ui-sunken)] text-[var(--ui-ink-2)]" : up ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]" : "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"}`}>
       {!flat && (
         <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" className={`h-2.5 w-2.5 ${up ? "" : "rotate-180"}`} aria-hidden>
           <path d="M6 10V2M2.5 5.5L6 2l3.5 3.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -91,10 +91,10 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
 function CardSkeleton() {
   return (
     <div className="ui-card p-5" aria-hidden>
-      <div className="h-3 w-28 animate-pulse rounded-[2px] bg-[var(--ui-sunken)]" />
-      <div className="mt-3 h-8 w-20 animate-pulse rounded-[2px] bg-[var(--ui-sunken)]" />
+      <div className="h-3 w-28 animate-pulse rounded-[8px] bg-[var(--ui-sunken)]" />
+      <div className="mt-3 h-8 w-20 animate-pulse rounded-[8px] bg-[var(--ui-sunken)]" />
       <div className="mt-4 grid grid-cols-3 gap-3">
-        {[0, 1, 2].map((i) => <div key={i} className="h-10 animate-pulse rounded-[2px] bg-[var(--ui-sunken)]" />)}
+        {[0, 1, 2].map((i) => <div key={i} className="h-10 animate-pulse rounded-[8px] bg-[var(--ui-sunken)]" />)}
       </div>
     </div>
   );
@@ -163,7 +163,7 @@ export default function PulseCards({
           {rep.awaiting_reply > 0 && (
             <Link
               href="/dashboard/reviews?status=unanswered"
-              className="ui-btn shrink-0 rounded-[2px] bg-[var(--ui-ink)] px-2.5 py-1.5 text-[10px] font-bold text-[var(--ui-on-ink)]"
+              className="ui-btn shrink-0 rounded-[8px] bg-[var(--ui-ink)] px-2.5 py-1.5 text-[10px] font-bold text-[var(--ui-on-ink)]"
             >
               Reply to {rep.awaiting_reply}
             </Link>
@@ -211,7 +211,7 @@ export default function PulseCards({
           </div>
           <Link
             href="/dashboard/channels/inbox"
-            className="ui-btn shrink-0 rounded-[2px] bg-[var(--ui-ink)] px-2.5 py-1.5 text-[10px] font-bold text-[var(--ui-on-ink)]"
+            className="ui-btn shrink-0 rounded-[8px] bg-[var(--ui-ink)] px-2.5 py-1.5 text-[10px] font-bold text-[var(--ui-on-ink)]"
           >
             Open inbox
           </Link>
@@ -260,7 +260,7 @@ export default function PulseCards({
             </div>
             <Link
               href="/dashboard/analytics?tab=insights"
-              className="ui-btn shrink-0 rounded-[2px] bg-[var(--ui-ink)] px-2.5 py-1.5 text-[10px] font-bold text-[var(--ui-on-ink)]"
+              className="ui-btn shrink-0 rounded-[8px] bg-[var(--ui-ink)] px-2.5 py-1.5 text-[10px] font-bold text-[var(--ui-on-ink)]"
             >
               View insights
             </Link>
@@ -272,7 +272,7 @@ export default function PulseCards({
               {locations.slice(0, 6).map((loc) => (
                 <li key={loc.channel_id} className="flex flex-wrap items-center gap-2 py-2.5 first:pt-0 last:pb-0">
                   <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-[var(--ui-ink)]">{loc.name}</span>
-                  <span className={`shrink-0 rounded-[2px] px-1.5 py-0.5 text-[11px] font-bold tabular-nums ${loc.below_threshold ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]" : "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"}`}>
+                  <span className={`shrink-0 rounded-[8px] px-1.5 py-0.5 text-[11px] font-bold tabular-nums ${loc.below_threshold ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]" : "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"}`}>
                     {loc.avg_rating !== null ? loc.avg_rating.toFixed(1) : "-"}&#9733;
                   </span>
                   <span className="w-16 shrink-0 text-right text-[11px] tabular-nums text-[var(--ui-ink-2)]">{loc.new_reviews} new</span>
@@ -345,7 +345,7 @@ export default function PulseCards({
             <p className="text-[11px] text-[var(--ui-ink-2)]">Prioritized by revenue at risk, then age.</p>
           </div>
           {attention.length === 0 && (
-            <span className="rounded-[2px] bg-[var(--ui-sunken)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">
+            <span className="rounded-[8px] bg-[var(--ui-sunken)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">
               All clear
             </span>
           )}
@@ -354,7 +354,7 @@ export default function PulseCards({
           <ul className="mt-3 divide-y divide-[var(--ui-line)]">
             {attention.map((item, i) => (
               <li key={`${item.kind}-${i}`} className="flex items-center gap-2 py-2.5 first:pt-0 last:pb-0">
-                <span className={`shrink-0 rounded-[2px] px-1.5 py-0.5 text-[9px] font-bold uppercase ${severityStyle(item.severity)}`}>
+                <span className={`shrink-0 rounded-[8px] px-1.5 py-0.5 text-[9px] font-bold uppercase ${severityStyle(item.severity)}`}>
                   {item.severity}
                 </span>
                 <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-[var(--ui-ink)]">{item.title}</span>

@@ -447,7 +447,7 @@ export default function NewLocationPage() {
         <Link href="/dashboard/locations" className="text-[12px] font-semibold text-ink/50 hover:text-ink dark:text-fog/50 dark:hover:text-fog">
           ← Locations
         </Link>
-        <div className="mt-5 rounded-2xl border border-ink/[0.06] bg-white p-6 shadow-sm dark:border-fog/[0.08] dark:bg-ink">
+        <div className="mt-5 rounded-[8px] border border-ink/[0.06] bg-white p-6 shadow-sm dark:border-fog/[0.08] dark:bg-ink">
           <h1 className="text-[22px] font-bold text-ink dark:text-fog">
             Connect Google Business Profile first
           </h1>
@@ -527,7 +527,7 @@ export default function NewLocationPage() {
             })}
           </ol>
 
-          <div className="mt-6 rounded-xl border border-ink/[0.06] bg-white p-3 text-[11px] leading-relaxed text-ink/50 dark:border-fog/[0.08] dark:bg-ink dark:text-fog/50">
+          <div className="mt-6 rounded-[8px] border border-ink/[0.06] bg-white p-3 text-[11px] leading-relaxed text-ink/50 dark:border-fog/[0.08] dark:bg-ink dark:text-fog/50">
             <p className="font-bold text-ink/65 dark:text-fog/65">What happens next</p>
             <p className="mt-1">
               Sayvors checks Google for duplicates, creates the location, then hands you to Google
@@ -537,7 +537,7 @@ export default function NewLocationPage() {
         </aside>
 
         <main className="min-w-0">
-          <div className="rounded-2xl border border-ink/[0.06] bg-white p-5 shadow-sm sm:p-7 dark:border-fog/[0.08] dark:bg-ink">
+          <div className="rounded-[8px] border border-ink/[0.06] bg-white p-5 shadow-sm sm:p-7 dark:border-fog/[0.08] dark:bg-ink">
             <div className="mb-5 flex items-start justify-between gap-3">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-deep-violet">
@@ -553,7 +553,7 @@ export default function NewLocationPage() {
             </div>
 
             {errors.length > 0 && (
-              <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-[12px] text-red-700 dark:border-red-500/25 dark:bg-red-500/10 dark:text-red-200">
+              <p role="alert" className="mb-4 rounded-[8px] border border-red-200 bg-red-50 p-3 text-[12px] text-red-700 dark:border-red-500/25 dark:bg-red-500/10 dark:text-red-200">
                 Please fix: {errors.join("; ")}.
               </p>
             )}
@@ -577,7 +577,7 @@ export default function NewLocationPage() {
                   </Field>
 
                   {(matchLoading || matches.length > 0 || matchError) && (
-                    <div className="mt-1.5 overflow-hidden rounded-xl border border-ink/[0.08] bg-white shadow-lg dark:border-fog/[0.08] dark:bg-ink">
+                    <div className="mt-1.5 overflow-hidden rounded-[8px] border border-ink/[0.08] bg-white shadow-lg dark:border-fog/[0.08] dark:bg-ink">
                       <button
                         type="button"
                         onClick={() => {
@@ -694,7 +694,7 @@ export default function NewLocationPage() {
                     type="button"
                     aria-pressed={draft.hasStorefront === option.value}
                     onClick={() => update({ hasStorefront: option.value })}
-                    className={`flex w-full items-start gap-3 rounded-xl border p-3.5 text-left transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 ${
+                    className={`flex w-full items-start gap-3 rounded-[8px] border p-3.5 text-left transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 ${
                       draft.hasStorefront === option.value
                         ? "border-deep-violet bg-deep-violet/[0.04] dark:border-deep-violet/50 dark:bg-deep-violet/10"
                         : "border-ink/[0.08] hover:bg-ink/[0.02] dark:border-fog/[0.08] dark:hover:bg-fog/[0.03]"
@@ -814,13 +814,13 @@ export default function NewLocationPage() {
                     </div>
                   </>
                 ) : (
-                  <div className="rounded-xl border border-deep-violet/15 bg-deep-violet/[0.03] p-3.5 text-[12px] leading-relaxed text-ink/60 dark:border-deep-violet/25 dark:bg-deep-violet/10 dark:text-fog/60">
+                  <div className="rounded-[8px] border border-deep-violet/15 bg-deep-violet/[0.03] p-3.5 text-[12px] leading-relaxed text-ink/60 dark:border-deep-violet/25 dark:bg-deep-violet/10 dark:text-fog/60">
                     Google will not show a street address for this business. Add the cities,
                     districts or postal codes you serve.
                   </div>
                 )}
 
-                <div className="rounded-xl border border-ink/[0.06] p-3.5 dark:border-fog/[0.08]">
+                <div className="rounded-[8px] border border-ink/[0.06] p-3.5 dark:border-fog/[0.08]">
                   <label className="flex items-start gap-2.5">
                     <input
                       type="checkbox"
@@ -945,7 +945,7 @@ export default function NewLocationPage() {
 
             {step === 4 && (
               <div className="space-y-5">
-                <dl className="grid gap-2 rounded-xl border border-ink/[0.06] bg-ink/[0.02] p-4 text-[12px] dark:border-fog/[0.08] dark:bg-fog/[0.03] sm:grid-cols-2">
+                <dl className="grid gap-2 rounded-[8px] border border-ink/[0.06] bg-ink/[0.02] p-4 text-[12px] dark:border-fog/[0.08] dark:bg-fog/[0.03] sm:grid-cols-2">
                   {[
                     ["Business name", draft.name || "-"],
                     ["Category", draft.category || "-"],
@@ -984,7 +984,7 @@ export default function NewLocationPage() {
                   ))}
                 </dl>
 
-                <div className="rounded-xl border border-ink/[0.06] p-3.5 dark:border-fog/[0.08]">
+                <div className="rounded-[8px] border border-ink/[0.06] p-3.5 dark:border-fog/[0.08]">
                   <p className="text-[12px] font-bold text-ink dark:text-fog">
                     Duplicate check
                   </p>
@@ -1067,7 +1067,7 @@ export default function NewLocationPage() {
                 </div>
 
                 {createError && (
-                  <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-[12px] text-red-700 dark:border-red-500/25 dark:bg-red-500/10 dark:text-red-200">
+                  <div role="alert" className="rounded-[8px] border border-red-200 bg-red-50 p-3 text-[12px] text-red-700 dark:border-red-500/25 dark:bg-red-500/10 dark:text-red-200">
                     <p>{createError}</p>
                     {/address|state|province|street|city|postal/i.test(createError) && (
                       <button
@@ -1104,7 +1104,7 @@ export default function NewLocationPage() {
 
             {step === 5 && created && (
               <div className="space-y-5">
-                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-500/25 dark:bg-emerald-500/10">
+                <div className="rounded-[8px] border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-500/25 dark:bg-emerald-500/10">
                   <p className="text-[13px] font-bold text-emerald-900 dark:text-emerald-100">
                     {created.created ? "Location created on Google" : "Location linked to Sayvors"}
                   </p>

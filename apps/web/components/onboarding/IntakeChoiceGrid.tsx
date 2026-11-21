@@ -58,7 +58,7 @@ export default function IntakeChoiceGrid({
             aria-pressed={multiple ? active : undefined}
             onClick={() => onChoose(choice.key)}
             className={[
-              "relative flex min-h-[104px] flex-col items-start justify-between gap-3 rounded-[20px] border p-4 text-start",
+              "relative flex min-h-[104px] flex-col items-start justify-between gap-3 rounded-[8px] border p-4 text-start",
               "transition-[transform,border-color,background-color,color] duration-150 ease-out",
               "hover:-translate-y-[2px] active:translate-y-[2px] active:scale-[0.98]",
               FOCUS,

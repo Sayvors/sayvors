@@ -105,7 +105,7 @@ export default function ConfirmModal({
           </button>
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-[16px] bg-[var(--ui-sunken)] px-3 py-2.5">
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-[8px] bg-[var(--ui-sunken)] px-3 py-2.5">
           {media.type && (
             <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">
               {media.type === "video" ? cf.mediaVideo : cf.mediaImage}
@@ -126,7 +126,7 @@ export default function ConfirmModal({
         </p>
         <ul className="mt-1.5 space-y-1">
           {items.map(({ target: t, methods }) => (
-            <li key={t.id} className="flex items-center gap-2.5 rounded-[16px] border border-[var(--ui-line)] px-3 py-2">
+            <li key={t.id} className="flex items-center gap-2.5 rounded-[8px] border border-[var(--ui-line)] px-3 py-2">
               <PlatformMark platform={t.platform} size={16} />
               <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--ui-ink)]">{t.name}</span>
               <span className="shrink-0 text-right text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
@@ -143,13 +143,13 @@ export default function ConfirmModal({
 
         <p aria-live="polite">
           {error && (
-            <span role="alert" className="mt-3 block rounded-[16px] border border-red-500/50 bg-red-500/10 px-3 py-2 text-[12px] font-medium text-red-700 dark:text-red-400">
+            <span role="alert" className="mt-3 block rounded-[8px] border border-red-500/50 bg-red-500/10 px-3 py-2 text-[12px] font-medium text-red-700 dark:text-red-400">
               {error}
               {onChangePhoto && (
                 <button
                   type="button"
                   onClick={onChangePhoto}
-                  className="mt-2 block rounded-[14px] bg-white px-3 py-1.5 text-[11px] font-bold text-red-700 shadow-[0_8px_16px_-10px_rgba(61,29,110,0.55)] transition duration-200 hover:bg-red-50 active:translate-y-[2px] active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] dark:bg-[var(--ui-surface)] dark:text-red-400"
+                  className="mt-2 block rounded-[8px] bg-white px-3 py-1.5 text-[11px] font-bold text-red-700 shadow-[0_8px_16px_-10px_rgba(61,29,110,0.55)] transition duration-200 hover:bg-red-50 active:translate-y-[2px] active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] dark:bg-[var(--ui-surface)] dark:text-red-400"
                 >
                   Change photo
                 </button>

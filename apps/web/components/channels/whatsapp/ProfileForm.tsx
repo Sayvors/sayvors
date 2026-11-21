@@ -178,7 +178,7 @@ export default function ProfileForm({ phoneId, businessName }: { phoneId: string
     return (
       <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_300px]">
         <div className="animate-pulse space-y-3"><div className="h-12 rounded-lg bg-[var(--wa-panel)] shadow" /><div className="h-24 rounded-lg bg-[var(--wa-panel)] shadow" /><div className="h-12 rounded-lg bg-[var(--wa-panel)] shadow" /></div>
-        <div className="h-80 animate-pulse rounded-[32px] bg-[var(--wa-panel)] shadow" />
+        <div className="h-80 animate-pulse rounded-[8px] bg-[var(--wa-panel)] shadow" />
       </div>
     );
   }

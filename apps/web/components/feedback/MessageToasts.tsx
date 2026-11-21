@@ -66,7 +66,7 @@ function MessageToast({
     <div
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
-      className={`pointer-events-auto relative overflow-hidden rounded-[14px] border border-[var(--ui-line)] bg-[var(--ui-surface)] shadow-[0_12px_28px_rgba(20,16,31,0.16),0_3px_8px_rgba(20,16,31,0.10)] ${
+      className={`pointer-events-auto relative overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] shadow-[0_12px_28px_rgba(20,16,31,0.16),0_3px_8px_rgba(20,16,31,0.10)] ${
         leaving ? "sayvors-toast-exit" : "sayvors-toast-enter"
       }`}
     >

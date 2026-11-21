@@ -48,7 +48,7 @@ function Dropdown({
       <label className="mb-2 block text-[13px] font-semibold text-ink">{label}</label>
       <button
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-3 rounded-xl border-2 border-white bg-white/80 px-4 py-3 text-left transition hover:border-deep-violet/20 hover:bg-white"
+        className="flex w-full items-center gap-3 rounded-[8px] border-2 border-white bg-white/80 px-4 py-3 text-left transition hover:border-deep-violet/20 hover:bg-white"
       >
         {selected && renderSelected(selected)}
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className={`ml-auto h-4 w-4 text-ink/30 transition-transform ${open ? "rotate-180" : ""}`}>
@@ -56,7 +56,7 @@ function Dropdown({
         </svg>
       </button>
       {open && (
-        <div className="absolute left-0 right-0 z-50 mt-2 overflow-hidden rounded-xl border-2 border-white bg-white shadow-xl">
+        <div className="absolute left-0 right-0 z-50 mt-2 overflow-hidden rounded-[8px] border-2 border-white bg-white shadow-xl">
           <div className="max-h-64 overflow-y-auto py-1">
             {options.map((opt, i) => (
               <button
@@ -88,7 +88,7 @@ function Toggle({
   disabled?: boolean;
 }) {
   return (
-    <div className="flex items-center justify-between rounded-xl border-2 border-white bg-white/80 p-4 sm:p-5">
+    <div className="flex items-center justify-between rounded-[8px] border-2 border-white bg-white/80 p-4 sm:p-5">
       <div>
         <span className="text-[14px] font-semibold text-ink">{label}</span>
         <p className="mt-0.5 text-[12px] text-ink/60">{desc}</p>
@@ -227,7 +227,7 @@ export default function ChannelSettingsPage() {
           ]}
         />
         <div className="mt-3 flex items-center gap-3 sm:gap-4">
-          <div className="flex h-11 w-11 sm:h-12 sm:w-12 items-center justify-center rounded-2xl bg-gradient-to-br shadow-md overflow-hidden" style={{ background: `linear-gradient(135deg, ${channel.color.includes("pink") ? "#E1306C" : channel.color.includes("green") ? "#25D366" : channel.color.includes("blue") ? "#1877F2" : channel.color.includes("sky") ? "#000000" : channel.color.includes("indigo") ? "#2AABEE" : "#0A66C2"}, ${channel.color.includes("pink") ? "#F77737" : channel.color.includes("green") ? "#128C7E" : channel.color.includes("blue") ? "#4267B2" : channel.color.includes("sky") ? "#000000" : channel.color.includes("indigo") ? "#229ED9" : "#0A66C2"})` }}>
+          <div className="flex h-11 w-11 sm:h-12 sm:w-12 items-center justify-center rounded-[8px] bg-gradient-to-br shadow-md overflow-hidden" style={{ background: `linear-gradient(135deg, ${channel.color.includes("pink") ? "#E1306C" : channel.color.includes("green") ? "#25D366" : channel.color.includes("blue") ? "#1877F2" : channel.color.includes("sky") ? "#000000" : channel.color.includes("indigo") ? "#2AABEE" : "#0A66C2"}, ${channel.color.includes("pink") ? "#F77737" : channel.color.includes("green") ? "#128C7E" : channel.color.includes("blue") ? "#4267B2" : channel.color.includes("sky") ? "#000000" : channel.color.includes("indigo") ? "#229ED9" : "#0A66C2"})` }}>
             <ChannelLogo channel={slug} className="h-7 w-7 sm:h-8 sm:w-8" />
           </div>
           <div>
@@ -254,7 +254,7 @@ export default function ChannelSettingsPage() {
               onSelect={setSelectedAgent}
               renderOption={(opt) => (
                 <>
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-deep-violet/10">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-deep-violet/10">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-5 w-5 text-deep-violet">
                       <rect x="3" y="11" width="18" height="10" rx="2" />
                       <circle cx="12" cy="5" r="2" />
@@ -274,7 +274,7 @@ export default function ChannelSettingsPage() {
               )}
               renderSelected={(opt) => (
                 <>
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-deep-violet/10">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-deep-violet/10">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-5 w-5 text-deep-violet">
                       <rect x="3" y="11" width="18" height="10" rx="2" />
                       <circle cx="12" cy="5" r="2" />
@@ -321,7 +321,7 @@ export default function ChannelSettingsPage() {
                         key={opt.value}
                         onClick={() => chooseResponseStyle(opt.value)}
                         disabled={styleStatus === "saving"}
-                        className={`flex w-full items-start gap-3 rounded-xl border-2 p-4 text-left transition disabled:opacity-70 ${
+                        className={`flex w-full items-start gap-3 rounded-[8px] border-2 p-4 text-left transition disabled:opacity-70 ${
                           selected
                             ? "border-deep-violet bg-white shadow-md shadow-deep-violet/10"
                             : "border-white bg-white/80 hover:border-deep-violet/20 hover:bg-white"
@@ -343,7 +343,7 @@ export default function ChannelSettingsPage() {
                   })}
                 </div>
                 {responseStyle === "human" && (
-                  <div className="mt-3 rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-3 text-[12px] leading-relaxed text-amber-800">
+                  <div className="mt-3 rounded-[8px] border border-amber-300/60 bg-amber-50 px-4 py-3 text-[12px] leading-relaxed text-amber-800">
                     ⚠️ {cs.humanWarn}
                   </div>
                 )}
@@ -371,7 +371,7 @@ export default function ChannelSettingsPage() {
           <section>
             <h2 className="mb-1 text-[15px] font-bold text-ink">{cs.connTitle}</h2>
             <p className="mb-4 text-[13px] text-ink/60">{cs.connSub}</p>
-            <div className="rounded-xl border-2 border-white bg-white/80 p-4 sm:p-5">
+            <div className="rounded-[8px] border-2 border-white bg-white/80 p-4 sm:p-5">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <span className={`h-3 w-3 rounded-full ${channel.connected ? "bg-emerald-500" : "bg-ink/20"}`} />
@@ -385,7 +385,7 @@ export default function ChannelSettingsPage() {
                   </div>
                 </div>
                 {!channel.connected && (
-                  <button className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white shadow-md shadow-deep-violet/25 transition hover:bg-deep-violet/90 active:scale-[0.98]">
+                  <button className="rounded-[8px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white shadow-md shadow-deep-violet/25 transition hover:bg-deep-violet/90 active:scale-[0.98]">
                     {cs.connectBtn}
                   </button>
                 )}
@@ -402,11 +402,11 @@ export default function ChannelSettingsPage() {
       <div className="flex items-center justify-between border-t border-deep-violet/10 bg-white px-4 sm:px-6 py-3 sm:py-4">
         <Link
           href={`/dashboard/channels/${slug}`}
-          className="rounded-xl border-2 border-ink/10 px-4 sm:px-5 py-2 sm:py-2.5 text-[12px] sm:text-[13px] font-semibold text-ink/60 transition hover:bg-ink/[0.03] hover:text-ink"
+          className="rounded-[8px] border-2 border-ink/10 px-4 sm:px-5 py-2 sm:py-2.5 text-[12px] sm:text-[13px] font-semibold text-ink/60 transition hover:bg-ink/[0.03] hover:text-ink"
         >
           Back
         </Link>
-        <button className="rounded-xl bg-deep-violet px-5 sm:px-6 py-2 sm:py-2.5 text-[12px] sm:text-[13px] font-bold text-white shadow-md shadow-deep-violet/25 transition hover:bg-deep-violet/90 hover:shadow-lg active:scale-[0.98]">
+        <button className="rounded-[8px] bg-deep-violet px-5 sm:px-6 py-2 sm:py-2.5 text-[12px] sm:text-[13px] font-bold text-white shadow-md shadow-deep-violet/25 transition hover:bg-deep-violet/90 hover:shadow-lg active:scale-[0.98]">
           Save Changes
         </button>
       </div>

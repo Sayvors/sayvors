@@ -50,7 +50,7 @@ function PostCard({ post, onOpen }: { post: FacebookPost; onOpen: () => void }) 
       <button
         type="button"
         onClick={onOpen}
-        className="ui-btn block w-full overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-surface)] text-left"
+        className="ui-btn block w-full overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] text-left"
       >
         {img && (
           <span className="block aspect-square w-full overflow-hidden bg-[var(--ui-sunken)]">
@@ -125,7 +125,7 @@ function PostModal({
       aria-label={p.modalAria}
     >
       <div
-        className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-[24px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-5"
+        className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-5"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3">
@@ -148,7 +148,7 @@ function PostModal({
             {post.images.map((src, i) => (
               <span
                 key={i}
-                className="block overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-sunken)]"
+                className="block overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)]"
               >
                 <Image
                   src={src}
@@ -290,7 +290,7 @@ function Feed({ pageId, reloadKey, onOpen }: { pageId: string; reloadKey: number
     return (
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3" aria-hidden>
         {Array.from({ length: 6 }).map((_, i) => (
-          <div key={i} className="aspect-square animate-pulse rounded-[16px] bg-[var(--ui-sunken)]" />
+          <div key={i} className="aspect-square animate-pulse rounded-[8px] bg-[var(--ui-sunken)]" />
         ))}
       </div>
     );
@@ -314,7 +314,7 @@ function Feed({ pageId, reloadKey, onOpen }: { pageId: string; reloadKey: number
             {scheduledRows.map((q) => (
               <li
                 key={q.id}
-                className="flex items-center gap-2 rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2"
+                className="flex items-center gap-2 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2"
               >
                 <span className={`max-w-[10rem] truncate text-[12px] ${INK}`}>
                   {q.message || p.noText}

@@ -104,13 +104,13 @@ function ReplyBox({
           maxLength={2200}
           aria-label={g.replyAria}
           placeholder={g.replyPh}
-          className="min-h-[38px] flex-1 resize-y rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+          className="min-h-[38px] flex-1 resize-y rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
         />
         <button
           type="button"
           onClick={() => void send()}
           disabled={busy || !draft.trim()}
-          className="rounded-[12px] bg-[var(--ui-ink)] px-3 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)] disabled:opacity-50"
+          className="rounded-[8px] bg-[var(--ui-ink)] px-3 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)] disabled:opacity-50"
         >
           {busy ? g.sending : g.reply}
         </button>
@@ -310,7 +310,7 @@ export default function CommentsTab({
     return (
       <div className="space-y-3" aria-hidden>
         {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="h-14 animate-pulse rounded-[12px] bg-[var(--ui-sunken)]" />
+          <div key={i} className="h-14 animate-pulse rounded-[8px] bg-[var(--ui-sunken)]" />
         ))}
       </div>
     );

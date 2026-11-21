@@ -33,7 +33,7 @@ export default function UserAvatar({
 
   return (
     <span
-      className={`flex shrink-0 items-center justify-center overflow-hidden rounded-[2px] bg-deep-violet font-semibold text-white ${className}`}
+      className={`flex shrink-0 items-center justify-center overflow-hidden rounded-[8px] bg-deep-violet font-semibold text-white ${className}`}
     >
       {resolved && !failed ? (
         // eslint-disable-next-line @next/next/no-img-element -- runtime provider/upload URL

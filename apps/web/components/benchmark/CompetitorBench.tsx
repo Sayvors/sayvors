@@ -81,7 +81,7 @@ export default function CompetitorBench() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="restaurant near me, hospitals in Riyadh, banks in Malaz"
-          className={`mt-2 w-full rounded-[20px] border border-[var(--ui-line)] bg-white px-4 py-3 text-[13px] text-[var(--ink)] ${FOCUS}`}
+          className={`mt-2 w-full rounded-[8px] border border-[var(--ui-line)] bg-white px-4 py-3 text-[13px] text-[var(--ink)] ${FOCUS}`}
         />
       </label>
 
@@ -92,7 +92,7 @@ export default function CompetitorBench() {
       ) : null}
 
       {results.length > 0 ? (
-        <ul className="mt-3 divide-y divide-[var(--ui-line)] rounded-[16px] border border-[var(--ui-line)] bg-white">
+        <ul className="mt-3 divide-y divide-[var(--ui-line)] rounded-[8px] border border-[var(--ui-line)] bg-white">
           {results.map((place) => (
             <li key={place.place_id} className="flex flex-wrap items-center gap-3 px-4 py-2.5">
               <div className="min-w-0 flex-1">
@@ -106,7 +106,7 @@ export default function CompetitorBench() {
                 type="button"
                 onClick={() => void save(place)}
                 disabled={busyId === place.place_id}
-                className={`rounded-[24px] bg-[var(--ink)] px-4 py-2 text-[12px] font-bold text-white disabled:opacity-50 ${FOCUS}`}
+                className={`rounded-[8px] bg-[var(--ink)] px-4 py-2 text-[12px] font-bold text-white disabled:opacity-50 ${FOCUS}`}
               >
                 Save
               </button>
@@ -137,7 +137,7 @@ export default function CompetitorBench() {
                   type="button"
                   onClick={() => void remove(place.place_id)}
                   disabled={busyId === place.place_id}
-                  className={`rounded-[24px] border border-red-400 px-3 py-1.5 text-[11px] font-bold text-red-600 disabled:opacity-50 ${FOCUS}`}
+                  className={`rounded-[8px] border border-red-400 px-3 py-1.5 text-[11px] font-bold text-red-600 disabled:opacity-50 ${FOCUS}`}
                 >
                   Remove
                 </button>

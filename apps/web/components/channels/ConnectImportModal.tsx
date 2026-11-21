@@ -382,7 +382,7 @@ export default function ConnectImportModal({
                   Google Business Profile
                 </p>
                 {session && (
-                  <span className="rounded-sm border border-ink/[0.08] bg-ink/[0.03] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-ink/45">
+                  <span className="rounded-[8px] border border-ink/[0.08] bg-ink/[0.03] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-ink/45">
                     {sessionLabel(session.status)}
                   </span>
                 )}
@@ -399,7 +399,7 @@ export default function ConnectImportModal({
             <button
               type="button"
               onClick={requestClose}
-              className="shrink-0 rounded-md border border-ink/10 bg-white px-3 py-2 text-[12px] font-bold text-ink/55 transition hover:bg-ink/[0.03] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-deep-violet"
+              className="shrink-0 rounded-[8px] border border-ink/10 bg-white px-3 py-2 text-[12px] font-bold text-ink/55 transition hover:bg-ink/[0.03] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-deep-violet"
             >
               Close
             </button>
@@ -416,9 +416,9 @@ export default function ConnectImportModal({
                 </span>
                 <span className="tabular-nums">{pct}%</span>
               </div>
-              <div className="mt-1.5 h-1.5 overflow-hidden rounded-[2px] bg-ink/[0.08]">
+              <div className="mt-1.5 h-1.5 overflow-hidden rounded-[8px] bg-ink/[0.08]">
                 <div
-                  className="h-full rounded-[2px] bg-deep-violet transition-all duration-500"
+                  className="h-full rounded-[8px] bg-deep-violet transition-all duration-500"
                   style={{ width: `${Math.max(2, pct)}%` }}
                 />
               </div>
@@ -429,12 +429,12 @@ export default function ConnectImportModal({
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-7">
           {message && (
-            <div className="mb-4 rounded-md border border-deep-violet/15 bg-ink/[0.02] px-3 py-2.5 text-[12px] text-ink/70">
+            <div className="mb-4 rounded-[8px] border border-deep-violet/15 bg-ink/[0.02] px-3 py-2.5 text-[12px] text-ink/70">
               {message}
             </div>
           )}
           {query.isError && (
-            <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2.5 text-[12px] text-rose-700">
+            <div className="rounded-[8px] border border-rose-200 bg-rose-50 px-3 py-2.5 text-[12px] text-rose-700">
               {query.error instanceof Error ? query.error.message : "Could not load the import."}
             </div>
           )}
@@ -487,7 +487,7 @@ export default function ConnectImportModal({
           ) : null}
 
           {session?.status === "completed" && !session.summary ? (
-            <div className="rounded-md border border-ink/[0.08] bg-ink/[0.025] p-5 text-[13px] text-ink/60">
+            <div className="rounded-[8px] border border-ink/[0.08] bg-ink/[0.025] p-5 text-[13px] text-ink/60">
               <p className="font-bold text-ink">Your Google import is complete</p>
               <p className="mt-1">
                 {session.progress.fetched_reviews || 0} reviews fetched ·{" "}
@@ -501,7 +501,7 @@ export default function ConnectImportModal({
           ) : null}
 
           {session?.status === "failed" && (
-            <div className="rounded-md border border-rose-200 bg-rose-50 p-5 text-[13px] text-rose-800">
+            <div className="rounded-[8px] border border-rose-200 bg-rose-50 p-5 text-[13px] text-rose-800">
               <p className="font-bold">The import stopped.</p>
               <p className="mt-1">{session.error || "Google or the AI provider returned an error."}</p>
               <p className="mt-2 text-[12px] text-rose-700/80">
@@ -517,7 +517,7 @@ export default function ConnectImportModal({
               <button
                 type="button"
                 onClick={onClose}
-                className="rounded-md border border-ink/10 bg-white px-4 py-2.5 text-[12px] font-bold text-ink/65 transition active:translate-y-[2px] active:scale-[0.98]"
+                className="rounded-[8px] border border-ink/10 bg-white px-4 py-2.5 text-[12px] font-bold text-ink/65 transition active:translate-y-[2px] active:scale-[0.98]"
               >
                 Run in background
               </button>
@@ -532,7 +532,7 @@ export default function ConnectImportModal({
                   type="button"
                   onClick={() => publish.mutate(false)}
                   disabled={!selectedDrafts || busy}
-                  className="rounded-md bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white transition active:translate-y-[2px] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded-[8px] bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white transition active:translate-y-[2px] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {publish.isPending ? "Publishing…" : `Publish selected (${selectedDrafts})`}
                 </button>
@@ -540,7 +540,7 @@ export default function ConnectImportModal({
                   type="button"
                   onClick={() => publish.mutate(true)}
                   disabled={!draftItems.length || busy}
-                  className="rounded-md border border-deep-violet/25 bg-white px-4 py-2.5 text-[12px] font-bold text-deep-violet transition active:translate-y-[2px] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded-[8px] border border-deep-violet/25 bg-white px-4 py-2.5 text-[12px] font-bold text-deep-violet transition active:translate-y-[2px] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Publish all drafts
                 </button>
@@ -576,14 +576,14 @@ export default function ConnectImportModal({
                 <button
                   type="button"
                   onClick={() => setConfirmClose(false)}
-                  className="rounded-md border border-ink/10 bg-white px-4 py-2.5 text-[12px] font-bold text-ink/65 transition active:translate-y-[2px] active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-deep-violet"
+                  className="rounded-[8px] border border-ink/10 bg-white px-4 py-2.5 text-[12px] font-bold text-ink/65 transition active:translate-y-[2px] active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-deep-violet"
                 >
                   Keep this open
                 </button>
                 <button
                   type="button"
                   onClick={finish}
-                  className="rounded-md bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white transition active:translate-y-[2px] active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-deep-violet"
+                  className="rounded-[8px] bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white transition active:translate-y-[2px] active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-deep-violet"
                 >
                   Close panel
                 </button>
@@ -608,7 +608,7 @@ function ProgressFeed({ events, status }: { events: ImportEvent[]; status: strin
   return (
     <aside
       aria-live="polite"
-      className="order-first overflow-hidden rounded-md border border-ink/[0.08] bg-ink/[0.025] lg:order-none"
+      className="order-first overflow-hidden rounded-[8px] border border-ink/[0.08] bg-ink/[0.025] lg:order-none"
     >
       <div className="flex items-center gap-2 border-b border-ink/[0.08] px-3 py-2">
         <span
@@ -656,7 +656,7 @@ function eventTone(level: string): string {
 function FetchStage({ session }: { session: ImportSession }) {
   return (
     <div className="space-y-3">
-      <div className="rounded-md border border-ink/[0.08] bg-white p-5">
+      <div className="rounded-[8px] border border-ink/[0.08] bg-white p-5">
         <p className="text-[13px] font-bold text-ink">Fetching every review from Google</p>
         <p className="mt-1 text-[12px] leading-relaxed text-ink/55">
           We are reading every location and review first. AI drafts start only after you choose a range.
@@ -671,12 +671,12 @@ function FetchStage({ session }: { session: ImportSession }) {
         </div>
       </div>
       {session.locations.length === 0 ? (
-        <p className="rounded-md border border-ink/[0.08] bg-white px-4 py-3 text-[12px] text-ink/45">
+        <p className="rounded-[8px] border border-ink/[0.08] bg-white px-4 py-3 text-[12px] text-ink/45">
           Waiting for the first location to return…
         </p>
       ) : (
         session.locations.map((location) => (
-          <div key={location.channel_id} className="rounded-md border border-ink/[0.08] bg-white p-4">
+          <div key={location.channel_id} className="rounded-[8px] border border-ink/[0.08] bg-white p-4">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-[13px] font-bold text-ink">{location.name}</p>
@@ -709,7 +709,7 @@ function ScopeStage({
   const longRange = scope === 365 || scope === 0;
   return (
     <div className="space-y-4">
-      <div className="rounded-md border border-ink/[0.08] bg-white p-5">
+      <div className="rounded-[8px] border border-ink/[0.08] bg-white p-5">
         <p className="text-[13px] font-bold text-ink">
           {session.progress.fetched_reviews} reviews imported across {session.progress.fetched_locations} locations
         </p>
@@ -724,7 +724,7 @@ function ScopeStage({
             key={option.days}
             type="button"
             onClick={() => setScope(option.days)}
-            className={`rounded-md border p-4 text-left transition ${
+            className={`rounded-[8px] border p-4 text-left transition ${
               scope === option.days
                 ? "border-deep-violet bg-deep-violet/[0.05]"
                 : "border-ink/[0.08] bg-white hover:border-deep-violet/25"
@@ -740,7 +740,7 @@ function ScopeStage({
         ))}
       </div>
       {longRange && (
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] leading-relaxed text-amber-800">
+        <div className="rounded-[8px] border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] leading-relaxed text-amber-800">
           A longer range means more AI calls and a slower first import. Drafts are still never
           published automatically.
         </div>
@@ -749,7 +749,7 @@ function ScopeStage({
         type="button"
         onClick={onStart}
         disabled={busy}
-        className="rounded-md bg-deep-violet px-5 py-3 text-[13px] font-bold text-white transition active:translate-y-[2px] active:scale-[0.98] disabled:opacity-40"
+        className="rounded-[8px] bg-deep-violet px-5 py-3 text-[13px] font-bold text-white transition active:translate-y-[2px] active:scale-[0.98] disabled:opacity-40"
       >
         {busy ? "Starting…" : "Generate drafts"}
       </button>
@@ -807,7 +807,7 @@ function WorkspaceStage({
         )}
       </div>
       {session.error && (
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-800">
+        <div className="rounded-[8px] border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-800">
           {session.error}
         </div>
       )}
@@ -815,21 +815,21 @@ function WorkspaceStage({
         const visible = location.items.filter((item) => itemMatches(item, filter));
         if (!visible.length) return null;
         return (
-          <section key={location.channel_id} className="overflow-hidden rounded-md border border-ink/[0.08] bg-white">
+          <section key={location.channel_id} className="overflow-hidden rounded-[8px] border border-ink/[0.08] bg-white">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-ink/[0.08] px-4 py-3">
               <div>
                 <p className="text-[13px] font-bold text-ink">{location.name}</p>
                 <p className="text-[11px] text-ink/40">{location.address || "Google location"}</p>
               </div>
-              <span className="rounded-sm border border-ink/[0.08] bg-ink/[0.03] px-2 py-0.5 text-[10px] font-bold capitalize text-ink/50">
+              <span className="rounded-[8px] border border-ink/[0.08] bg-ink/[0.03] px-2 py-0.5 text-[10px] font-bold capitalize text-ink/50">
                 {locationLabel(location.status)}
               </span>
             </div>
             {location.items.length > 0 && (
               <div className="px-4 pt-2.5">
-                <div className="h-1 overflow-hidden rounded-[2px] bg-ink/[0.06]">
+                <div className="h-1 overflow-hidden rounded-[8px] bg-ink/[0.06]">
                   <div
-                    className="h-full rounded-[2px] bg-deep-violet/70 transition-all duration-500"
+                    className="h-full rounded-[8px] bg-deep-violet/70 transition-all duration-500"
                     style={{
                       width: `${Math.round(
                         (location.items.filter((item) =>
@@ -859,7 +859,7 @@ function WorkspaceStage({
         );
       })}
       {session.locations.every((location) => !location.items.some((item) => itemMatches(item, filter))) && (
-        <p className="rounded-md border border-ink/[0.08] bg-white px-4 py-8 text-center text-[12px] text-ink/45">
+        <p className="rounded-[8px] border border-ink/[0.08] bg-white px-4 py-8 text-center text-[12px] text-ink/45">
           No reviews match this filter.
         </p>
       )}
@@ -888,7 +888,7 @@ function ReviewRow({
         disabled={busy || item.status !== "draft_ready"}
         onChange={onToggle}
         aria-label={`Select review from ${item.reviewer_name || "customer"}`}
-        className="mt-1 h-4 w-4 shrink-0 rounded-[3px] border-ink/20 text-deep-violet focus:ring-deep-violet disabled:opacity-30"
+        className="mt-1 h-4 w-4 shrink-0 rounded-[8px] border-ink/20 text-deep-violet focus:ring-deep-violet disabled:opacity-30"
       />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
@@ -897,7 +897,7 @@ function ReviewRow({
             {"★".repeat(Math.max(0, Math.min(5, item.rating)))}
             <span className="text-ink/15">{"★".repeat(Math.max(0, 5 - item.rating))}</span>
           </span>
-          <span className={`rounded-sm px-1.5 py-0.5 text-[10px] font-bold ${statusTone(item.status)}`}>
+          <span className={`rounded-[8px] px-1.5 py-0.5 text-[10px] font-bold ${statusTone(item.status)}`}>
             {statusLabel(item.status)}
           </span>
           {item.review_time && (
@@ -950,7 +950,7 @@ function CompletionStage({
   const nothingToReply = summary.unanswered_before === 0;
   return (
     <div className="space-y-4">
-      <div className="rounded-md border border-ink/[0.08] bg-white p-5">
+      <div className="rounded-[8px] border border-ink/[0.08] bg-white p-5">
         <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-deep-violet/60">
           Import complete
         </p>
@@ -975,14 +975,14 @@ function CompletionStage({
         <button
           type="button"
           onClick={onViewSummary}
-          className="rounded-md bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white transition active:translate-y-[2px] active:scale-[0.98]"
+          className="rounded-[8px] bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white transition active:translate-y-[2px] active:scale-[0.98]"
         >
           View summary &amp; analytics
         </button>
         <button
           type="button"
           onClick={onClose}
-          className="rounded-md border border-ink/10 bg-white px-4 py-2.5 text-[12px] font-bold text-ink/65 transition active:translate-y-[2px] active:scale-[0.98]"
+          className="rounded-[8px] border border-ink/10 bg-white px-4 py-2.5 text-[12px] font-bold text-ink/65 transition active:translate-y-[2px] active:scale-[0.98]"
         >
           Close
         </button>
@@ -1005,7 +1005,7 @@ function SummaryStage({ session, onClose }: { session: ImportSession; onClose: (
         <Metric label="Already answered" value={String(summary.already_answered)} />
         <Metric label="Needs attention" value={String(summary.failed)} />
       </div>
-      <div className="rounded-md border border-ink/[0.08] bg-white p-5">
+      <div className="rounded-[8px] border border-ink/[0.08] bg-white p-5">
         <p className="text-[13px] font-bold text-ink">This business on Google</p>
         <p className="mt-1 text-[12px] text-ink/55">
           Oldest connected location:{" "}
@@ -1014,11 +1014,11 @@ function SummaryStage({ session, onClose }: { session: ImportSession; onClose: (
         </p>
       </div>
       <div className="grid gap-3 lg:grid-cols-2">
-        <div className="rounded-md border border-ink/[0.08] bg-white p-4">
+        <div className="rounded-[8px] border border-ink/[0.08] bg-white p-4">
           <p className="text-[12px] font-bold text-ink">Reviews received, last 12 months</p>
           <VolumeBars data={summary.review_volume} />
         </div>
-        <div className="rounded-md border border-ink/[0.08] bg-white p-4">
+        <div className="rounded-[8px] border border-ink/[0.08] bg-white p-4">
           <p className="text-[12px] font-bold text-ink">Rating over time</p>
           <RatingScatter data={summary.rating_scatter} />
         </div>
@@ -1026,14 +1026,14 @@ function SummaryStage({ session, onClose }: { session: ImportSession; onClose: (
       <div className="flex flex-wrap items-center justify-between gap-3">
         <a
           href={summary.analytics_url || "/dashboard/analytics"}
-          className="rounded-md bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white transition active:translate-y-[2px] active:scale-[0.98]"
+          className="rounded-[8px] bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white transition active:translate-y-[2px] active:scale-[0.98]"
         >
           View full analytics
         </a>
         <button
           type="button"
           onClick={onClose}
-          className="rounded-md border border-ink/10 bg-white px-4 py-2.5 text-[12px] font-bold text-ink/65 transition active:translate-y-[2px] active:scale-[0.98]"
+          className="rounded-[8px] border border-ink/10 bg-white px-4 py-2.5 text-[12px] font-bold text-ink/65 transition active:translate-y-[2px] active:scale-[0.98]"
         >
           Done
         </button>
@@ -1048,7 +1048,7 @@ function SummaryStage({ session, onClose }: { session: ImportSession; onClose: (
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-md border border-ink/[0.08] bg-white p-3">
+    <div className="rounded-[8px] border border-ink/[0.08] bg-white p-3">
       <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/35">{label}</p>
       <p className="mt-1.5 text-[16px] font-bold tabular-nums text-ink">{value}</p>
     </div>
@@ -1063,7 +1063,7 @@ function VolumeBars({ data }: { data: { month: string; count: number }[] }) {
       {data.map((d) => (
         <div key={d.month} className="flex min-w-0 flex-1 flex-col items-center justify-end gap-1">
           <div
-            className="w-full rounded-t-[2px] bg-deep-violet/70"
+            className="w-full rounded-t-[8px] bg-deep-violet/70"
             style={{ height: `${Math.max(4, (d.count / max) * 76)}px` }}
             title={`${d.month}: ${d.count}`}
           />

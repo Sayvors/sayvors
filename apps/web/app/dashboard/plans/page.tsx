@@ -84,7 +84,7 @@ function PlanCard({
   const creditCents = isTrial ? TRIAL_CREDIT_CENTS : plan.included_credit_cents;
   return (
     <div
-      className={`relative flex flex-col rounded-3xl border border-ink/[0.08] bg-white p-6 ${
+      className={`relative flex flex-col rounded-[8px] border border-ink/[0.08] bg-white p-6 ${
         current ? "ring-2 ring-emerald-400/60" : ""
       }`}
     >
@@ -111,7 +111,7 @@ function PlanCard({
       </div>
 
       <div className="mb-5 grid grid-cols-2 gap-2 text-[11px]">
-        <div className="rounded-xl bg-ink/[0.03] px-3 py-2 dark:bg-fog/[0.04]">
+        <div className="rounded-[8px] bg-ink/[0.03] px-3 py-2 dark:bg-fog/[0.04]">
           <div className="text-ink/45 dark:text-fog/45">{t.dashboard.plans.aiCredit}</div>
           <div className="font-semibold text-ink dark:text-fog">
             {isEnterprise
@@ -119,13 +119,13 @@ function PlanCard({
               : `${fmtNum(Math.round((creditCents / 100) * scPerUsd), locale)} SC`}
           </div>
         </div>
-        <div className="rounded-xl bg-ink/[0.03] px-3 py-2 dark:bg-fog/[0.04]">
+        <div className="rounded-[8px] bg-ink/[0.03] px-3 py-2 dark:bg-fog/[0.04]">
           <div className="text-ink/45 dark:text-fog/45">{t.dashboard.plans.channels}</div>
           <div className="font-semibold text-ink dark:text-fog">
             {isEnterprise ? t.dashboard.plans.custom : plan.max_channels == null ? t.dashboard.plans.unlimited : plan.max_channels}
           </div>
         </div>
-        <div className="col-span-2 rounded-xl bg-ink/[0.03] px-3 py-2 dark:bg-fog/[0.04]">
+        <div className="col-span-2 rounded-[8px] bg-ink/[0.03] px-3 py-2 dark:bg-fog/[0.04]">
           <div className="text-ink/45 dark:text-fog/45">{t.dashboard.plans.whatsappMonthly}</div>
           <div className="font-semibold text-ink dark:text-fog">
             {isEnterprise
@@ -135,7 +135,7 @@ function PlanCard({
                 : fmtNum(plan.max_messages_per_month, locale)}
           </div>
         </div>
-        <div className="col-span-2 rounded-xl bg-ink/[0.03] px-3 py-2 dark:bg-fog/[0.04]">
+        <div className="col-span-2 rounded-[8px] bg-ink/[0.03] px-3 py-2 dark:bg-fog/[0.04]">
           <div className="text-ink/45 dark:text-fog/45">{t.dashboard.plans.locations}</div>
           <div className="font-semibold text-ink dark:text-fog">
             {isEnterprise
@@ -145,7 +145,7 @@ function PlanCard({
                 : fmtNum(plan.max_locations, locale)}
           </div>
         </div>
-        <div className="col-span-2 rounded-xl bg-ink/[0.03] px-3 py-2 dark:bg-fog/[0.04]">
+        <div className="col-span-2 rounded-[8px] bg-ink/[0.03] px-3 py-2 dark:bg-fog/[0.04]">
           <div className="text-ink/45 dark:text-fog/45">{t.dashboard.plans.teamMembers}</div>
           <div className="font-semibold text-ink dark:text-fog">
             {isEnterprise
@@ -155,7 +155,7 @@ function PlanCard({
                 : fmtNum(plan.max_team_members, locale)}
           </div>
         </div>
-        <div className="col-span-2 rounded-xl bg-ink/[0.03] px-3 py-2 dark:bg-fog/[0.04]">
+        <div className="col-span-2 rounded-[8px] bg-ink/[0.03] px-3 py-2 dark:bg-fog/[0.04]">
           <div className="text-ink/45 dark:text-fog/45">{t.dashboard.plans.regenerations}</div>
           <div className="font-semibold text-ink dark:text-fog">
             {isEnterprise
@@ -183,7 +183,7 @@ function PlanCard({
       <button
         onClick={onSelect}
         disabled={current || (isEnterprise && selectBusy)}
-        className={`w-full rounded-2xl px-4 py-3 text-[13px] font-bold transition-all ${
+        className={`w-full rounded-[8px] px-4 py-3 text-[13px] font-bold transition-all ${
           current
             ? "cursor-default bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
             : "bg-deep-violet text-white hover:bg-deep-violet/90 active:scale-[0.98] disabled:opacity-50"
@@ -285,7 +285,7 @@ export default function PlansPage() {
             </p>
           </div>
           {entitlements && (
-            <div className="rounded-2xl border border-ink/[0.08] bg-white px-4 py-3 dark:border-fog/[0.08] dark:bg-ink/60">
+            <div className="rounded-[8px] border border-ink/[0.08] bg-white px-4 py-3 dark:border-fog/[0.08] dark:bg-ink/60">
               <div className="text-[10px] uppercase tracking-wider text-ink/45 dark:text-fog/45">{t.dashboard.plans.currentPlan}</div>
               <div className="mt-0.5 text-[16px] font-bold text-ink dark:text-fog">
                 {planLabel(currentSlug, t.dashboard.plans.planNames, entitlements.plan_name)}
@@ -334,7 +334,7 @@ export default function PlansPage() {
         <div className="-mt-4 mb-8 flex justify-end">
           <Link
             href="/dashboard/billing/topup"
-            className="inline-flex items-center gap-1.5 rounded-xl border border-ink/[0.08] bg-white px-3.5 py-2 text-[12px] font-semibold text-ink/60 transition hover:border-deep-violet/30 hover:text-deep-violet dark:border-fog/[0.1] dark:bg-ink dark:text-fog/60"
+            className="inline-flex items-center gap-1.5 rounded-[8px] border border-ink/[0.08] bg-white px-3.5 py-2 text-[12px] font-semibold text-ink/60 transition hover:border-deep-violet/30 hover:text-deep-violet dark:border-fog/[0.1] dark:bg-ink dark:text-fog/60"
           >
             {t.dashboard.plans.topup}
             <span aria-hidden>→</span>
@@ -360,7 +360,7 @@ export default function PlansPage() {
         {/* feature matrix */}
         <div className="mt-12">
           <h2 className="mb-4 text-[18px] font-bold text-ink dark:text-fog">{t.dashboard.plans.featureComparison}</h2>
-          <div className="overflow-x-auto rounded-3xl border border-ink/[0.08] bg-white dark:border-fog/[0.08] dark:bg-ink/60">
+          <div className="overflow-x-auto rounded-[8px] border border-ink/[0.08] bg-white dark:border-fog/[0.08] dark:bg-ink/60">
             <table className="w-full text-[12px]">
               <thead>
                 <tr className="border-b border-ink/[0.06] dark:border-fog/[0.06]">
@@ -429,7 +429,7 @@ function UsageMeter({
 }) {
   const pct = max && max > 0 ? Math.min(100, (used / max) * 100) : 0;
   return (
-    <div className="rounded-2xl border border-ink/[0.08] bg-white p-4 dark:border-fog/[0.08] dark:bg-ink/60">
+    <div className="rounded-[8px] border border-ink/[0.08] bg-white p-4 dark:border-fog/[0.08] dark:bg-ink/60">
       <div className="flex items-center justify-between">
         <span className="text-[11px] font-medium text-ink/55 dark:text-fog/55">{label}</span>
         <span className="text-[12px] font-bold text-ink dark:text-fog">

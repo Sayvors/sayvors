@@ -244,7 +244,7 @@ export default function NotificationsBell() {
         aria-label={unread > 0 ? `Notifications, ${unread} unread` : "Notifications"}
         aria-expanded={open}
         title="Notifications"
-        className="relative flex h-10 w-10 items-center justify-center rounded-[2px] text-ink/55 outline-none transition hover:bg-deep-violet/[0.05] hover:text-ink focus-visible:ring-2 focus-visible:ring-deep-violet/40 md:h-9 md:w-9 dark:text-fog/55 dark:hover:bg-fog/[0.06] dark:hover:text-fog"
+        className="relative flex h-10 w-10 items-center justify-center rounded-[8px] text-ink/55 outline-none transition hover:bg-deep-violet/[0.05] hover:text-ink focus-visible:ring-2 focus-visible:ring-deep-violet/40 md:h-9 md:w-9 dark:text-fog/55 dark:hover:bg-fog/[0.06] dark:hover:text-fog"
       >
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-[18px] w-[18px]" aria-hidden>
           <path d="M10 2.5a5 5 0 00-5 5v2.6L3.6 12a.6.6 0 00.5.9h11.8a.6.6 0 00.5-.9L15 10.1V7.5a5 5 0 00-5-5Z" strokeLinejoin="round" />
@@ -266,7 +266,7 @@ export default function NotificationsBell() {
         <div
           role="dialog"
           aria-label="Notifications"
-          className="fixed inset-x-3 top-14 z-50 max-h-[70vh] overflow-hidden rounded-xl border border-deep-violet/[0.08] bg-white shadow-xl dark:border-fog/[0.08] dark:bg-[#1d1636] sm:absolute sm:inset-x-auto sm:end-0 sm:top-full sm:mt-1 sm:w-80"
+          className="fixed inset-x-3 top-14 z-50 max-h-[70vh] overflow-hidden rounded-[8px] border border-deep-violet/[0.08] bg-white shadow-xl dark:border-fog/[0.08] dark:bg-[#1d1636] sm:absolute sm:inset-x-auto sm:end-0 sm:top-full sm:mt-1 sm:w-80"
         >
           <div className="flex items-center justify-between border-b border-ink/[0.06] px-3.5 py-2.5 dark:border-fog/[0.06]">
             <p className="text-[13px] font-bold text-ink dark:text-fog">Notifications</p>

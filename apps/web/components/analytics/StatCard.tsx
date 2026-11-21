@@ -17,7 +17,7 @@ export function DeltaChip({ delta, suffix = "%", noPriorData }: { delta: number 
   // to ink, "better" sits on sunken, "flat" dims — same chips as MessagingSection.
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-[2px] px-2 py-0.5 text-[11px] font-bold tabular-nums ${
+      className={`inline-flex items-center gap-1 rounded-[8px] px-2 py-0.5 text-[11px] font-bold tabular-nums ${
         flat
           ? "bg-[var(--ui-sunken)] text-[var(--ui-ink-2)]"
           : up
@@ -79,7 +79,7 @@ export function StatCard({
       <div className="flex items-center justify-between gap-2">
         <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-wide text-[var(--ui-ink-2)]">{label}</p>
         {icon && (
-          <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-[2px] ${accent ?? "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"}`}>
+          <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-[8px] ${accent ?? "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"}`}>
             {icon}
           </span>
         )}

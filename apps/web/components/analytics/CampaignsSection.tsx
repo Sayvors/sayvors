@@ -78,18 +78,18 @@ export default function CampaignsSection() {
             value={name}
             onChange={(e) => setName(e.target.value)}
             maxLength={120}
-            className="mt-1 w-full rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 py-1.5 text-[12px] normal-case tracking-normal text-[var(--ui-ink)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+            className="mt-1 w-full rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 py-1.5 text-[12px] normal-case tracking-normal text-[var(--ui-ink)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
           />
         </label>
         <label className="text-[10px] font-semibold uppercase tracking-wide text-[var(--ui-ink-2)]">
           {copy.from}
           <input type="date" value={from} min={today()} onChange={(e) => setFrom(e.target.value)}
-            className="mt-1 w-full rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 py-1.5 text-[12px] normal-case text-[var(--ui-ink)]" />
+            className="mt-1 w-full rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 py-1.5 text-[12px] normal-case text-[var(--ui-ink)]" />
         </label>
         <label className="text-[10px] font-semibold uppercase tracking-wide text-[var(--ui-ink-2)]">
           {copy.to}
           <input type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)}
-            className="mt-1 w-full rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 py-1.5 text-[12px] normal-case text-[var(--ui-ink)]" />
+            className="mt-1 w-full rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 py-1.5 text-[12px] normal-case text-[var(--ui-ink)]" />
         </label>
         <div className="flex items-end">
           <button type="button" onClick={() => void create()} disabled={busy || !name.trim()}
@@ -102,7 +102,7 @@ export default function CampaignsSection() {
         {copy.template}
         <input value={template} onChange={(e) => setTemplate(e.target.value)} maxLength={8000}
           placeholder="Hi {name} - {link}"
-          className="mt-1 w-full rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 py-1.5 text-[12px] normal-case tracking-normal text-[var(--ui-ink)]" />
+          className="mt-1 w-full rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 py-1.5 text-[12px] normal-case tracking-normal text-[var(--ui-ink)]" />
       </label>
       {error ? <p className="mt-2 text-[11px] text-red-600">{error}</p> : null}
 
@@ -130,11 +130,11 @@ export default function CampaignsSection() {
             {c.status !== "cancelled" ? (
               <div className="flex gap-2">
                 <button type="button" onClick={() => void act(c.id, "duplicate")} disabled={busy}
-                  className="rounded-[2px] border border-[var(--ui-line-strong)] px-2 py-1 text-[10px] font-bold text-[var(--ui-ink)] disabled:opacity-50">
+                  className="rounded-[8px] border border-[var(--ui-line-strong)] px-2 py-1 text-[10px] font-bold text-[var(--ui-ink)] disabled:opacity-50">
                   {copy.duplicate}
                 </button>
                 <button type="button" onClick={() => void act(c.id, "cancel")} disabled={busy}
-                  className="rounded-[2px] border border-red-400 px-2 py-1 text-[10px] font-bold text-red-600 disabled:opacity-50">
+                  className="rounded-[8px] border border-red-400 px-2 py-1 text-[10px] font-bold text-red-600 disabled:opacity-50">
                   {copy.cancel}
                 </button>
               </div>

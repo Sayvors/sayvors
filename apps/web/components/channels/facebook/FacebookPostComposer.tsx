@@ -26,7 +26,7 @@ const MAX_IMAGES = 10;
 const MESSAGE_MAX = 5000;
 
 const FIELD =
-  "rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]";
+  "rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]";
 
 type Entry = {
   key: string;
@@ -235,7 +235,7 @@ export default function FacebookPostComposer({
   };
 
   return (
-    <div className="rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-4">
+    <div className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-4">
       <textarea
         value={message}
         onChange={(e) => setMessage(e.target.value)}
@@ -270,7 +270,7 @@ export default function FacebookPostComposer({
             type="button"
             onClick={() => fileInput.current?.click()}
             disabled={entries.length >= MAX_IMAGES}
-            className="rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-ink)] disabled:opacity-50"
+            className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-ink)] disabled:opacity-50"
           >
             {fill(c.addPhotos, { n: entries.length, max: MAX_IMAGES })}
           </button>
@@ -303,7 +303,7 @@ export default function FacebookPostComposer({
             type="button"
             onClick={addPastedUrl}
             disabled={!pasteUrl.trim()}
-            className="rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[12px] font-semibold text-[var(--ui-ink)] disabled:opacity-50"
+            className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[12px] font-semibold text-[var(--ui-ink)] disabled:opacity-50"
           >
             {c.add}
           </button>
@@ -313,7 +313,7 @@ export default function FacebookPostComposer({
           <ul className="mt-3 flex flex-wrap gap-2">
             {entries.map((e) => (
               <li key={e.key} className="relative">
-                <span className="block h-20 w-20 overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)]">
+                <span className="block h-20 w-20 overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)]">
                   {e.preview ? (
                     <Image
                       src={e.preview}
@@ -335,7 +335,7 @@ export default function FacebookPostComposer({
                   ) : null}
                 </span>
                 {e.busy && (
-                  <span className="absolute inset-0 flex items-center justify-center rounded-[12px] bg-[var(--ui-surface)]/80 text-[11px] font-bold text-[var(--ui-ink)]">
+                  <span className="absolute inset-0 flex items-center justify-center rounded-[8px] bg-[var(--ui-surface)]/80 text-[11px] font-bold text-[var(--ui-ink)]">
                     {c.uploading}
                   </span>
                 )}
@@ -403,7 +403,7 @@ export default function FacebookPostComposer({
           type="button"
           onClick={() => void publish()}
           disabled={busy || pending > 0}
-          className="rounded-[12px] bg-[var(--ui-ink)] px-5 py-2.5 text-[13px] font-semibold text-[var(--ui-on-ink)] disabled:opacity-50"
+          className="rounded-[8px] bg-[var(--ui-ink)] px-5 py-2.5 text-[13px] font-semibold text-[var(--ui-on-ink)] disabled:opacity-50"
         >
           {busy
             ? c.publishing

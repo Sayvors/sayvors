@@ -41,11 +41,11 @@ export default function AutoPilotDialog({
         onKeyDown={(e) => {
           if (e.key === "Escape" && !saving) onClose();
         }}
-        className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-ink"
+        className="w-full max-w-md overflow-hidden rounded-[8px] bg-white shadow-2xl dark:bg-ink"
       >
         {/* Header */}
         <div className="flex items-center gap-3 border-b border-ink/[0.06] px-5 py-4 dark:border-fog/[0.08]">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-deep-violet to-magenta text-white shadow-sm">
+          <span className="flex h-9 w-9 items-center justify-center rounded-[8px] bg-gradient-to-br from-deep-violet to-magenta text-white shadow-sm">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]" aria-hidden>
               <path d="M17.8 19.2L16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.2c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z" />
             </svg>
@@ -76,7 +76,7 @@ export default function AutoPilotDialog({
             onClick={() => setSelected(true)}
             aria-pressed={selected}
             disabled={saving || !hasChannels}
-            className={`flex w-full items-start gap-3 rounded-xl border-2 p-3.5 text-left outline-none transition focus-visible:ring-2 focus-visible:ring-emerald/50 disabled:opacity-60 ${
+            className={`flex w-full items-start gap-3 rounded-[8px] border-2 p-3.5 text-left outline-none transition focus-visible:ring-2 focus-visible:ring-emerald/50 disabled:opacity-60 ${
               selected ? "border-emerald bg-emerald/[0.06]" : "border-ink/10 hover:border-emerald/50 dark:border-fog/10"
             }`}
           >
@@ -98,7 +98,7 @@ export default function AutoPilotDialog({
             onClick={() => setSelected(false)}
             aria-pressed={!selected}
             disabled={saving || !hasChannels}
-            className={`flex w-full items-start gap-3 rounded-xl border-2 p-3.5 text-left outline-none transition focus-visible:ring-2 focus-visible:ring-amber/50 disabled:opacity-60 ${
+            className={`flex w-full items-start gap-3 rounded-[8px] border-2 p-3.5 text-left outline-none transition focus-visible:ring-2 focus-visible:ring-amber/50 disabled:opacity-60 ${
               !selected ? "border-amber bg-amber/[0.07]" : "border-ink/10 hover:border-amber/60 dark:border-fog/10"
             }`}
           >

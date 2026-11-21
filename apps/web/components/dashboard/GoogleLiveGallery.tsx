@@ -206,11 +206,11 @@ export default function GoogleLiveGallery() {
 
   if (locations.length === 0) {
     return (
-      <div className="rounded-[32px] border border-dashed border-ink/15 bg-white p-10 text-center shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)]">
+      <div className="rounded-[8px] border border-dashed border-ink/15 bg-white p-10 text-center shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)]">
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-deep-violet/10 text-[24px]">📍</div>
         <h3 className="mt-4 text-[17px] font-bold text-ink">No Google locations connected</h3>
         <p className="mt-1 text-[13px] text-ink/55">Connect a Google Business Profile location to see live photos.</p>
-        <Link href="/dashboard/channels" className="mt-5 inline-flex rounded-[20px] bg-deep-violet px-5 py-2.5 text-[13px] font-bold text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)] transition hover:bg-deep-violet/90">Connect Google</Link>
+        <Link href="/dashboard/channels" className="mt-5 inline-flex rounded-[8px] bg-deep-violet px-5 py-2.5 text-[13px] font-bold text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)] transition hover:bg-deep-violet/90">Connect Google</Link>
       </div>
     );
   }
@@ -233,7 +233,7 @@ export default function GoogleLiveGallery() {
               type="button"
               onClick={() => setSelectionMode(true)}
               disabled={items.length === 0}
-              className="rounded-[20px] border border-ink/10 bg-white px-4 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] disabled:opacity-40 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:bg-white/[0.04] dark:text-fog"
+              className="rounded-[8px] border border-ink/10 bg-white px-4 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] disabled:opacity-40 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:bg-white/[0.04] dark:text-fog"
             >
               Select
             </button>
@@ -241,7 +241,7 @@ export default function GoogleLiveGallery() {
             <button
               type="button"
               onClick={() => { setSelectionMode(false); setSelected(new Set()); }}
-              className="rounded-[20px] border border-ink/10 bg-white px-4 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:bg-white/[0.04] dark:text-fog"
+              className="rounded-[8px] border border-ink/10 bg-white px-4 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:bg-white/[0.04] dark:text-fog"
             >
               Cancel
             </button>
@@ -251,7 +251,7 @@ export default function GoogleLiveGallery() {
             onClick={() => void importFromGoogle()}
             disabled={importing || !selectedSingleChannelId}
             title={selectedSingleChannelId ? "Pull this location's posts and gallery photos from Google into Sayvors" : "Select a single location to import"}
-            className="rounded-[20px] border border-ink/10 bg-white px-4 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:bg-white/[0.04] dark:text-fog"
+            className="rounded-[8px] border border-ink/10 bg-white px-4 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:bg-white/[0.04] dark:text-fog"
           >
             {importing ? "Importing…" : "Import from Google"}
           </button>
@@ -259,7 +259,7 @@ export default function GoogleLiveGallery() {
             type="button"
             onClick={() => loadGallery(targetChannelIds, category)}
             disabled={galleryLoading || targetChannelIds.length === 0}
-            className="rounded-[20px] border border-ink/10 bg-white px-4 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:bg-white/[0.04] dark:text-fog"
+            className="rounded-[8px] border border-ink/10 bg-white px-4 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:bg-white/[0.04] dark:text-fog"
           >
             {galleryLoading ? "Refreshing…" : "Refresh"}
           </button>
@@ -271,7 +271,7 @@ export default function GoogleLiveGallery() {
           <select
             value={selectedId}
             onChange={(e) => { setSelectedId(e.target.value || ALL_BRANCHES); setSelectionMode(false); setSelected(new Set()); }}
-            className="w-72 max-w-full appearance-none rounded-[20px] border border-ink/10 bg-white py-2.5 pl-4 pr-9 text-[13px] font-semibold text-ink outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/25 dark:bg-white/[0.04] dark:text-fog"
+            className="w-72 max-w-full appearance-none rounded-[8px] border border-ink/10 bg-white py-2.5 pl-4 pr-9 text-[13px] font-semibold text-ink outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/25 dark:bg-white/[0.04] dark:text-fog"
           >
             <option value={ALL_BRANCHES}>
               {locations.length > 0 ? `All locations (${locations.length})` : "All locations"}
@@ -303,7 +303,7 @@ export default function GoogleLiveGallery() {
                 key={c.value || "all"}
                 type="button"
                 onClick={() => setCategory(c.value)}
-                className={`shrink-0 whitespace-nowrap rounded-[20px] px-3.5 py-2 text-[12px] font-bold transition duration-200 active:scale-[0.97] ${active ? "bg-deep-violet text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)]" : "bg-ink/[0.04] text-ink/65 hover:bg-ink/[0.08] dark:bg-white/[0.06] dark:text-fog/70"}`}
+                className={`shrink-0 whitespace-nowrap rounded-[8px] px-3.5 py-2 text-[12px] font-bold transition duration-200 active:scale-[0.97] ${active ? "bg-deep-violet text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)]" : "bg-ink/[0.04] text-ink/65 hover:bg-ink/[0.08] dark:bg-white/[0.06] dark:text-fog/70"}`}
               >
                 {c.label} <span className={active ? "opacity-80" : "opacity-60"}>({count})</span>
               </button>
@@ -313,24 +313,24 @@ export default function GoogleLiveGallery() {
       </div>
 
       {notice && (
-        <div className="flex items-start justify-between gap-3 rounded-[20px] bg-emerald-50 px-4 py-3 text-[13px] font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
+        <div className="flex items-start justify-between gap-3 rounded-[8px] bg-emerald-50 px-4 py-3 text-[13px] font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
           <p>{notice}</p>
           <button type="button" onClick={() => setNotice(null)} className="shrink-0 text-[16px] leading-none opacity-60 hover:opacity-100" aria-label="Dismiss">×</button>
         </div>
       )}
       {error && (
-        <div className="flex items-center justify-between rounded-[20px] border border-red-500/40 bg-red-500/10 px-4 py-3 text-[13px] text-red-700 dark:text-red-300">
+        <div className="flex items-center justify-between rounded-[8px] border border-red-500/40 bg-red-500/10 px-4 py-3 text-[13px] text-red-700 dark:text-red-300">
           <span>{error}</span>
-          <button type="button" onClick={() => loadGallery(targetChannelIds, category)} className="rounded-[16px] border border-red-500/40 px-3 py-1 text-[12px] font-bold">Retry</button>
+          <button type="button" onClick={() => loadGallery(targetChannelIds, category)} className="rounded-[8px] border border-red-500/40 px-3 py-1 text-[12px] font-bold">Retry</button>
         </div>
       )}
 
       {galleryLoading && items.length === 0 ? (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-          {Array.from({ length: 8 }).map((_, i) => <div key={i} className="aspect-[4/3] animate-pulse rounded-[24px] bg-ink/[0.06]" />)}
+          {Array.from({ length: 8 }).map((_, i) => <div key={i} className="aspect-[4/3] animate-pulse rounded-[8px] bg-ink/[0.06]" />)}
         </div>
       ) : items.length === 0 ? (
-        <div className="flex flex-col items-center rounded-[32px] border border-dashed border-ink/15 bg-white p-12 text-center shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)]">
+        <div className="flex flex-col items-center rounded-[8px] border border-dashed border-ink/15 bg-white p-12 text-center shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)]">
           <div className="flex h-14 w-14 items-center justify-center rounded-full bg-deep-violet/10 text-[24px]">📷</div>
           <h3 className="mt-4 text-[17px] font-bold text-ink">No live media found</h3>
           <p className="mt-1 max-w-sm text-[13px] text-ink/55">
@@ -347,7 +347,7 @@ export default function GoogleLiveGallery() {
             return (
               <div
                 key={key}
-                className={`group relative overflow-hidden rounded-[24px] border bg-white shadow-[0_12px_28px_-20px_rgba(20,16,31,0.35)] transition hover:-translate-y-0.5 hover:shadow-[0_20px_40px_-22px_rgba(20,16,31,0.5)] ${isSelected ? "ring-2 ring-deep-violet" : "ring-1 ring-ink/[0.06]"}`}
+                className={`group relative overflow-hidden rounded-[8px] border bg-white shadow-[0_12px_28px_-20px_rgba(20,16,31,0.35)] transition hover:-translate-y-0.5 hover:shadow-[0_20px_40px_-22px_rgba(20,16,31,0.5)] ${isSelected ? "ring-2 ring-deep-violet" : "ring-1 ring-ink/[0.06]"}`}
               >
                 <div className="relative aspect-[4/3] overflow-hidden bg-ink/[0.04]">
                   {m.thumbnailUrl || m.googleUrl ? (
@@ -396,7 +396,7 @@ export default function GoogleLiveGallery() {
                     <button
                       type="button"
                       onClick={() => setConfirmRemove({ items: [{ name: m.name, channelId: m.channelId }] })}
-                      className="w-full rounded-[16px] border border-red-200 bg-white px-3 py-1.5 text-[11.5px] font-bold text-red-600 transition hover:bg-red-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-red-400/40"
+                      className="w-full rounded-[8px] border border-red-200 bg-white px-3 py-1.5 text-[11.5px] font-bold text-red-600 transition hover:bg-red-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-red-400/40"
                     >
                       Remove from Google
                     </button>
@@ -409,14 +409,14 @@ export default function GoogleLiveGallery() {
       )}
 
       {selectionMode && selected.size > 0 && (
-        <div className="sticky bottom-3 z-10 mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3 rounded-[24px] border border-ink/10 bg-white px-4 py-3 shadow-[0_24px_48px_-24px_rgba(20,16,31,0.6)]">
+        <div className="sticky bottom-3 z-10 mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3 rounded-[8px] border border-ink/10 bg-white px-4 py-3 shadow-[0_24px_48px_-24px_rgba(20,16,31,0.6)]">
           <span className="text-[13px] font-bold text-ink">{selected.size} selected</span>
           <div className="flex gap-2">
             <button
               type="button"
               onClick={() => setConfirmRemove({ items: selectedItems.map((m) => ({ name: m.name, channelId: m.channelId })) })}
               disabled={removing}
-              className="rounded-[16px] border border-red-300 bg-white px-4 py-2 text-[12px] font-bold text-red-600 transition hover:bg-red-50 disabled:opacity-50"
+              className="rounded-[8px] border border-red-300 bg-white px-4 py-2 text-[12px] font-bold text-red-600 transition hover:bg-red-50 disabled:opacity-50"
             >
               Remove ({selected.size})
             </button>
@@ -431,8 +431,8 @@ export default function GoogleLiveGallery() {
               {confirmRemove.items.length === 1 ? "The photo will be removed from Google." : `${confirmRemove.items.length} photos will be removed from Google.`}
             </p>
             <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <button type="button" onClick={() => setConfirmRemove(null)} disabled={removing} className="rounded-[20px] border border-ink/10 bg-white px-5 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] disabled:opacity-50">Keep them</button>
-              <button type="button" onClick={() => removeMany(confirmRemove.items)} disabled={removing} className="rounded-[20px] bg-red-600 px-5 py-2.5 text-[13px] font-bold text-white transition hover:bg-red-700 disabled:opacity-60">
+              <button type="button" onClick={() => setConfirmRemove(null)} disabled={removing} className="rounded-[8px] border border-ink/10 bg-white px-5 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] disabled:opacity-50">Keep them</button>
+              <button type="button" onClick={() => removeMany(confirmRemove.items)} disabled={removing} className="rounded-[8px] bg-red-600 px-5 py-2.5 text-[13px] font-bold text-white transition hover:bg-red-700 disabled:opacity-60">
                 {removing ? "Removing…" : "Remove"}
               </button>
             </div>

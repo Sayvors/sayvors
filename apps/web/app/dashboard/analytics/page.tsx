@@ -40,7 +40,7 @@ function AnalyticsShell() {
         <div
           role="tablist"
           aria-label={t.analytics.sections}
-          className="mt-4 flex gap-1 overflow-x-auto rounded-[2px] bg-[var(--ui-sunken)] p-1"
+          className="mt-4 flex gap-1 overflow-x-auto rounded-[8px] bg-[var(--ui-sunken)] p-1"
         >
           {TABS.map((tabId) => {
             const active = tab === tabId;
@@ -56,7 +56,7 @@ function AnalyticsShell() {
                 aria-selected={active}
                 href={tabId === "overview" ? "/dashboard/analytics" : `/dashboard/analytics?tab=${tabId}`}
                 scroll={false}
-                className={`whitespace-nowrap rounded-[2px] px-3.5 py-1.5 text-[12px] font-semibold outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+                className={`whitespace-nowrap rounded-[8px] px-3.5 py-1.5 text-[12px] font-semibold outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
                   active
                     ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
                     : "text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"

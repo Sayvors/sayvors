@@ -61,7 +61,7 @@ export default function ProcessingPanel({ jobs, isOpen, onToggle, onClose }: Pro
 
       {/* Expanded panel */}
       {isOpen && (
-        <div className="w-80 rounded-2xl border border-ink/[0.08] bg-white shadow-2xl dark:border-fog/[0.08] dark:bg-ink overflow-hidden">
+        <div className="w-80 rounded-[8px] border border-ink/[0.08] bg-white shadow-2xl dark:border-fog/[0.08] dark:bg-ink overflow-hidden">
           {/* Header */}
           <div className="flex items-center justify-between border-b border-ink/[0.06] px-4 py-3 dark:border-fog/[0.06]">
             <div className="flex items-center gap-2">
@@ -76,7 +76,7 @@ export default function ProcessingPanel({ jobs, isOpen, onToggle, onClose }: Pro
             </div>
             <button
               onClick={onClose}
-              className="rounded-md p-1 text-ink/30 transition hover:text-ink/60 dark:text-fog/30 dark:hover:text-fog/60"
+              className="rounded-[8px] p-1 text-ink/30 transition hover:text-ink/60 dark:text-fog/30 dark:hover:text-fog/60"
             >
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3.5 w-3.5">
                 <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />

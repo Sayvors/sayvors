@@ -109,7 +109,7 @@ export default function BenchmarkCards({
               </p>
             </div>
             {!peerWeak && benchmark.my_rank && (
-              <span className="rounded-[2px] bg-[var(--ui-sunken)] px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">
+              <span className="rounded-[8px] bg-[var(--ui-sunken)] px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">
                 {fill(bc.rankLine, { rank: fmt(benchmark.my_rank), total: fmt((benchmark.market?.length ?? cohort?.count ?? 0) + 1) })}
               </span>
             )}
@@ -122,7 +122,7 @@ export default function BenchmarkCards({
             <span className="w-14 text-right">{bc.gap}</span>
           </div>
           {peerWeak && (
-            <p className="mt-3 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-2.5 text-[11px] text-[var(--ui-ink)]">
+            <p className="mt-3 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-2.5 text-[11px] text-[var(--ui-ink)]">
               {peerCount === 1 ? bc.notEnoughOne : fill(bc.notEnoughN, { n: fmt(peerCount) })}
             </p>
           )}
@@ -231,7 +231,7 @@ export default function BenchmarkCards({
         <section aria-label={bc.extTitle} className="ui-card p-5">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
-              <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">{bc.extTitle} <span className="ml-1 rounded-[2px] bg-[var(--ui-sunken)] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">{bc.pro}</span></h3>
+              <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">{bc.extTitle} <span className="ml-1 rounded-[8px] bg-[var(--ui-sunken)] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">{bc.pro}</span></h3>
               <p className="text-[11px] text-[var(--ui-ink-2)]">
                 {bc.extSub}
               </p>
@@ -240,7 +240,7 @@ export default function BenchmarkCards({
               <button
                 onClick={onRefreshExternal}
                 disabled={refreshingExternal}
-                className="ui-btn shrink-0 rounded-[2px] bg-[var(--ui-ink)] px-2.5 py-1.5 text-[10px] font-bold text-[var(--ui-on-ink)] disabled:opacity-50"
+                className="ui-btn shrink-0 rounded-[8px] bg-[var(--ui-ink)] px-2.5 py-1.5 text-[10px] font-bold text-[var(--ui-on-ink)] disabled:opacity-50"
               >
                 {refreshingExternal ? bc.refreshing : bc.refreshPeers}
               </button>
@@ -248,11 +248,11 @@ export default function BenchmarkCards({
           </div>
 
           {!benchmark.external.configured ? (
-            <p className="mt-3 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3 text-[12px] text-[var(--ui-ink)]">
+            <p className="mt-3 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3 text-[12px] text-[var(--ui-ink)]">
               {bc.extNotConnPre} <code>GOOGLE_PLACES_API_KEY</code> {bc.extNotConnPost}
             </p>
           ) : !benchmark.external.available ? (
-            <p className="mt-3 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3 text-[12px] text-[var(--ui-ink)]">
+            <p className="mt-3 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3 text-[12px] text-[var(--ui-ink)]">
               {benchmark.external.count === 0
                 ? bc.extNone
                 : fill(bc.extFew, { n: fmt(benchmark.external.count) })}
@@ -279,19 +279,19 @@ export default function BenchmarkCards({
                 benchmark.external.median_reviews_delta != null ||
                 benchmark.external.median_velocity_per_month != null) && (
                 <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                  <div className="rounded-[2px] bg-[var(--ui-sunken)] p-2.5">
+                  <div className="rounded-[8px] bg-[var(--ui-sunken)] p-2.5">
                     <p className="text-[9px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">{fill(bc.deltaRating, { n: fmt(deltaWindow) })}</p>
                     <p className="mt-1 text-[16px] font-black tabular-nums text-[var(--ui-ink)]">
                       {fmtDelta(benchmark.external.median_rating_delta, "★")}
                     </p>
                   </div>
-                  <div className="rounded-[2px] bg-[var(--ui-sunken)] p-2.5">
+                  <div className="rounded-[8px] bg-[var(--ui-sunken)] p-2.5">
                     <p className="text-[9px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">{fill(bc.deltaReviews, { n: fmt(deltaWindow) })}</p>
                     <p className="mt-1 text-[16px] font-black tabular-nums text-[var(--ui-ink)]">
                       {fmtDelta(benchmark.external.median_reviews_delta)}
                     </p>
                   </div>
-                  <div className="rounded-[2px] bg-[var(--ui-sunken)] p-2.5">
+                  <div className="rounded-[8px] bg-[var(--ui-sunken)] p-2.5">
                     <p className="text-[9px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">{bc.deltaVelocity}</p>
                     <p className="mt-1 text-[16px] font-black tabular-nums text-[var(--ui-ink)]">
                       {fmtDelta(benchmark.external.median_velocity_per_month)}

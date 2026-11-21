@@ -219,7 +219,7 @@ export default function CustomersTable() {
       <div
         className={`${
           selected ? "hidden xl:flex" : "flex"
-        } min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink`}
+        } min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[8px] border border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink`}
       >
         {/* Filters */}
         <div className="border-b border-ink/[0.06] p-3 dark:border-fog/[0.06]">
@@ -436,7 +436,7 @@ export default function CustomersTable() {
                         <Link
                           href={`/dashboard/channels/inbox?channel=${encodeURIComponent(c.channel_id)}&key=${encodeURIComponent(c.key)}`}
                           onClick={(e) => e.stopPropagation()}
-                          className="inline-flex items-center gap-1 rounded-md border border-ink/[0.08] bg-white px-2 py-1 text-[10px] font-semibold text-deep-violet transition hover:bg-deep-violet/5 dark:border-fog/[0.1] dark:bg-ink dark:hover:bg-deep-violet/10"
+                          className="inline-flex items-center gap-1 rounded-[8px] border border-ink/[0.08] bg-white px-2 py-1 text-[10px] font-semibold text-deep-violet transition hover:bg-deep-violet/5 dark:border-fog/[0.1] dark:bg-ink dark:hover:bg-deep-violet/10"
                         >
                           {u.open}
                           <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="2">
@@ -483,7 +483,7 @@ export default function CustomersTable() {
 
       {/* Profile — full screen on phones, side panel from lg up. */}
       {selected && (
-        <aside className="flex w-full min-w-0 flex-col overflow-hidden rounded-2xl border border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink xl:w-[400px] xl:shrink-0">
+        <aside className="flex w-full min-w-0 flex-col overflow-hidden rounded-[8px] border border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink xl:w-[400px] xl:shrink-0">
           <div className="flex items-center gap-2 border-b border-ink/[0.06] px-2.5 py-2 dark:border-fog/[0.06] sm:px-3">
             <button
               type="button"
@@ -525,7 +525,7 @@ export default function CustomersTable() {
               <div className="space-y-3" aria-label="Loading profile">
                 <div className="h-16 w-16 animate-pulse rounded-full bg-[var(--ui-sunken)]" />
                 <div className="h-5 w-40 animate-pulse rounded bg-[var(--ui-sunken)]" />
-                <div className="h-20 animate-pulse rounded-xl bg-[var(--ui-sunken)]" />
+                <div className="h-20 animate-pulse rounded-[8px] bg-[var(--ui-sunken)]" />
               </div>
             ) : profile ? (
               <CustomerProfileComponent

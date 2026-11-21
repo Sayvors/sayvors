@@ -63,13 +63,13 @@ export default function AdsTab({ channelSlug, channelName }: AdsTabProps) {
 
             <h2 className="text-[15px] font-bold text-ink">{tb.newCampaignTitle}</h2>
 
-            <div className="rounded-xl border-2 border-white bg-white/80 p-4 sm:p-5 space-y-4">
+            <div className="rounded-[8px] border-2 border-white bg-white/80 p-4 sm:p-5 space-y-4">
               <div>
                 <label className="mb-1.5 block text-[11px] font-semibold text-ink/50">{tb.campaignName}</label>
                 <input
                   type="text"
                   placeholder="e.g., Summer Sale 2024"
-                  className="w-full rounded-xl border-2 border-white bg-white px-4 py-2.5 text-[13px] text-ink outline-none focus:border-deep-violet/40 focus:ring-2 focus:ring-deep-violet/10"
+                  className="w-full rounded-[8px] border-2 border-white bg-white px-4 py-2.5 text-[13px] text-ink outline-none focus:border-deep-violet/40 focus:ring-2 focus:ring-deep-violet/10"
                 />
               </div>
 
@@ -102,7 +102,7 @@ export default function AdsTab({ channelSlug, channelName }: AdsTabProps) {
                   ].map((option) => (
                     <label
                       key={option.id}
-                      className={`flex items-center gap-3 rounded-xl border-2 p-3 cursor-pointer transition ${
+                      className={`flex items-center gap-3 rounded-[8px] border-2 p-3 cursor-pointer transition ${
                         newAudience === option.id
                           ? "border-deep-violet bg-deep-violet/[0.04]"
                           : "border-white hover:bg-ink/[0.02]"
@@ -130,7 +130,7 @@ export default function AdsTab({ channelSlug, channelName }: AdsTabProps) {
                 <input
                   type="number"
                   placeholder="0.00"
-                  className="w-full rounded-xl border-2 border-white bg-white px-4 py-2.5 text-[13px] text-ink outline-none focus:border-deep-violet/40 focus:ring-2 focus:ring-deep-violet/10"
+                  className="w-full rounded-[8px] border-2 border-white bg-white px-4 py-2.5 text-[13px] text-ink outline-none focus:border-deep-violet/40 focus:ring-2 focus:ring-deep-violet/10"
                 />
               </div>
 
@@ -139,7 +139,7 @@ export default function AdsTab({ channelSlug, channelName }: AdsTabProps) {
                 <textarea
                   rows={4}
                   placeholder={tb.messagePh}
-                  className="w-full rounded-xl border-2 border-white bg-white px-4 py-3 text-[13px] text-ink outline-none transition placeholder:text-ink/35 focus:border-deep-violet/40 focus:ring-2 focus:ring-deep-violet/10"
+                  className="w-full rounded-[8px] border-2 border-white bg-white px-4 py-3 text-[13px] text-ink outline-none transition placeholder:text-ink/35 focus:border-deep-violet/40 focus:ring-2 focus:ring-deep-violet/10"
                 />
                 <p className="mt-1 text-[10px] text-ink/35">{fill(tb.supportsTokens, { name: "{name}", company: "{company}" })}</p>
               </div>
@@ -148,11 +148,11 @@ export default function AdsTab({ channelSlug, channelName }: AdsTabProps) {
             <div className="flex gap-2">
               <button
                 onClick={() => setShowNewForm(false)}
-                className="flex-1 rounded-xl border-2 border-ink/10 px-4 py-2.5 text-[12px] font-semibold text-ink/60 transition hover:bg-ink/[0.03]"
+                className="flex-1 rounded-[8px] border-2 border-ink/10 px-4 py-2.5 text-[12px] font-semibold text-ink/60 transition hover:bg-ink/[0.03]"
               >
                 {tb.saveDraft}
               </button>
-              <button className="flex-1 rounded-xl bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white shadow-md transition hover:bg-deep-violet/90">
+              <button className="flex-1 rounded-[8px] bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white shadow-md transition hover:bg-deep-violet/90">
                 {tb.launchCampaign}
               </button>
             </div>
@@ -204,33 +204,33 @@ export default function AdsTab({ channelSlug, channelName }: AdsTabProps) {
             </div>
 
             {/* Message preview */}
-            <div className="rounded-xl border-2 border-white bg-white/80 p-4">
+            <div className="rounded-[8px] border-2 border-white bg-white/80 p-4">
               <p className="text-[10px] text-ink/40 mb-2">{tb.messageLabel}</p>
               <p className="text-[13px] text-ink/70">{campaign.message}</p>
             </div>
 
             {/* Stats */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="rounded-xl border-2 border-white bg-white/80 p-3 text-center">
+              <div className="rounded-[8px] border-2 border-white bg-white/80 p-3 text-center">
                 <p className="text-[20px] font-bold text-ink">{fmt(campaign.sent)}</p>
                 <p className="text-[10px] text-ink/40">{tb.sent}</p>
               </div>
-              <div className="rounded-xl border-2 border-white bg-white/80 p-3 text-center">
+              <div className="rounded-[8px] border-2 border-white bg-white/80 p-3 text-center">
                 <p className="text-[20px] font-bold text-ink">{fmt(campaign.delivered)}</p>
                 <p className="text-[10px] text-ink/40">{tb.delivered}</p>
               </div>
-              <div className="rounded-xl border-2 border-white bg-white/80 p-3 text-center">
+              <div className="rounded-[8px] border-2 border-white bg-white/80 p-3 text-center">
                 <p className="text-[20px] font-bold text-ink">{fmt(campaign.opened)}</p>
                 <p className="text-[10px] text-ink/40">{tb.opened}</p>
               </div>
-              <div className="rounded-xl border-2 border-white bg-white/80 p-3 text-center">
+              <div className="rounded-[8px] border-2 border-white bg-white/80 p-3 text-center">
                 <p className="text-[20px] font-bold text-emerald-600">{fmt(campaign.conversion)}%</p>
                 <p className="text-[10px] text-ink/40">{tb.conversion}</p>
               </div>
             </div>
 
             {/* Budget */}
-            <div className="rounded-xl border-2 border-white bg-white/80 p-4">
+            <div className="rounded-[8px] border-2 border-white bg-white/80 p-4">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-[11px] text-ink/50">{tb.budgetProgress}</p>
                 <p className="text-[12px] font-semibold text-ink">${fmt(campaign.spent)} / ${fmt(campaign.budget)}</p>
@@ -244,7 +244,7 @@ export default function AdsTab({ channelSlug, channelName }: AdsTabProps) {
             </div>
 
             {/* Performance breakdown */}
-            <div className="rounded-xl border-2 border-white bg-white/80 p-4">
+            <div className="rounded-[8px] border-2 border-white bg-white/80 p-4">
               <p className="text-[11px] text-ink/50 mb-3">{tb.perfBreakdown}</p>
               <div className="space-y-3">
                 <div>
@@ -292,7 +292,7 @@ export default function AdsTab({ channelSlug, channelName }: AdsTabProps) {
           </div>
           <button
             onClick={() => setShowNewForm(true)}
-            className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white shadow-md transition hover:bg-deep-violet/90"
+            className="rounded-[8px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white shadow-md transition hover:bg-deep-violet/90"
           >
             {tb.newCampaign}
           </button>
@@ -303,7 +303,7 @@ export default function AdsTab({ channelSlug, channelName }: AdsTabProps) {
             <button
               key={c.id}
               onClick={() => setSelectedCampaign(c.id)}
-              className="w-full rounded-xl border-2 border-white bg-white/80 p-4 text-left transition hover:bg-white"
+              className="w-full rounded-[8px] border-2 border-white bg-white/80 p-4 text-left transition hover:bg-white"
             >
               <div className="flex items-start justify-between">
                 <div>

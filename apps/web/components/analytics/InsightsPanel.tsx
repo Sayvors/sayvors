@@ -41,7 +41,7 @@ function TrendChip({ trend, copy }: { trend: number | null; copy: InsightsCopy }
   const flat = trend === 0;
   return (
     <span
-      className={`inline-flex items-center gap-0.5 rounded-[2px] px-2 py-0.5 text-[10px] font-semibold ${
+      className={`inline-flex items-center gap-0.5 rounded-[8px] px-2 py-0.5 text-[10px] font-semibold ${
         flat
           ? "bg-[var(--ui-sunken)] text-[var(--ui-ink-2)]"
           : up
@@ -76,7 +76,7 @@ function SkeletonList({ rows = 5 }: { rows?: number }) {
       {Array.from({ length: rows }).map((_, i) => (
         <div
           key={i}
-          className="h-8 animate-pulse rounded-[2px] bg-[var(--ui-sunken)]"
+          className="h-8 animate-pulse rounded-[8px] bg-[var(--ui-sunken)]"
           style={{ width: `${95 - i * 8}%` }}
         />
       ))}
@@ -94,7 +94,7 @@ function HeroStat({
   sub: string;
 }) {
   return (
-    <div className="min-w-0 flex-1 rounded-[2px] bg-[var(--ui-sunken)] px-3.5 py-2.5">
+    <div className="min-w-0 flex-1 rounded-[8px] bg-[var(--ui-sunken)] px-3.5 py-2.5">
       <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
         {label}
       </p>
@@ -161,13 +161,13 @@ function ComplaintsByArea({
         </div>
         <div className="flex items-center gap-2">
           {top && (
-            <span className="rounded-[2px] bg-[var(--ui-sunken)] px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">
+            <span className="rounded-[8px] bg-[var(--ui-sunken)] px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">
               Main complaint: {areaLabel(top.category)}
             </span>
           )}
           <Link
             href="/dashboard/reviews"
-            className="ui-btn rounded-[2px] bg-[var(--ui-ink)] px-3 py-1.5 text-[11px] font-bold text-[var(--ui-on-ink)]"
+            className="ui-btn rounded-[8px] bg-[var(--ui-ink)] px-3 py-1.5 text-[11px] font-bold text-[var(--ui-on-ink)]"
           >
             Read reviews
           </Link>
@@ -195,12 +195,12 @@ function ComplaintsByArea({
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-1.5 pl-[152px] text-[10px] text-[var(--ui-ink-2)]">
                 {a.staff_named > 0 && (
-                  <span className="rounded-[2px] bg-[var(--ui-sunken)] px-1.5 py-px font-semibold text-[var(--ui-ink)]">
+                  <span className="rounded-[8px] bg-[var(--ui-sunken)] px-1.5 py-px font-semibold text-[var(--ui-ink)]">
                     {a.staff_named} staff named
                   </span>
                 )}
                 {a.serious > 0 && (
-                  <span className="rounded-[2px] border border-[var(--ui-line-strong)] px-1.5 py-px font-bold text-[var(--ui-ink)]">
+                  <span className="rounded-[8px] border border-[var(--ui-line-strong)] px-1.5 py-px font-bold text-[var(--ui-ink)]">
                     {a.serious} serious
                   </span>
                 )}
@@ -375,7 +375,7 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
           </p>
           <button
             onClick={retry}
-            className="ui-btn rounded-[2px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)]"
+            className="ui-btn rounded-[8px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)]"
           >
             {copy.retry}
           </button>
@@ -385,14 +385,14 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
           {[1, 2, 3, 4, 5].map((i) => (
             <div
               key={i}
-              className="h-9 animate-pulse rounded-[2px] bg-[var(--ui-sunken)]"
+              className="h-9 animate-pulse rounded-[8px] bg-[var(--ui-sunken)]"
             />
           ))}
         </div>
       ) : (
         <>
           {insightsQuery.data?.failed ? (
-            <p className="mb-3 rounded-[2px] bg-[var(--ui-sunken)] px-3 py-2 text-[10.5px] leading-relaxed text-[var(--ui-ink-2)]">
+            <p className="mb-3 rounded-[8px] bg-[var(--ui-sunken)] px-3 py-2 text-[10.5px] leading-relaxed text-[var(--ui-ink-2)]">
               Some intelligence panels could not load just now. Showing what is
               available.
             </p>
@@ -596,7 +596,7 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
                         <span className="min-w-0 flex-1 truncate text-[12.5px] text-[var(--ui-ink)]">
                           {question.question}
                         </span>
-                        <span className="shrink-0 rounded-[2px] bg-[var(--ui-sunken)] px-2 py-0.5 text-[11px] font-bold tabular-nums text-[var(--ui-ink)]">
+                        <span className="shrink-0 rounded-[8px] bg-[var(--ui-sunken)] px-2 py-0.5 text-[11px] font-bold tabular-nums text-[var(--ui-ink)]">
                           {question.count}
                         </span>
                       </li>
@@ -620,7 +620,7 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
                       .map((intent, index) => (
                         <span
                           key={index}
-                          className="rounded-[2px] bg-[var(--ui-sunken)] px-2.5 py-1 text-[11px] font-semibold text-[var(--ui-ink)]"
+                          className="rounded-[8px] bg-[var(--ui-sunken)] px-2.5 py-1 text-[11px] font-semibold text-[var(--ui-ink)]"
                         >
                           {intent.intent}{" "}
                           <span className="text-[var(--ui-ink-2)]">
@@ -654,7 +654,7 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
               </p>
               <Link
                 href="/dashboard/reviews"
-                className="ui-btn rounded-[2px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)]"
+                className="ui-btn rounded-[8px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)]"
               >
                 {copy.readReviews}
               </Link>

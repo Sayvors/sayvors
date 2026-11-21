@@ -62,7 +62,7 @@ function InstagramFeedPreview({
   const aspect = aspectFor(crop, 1);
   const overflow = captionOverflow(caption, "instagram");
   return (
-    <div className="mx-auto overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-white shadow-sm" style={{ width: PREVIEW_W }}>
+    <div className="mx-auto overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white shadow-sm" style={{ width: PREVIEW_W }}>
       <div className="flex items-center gap-2.5 px-3.5 py-2.5">
         <span className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-[#e0405f] bg-[#f0eaff] text-[11px] font-bold text-[#3a2a5e]">
           {author.charAt(author.startsWith("@") ? 1 : 0).toUpperCase()}
@@ -113,7 +113,7 @@ function FacebookFeedPreview({
   const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
   const aspect = aspectFor(crop, 1.91);
   return (
-    <div className="mx-auto overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-white shadow-sm" style={{ width: PREVIEW_W }}>
+    <div className="mx-auto overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white shadow-sm" style={{ width: PREVIEW_W }}>
       <div className="flex items-center gap-2.5 px-3.5 pt-3 pb-2">
         <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#e7f3ff] text-[14px] font-bold text-[#0a66c2]">
           {(target.name || "P").charAt(0).toUpperCase()}
@@ -157,7 +157,7 @@ function WhatsAppStatusPreview({
   const name = target.name || pv.waName;
   const aspect = aspectFor(crop, 9 / 16);
   return (
-    <div className="mx-auto overflow-hidden rounded-[16px] bg-[#eae6df] shadow-sm" style={{ width: PREVIEW_W - 20 }}>
+    <div className="mx-auto overflow-hidden rounded-[8px] bg-[#eae6df] shadow-sm" style={{ width: PREVIEW_W - 20 }}>
       <div className="flex items-center gap-2.5 bg-white px-3 py-2.5">
         <span className="flex h-9 w-9 items-center justify-center rounded-full border-2 border-[#25d366] bg-[#efeae2] text-[12px] font-bold text-[#075e54]">
           {name.charAt(0).toUpperCase()}
@@ -168,7 +168,7 @@ function WhatsAppStatusPreview({
         </span>
       </div>
       <div className="p-2" style={{ backgroundColor: "#efeae2" }}>
-        <div className="relative mx-auto overflow-hidden rounded-[10px] bg-black" style={{ aspectRatio: String(aspect), width: PREVIEW_W - 40, height: Math.round((PREVIEW_W - 40) / aspect) }}>
+        <div className="relative mx-auto overflow-hidden rounded-[8px] bg-black" style={{ aspectRatio: String(aspect), width: PREVIEW_W - 40, height: Math.round((PREVIEW_W - 40) / aspect) }}>
           <CroppedMedia media={media} cropKey={crop.key} zoom={crop.zoom} offset={{ x: crop.x, y: crop.y }} boxW={PREVIEW_W - 40} aspect={aspect} />
           {media.type && (
             <>
@@ -222,7 +222,7 @@ function StoryChrome({
   const boxW = 200;
   const boxH = aspect > 0 ? Math.round(boxW / aspect) : boxW;
   return (
-    <div className="mx-auto overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-black shadow-sm relative" style={{ width: boxW, height: boxH }}>
+    <div className="mx-auto overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-black shadow-sm relative" style={{ width: boxW, height: boxH }}>
       <CroppedMedia media={media} cropKey={crop.key} zoom={crop.zoom} offset={{ x: crop.x, y: crop.y }} boxW={boxW} aspect={aspect} />
       {media.type && (
         <>
@@ -284,7 +284,7 @@ function GooglePostPreview({
   const kindLabel =
     method === "event" ? methods.event.label : method === "offer" ? methods.offer.label : methods.update.label;
   return (
-    <div className="mx-auto overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-white shadow-sm" style={{ width: PREVIEW_W }}>
+    <div className="mx-auto overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white shadow-sm" style={{ width: PREVIEW_W }}>
       <div className="flex items-center gap-2.5 px-3.5 py-2.5">
         <span className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-[#4285f4] bg-[#eef5ff] text-[11px] font-bold text-[#1a0dab]">
           {author.charAt(0).toUpperCase()}
@@ -338,7 +338,7 @@ function GenericPreview({
 }) {
   const aspect = aspectFor(crop, 4 / 3);
   return (
-    <div className="mx-auto overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-white shadow-sm" style={{ width: PREVIEW_W }}>
+    <div className="mx-auto overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white shadow-sm" style={{ width: PREVIEW_W }}>
       <div className="flex items-center gap-2.5 px-3.5 py-2.5">
         <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--ui-sunken)] text-[12px] font-bold text-[var(--ui-ink)]">
           &#10022;
@@ -376,7 +376,7 @@ function ProfilePicturePreview({
   const aspect = aspectFor(crop, 1);
   const size = 56;
   return (
-    <div className="mx-auto overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-white shadow-sm" style={{ width: PREVIEW_W }}>
+    <div className="mx-auto overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white shadow-sm" style={{ width: PREVIEW_W }}>
       <div className="relative h-[74px] bg-[#e9eaee]">
         <div
           className="absolute -bottom-7 left-3 overflow-hidden rounded-full border-[3px] border-white bg-white shadow-sm"
@@ -409,7 +409,7 @@ function BannerPreview({
   const pv = t.publish.preview;
   const aspect = aspectFor(crop, 1.91);
   return (
-    <div className="mx-auto overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-white shadow-sm" style={{ width: PREVIEW_W }}>
+    <div className="mx-auto overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white shadow-sm" style={{ width: PREVIEW_W }}>
       <div className="relative w-full overflow-hidden bg-[#e9eaee]" style={{ aspectRatio: String(aspect), height: Math.round(PREVIEW_W / aspect) }}>
         <CroppedMedia media={media} cropKey={crop.key} zoom={crop.zoom} offset={{ x: crop.x, y: crop.y }} boxW={PREVIEW_W} aspect={aspect} />
       </div>
@@ -435,7 +435,7 @@ function GalleryPreview({
   const pv = t.publish.preview;
   const aspect = aspectFor(crop, 4 / 3);
   return (
-    <div className="mx-auto overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-white shadow-sm" style={{ width: PREVIEW_W }}>
+    <div className="mx-auto overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white shadow-sm" style={{ width: PREVIEW_W }}>
       <div className="relative w-full overflow-hidden bg-[#e9eaee]" style={{ aspectRatio: String(aspect), height: Math.round(PREVIEW_W / aspect) }}>
         <CroppedMedia media={media} cropKey={crop.key} zoom={crop.zoom} offset={{ x: crop.x, y: crop.y }} boxW={PREVIEW_W} aspect={aspect} />
       </div>

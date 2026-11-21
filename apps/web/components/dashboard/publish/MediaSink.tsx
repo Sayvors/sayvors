@@ -270,7 +270,7 @@ export default function MediaSink({
   };
 
   const tabClass = (active: boolean) =>
-    `flex-1 rounded-[20px] px-3 py-2 text-[12px] font-bold transition duration-200 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+    `flex-1 rounded-[8px] px-3 py-2 text-[12px] font-bold transition duration-200 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
       active
         ? "bg-[var(--ui-surface)] text-[var(--ui-ink)] shadow-[0_8px_18px_-12px_rgba(61,29,110,0.55)]"
         : "text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
@@ -280,9 +280,9 @@ export default function MediaSink({
     <div className="space-y-3">
       {media ? (
         /* Chosen media: one clear card with the preview, details and actions. */
-        <div className="flex flex-wrap items-center gap-4 rounded-[24px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3.5 shadow-[0_12px_28px_-22px_rgba(61,29,110,0.45)]">
+        <div className="flex flex-wrap items-center gap-4 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3.5 shadow-[0_12px_28px_-22px_rgba(61,29,110,0.45)]">
           <div
-            className="relative shrink-0 overflow-hidden rounded-[20px] border border-[var(--ui-line)] bg-[var(--ui-surface)] shadow-[0_12px_28px_-20px_rgba(61,29,110,0.5)] transition-[width,height] duration-200"
+            className="relative shrink-0 overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] shadow-[0_12px_28px_-20px_rgba(61,29,110,0.5)] transition-[width,height] duration-200"
             style={{ width: box.w, height: box.h }}
           >
             {media.type === "video" ? (
@@ -322,7 +322,7 @@ export default function MediaSink({
               <button
                 type="button"
                 onClick={onClear}
-                className="rounded-[20px] px-3 py-1.5 text-[11px] font-semibold text-red-600 outline-none transition hover:bg-red-500/10 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] dark:text-red-400"
+                className="rounded-[8px] px-3 py-1.5 text-[11px] font-semibold text-red-600 outline-none transition hover:bg-red-500/10 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] dark:text-red-400"
               >
                 {md.removeMedia}
               </button>
@@ -332,7 +332,7 @@ export default function MediaSink({
       ) : (
         /* Three standard sources, one tab at a time. */
         <div>
-          <div className="flex gap-1 rounded-[24px] bg-[var(--ui-sunken)] p-1" role="tablist" aria-label={md.pasteAria}>
+          <div className="flex gap-1 rounded-[8px] bg-[var(--ui-sunken)] p-1" role="tablist" aria-label={md.pasteAria}>
             <button type="button" role="tab" aria-selected={source === "upload"} onClick={() => setSource("upload")} className={tabClass(source === "upload")}>
               {md.tabUpload}
             </button>
@@ -364,13 +364,13 @@ export default function MediaSink({
                 setDropping(false);
                 acceptFiles(e.dataTransfer.files);
               }}
-              className={`mt-3 flex flex-col items-center rounded-[28px] border-2 border-dashed bg-[var(--ui-sunken)] px-4 py-8 text-center transition duration-200 ${
+              className={`mt-3 flex flex-col items-center rounded-[8px] border-2 border-dashed bg-[var(--ui-sunken)] px-4 py-8 text-center transition duration-200 ${
                 dropping
                   ? "border-[var(--ui-ink)] bg-[var(--ui-ink)]/[0.04]"
                   : "border-[var(--ui-line-strong)] hover:border-[var(--ui-ink)]/40"
               }`}
             >
-              <span className="flex h-14 w-14 items-center justify-center rounded-[20px] bg-[var(--ui-surface)] text-[var(--ui-ink)] shadow-[0_10px_20px_-14px_rgba(61,29,110,0.6)]">
+              <span className="flex h-14 w-14 items-center justify-center rounded-[8px] bg-[var(--ui-surface)] text-[var(--ui-ink)] shadow-[0_10px_20px_-14px_rgba(61,29,110,0.6)]">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6" aria-hidden>
                   <rect x="3" y="3" width="18" height="18" rx="2" />
                   <circle cx="8.5" cy="8.5" r="1.5" />
@@ -390,7 +390,7 @@ export default function MediaSink({
           )}
 
           {source === "link" && (
-            <div role="tabpanel" className="mt-3 rounded-[24px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3.5">
+            <div role="tabpanel" className="mt-3 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3.5">
               <p className="mb-2 text-[11.5px] text-[var(--ui-ink-2)]">{md.urlHint}</p>
               <div className="flex flex-wrap items-center gap-2">
                 <input
@@ -420,7 +420,7 @@ export default function MediaSink({
           )}
 
           {source === "library" && (
-            <div role="tabpanel" className="mt-3 rounded-[24px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3.5">
+            <div role="tabpanel" className="mt-3 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3.5">
               {libraryLoading ? (
                 <p className="py-6 text-center text-[12px] text-[var(--ui-ink-2)]">{md.libraryLoading}</p>
               ) : libraryError ? (
@@ -440,7 +440,7 @@ export default function MediaSink({
                       type="button"
                       onClick={() => pickFromLibrary(it)}
                       title={`${it.label} — ${md.libraryChoose}`}
-                      className="group relative aspect-square overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-surface)] transition duration-200 hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+                      className="group relative aspect-square overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] transition duration-200 hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
                     >
                       {it.type === "video" ? (
                         <video src={it.url} muted playsInline className="h-full w-full object-cover" />

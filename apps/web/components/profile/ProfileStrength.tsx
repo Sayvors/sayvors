@@ -15,7 +15,7 @@ function fill(s: string, vars: Record<string, string | number>): string {
 }
 
 const CARD =
-  "rounded-[32px] bg-white p-5 shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)] ring-1 ring-ink/[0.06] dark:bg-[#1b1530] dark:ring-white/[0.08] sm:p-7";
+  "rounded-[8px] bg-white p-5 shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)] ring-1 ring-ink/[0.06] dark:bg-[#1b1530] dark:ring-white/[0.08] sm:p-7";
 
 export default function ProfileStrength({ profile }: { profile: Profile }) {
   const { t, locale } = useI18n();

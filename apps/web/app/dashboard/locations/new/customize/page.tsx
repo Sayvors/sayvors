@@ -163,7 +163,7 @@ export default function CustomizeLocationPage() {
   if (!listing) {
     return (
       <div className="mx-auto w-full max-w-2xl p-4 sm:p-8">
-        <div className="rounded-2xl border border-ink/[0.06] bg-white p-6 shadow-sm dark:border-fog/[0.08] dark:bg-ink">
+        <div className="rounded-[8px] border border-ink/[0.06] bg-white p-6 shadow-sm dark:border-fog/[0.08] dark:bg-ink">
           <h1 className="text-[20px] font-bold text-ink dark:text-fog">Location not found</h1>
           <p className="mt-2 text-[13px] text-ink/60 dark:text-fog/60">{loadError}</p>
           <Link href="/dashboard/locations" className="btn-primary mt-5 inline-flex">
@@ -185,7 +185,7 @@ export default function CustomizeLocationPage() {
   if (loadError) {
     return (
       <div className="mx-auto w-full max-w-2xl p-4 sm:p-8">
-        <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-[13px] text-red-700 dark:border-red-500/25 dark:bg-red-500/10 dark:text-red-200">
+        <div className="rounded-[8px] border border-red-200 bg-red-50 p-5 text-[13px] text-red-700 dark:border-red-500/25 dark:bg-red-500/10 dark:text-red-200">
           {loadError}
         </div>
       </div>
@@ -240,21 +240,21 @@ export default function CustomizeLocationPage() {
               );
             })}
           </ol>
-          <div className="mt-6 rounded-xl border border-ink/[0.06] bg-white p-3 text-[11px] leading-relaxed text-ink/50 dark:border-fog/[0.08] dark:bg-ink dark:text-fog/50">
+          <div className="mt-6 rounded-[8px] border border-ink/[0.06] bg-white p-3 text-[11px] leading-relaxed text-ink/50 dark:border-fog/[0.08] dark:bg-ink dark:text-fog/50">
             Google shows these edits once the location is verified. You can skip any step and come
             back from Locations.
           </div>
         </aside>
 
         <main className="min-w-0">
-          <div className="rounded-2xl border border-ink/[0.06] bg-white p-5 shadow-sm sm:p-7 dark:border-fog/[0.08] dark:bg-ink">
+          <div className="rounded-[8px] border border-ink/[0.06] bg-white p-5 shadow-sm sm:p-7 dark:border-fog/[0.08] dark:bg-ink">
             {message && (
-              <p className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-[12px] text-emerald-700 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-200">
+              <p className="mb-4 rounded-[8px] border border-emerald-200 bg-emerald-50 p-3 text-[12px] text-emerald-700 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-200">
                 {message}
               </p>
             )}
             {error && (
-              <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-[12px] text-red-700 dark:border-red-500/25 dark:bg-red-500/10 dark:text-red-200">
+              <p role="alert" className="mb-4 rounded-[8px] border border-red-200 bg-red-50 p-3 text-[12px] text-red-700 dark:border-red-500/25 dark:bg-red-500/10 dark:text-red-200">
                 {error}
               </p>
             )}
@@ -276,7 +276,7 @@ export default function CustomizeLocationPage() {
                     return (
                       <div
                         key={day}
-                        className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.08] dark:bg-fog/[0.03]"
+                        className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[8px] border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.08] dark:bg-fog/[0.03]"
                       >
                         <label className="flex w-32 shrink-0 items-center gap-2">
                           <input
@@ -377,7 +377,7 @@ export default function CustomizeLocationPage() {
                 </div>
 
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="rounded-xl border border-dashed border-ink/15 p-4 text-center transition hover:bg-ink/[0.02] dark:border-fog/15 dark:hover:bg-fog/[0.03]">
+                  <label className="rounded-[8px] border border-dashed border-ink/15 p-4 text-center transition hover:bg-ink/[0.02] dark:border-fog/15 dark:hover:bg-fog/[0.03]">
                     <span className="block text-[12.5px] font-semibold text-ink dark:text-fog">
                       Storefront photo
                     </span>
@@ -396,7 +396,7 @@ export default function CustomizeLocationPage() {
                       }}
                     />
                   </label>
-                  <label className="rounded-xl border border-dashed border-ink/15 p-4 text-center transition hover:bg-ink/[0.02] dark:border-fog/15 dark:hover:bg-fog/[0.03]">
+                  <label className="rounded-[8px] border border-dashed border-ink/15 p-4 text-center transition hover:bg-ink/[0.02] dark:border-fog/15 dark:hover:bg-fog/[0.03]">
                     <span className="block text-[12.5px] font-semibold text-ink dark:text-fog">
                       Business photos
                     </span>
@@ -422,7 +422,7 @@ export default function CustomizeLocationPage() {
                   <p className="text-[11.5px] text-ink/50 dark:text-fog/50">Uploading photo...</p>
                 )}
                 {uploaded.length > 0 && (
-                  <ul className="space-y-1 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-[11.5px] text-emerald-800 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-200">
+                  <ul className="space-y-1 rounded-[8px] border border-emerald-200 bg-emerald-50 p-3 text-[11.5px] text-emerald-800 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-200">
                     {uploaded.map((item) => (
                       <li key={item}>✓ {item}</li>
                     ))}

@@ -1483,7 +1483,7 @@ export default function InboxView() {
           </div>
           <button
             onClick={() => void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] })}
-            className="rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12px] font-semibold text-ink transition hover:border-deep-violet/30 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+            className="rounded-[8px] border border-ink/[0.08] bg-white px-3 py-2 text-[12px] font-semibold text-ink transition hover:border-deep-violet/30 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
           >
             {u.refresh}
           </button>
@@ -1492,7 +1492,7 @@ export default function InboxView() {
       {listActionError && (
         <div
           role="alert"
-          className="mb-3 flex items-center justify-between gap-4 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-[12px] font-medium text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300"
+          className="mb-3 flex items-center justify-between gap-4 rounded-[8px] border border-red-200 bg-red-50 px-4 py-2.5 text-[12px] font-medium text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300"
         >
           <span>{listActionError}</span>
           <button
@@ -1507,7 +1507,7 @@ export default function InboxView() {
 
       <div className={`relative grid min-h-0 flex-1 gap-4 ${showInfo ? "lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)_minmax(0,280px)]" : "lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)]"}`}>
         {/* Thread list */}
-        <div className={`${openThread ? "hidden lg:flex" : "flex"} min-h-0 flex-col overflow-hidden rounded-2xl border border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink`}>
+        <div className={`${openThread ? "hidden lg:flex" : "flex"} min-h-0 flex-col overflow-hidden rounded-[8px] border border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink`}>
           <div className="border-b border-ink/[0.06] p-3 dark:border-fog/[0.06]">
             <input
               value={search}
@@ -1757,7 +1757,7 @@ export default function InboxView() {
         </div>
 
         {/* Thread detail */}
-        <div className={`${openThread ? "flex" : "hidden lg:flex"} min-h-0 flex-col overflow-hidden rounded-2xl border border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink`}>
+        <div className={`${openThread ? "flex" : "hidden lg:flex"} min-h-0 flex-col overflow-hidden rounded-[8px] border border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink`}>
           {!target ? (
             <div className="flex flex-1 items-center justify-center px-6 text-center text-[13px] text-ink/40">
               {u.selectConversation}
@@ -1777,7 +1777,7 @@ export default function InboxView() {
                 </button>
                 <button
                   onClick={() => setShowInfo((v) => !v)}
-                  className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-xl p-1.5 text-left transition hover:bg-ink/[0.04] dark:hover:bg-fog/[0.05]"
+                  className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-[8px] p-1.5 text-left transition hover:bg-ink/[0.04] dark:hover:bg-fog/[0.05]"
                   aria-label={u.viewProfile}
                 >
                   <Avatar
@@ -1932,7 +1932,7 @@ export default function InboxView() {
                       exactly when the sweep will hand the thread back — so a
                       24h window cannot look like a dead bot. */}
                   {threadState?.priority === "important" && (
-                    <div className="mx-3 mb-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-500/30 dark:bg-amber-500/10">
+                    <div className="mx-3 mb-2 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-500/30 dark:bg-amber-500/10">
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                         <span
                           title={
@@ -2131,7 +2131,7 @@ export default function InboxView() {
                               <span className="h-7 w-7 shrink-0" aria-hidden />
                             ))}
                           <div
-                            className={`max-w-[72%] rounded-2xl px-4 py-2.5 shadow-sm ${
+                            className={`max-w-[72%] rounded-[8px] px-4 py-2.5 shadow-sm ${
                               mine
                                 ? m.status === "failed"
                                   ? "bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-200"
@@ -2354,7 +2354,7 @@ export default function InboxView() {
                   </p>
                 )}
                 {replyTo && (
-                  <div className="mb-2 flex items-start gap-2 rounded-xl border-l-2 border-deep-violet bg-deep-violet/[0.05] px-3 py-2 dark:bg-fog/[0.06]">
+                  <div className="mb-2 flex items-start gap-2 rounded-[8px] border-l-2 border-deep-violet bg-deep-violet/[0.05] px-3 py-2 dark:bg-fog/[0.06]">
                     <div className="min-w-0 flex-1">
                       <p className="text-[9px] font-bold uppercase tracking-wide text-deep-violet/70 dark:text-fog/60">
                         {u.replyingTo}{" "}
@@ -2430,7 +2430,7 @@ export default function InboxView() {
                 ) : (
                   <>
                     {(!replyWindowOpen(target) || windowClosed) && (
-                      <div className="mb-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2.5 dark:border-amber-500/30 dark:bg-amber-500/10">
+                      <div className="mb-2 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2.5 dark:border-amber-500/30 dark:bg-amber-500/10">
                         <p className="text-[12px] font-medium text-amber-800 dark:text-amber-300">
                           {u.windowNote}
                         </p>
@@ -2466,7 +2466,7 @@ export default function InboxView() {
                         </div>
 
                         {templateOpen && (
-                          <div className="mt-3 rounded-xl bg-white/80 p-3 dark:bg-ink/40">
+                          <div className="mt-3 rounded-[8px] bg-white/80 p-3 dark:bg-ink/40">
                             {templateError && (
                               <p className="mb-2 text-[11px] font-medium text-[#C4304B] dark:text-[#FF8FA3]">
                                 {templateError}
@@ -2578,7 +2578,7 @@ export default function InboxView() {
         </div>
 
         {/* Contact info sidebar */}
-        <aside className={`${showInfo ? "flex" : "hidden"} absolute inset-0 z-20 min-h-0 flex-col overflow-y-auto rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink lg:static lg:z-auto`}>
+        <aside className={`${showInfo ? "flex" : "hidden"} absolute inset-0 z-20 min-h-0 flex-col overflow-y-auto rounded-[8px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink lg:static lg:z-auto`}>
           <div className="mb-3 flex items-center justify-between lg:hidden">
             <button
               type="button"
@@ -2607,7 +2607,7 @@ export default function InboxView() {
                       ? fill(u.viewPic, { name: target.display_name || u.unknownSender })
                       : undefined
                   }
-                  className={`rounded-2xl outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
+                  className={`rounded-[8px] outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
                     target.avatar_url
                       ? "cursor-zoom-in hover:opacity-90"
                       : "cursor-default"
@@ -2617,7 +2617,7 @@ export default function InboxView() {
                     name={target.display_name}
                     phone={target.contact_phone}
                     url={target.avatar_url}
-                    boxCls="h-14 w-14 rounded-2xl bg-deep-violet/10 text-[16px] text-deep-violet ring-1 ring-deep-violet/10"
+                    boxCls="h-14 w-14 rounded-[8px] bg-deep-violet/10 text-[16px] text-deep-violet ring-1 ring-deep-violet/10"
                   >
                     <PlatformBadge platform={target.platform} />
                   </Avatar>
@@ -2687,7 +2687,7 @@ export default function InboxView() {
                 </div>
               </dl>
               {target.platform === "whatsapp" && (
-                <div className="rounded-xl border border-ink/[0.08] p-3 dark:border-fog/[0.1]">
+                <div className="rounded-[8px] border border-ink/[0.08] p-3 dark:border-fog/[0.1]">
                   <p className="text-[11px] font-bold uppercase tracking-wide text-ink/45 dark:text-fog/45">
                     {u.accessTitle}
                   </p>
@@ -2746,26 +2746,26 @@ export default function InboxView() {
           <img
             src={resolveMediaUrl(target.avatar_url) || target.avatar_url}
             alt={fill(u.photoOf, { name: target.display_name || u.unknownSender })}
-            className="max-h-[82vh] max-w-[82vw] rounded-2xl object-contain shadow-2xl"
+            className="max-h-[82vh] max-w-[82vw] rounded-[8px] object-contain shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           />
         </div>
       )}
 
       {error && (
-        <p role="status" className="mt-3 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-[12px] text-red-700">
+        <p role="status" className="mt-3 rounded-[8px] border border-red-200 bg-red-50 px-4 py-2.5 text-[12px] text-red-700">
           {error}
         </p>
       )}
       {deleteTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl dark:bg-ink">
+          <div className="w-full max-w-sm rounded-[8px] bg-white p-5 shadow-xl dark:bg-ink">
             <h2 className="text-[15px] font-bold text-ink dark:text-fog">{u.deleteModalTitle}</h2>
             <p className="mt-2 text-[12px] text-ink/60 dark:text-fog/60">
               {u.deleteDesc}
             </p>
             {listActionError && (
-              <p role="alert" className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-medium text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+              <p role="alert" className="mt-3 rounded-[8px] border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-medium text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
                 {listActionError}
               </p>
             )}
@@ -2774,7 +2774,7 @@ export default function InboxView() {
                 type="button"
                 disabled={deleteBusy}
                 onClick={() => setDeleteTarget(null)}
-                className="rounded-[2px] border border-[var(--ui-line)] px-3 py-1.5 text-[12px] font-medium text-ink/70 disabled:opacity-50"
+                className="rounded-[8px] border border-[var(--ui-line)] px-3 py-1.5 text-[12px] font-medium text-ink/70 disabled:opacity-50"
               >
                 {t.common.cancel}
               </button>
@@ -2782,7 +2782,7 @@ export default function InboxView() {
                 type="button"
                 disabled={deleteBusy}
                 onClick={() => void handleDelete(deleteTarget)}
-                className="rounded-[2px] bg-red-600 px-3 py-1.5 text-[12px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-[8px] bg-red-600 px-3 py-1.5 text-[12px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {deleteBusy ? u.deleting : u.deleteBtn}
               </button>
@@ -2792,7 +2792,7 @@ export default function InboxView() {
       )}
       {richComposer && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl dark:bg-ink">
+          <div className="w-full max-w-md rounded-[8px] bg-white p-5 shadow-xl dark:bg-ink">
             <h2 className="text-[15px] font-bold text-ink dark:text-fog">
               {richComposer === "location"
                 ? u.rich.locationTitle
@@ -2828,7 +2828,7 @@ export default function InboxView() {
                       }
                     }}
                     placeholder="https://maps.google.com/.../@24.7136,46.6753,17z"
-                    className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                    className="mt-1 w-full rounded-[8px] border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
                   />
                 </label>
                 <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
@@ -2837,7 +2837,7 @@ export default function InboxView() {
                     value={locName}
                     onChange={(e) => setLocName(e.target.value)}
                     placeholder="Aster Coffee — Olaya"
-                    className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                    className="mt-1 w-full rounded-[8px] border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
                   />
                 </label>
                 <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
@@ -2846,7 +2846,7 @@ export default function InboxView() {
                     value={locAddress}
                     onChange={(e) => setLocAddress(e.target.value)}
                     placeholder="Olaya St, Riyadh"
-                    className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                    className="mt-1 w-full rounded-[8px] border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
                   />
                 </label>
                 <div className="grid grid-cols-2 gap-2">
@@ -2857,7 +2857,7 @@ export default function InboxView() {
                       onChange={(e) => setLocLat(e.target.value)}
                       inputMode="decimal"
                       placeholder="24.7136"
-                      className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] tabular-nums text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                      className="mt-1 w-full rounded-[8px] border border-ink/[0.1] bg-white px-3 py-2 text-[12px] tabular-nums text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
                     />
                   </label>
                   <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
@@ -2867,7 +2867,7 @@ export default function InboxView() {
                       onChange={(e) => setLocLng(e.target.value)}
                       inputMode="decimal"
                       placeholder="46.6753"
-                      className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] tabular-nums text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                      className="mt-1 w-full rounded-[8px] border border-ink/[0.1] bg-white px-3 py-2 text-[12px] tabular-nums text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
                     />
                   </label>
                 </div>
@@ -2880,7 +2880,7 @@ export default function InboxView() {
                     value={cardName}
                     onChange={(e) => setCardName(e.target.value)}
                     placeholder="Aster Coffee"
-                    className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                    className="mt-1 w-full rounded-[8px] border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
                   />
                 </label>
                 <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
@@ -2889,7 +2889,7 @@ export default function InboxView() {
                     value={cardPhone}
                     onChange={(e) => setCardPhone(e.target.value)}
                     placeholder="+966 50 000 0000"
-                    className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                    className="mt-1 w-full rounded-[8px] border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
                   />
                 </label>
                 <label className="block text-[11px] font-semibold text-ink/60 dark:text-fog/60">
@@ -2899,7 +2899,7 @@ export default function InboxView() {
                     onChange={(e) => setCardEmail(e.target.value)}
                     type="email"
                     placeholder="hello@example.com"
-                    className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                    className="mt-1 w-full rounded-[8px] border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
                   />
                 </label>
               </div>
@@ -2924,7 +2924,7 @@ export default function InboxView() {
                     value={docCaption}
                     onChange={(e) => setDocCaption(e.target.value)}
                     placeholder={u.rich.captionPh}
-                    className="mt-1 w-full rounded-xl border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                    className="mt-1 w-full rounded-[8px] border border-ink/[0.1] bg-white px-3 py-2 text-[12px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
                   />
                 </label>
               </div>

@@ -71,7 +71,7 @@ export default function HeatmapGrid() {
           {Array.from({ length: 8 }, (_, i) => (
             <div
               key={i}
-              className={`min-h-[120px] rounded-[16px] border border-dashed border-[#3D1D6E]/15 bg-[#F1F2F5] ${SPANS[i]}`}
+              className={`min-h-[120px] rounded-[8px] border border-dashed border-[#3D1D6E]/15 bg-[#F1F2F5] ${SPANS[i]}`}
             />
           ))}
         </div>
@@ -84,7 +84,7 @@ export default function HeatmapGrid() {
                 key={place.id}
                 href={compareHref(place)}
                 style={{ backgroundColor: tone.bg, color: tone.fg }}
-                className={`flex min-h-[130px] flex-col justify-between overflow-hidden rounded-[16px] border border-black/5 p-4 transition-transform active:translate-y-[2px] active:scale-[0.98] ${SPANS[index % SPANS.length]} ${FOCUS}`}
+                className={`flex min-h-[130px] flex-col justify-between overflow-hidden rounded-[8px] border border-black/5 p-4 transition-transform active:translate-y-[2px] active:scale-[0.98] ${SPANS[index % SPANS.length]} ${FOCUS}`}
               >
                 <div className="flex items-start justify-between gap-2">
                   <h3 className="max-w-[92%] text-[17px] font-bold leading-tight sm:text-[19px]">
@@ -116,7 +116,7 @@ export default function HeatmapGrid() {
           <span
             key={color}
             aria-hidden
-            className="h-4 w-8 rounded-[6px] border border-[#3D1D6E]/10"
+            className="h-4 w-8 rounded-[8px] border border-[#3D1D6E]/10"
             style={{ backgroundColor: color }}
           />
         ))}

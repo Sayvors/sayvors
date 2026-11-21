@@ -104,7 +104,7 @@ export default function BenchmarkDetailPage() {
             <p className="mt-1 text-[12px] text-[#3B2D5E]">{details.address}</p>
           </header>
 
-          <section className="mt-6 overflow-hidden rounded-[12px] border border-[#3D1D6E]/12 bg-white">
+          <section className="mt-6 overflow-hidden rounded-[8px] border border-[#3D1D6E]/12 bg-white">
             <div className="border-b border-[#3D1D6E]/10 px-5 py-4">
               <h2 className="text-[14px] font-bold text-[#14101F]">
                 Compare with your locations
@@ -152,7 +152,7 @@ export default function BenchmarkDetailPage() {
             ) : (
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {comparisons.map(({ channel, overview }) => (
-                  <article key={channel.id} className="rounded-[12px] border border-[#3D1D6E]/12 bg-white p-4">
+                  <article key={channel.id} className="rounded-[8px] border border-[#3D1D6E]/12 bg-white p-4">
                     <h3 className="truncate text-[12px] font-bold text-[#14101F]">
                       {channel.display_name || "Unnamed location"}
                     </h3>
@@ -185,7 +185,7 @@ export default function BenchmarkDetailPage() {
             {details.reviews.length === 0 ? (
               <p className="text-[12px] text-[#3B2D5E]">No reviews returned by Google.</p>
             ) : (
-              <ul className="divide-y divide-[#3D1D6E]/10 rounded-[12px] border border-[#3D1D6E]/12 bg-white">
+              <ul className="divide-y divide-[#3D1D6E]/10 rounded-[8px] border border-[#3D1D6E]/12 bg-white">
                 {details.reviews.slice(0, 20).map((review, i) => (
                   <li key={i} className="px-5 py-3">
                     <p className="font-mono text-[11px] font-bold text-[#3D1D6E]">

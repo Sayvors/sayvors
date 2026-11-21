@@ -266,7 +266,7 @@ export default function MetaConnections({
         return (
           <article
             key={p.key}
-            className="flex flex-col rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink"
+            className="flex flex-col rounded-[8px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink"
           >
             <div className="flex items-start gap-3">
               <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${p.tint}`}>
@@ -365,7 +365,7 @@ export default function MetaConnections({
             if (e.target === e.currentTarget) setPicking(null);
           }}
         >
-          <div className="w-full max-w-md rounded-2xl border border-ink/[0.06] bg-white p-4 shadow-xl dark:border-fog/[0.08] dark:bg-ink sm:p-5">
+          <div className="w-full max-w-md rounded-[8px] border border-ink/[0.06] bg-white p-4 shadow-xl dark:border-fog/[0.08] dark:bg-ink sm:p-5">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h2 className="text-[15px] font-bold text-ink dark:text-fog">
@@ -476,7 +476,7 @@ export default function MetaConnections({
             if (e.target === e.currentTarget) setConfirmOff(null);
           }}
         >
-          <div className="w-full max-w-md rounded-2xl border border-ink/[0.06] bg-white p-4 shadow-xl dark:border-fog/[0.08] dark:bg-ink sm:p-5">
+          <div className="w-full max-w-md rounded-[8px] border border-ink/[0.06] bg-white p-4 shadow-xl dark:border-fog/[0.08] dark:bg-ink sm:p-5">
             <h2 className="text-[15px] font-bold text-ink dark:text-fog">
               {fill(m.confirmTitle, { provider: providerDisplay(confirmOff) })}
             </h2>

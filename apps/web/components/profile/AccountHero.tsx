@@ -269,7 +269,7 @@ export default function AccountHero({
   return (
     <section
       aria-label={pf.heroAria}
-      className="overflow-hidden rounded-[32px] bg-white shadow-[0_24px_60px_-30px_rgba(61,29,110,0.35)] ring-1 ring-ink/[0.06] dark:bg-[#1b1530] dark:ring-white/[0.08]"
+      className="overflow-hidden rounded-[8px] bg-white shadow-[0_24px_60px_-30px_rgba(61,29,110,0.35)] ring-1 ring-ink/[0.06] dark:bg-[#1b1530] dark:ring-white/[0.08]"
     >
       {/* Cover — a solid brand panel when empty, never a gradient. */}
       <div className="relative h-40 overflow-hidden bg-deep-violet sm:h-52">
@@ -393,7 +393,7 @@ export default function AccountHero({
           </div>
         </div>
 
-        <div className="mt-6 rounded-[24px] border border-ink/[0.055] bg-[#f7f4fd] p-4 dark:border-white/[0.07] dark:bg-white/[0.035] sm:mt-7 sm:p-5">
+        <div className="mt-6 rounded-[8px] border border-ink/[0.055] bg-[#f7f4fd] p-4 dark:border-white/[0.07] dark:bg-white/[0.035] sm:mt-7 sm:p-5">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
               <p className="text-[13px] font-bold text-ink dark:text-fog">{pf.photoTitle}</p>

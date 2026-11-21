@@ -125,13 +125,13 @@ export function MetricChart({
     <div className="ui-card p-5">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-[14px] font-bold text-[var(--ui-ink)]">{chartLabels.activityOverTime}</h3>
-        <div className="flex rounded-[2px] bg-[var(--ui-sunken)] p-0.5" role="group" aria-label={chartLabels.metric}>
+        <div className="flex rounded-[8px] bg-[var(--ui-sunken)] p-0.5" role="group" aria-label={chartLabels.metric}>
           {METRICS.map((m) => (
             <button
               key={m.key}
               onClick={() => setMetric(m.key)}
               aria-pressed={metric === m.key}
-              className={`rounded-[2px] px-2.5 py-1 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+              className={`rounded-[8px] px-2.5 py-1 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
                 metric === m.key ? "border border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink)]" : "text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
               }`}
             >
@@ -201,7 +201,7 @@ export function MetricChart({
             {/* tooltip */}
             {hoverInfo && (
               <div
-                className="pointer-events-none absolute top-1 z-10 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2.5 py-1.5"
+                className="pointer-events-none absolute top-1 z-10 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2.5 py-1.5"
                 style={{
                   left: `min(max(${(hover! / Math.max(1, points.length - 1)) * 100}%, 60px), calc(100% - 60px))`,
                   transform: "translateX(-50%)",
@@ -311,9 +311,9 @@ export function RatingDistribution({
               </svg>
             </span>
             {/* Bar length scales to the biggest star so the graph fills the card */}
-            <div className="h-4 flex-1 overflow-hidden rounded-[2px] bg-[var(--ui-sunken)]">
+            <div className="h-4 flex-1 overflow-hidden rounded-[8px] bg-[var(--ui-sunken)]">
               <div
-                className="h-full rounded-[2px] transition-all duration-500"
+                className="h-full rounded-[8px] transition-all duration-500"
                 style={{ width: `${(count / max) * 100}%`, background: STAR_COLORS[star] }}
               />
             </div>

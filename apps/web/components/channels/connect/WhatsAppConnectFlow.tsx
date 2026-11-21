@@ -345,7 +345,7 @@ export default function WhatsAppConnectFlow() {
           {error && <ErrorNote>{error}</ErrorNote>}
 
           {needsPin ? (
-            <div className="mt-4 rounded-xl border border-amber-300/60 bg-amber-50 p-3 dark:border-amber-500/25 dark:bg-amber-500/10">
+            <div className="mt-4 rounded-[8px] border border-amber-300/60 bg-amber-50 p-3 dark:border-amber-500/25 dark:bg-amber-500/10">
               <label htmlFor="wa-connect-pin" className="text-[11px] font-bold uppercase tracking-wide text-amber-800 dark:text-amber-300">
                 {w.pinLabel}
               </label>
@@ -442,7 +442,7 @@ export default function WhatsAppConnectFlow() {
                 : w.doneBodyStandard
             }
           />
-          <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-500/25 dark:bg-emerald-500/10">
+          <div className="mt-4 rounded-[8px] border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-500/25 dark:bg-emerald-500/10">
             <p className="text-[12px] font-semibold text-emerald-800 dark:text-emerald-300">
               {saved && picked.length > 0
                 ? numbers.find((n) => n.id === picked[0])?.phone ?? w.activated
@@ -483,7 +483,7 @@ function ModeCard({
       role="radio"
       aria-checked={selected}
       onClick={onSelect}
-      className={`w-full rounded-xl border p-3.5 text-left outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
+      className={`w-full rounded-[8px] border p-3.5 text-left outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
         selected
           ? "border-deep-violet/40 bg-deep-violet/[0.04]"
           : "border-ink/[0.08] bg-white hover:border-deep-violet/25 dark:border-fog/[0.1] dark:bg-ink"

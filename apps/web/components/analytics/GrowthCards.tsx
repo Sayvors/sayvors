@@ -38,7 +38,7 @@ function triggerLabel(t: string, gc: CardsDict): string {
 
 function FunnelStep({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <div className="min-w-0 flex-1 rounded-[2px] bg-[var(--ui-sunken)] px-3 py-2.5">
+    <div className="min-w-0 flex-1 rounded-[8px] bg-[var(--ui-sunken)] px-3 py-2.5">
       <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">{label}</p>
       <p className="mt-0.5 text-[20px] font-black leading-none tabular-nums text-[var(--ui-ink)]">{value}</p>
       {sub && <p className="mt-1 truncate text-[10px] text-[var(--ui-ink-2)]">{sub}</p>}
@@ -91,7 +91,7 @@ export default function GrowthCardsSection({
           </div>
           <Link
             href="/dashboard/reviews?ask=1"
-            className="ui-btn shrink-0 rounded-[2px] bg-[var(--ui-ink)] px-2.5 py-1.5 text-[10px] font-bold text-[var(--ui-on-ink)]"
+            className="ui-btn shrink-0 rounded-[8px] bg-[var(--ui-ink)] px-2.5 py-1.5 text-[10px] font-bold text-[var(--ui-on-ink)]"
           >
             {gc.askReviews}
           </Link>
@@ -182,7 +182,7 @@ export default function GrowthCardsSection({
             <span className="text-[30px] font-black leading-none tabular-nums text-[var(--ui-ink)]">{fmt(c.new_contacts)}</span>
             <span className="text-[12px] font-semibold text-[var(--ui-ink-2)]">{gc.newWord}</span>
             {c.delta_pct !== null && (
-              <span className={`rounded-[2px] px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${c.delta_pct > 0 ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]" : "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"}`}>
+              <span className={`rounded-[8px] px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${c.delta_pct > 0 ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]" : "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"}`}>
                 {c.delta_pct > 0 ? "+" : ""}{fmt(Math.round(c.delta_pct * 10) / 10)}%
               </span>
             )}
@@ -239,9 +239,9 @@ export default function GrowthCardsSection({
         ) : (
           <ul className="mt-3 space-y-2">
             {actions.map((a, i) => (
-              <li key={`${a.kind}-${i}`} className="rounded-[2px] border border-[var(--ui-line)] p-3">
+              <li key={`${a.kind}-${i}`} className="rounded-[8px] border border-[var(--ui-line)] p-3">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded-[2px] bg-[var(--ui-sunken)] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">
+                  <span className="rounded-[8px] bg-[var(--ui-sunken)] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">
                     {a.kind.replace(/_/g, " ")}
                   </span>
                   <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-[var(--ui-ink)]">{a.title}</span>

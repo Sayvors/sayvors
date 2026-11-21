@@ -32,7 +32,7 @@ function displayPhone(phone: string | null): string | null {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2.5 py-2">
+    <div className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2.5 py-2">
       <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-[var(--ui-ink-2)]">
         {label}
       </p>
@@ -153,7 +153,7 @@ export default function CustomerProfile({
       </section>
 
       {/* Categorization */}
-      <section className="rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] p-3">
+      <section className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-3">
         <div className="flex items-center justify-between gap-2">
           <h3 className="text-[10px] font-bold uppercase tracking-[0.1em] text-[var(--ui-ink-2)]">
             {u.catTitle}
@@ -242,7 +242,7 @@ export default function CustomerProfile({
 
       {/* Lead */}
       {profile.lead && (
-        <section className="rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] p-3">
+        <section className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-3">
           <h3 className="text-[10px] font-bold uppercase tracking-[0.1em] text-[var(--ui-ink-2)]">
             {u.leadTitle}
           </h3>
@@ -304,7 +304,7 @@ export default function CustomerProfile({
             {profile.reviews.map((r) => (
               <article
                 key={r.id}
-                className="rounded-xl border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3"
+                className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3"
               >
                 <div className="flex items-center justify-between gap-2">
                   <span
@@ -355,7 +355,7 @@ export default function CustomerProfile({
             return (
               <div
                 key={m.id}
-                className={`rounded-xl px-3 py-2 text-[12px] ${
+                className={`rounded-[8px] px-3 py-2 text-[12px] ${
                   inbound
                     ? "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
                     : "bg-deep-violet/[0.06] text-[var(--ui-ink)]"
@@ -401,7 +401,7 @@ export default function CustomerProfile({
           <img
             src={resolveMediaUrl(profile.identity.avatar_url) || profile.identity.avatar_url}
             alt={name}
-            className="max-h-[82vh] max-w-[82vw] rounded-2xl object-contain shadow-2xl"
+            className="max-h-[82vh] max-w-[82vw] rounded-[8px] object-contain shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           />
         </div>
