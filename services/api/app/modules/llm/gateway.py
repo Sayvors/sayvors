@@ -126,6 +126,7 @@ def _build_request(
     tools: list[ToolDefinition] | None,
     tenant_id: str | None,
     channel_id: str | None,
+    images: list[tuple[str, bytes]] | None = None,
 ) -> LLMRequest:
     return LLMRequest(
         model=resolved.api_model,
@@ -139,6 +140,7 @@ def _build_request(
         model_id=model_id,
         purpose=purpose,
         channel_id=channel_id,
+        images=images or [],
     )
 
 
@@ -176,11 +178,14 @@ async def complete(
     tools: list[ToolDefinition] | None = None,
     tenant_id: str | None = None,
     channel_id: str | None = None,
+    images: list[tuple[str, bytes]] | None = None,
 ) -> LLMResponse:
     """One completion through the budgeted, metered path.
 
     ``purpose`` has no default: an LLM call nobody can attribute is a cost
-    nobody budgeted for, so every caller must name its use.
+    nobody budgeted for, so every caller must name its use. ``images`` is how
+    multimodal callers (e.g. the banner photo check) attach inline image data
+    without bypassing the metered path.
     """
     await registry.ensure_provider_keys_fresh()
     # Plan entitlement: AI replies must be enabled for this tenant.
@@ -201,6 +206,7 @@ async def complete(
         tools=tools,
         tenant_id=tenant_id,
         channel_id=channel_id,
+        images=images,
     )
     try:
         return _with_sanitized_content(await provider.complete(req))
