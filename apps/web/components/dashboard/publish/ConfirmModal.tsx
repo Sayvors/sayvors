@@ -34,6 +34,7 @@ export default function ConfirmModal({
   error,
   onConfirm,
   onClose,
+  onChangePhoto,
 }: {
   open: boolean;
   items: { target: PublishTarget; methods: PostMethod[] }[];
@@ -46,6 +47,9 @@ export default function ConfirmModal({
   error: string | null;
   onConfirm: () => void;
   onClose: () => void;
+  /** Shown under a failed publish: closes the dialog, lands on the media
+      step with the file picker open — no stepping back through the wizard. */
+  onChangePhoto?: () => void;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const { t, locale } = useI18n();
@@ -141,6 +145,15 @@ export default function ConfirmModal({
           {error && (
             <span role="alert" className="mt-3 block rounded-[16px] border border-red-500/50 bg-red-500/10 px-3 py-2 text-[12px] font-medium text-red-700 dark:text-red-400">
               {error}
+              {onChangePhoto && (
+                <button
+                  type="button"
+                  onClick={onChangePhoto}
+                  className="mt-2 block rounded-[14px] bg-white px-3 py-1.5 text-[11px] font-bold text-red-700 shadow-[0_8px_16px_-10px_rgba(61,29,110,0.55)] transition duration-200 hover:bg-red-50 active:translate-y-[2px] active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] dark:bg-[var(--ui-surface)] dark:text-red-400"
+                >
+                  Change photo
+                </button>
+              )}
             </span>
           )}
           {busy && !error && (

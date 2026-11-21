@@ -234,6 +234,133 @@ export function inspectImageFile(file: File): Promise<ImageDimensions> {
   });
 }
 
+/**
+ * The real container format, from the file's leading bytes.
+ *
+ * Downloads from WhatsApp and phone galleries routinely carry a wrong
+ * extension or MIME ("photo.jpg" that is actually WebP/AVIF). The publish
+ * pipeline rejects those at upload time with a cryptic message, so we sniff
+ * at pick time instead — before the merchant has filled in anything else.
+ */
+export type SniffedFormat =
+  | "jpeg" | "png" | "webp" | "gif"
+  | "avif" | "heic" | "bmp" | "tiff"
+  | "mp4" | "mov" | "unknown";
+
+export async function sniffFileFormat(file: File): Promise<SniffedFormat> {
+  const head = new Uint8Array(await file.slice(0, 64).arrayBuffer());
+  const ascii = (from: number, to: number) =>
+    Array.from(head.slice(from, to), (b) => String.fromCharCode(b)).join("");
+  const startsWith = (sig: number[]) => sig.every((b, i) => head[i] === b);
+
+  if (startsWith([0xff, 0xd8, 0xff])) return "jpeg";
+  if (startsWith([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return "png";
+  if (ascii(0, 4) === "GIF8") return "gif";
+  if (ascii(0, 4) === "RIFF" && ascii(8, 12) === "WEBP") return "webp";
+  if (ascii(0, 2) === "BM") return "bmp";
+  if (ascii(0, 2) === "II" || ascii(0, 2) === "MM") return "tiff";
+  if (head.length >= 12 && ascii(4, 8) === "ftyp") {
+    const brand = ascii(8, 12);
+    if (brand.startsWith("qt")) return "mov";
+    if (brand.startsWith("av")) return "avif"; // avif / avis
+    if (["heic", "heix", "hevc", "hevx", "mif1", "msf1"].some((b) => brand.startsWith(b.slice(0, 4)))) {
+      return "heic";
+    }
+    return "mp4";
+  }
+  return "unknown";
+}
+
+const EXT_FOR_FORMAT: Partial<Record<SniffedFormat, { ext: string; mime: string }>> = {
+  jpeg: { ext: "jpg", mime: "image/jpeg" },
+  png: { ext: "png", mime: "image/png" },
+  webp: { ext: "webp", mime: "image/webp" },
+  gif: { ext: "gif", mime: "image/gif" },
+  mp4: { ext: "mp4", mime: "video/mp4" },
+  mov: { ext: "mov", mime: "video/quicktime" },
+};
+
+/** Canvas re-encode used when the bytes are decodable but not publishable. */
+async function reencodeToJpeg(file: File): Promise<Blob | null> {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    // Flatten onto white: JPEG has no alpha channel, so transparent logos
+    // would otherwise land on a black background.
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    return await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", 0.92),
+    );
+  } catch {
+    return null;
+  }
+}
+
+export type NormalizedMedia =
+  | { ok: true; file: File; note?: string }
+  | { ok: false; error: string };
+
+/**
+ * Make a picked file safe to upload: correct a lying extension, or convert
+ * a format Google cannot store (HEIC/AVIF/BMP) into JPEG. Runs at pick time
+ * so a mismatch never surfaces as a publish failure several steps later.
+ */
+export async function normalizePickedFile(file: File): Promise<NormalizedMedia> {
+  const format = await sniffFileFormat(file);
+  const base = (file.name.replace(/\.[^.]+$/, "") || "photo").slice(0, 80);
+  const currentExt = fileExtension(file.name);
+
+  if (format === "unknown") {
+    // The extension/MIME checks upstream let "image/*" through; the bytes
+    // say otherwise. Fail here with the fix, not at publish time.
+    return {
+      ok: false,
+      error: "We couldn't read that file's type. Save it as JPG or PNG and pick it again.",
+    };
+  }
+
+  const good = EXT_FOR_FORMAT[format];
+  if (good) {
+    const matches = currentExt === good.ext || (format === "jpeg" && currentExt === "jpeg");
+    if (matches) return { ok: true, file };
+    // Same bytes, honest name — the storage layer validates content against
+    // the extension, so a renamed WebP kept as .jpg would be rejected later.
+    const fixed = new File([file], `${base}.${good.ext}`, { type: good.mime });
+    return {
+      ok: true,
+      file: fixed,
+      note: `Fixed the file name to .${good.ext} — the content didn't match its old name.`,
+    };
+  }
+
+  // Decodable-but-unpublishable formats: try a JPEG transcode so the
+  // merchant is not sent away to convert by hand.
+  if (format === "avif" || format === "heic" || format === "bmp") {
+    const jpeg = await reencodeToJpeg(file);
+    if (jpeg) {
+      return {
+        ok: true,
+        file: new File([jpeg], `${base}-converted.jpg`, { type: "image/jpeg" }),
+        note: "Converted to JPG — Google can't use that format directly.",
+      };
+    }
+    return {
+      ok: false,
+      error:
+        "That photo is in a format Google can't publish (HEIC/AVIF). Export it as JPG or PNG, then pick it again.",
+    };
+  }
+
+  return { ok: false, error: "Only JPG, PNG, WEBP, GIF, MP4 or MOV files." };
+}
+
 export function probeImageUrl(url: string): Promise<ImageDimensions> {
   return new Promise((resolve, reject) => {
     const img = new Image();

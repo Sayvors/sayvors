@@ -1,9 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CROP_ASPECT } from "./CropFrame";
 import { MAX_MEDIA_MB, type CropState } from "./types";
-import { inspectImageFile, probeImageUrl, ALLOWED_IMAGE_EXT, ALLOWED_VIDEO_EXT } from "@/lib/media-validation";
+import { inspectImageFile, probeImageUrl, normalizePickedFile, ALLOWED_IMAGE_EXT, ALLOWED_VIDEO_EXT } from "@/lib/media-validation";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { apiFetch } from "@/lib/api-rag";
 
@@ -41,6 +41,7 @@ export default function MediaSink({
   thumb = null,
   thumbLabel = "",
   platforms = [],
+  replaceSignal = 0,
 }: {
   media: { type: "image" | "video" | null; url: string; fileName?: string; sizeBytes?: number } | null;
   onPick: (type: "image" | "video", url: string, fileName?: string, sizeBytes?: number, file?: File, width?: number, height?: number) => void;
@@ -49,10 +50,15 @@ export default function MediaSink({
   thumbLabel?: string;
   /** Destinations this media will be published to — drives Google's stricter limits. */
   platforms?: string[];
+  /** Bumped by the parent to open the file picker from anywhere (an AI
+      verdict or a publish error) — the one-click route back to fixing the
+      photo, instead of stepping back through the wizard. */
+  replaceSignal?: number;
 }) {
   const [dropping, setDropping] = useState(false);
   const [urlDraft, setUrlDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   const [source, setSource] = useState<"upload" | "link" | "library">("upload");
   const [libraryItems, setLibraryItems] = useState<{ id: string; url: string; type: "image" | "video"; label: string; sizeBytes?: number }[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
@@ -67,6 +73,11 @@ export default function MediaSink({
   const hasGoogle = platforms.includes("google_reviews");
   const maxMb = hasGoogle ? 5 : MAX_MEDIA_MB;
 
+  // Parent-driven "replace this photo": open the OS picker directly.
+  useEffect(() => {
+    if (replaceSignal > 0) fileInput.current?.click();
+  }, [replaceSignal]);
+
   const aspect = thumb && thumb.cropKey !== "orig" ? CROP_ASPECT[thumb.cropKey as Exclude<CropState["key"], "orig">] : null;
   const box = thumbBox(thumb?.cropKey ?? "orig");
   const cropStyle = aspect
@@ -75,6 +86,7 @@ export default function MediaSink({
 
   const acceptFiles = async (files: FileList | null) => {
     setError(null);
+    setInfo(null);
     const file = files?.[0];
     if (!file) return;
     if (file.size > maxMb * 1024 * 1024) {
@@ -104,11 +116,21 @@ export default function MediaSink({
       setError(pc.googleVideo);
       return;
     }
+    // Downloads from WhatsApp/phones often carry a lying extension or a
+    // format Google refuses (HEIC/AVIF). Fix or convert NOW, at pick time,
+    // so it can never surface as a publish failure after everything is set.
+    const norm = await normalizePickedFile(file);
+    if (!norm.ok) {
+      setError(norm.error);
+      return;
+    }
+    if (norm.note) setInfo(norm.note);
+    const picked = norm.file;
     let width: number | undefined;
     let height: number | undefined;
     if (kind === "image") {
       try {
-        const d = await inspectImageFile(file);
+        const d = await inspectImageFile(picked);
         width = d.width; height = d.height;
         if (width < 250 || height < 250) {
           setError(pc.googleSmall);
@@ -118,7 +140,7 @@ export default function MediaSink({
         // keep going; server will validate
       }
     }
-    onPick(kind, URL.createObjectURL(file), file.name, file.size, file, width, height);
+    onPick(kind, URL.createObjectURL(picked), picked.name, picked.size, picked, width, height);
   };
 
   const openLibrary = async () => {
@@ -402,6 +424,11 @@ export default function MediaSink({
       {error && (
         <p role="alert" className="text-[12px] font-semibold text-red-600 dark:text-red-400">
           {error}
+        </p>
+      )}
+      {info && !error && (
+        <p role="status" className="text-[12px] font-semibold text-deep-violet dark:text-fog">
+          {info}
         </p>
       )}
 

@@ -299,6 +299,7 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
 function BannerCheckCard({
   check,
   onRetry,
+  onReplace,
 }: {
   check: {
     state: "idle" | "loading" | "done" | "error";
@@ -311,6 +312,8 @@ function BannerCheckCard({
     };
   };
   onRetry: () => void;
+  /** Opens the file picker directly — the fix for every failed check. */
+  onReplace: () => void;
 }) {
   if (check.state === "idle") return null;
   if (check.state === "loading") {
@@ -383,6 +386,20 @@ function BannerCheckCard({
           ))}
         </ul>
       ) : null}
+      {suitable === "no" && (
+        <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-current/10 pt-2.5">
+          <span className={`text-[10.5px] font-semibold ${tone.text} opacity-80`}>
+            Google may reject this photo or replace it with another one.
+          </span>
+          <button
+            type="button"
+            onClick={onReplace}
+            className="shrink-0 rounded-[14px] bg-white px-3 py-1.5 text-[11px] font-bold text-deep-violet shadow-[0_8px_16px_-10px_rgba(61,29,110,0.55)] transition duration-200 hover:bg-fog/60 active:translate-y-[2px] active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] dark:bg-[var(--ui-surface)] dark:text-fog"
+          >
+            Replace photo
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -565,6 +582,16 @@ export default function PublishComposer({
   };
 
   const bannerSelected = selectedTargets.some((t) => chosenFor(t).includes("banner"));
+
+  // One-click recovery: close the confirm dialog (if open), land on the media
+  // step and open the file picker. Every "this photo can't be published"
+  // path funnels here, so the merchant never walks back through the wizard.
+  const [replaceSignal, setReplaceSignal] = useState(0);
+  const requestPhotoReplace = () => {
+    setConfirmOpen(false);
+    setPostStep("media");
+    setReplaceSignal((n) => n + 1);
+  };
 
   // AI suitability check for the promotion/banner photo. Runs only when a
   // banner destination is selected AND an image file is attached (never for
@@ -1302,6 +1329,7 @@ export default function PublishComposer({
               thumb={thumb}
               thumbLabel={thumbLabel}
               platforms={confirmItems.map(({ target }) => target.platform)}
+              replaceSignal={replaceSignal}
             />
             {bannerSelected && media?.type === "image" && media.file ? (
               <BannerCheckCard
@@ -1315,6 +1343,7 @@ export default function PublishComposer({
                     .then((result) => setBannerCheck({ state: "done", result }))
                     .catch(() => setBannerCheck({ state: "error" }));
                 }}
+                onReplace={requestPhotoReplace}
               />
             ) : null}
             {needsMedia && media === null && (
@@ -1974,6 +2003,7 @@ export default function PublishComposer({
         error={publishError}
         onConfirm={publishNow}
         onClose={() => setConfirmOpen(false)}
+        onChangePhoto={requestPhotoReplace}
       />
     </div>
   );
