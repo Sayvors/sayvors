@@ -655,14 +655,23 @@ export default function PublishComposer({
   }, [media?.url, bannerSelected]);
 
   const runBannerCheck = useCallback(async () => {
-    if (!media?.file) {
+    if (!media) {
       setBannerCheck({ state: "error" });
       return;
     }
     setBannerCheck({ state: "loading" });
     try {
       const form = new FormData();
-      form.append("file", media.file, media.fileName || "banner.png");
+      if (media.file) {
+        form.append("file", media.file, media.fileName || "banner.png");
+      } else if (media.url && !media.url.startsWith("blob:")) {
+        // Library / URL media has no local File — the server reads the
+        // bytes from its own storage (or the guarded fetcher).
+        form.append("url", media.url);
+      } else {
+        setBannerCheck({ state: "error" });
+        return;
+      }
       const queued = await apiFetch("/api/v1/media/banner-checks", {
         method: "POST",
         body: form,
@@ -694,7 +703,7 @@ export default function PublishComposer({
     } catch {
       setBannerCheck({ state: "error" });
     }
-  }, [media?.file, media?.fileName]);
+  }, [media]);
 
   // Write the description from the caption + the selected branch/business.
   // The endpoint already grounds copy in the tenant's own Databank facts, so
@@ -1485,7 +1494,7 @@ export default function PublishComposer({
               platforms={confirmItems.map(({ target }) => target.platform)}
               replaceSignal={replaceSignal}
             />
-            {bannerSelected && media?.type === "image" && media.file ? (
+            {bannerSelected && media?.type === "image" ? (
               <BannerCheckCard
                 check={bannerCheck}
                 onRetry={() => void runBannerCheck()}
@@ -2113,7 +2122,7 @@ export default function PublishComposer({
                       </p>
                     </div>
                   )}
-                  {modalCtx.method === "banner" && media?.type === "image" && media.file ? (
+                  {modalCtx.method === "banner" && media?.type === "image" ? (
                     <BannerCheckCard
                       check={bannerCheck}
                       onRetry={() => void runBannerCheck()}

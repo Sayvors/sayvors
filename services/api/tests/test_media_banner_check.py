@@ -159,6 +159,44 @@ async def test_banner_check_queue_end_to_end(client, db, monkeypatch, tmp_path):
     assert outcome2["status"] == "done"
 
 
+async def test_banner_check_accepts_library_url(client, db, monkeypatch, tmp_path):
+    """Library media has no local File: the check must accept the stored URL."""
+    from app.config import settings
+    from app.modules.media import service
+
+    monkeypatch.setattr(settings, "MEDIA_DIR", str(tmp_path))
+    monkeypatch.setattr(settings, "S3_MEDIA_BUCKET", "")
+    monkeypatch.setattr(settings, "AWS_S3_BUCKET", "")
+    monkeypatch.setattr(settings, "GCS_PUBLIC_BUCKET", "")
+
+    up = client.post(
+        "/api/v1/media/upload",
+        files={"file": ("banner.png", _good_banner_png(), "image/png")},
+        headers={"host": "localhost"},
+    )
+    assert up.status_code == 200, up.text
+
+    res = client.post(
+        "/api/v1/media/banner-checks",
+        data={"url": up.json()["image_url"]},
+        headers={"host": "localhost"},
+    )
+    assert res.status_code == 200, res.text
+    check_id = res.json()["id"]
+
+    from sqlalchemy import select
+
+    from app.modules.jobs.models import Job
+
+    job = (
+        await db.execute(
+            select(Job).where(Job.subject_id == check_id, Job.subject_type == "banner_check")
+        )
+    ).scalar_one()
+    outcome = await service.run_banner_check(db, check_id=check_id, tenant_id=job.tenant_id)
+    assert outcome["status"] == "done"
+
+
 async def test_banner_check_queue_rejects_lying_file(client, tmp_path, monkeypatch):
     """The picker normalises; a lying file that slips through is rejected here."""
     from app.config import settings

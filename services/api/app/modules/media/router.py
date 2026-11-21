@@ -164,18 +164,44 @@ async def _decision_verdict(result: dict, model: str) -> dict | None:
 @router.post("/banner-checks")
 async def enqueue_banner_check(
     request: Request,
-    file: UploadFile = File(...),
+    file: UploadFile | None = File(default=None),
+    url: str | None = Form(default=None),
     ctx: TenantContext = Depends(require_perm("media.manage")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Queue the AI photo check on the realtime lane (publication waits on it).
 
-    Returns the check id for polling. The photo is stored through the same
-    validation path as /upload, so a lying-extension file is rejected here
-    with the same message the picker already showed.
+    Accepts an uploaded file, or a media URL when the photo lives in the
+    library (no local File in the browser) — the server resolves the bytes
+    through its own storage / the SSRF-guarded fetcher. Returns the check id
+    for polling. The photo is stored through the same validation as
+    /upload, so a lying-extension file is rejected here with the same
+    message the picker already showed.
     """
-    data = await file.read()
+    _ = ctx
+    if file is not None and (file.filename or file.content_type):
+        data = await file.read()
+        filename = file.filename or "banner.png"
+        content_type = file.content_type
+    elif url:
+        from ...core.storage import media_bytes_from_url
+
+        try:
+            data, content_type = media_bytes_from_url(tenant_id_of(user), url)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Could not read that image: {e}")
+        # The stored content type is authoritative (it was derived from a
+        # validated upload); derive the name so the magic check passes.
+        ext = {
+            "image/jpeg": "banner.jpg",
+            "image/png": "banner.png",
+            "image/webp": "banner.webp",
+            "image/gif": "banner.gif",
+        }.get((content_type or "").split(";")[0].strip().lower(), "banner.png")
+        filename = ext
+    else:
+        raise HTTPException(status_code=400, detail="Provide a file or a url.")
     if not data:
         raise HTTPException(status_code=400, detail="Empty file.")
     max_bytes = max(1, settings.MEDIA_MAX_MB) * 1024 * 1024
@@ -185,8 +211,8 @@ async def enqueue_banner_check(
         row = await service.enqueue_banner_check(
             db,
             user_id=tenant_id_of(user),
-            filename=file.filename or "banner.png",
-            content_type=file.content_type,
+            filename=filename,
+            content_type=content_type,
             data=data,
             base_url=public_media_base(str(request.base_url)),
         )
