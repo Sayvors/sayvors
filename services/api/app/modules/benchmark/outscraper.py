@@ -185,7 +185,8 @@ async def search_places(query: str, *, limit: int = MAX_SEARCH_RESULTS) -> list[
     rows = await _request({
         "query": q,
         "limit": max(1, min(int(limit), MAX_SEARCH_RESULTS)),
-        "reviewsLimit": 0,
+        # Never 0: Outscraper treats 0 as unlimited and bills per review.
+        "reviewsLimit": 1,
         "async": "false",
     })
     return [_map_place(p) for p in rows[:limit]]
@@ -204,7 +205,8 @@ async def get_place(
     params: dict[str, Any] = {
         "query": pid,
         "limit": 1,
-        "reviewsLimit": max(0, min(int(reviews_limit), MAX_REVIEWS)),
+        # Never 0: Outscraper treats 0 as unlimited and bills per review.
+        "reviewsLimit": max(1, min(int(reviews_limit), MAX_REVIEWS)),
         "async": "false",
     }
     if start is not None:
