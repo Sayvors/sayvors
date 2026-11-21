@@ -669,6 +669,7 @@ def _system_prompt(
     charts: list[dict] | None = None,
     profile_block: str = "",
     page_block: str = "",
+    knowledge_block: str = "",
 ) -> str:
     import json
 
@@ -745,7 +746,8 @@ def _system_prompt(
         f"{screen_block}"
         f"{navigation_prompt_block()}"
         f"{profile_block}\n\n"
-        "Rules:\n"
+        + (f"OWNER-CONFIGURED BUSINESS FACTS AND CATALOG:\n{knowledge_block}\n\n" if knowledge_block else "")
+        + "Rules:\n"
         + (
             "- This question is about totals, so individual review, reply and "
             "lead rows were left out of the context on purpose. Answer from "
@@ -969,6 +971,12 @@ async def chat(
     )
     rag_answer, citations, grounded, rag_status = await _rag_answer(db, user, body.message, model)
     prompt_snapshot, detail_omitted = _prune_snapshot(snapshot, body.message)
+    from .reply_context import CATALOG, FACTS, build_reply_context
+
+    knowledge = await build_reply_context(
+        db, tenant_id=tid, surface="dashboard", query=body.message,
+        include=(FACTS, CATALOG),
+    )
     system_prompt = _system_prompt(
         prompt_snapshot, rag_answer, citations, detail_omitted, rag_status,
         charts=chart_plan.charts,
@@ -976,6 +984,7 @@ async def chat(
             profile, exclude_session=body.session_id
         ),
         page_block=await _page_context(db, tid, body.page),
+        knowledge_block=knowledge.render(),
     )
     model = await _resolve_model(db, tid)
 
@@ -1436,6 +1445,12 @@ async def chat_stream(
 
             prompt_snapshot, detail_omitted = _prune_snapshot(snapshot, body.message)
             yield sse({"type": "step", "id": "think", "label": "Writing your answer"})
+            from .reply_context import CATALOG, FACTS, build_reply_context
+
+            knowledge = await build_reply_context(
+                db, tenant_id=tid, surface="dashboard", query=body.message,
+                include=(FACTS, CATALOG),
+            )
             system_prompt = _system_prompt(
                 prompt_snapshot, rag_answer, citations, detail_omitted, rag_status,
                 charts=chart_plan.charts,
@@ -1443,6 +1458,7 @@ async def chat_stream(
                     profile, exclude_session=body.session_id
                 ),
                 page_block=await _page_context(db, tid, body.page),
+                knowledge_block=knowledge.render(),
             )
 
             from ..llm.gateway import LLMMessage, stream as llm_stream

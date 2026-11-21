@@ -321,32 +321,24 @@ async def _channel_databank_id(channel_id: str | None, tenant_id: str, db: Async
 
 
 async def _business_facts_block(db: AsyncSession, tenant_id: str) -> str:
-    """The owner's structured business facts (branches, hours, contact, services).
+    """The owner's structured business facts, via the shared knowledge layer.
 
-    This is the same store the WhatsApp assistant answers from. The review
-    engine previously saw only databank documents, so a review asking "do you
-    have other branches?" was answered with "we don't have details" even
-    though the owner's facts list every location. Facts are owner-verified,
-    so the validator may ground claims in them. Best-effort: an empty or
-    unreadable store must never cost the reply.
+    The review engine previously saw only databank documents, so a review
+    asking "do you have other branches?" was answered with "we don't have
+    details" even though the owner's facts list every location. Facts are
+    owner-verified, so the validator may ground claims in them. Best-effort:
+    an empty or unreadable store must never cost the reply.
     """
-    try:
-        from ..profile.facts_store import get_facts, render_core
-        from ..profile.facts_tool import render_topic
+    from ..assistant.reply_context import FACTS, REVIEW_FACT_TOPICS, build_reply_context
 
-        facts = await get_facts(db, tenant_id)
-        parts = [render_core(facts)]
-        # render_core is identity-only; branches/hours/contact live in topic
-        # slices — a review asking "do you have other branches?" needs them.
-        for topic in ("locations", "hours", "contact", "website", "services"):
-            parts.append(render_topic(facts, topic))
-        block = "\n\n".join(p for p in parts if p)
-        return block or ""
-    except Exception as e:  # noqa: BLE001 - never cost the reply
-        logger.warning(
-            "business facts skipped in review engine tenant=%s: %s", tenant_id, e
-        )
-        return ""
+    ctx = await build_reply_context(
+        db,
+        tenant_id=tenant_id,
+        surface="reviews",
+        include=(FACTS,),
+        facts_topics=REVIEW_FACT_TOPICS,
+    )
+    return ctx.render()
 
 
 async def _gather_evidence(needs, tenant_id: str | None, channel_id: str | None,
