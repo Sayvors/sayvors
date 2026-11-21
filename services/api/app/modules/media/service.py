@@ -188,7 +188,7 @@ async def vision_verdict(data: bytes, model: str) -> dict | None:
                     "\"reasons\": [\"...\"]}."
                 ),
             )],
-            images=[("image/jpeg", data)],
+            images=[(_mime_for_bytes(data), data)],
             purpose="media.banner_verdict",
             temperature=0.2,
             max_tokens=300,
@@ -210,7 +210,24 @@ async def vision_verdict(data: bytes, model: str) -> dict | None:
         return None
 
 
-async def decision_verdict(result: dict, model: str) -> dict | None:
+def _mime_for_bytes(data: bytes) -> str:
+    """The real MIME for the vision call — providers validate it.
+
+    Labeling PNG bytes as image/jpeg made strict providers (Gemini) reject
+    the part, which silently degraded the verdict to rules-only.
+    """
+    ext = _sniff_extension(data)
+    return {
+        ".jpg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }.get(ext or "", "image/jpeg")
+
+
+async def decision_verdict(
+    result: dict, model: str, images: list[tuple[str, bytes]] | None = None
+) -> dict | None:
     """Plain-language suitability call from a text model, best-effort.
 
     The rule layer supplies facts and the vision layer (when configured)
@@ -244,6 +261,7 @@ async def decision_verdict(result: dict, model: str) -> dict | None:
         response = await complete(
             model=model,
             messages=[LLMMessage(role="user", content=prompt)],
+            images=images or None,
             purpose="media.banner_decision",
             temperature=0.1,
             max_tokens=300,
@@ -294,12 +312,23 @@ async def full_banner_analysis(
     if model:
         result["ai_verdict"] = await vision_fn(data, model)
 
-    # Optional plain-text decision model: it reads the measurements (and the
-    # vision observations, when present) and writes the final call. Best-
-    # effort: when it is unset or fails, the deterministic score stands.
+    # Optional decision model: it reads the measurements (and the vision
+    # observations, when present) and writes the final call. When the chosen
+    # model is vision-capable it ALSO gets the photo, so the final verdict is
+    # made by something that actually saw the image. Best-effort: when it is
+    # unset or fails, the deterministic score stands.
     decision_model = (config.banner_decision_model or "").strip()
     if decision_model:
-        decision = await decision_fn(result, decision_model)
+        decision_images = None
+        try:
+            from ..llm.providers.registry import get_effective_model
+
+            info = get_effective_model(decision_model)
+            if info is not None and getattr(info, "supports_vision", False):
+                decision_images = [(_mime_for_bytes(data), data)]
+        except Exception as e:  # noqa: BLE001 - vision is a bonus, not a requirement
+            logger.warning("decision-model vision probe failed: %s", e)
+        decision = await decision_fn(result, decision_model, decision_images)
         if decision:
             result["decision"] = decision
             result["suitable"] = decision["suitable"]

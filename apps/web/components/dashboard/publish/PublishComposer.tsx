@@ -402,6 +402,11 @@ function BannerCheckCard({
       <p className={`mt-2 text-[11px] leading-relaxed ${tone.text}`}>
         {result.summary ?? "No summary."}
       </p>
+      <p className={`mt-1 text-[10px] font-bold uppercase tracking-wide ${tone.text} opacity-70`}>
+        {result.ai_verdict || result.decision
+          ? "An AI model looked at this photo."
+          : "Automated measurements only — no AI vision model is configured."}
+      </p>
       {(result.checks ?? []).filter((c) => !c.pass).map((c) => (
         <p key={c.key} className={`mt-1 text-[10.5px] leading-snug ${tone.text} opacity-80`}>
           • {c.label}: {c.note}

@@ -157,8 +157,10 @@ async def _vision_verdict(data: bytes, model: str) -> dict | None:
     return await service.vision_verdict(data, model)
 
 
-async def _decision_verdict(result: dict, model: str) -> dict | None:
-    return await service.decision_verdict(result, model)
+async def _decision_verdict(
+    result: dict, model: str, images: list | None = None
+) -> dict | None:
+    return await service.decision_verdict(result, model, images)
 
 
 @router.post("/banner-checks")
