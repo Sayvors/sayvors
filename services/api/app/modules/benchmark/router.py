@@ -1,6 +1,8 @@
 """Benchmark API: search Places and manage the tenant's saved bench."""
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -8,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_db
+from ..redis.service import cache_get, cache_set
 from ..team.context import TenantContext, require_perm, tenant_id_of
 from . import compare, places, service
 
@@ -68,13 +71,29 @@ async def compare_places(
     the others ask for a window that saved places compute from snapshot history
     and own locations compute from their review and performance rows.
     """
-    return {
+    tenant_id = tenant_id_of(ctx.user)
+    key = "bm:compare:" + hashlib.sha1(
+        json.dumps({"t": tenant_id, "s": sorted(subjects), "r": period}, sort_keys=True).encode()
+    ).hexdigest()
+    try:
+        cached = await cache_get(key)
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
+
+    payload = {
         "range": period,
         "days": compare.RANGES[period],
         "subjects": await compare.compare_subjects(
-            db, tenant_id_of(ctx.user), subjects, days=compare.RANGES[period]
+            db, tenant_id, subjects, days=compare.RANGES[period]
         ),
     }
+    try:
+        await cache_set(key, json.dumps(payload, default=str), ttl=60)
+    except Exception:
+        pass
+    return payload
 
 
 @router.get("/history", response_model=dict)

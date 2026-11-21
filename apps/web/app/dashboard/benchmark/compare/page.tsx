@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
+import LogoLoader from "@/components/LogoLoader";
 import { apiFetch } from "@/lib/api-rag";
 import {
   fetchComparison,
@@ -1206,7 +1207,10 @@ export default function ComparePage() {
           Pick a business in either dropdown to build the table.
         </p>
       ) : compareQuery.isPending ? (
-        <p className="mt-5 text-[12px] text-[#3B2D5E]">Loading comparison…</p>
+        <div className="mt-8 flex flex-col items-center justify-center gap-3 rounded-[8px] border border-[var(--ui-line)] bg-white px-5 py-14">
+          <LogoLoader size={44} label="Loading comparison…" showText />
+          <p className="text-[11px] text-[#7C7392]">Pulling the latest numbers and reviews.</p>
+        </div>
       ) : compareQuery.isError ? (
         <p className="mt-5 text-[12px] text-red-700">Could not load the comparison.</p>
       ) : (

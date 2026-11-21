@@ -6,14 +6,39 @@ generic error — raw response bodies never reach a client.
 """
 from __future__ import annotations
 
+import json
 import logging
 
 import httpx
 
 from ...config import settings
+from ..redis.service import cache_get, cache_set
 from . import outscraper
 
 logger = logging.getLogger(__name__)
+
+SEARCH_CACHE_TTL_SECONDS = 600
+DETAILS_CACHE_TTL_SECONDS = 1800
+
+
+async def _cache_get_json(key: str) -> dict | list | None:
+    try:
+        raw = await cache_get(key)
+    except Exception:
+        return None
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except Exception:
+        return None
+
+
+async def _cache_set_json(key: str, value: dict | list, ttl: int) -> None:
+    try:
+        await cache_set(key, json.dumps(value, separators=(",", ":"), default=str), ttl=ttl)
+    except Exception:
+        logger.debug("Benchmark cache write failed for %s", key, exc_info=True)
 
 PLACES_TEXT_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
 PLACES_DETAILS_URL = "https://places.googleapis.com/v1/places/{place_id}"
@@ -123,11 +148,19 @@ async def search_places(
     text = str(query or "").strip()[:255]
     if not text:
         return []
+    cache_key = f"bm:search:{outscraper.configured()}:{language or 'en'}:{region or 'SA'}:{text.lower()}"
+    cached = await _cache_get_json(cache_key)
+    if isinstance(cached, list):
+        return cached
+
     if outscraper.configured():
         try:
-            return await outscraper.search_places(text, limit=MAX_SEARCH_RESULTS)
+            result = await outscraper.search_places(text, limit=MAX_SEARCH_RESULTS)
         except outscraper.OutscraperError as exc:
             raise PlacesError(str(exc), exc.status_code) from exc
+        await _cache_set_json(cache_key, result, SEARCH_CACHE_TTL_SECONDS)
+        return result
+
     key = _key()
     headers = {"X-Goog-Api-Key": key, "X-Goog-FieldMask": SEARCH_FIELD_MASK}
     try:
@@ -153,7 +186,9 @@ async def search_places(
     except ValueError:
         logger.error("Places search returned invalid JSON")
         raise PlacesError("Place search returned an invalid response")
-    return [_map_search(p) for p in places[:MAX_SEARCH_RESULTS] if isinstance(p, dict)]
+    result = [_map_search(p) for p in places[:MAX_SEARCH_RESULTS] if isinstance(p, dict)]
+    await _cache_set_json(cache_key, result, SEARCH_CACHE_TTL_SECONDS)
+    return result
 
 
 async def get_place(place_id: str, *, language: str = "en") -> dict:
@@ -161,11 +196,19 @@ async def get_place(place_id: str, *, language: str = "en") -> dict:
     pid = _place_id(place_id)
     if not pid:
         raise PlacesError("Unknown place")
+    cache_key = f"bm:place:{outscraper.configured()}:{language or 'en'}:{pid}"
+    cached = await _cache_get_json(cache_key)
+    if isinstance(cached, dict) and cached.get("place_id"):
+        return cached
+
     if outscraper.configured():
         try:
-            return await outscraper.get_place(pid)
+            result = await outscraper.get_place(pid)
         except outscraper.OutscraperError as exc:
             raise PlacesError(str(exc), exc.status_code) from exc
+        await _cache_set_json(cache_key, result, DETAILS_CACHE_TTL_SECONDS)
+        return result
+
     key = _key()
     headers = {"X-Goog-Api-Key": key, "X-Goog-FieldMask": DETAILS_FIELD_MASK}
     try:
@@ -182,6 +225,8 @@ async def get_place(place_id: str, *, language: str = "en") -> dict:
         logger.error("Places details failed status=%s", resp.status_code)
         raise PlacesError("Place details are temporarily unavailable", resp.status_code)
     try:
-        return _map_details(resp.json() or {})
+        result = _map_details(resp.json() or {})
     except ValueError:
         raise PlacesError("Place details returned an invalid response")
+    await _cache_set_json(cache_key, result, DETAILS_CACHE_TTL_SECONDS)
+    return result
