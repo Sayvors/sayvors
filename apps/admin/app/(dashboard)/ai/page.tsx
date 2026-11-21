@@ -12,6 +12,7 @@ interface SavedModel {
   provider: string;
   api_model: string;
   enabled: boolean;
+  supports_vision?: boolean | null;
 }
 
 interface AiConfig {
@@ -42,7 +43,7 @@ export default function AiImageCheckPage() {
       adminFetch<AiConfig>("/api/v1/admin/config/ai"),
     ])
       .then(([modelList, cfg]) => {
-        setModels(modelList.filter((m) => m.enabled));
+        setModels(modelList.filter((m) => m.enabled && m.supports_vision));
         setConfig(cfg);
         setSelected(cfg.banner_vision_model ?? "");
         setTest(null);
@@ -125,6 +126,11 @@ export default function AiImageCheckPage() {
             ))}
             {selected && !models.some((m) => m.id === selected) ? (
               <option value={selected}>{selected} (disabled / missing)</option>
+            ) : null}
+            {models.length === 0 ? (
+              <option value="" disabled>
+                No vision-capable models saved yet — add one on the LLMs page and check "Supports vision"
+              </option>
             ) : null}
           </select>
           <button

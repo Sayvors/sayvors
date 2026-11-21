@@ -20,6 +20,7 @@ interface SavedModel {
   custom: boolean;
   tested_ok: boolean | null;
   tested_at: string | null;
+  supports_vision: boolean | null;
 }
 
 interface RemoteModel {
@@ -132,6 +133,7 @@ export default function AdminLlmsPage() {
   const [addApiUrl, setAddApiUrl] = useState("");
   const [addCtx, setAddCtx] = useState("32000");
   const [addMax, setAddMax] = useState("4096");
+  const [addVision, setAddVision] = useState(false);
   const [apiCache, setApiCache] = useState<Record<string, RemoteModel[]>>({});
 
   const load = useCallback(async () => {
@@ -315,6 +317,7 @@ export default function AdminLlmsPage() {
           context_window: Math.max(1024, Number(addCtx) || 32000),
           max_output: Math.max(128, Number(addMax) || 4096),
           supports_stream: true,
+          supports_vision: addVision,
         }),
       });
       setAdding(false);
@@ -681,6 +684,17 @@ export default function AdminLlmsPage() {
               <div>
                 <label className="mb-1 block text-[11px] font-semibold text-ink/50">Context window</label>
                 <input value={addCtx} onChange={(e) => setAddCtx(e.target.value)} inputMode="numeric" className="input-field" />
+              </div>
+              <div className="flex items-center gap-2 pt-6">
+                <label className="flex items-center gap-1.5 text-[11px] font-semibold text-ink/60">
+                  <input
+                    type="checkbox"
+                    checked={addVision}
+                    onChange={(e) => setAddVision(e.target.checked)}
+                    className="h-3.5 w-3.5 accent-deep-violet"
+                  />
+                  Supports vision
+                </label>
               </div>
               <div>
                 <label className="mb-1 block text-[11px] font-semibold text-ink/50">Max output</label>

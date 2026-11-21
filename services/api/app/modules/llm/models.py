@@ -86,6 +86,9 @@ class ModelConfig(Base):
     context_window: Mapped[int | None] = mapped_column(Integer, nullable=True)
     max_output: Mapped[int | None] = mapped_column(Integer, nullable=True)
     supports_stream: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Catalog models read this from code (ModelInfo.supports_vision). Custom
+    # models set it explicitly; NULL means "no vision support declared".
+    supports_vision: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

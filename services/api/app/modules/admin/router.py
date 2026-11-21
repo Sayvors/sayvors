@@ -1484,6 +1484,7 @@ async def admin_llm_list(
                     else None
                 ),
                 custom=False,
+                supports_vision=m.supports_vision,
             ))
         for model_id, model_row in sorted(model_rows.items()):
             if not (model_row.provider and model_row.api_model) or model_row.provider != name:
@@ -1494,6 +1495,7 @@ async def admin_llm_list(
                 tested_ok=model_row.tested_ok,
                 tested_at=model_row.tested_at.isoformat() if model_row.tested_at else None,
                 custom=True,
+                supports_vision=model_row.supports_vision,
             ))
         out.append(LlmProviderStatus(
             provider=name,
@@ -1793,6 +1795,8 @@ async def admin_llm_model_update(
         db.add(row)
     else:
         row.enabled = body.enabled
+    if body.supports_vision is not None:
+        row.supports_vision = body.supports_vision
     row.updated_at = datetime.now(timezone.utc)
     await db.commit()
 
@@ -1895,6 +1899,7 @@ async def admin_llm_model_create(
         context_window=body.context_window,
         max_output=body.max_output,
         supports_stream=body.supports_stream,
+        supports_vision=body.supports_vision,
     )
     db.add(row)
     await db.commit()
@@ -1905,6 +1910,7 @@ async def admin_llm_model_create(
     return LlmModelStatus(
         id=row.model_id, name=body.name, enabled=row.enabled,
         tested_ok=None, tested_at=None, custom=True,
+        supports_vision=row.supports_vision,
     )
 
 

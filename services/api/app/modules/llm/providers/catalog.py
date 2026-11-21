@@ -10,23 +10,24 @@ class ModelInfo:
     context: int       # context window in tokens
     max_output: int    # max output tokens
     supports_stream: bool = True
+    supports_vision: bool = False
 
 
 MODELS: list[ModelInfo] = [
     # ── OpenAI ──────────────────────────────────────────
-    ModelInfo("openai:gpt-4o", "GPT-4o", "openai", "gpt-4o", 128_000, 16_384),
-    ModelInfo("openai:gpt-4o-mini", "GPT-4o Mini", "openai", "gpt-4o-mini", 128_000, 16_384),
-    ModelInfo("openai:gpt-4-turbo", "GPT-4 Turbo", "openai", "gpt-4-turbo", 128_000, 4_096),
+    ModelInfo("openai:gpt-4o", "GPT-4o", "openai", "gpt-4o", 128_000, 16_384, supports_vision=True),
+    ModelInfo("openai:gpt-4o-mini", "GPT-4o Mini", "openai", "gpt-4o-mini", 128_000, 16_384, supports_vision=True),
+    ModelInfo("openai:gpt-4-turbo", "GPT-4 Turbo", "openai", "gpt-4-turbo", 128_000, 4_096, supports_vision=True),
     ModelInfo("openai:o3-mini", "o3-mini", "openai", "o3-mini", 200_000, 100_000),
     ModelInfo("openai:o4-mini", "o4-mini", "openai", "o4-mini", 200_000, 100_000),
     # ── Grok (xAI) ──────────────────────────────────────
     ModelInfo("grok:grok-2", "Grok-2", "grok", "grok-2", 131_072, 4_096),
     ModelInfo("grok:grok-2-mini", "Grok-2 Mini", "grok", "grok-2-mini", 131_072, 4_096),
-    ModelInfo("grok:grok-3", "Grok-3", "grok", "grok-3", 131_072, 8_192),
-    ModelInfo("grok:grok-3-mini", "Grok-3 Mini", "grok", "grok-3-mini", 131_072, 8_192),
+    ModelInfo("grok:grok-3", "Grok-3", "grok", "grok-3", 131_072, 8_192, supports_vision=True),
+    ModelInfo("grok:grok-3-mini", "Grok-3 Mini", "grok", "grok-3-mini", 131_072, 8_192, supports_vision=True),
     # ── Gemini (Google) ─────────────────────────────────
-    ModelInfo("gemini:gemini-3.6-flash", "Gemini 3.6 Flash", "gemini", "gemini-3.6-flash", 1_000_000, 65_536),
-    ModelInfo("gemini:gemini-2.5-pro", "Gemini 2.5 Pro", "gemini", "gemini-2.5-pro", 1_000_000, 65_536),
+    ModelInfo("gemini:gemini-3.6-flash", "Gemini 3.6 Flash", "gemini", "gemini-3.6-flash", 1_000_000, 65_536, supports_vision=True),
+    ModelInfo("gemini:gemini-2.5-pro", "Gemini 2.5 Pro", "gemini", "gemini-2.5-pro", 1_000_000, 65_536, supports_vision=True),
     # ── Kimi (Moonshot) ─────────────────────────────────
     ModelInfo("kimi:kimi-k2", "Kimi K2", "kimi", "kimi-k2", 128_000, 16_384),
     ModelInfo("kimi:moonshot-v1-128k", "Moonshot v1 128k", "kimi", "moonshot-v1-128k", 128_000, 4_096),
@@ -42,13 +43,13 @@ MODELS: list[ModelInfo] = [
     # ── Ollama (local) ──────────────────────────────────
     ModelInfo("ollama:llama3.1", "Llama 3.1 (local)", "ollama", "llama3.1", 128_000, 4_096),
     ModelInfo("ollama:mistral", "Mistral (local)", "ollama", "mistral", 32_000, 4_096),
-    ModelInfo("ollama:qwen3", "Qwen3 (local)", "ollama", "qwen3", 32_000, 4_096),
+    ModelInfo("ollama:qwen3", "Qwen3 (local)", "ollama", "qwen3", 32_000, 4_096, supports_vision=True),
     # ── Z.AI (Zhipu GLM, OpenAI-compatible) ─────────────
-    ModelInfo("zhipu:glm-5.3", "GLM-5.3 (Z.AI)", "zhipu", "glm-5.3", 1_000_000, 16_384),
-    ModelInfo("zhipu:glm-4.6", "GLM-4.6 (Z.AI)", "zhipu", "glm-4.6", 204_800, 16_384),
+    ModelInfo("zhipu:glm-5.3", "GLM-5.3 (Z.AI)", "zhipu", "glm-5.3", 1_000_000, 16_384, supports_vision=True),
+    ModelInfo("zhipu:glm-4.6", "GLM-4.6 (Z.AI)", "zhipu", "glm-4.6", 204_800, 16_384, supports_vision=True),
     # ── Z.AI Coding Plan (separate key + endpoint) ──────
-    ModelInfo("zhipu-coding:glm-5.3", "GLM-5.3 (Coding Plan)", "zhipu-coding", "glm-5.3", 1_000_000, 16_384),
-    ModelInfo("zhipu-coding:glm-4.6", "GLM-4.6 (Coding Plan)", "zhipu-coding", "glm-4.6", 204_800, 16_384),
+    ModelInfo("zhipu-coding:glm-5.3", "GLM-5.3 (Coding Plan)", "zhipu-coding", "glm-5.3", 1_000_000, 16_384, supports_vision=True),
+    ModelInfo("zhipu-coding:glm-4.6", "GLM-4.6 (Coding Plan)", "zhipu-coding", "glm-4.6", 204_800, 16_384, supports_vision=True),
 ]
 
 PROVIDERS = ["openai", "grok", "gemini", "kimi", "deepseek", "groq", "openrouter", "zhipu", "zhipu-coding", "ollama"]
