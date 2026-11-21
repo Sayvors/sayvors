@@ -29,19 +29,81 @@ class SavePlaceIn(BaseModel):
     review_count: int | None = Field(default=None, ge=0)
 
 
-@router.get("/search", response_model=list[dict])
+def _norm(s: str | None) -> str:
+    return " ".join(str(s or "").lower().split())
+
+
+def _is_nearby(place: dict, loc: dict) -> bool:
+    addr = _norm(place.get("address"))
+    city = _norm(loc.get("city"))
+    country = _norm(loc.get("country"))
+    if city and city in addr:
+        return True
+    if country and country in addr:
+        # Same country counts as nearby-ish when we have no city; city match is stronger.
+        return bool(city) or True
+    return False
+
+
+def _popularity(place: dict) -> tuple:
+    rating = place.get("rating") or 0
+    reviews = place.get("review_count") or 0
+    return (int(reviews), float(rating))
+
+
+@router.get("/search", response_model=dict)
 async def search_places(
     q: str = Query(..., min_length=2, max_length=255),
     limit: int = Query(20, ge=1, le=20),
     ctx: TenantContext = Depends(require_perm("benchmark.view")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Search Google Places for businesses. Results are live, not stored."""
+    """Search businesses for benchmarking. Nearby results first, then others."""
+    tenant_id = tenant_id_of(ctx.user)
+    loc = await service.tenant_location_context(db, tenant_id)
+    raw_q = str(q or "").strip()[:255]
+    search_q = raw_q
+    loc_hint = ", ".join([p for p in [loc.get("city"), loc.get("country")] if p])
+    # Bias keyword/category searches to the tenant location, but don't fight an
+    # explicit location the user already typed.
+    has_explicit_location = "," in raw_q or " in " in raw_q.lower() or " near " in raw_q.lower()
+    if loc_hint and not has_explicit_location and loc_hint.lower() not in raw_q.lower():
+        search_q = f"{raw_q}, {loc_hint}"
+
     try:
-        results = await places.search_places(q)
+        results = await places.search_places(search_q)
     except places.PlacesError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
-    return results[:limit]
+
+    # De-dupe by place_id preserving order.
+    seen = set()
+    deduped = []
+    for p in results:
+        pid = str(p.get("place_id") or "")
+        if not pid or pid in seen:
+            continue
+        seen.add(pid)
+        deduped.append(p)
+
+    nearby, other = [], []
+    for p in deduped:
+        (nearby if _is_nearby(p, loc) else other).append(p)
+
+    # If we have no location context, treat all as nearby to avoid a confusing split.
+    if not loc_hint:
+        nearby, other = deduped, []
+
+    nearby.sort(key=_popularity, reverse=True)
+    other.sort(key=_popularity, reverse=True)
+    nearby = nearby[: max(1, min(limit, 20))]
+    remaining = max(0, min(limit, 20) - len(nearby))
+    other = other[:remaining]
+    return {
+        "query": raw_q,
+        "location": {"city": loc.get("city"), "country": loc.get("country")},
+        "nearby": nearby,
+        "other": other,
+    }
 
 
 @router.get("/heatmap", response_model=dict)

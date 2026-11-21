@@ -6,6 +6,7 @@ construction rather than by convention.
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
@@ -413,3 +414,54 @@ async def history_points(
         }
         for row in reversed(selected)
     ]
+
+async def tenant_location_context(db: AsyncSession, tenant_id: str) -> dict:
+    """Best-effort location context for nearby-first benchmark search.
+
+    Uses the tenant's active Google location metadata. No guessing: if fields
+    are missing, we return only what we know.
+    """
+    from ..channels.models import Channel
+
+    rows = (
+        await db.execute(
+            select(Channel)
+            .where(Channel.user_id == tenant_id, Channel.platform == "google_reviews", Channel.status == "active")
+            .order_by(Channel.created_at.desc())
+        )
+    ).scalars().all()
+    for ch in rows:
+        try:
+            meta = json.loads(ch.metadata_json or "{}")
+        except Exception:
+            meta = {}
+        if not isinstance(meta, dict):
+            meta = {}
+        addr = str(meta.get("address") or meta.get("formatted_address") or "").strip()
+        country = str(meta.get("country") or "").strip()
+        city = str(meta.get("city") or meta.get("locality") or "").strip()
+        lat = meta.get("latitude") or meta.get("lat")
+        lng = meta.get("longitude") or meta.get("lng")
+        try:
+            lat = float(lat) if lat is not None else None
+            lng = float(lng) if lng is not None else None
+        except Exception:
+            lat = lng = None
+        if not country and addr:
+            parts = [p.strip() for p in addr.split(",") if p.strip()]
+            if parts:
+                country = parts[-1][:80]
+                if len(parts) >= 2 and not city:
+                    city = parts[-2][:80]
+        if not (addr or city or country or (lat is not None and lng is not None)):
+            continue
+        return {
+            "name": ch.display_name,
+            "address": addr or None,
+            "city": city or None,
+            "country": country or None,
+            "latitude": lat,
+            "longitude": lng,
+        }
+    return {}
+

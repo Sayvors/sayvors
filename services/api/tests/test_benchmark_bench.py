@@ -81,7 +81,8 @@ async def test_search_requires_permission(client, monkeypatch):
     monkeypatch.setattr(places_module, "search_places", _fake)
     res = client.get("/api/v1/benchmark/search?q=cafe")
     assert res.status_code == 200
-    assert res.json()[0]["place_id"] == "p1"
+    body = res.json()
+    assert body["nearby"][0]["place_id"] == "p1"
 
 
 async def test_save_and_list_are_tenant_scoped(client, db):

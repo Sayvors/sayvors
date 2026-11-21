@@ -12,6 +12,13 @@ export interface PlaceResult {
   types: string[];
 }
 
+export interface BenchmarkSearchResponse {
+  query: string;
+  location: { city?: string | null; country?: string | null };
+  nearby: PlaceResult[];
+  other: PlaceResult[];
+}
+
 export interface PlaceDetails extends PlaceResult {
   reviews: { rating: number | null; text: string | null; publish_time: string | null; author: string | null }[];
   photos: { name: string; width: number | null; height: number | null }[];
@@ -33,8 +40,17 @@ export interface SavedPlace {
   created_at: string | null;
 }
 
-export function searchPlaces(query: string): Promise<PlaceResult[]> {
-  return apiFetch(`/api/v1/benchmark/search?q=${encodeURIComponent(query)}`);
+export async function searchPlaces(query: string): Promise<BenchmarkSearchResponse> {
+  const res = await apiFetch(`/api/v1/benchmark/search?q=${encodeURIComponent(query)}`) as any;
+  if (Array.isArray(res)) {
+    return { query, location: {}, nearby: res, other: [] };
+  }
+  return {
+    query: res?.query ?? query,
+    location: res?.location ?? {},
+    nearby: Array.isArray(res?.nearby) ? res.nearby : [],
+    other: Array.isArray(res?.other) ? res.other : [],
+  };
 }
 
 export function fetchSavedPlaces(): Promise<SavedPlace[]> {

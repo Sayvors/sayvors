@@ -7,6 +7,7 @@ import {
   fetchSavedPlaces,
   saveBenchmarkPlace,
   searchPlaces,
+  type BenchmarkSearchResponse,
   type PlaceResult,
 } from "@/lib/api-benchmark";
 
@@ -15,7 +16,7 @@ const FOCUS = "focus-visible:outline focus-visible:outline-[3px] focus-visible:o
 export default function CompetitorBench() {
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<PlaceResult[]>([]);
+  const [searchRes, setSearchRes] = useState<BenchmarkSearchResponse | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [searched, setSearched] = useState(false);
@@ -31,9 +32,9 @@ export default function CompetitorBench() {
     setSearchError(null);
     setSearched(true);
     try {
-      setResults(await searchPlaces(q));
+      setSearchRes(await searchPlaces(q));
     } catch (e) {
-      setResults([]);
+      setSearchRes({ query: q, location: {}, nearby: [], other: [] });
       setSearchError(e instanceof Error ? e.message : "Search failed");
     } finally {
       setSearching(false);
@@ -50,7 +51,7 @@ export default function CompetitorBench() {
     try {
       await saveBenchmarkPlace({ place_id: place.place_id, label: place.name });
       await queryClient.invalidateQueries({ queryKey: ["benchmark", "saved"] });
-      setResults((prev) => prev.filter((p) => p.place_id !== place.place_id));
+      setSearchRes((prev) => prev ? { ...prev, nearby: prev.nearby.filter((p) => p.place_id !== place.place_id), other: prev.other.filter((p) => p.place_id !== place.place_id) } : prev);
     } catch {
       // Leave the result visible so the tenant can retry.
     } finally {
@@ -87,32 +88,55 @@ export default function CompetitorBench() {
 
       {searchError ? <p role="alert" className="mt-3 text-[12px] text-red-600">{searchError}</p> : null}
       {searching ? <p className="mt-3 text-[12px] text-[var(--ui-ink-2)]">Searching…</p> : null}
-      {searched && !searching && results.length === 0 && !searchError ? (
+      {searched && !searching && (searchRes?.nearby.length ?? 0) === 0 && (searchRes?.other.length ?? 0) === 0 && !searchError ? (
         <p className="mt-3 text-[12px] text-[var(--ui-ink-2)]">No businesses found. Try a different phrase or city.</p>
       ) : null}
 
-      {results.length > 0 ? (
-        <ul className="mt-3 divide-y divide-[var(--ui-line)] rounded-[8px] border border-[var(--ui-line)] bg-white">
-          {results.map((place) => (
-            <li key={place.place_id} className="flex flex-wrap items-center gap-3 px-4 py-2.5">
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[13px] font-semibold text-[var(--ui-ink)]">{place.name || "Unnamed place"}</p>
-                <p className="truncate text-[11px] text-[var(--ui-ink-2)]">{place.address}</p>
-                <p className="mt-0.5 font-mono text-[11px] text-[var(--ui-ink)]">
-                  {place.rating != null ? place.rating.toFixed(1) : "—"}★ · {place.review_count ?? "—"} reviews
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => void save(place)}
-                disabled={busyId === place.place_id}
-                className={`rounded-[8px] bg-[var(--ink)] px-4 py-2 text-[12px] font-bold text-white disabled:opacity-50 ${FOCUS}`}
-              >
-                Save
-              </button>
-            </li>
-          ))}
-        </ul>
+      {(searchRes?.nearby.length || searchRes?.other.length) ? (
+        <div className="mt-3 rounded-[8px] border border-[var(--ui-line)] bg-white">
+          {searchRes?.nearby.length ? (
+            <div>
+              <p className="px-4 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wide text-[#3D1D6E]">
+                Nearby{searchRes.location?.city ? ` · ${searchRes.location.city}` : searchRes.location?.country ? ` · ${searchRes.location.country}` : ""}
+              </p>
+              <ul className="divide-y divide-[var(--ui-line)]">
+                {searchRes.nearby.map((place) => (
+                  <li key={place.place_id} className="flex flex-wrap items-center gap-3 px-4 py-2.5">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[13px] font-semibold text-[var(--ui-ink)]">{place.name || "Unnamed place"}</p>
+                      <p className="truncate text-[11px] text-[var(--ui-ink-2)]">{place.address}</p>
+                      <p className="mt-0.5 text-[10px] text-[var(--ui-ink-2)]">{place.rating != null ? `${place.rating.toFixed(1)}★` : "—"} · {place.review_count ?? "—"} reviews</p>
+                    </div>
+                    <button type="button" onClick={() => void save(place)} disabled={busyId === place.place_id} className={`rounded-[8px] bg-[var(--ink)] px-4 py-2 text-[12px] font-bold text-white disabled:opacity-50 ${FOCUS}`}>Save</button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {searchRes?.nearby.length && searchRes?.other.length ? (
+            <div className="flex items-center gap-3 px-4 py-2">
+              <div className="h-px flex-1 bg-[var(--ui-line)]" />
+              <span className="text-[10px] font-bold uppercase tracking-wide text-[#7C7392]">
+                Other locations{searchRes.location?.country ? ` · ${searchRes.location.country}` : ""}
+              </span>
+              <div className="h-px flex-1 bg-[var(--ui-line)]" />
+            </div>
+          ) : null}
+          {searchRes?.other.length ? (
+            <ul className="divide-y divide-[var(--ui-line)]">
+              {searchRes.other.map((place) => (
+                <li key={place.place_id} className="flex flex-wrap items-center gap-3 px-4 py-2.5">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[13px] font-semibold text-[var(--ui-ink)]">{place.name || "Unnamed place"}</p>
+                    <p className="truncate text-[11px] text-[var(--ui-ink-2)]">{place.address}</p>
+                    <p className="mt-0.5 text-[10px] text-[var(--ui-ink-2)]">{place.rating != null ? `${place.rating.toFixed(1)}★` : "—"} · {place.review_count ?? "—"} reviews</p>
+                  </div>
+                  <button type="button" onClick={() => void save(place)} disabled={busyId === place.place_id} className={`rounded-[8px] bg-[var(--ink)] px-4 py-2 text-[12px] font-bold text-white disabled:opacity-50 ${FOCUS}`}>Save</button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
       ) : null}
 
       <div className="mt-5 border-t border-[var(--ui-line)] pt-4">

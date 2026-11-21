@@ -7,6 +7,10 @@ from app.modules.benchmark import places
 pytestmark = pytest.mark.asyncio
 
 
+async def _async_none(*args, **kwargs):
+    return None
+
+
 class _Response:
     def __init__(self, status=200, payload=None):
         self.status_code = status
@@ -49,6 +53,8 @@ async def test_search_maps_fields_and_strips_prefix(monkeypatch, key):
          "userRatingCount": 120, "types": ["cafe"]},
     ]}))
     monkeypatch.setattr(places.httpx, "AsyncClient", lambda **kw: client)
+    monkeypatch.setattr(places, "_cache_get_json", lambda *a, **k: _async_none())
+    monkeypatch.setattr(places, "_cache_set_json", lambda *a, **k: _async_none())
 
     result = await places.search_places("cafe riyadh")
     assert result == [{
