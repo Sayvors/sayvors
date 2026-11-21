@@ -94,6 +94,27 @@ def _magic_matches(ext: str, data: bytes) -> bool:
     return any(data.startswith(s) for s in sigs)
 
 
+def _sniff_extension(data: bytes) -> str | None:
+    """The real container format from leading bytes, or None when unknown.
+
+    Downloads routinely lie about their extension (a JPEG saved as .png by a
+    messenger, a WebP named .jpg by a browser). The bytes are what matter, so
+    the upload path repairs the name instead of rejecting a good photo.
+    """
+    if data.startswith(b"\xff\xd8"):
+        return ".jpg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if data.startswith(b"GIF8"):
+        return ".gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return ".webp"
+    if len(data) >= 12 and data[4:8] == b"ftyp":
+        brand = data[8:12]
+        return ".mov" if brand.startswith(b"qt") else ".mp4"
+    return None
+
+
 async def save_upload(
     user_id: str, filename: str, content_type: str | None, data: bytes, base_url: str
 ) -> dict:
@@ -106,17 +127,29 @@ async def save_upload(
     if not data:
         raise ValueError("Empty file.")
     ext = Path(filename or "").suffix.lower()
-    if ext not in UPLOAD_EXTENSIONS:
-        raise ValueError("Only JPG, PNG, WEBP, GIF, MP4 or MOV files.")
     ctype = content_type or ""
     if ctype and not (ctype.startswith("image/") or ctype.startswith("video/")):
         raise ValueError("Only image or video files.")
     # Content must match the extension (polyglot guard), and the stored
     # content type is always derived from the extension, never the header.
-    if not _magic_matches(ext, data):
-        raise ValueError("File content doesn't look like the file type it claims.")
+    # A LYING extension is repaired from the bytes rather than rejected: a
+    # JPEG downloaded as .png is a good photo with a bad name, and bouncing
+    # it costs the merchant a publish for nothing. Unknown bytes still fail.
+    if ext not in UPLOAD_EXTENSIONS or not _magic_matches(ext, data):
+        sniffed = _sniff_extension(data)
+        if sniffed is None or sniffed not in UPLOAD_EXTENSIONS:
+            raise ValueError("File content doesn't look like the file type it claims.")
+        logger.warning(
+            "upload name repaired: %r bytes are %s (was %r)",
+            (filename or "")[:80], sniffed, ext,
+        )
+        ext = sniffed
     expected_type = _CONTENT_TYPES[ext]
-    storage_key, _provider_url = put_media(user_id, filename, data, expected_type)
+    # The stored name must carry the REPAIRED extension: the public URL is
+    # what Google and browsers fetch, and a .png URL serving JPEG bytes
+    # breaks clients that trust the suffix.
+    stored_name = f"{Path(filename or 'upload').stem or 'upload'}{ext}"
+    storage_key, _provider_url = put_media(user_id, stored_name, data, expected_type)
     # Always hand out our own public origin, even when the bytes live in S3 or
     # GCS. The raw object URL is often private, and Google's localPosts API
     # fetches `sourceUrl` itself — a 403 there is a generic INVALID_ARGUMENT.

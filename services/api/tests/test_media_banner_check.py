@@ -215,6 +215,35 @@ async def test_banner_check_queue_rejects_lying_file(client, tmp_path, monkeypat
     assert "doesn't match its file name" in res.json()["detail"]
 
 
+async def test_banner_check_repairs_a_lying_extension(client, tmp_path, monkeypatch):
+    """A real JPEG downloaded as .png must analyse, not bounce."""
+    import io
+
+    from PIL import Image
+
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "MEDIA_DIR", str(tmp_path))
+    monkeypatch.setattr(settings, "S3_MEDIA_BUCKET", "")
+    monkeypatch.setattr(settings, "AWS_S3_BUCKET", "")
+    monkeypatch.setattr(settings, "GCS_PUBLIC_BUCKET", "")
+
+    buf = io.BytesIO()
+    img = Image.new("RGB", (1200, 675))
+    for x in range(0, 1200, 6):
+        for y in range(0, 675, 6):
+            img.putpixel((x, y), (0, 0, 0))
+    img.save(buf, format="JPEG", quality=90)
+
+    res = client.post(
+        "/api/v1/media/banner-checks",
+        files={"file": ("download.png", buf.getvalue(), "image/png")},
+        headers={"host": "localhost"},
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "queued"
+
+
 async def test_banner_check_poll_unknown_id(client):
     res = client.get("/api/v1/media/banner-checks/nope", headers={"host": "localhost"})
     assert res.status_code == 404

@@ -310,6 +310,48 @@ async def test_convert_reencodes_browser_undecodable_image(client):
 
 
 @pytest.mark.asyncio
+async def test_upload_repairs_a_lying_extension(monkeypatch, tmp_path, client):
+    """A JPEG downloaded as .png is a good photo with a bad name: repair, don't reject."""
+    import io
+
+    from PIL import Image
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "MEDIA_DIR", str(tmp_path))
+    monkeypatch.setattr(settings, "S3_MEDIA_BUCKET", "")
+    monkeypatch.setattr(settings, "AWS_S3_BUCKET", "")
+    monkeypatch.setattr(settings, "GCS_PUBLIC_BUCKET", "")
+
+    buf = io.BytesIO()
+    Image.new("RGB", (300, 200), (200, 30, 30)).save(buf, format="JPEG", quality=85)
+    r = client.post(
+        "/api/v1/media/upload",
+        files={"file": ("download.png", buf.getvalue(), "image/png")},
+        headers={"host": "localhost"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["content_type"] == "image/jpeg"
+    assert body["image_url"].endswith(".jpg")
+
+
+@pytest.mark.asyncio
+async def test_upload_still_rejects_unknown_bytes(monkeypatch, tmp_path, client):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "MEDIA_DIR", str(tmp_path))
+    monkeypatch.setattr(settings, "S3_MEDIA_BUCKET", "")
+    monkeypatch.setattr(settings, "AWS_S3_BUCKET", "")
+    monkeypatch.setattr(settings, "GCS_PUBLIC_BUCKET", "")
+    r = client.post(
+        "/api/v1/media/upload",
+        files={"file": ("x.jpg", b"definitely not an image", "image/jpeg")},
+        headers={"host": "localhost"},
+    )
+    assert r.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_server_side_crop_clamps_and_returns_image(client):
     """The Pillow crop rescue honours the editor's rect and never 500s on drift."""
     import io
