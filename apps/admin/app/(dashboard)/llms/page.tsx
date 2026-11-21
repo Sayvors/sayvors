@@ -353,6 +353,22 @@ export default function AdminLlmsPage() {
     }
   };
 
+  const toggleVision = async (provider: string, modelId: string, supportsVision: boolean) => {
+    const key = `saved:${modelId}`;
+    setBusy(key);
+    try {
+      await adminFetch(`/api/v1/admin/llm/${provider}/models/${encodeURIComponent(modelId)}`, {
+        method: "PUT",
+        body: JSON.stringify({ enabled: savedModels.find((m) => m.id === modelId)?.enabled ?? true, supports_vision: supportsVision }),
+      });
+      await load();
+    } catch (e) {
+      flash(e instanceof Error ? e.message : "Toggle failed.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const testSavedModel = async (provider: string, modelId: string) => {
     const key = `saved:${modelId}:test`;
     setBusy(key);
@@ -747,6 +763,11 @@ export default function AdminLlmsPage() {
                         failed
                       </span>
                     )}
+                    {m.supports_vision ? (
+                      <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[9px] font-bold uppercase text-blue-700">
+                        vision
+                      </span>
+                    ) : null}
                     <select
                       value={m.enabled ? "enabled" : "disabled"}
                       disabled={mbusy}
@@ -757,6 +778,16 @@ export default function AdminLlmsPage() {
                       <option value="enabled">On</option>
                       <option value="disabled">Off</option>
                     </select>
+                    <label className="flex items-center gap-1 text-[10px] font-semibold text-ink/60" title="Vision-capable (supports image input)">
+                      <input
+                        type="checkbox"
+                        checked={!!m.supports_vision}
+                        disabled={mbusy}
+                        onChange={(e) => void toggleVision(m.provider, m.id, e.target.checked)}
+                        className="h-3.5 w-3.5 accent-deep-violet"
+                      />
+                      vision
+                    </label>
                     <button
                       onClick={() => void testSavedModel(m.provider, m.id)}
                       disabled={mbusy}
