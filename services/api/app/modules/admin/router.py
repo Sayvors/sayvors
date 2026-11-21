@@ -2150,6 +2150,9 @@ async def admin_models_list(
             custom=custom,
             tested_ok=row.tested_ok,
             tested_at=row.tested_at.isoformat() if row.tested_at else None,
+            supports_vision=(
+                info.supports_vision if info is not None else row.supports_vision
+            ),
         ))
     return out
 
