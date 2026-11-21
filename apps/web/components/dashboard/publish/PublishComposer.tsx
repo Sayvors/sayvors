@@ -306,6 +306,7 @@ function BannerCheckCard({
 }: {
   check: {
     state: "idle" | "loading" | "done" | "error";
+    error?: string;
     result?: {
       suitable?: string;
       confidence?: number;
@@ -357,11 +358,11 @@ function BannerCheckCard({
   }
   if (check.state === "error") {
     return (
-      <div className="mt-3 flex items-center justify-between gap-2 rounded-[8px] border border-red-500/30 bg-red-500/[0.06] px-3.5 py-2.5">
+      <div className="mt-3 flex items-start justify-between gap-2 rounded-[8px] border border-red-500/30 bg-red-500/[0.06] px-3.5 py-2.5">
         <span className="text-[11.5px] font-semibold text-red-700 dark:text-red-400">
-          The AI check could not run right now.
+          {check.error || "The AI check could not run right now."}
         </span>
-        <button type="button" onClick={onRetry} className="text-[11px] font-bold text-red-700 underline dark:text-red-400">
+        <button type="button" onClick={onRetry} className="shrink-0 text-[11px] font-bold text-red-700 underline dark:text-red-400">
           Retry
         </button>
       </div>
@@ -639,6 +640,7 @@ export default function PublishComposer({
   // check row until it is done or failed.
   const [bannerCheck, setBannerCheck] = useState<{
     state: "idle" | "loading" | "done" | "error";
+    error?: string;
     result?: {
       suitable?: string;
       confidence?: number;
@@ -662,14 +664,25 @@ export default function PublishComposer({
     setBannerCheck({ state: "loading" });
     try {
       const form = new FormData();
-      if (media.file) {
-        form.append("file", media.file, media.fileName || "banner.png");
-      } else if (media.url && !media.url.startsWith("blob:")) {
+      const localFile = media.file && media.file.size > 0 ? media.file : null;
+      const remoteUrl =
+        media.url && !media.url.startsWith("blob:") && /^https?:\/\//.test(media.url)
+          ? media.url
+          : null;
+      if (localFile) {
+        form.append("file", localFile, media.fileName || "banner.png");
+      } else if (remoteUrl) {
         // Library / URL media has no local File — the server reads the
         // bytes from its own storage (or the guarded fetcher).
-        form.append("url", media.url);
+        form.append("url", remoteUrl);
       } else {
+        // A blob: URL with no File means the picked bytes are gone (tab
+        // restored, file GC'd). Sending an empty part would only produce a
+        // confusing server error — say what to do instead.
         setBannerCheck({ state: "error" });
+        setNotice?.(
+          "The photo's bytes are no longer in this tab — pick the photo again, then run the AI check.",
+        );
         return;
       }
       const queued = await apiFetch("/api/v1/media/banner-checks", {
@@ -683,6 +696,7 @@ export default function PublishComposer({
         await new Promise((r) => setTimeout(r, 1200));
         const row = await apiFetch(`/api/v1/media/banner-checks/${encodeURIComponent(queued.id)}`) as {
           status: "queued" | "running" | "done" | "failed";
+          error?: string | null;
           suitable?: string;
           confidence?: number;
           summary?: string;
@@ -695,13 +709,16 @@ export default function PublishComposer({
           return;
         }
         if (row.status === "failed") {
-          setBannerCheck({ state: "error" });
+          setBannerCheck({ state: "error", error: row.error || undefined });
           return;
         }
       }
       setBannerCheck({ state: "error" });
-    } catch {
-      setBannerCheck({ state: "error" });
+    } catch (e) {
+      setBannerCheck({
+        state: "error",
+        error: e instanceof Error ? e.message : undefined,
+      });
     }
   }, [media]);
 

@@ -211,7 +211,8 @@ async def test_banner_check_queue_rejects_lying_file(client, tmp_path, monkeypat
         headers={"host": "localhost"},
     )
     assert res.status_code == 400
-    assert "file type" in res.json()["detail"].lower()
+    # Merchant-facing wording, not the storage layer's internals.
+    assert "doesn't match its file name" in res.json()["detail"]
 
 
 async def test_banner_check_poll_unknown_id(client):

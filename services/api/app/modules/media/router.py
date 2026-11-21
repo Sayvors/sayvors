@@ -201,7 +201,27 @@ async def enqueue_banner_check(
         }.get((content_type or "").split(";")[0].strip().lower(), "banner.png")
         filename = ext
     else:
-        raise HTTPException(status_code=400, detail="Provide a file or a url.")
+        # A form with neither field means a stale client build (an older
+        # composer appended an empty/null file part). Log exactly what
+        # arrived so the next occurrence names itself instead of guessing.
+        form = await request.form()
+        fields = {
+            k: (len(v) if isinstance(v, str) else getattr(v, "size", -1))
+            for k, v in form.items()
+        }
+        logger.warning(
+            "banner-checks rejected: no file and no url; form fields=%s "
+            "user_agent=%s",
+            fields,
+            request.headers.get("user-agent", "-")[:80],
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "The photo did not reach the server (no file and no link in the "
+                "request). Reload the page — this tab is running an older build."
+            ),
+        )
     if not data:
         raise HTTPException(status_code=400, detail="Empty file.")
     max_bytes = max(1, settings.MEDIA_MAX_MB) * 1024 * 1024
@@ -217,7 +237,17 @@ async def enqueue_banner_check(
             base_url=public_media_base(str(request.base_url)),
         )
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        detail = str(e)
+        if "file type it claims" in detail:
+            # The picker normally fixes a lying extension at pick time; a
+            # stale tab can still send one. Tell the merchant what to do
+            # instead of quoting the storage layer's internals.
+            detail = (
+                "That photo's content doesn't match its file name (for example a "
+                "WebP or HEIC saved as .jpg). Reload this page and pick the photo "
+                "again — the picker repairs the name automatically."
+            )
+        raise HTTPException(status_code=400, detail=detail)
     return {"id": row.id, "status": row.status}
 
 
