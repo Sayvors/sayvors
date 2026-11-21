@@ -191,11 +191,15 @@ async def vision_verdict(
             "cover/banner image. Look at the photo and use these measurements as facts:\n"
             f"{json.dumps(facts)}\n"
             "Google prefers a wide photo (around 16:9), bright, sharp, and showing the "
-            "real business. Text-heavy, blurry, dark, tiny, or stock-looking photos "
-            "perform poorly and Google may replace them.\n"
+            "real business (storefront, team, workspace, products, or service in action).\n"
+            "Mark it YES when it is a clear real photo of the business and has no major "
+            "problems, even if the shape is not perfect. Mark it MAYBE when it is usable "
+            "but has fixable issues like being a bit square, slightly generic, or missing "
+            "clear branding. Mark it NO when it is text-heavy, a logo/graphic, a screenshot, "
+            "blurry, dark, tiny, or not a real photo of the business.\n"
             "Answer ONLY with JSON: {\"suitable\": \"yes\"|\"maybe\"|\"no\", "
             "\"confidence\": 0-100, \"summary\": \"one plain sentence for the business owner\", "
-            "\"reasons\": [\"short plain reason\"]}. Give at most 5 reasons. "
+            "\"reasons\": [\"short plain reason\"]}. Give at most 4 reasons. "
             "Do not repeat the same point twice."
         )
         response = await complete(
