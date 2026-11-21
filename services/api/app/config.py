@@ -344,6 +344,12 @@ class Settings(BaseSettings):
     BENCHMARK_PEER_MAX_RESULTS: int = 20
     BENCHMARK_SNAPSHOT_TTL_HOURS: int = 24
 
+    # ── Outscraper (public Google Maps data for benchmarking) ───────────
+    # Used for competitor benchmark snapshots/reviews when configured. The
+    # tenant's own connected location still comes from GBP OAuth. Never log
+    # or return this value.
+    OUTSCRAPER_API_KEY: str = ""
+
     # ── Analytics / business intelligence ────────────────────────────────
     # How often the Google Business Profile performance sync runs (impressions,
     # website clicks, calls, direction requests -> location_daily_metrics).

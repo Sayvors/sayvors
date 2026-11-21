@@ -39,6 +39,7 @@ class _Client:
 @pytest.fixture
 def key(monkeypatch):
     monkeypatch.setattr(settings, "GOOGLE_PLACES_API_KEY", "test-key")
+    monkeypatch.setattr(settings, "OUTSCRAPER_API_KEY", "")
 
 
 async def test_search_maps_fields_and_strips_prefix(monkeypatch, key):
@@ -61,6 +62,7 @@ async def test_search_maps_fields_and_strips_prefix(monkeypatch, key):
 
 async def test_search_missing_key_fails_503(monkeypatch):
     monkeypatch.setattr(settings, "GOOGLE_PLACES_API_KEY", "")
+    monkeypatch.setattr(settings, "OUTSCRAPER_API_KEY", "")
     with pytest.raises(places.PlacesError) as exc:
         await places.search_places("cafe")
     assert exc.value.status_code == 503

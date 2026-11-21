@@ -11,6 +11,7 @@ import logging
 import httpx
 
 from ...config import settings
+from . import outscraper
 
 logger = logging.getLogger(__name__)
 
@@ -118,10 +119,15 @@ def _map_details(place: dict) -> dict:
 async def search_places(
     query: str, *, language: str = "en", region: str = "SA"
 ) -> list[dict]:
-    """Free-text business search with location bias, bounded to 20 results."""
+    """Free-text business search, bounded to 20 results."""
     text = str(query or "").strip()[:255]
     if not text:
         return []
+    if outscraper.configured():
+        try:
+            return await outscraper.search_places(text, limit=MAX_SEARCH_RESULTS)
+        except outscraper.OutscraperError as exc:
+            raise PlacesError(str(exc), exc.status_code) from exc
     key = _key()
     headers = {"X-Goog-Api-Key": key, "X-Goog-FieldMask": SEARCH_FIELD_MASK}
     try:
@@ -151,10 +157,15 @@ async def search_places(
 
 
 async def get_place(place_id: str, *, language: str = "en") -> dict:
-    """Details for one place, field-masked to what the UI renders."""
+    """Details for one place."""
     pid = _place_id(place_id)
     if not pid:
         raise PlacesError("Unknown place")
+    if outscraper.configured():
+        try:
+            return await outscraper.get_place(pid)
+        except outscraper.OutscraperError as exc:
+            raise PlacesError(str(exc), exc.status_code) from exc
     key = _key()
     headers = {"X-Goog-Api-Key": key, "X-Goog-FieldMask": DETAILS_FIELD_MASK}
     try:
