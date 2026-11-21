@@ -177,6 +177,7 @@ class SavedModel(BaseModel):
     custom: bool = False
     tested_ok: bool | None = None
     tested_at: str | None = None
+    supports_vision: bool | None = None
 
 
 class LlmProviderUpdate(BaseModel):

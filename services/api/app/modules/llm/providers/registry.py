@@ -148,6 +148,7 @@ async def refresh_provider_keys_from_session(db) -> int:
             "context": r.context_window or 32000,
             "max_output": r.max_output or 4096,
             "supports_stream": bool(r.supports_stream) if r.supports_stream is not None else True,
+            "supports_vision": bool(r.supports_vision) if r.supports_vision is not None else False,
         }
         for r in model_rows
         if r.provider and r.api_model
@@ -203,6 +204,7 @@ def list_effective_models() -> list[ModelInfo]:
             context=definition["context"],
             max_output=definition["max_output"],
             supports_stream=definition["supports_stream"],
+            supports_vision=definition.get("supports_vision", False),
         )
     return list(merged.values())
 
@@ -219,6 +221,7 @@ def get_effective_model(model_id: str) -> ModelInfo | None:
             context=custom["context"],
             max_output=custom["max_output"],
             supports_stream=custom["supports_stream"],
+            supports_vision=custom.get("supports_vision", False),
         )
     return get_model_by_id(model_id)
 
@@ -350,6 +353,7 @@ async def list_tenant_models(db) -> list[tuple[ModelInfo, str]]:
                 supports_stream=row.supports_stream
                 if row.supports_stream is not None
                 else True,
+                supports_vision=bool(row.supports_vision),
             )
         else:
             base = get_model_by_id(row.model_id)
@@ -363,6 +367,11 @@ async def list_tenant_models(db) -> list[tuple[ModelInfo, str]]:
                 context=base.context,
                 max_output=base.max_output,
                 supports_stream=base.supports_stream,
+                supports_vision=(
+                    row.supports_vision
+                    if row.supports_vision is not None
+                    else base.supports_vision
+                ),
             )
         source = _usable_source(info.provider)
         if source is None:

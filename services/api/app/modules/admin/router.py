@@ -1484,7 +1484,11 @@ async def admin_llm_list(
                     else None
                 ),
                 custom=False,
-                supports_vision=m.supports_vision,
+                supports_vision=(
+                    model_row.supports_vision
+                    if model_row is not None and model_row.supports_vision is not None
+                    else m.supports_vision
+                ),
             ))
         for model_id, model_row in sorted(model_rows.items()):
             if not (model_row.provider and model_row.api_model) or model_row.provider != name:
@@ -1810,6 +1814,9 @@ async def admin_llm_model_update(
         tested_ok=row.tested_ok,
         tested_at=row.tested_at.isoformat() if row.tested_at else None,
         custom=bool(row.provider and row.api_model),
+        supports_vision=(
+            row.supports_vision if row.supports_vision is not None else info.supports_vision
+        ),
     )
 
 
@@ -2151,7 +2158,9 @@ async def admin_models_list(
             tested_ok=row.tested_ok,
             tested_at=row.tested_at.isoformat() if row.tested_at else None,
             supports_vision=(
-                info.supports_vision if info is not None else row.supports_vision
+                row.supports_vision
+                if row.supports_vision is not None
+                else (info.supports_vision if info is not None else None)
             ),
         ))
     return out

@@ -9,6 +9,7 @@ interface LlmStatus {
   key_source: "database" | "none" | "disabled";
   enabled: boolean;
   has_key: boolean;
+  models?: Array<{ id: string; supports_vision?: boolean | null }>;
 }
 
 interface SavedModel {
@@ -143,8 +144,21 @@ export default function AdminLlmsPage() {
         adminFetch<LlmStatus[]>("/api/v1/admin/llm"),
         adminFetch<SavedModel[]>("/api/v1/admin/models"),
       ]);
+      // Older API builds omit supports_vision from /admin/models; the provider
+      // list already carries it, so merge instead of losing the checkbox state.
+      const visionById = new Map<string, boolean | null>();
+      for (const p of providers) {
+        for (const m of p.models ?? []) {
+          visionById.set(m.id, m.supports_vision ?? null);
+        }
+      }
       setItems(providers);
-      setSavedModels(models);
+      setSavedModels(
+        models.map((m) => ({
+          ...m,
+          supports_vision: m.supports_vision ?? visionById.get(m.id) ?? null,
+        }))
+      );
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Load failed.");
@@ -355,6 +369,12 @@ export default function AdminLlmsPage() {
 
   const toggleVision = async (provider: string, modelId: string, supportsVision: boolean) => {
     const key = `saved:${modelId}`;
+    // Flip immediately: the round trip reload is fast but a controlled
+    // checkbox that waits for the server looks broken while it is in flight.
+    const previous = savedModels;
+    setSavedModels((prev) =>
+      prev.map((m) => (m.id === modelId ? { ...m, supports_vision: supportsVision } : m))
+    );
     setBusy(key);
     try {
       await adminFetch(`/api/v1/admin/llm/${provider}/models/${encodeURIComponent(modelId)}`, {
@@ -363,6 +383,7 @@ export default function AdminLlmsPage() {
       });
       await load();
     } catch (e) {
+      setSavedModels(previous);
       flash(e instanceof Error ? e.message : "Toggle failed.");
     } finally {
       setBusy(null);

@@ -548,6 +548,38 @@ async def test_admin_models_list(client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_admin_models_list_reports_supports_vision(client, monkeypatch):
+    """The saved-model list carries the vision flag the admin UI binds to."""
+    headers = _admin_headers(client, monkeypatch)
+    payload = {
+        "id": "groq:vision-custom-1", "name": "Vision Custom",
+        "provider": "groq", "api_model": "vision-custom-1",
+        "context_window": 8000, "max_output": 1000,
+        "supports_stream": False, "supports_vision": True,
+    }
+    r = client.post("/api/v1/admin/llm/models", json=payload, headers=headers)
+    assert r.status_code == 201, r.text[:300]
+
+    r = client.get("/api/v1/admin/models", headers=headers)
+    assert r.status_code == 200
+    row = next(m for m in r.json() if m["id"] == payload["id"])
+    assert row["supports_vision"] is True
+
+    # A catalog model defaults to no vision; an explicit admin override wins
+    # in both directions (checking and unchecking the box).
+    for value in (True, False):
+        put = client.put(
+            "/api/v1/admin/llm/groq/models/groq:oss-120b",
+            json={"enabled": True, "supports_vision": value},
+            headers=headers,
+        )
+        assert put.status_code == 200, put.text[:300]
+        r = client.get("/api/v1/admin/models", headers=headers)
+        row = next(m for m in r.json() if m["id"] == "groq:oss-120b")
+        assert row["supports_vision"] is value
+
+
+@pytest.mark.asyncio
 async def test_admin_remote_models_unknown_provider(client, monkeypatch):
     headers = _admin_headers(client, monkeypatch)
     r = client.get("/api/v1/admin/llm/nope/remote-models", headers=headers)
