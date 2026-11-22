@@ -212,7 +212,7 @@ export default function OverviewPanel() {
               aria-label={t.dashboard.glance.filterByLocation}
               className="h-8 w-full rounded-[8px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2 text-[12px] text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:w-auto"
             >
-              <option value="">All locations</option>
+              <option value="">{t.nav.allLocations}</option>
               {channels.map((c) => (
                 <option key={c.id} value={c.id}>{c.label}</option>
               ))}
