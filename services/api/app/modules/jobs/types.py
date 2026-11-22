@@ -23,6 +23,7 @@ class JobType(str, Enum):
     # ── publishing lane ── provider-quota-bound
     post_publish = "post.publish"            # Google Business Profile post
     post_delete = "post.delete"              # take a published post down on schedule
+    post_remove = "post.remove"              # remove published posts from platforms now
     media_publish = "media.publish"          # Google media upload
 
     # ── media lane ── memory-bound image processing
@@ -50,6 +51,7 @@ _LANE_MAP: dict[JobType, JobLane] = {
     JobType.media_banner_check: JobLane.realtime,
     JobType.post_publish: JobLane.publishing,
     JobType.post_delete: JobLane.publishing,
+    JobType.post_remove: JobLane.publishing,
     JobType.media_publish: JobLane.publishing,
     JobType.media_process: JobLane.media,
     JobType.review_request_send: JobLane.bulk,

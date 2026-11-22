@@ -134,34 +134,20 @@ export function usePublishJobs() {
     [names],
   );
 
-  /** Delete published posts from their platforms (or cancel the ones that
-   * never went out). Best-effort per job: the server reports what it did, and
-   * a platform refusal comes back marked with the reason instead of counting
-   * as removed. */
+  /** Queue background removal/cancellation for published posts. */
   const removeJobs = useCallback(
     async (jobIds: string[]) => {
-      if (jobIds.length === 0) return { removed: 0, failed: 0, error: null as string | null };
+      if (jobIds.length === 0) return { removed: 0, failed: 0, queued: false, jobId: null as string | null, error: null as string | null };
       setBusy(true);
       try {
-        const updated = (await apiFetch("/api/v1/channels/publish/delete", {
+        const res = (await apiFetch("/api/v1/channels/publish/delete/background", {
           method: "POST",
           body: JSON.stringify({ job_ids: jobIds }),
-        })) as PublishJob[];
-        // Terminal rows are hard-deleted server-side. Re-read the list
-        // instead of patching in place, so dismissed cards disappear now.
+        })) as { job_id?: string; status?: string };
         await refresh(true);
-        const failed = updated.filter(
-          (row) => typeof row.result?.delete_error === "string",
-        ).length;
-        return {
-          removed: updated.filter(
-            (row) => row.status === "cancelled" && !row.result?.delete_error,
-          ).length,
-          failed,
-          error: null as string | null,
-        };
+        return { removed: 0, failed: 0, queued: true, jobId: res.job_id ?? null, error: null as string | null };
       } catch (e) {
-        return { removed: 0, failed: 0, error: e instanceof Error ? e.message : "Removing the posts failed." };
+        return { removed: 0, failed: 0, queued: false, jobId: null as string | null, error: e instanceof Error ? e.message : "Removing the posts failed." };
       } finally {
         setBusy(false);
       }

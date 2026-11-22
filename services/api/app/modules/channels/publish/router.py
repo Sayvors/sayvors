@@ -32,7 +32,7 @@ from ....modules.kafka.client import get_kafka_producer
 from ...users.models import User
 from ...jobs.handlers.post_publish import _provider_for
 from ...jobs.models import Job, JobStatus
-from ...jobs.service import submit_job
+from ...jobs.service import create_ui_job, submit_job
 from ...jobs.types import JobType
 from ...team.context import tenant_id_of
 from ..google_reviews import GoogleReviewsError
@@ -732,6 +732,36 @@ async def batch_delete_published_posts(
     if not out:
         raise HTTPException(status_code=409, detail="no jobs could be deleted or cancelled")
     return out
+
+
+@router.post("/publish/delete/background")
+async def batch_delete_published_posts_background(
+    body: BatchDeleteBody,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Queue background removal/cancellation of publish jobs and return a UI job id."""
+    tenant_id = tenant_id_of(user)
+    if not body.job_ids:
+        raise HTTPException(status_code=400, detail="job_ids must not be empty")
+    job = await create_ui_job(
+        db,
+        tenant_id=tenant_id,
+        job_type=JobType.post_remove.value,
+        ui_title="Removing posts",
+        ui_kind="publish_remove",
+        payload={"job_ids": body.job_ids, "platforms": body.platforms},
+        lane="publishing",
+        priority=50,
+        max_attempts=5,
+        idempotency_key=f"post-remove:{tenant_id}:{','.join(sorted(body.job_ids))}:{','.join(sorted(body.platforms or []))}",
+        subject_type="publish_batch",
+        subject_id=None,
+        lane_key=f"{tenant_id}:publish-remove:{body.job_ids[0]}",
+        progress_label="Queued",
+    )
+    await db.commit()
+    return {"job_id": job.id, "status": job.status}
 
 
 @router.get("/publish/status", response_model=list[JobOut])

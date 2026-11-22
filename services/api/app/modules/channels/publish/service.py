@@ -165,3 +165,141 @@ async def schedule_removal(
         lane_key=publish_job.lane_key,
         next_run_at=delete_at,
     )
+
+
+async def batch_remove_published_posts(
+    db: AsyncSession,
+    *,
+    tenant_id: str,
+    job_ids: list[str],
+    platforms: list[str] | None = None,
+) -> list[dict]:
+    """Remove/cancel/dismiss publish jobs now. Returns JobOut-like dicts.
+
+    Mirrors the /publish/delete endpoint behavior so UI and background jobs
+    share one implementation.
+    """
+    from ...jobs.models import Job
+    from ..models import Channel
+    from ..service import channel_location_ids, decrypt_token
+
+    requested_platforms = platforms or []
+    rows = await db.execute(select(Job).where(Job.id.in_(job_ids), Job.tenant_id == tenant_id))
+    jobs = list(rows.scalars().all())
+    if not jobs:
+        return []
+
+    out: list[dict] = []
+    for job_row in jobs:
+        payload = job_row.payload or {}
+        platform = payload.get("platform")
+        external_asset_id = payload.get("external_asset_id")
+
+        if not requested_platforms or "all" in requested_platforms:
+            target_platforms = [platform] if platform else []
+        else:
+            target_platforms = [p for p in requested_platforms if p == platform]
+        if not target_platforms:
+            continue
+
+        base = {
+            "job_id": job_row.id,
+            "status": job_row.status,
+            "lane": job_row.lane,
+            "created_at": job_row.created_at.isoformat(),
+            "platform": platform,
+            "method": payload.get("method"),
+            "external_asset_id": external_asset_id,
+            "scheduled_at": payload.get("scheduled_at"),
+            "delete_at": payload.get("delete_at"),
+            "result": job_row.result,
+            "last_error": job_row.last_error,
+            "updated_at": job_row.updated_at.isoformat() if job_row.updated_at else None,
+            "batch_id": payload.get("batch_id"),
+            "caption": payload.get("caption"),
+            "media_url": payload.get("media_url"),
+        }
+
+        if job_row.status in {"failed", "dead", "cancelled"}:
+            await db.delete(job_row)
+            await db.commit()
+            base["status"] = "cancelled"
+            out.append(base)
+            continue
+
+        if job_row.status in {"accepted", "queued", "retrying", "blocked"}:
+            job_row.status = "cancelled"
+            job_row.last_error = "deleted by user before publish"
+            await db.commit()
+            base["status"] = job_row.status
+            base["last_error"] = job_row.last_error
+            base["updated_at"] = job_row.updated_at.isoformat() if job_row.updated_at else None
+            out.append(base)
+            continue
+
+        if job_row.status != "succeeded":
+            continue
+
+        if payload.get("method") in {"profile", "banner"}:
+            base["status"] = "cancelled"
+            base["last_error"] = (
+                "dismissed — a profile picture or banner cannot be deleted, only replaced by publishing a new one"
+            )
+            await db.delete(job_row)
+            await db.commit()
+            out.append(base)
+            continue
+
+        result = await db.execute(
+            select(Channel).where(
+                Channel.user_id == tenant_id,
+                Channel.platform == platform,
+                Channel.status == "active",
+            )
+        )
+        channel = None
+        if platform == "google_reviews":
+            for ch in result.scalars().all():
+                if str(external_asset_id) in channel_location_ids(ch):
+                    channel = ch
+                    break
+        else:
+            channel = result.scalars().first()
+
+        job_result = job_row.result or {}
+        post_id = job_result.get("id") or job_result.get("name") or job_result.get("media_id")
+        failure: str | None = None
+        if not post_id:
+            failure = "the job has no recorded platform post id"
+        elif channel is None or (not channel.access_token and not channel.refresh_token):
+            failure = "the channel for this post is not connected"
+        else:
+            try:
+                r = await delete_published_from_platform(
+                    platform=platform,
+                    post_id=str(post_id),
+                    channel=channel,
+                    db=db,
+                )
+                job_row.result = {**(job_row.result or {}), "deleted": True, "delete_results": [r]}
+            except Exception as e:
+                failure = str(e)[:200]
+
+        if failure is not None:
+            job_row.result = {**(job_row.result or {}), "delete_error": failure}
+            await db.commit()
+            base["result"] = job_row.result
+            base["updated_at"] = job_row.updated_at.isoformat() if job_row.updated_at else None
+            out.append(base)
+            continue
+
+        job_row.status = "cancelled"
+        job_row.last_error = "deleted from the platform by user"
+        await db.commit()
+        base["status"] = job_row.status
+        base["last_error"] = job_row.last_error
+        base["result"] = job_row.result
+        base["updated_at"] = job_row.updated_at.isoformat() if job_row.updated_at else None
+        out.append(base)
+
+    return out

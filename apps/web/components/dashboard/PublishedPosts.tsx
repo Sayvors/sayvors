@@ -152,11 +152,13 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
     setNotice(
       res.error
         ? { kind: "err", text: res.error }
-        : res.failed > 0
-          ? { kind: "err", text: p.deleteFailed }
-          : res.removed === 0
-            ? { kind: "err", text: p.removedNone }
-            : { kind: "ok", text: res.removed === 1 ? p.removedOne : fill(p.removedN, { n: fmt(res.removed) }) },
+        : res.queued
+          ? { kind: "ok", text: p.removalStarted }
+          : res.failed > 0
+            ? { kind: "err", text: p.deleteFailed }
+            : res.removed === 0
+              ? { kind: "err", text: p.removedNone }
+              : { kind: "ok", text: res.removed === 1 ? p.removedOne : fill(p.removedN, { n: fmt(res.removed) }) },
     );
     setTimeout(() => setNotice(null), 6000);
   };
