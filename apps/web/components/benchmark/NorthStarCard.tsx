@@ -21,10 +21,12 @@ export default function NorthStarCard({
 }) {
   const { t } = useI18n();
   const b = t.benchmark;
+  // total_reviews is excluded on purpose: any bigger competitor always leads
+  // lifetime volume, so the fix-first CTA must point at something a merchant
+  // can act on — rating, velocity or sentiment.
   const gapLabels: Array<[keyof CompareSummary["gaps"], string]> = [
     ["avg_rating", b.metricRating],
     ["reviews_per_month", b.metricVelocity],
-    ["total_reviews", b.metricTotalReviews],
     ["positive_pct", b.metricSentiment],
   ];
   const worst = gapLabels
@@ -37,7 +39,7 @@ export default function NorthStarCard({
         <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold uppercase ${PILL[summary.health]}`}>
           {b[`health_${summary.health}` as const]}
         </span>
-        <p className="text-[14px] font-bold text-[#14101F]">
+        <p className="text-[14px] font-bold text-[#14101F]" title={summary.own.name ?? undefined}>
           {b.rankLine
             .replace("{rank}", String(summary.rank))
             .replace("{of}", String(summary.of))}

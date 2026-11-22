@@ -8,7 +8,7 @@
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import type { HistoryPoint, SubjectHistory } from "@/lib/api-benchmark";
 
-const COLORS = ["#3D1D6E", "#B0338A", "#FF4F6E", "#6B3FB5", "#D8459F", "#FF6E85"];
+const COLORS = ["#3D1D6E", "#B0338A", "#FF4F6E", "#116631", "#8A6100", "#0B5CAD"];
 const W = 320, H = 96, PAD = 8;
 
 function perMonth(points: HistoryPoint[]): { x: number; y: number }[] {
@@ -20,7 +20,8 @@ function perMonth(points: HistoryPoint[]): { x: number; y: number }[] {
   for (let i = 1; i < dated.length; i++) {
     const days = (dated[i].t - dated[i - 1].t) / 86_400_000;
     if (days <= 0) continue;
-    out.push({ x: dated[i].t, y: ((dated[i].reviews - dated[i - 1].reviews) / days) * 30 });
+    // Google review removals can make a window net-negative; velocity can't be.
+    out.push({ x: dated[i].t, y: Math.max(0, ((dated[i].reviews - dated[i - 1].reviews) / days) * 30) });
   }
   return out;
 }
@@ -32,14 +33,19 @@ function ratingPoints(points: HistoryPoint[]): { x: number; y: number }[] {
     .sort((a, b) => a.x - b.x);
 }
 
-function scale(series: { x: number; y: number }[], yMin: number, yMax: number): string {
+function scale(
+  series: { x: number; y: number }[],
+  xDomain: { x0: number; x1: number },
+  yMin: number,
+  yMax: number
+): string {
   if (series.length === 0) return "";
-  const xs = series.map((p) => p.x);
-  const x0 = Math.min(...xs), x1 = Math.max(...xs) || 1;
+  // Clamped to 1ms so all-equal timestamps can't divide by zero.
+  const spanX = Math.max(xDomain.x1 - xDomain.x0, 1);
   const span = Math.max(yMax - yMin, 0.0001);
   return series
     .map((p) => {
-      const px = PAD + ((p.x - x0) / (x1 - x0)) * (W - 2 * PAD);
+      const px = PAD + ((p.x - xDomain.x0) / spanX) * (W - 2 * PAD);
       const py = H - PAD - ((p.y - yMin) / span) * (H - 2 * PAD);
       return `${px.toFixed(1)},${py.toFixed(1)}`;
     })
@@ -51,6 +57,11 @@ export default function TrendChart({ history, title }: { history: SubjectHistory
   const b = t.benchmark;
   const live = history.filter((s) => s.points.length >= 2);
   if (live.length === 0) return null;
+  // One shared x-domain: a competitor with two snapshots must render on the
+  // same time scale as a branch with a year of history, or comparison lies.
+  const xs = live.flatMap((s) => ratingPoints(s.points).map((p) => p.x));
+  if (xs.length === 0) return null;
+  const xDomain = { x0: Math.min(...xs), x1: Math.max(...xs) };
   return (
     <section className="mt-4 rounded-[8px] border border-[var(--ui-line)] bg-white p-3 sm:p-4">
       <h2 className="text-[12px] font-bold uppercase tracking-wide text-[#14101F]">{title}</h2>
@@ -65,11 +76,12 @@ export default function TrendChart({ history, title }: { history: SubjectHistory
               {chart.series.map((series, i) => (
                 <polyline
                   key={i}
-                  points={scale(series, chart.yMin, chart.yMax)}
+                  points={scale(series, xDomain, chart.yMin, chart.yMax)}
                   fill="none"
                   stroke={COLORS[i % COLORS.length]}
                   strokeWidth="2"
                   strokeLinejoin="round"
+                  strokeDasharray={i % 2 === 1 ? "6 4" : undefined}
                 />
               ))}
             </svg>

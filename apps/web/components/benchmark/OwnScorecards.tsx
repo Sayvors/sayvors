@@ -4,7 +4,9 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
 import { median } from "@/lib/benchmark-stats";
 import type { ComparisonSubject } from "@/lib/api-benchmark";
 
-const FOCUS = "focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]";
+// One-sided on purpose: a branch above the own-set median is healthy, so the
+// flag fires only when a rating trails the median by more than 35%.
+const VARIANCE_FLAG_THRESHOLD = 0.35;
 
 /** One scorecard per own branch + a variance flag (>35% off the own median). */
 export default function OwnScorecards({ subjects }: { subjects: ComparisonSubject[] }) {
@@ -22,15 +24,15 @@ export default function OwnScorecards({ subjects }: { subjects: ComparisonSubjec
           const rating = s.metrics.avg_rating;
           const velocity = s.metrics.reviews_last_month ?? (s.metrics.reviews_last_year != null ? Math.round(s.metrics.reviews_last_year / 12) : null);
           const fiveShare = s.metrics.total_ratings ? Math.round(((s.metrics.five_star ?? 0) / s.metrics.total_ratings) * 100) : null;
-          const variance = rating != null && ownMedian != null && ownMedian > 0
-            ? Math.abs(rating - ownMedian) / ownMedian : null;
-          const flagged = variance != null && variance > 0.35;
+          const belowMedian = rating != null && ownMedian != null && ownMedian > 0 && rating < ownMedian;
+          const variance = belowMedian ? (ownMedian - rating) / ownMedian : null;
+          const flagged = variance != null && variance > VARIANCE_FLAG_THRESHOLD;
           return (
             <article key={s.key} className={`rounded-[8px] border bg-white p-3 ${flagged ? "border-[#B3123A]" : "border-[var(--ui-line)]"}`}>
               <header className="flex items-center justify-between">
                 <h3 className="text-[13px] font-bold text-[#14101F]">{s.name}</h3>
                 {flagged ? (
-                  <span className={`rounded-full bg-[#FDE8EC] px-2 py-0.5 text-[10px] font-bold text-[#B3123A] ${FOCUS}`}>
+                  <span className="rounded-full bg-[#FDE8EC] px-2 py-0.5 text-[10px] font-bold text-[#B3123A]">
                     {b.varianceFlag.replace("{pct}", String(Math.round((variance ?? 0) * 100)))}
                   </span>
                 ) : null}
