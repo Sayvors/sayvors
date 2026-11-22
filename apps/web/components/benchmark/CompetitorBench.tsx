@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   deleteBenchmarkPlace,
   fetchSavedPlaces,
+  refreshBenchmarkPlace,
   saveBenchmarkPlace,
   searchPlaces,
   type BenchmarkSearchResponse,
@@ -52,8 +53,10 @@ export default function CompetitorBench() {
       await saveBenchmarkPlace({ place_id: place.place_id, label: place.name });
       await queryClient.invalidateQueries({ queryKey: ["benchmark", "saved"] });
       setSearchRes((prev) => prev ? { ...prev, nearby: prev.nearby.filter((p) => p.place_id !== place.place_id), other: prev.other.filter((p) => p.place_id !== place.place_id) } : prev);
+      await refreshBenchmarkPlace(place.place_id);
+      await queryClient.invalidateQueries({ queryKey: ["benchmark", "saved"] });
     } catch {
-      // Leave the result visible so the tenant can retry.
+      await queryClient.invalidateQueries({ queryKey: ["benchmark", "saved"] });
     } finally {
       setBusyId(null);
     }
@@ -107,7 +110,14 @@ export default function CompetitorBench() {
                       <p className="truncate text-[11px] text-[var(--ui-ink-2)]">{place.address}</p>
                       <p className="mt-0.5 text-[10px] text-[var(--ui-ink-2)]">{place.rating != null ? `${place.rating.toFixed(1)}★` : "—"} · {place.review_count ?? "—"} reviews</p>
                     </div>
-                    <button type="button" onClick={() => void save(place)} disabled={busyId === place.place_id} className={`rounded-[8px] bg-[var(--ink)] px-4 py-2 text-[12px] font-bold text-white disabled:opacity-50 ${FOCUS}`}>Save</button>
+                    {busyId === place.place_id ? (
+                      <div className="w-32 shrink-0">
+                        <p className="text-[10px] font-semibold text-[#3D1D6E]">Fetching details…</p>
+                        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[#E9E3F3]"><div className="h-full w-2/3 animate-pulse rounded-full bg-[#3D1D6E]" /></div>
+                      </div>
+                    ) : (
+                      <button type="button" onClick={() => void save(place)} disabled={!!busyId} className={`rounded-[8px] bg-[var(--ink)] px-4 py-2 text-[12px] font-bold text-white disabled:opacity-50 ${FOCUS}`}>Save</button>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -131,7 +141,14 @@ export default function CompetitorBench() {
                     <p className="truncate text-[11px] text-[var(--ui-ink-2)]">{place.address}</p>
                     <p className="mt-0.5 text-[10px] text-[var(--ui-ink-2)]">{place.rating != null ? `${place.rating.toFixed(1)}★` : "—"} · {place.review_count ?? "—"} reviews</p>
                   </div>
-                  <button type="button" onClick={() => void save(place)} disabled={busyId === place.place_id} className={`rounded-[8px] bg-[var(--ink)] px-4 py-2 text-[12px] font-bold text-white disabled:opacity-50 ${FOCUS}`}>Save</button>
+                  {busyId === place.place_id ? (
+                    <div className="w-32 shrink-0">
+                      <p className="text-[10px] font-semibold text-[#3D1D6E]">Fetching details…</p>
+                      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[#E9E3F3]"><div className="h-full w-2/3 animate-pulse rounded-full bg-[#3D1D6E]" /></div>
+                    </div>
+                  ) : (
+                    <button type="button" onClick={() => void save(place)} disabled={!!busyId} className={`rounded-[8px] bg-[var(--ink)] px-4 py-2 text-[12px] font-bold text-white disabled:opacity-50 ${FOCUS}`}>Save</button>
+                  )}
                 </li>
               ))}
             </ul>
@@ -149,10 +166,14 @@ export default function CompetitorBench() {
           </p>
         ) : (
           <ul className="mt-2 divide-y divide-[var(--ui-line)]">
-            {saved.map((place) => (
+            {saved.map((place) => {
+              const ready = Boolean(place.fetched_at) && !place.last_scrape_error;
+              const fetching = busyId === place.place_id;
+              return (
               <li key={place.id} className="flex items-center gap-3 py-2">
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-[12px] font-semibold text-[var(--ui-ink)]">{place.label || place.name || place.place_id}</p>
+                  <p className="truncate text-[12px] font-semibold text-[var(--ui-ink)]">{place.label || place.name || "Saved business"}</p>
+                  <p className="text-[10px] text-[var(--ui-ink-2)]">{ready ? "Ready to compare" : fetching ? "Fetching details…" : "Details not ready"}</p>
                   <p className="font-mono text-[11px] text-[var(--ui-ink)]">
                     {place.rating != null ? place.rating.toFixed(1) : "—"}★ · {place.review_count ?? "—"} reviews
                   </p>
@@ -160,13 +181,14 @@ export default function CompetitorBench() {
                 <button
                   type="button"
                   onClick={() => void remove(place.place_id)}
-                  disabled={busyId === place.place_id}
+                  disabled={fetching}
                   className={`rounded-[8px] border border-red-400 px-3 py-1.5 text-[11px] font-bold text-red-600 disabled:opacity-50 ${FOCUS}`}
                 >
                   Remove
                 </button>
               </li>
-            ))}
+              );
+            })}
           </ul>
         )}
       </div>

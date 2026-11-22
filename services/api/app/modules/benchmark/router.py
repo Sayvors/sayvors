@@ -209,6 +209,7 @@ async def save_place(
     ctx: TenantContext = Depends(require_perm("benchmark.manage")),
     db: AsyncSession = Depends(get_db),
 ):
+    import time as _time
     try:
         row = await service.save_place(
             db, tenant_id_of(ctx.user),
@@ -218,6 +219,7 @@ async def save_place(
         )
     except service.BenchError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+
     return service.serialize(row)
 
 
@@ -236,6 +238,33 @@ async def set_heatmap(
     return service.serialize(row)
 
 
+@router.post("/places/{place_id}/refresh", response_model=dict)
+async def refresh_place(
+    place_id: str,
+    ctx: TenantContext = Depends(require_perm("benchmark.manage")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fetch last-week details for one saved place (cost-capped, 10 reviews max)."""
+    import time as _time
+
+    saved = await service.get_saved(db, tenant_id_of(ctx.user), place_id)
+    if saved is None:
+        raise HTTPException(status_code=404, detail="Saved place not found")
+    now_ts = int(_time.time())
+    try:
+        details = await places.get_place(
+            saved.place_id, reviews_limit=10, cutoff=now_ts - 7 * 24 * 3600
+        )
+    except places.PlacesError as exc:
+        saved.last_scrape_error = str(exc)[:500]
+        await db.commit()
+        await db.refresh(saved)
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    await service.store_place_details(db, saved, details, append_snapshot=True)
+    await db.refresh(saved)
+    return service.serialize(saved)
+
+
 @router.get("/places/{place_id}/details", response_model=dict)
 async def place_details(
     place_id: str,
@@ -247,11 +276,16 @@ async def place_details(
     The saved row is checked first: a place nobody on this tenant saved cannot
     be used as a free Places lookup proxy.
     """
+    import time as _time
+
     saved = await service.get_saved(db, tenant_id_of(ctx.user), place_id)
     if saved is None:
         raise HTTPException(status_code=404, detail="Saved place not found")
+    now_ts = int(_time.time())
     try:
-        details = await places.get_place(saved.place_id)
+        details = await places.get_place(
+            saved.place_id, reviews_limit=10, cutoff=now_ts - 7 * 24 * 3600
+        )
     except places.PlacesError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
     return {**details, "saved_id": saved.id, "label": saved.label}

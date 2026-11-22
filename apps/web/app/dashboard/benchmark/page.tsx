@@ -8,6 +8,7 @@ import OwnLocations from "@/components/benchmark/OwnLocations";
 import {
   deleteBenchmarkPlace,
   fetchSavedPlaces,
+  refreshBenchmarkPlace,
   saveBenchmarkPlace,
   searchPlaces,
   setBenchmarkHeatmap,
@@ -63,8 +64,12 @@ export default function BenchmarkPage() {
         nearby: prev.nearby.filter((p) => p.place_id !== place.place_id),
         other: prev.other.filter((p) => p.place_id !== place.place_id),
       } : prev);
+      // Fetch last-week details (cost-capped) so the card becomes ready to compare.
+      await refreshBenchmarkPlace(place.place_id);
+      await queryClient.invalidateQueries({ queryKey: ["benchmark", "saved"] });
     } catch {
-      // Keep the result visible so the tenant can retry.
+      // Keep the result visible so the tenant can retry; saved card may be not ready.
+      await queryClient.invalidateQueries({ queryKey: ["benchmark", "saved"] });
     } finally {
       setBusyId(null);
     }
@@ -143,7 +148,14 @@ export default function BenchmarkPage() {
                           <p className="truncate text-[11px] text-[#3B2D5E]">{place.address}</p>
                           <p className="mt-0.5 text-[10px] text-[#3B2D5E]/80">{place.rating != null ? `${place.rating.toFixed(1)}★` : "—"} · {place.review_count ?? "—"} reviews</p>
                         </div>
-                        <button type="button" onClick={() => void save(place)} disabled={busyId === place.place_id} className={`shrink-0 rounded-[8px] bg-[#3D1D6E] px-3 py-1.5 text-[11px] font-bold text-white disabled:opacity-50 ${FOCUS}`}>Save</button>
+                        {busyId === place.place_id ? (
+                          <div className="w-32 shrink-0">
+                            <p className="text-[10px] font-semibold text-[#3D1D6E]">Fetching details…</p>
+                            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[#E9E3F3]"><div className="h-full w-2/3 animate-pulse rounded-full bg-[#3D1D6E]" /></div>
+                          </div>
+                        ) : (
+                          <button type="button" onClick={() => void save(place)} disabled={!!busyId} className={`shrink-0 rounded-[8px] bg-[#3D1D6E] px-3 py-1.5 text-[11px] font-bold text-white disabled:opacity-50 ${FOCUS}`}>Save</button>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -167,7 +179,14 @@ export default function BenchmarkPage() {
                         <p className="truncate text-[11px] text-[#3B2D5E]">{place.address}</p>
                         <p className="mt-0.5 text-[10px] text-[#3B2D5E]/80">{place.rating != null ? `${place.rating.toFixed(1)}★` : "—"} · {place.review_count ?? "—"} reviews</p>
                       </div>
-                      <button type="button" onClick={() => void save(place)} disabled={busyId === place.place_id} className={`shrink-0 rounded-[8px] bg-[#3D1D6E] px-3 py-1.5 text-[11px] font-bold text-white disabled:opacity-50 ${FOCUS}`}>Save</button>
+                      {busyId === place.place_id ? (
+                        <div className="w-32 shrink-0">
+                          <p className="text-[10px] font-semibold text-[#3D1D6E]">Fetching details…</p>
+                          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[#E9E3F3]"><div className="h-full w-2/3 animate-pulse rounded-full bg-[#3D1D6E]" /></div>
+                        </div>
+                      ) : (
+                        <button type="button" onClick={() => void save(place)} disabled={!!busyId} className={`shrink-0 rounded-[8px] bg-[#3D1D6E] px-3 py-1.5 text-[11px] font-bold text-white disabled:opacity-50 ${FOCUS}`}>Save</button>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -196,19 +215,27 @@ export default function BenchmarkPage() {
           </p>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {saved.map((place) => (
+            {saved.map((place) => {
+              const ready = Boolean(place.fetched_at) && !place.last_scrape_error;
+              const fetching = busyId === place.place_id;
+              const name = place.label || place.name || "Saved business";
+              return (
               <article key={place.id} className="relative rounded-[8px] border border-[var(--ui-line)] bg-white p-4">
                 <div className="flex items-start gap-2">
-                  <Link
-                    href={`/dashboard/benchmark/compare?vs=${encodeURIComponent(`saved:${place.place_id}`)}`}
-                    className="min-w-0 flex-1 truncate text-[13px] font-bold text-[#14101F] hover:underline"
-                  >
-                    {place.label || place.name || place.place_id}
-                  </Link>
+                  {ready ? (
+                    <Link
+                      href={`/dashboard/benchmark/compare?vs=${encodeURIComponent(`saved:${place.place_id}`)}`}
+                      className="min-w-0 flex-1 truncate text-[13px] font-bold text-[#14101F] hover:underline"
+                    >
+                      {name}
+                    </Link>
+                  ) : (
+                    <p className="min-w-0 flex-1 truncate text-[13px] font-bold text-[#14101F]">{name}</p>
+                  )}
                   <div className="relative shrink-0">
                     <button
                       type="button"
-                      aria-label={`Actions for ${place.label || place.name || place.place_id}`}
+                      aria-label={`Actions for ${name}`}
                       aria-expanded={menuId === place.id}
                       onClick={() => setMenuId((v) => v === place.id ? null : place.id)}
                       className={`rounded-[8px] px-2 py-1 text-[15px] leading-none text-[#3B2D5E] hover:bg-[#F4F2F7] ${FOCUS}`}
@@ -217,25 +244,38 @@ export default function BenchmarkPage() {
                     </button>
                     {menuId === place.id ? (
                       <div className="absolute right-0 top-full z-20 mt-1 w-44 rounded-[8px] border border-[var(--ui-line)] bg-white p-1 shadow-[0_2px_8px_rgba(20,16,31,0.10)]">
-                        <Link
-                          href={`/dashboard/benchmark/compare?vs=${encodeURIComponent(`saved:${place.place_id}`)}`}
-                          onClick={() => setMenuId(null)}
-                          className={`block w-full rounded-[8px] px-2.5 py-2 text-left text-[11px] font-semibold text-[#14101F] hover:bg-[#F4F2F7] ${FOCUS}`}
-                        >
-                          Compare
-                        </Link>
+                        {ready ? (
+                          <Link
+                            href={`/dashboard/benchmark/compare?vs=${encodeURIComponent(`saved:${place.place_id}`)}`}
+                            onClick={() => setMenuId(null)}
+                            className={`block w-full rounded-[8px] px-2.5 py-2 text-left text-[11px] font-semibold text-[#14101F] hover:bg-[#F4F2F7] ${FOCUS}`}
+                          >
+                            Compare
+                          </Link>
+                        ) : (
+                          <button type="button" disabled className="w-full rounded-[8px] px-2.5 py-2 text-left text-[11px] font-semibold text-[#7C7392]">Compare (not ready)</button>
+                        )}
                         <button
                           type="button"
                           onClick={() => { setMenuId(null); void toggleHeatmap(place); }}
-                          disabled={busyId === place.place_id}
+                          disabled={fetching}
                           className={`w-full rounded-[8px] px-2.5 py-2 text-left text-[11px] font-semibold text-[#14101F] hover:bg-[#F4F2F7] ${FOCUS}`}
                         >
                           {place.in_heatmap ? "Remove from heatmap" : "Add to heatmap"}
                         </button>
+                        {!ready && !fetching ? (
+                          <button
+                            type="button"
+                            onClick={() => { setMenuId(null); setBusyId(place.place_id); void refreshBenchmarkPlace(place.place_id).finally(() => { void queryClient.invalidateQueries({ queryKey: ["benchmark", "saved"] }); setBusyId(null); }); }}
+                            className={`w-full rounded-[8px] px-2.5 py-2 text-left text-[11px] font-semibold text-[#14101F] hover:bg-[#F4F2F7] ${FOCUS}`}
+                          >
+                            Fetch details
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           onClick={() => { setMenuId(null); void remove(place.place_id); }}
-                          disabled={busyId === place.place_id}
+                          disabled={fetching}
                           className={`w-full rounded-[8px] px-2.5 py-2 text-left text-[11px] font-semibold text-red-600 hover:bg-[#F4F2F7] ${FOCUS}`}
                         >
                           Remove from bench
@@ -244,31 +284,43 @@ export default function BenchmarkPage() {
                     ) : null}
                   </div>
                 </div>
-                <p className="mt-0.5 truncate text-[10px] text-[#3B2D5E]">{place.place_id}</p>
+                <p className="mt-0.5 truncate text-[10px] text-[#3B2D5E]">{ready ? "Ready to compare" : fetching ? "Fetching details…" : "Details not ready"}</p>
                 <p className="mt-3 font-mono text-[17px] font-bold text-[#14101F]">
                   {place.rating != null ? place.rating.toFixed(1) : "—"}<span className="text-[11px]">★</span>
                 </p>
                 <p className="font-mono text-[10px] text-[#3B2D5E]">{place.review_count ?? "—"} reviews</p>
-                <div className="mt-3 flex gap-2">
-                  <Link
-                    href={`/dashboard/benchmark/${encodeURIComponent(place.place_id)}`}
-                    className={`rounded-[8px] bg-[#3D1D6E] px-3 py-1.5 text-[11px] font-bold text-white ${FOCUS}`}
-                  >
-                    Open
-                  </Link>
-                  {!place.in_heatmap ? (
-                    <button
-                      type="button"
-                      onClick={() => void toggleHeatmap(place)}
-                      disabled={busyId === place.place_id}
-                      className={`rounded-[8px] border border-[#3D1D6E]/25 px-3 py-1.5 text-[11px] font-bold text-[#3D1D6E] ${FOCUS}`}
-                    >
-                      Add to heatmap
-                    </button>
-                  ) : null}
-                </div>
+                {fetching ? (
+                  <div className="mt-3">
+                    <p className="text-[10px] font-semibold text-[#3D1D6E]">Fetching last week details…</p>
+                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[#E9E3F3]"><div className="h-full w-2/3 animate-pulse rounded-full bg-[#3D1D6E]" /></div>
+                  </div>
+                ) : (
+                  <div className="mt-3 flex gap-2">
+                    {ready ? (
+                      <Link
+                        href={`/dashboard/benchmark/${encodeURIComponent(place.place_id)}`}
+                        className={`rounded-[8px] bg-[#3D1D6E] px-3 py-1.5 text-[11px] font-bold text-white ${FOCUS}`}
+                      >
+                        Open
+                      </Link>
+                    ) : (
+                      <button type="button" disabled className="rounded-[8px] bg-[#3D1D6E]/40 px-3 py-1.5 text-[11px] font-bold text-white">Open</button>
+                    )}
+                    {!place.in_heatmap ? (
+                      <button
+                        type="button"
+                        onClick={() => void toggleHeatmap(place)}
+                        disabled={fetching}
+                        className={`rounded-[8px] border border-[#3D1D6E]/25 px-3 py-1.5 text-[11px] font-bold text-[#3D1D6E] ${FOCUS}`}
+                      >
+                        Add to heatmap
+                      </button>
+                    ) : null}
+                  </div>
+                )}
               </article>
-            ))}
+              );
+            })}
           </div>
         )}
       </section>

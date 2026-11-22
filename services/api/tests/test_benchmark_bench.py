@@ -99,3 +99,31 @@ async def test_save_and_list_are_tenant_scoped(client, db):
 
 async def test_delete_other_tenant_place_returns_404(client, db):
     assert client.delete("/api/v1/benchmark/places/not-mine").status_code == 404
+
+
+async def test_save_returns_not_ready_then_refresh_makes_ready(client, monkeypatch):
+    import app.modules.benchmark.places as places_module
+
+    async def _fake_get_place(place_id, **kwargs):
+        assert kwargs.get("reviews_limit") == 10
+        assert "cutoff" in kwargs
+        return {
+            "place_id": place_id, "name": "Cafe", "address": "Riyadh",
+            "rating": 4.5, "review_count": 20, "types": ["cafe"],
+            "reviews": [{"rating": 5, "text": "Great"}],
+        }
+
+    monkeypatch.setattr(places_module, "get_place", _fake_get_place)
+
+    res = client.post("/api/v1/benchmark/places", json={"place_id": "p-ready", "label": "Cafe"})
+    assert res.status_code == 201, res.text
+    body = res.json()
+    assert body["fetched_at"] is None
+    assert body["last_scrape_error"] is None
+
+    ref = client.post("/api/v1/benchmark/places/p-ready/refresh")
+    assert ref.status_code == 200, ref.text
+    ready = ref.json()
+    assert ready["fetched_at"] is not None
+    assert ready["last_scrape_error"] is None
+    assert ready["name"] == "Cafe"

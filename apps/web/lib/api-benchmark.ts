@@ -37,6 +37,8 @@ export interface SavedPlace {
   latitude: number | null;
   longitude: number | null;
   in_heatmap: boolean;
+  fetched_at: string | null;
+  last_scrape_error: string | null;
   created_at: string | null;
 }
 
@@ -81,6 +83,12 @@ export function setBenchmarkHeatmap(placeId: string, enabled?: boolean): Promise
 
 export function getBenchmarkPlaceDetails(placeId: string): Promise<PlaceDetails> {
   return apiFetch(`/api/v1/benchmark/places/${encodeURIComponent(placeId)}/details`);
+}
+
+export function refreshBenchmarkPlace(placeId: string): Promise<SavedPlace> {
+  return apiFetch(`/api/v1/benchmark/places/${encodeURIComponent(placeId)}/refresh`, {
+    method: "POST",
+  });
 }
 
 export function deleteBenchmarkPlace(placeId: string): Promise<{ deleted: boolean }> {

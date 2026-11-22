@@ -48,7 +48,7 @@ async def test_saved_subject_uses_places_and_flags_hidden_facts(db, monkeypatch)
 
     await bench_service.save_place(db, TENANT, place_id="cmp-1", label="Rival Cafe")
 
-    async def _fake_get_place(place_id):
+    async def _fake_get_place(place_id, **kwargs):
         assert place_id == "cmp-1"
         now = datetime.now(timezone.utc)
         return {
@@ -90,7 +90,7 @@ async def test_saved_subject_falls_back_to_stored_values_when_live_fails(db, mon
         rating=4.1, review_count=250,
     )
 
-    async def _boom(place_id):
+    async def _boom(place_id, **kwargs):
         raise places_module.PlacesError("quota exceeded", status_code=503)
 
     monkeypatch.setattr(places_module, "get_place", _boom)
@@ -144,7 +144,7 @@ async def test_up_to_six_subjects_allowed(db, monkeypatch):
     for i in range(6):
         await bench_service.save_place(db, TENANT, place_id=f"multi-{i}")
 
-    async def _fake_get_place(place_id):
+    async def _fake_get_place(place_id, **kwargs):
         return {"place_id": place_id, "name": place_id, "address": None,
                 "rating": 4.0, "review_count": 10, "types": [], "reviews": []}
 
@@ -165,7 +165,7 @@ async def test_compare_endpoint(client, monkeypatch):
     )
     assert created.status_code == 201, created.text
 
-    async def _fake_get_place(place_id):
+    async def _fake_get_place(place_id, **kwargs):
         return {
             "place_id": "http-1", "name": "HTTP Rival", "address": None,
             "rating": 4.2, "review_count": 42, "types": [], "reviews": [],
@@ -213,7 +213,7 @@ async def test_period_view_serves_fresh_cache_without_calling_places(db, monkeyp
         )
     ).scalar()
 
-    async def _must_not_call(place_id):
+    async def _must_not_call(place_id, **kwargs):
         raise AssertionError("Places was called although the cache was fresh")
 
     monkeypatch.setattr(places_module, "get_place", _must_not_call)
@@ -253,7 +253,7 @@ async def test_stale_cache_calls_places_and_stores_a_snapshot(db, monkeypatch):
     )
     await db.commit()
 
-    async def _fake(place_id):
+    async def _fake(place_id, **kwargs):
         return await _fake_details(place_id, rating=4.5, review_count=450, types=["restaurant"])
 
     monkeypatch.setattr(places_module, "get_place", _fake)
@@ -280,7 +280,7 @@ async def test_live_range_always_calls_places_even_when_fresh(db, monkeypatch):
     )
 
     calls = []
-    async def _fake(place_id):
+    async def _fake(place_id, **kwargs):
         calls.append(place_id)
         return await _fake_details(place_id, rating=4.3, review_count=120)
 
@@ -301,7 +301,7 @@ async def test_cache_disabled_always_calls_places(db, monkeypatch):
     )
     await bench_service.update_config(db, place_cache_enabled=False)
 
-    async def _fake(place_id):
+    async def _fake(place_id, **kwargs):
         return await _fake_details(place_id, rating=4.6, review_count=150)
 
     monkeypatch.setattr(places_module, "get_place", _fake)
@@ -331,7 +331,7 @@ async def test_saved_subject_period_from_snapshot_delta(db, monkeypatch):
     ))
     await db.commit()
 
-    async def _fake(place_id):
+    async def _fake(place_id, **kwargs):
         return await _fake_details(
             place_id, rating=4.4, review_count=900,
             reviews=[{
@@ -359,7 +359,7 @@ async def test_saved_subject_period_without_history_is_null(db, monkeypatch):
 
     await bench_service.save_place(db, TENANT, place_id="period-2", label="No History")
 
-    async def _fake(place_id):
+    async def _fake(place_id, **kwargs):
         return await _fake_details(place_id)
 
     monkeypatch.setattr(places_module, "get_place", _fake)
@@ -582,7 +582,7 @@ async def test_scraper_scrapes_due_places_records_failures_and_prunes(db, monkey
 
     seen: list[str] = []
 
-    async def _fake(place_id):
+    async def _fake(place_id, **kwargs):
         seen.append(place_id)
         if place_id == "scrape-bad":
             raise places_module.PlacesError("quota exceeded", status_code=500)
@@ -705,7 +705,7 @@ async def test_compare_endpoint_accepts_range(client, monkeypatch):
     )
     assert created.status_code == 201, created.text
 
-    async def _fake_get_place(place_id):
+    async def _fake_get_place(place_id, **kwargs):
         return await _fake_details(place_id, rating=4.2, review_count=42)
 
     monkeypatch.setattr(places_module, "get_place", _fake_get_place)

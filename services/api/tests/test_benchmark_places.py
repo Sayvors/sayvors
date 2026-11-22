@@ -96,3 +96,29 @@ async def test_details_maps_reviews_and_photos(monkeypatch, key):
     assert result["place_id"] == "abc"
     assert result["reviews"][0]["text"] == "Great"
     assert result["photos"][0]["name"] == "places/abc/photos/p1"
+
+
+async def test_outscraper_get_place_caps_reviews_and_passes_cutoff(monkeypatch):
+    import app.modules.benchmark.outscraper as outscraper_mod
+
+    monkeypatch.setattr(settings, "OUTSCRAPER_API_KEY", "test-os-key")
+    monkeypatch.setattr(settings, "GOOGLE_PLACES_API_KEY", "")
+
+    calls = {}
+
+    async def _fake_get_place(place_id, *, reviews_limit=10, start=None, cutoff=None):
+        calls["place_id"] = place_id
+        calls["reviews_limit"] = reviews_limit
+        calls["start"] = start
+        calls["cutoff"] = cutoff
+        return {"place_id": place_id, "name": "Cafe", "reviews": []}
+
+    monkeypatch.setattr(outscraper_mod, "configured", lambda: True)
+    monkeypatch.setattr(outscraper_mod, "get_place", _fake_get_place)
+    monkeypatch.setattr(places, "_cache_get_json", lambda *a, **k: _async_none())
+    monkeypatch.setattr(places, "_cache_set_json", lambda *a, **k: _async_none())
+
+    result = await places.get_place("abc", reviews_limit=999, cutoff=123)
+    assert result["place_id"] == "abc"
+    assert calls["reviews_limit"] == 10
+    assert calls["cutoff"] == 123

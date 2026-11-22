@@ -22,7 +22,8 @@ REQUEST_TIMEOUT_SECONDS = 60.0
 POLL_INTERVAL_SECONDS = 3.0
 POLL_TIMEOUT_SECONDS = 180.0
 MAX_SEARCH_RESULTS = 20
-MAX_REVIEWS = 200
+# Hard cost cap: never pull more than 10 reviews per place in one call.
+MAX_REVIEWS = 10
 
 
 class OutscraperError(Exception):
@@ -207,6 +208,7 @@ async def get_place(
         "limit": 1,
         # Never 0: Outscraper treats 0 as unlimited and bills per review.
         "reviewsLimit": max(1, min(int(reviews_limit), MAX_REVIEWS)),
+        "sort": "newest",
         "async": "false",
     }
     if start is not None:

@@ -325,7 +325,11 @@ async def _saved_subject(db: AsyncSession, tenant_id: str, raw: str,
         }
     else:
         try:
-            details = await places.get_place(saved.place_id)
+            details = await places.get_place(
+                saved.place_id,
+                reviews_limit=10,
+                cutoff=int(now.timestamp()) - 7 * 24 * 3600,
+            )
         except places.PlacesError as exc:
             logger.warning("Comparison details failed for place %s: %s", saved.place_id, exc)
             details = {}
@@ -803,7 +807,10 @@ async def _saved_reviews(
     reviews = list(saved.reviews or [])
     if not reviews:
         try:
-            details = await places.get_place(saved.place_id)
+            now_ts = int(datetime.now(timezone.utc).timestamp())
+            details = await places.get_place(
+                saved.place_id, reviews_limit=10, cutoff=now_ts - 7 * 24 * 3600
+            )
         except places.PlacesError:
             details = {}
         reviews = list(details.get("reviews") or [])

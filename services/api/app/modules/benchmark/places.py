@@ -43,7 +43,8 @@ async def _cache_set_json(key: str, value: dict | list, ttl: int) -> None:
 PLACES_TEXT_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
 PLACES_DETAILS_URL = "https://places.googleapis.com/v1/places/{place_id}"
 MAX_SEARCH_RESULTS = 20
-MAX_REVIEWS = 500
+# Hard cost cap: never pull/return more than 10 reviews per place.
+MAX_REVIEWS = 10
 MAX_PHOTOS = 30
 REQUEST_TIMEOUT_SECONDS = 15.0
 
@@ -107,10 +108,11 @@ def _map_search(place: dict) -> dict:
     }
 
 
-def _map_details(place: dict) -> dict:
+def _map_details(place: dict, *, reviews_limit: int = MAX_REVIEWS) -> dict:
     base = _map_search(place)
     reviews = []
-    for review in (place.get("reviews") or [])[:MAX_REVIEWS]:
+    limit = max(1, min(int(reviews_limit), MAX_REVIEWS))
+    for review in (place.get("reviews") or [])[:limit]:
         if not isinstance(review, dict):
             continue
         text_value = review.get("text")
@@ -191,19 +193,22 @@ async def search_places(
     return result
 
 
-async def get_place(place_id: str, *, language: str = "en") -> dict:
+async def get_place(
+    place_id: str, *, language: str = "en", reviews_limit: int = 10, start: int | None = None, cutoff: int | None = None
+) -> dict:
     """Details for one place."""
     pid = _place_id(place_id)
     if not pid:
         raise PlacesError("Unknown place")
-    cache_key = f"bm:place:{outscraper.configured()}:{language or 'en'}:{pid}"
+    reviews_limit = max(1, min(int(reviews_limit), 10))
+    cache_key = f"bm:place:{outscraper.configured()}:{language or 'en'}:{pid}:{reviews_limit}:{start or 0}:{cutoff or 0}"
     cached = await _cache_get_json(cache_key)
     if isinstance(cached, dict) and cached.get("place_id"):
         return cached
 
     if outscraper.configured():
         try:
-            result = await outscraper.get_place(pid)
+            result = await outscraper.get_place(pid, reviews_limit=reviews_limit, start=start, cutoff=cutoff)
         except outscraper.OutscraperError as exc:
             raise PlacesError(str(exc), exc.status_code) from exc
         await _cache_set_json(cache_key, result, DETAILS_CACHE_TTL_SECONDS)
@@ -225,7 +230,7 @@ async def get_place(place_id: str, *, language: str = "en") -> dict:
         logger.error("Places details failed status=%s", resp.status_code)
         raise PlacesError("Place details are temporarily unavailable", resp.status_code)
     try:
-        result = _map_details(resp.json() or {})
+        result = _map_details(resp.json() or {}, reviews_limit=reviews_limit)
     except ValueError:
         raise PlacesError("Place details returned an invalid response")
     await _cache_set_json(cache_key, result, DETAILS_CACHE_TTL_SECONDS)

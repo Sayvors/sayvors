@@ -32,11 +32,10 @@ logger = logging.getLogger(__name__)
 # How often the loop checks for work. The real cadence is `refresh_hours`;
 # this only decides how quickly an admin change is picked up.
 TICK_SECONDS = 300
-# Places per pass. Google Places bills per request, so a pass is deliberately
-# small enough to stay predictable at 1000 tenants with 50 saved places each.
-BATCH_LIMIT = 200
-# Politeness gap between Google calls; keeps a large pass from bursting.
-CALL_PACING_SECONDS = 0.15
+# Hard cost cap: small batch, last-week window only.
+BATCH_LIMIT = 10
+# Politeness gap between provider calls; keeps a pass from bursting.
+CALL_PACING_SECONDS = 0.25
 MAX_ERROR_LEN = 300
 
 
@@ -131,9 +130,12 @@ async def refresh_due_places(
         for place_pk, google_place_id, tenant_id, _last in due:
             grouped.setdefault(google_place_id, []).append((place_pk, tenant_id))
 
+        cutoff_ts = int((moment - timedelta(days=7)).timestamp())
         for google_place_id, targets in grouped.items():
             try:
-                details = await places.get_place(google_place_id)
+                details = await places.get_place(
+                    google_place_id, reviews_limit=10, cutoff=cutoff_ts
+                )
             except places.PlacesError as exc:
                 if exc.status_code == 503:
                     # No API key: every remaining call fails the same way.
