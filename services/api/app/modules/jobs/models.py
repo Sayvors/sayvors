@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from enum import Enum
 
-from sqlalchemy import DateTime, Enum as SAEnum, Integer, Index, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Enum as SAEnum, Integer, Index, JSON, String, Text, UniqueConstraint, false
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...database import Base
@@ -96,6 +96,15 @@ class Job(Base):
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # UI progress (Phase 1: background-operation progress UI). No behavior change.
+    progress: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    progress_label: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    ui_title: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    ui_kind: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    ui_visible: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    ui_subject_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    ui_subject_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -122,6 +131,7 @@ class Job(Base):
         # The reaper finds overdue jobs by deadline. Name matches the
         # migration so a models-only rebuild produces the same index.
         Index("ix_jobs_hard_deadline", "hard_deadline_at"),
+        Index("ix_jobs_tenant_ui_visible", "tenant_id", "ui_visible"),
     )
 
 
