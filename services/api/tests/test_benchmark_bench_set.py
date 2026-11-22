@@ -40,6 +40,8 @@ async def test_set_cap_is_five(db, user_id):
     for i in range(5):
         await service.save_place(db, user_id, place_id=f"p{i}", label=str(i))
         await service.set_bench_set(db, user_id, f"p{i}", enabled=True)
+    # no-op at cap, must not raise
+    await service.set_bench_set(db, user_id, "p2", enabled=True)
     await service.save_place(db, user_id, place_id="p5", label="Sixth")
     with pytest.raises(service.BenchError, match="full"):
         await service.set_bench_set(db, user_id, "p5", enabled=True)
@@ -54,3 +56,22 @@ async def test_list_saved_carries_flag(db, user_id):
     await service.set_bench_set(db, user_id, "p1", enabled=True)
     rows = await service.list_saved(db, user_id, limit=10)
     assert rows[0]["in_bench_set"] is True
+
+
+# -- HTTP surface -------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_bench_set_http_statuses(client, db, user_id):
+    # Unknown place mirrors set_heatmap's 404, not the generic 422.
+    res = client.post("/api/v1/benchmark/places/nope/bench-set?enabled=true")
+    assert res.status_code == 404
+
+    # The client acts as the user_id tenant (conftest user has no tenant_id),
+    # so rows saved via the service are visible to the endpoint.
+    for i in range(5):
+        await service.save_place(db, user_id, place_id=f"hp{i}", label=str(i))
+        await service.set_bench_set(db, user_id, f"hp{i}", enabled=True)
+    await service.save_place(db, user_id, place_id="hp5", label="Sixth")
+    res = client.post("/api/v1/benchmark/places/hp5/bench-set?enabled=true")
+    assert res.status_code == 422, res.text
+    assert "full" in res.json()["detail"]

@@ -265,10 +265,12 @@ async def set_bench_set(
 ) -> BenchmarkPlace:
     """Toggle a saved place's membership in the tenant's benchmark set.
 
-    The cap is enforced under a row lock on the tenant's bench so two
-    concurrent toggles cannot both pass the count check (AGENTS.md: real
-    concurrency). Enabling an already-enabled member is a no-op that must
-    not trip the cap.
+    The cap is enforced under a row lock on ALL of the tenant's saved rows,
+    not just current members: a members-only lock anchors zero rows on an
+    empty set, so N concurrent first-enables would all pass the count check
+    (AGENTS.md: real concurrency). Enabling an already-enabled member is a
+    no-op that must not trip the cap. SQLite ignores FOR UPDATE, so the
+    tests exercise the count logic, not the locking itself.
     """
     row = await get_saved(db, tenant_id, place_id)
     if row is None:
@@ -282,14 +284,11 @@ async def set_bench_set(
     members = (
         await db.execute(
             select(BenchmarkPlace)
-            .where(
-                BenchmarkPlace.tenant_id == tenant_id,
-                BenchmarkPlace.in_bench_set.is_(True),
-            )
+            .where(BenchmarkPlace.tenant_id == tenant_id)
             .with_for_update()
         )
     ).scalars().all()
-    if len(members) >= BENCH_SET_MAX:
+    if len([m for m in members if m.in_bench_set]) >= BENCH_SET_MAX:
         raise BenchError(
             f"Benchmark set is full ({BENCH_SET_MAX} places). "
             "Remove one before adding another."
