@@ -47,7 +47,7 @@ function AnalyticsShell() {
             const label = tabId === "overview"
               ? t.analytics.overview
               : tabId === "staff"
-              ? "Staff"
+              ? t.nav.staff
               : (t.nav as Record<string, string>)[tabId] ?? tabId;
             return (
               <Link

@@ -103,11 +103,11 @@ export default function StaffPanel() {
       setBranches(
         google.map((c: ChannelRow) => ({
           id: c.listing_id ?? c.id,
-          name: c.display_name ?? "Branch",
+          name: c.display_name ?? sc.branch,
         })),
       );
     } catch (e) {
-      setError(e instanceof Error ? e.message.slice(0, 200) : "Could not load staff data.");
+      setError(e instanceof Error ? e.message.slice(0, 200) : sc.couldNotLoad);
     } finally {
       setLoading(false);
     }
@@ -127,11 +127,11 @@ export default function StaffPanel() {
         body: JSON.stringify({ days: 90, limit: 300, reextract: false }),
       });
       setNotice(
-        `Scanned ${result.scanned} reviews, linked ${result.mentions} mentions. Run again any time — it is safe to repeat.`,
+        sc.scannedReviews(result.scanned, result.mentions),
       );
       await loadAll();
     } catch (e) {
-      setError(e instanceof Error ? e.message.slice(0, 200) : "Backfill failed.");
+      setError(e instanceof Error ? e.message.slice(0, 200) : sc.backfillFailed);
     } finally {
       setBackfilling(false);
     }
@@ -144,10 +144,10 @@ export default function StaffPanel() {
         method: "POST",
         body: JSON.stringify({ name_normalized: nameNormalized, staff_member_id: staffMemberId }),
       });
-      setNotice(`Linked ${result.linked} mention(s) to your employee.`);
+      setNotice(sc.linkedMentions(result.linked));
       await loadAll();
     } catch (e) {
-      setError(e instanceof Error ? e.message.slice(0, 200) : "Assign failed.");
+      setError(e instanceof Error ? e.message.slice(0, 200) : sc.assignFailed);
     }
   };
 
@@ -299,7 +299,7 @@ export default function StaffPanel() {
               disabled={backfilling}
               className="rounded-[8px] bg-[var(--ui-ink)] px-4 py-1.5 text-[12px] font-bold text-[var(--ui-on-ink)] transition hover:opacity-90 disabled:opacity-50"
             >
-              {backfilling ? "Working…" : "Link past reviews"}
+              {backfilling ? sc.working : sc.linkPastReviews}
             </button>
           </div>
 
@@ -320,11 +320,11 @@ export default function StaffPanel() {
                     <span className="text-[13px] font-bold text-[var(--ui-ink)]">{u.name_display}</span>
                     <span className="text-[11px] text-[var(--ui-ink-2)]">
                       {u.mentions} mention{u.mentions === 1 ? "" : "s"}
-                      {u.latest ? ` · last ${new Date(u.latest).toLocaleDateString()}` : ""}
+                      {u.latest ? ` · ${sc.lastDate} ${new Date(u.latest).toLocaleDateString()}` : ""}
                     </span>
                     <div className="ml-auto flex items-center gap-2">
                       <select
-                        aria-label={`Assign ${u.name_display} to`}
+                        aria-label={sc.assignTo(u.name_display)}
                         defaultValue=""
                         onChange={(e) => { if (e.target.value) void assignName(u.name_normalized, e.target.value); }}
                         className="rounded-[8px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2 py-1.5 text-[12px] text-[var(--ui-ink)]"

@@ -209,7 +209,7 @@ export default function OverviewPanel() {
               onChange={(e) => {
                 setChannelId(e.target.value || null);
               }}
-              aria-label="Filter by location"
+              aria-label={t.dashboard.glance.filterByLocation}
               className="h-8 w-full rounded-[8px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2 text-[12px] text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:w-auto"
             >
               <option value="">All locations</option>
@@ -218,7 +218,7 @@ export default function OverviewPanel() {
               ))}
             </select>
           )}
-          <div className="flex rounded-[8px] bg-[var(--ui-sunken)] p-0.5" role="group" aria-label="Time range">
+          <div className="flex rounded-[8px] bg-[var(--ui-sunken)] p-0.5" role="group" aria-label={t.dashboard.glance.timeRange}>
             {RANGES.map((r) => (
               <button
                 key={r}
@@ -308,7 +308,7 @@ export default function OverviewPanel() {
                     <li key={edit.id} className="py-2.5 first:pt-0 last:pb-0">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <span className="text-[12px] font-semibold text-[var(--ui-ink)]">
-                          {edit.reviewer_name ?? "Google reviewer"}
+                          {edit.reviewer_name ?? t.dashboard.glance.googleReviewer}
                         </span>
                         <span
                           className={`text-[12px] font-bold tabular-nums ${
@@ -327,7 +327,7 @@ export default function OverviewPanel() {
                         </span>
                       </div>
                       <p className="mt-0.5 line-clamp-1 text-[11.5px] text-[var(--ui-ink-2)]">
-                        {edit.review_text || "No written comment"}
+                        {edit.review_text || t.dashboard.glance.noWrittenComment}
                       </p>
                     </li>
                   );

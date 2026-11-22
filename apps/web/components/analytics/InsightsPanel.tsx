@@ -109,19 +109,22 @@ function HeroStat({
   );
 }
 
-const COMPLAINT_AREAS: { key: string; label: string }[] = [
-  { key: "waiting_time", label: "Waiting time" },
-  { key: "staff_service", label: "Staff & service" },
-  { key: "order_accuracy", label: "Order accuracy" },
-  { key: "cleanliness", label: "Cleanliness" },
-  { key: "price_value", label: "Price & value" },
-  { key: "quality", label: "Food / product quality" },
-  { key: "other", label: "Other" },
-];
+function complaintAreas(t: ReturnType<typeof useI18n>["t"]): { key: string; label: string }[] {
+  const ca = t.analytics.complaintAreas;
+  return [
+    { key: "waiting_time", label: ca.waiting_time },
+    { key: "staff_service", label: ca.staff_service },
+    { key: "order_accuracy", label: ca.order_accuracy },
+    { key: "cleanliness", label: ca.cleanliness },
+    { key: "price_value", label: ca.price_value },
+    { key: "quality", label: ca.quality },
+    { key: "other", label: ca.other },
+  ];
+}
 
-function areaLabel(category: string): string {
+function areaLabel(t: ReturnType<typeof useI18n>["t"], category: string): string {
   return (
-    COMPLAINT_AREAS.find((a) => a.key === category)?.label ??
+    complaintAreas(t).find((a) => a.key === category)?.label ??
     category.replace(/_/g, " ")
   );
 }
@@ -131,45 +134,47 @@ function ComplaintsByArea({
   days,
   loading,
   copy,
+  t,
   googleConnected,
 }: {
   areas: import("@/lib/api-analytics").ComplaintArea[];
   days: number;
   loading: boolean;
   copy: InsightsCopy;
+  t: ReturnType<typeof useI18n>["t"];
   googleConnected: boolean;
 }) {
   if (loading) {
     return (
-      <section aria-label="Complaints by area" className="ui-card p-5">
+      <section aria-label={t.analytics.complaintsByArea} className="ui-card p-5">
         <SkeletonList rows={4} />
       </section>
     );
   }
   const top = areas[0];
   return (
-    <section aria-label="Complaints by area" className="ui-card p-5">
+    <section aria-label={t.analytics.complaintsByArea} className="ui-card p-5">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
         <div>
           <h3 className="text-[14px] font-bold text-[var(--ui-ink)]">
-            Complaints by area
+            {t.analytics.complaintsByArea}
           </h3>
           <p className="text-[11px] text-[var(--ui-ink-2)]">
-            Last {days} days vs the prior {days}. Ranked by serious incidents,
+            {t.analytics.lastDaysVsPrior(days)}. Ranked by serious incidents,
             then volume.
           </p>
         </div>
         <div className="flex items-center gap-2">
           {top && (
             <span className="rounded-[8px] bg-[var(--ui-sunken)] px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">
-              Main complaint: {areaLabel(top.category)}
+              Main complaint: {areaLabel(t, top.category)}
             </span>
           )}
           <Link
             href="/dashboard/reviews"
             className="ui-btn rounded-[8px] bg-[var(--ui-ink)] px-3 py-1.5 text-[11px] font-bold text-[var(--ui-on-ink)]"
           >
-            Read reviews
+            {t.analytics.readReviews}
           </Link>
         </div>
       </div>
@@ -180,7 +185,7 @@ function ComplaintsByArea({
             <li key={a.category}>
               <div className="flex items-center gap-2">
                 <span className="w-36 shrink-0 truncate text-[12px] font-semibold text-[var(--ui-ink)]">
-                  {areaLabel(a.category)}
+                  {areaLabel(t, a.category)}
                 </span>
                 <span className="relative h-2 flex-1 overflow-hidden rounded-full bg-[var(--ui-sunken)]">
                   <span
@@ -466,6 +471,7 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
                 days={days}
                 loading={false}
                 copy={copy}
+          t={t}
                 googleConnected={channels.length > 0}
               />
             </div>
