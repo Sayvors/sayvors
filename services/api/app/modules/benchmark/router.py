@@ -12,12 +12,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.deps import get_db
 from ..redis.service import cache_get, cache_set
 from ..team.context import TenantContext, require_perm, tenant_id_of
-from . import compare, places, service
+from . import ai, compare, places, service
 from .summary import distribution as metric_distribution, north_star
 
 router = APIRouter(prefix="/api/v1/benchmark", tags=["benchmark"])
 
 MAX_COMPARE_SUBJECTS = 6
+# AI summaries are stable over slowly-moving numbers; 10 min also rate-limits
+# the one paid LLM call per comparison set without an extra throttle layer.
+AI_SUMMARY_CACHE_TTL = 600
 
 
 class SavePlaceIn(BaseModel):
@@ -163,6 +166,47 @@ async def compare_places(
     except Exception:
         pass
     return payload
+
+
+class AiSummaryIn(BaseModel):
+    subjects: list[str] = Field(min_length=1, max_length=MAX_COMPARE_SUBJECTS)
+
+
+@router.post("/ai-summary", response_model=dict)
+async def post_ai_summary(
+    body: AiSummaryIn,
+    ctx: TenantContext = Depends(require_perm("benchmark.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """One-to-two sentence takeaway over the comparison numbers.
+
+    Subjects parse exactly like ``/compare`` (saved:<place_id> / own:<channel_id>,
+    max 6); unknown sides come back through ``compare_subjects`` as unavailable
+    records instead of failing the request. The LLM only ever sees the numeric
+    aggregate (rank, gaps, distribution), never review text.
+
+    Fail-open by design: any LLM failure, timeout or missing model returns the
+    rule-based template with HTTP 200 and ``source: "template"`` — the compare
+    page always has a summary, so a broken provider must not surface as 5xx.
+    Cached 10 min per tenant + subject set, which doubles as the cost cap.
+    """
+    tenant_id = tenant_id_of(ctx.user)
+    key = "bm:ai-summary:" + tenant_id + ":" + hashlib.sha1(
+        json.dumps(sorted(body.subjects)).encode()
+    ).hexdigest()
+    try:
+        cached = await cache_get(key)
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
+
+    result = await ai.ai_summary(db, tenant_id, body.subjects)
+    try:
+        await cache_set(key, json.dumps(result), ttl=AI_SUMMARY_CACHE_TTL)
+    except Exception:
+        pass
+    return result
 
 
 @router.get("/history", response_model=dict)
