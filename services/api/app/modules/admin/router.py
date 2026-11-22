@@ -2139,6 +2139,54 @@ async def admin_tone_delete(
     logger.info("Admin deleted tone %s", code)
 
 
+async def _openrouter_expiration_map() -> dict[str, str | int | None]:
+    """Best-effort OpenRouter model expiration map keyed by model id (e.g. openai/gpt-4o)."""
+    from ..redis.service import cache_get, cache_set
+    import json as _json
+    import httpx
+
+    cache_key = "openrouter:models:expirations:v1"
+    try:
+        cached = await cache_get(cache_key)
+        if cached:
+            data = _json.loads(cached)
+            if isinstance(data, dict):
+                return data
+    except Exception:
+        pass
+
+    headers: dict[str, str] = {}
+    try:
+        from ..llm.providers import registry
+
+        key, _source = registry.resolve_provider_key("openrouter")
+        if key:
+            headers["Authorization"] = f"Bearer {key}"
+    except Exception:
+        pass
+
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.get("https://openrouter.ai/api/v1/models", headers=headers)
+            resp.raise_for_status()
+            payload = resp.json()
+        items = payload.get("data", []) if isinstance(payload, dict) else []
+        out: dict[str, str | int | None] = {}
+        for m in items:
+            if not isinstance(m, dict):
+                continue
+            mid = m.get("id")
+            if isinstance(mid, str) and mid:
+                out[mid] = m.get("expiration_date")
+        try:
+            await cache_set(cache_key, _json.dumps(out), ttl=600)
+        except Exception:
+            pass
+        return out
+    except Exception:
+        return {}
+
+
 @router.get("/models", response_model=list[SavedModel])
 async def admin_models_list(
     _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
@@ -2149,15 +2197,27 @@ async def admin_models_list(
     from ..llm.providers.catalog import get_model_by_id
 
     rows = (await db.execute(select(ModelConfig))).scalars().all()
+    needs_openrouter = any(
+        (r.provider or (get_model_by_id(r.model_id).provider if get_model_by_id(r.model_id) else "")) == "openrouter"
+        or r.model_id.startswith("openrouter:")
+        for r in rows
+    )
+    openrouter_exp = await _openrouter_expiration_map() if needs_openrouter else {}
+
     out = []
     for row in sorted(rows, key=lambda r: r.model_id):
         info = get_model_by_id(row.model_id)
         custom = bool(row.provider and row.api_model)
+        provider = row.provider or (info.provider if info else "")
+        api_model = row.api_model or (info.api_model if info else "")
+        expiration_date = None
+        if provider == "openrouter":
+            expiration_date = openrouter_exp.get(api_model) or openrouter_exp.get(row.model_id.removeprefix("openrouter:"))
         out.append(SavedModel(
             id=row.model_id,
             name=row.display_name or (info.name if info else row.model_id),
-            provider=row.provider or (info.provider if info else ""),
-            api_model=row.api_model or (info.api_model if info else ""),
+            provider=provider,
+            api_model=api_model,
             enabled=row.enabled,
             custom=custom,
             tested_ok=row.tested_ok,
@@ -2167,6 +2227,7 @@ async def admin_models_list(
                 if row.supports_vision is not None
                 else (info.supports_vision if info is not None else None)
             ),
+            expiration_date=expiration_date,
         ))
     return out
 
@@ -2236,7 +2297,11 @@ async def admin_remote_models(
         data = resp.json()
         items = data.get("data", []) if isinstance(data, dict) else []
         return [
-            RemoteModel(id=f"{provider}:{m.get('id', '')}", name=str(m.get("id", "")))
+            RemoteModel(
+                id=f"{provider}:{m.get('id', '')}",
+                name=str(m.get("id", "")),
+                expiration_date=m.get("expiration_date"),
+            )
             for m in items
             if isinstance(m, dict) and m.get("id")
         ]

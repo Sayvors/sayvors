@@ -6,6 +6,28 @@ import LlmsPage from "../llms/page";
 
 const FOCUS_RING = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet";
 
+function parseExpiry(value: string | number | null | undefined): Date | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "number") {
+    const ms = value > 1_000_000_000_000 ? value : value * 1000;
+    const d = new Date(ms);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function expiryLabel(value: string | number | null | undefined): { text: string; tone: "ok" | "warn" | "expired" | "none" } {
+  const d = parseExpiry(value);
+  if (!d) return { text: "No expiry date", tone: "none" };
+  const now = Date.now();
+  const days = Math.ceil((d.getTime() - now) / 86_400_000);
+  const date = d.toLocaleDateString();
+  if (days <= 0) return { text: `Expired ${date}`, tone: "expired" };
+  if (days <= 30) return { text: `Expires ${date} (${days}d)`, tone: "warn" };
+  return { text: `Expires ${date}`, tone: "ok" };
+}
+
 interface SavedModel {
   id: string;
   name: string;
@@ -14,6 +36,7 @@ interface SavedModel {
   enabled: boolean;
   custom?: boolean;
   supports_vision?: boolean | null;
+  expiration_date?: string | number | null;
 }
 
 interface AiConfig {
@@ -208,6 +231,15 @@ export default function AiImageCheckPage() {
             </button>
           </div>
         ) : null}
+        {savedModel ? (() => {
+          const expiry = expiryLabel(savedModel.expiration_date);
+          if (expiry.tone !== "expired" && expiry.tone !== "warn") return null;
+          return (
+            <div className={`mt-3 rounded-[2px] border px-3 py-2 text-[12px] font-medium ${expiry.tone === "expired" ? "border-red-300 bg-red-50 text-red-900" : "border-amber-300 bg-amber-50 text-amber-900"}`}>
+              The active photo-check model {expiry.tone === "expired" ? "has expired" : "is expiring soon"}: <span className="font-semibold">{expiry.text}</span>. Pick a replacement model and save.
+            </div>
+          );
+        })() : null}
 
         <div role="radiogroup" aria-label="Photo check model" className="mt-4 space-y-2">
           <div
@@ -302,6 +334,15 @@ export default function AiImageCheckPage() {
                     <span className="mt-0.5 block truncate font-mono text-[10px] text-ink/40">
                       {m.provider} · {m.api_model}
                     </span>
+                    {(() => {
+                      const expiry = expiryLabel(m.expiration_date);
+                      const cls = expiry.tone === "expired"
+                        ? "text-coral"
+                        : expiry.tone === "warn"
+                          ? "text-amber-700"
+                          : "text-ink/45";
+                      return <span className={`mt-0.5 block text-[10px] font-semibold ${cls}`}>{expiry.text}</span>;
+                    })()}
                   </label>
                   <button
                     type="button"

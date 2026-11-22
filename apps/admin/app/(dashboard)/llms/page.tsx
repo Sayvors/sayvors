@@ -22,11 +22,13 @@ interface SavedModel {
   tested_ok: boolean | null;
   tested_at: string | null;
   supports_vision: boolean | null;
+  expiration_date?: string | number | null;
 }
 
 interface RemoteModel {
   id: string;
   name: string;
+  expiration_date?: string | number | null;
 }
 
 interface TestResult {
@@ -81,6 +83,28 @@ const PROVIDER_API_URL: Record<string, string> = {
   qwen: "https://dashscope.aliyuncs.com/compatible-mode/v1",
   kimi: "https://api.moonshot.cn/v1",
 };
+
+function parseExpiry(value: string | number | null | undefined): Date | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "number") {
+    const ms = value > 1_000_000_000_000 ? value : value * 1000;
+    const d = new Date(ms);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function expiryLabel(value: string | number | null | undefined): { text: string; tone: "ok" | "warn" | "expired" | "none" } {
+  const d = parseExpiry(value);
+  if (!d) return { text: "No expiry date", tone: "none" };
+  const now = Date.now();
+  const days = Math.ceil((d.getTime() - now) / 86_400_000);
+  const date = d.toLocaleDateString();
+  if (days <= 0) return { text: `Expired ${date}`, tone: "expired" };
+  if (days <= 30) return { text: `Expires ${date} (${days}d)`, tone: "warn" };
+  return { text: `Expires ${date}`, tone: "ok" };
+}
 
 function ProviderLogo({ provider }: { provider: string }) {
   const [failed, setFailed] = useState(false);
@@ -704,9 +728,11 @@ export default function AdminLlmsPage() {
                 className="input-field disabled:opacity-50"
               >
                 <option value="">{remoteLoading ? "Loading…" : remoteModels.length > 0 ? "Select model…" : "No models yet — fetch first"}</option>
-                {remoteModels.map((m) => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
-                ))}
+                {remoteModels.map((m) => {
+                  const expiry = expiryLabel(m.expiration_date);
+                  const suffix = expiry.tone === "none" ? "" : ` — ${expiry.text}`;
+                  return <option key={m.id} value={m.id}>{m.name}{suffix}</option>;
+                })}
               </select>
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -789,6 +815,20 @@ export default function AdminLlmsPage() {
                         vision
                       </span>
                     ) : null}
+                    {(() => {
+                      const expiry = expiryLabel(m.expiration_date);
+                      if (expiry.tone === "none") return null;
+                      const cls = expiry.tone === "expired"
+                        ? "bg-red-100 text-red-700"
+                        : expiry.tone === "warn"
+                          ? "bg-amber-100 text-amber-800"
+                          : "bg-ink/[0.05] text-ink/55";
+                      return (
+                        <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase ${cls}`} title={expiry.text}>
+                          {expiry.text}
+                        </span>
+                      );
+                    })()}
                     <select
                       value={m.enabled ? "enabled" : "disabled"}
                       disabled={mbusy}

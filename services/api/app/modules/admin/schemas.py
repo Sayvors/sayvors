@@ -166,6 +166,7 @@ class LlmModelTestResult(BaseModel):
 class RemoteModel(BaseModel):
     id: str
     name: str
+    expiration_date: str | int | None = None
 
 
 class SavedModel(BaseModel):
@@ -178,6 +179,7 @@ class SavedModel(BaseModel):
     tested_ok: bool | None = None
     tested_at: str | None = None
     supports_vision: bool | None = None
+    expiration_date: str | int | None = None
 
 
 class LlmProviderUpdate(BaseModel):
