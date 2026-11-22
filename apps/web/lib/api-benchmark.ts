@@ -165,10 +165,34 @@ export const RANGE_DAYS: Record<CompareRange, number | null> = {
 export function fetchComparison(
   subjects: string[],
   range: CompareRange = "live"
-): Promise<{ range: CompareRange; days: number | null; subjects: ComparisonSubject[] }> {
+): Promise<{ range: CompareRange; days: number | null; subjects: ComparisonSubject[]; summary: CompareSummary | null; distribution: CompareDistribution }> {
   const q = subjects.map((s) => `subjects=${encodeURIComponent(s)}`).join("&");
   return apiFetch(`/api/v1/benchmark/compare?${q}&range=${range}`);
 }
+
+/* ── North-star summary + distribution (computed server-side) ────────── */
+
+export type Health = "good" | "warn" | "bad";
+
+export interface CompareSummary {
+  rank: number;
+  of: number;
+  own: { key: string; name: string | null };
+  leader: { key: string; name: string | null };
+  gaps: Partial<Record<"avg_rating" | "reviews_per_month" | "total_reviews" | "positive_pct", number | null>>;
+  health: Health;
+}
+
+export interface DistributionRow {
+  best: { name: string; value: number };
+  median: number;
+  worst: { name: string; value: number };
+  gap: number;
+  values: number[];
+  max_scale: number | null;
+}
+
+export type CompareDistribution = Record<string, DistributionRow>;
 
 /* ── Stored history ───────────────────────────────────────────────────── */
 
