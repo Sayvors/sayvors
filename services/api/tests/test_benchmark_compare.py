@@ -1,4 +1,5 @@
 """Two-sided comparison facts: scoping, normalization and honest empty states."""
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -737,3 +738,81 @@ async def test_history_endpoint_is_bounded_and_tenant_scoped(client):
         "/api/v1/benchmark/history?subjects=saved%3Amissing&days=30&points=99"
     )
     assert too_many.status_code == 422
+
+
+# ── Cohort tags on own subjects ────────────────────────────────────────────
+
+async def _tagged_channel(db, user_id, channel_pk, metadata_json):
+    """A google_reviews channel whose metadata carries the given raw JSON."""
+    from app.modules.channels.models import Channel
+
+    channel = Channel(
+        id=channel_pk, user_id=user_id, platform="google_reviews",
+        platform_user_id="acct-tags", display_name="Tagged Branch",
+        status="active", metadata_json=metadata_json,
+    )
+    db.add(channel)
+    await db.commit()
+    return channel_pk
+
+
+async def test_own_subject_tags_are_normalized(db, user_id):
+    """Tags come from channel metadata, normalized: trimmed and lowercased,
+    deduplicated, capped at 5 tags of at most 30 characters each, with junk
+    entries dropped rather than crashing the comparison."""
+    metadata = json.dumps({
+        "location_id": "loc-tags",
+        "tags": [
+            "  Cafes ", "FAMILY", "family", "Riyadh", "x" * 40,
+            "sixth", "   ", 123, {"not": "a tag"},
+        ],
+    })
+    channel_pk = await _tagged_channel(db, user_id, "ch-tags-norm", metadata)
+
+    result = (await compare.compare_subjects(db, user_id, [f"own:{channel_pk}"]))[0]
+
+    assert result["available"] is True
+    assert result["tags"] == ["cafes", "family", "riyadh", "x" * 30, "sixth"]
+
+
+async def test_own_subject_without_tags_is_empty_list(db, user_id):
+    """No tags key, an empty list, a non-list value, malformed JSON and no
+    metadata at all all mean "no cohort": an empty list, never None."""
+    no_key = await _tagged_channel(
+        db, user_id, "ch-tags-nokey", '{"location_id": "loc-none"}'
+    )
+    empty = await _tagged_channel(db, user_id, "ch-tags-empty", '{"tags": []}')
+    not_a_list = await _tagged_channel(db, user_id, "ch-tags-str", '{"tags": "cafe"}')
+    malformed = await _tagged_channel(db, user_id, "ch-tags-bad", "not-json")
+    no_metadata = await _tagged_channel(db, user_id, "ch-tags-nometa", None)
+
+    for channel_pk in (no_key, empty, not_a_list, malformed, no_metadata):
+        result = (await compare.compare_subjects(db, user_id, [f"own:{channel_pk}"]))[0]
+        assert result["available"] is True, channel_pk
+        assert result["tags"] == [], channel_pk
+
+
+async def test_saved_and_unavailable_subjects_carry_empty_tags(db, monkeypatch):
+    """Saved competitors have no cohort tags, and the blank record factory
+    gives every record the key — even unavailable ones — so the frontend can
+    read subject.tags unconditionally."""
+    from app.modules.benchmark import places as places_module
+    from app.modules.benchmark import service as bench_service
+
+    await bench_service.save_place(
+        db, TENANT, place_id="tags-saved", label="Tagless Rival"
+    )
+
+    async def _fake_get_place(place_id, **kwargs):
+        return {"place_id": place_id, "name": "Tagless Rival", "address": None,
+                "rating": 4.0, "review_count": 10, "types": [], "reviews": []}
+
+    monkeypatch.setattr(places_module, "get_place", _fake_get_place)
+    results = await compare.compare_subjects(
+        db, TENANT, ["saved:tags-saved", "own:missing-channel"]
+    )
+
+    assert results[0]["available"] is True
+    assert results[0]["tags"] == []
+    assert results[1]["available"] is False
+    assert results[1]["tags"] == []

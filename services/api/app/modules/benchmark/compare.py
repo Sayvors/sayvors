@@ -12,6 +12,7 @@ most recent reviews and labelled as such in the UI.
 """
 from __future__ import annotations
 
+import json
 import logging
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -48,6 +49,10 @@ WINDOW_DAYS = {
     "reviews_last_month": 30,
     "reviews_last_year": 365,
 }
+# Cohort tags come from merchant-supplied channel metadata, so they are
+# bounded before they reach the comparison page's filter chips.
+MAX_TAGS = 5
+MAX_TAG_LENGTH = 30
 TEXT_FACT_KEYS = (
     "employee_mentions", "working_hard_mentions", "menu_price_mentions",
     "parking_praised", "parking_criticised", "parking_mentions",
@@ -140,6 +145,32 @@ def _blank_facts() -> dict[str, Any]:
     }
 
 
+def _channel_tags(channel: Channel) -> list[str]:
+    """Cohort tags of an own location, from its channel metadata.
+
+    Metadata is merchant-supplied free-text JSON, so the parse is defensive
+    (malformed JSON means no tags, not a failed comparison) and the values are
+    normalized before they drive the UI's filter chips: trimmed, lowercased,
+    deduplicated preserving first-seen order, capped at MAX_TAGS tags of at
+    most MAX_TAG_LENGTH characters. Non-string entries are dropped.
+    """
+    try:
+        meta = json.loads(channel.metadata_json or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return []
+    raw = meta.get("tags") if isinstance(meta, dict) else None
+    if not isinstance(raw, list):
+        return []
+    tags = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        tag = item.strip().lower()[:MAX_TAG_LENGTH]
+        if tag:
+            tags.append(tag)
+    return list(dict.fromkeys(tags))[:MAX_TAGS]
+
+
 def _subject(raw: str, kind: str, ident: str, *, available: bool,
              reason: str | None = None, **fields: Any) -> dict[str, Any]:
     return {
@@ -152,6 +183,7 @@ def _subject(raw: str, kind: str, ident: str, *, available: bool,
         "address": None,
         "verified": False,
         "data_source": "sayvors_analytics" if kind == "own" else "google_places",
+        "tags": [],
         "metrics": _blank_metrics(),
         "facts": _blank_facts(),
         "notes": [],
@@ -616,6 +648,7 @@ async def _own_subject(db: AsyncSession, tenant_id: str, raw: str,
         name=channel.display_name,
         address=None,
         verified=verified,
+        tags=_channel_tags(channel),
         metrics=metrics, facts=facts,
         notes=notes,
     )
