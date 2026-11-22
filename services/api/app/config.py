@@ -350,6 +350,16 @@ class Settings(BaseSettings):
     # or return this value.
     OUTSCRAPER_API_KEY: str = ""
 
+    # ── gosom Google Maps scraper sidecar ───────────────────────────────────
+    # Self-hosted gosom/google-maps-scraper (MIT, free) running as a sidecar.
+    # Empty URL means "not deployed": the worker degrades to the Places provider
+    # instead of crashing. Never log or return this value.
+    GOSOM_SCRAPER_URL: str = ""
+    # Optional proxy list for the sidecar, comma-separated
+    # (protocol://user:pass@host:port). Empty = no proxy (safe for the
+    # named-competitor scale). Set when Google starts returning empty/limited
+    # results — see modules/benchmark/gosom.py docstring.
+    GOSOM_PROXIES: str = ""
     # ── Analytics / business intelligence ────────────────────────────────
     # How often the Google Business Profile performance sync runs (impressions,
     # website clicks, calls, direction requests -> location_daily_metrics).
