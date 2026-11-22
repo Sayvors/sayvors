@@ -64,11 +64,12 @@ export default function JobProgressProvider({ children }: { children: React.Reac
   });
 
   const jobs = jobsQuery.data ?? [];
-  const count = jobs.length;
+  const inFlight = jobs.filter((j) => ["accepted", "queued", "running", "retrying", "blocked"].includes(j.status));
+  const count = inFlight.length;
   const avg = useMemo(() => {
     if (!count) return 0;
-    return Math.round(jobs.reduce((sum, j) => sum + progressValue(j), 0) / count);
-  }, [jobs, count]);
+    return Math.round(inFlight.reduce((sum, j) => sum + progressValue(j), 0) / count);
+  }, [inFlight, count]);
 
   useEffect(() => {
     if (!open) return;
@@ -103,18 +104,18 @@ export default function JobProgressProvider({ children }: { children: React.Reac
       <div aria-live="polite" className="sr-only">
         {count > 0 ? `${count} background operation${count === 1 ? "" : "s"} in progress` : "No background operations in progress"}
       </div>
-      {count > 0 ? (
+      {jobs.length > 0 ? (
         <button
           ref={buttonRef}
           type="button"
           onClick={() => setOpen(true)}
           className={`fixed bottom-5 right-5 z-[60] flex h-14 w-14 items-center justify-center rounded-full border border-[var(--ui-line)] bg-white text-[#3D1D6E] shadow-[0_8px_24px_rgba(20,16,31,0.12)] ${FOCUS}`}
-          aria-label={`Open background operations, ${count} in progress`}
+          aria-label={count > 0 ? `Open background operations, ${count} in progress` : "Open background operations"}
         >
           <svg viewBox="0 0 36 36" className="h-10 w-10" aria-hidden>
             <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#E9E3F3" strokeWidth="3" />
             <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#3D1D6E" strokeWidth="3" strokeDasharray={`${avg}, 100`} strokeLinecap="round" />
-            <text x="18" y="20.5" textAnchor="middle" fontSize="8" fill="#14101F" fontWeight="700">{count}</text>
+            <text x="18" y="20.5" textAnchor="middle" fontSize="8" fill="#14101F" fontWeight="700">{count > 0 ? count : "✓"}</text>
           </svg>
         </button>
       ) : null}
