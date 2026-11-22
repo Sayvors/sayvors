@@ -99,6 +99,7 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [armDelete, setArmDelete] = useState(false);
   const [notice, setNotice] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [removingIds, setRemovingIds] = useState<Set<string>>(new Set());
   const [openId, setOpenId] = useState<string | null>(null);
   const [openLegacyId, setOpenLegacyId] = useState<string | null>(null);
   const [legacyBusy, setLegacyBusy] = useState<string | null>(null);
@@ -109,6 +110,23 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
   const openLegacy = openLegacyId
     ? (legacyPosts ?? []).find((post) => post.id === openLegacyId) ?? null
     : null;
+
+  useEffect(() => {
+    if (!jobs) return;
+    setRemovingIds((prev) => {
+      const next = new Set<string>();
+      prev.forEach((id) => {
+        if (jobs.some((j) => j.job_id === id)) next.add(id);
+      });
+      return next.size === prev.size ? prev : next;
+    });
+  }, [jobs]);
+
+  useEffect(() => {
+    if (removingIds.size === 0) return;
+    const t = setInterval(() => { void refresh(true); }, 4000);
+    return () => clearInterval(t);
+  }, [removingIds.size, refresh]);
 
   const scheduledEntries = useMemo<ScheduledEntry[]>(() => {
     return (jobs ?? [])
@@ -149,6 +167,13 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
 
   const removeIds = async (ids: string[]) => {
     const res = await removeJobs(ids);
+    if (res.queued) {
+      setRemovingIds((prev) => {
+        const next = new Set(prev);
+        ids.forEach((id) => next.add(id));
+        return next;
+      });
+    }
     setNotice(
       res.error
         ? { kind: "err", text: res.error }
@@ -325,6 +350,7 @@ export default function PublishedPosts({ onPublish }: { onPublish: (date?: strin
                     onCancel={() => void doCancel(entry.job)}
                     onOpen={() => setOpenId(entry.job.job_id)}
                     busy={busy}
+                    removing={removingIds.has(entry.job.job_id)}
                   />
                 ) : (
                   <LegacyPostCard
@@ -702,6 +728,7 @@ function PostCard({
   onCancel,
   onOpen,
   busy,
+  removing = false,
 }: {
   job: PublishJob;
   destination: string;
@@ -710,6 +737,7 @@ function PostCard({
   onCancel: () => void;
   onOpen: () => void;
   busy: boolean;
+  removing?: boolean;
 }) {
   const { t, locale } = useI18n();
   const c = t.publish;
@@ -773,7 +801,7 @@ function PostCard({
           >
             {c.detail.open}
           </button>
-          {removable && (
+          {removable && !removing && (
             <label className="flex cursor-pointer items-center gap-1.5 rounded-[8px] bg-ink/[0.05] px-2 py-1 text-[11px] font-semibold text-ink/60 dark:bg-fog/[0.07] dark:text-fog/60">
               <input
                 type="checkbox"
