@@ -2648,6 +2648,14 @@ const en = {
       locationMedia: "Location media",
       posts: "Posts",
       chooseGalleryCategory: "Choose where this photo appears in the location gallery on Google.",
+      expectTitle: "What to expect on Google",
+      expectTips: [
+        "A good check means the photo is suitable — Google still decides which cover photo to show.",
+        "Changes can appear in seconds or minutes, but sometimes take a few hours or up to 24–48 hours.",
+        "Use a real, clear photo with no text, logo, or heavy filter for the best chance.",
+      ],
+      rejectOrReplace: "Google may reject this photo or replace it with another one.",
+      replacePhoto: "Replace photo",
     },
     crop: {
       frameAria: "Crop frame — drag to reposition the image",

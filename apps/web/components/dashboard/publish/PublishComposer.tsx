@@ -344,6 +344,14 @@ function BannerCheckCard({
         >
           {pc.checkPhoto}
         </button>
+        <div className="mt-3 border-t border-deep-violet/15 pt-2.5">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-deep-violet/70 dark:text-fog/70">{pc.expectTitle}</p>
+          <ul className="mt-1.5 space-y-1">
+            {pc.expectTips.map((tip: string, i: number) => (
+              <li key={i} className="text-[10.5px] leading-snug text-ink/60 dark:text-fog/60">• {tip}</li>
+            ))}
+          </ul>
+        </div>
       </div>
     );
   }
@@ -422,17 +430,25 @@ function BannerCheckCard({
       {suitable === "no" && (
         <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-current/10 pt-2.5">
           <span className={`text-[10.5px] font-semibold ${tone.text} opacity-80`}>
-            Google may reject this photo or replace it with another one.
+            {pc.rejectOrReplace}
           </span>
           <button
             type="button"
             onClick={onReplace}
             className="shrink-0 rounded-[8px] bg-white px-3 py-1.5 text-[11px] font-bold text-deep-violet shadow-[0_8px_16px_-10px_rgba(61,29,110,0.55)] transition duration-200 hover:bg-fog/60 active:translate-y-[2px] active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] dark:bg-[var(--ui-surface)] dark:text-fog"
           >
-            Replace photo
+            {pc.replacePhoto}
           </button>
         </div>
       )}
+      <div className="mt-3 border-t border-current/10 pt-2.5">
+        <p className={`text-[10px] font-bold uppercase tracking-wide ${tone.text} opacity-70`}>{pc.expectTitle}</p>
+        <ul className="mt-1.5 space-y-1">
+          {pc.expectTips.map((tip: string, i: number) => (
+            <li key={i} className={`text-[10.5px] leading-snug ${tone.text} opacity-80`}>• {tip}</li>
+          ))}
+        </ul>
+      </div>
     </div>
   );
 }
