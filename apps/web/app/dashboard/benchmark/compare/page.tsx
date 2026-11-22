@@ -22,6 +22,10 @@ import ComparePicker, {
   MAX_COMPETITORS,
   type CompareSelection,
 } from "@/components/benchmark/ComparePicker";
+import TrendChart from "@/components/benchmark/TrendChart";
+import NorthStarCard from "@/components/benchmark/NorthStarCard";
+import DistributionStrip from "@/components/benchmark/DistributionStrip";
+import OwnScorecards from "@/components/benchmark/OwnScorecards";
 
 const FOCUS = "focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[#3D1D6E]";
 
@@ -1060,6 +1064,7 @@ function readSelection(params: URLSearchParams): CompareSelection {  const main 
 
 export default function ComparePage() {
   const { t } = useI18n();
+  const b = t.benchmark;
   const c = t.benchmark.compare;
   const router = useRouter();
   const params = useSearchParams();
@@ -1226,6 +1231,18 @@ export default function ComparePage() {
         <p className="mt-5 text-[12px] text-red-700">{c.couldNotLoadComparison}</p>
       ) : (
         <>
+          {/* Now-tier summary: rank, distribution, trends, own-branch cards. */}
+          {compareQuery.data?.summary ? (
+            <NorthStarCard
+              summary={compareQuery.data.summary}
+              problemTopic={null}
+            />
+          ) : null}
+          {compareQuery.data?.distribution ? (
+            <DistributionStrip distribution={compareQuery.data.distribution} />
+          ) : null}
+          <TrendChart history={historyQuery.data?.subjects ?? []} title={b.trendTitle} />
+          <OwnScorecards subjects={compareQuery.data?.subjects ?? []} />
           {days != null ? (
             <MatrixTable
               title={c.periodLastDays(days)}

@@ -111,7 +111,10 @@ def north_star(
     meaningless rank.
     """
     available = [s for s in subjects if s.get("available")]
-    own = [s for s in available if s.get("key") in set(own_keys)]
+    # Membership is normalized on both sides: keys arrive from stored
+    # selections and whitespace must not silently unmatch a location.
+    own_set = {k.strip() for k in own_keys}
+    own = [s for s in available if (s.get("key") or "").strip() in own_set]
     if not own:
         return None
 

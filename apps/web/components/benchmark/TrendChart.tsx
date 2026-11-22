@@ -8,6 +8,9 @@
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import type { HistoryPoint, SubjectHistory } from "@/lib/api-benchmark";
 
+// Chart-series palette, not surface tokens: e.g. #0B5CAD is here as the sixth
+// distinguishable hue for overlapping line series, not as a UI surface color
+// (surfaces stay white/neutral per the UI rules; color here is data ink).
 const COLORS = ["#3D1D6E", "#B0338A", "#FF4F6E", "#116631", "#8A6100", "#0B5CAD"];
 const W = 320, H = 96, PAD = 8;
 
@@ -59,7 +62,9 @@ export default function TrendChart({ history, title }: { history: SubjectHistory
   if (live.length === 0) return null;
   // One shared x-domain: a competitor with two snapshots must render on the
   // same time scale as a branch with a year of history, or comparison lies.
-  const xs = live.flatMap((s) => ratingPoints(s.points).map((p) => p.x));
+  // Velocity points join the domain so a rating-less history (no rating yet,
+  // but review counts recorded) still draws its velocity line.
+  const xs = live.flatMap((s) => [...ratingPoints(s.points).map((p) => p.x), ...perMonth(s.points).map((p) => p.x)]);
   if (xs.length === 0) return null;
   const xDomain = { x0: Math.min(...xs), x1: Math.max(...xs) };
   return (
@@ -90,12 +95,20 @@ export default function TrendChart({ history, title }: { history: SubjectHistory
         ))}
       </div>
       <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-[#3B2D5E]">
-        {live.map((s, i) => (
-          <li key={s.key} className="flex items-center gap-1.5">
-            <span aria-hidden className="inline-block h-2 w-4 rounded-full" style={{ background: COLORS[i % COLORS.length] }} />
-            {s.name ?? s.key}
-          </li>
-        ))}
+        {live.map((s, i) => {
+          const color = COLORS[i % COLORS.length];
+          return (
+            <li key={s.key} className="flex items-center gap-1.5">
+              {/* The swatch mirrors the line: odd series draw dashed. */}
+              {i % 2 === 1 ? (
+                <span aria-hidden className="inline-block w-4" style={{ borderTop: `3px dashed ${color}` }} />
+              ) : (
+                <span aria-hidden className="inline-block h-2 w-4 rounded-full" style={{ background: color }} />
+              )}
+              {s.name ?? s.key}
+            </li>
+          );
+        })}
       </ul>
     </section>
   );
