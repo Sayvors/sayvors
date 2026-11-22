@@ -77,7 +77,7 @@ function PostCard({ post, onOpen }: { post: FacebookPost; onOpen: () => void }) 
               <BubbleIcon className="h-3.5 w-3.5" />
               {post.comments_count}
             </span>
-            <span className="ml-auto">{timeAgo(post.created_time, locale) || ""}</span>
+            <span className="me-auto">{timeAgo(post.created_time, locale) || ""}</span>
           </span>
         </span>
       </button>
@@ -205,7 +205,7 @@ function PostModal({
                   <span className={c.deleted_at ? `line-through opacity-60 ${INK}` : INK}>
                     {c.content}
                   </span>
-                  <span className={`ml-2 text-[11px] ${INK2}`}>
+                  <span className={`ms-2 text-[11px] ${INK2}`}>
                     {timeAgo(c.platform_timestamp ?? c.created_at, locale)}
                   </span>
                 </p>

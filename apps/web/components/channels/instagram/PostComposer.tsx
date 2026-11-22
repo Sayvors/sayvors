@@ -87,7 +87,7 @@ function Switch({
           }`}
         />
       </span>
-      <span className={`text-left text-[13px] font-semibold ${INK}`}>{label}</span>
+      <span className={`text-start text-[13px] font-semibold ${INK}`}>{label}</span>
     </button>
   );
 }
@@ -136,7 +136,7 @@ function PostPreview({
       </div>
       <div className="px-3 py-2">
         <p className={`text-[13px] leading-snug ${INK}`}>
-          <span className="mr-1.5 font-bold">{username || k.previewUser}</span>
+          <span className="me-1.5 font-bold">{username || k.previewUser}</span>
           {caption || k.previewCaption}
         </p>
         {locationName && (

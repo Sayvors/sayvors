@@ -73,7 +73,7 @@ function ToastPill({ pill, onDone }: { pill: PillData; onDone: (id: string) => v
   return (
     <div
       role="status"
-      className={`flex max-w-md origin-top items-center gap-2.5 rounded-full border border-white/15 bg-ink/90 py-2 pl-2.5 pr-4 shadow-2xl backdrop-blur-xl dark:border-white/10 dark:bg-black/85 ${meta.glow} ${
+      className={`flex max-w-md origin-top items-center gap-2.5 rounded-full border border-white/15 bg-ink/90 py-2 ps-2.5 pe-4 shadow-2xl dark:border-white/10 dark:bg-black/85 ${meta.glow} ${
         stage === "closing" ? "sayvors-pill-exit" : "sayvors-pill-expand"
       }`}
     >

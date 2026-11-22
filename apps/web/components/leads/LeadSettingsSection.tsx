@@ -668,7 +668,7 @@ export default function LeadSettingsSection() {
                 {recipients.map((email) => (
                   <li
                     key={email}
-                    className={`flex items-center gap-1 rounded-[8px] border ${HAIRLINE} bg-ink/[0.02] py-1 pl-2 pr-1 text-[12px] dark:bg-fog/[0.03]`}
+                    className={`flex items-center gap-1 rounded-[8px] border ${HAIRLINE} bg-ink/[0.02] py-1 ps-2 pe-1 text-[12px] dark:bg-fog/[0.03]`}
                   >
                     <span className="max-w-[18rem] truncate text-ink/80 dark:text-fog/80">
                       {email}

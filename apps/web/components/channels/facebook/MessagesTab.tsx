@@ -100,7 +100,7 @@ export default function MessagesTab() {
               <p className={`text-[13px] font-semibold ${INK}`}>
                 {t.display_name || m.userFallback}
                 {!!t.unread && t.unread > 0 && (
-                  <span className="ml-2 rounded-[8px] bg-[var(--ui-ink)] px-2 py-0.5 text-[11px] font-bold text-[var(--ui-on-ink)]">
+                  <span className="ms-2 rounded-[8px] bg-[var(--ui-ink)] px-2 py-0.5 text-[11px] font-bold text-[var(--ui-on-ink)]">
                     {fill(m.newN, { count: fmt(t.unread) })}
                   </span>
                 )}

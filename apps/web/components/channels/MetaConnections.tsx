@@ -343,7 +343,7 @@ export default function MetaConnections({
                   </button>
                   <Link
                     href={HUB_HREF[p.key]}
-                    className="ml-auto hidden min-h-8 items-center rounded-lg px-2.5 text-[11.5px] font-semibold text-deep-violet transition hover:bg-deep-violet/[0.06] sm:inline-flex"
+                    className="me-auto hidden min-h-8 items-center rounded-lg px-2.5 text-[11.5px] font-semibold text-deep-violet transition hover:bg-deep-violet/[0.06] sm:inline-flex"
                   >
                     {m.open}
                   </Link>

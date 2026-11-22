@@ -594,14 +594,14 @@ function MethodCard({
   disabled: boolean;
   onClick: () => void;
 }) {
-  const { t } = useI18n();
+  const { t, dir } = useI18n();
   const label = labelFor(method, t.verification.methods);
   return (
     <button
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className={`rounded-[8px] border p-4 text-left transition ${
+      className={`rounded-[8px] border p-4 ${dir === "rtl" ? "text-start" : "text-left"} transition ${
         selected
           ? "border-deep-violet bg-deep-violet/[0.05]"
           : "border-[var(--ui-line)] bg-white hover:border-deep-violet/25"

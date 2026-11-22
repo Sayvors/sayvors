@@ -138,7 +138,7 @@ function Input({
               : focused
                 ? "border-deep-violet/40 ring-[3px] ring-deep-violet/[0.08]"
                 : "border-ink/[0.12] hover:border-ink/20"
-          } ${toggle ? "pr-11" : ""}`}
+          } ${toggle ? "pe-11" : ""}`}
         />
         {toggle && (
           <button type="button" tabIndex={-1} onClick={onToggle}

@@ -660,6 +660,21 @@ async def _rag_answer(
         return "", [], False, "unavailable"
 
 
+def _preferred_language_label(code: str | None) -> str:
+    names = {
+        "en": "English",
+        "ar": "Arabic",
+        "es": "Spanish",
+        "fr": "French",
+        "de": "German",
+        "ur": "Urdu",
+        "ch": "Chinese",
+        "zh": "Chinese",
+    }
+    c = (code or "en").strip().lower()
+    return f"{names.get(c, c)} ({c})"
+
+
 def _system_prompt(
     snapshot: dict,
     rag_answer: str,
@@ -670,6 +685,7 @@ def _system_prompt(
     profile_block: str = "",
     page_block: str = "",
     knowledge_block: str = "",
+    preferred_language: str | None = None,
 ) -> str:
     import json
 
@@ -785,7 +801,8 @@ def _system_prompt(
         "numbers show.\n"
         "- Be concise (max ~120 words) and concrete; quote real numbers when relevant.\n"
         "- Never use em dashes or en dashes. Use commas or full stops instead.\n"
-        "- Reply in the same language the owner writes in (Arabic stays Arabic).\n"
+        f"- Default to the owner's preferred language: {_preferred_language_label(preferred_language)}. "
+        "If the owner clearly writes in a different language, reply in that language.\n"
         "- The CURRENT SCREEN block says which page and which businesses are "
         "selected. Use it when the owner says 'here', 'these', 'mine', or "
         "points at branches. Never claim to see anything beyond that block; "
@@ -985,6 +1002,7 @@ async def chat(
         ),
         page_block=await _page_context(db, tid, body.page),
         knowledge_block=knowledge.render(),
+        preferred_language=getattr(user, "language", None),
     )
     model = await _resolve_model(db, tid)
 
@@ -1059,13 +1077,16 @@ def _is_greeting(message: str) -> bool:
     return bool(text) and len(text) <= _GREETING_MAX_CHARS and bool(_GREETING_RE.fullmatch(text))
 
 
-_GREETING_PROMPT = (
-    "You are Sayvors' business assistant inside the owner's dashboard. "
-    "The owner just greeted you. Reply in one short, warm sentence and ask "
-    "what they want to check (reviews, replies, Google visibility, customers, "
-    "or a chart). Do not claim to have looked at data, do not invent numbers, "
-    "and do not mention tools, databases or models. Reply in the owner's language."
-)
+def _greeting_prompt(preferred_language: str | None) -> str:
+    return (
+        "You are Sayvors' business assistant inside the owner's dashboard. "
+        "The owner just greeted you. Reply in one short, warm sentence and ask "
+        "what they want to check (reviews, replies, Google visibility, customers, "
+        "or a chart). Do not claim to have looked at data, do not invent numbers, "
+        "and do not mention tools, databases or models. "
+        f"Default to the owner's preferred language: {_preferred_language_label(preferred_language)}. "
+        "If the owner clearly wrote in a different language, reply in that language."
+    )
 
 
 def _assistant_error_message(error: Exception) -> str:
@@ -1141,7 +1162,7 @@ async def chat_stream(
                 yield sse({"type": "step", "id": "think", "label": "Writing your answer"})
                 empty = True
                 model = ""
-                greeting_prompt = _GREETING_PROMPT + chat_memory.profile_prompt_block(
+                greeting_prompt = _greeting_prompt(getattr(user, "language", None)) + chat_memory.profile_prompt_block(
                     profile, exclude_session=body.session_id
                 )
                 try:
@@ -1165,7 +1186,11 @@ async def chat_stream(
                     # error — the owner just said hello.
                     logger.warning("Greeting generation failed: %s", e)
                 if empty:
-                    fallback = "Hi! What would you like to check — reviews, replies, visibility or a chart?"
+                    pref = (getattr(user, "language", None) or "en").lower()
+                    if pref == "ar":
+                        fallback = "مرحباً! ما الذي تريد الاطلاع عليه — المراجعات، الردود، الظهور في Google، العملاء، أو رسم بياني؟"
+                    else:
+                        fallback = "Hi! What would you like to check — reviews, replies, visibility or a chart?"
                     answer_parts.append(fallback)
                     yield sse({"type": "delta", "text": fallback})
                 await _save_chat_turn(
@@ -1459,6 +1484,7 @@ async def chat_stream(
                 ),
                 page_block=await _page_context(db, tid, body.page),
                 knowledge_block=knowledge.render(),
+                preferred_language=getattr(user, "language", None),
             )
 
             from ..llm.gateway import LLMMessage, stream as llm_stream

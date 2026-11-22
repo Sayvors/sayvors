@@ -61,7 +61,7 @@ function CommentRow({ comment }: { comment: InstagramComment }) {
           )}
         </p>
         {comment.replies?.length > 0 && (
-          <ul className="mt-2 space-y-2 border-l-2 border-[var(--ui-line)] pl-3">
+          <ul className="mt-2 space-y-2 border-s-2 border-[var(--ui-line)] ps-3">
             {comment.replies.map((r, ri) => (
               <li key={`${r.id ?? "r"}-${ri}`}>
                 <p className="text-[12px] leading-snug">

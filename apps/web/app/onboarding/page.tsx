@@ -277,7 +277,7 @@ export default function OnboardingPage() {
           {step !== 4 && (
             <button
               onClick={goNext}
-              className="ml-auto rounded-[8px] bg-deep-violet px-6 py-2.5 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90"
+              className="me-auto rounded-[8px] bg-deep-violet px-6 py-2.5 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90"
             >
               {step === 0 ? "Let's go" : "Continue"}
             </button>

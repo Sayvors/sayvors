@@ -49,7 +49,7 @@ const PLATFORM_META: Record<string, { label: string; color: string; bg: string }
 };
 
 export default function AskForReview() {
-  const { t, locale } = useI18n();
+  const { t, locale, dir } = useI18n();
   const a = t.reviews.ask;
   const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
   const [businesses, setBusinesses] = useState<BusinessProfile[]>([]);
@@ -427,7 +427,7 @@ export default function AskForReview() {
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
         <button
           onClick={() => setActiveChannel(activeChannel === "whatsapp" ? null : "whatsapp")}
-          className={`group flex flex-row items-center gap-3 rounded-[8px] border-2 p-3 text-left outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 sm:flex-col sm:gap-2 sm:p-4 sm:text-center ${
+          className={`group flex flex-row items-center gap-3 rounded-[8px] border-2 p-3 ${dir === "rtl" ? "text-start" : "text-left"} outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 sm:flex-col sm:gap-2 sm:p-4 sm:text-center ${
             activeChannel === "whatsapp"
               ? "border-deep-violet/40 bg-deep-violet/[0.06]"
               : "border-ink/[0.06] bg-white hover:border-deep-violet/20 hover:bg-deep-violet/[0.03]"
@@ -446,7 +446,7 @@ export default function AskForReview() {
 
         <button
           onClick={() => setActiveChannel(activeChannel === "contacts" ? null : "contacts")}
-          className={`group flex flex-row items-center gap-3 rounded-[8px] border-2 p-3 text-left outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 sm:flex-col sm:gap-2 sm:p-4 sm:text-center ${
+          className={`group flex flex-row items-center gap-3 rounded-[8px] border-2 p-3 ${dir === "rtl" ? "text-start" : "text-left"} outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 sm:flex-col sm:gap-2 sm:p-4 sm:text-center ${
             activeChannel === "contacts"
               ? "border-deep-violet/40 bg-deep-violet/[0.06]"
               : "border-ink/[0.06] bg-white hover:border-deep-violet/20 hover:bg-deep-violet/[0.03]"
@@ -470,7 +470,7 @@ export default function AskForReview() {
 
         <button
           onClick={() => setActiveChannel(activeChannel === "email" ? null : "email")}
-          className={`group flex flex-row items-center gap-3 rounded-[8px] border-2 p-3 text-left outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 sm:flex-col sm:gap-2 sm:p-4 sm:text-center ${
+          className={`group flex flex-row items-center gap-3 rounded-[8px] border-2 p-3 ${dir === "rtl" ? "text-start" : "text-left"} outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 sm:flex-col sm:gap-2 sm:p-4 sm:text-center ${
             activeChannel === "email"
               ? "border-deep-violet/40 bg-deep-violet/[0.06]"
               : "border-ink/[0.06] bg-white hover:border-deep-violet/20 hover:bg-deep-violet/[0.03]"

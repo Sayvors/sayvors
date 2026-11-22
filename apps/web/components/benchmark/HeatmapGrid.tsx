@@ -96,7 +96,7 @@ export default function HeatmapGrid() {
                 <div className="mt-3">
                   <p className="font-mono text-[26px] font-bold leading-none sm:text-[30px]">
                     {place.rating != null ? place.rating.toFixed(1) : "—"}
-                    <span aria-hidden className="ml-0.5 text-[15px]">★</span>
+                    <span aria-hidden className="ms-0.5 text-[15px]">★</span>
                   </p>
                   <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide" style={{ color: tone.sub }}>
                     Avg rating

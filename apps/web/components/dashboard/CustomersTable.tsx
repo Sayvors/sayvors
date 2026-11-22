@@ -62,7 +62,7 @@ function fill(s: string, vars: Record<string, string | number>): string {
 }
 
 export default function CustomersTable() {
-  const { t, locale } = useI18n();
+  const { t, locale, dir } = useI18n();
   const u = t.dashboard.customers;
   const catLabel = (value: string | null | undefined): string => {
     if (!value) return "—";
@@ -274,7 +274,7 @@ export default function CustomersTable() {
               value={sort}
               onChange={(e) => setSort(e.target.value as "recent" | "important" | "messages")}
               aria-label={u.sortAria}
-              className={`${filterSelect} sm:ml-auto`}
+              className={`${filterSelect} sm:me-auto`}
             >
               <option value="important">{u.sortImportant}</option>
               <option value="recent">{u.sortRecent}</option>
@@ -317,7 +317,7 @@ export default function CustomersTable() {
                     key={`${c.channel_id}:${c.key}`}
                     type="button"
                     onClick={() => setSelected(c)}
-                    className="flex w-full items-start gap-3 px-3 py-3 text-left transition hover:bg-ink/[0.02] active:bg-ink/[0.04] dark:hover:bg-fog/[0.03] dark:active:bg-fog/[0.05]"
+                    className="flex w-full items-start gap-3 px-3 py-3 text-start transition hover:bg-ink/[0.02] active:bg-ink/[0.04] dark:hover:bg-fog/[0.03] dark:active:bg-fog/[0.05]"
                   >
                     <CustomerAvatar name={c.display_name} url={c.avatar_url} />
                     <span className="min-w-0 flex-1">
@@ -326,7 +326,7 @@ export default function CustomersTable() {
                           {c.display_name || u.unknownSender}
                         </span>
                         {c.unread > 0 && (
-                          <span className="ml-auto rounded-full bg-deep-violet px-1.5 py-0.5 text-[10px] font-bold text-white">
+                          <span className="me-auto rounded-full bg-deep-violet px-1.5 py-0.5 text-[10px] font-bold text-white">
                             {c.unread}
                           </span>
                         )}
@@ -352,7 +352,7 @@ export default function CustomersTable() {
                             {u.important}
                           </span>
                         )}
-                        <span className="ml-auto text-[10px] tabular-nums text-ink/35 dark:text-fog/35">
+                        <span className="me-auto text-[10px] tabular-nums text-ink/35 dark:text-fog/35">
                           {shortDate(c.last_message_at, locale)}
                         </span>
                       </span>
@@ -399,12 +399,12 @@ export default function CustomersTable() {
                             <span className="block truncate font-semibold text-ink dark:text-fog">
                               {c.display_name || u.unknownSender}
                               {c.unread > 0 && (
-                                <span className="ml-1.5 inline-block rounded-full bg-deep-violet px-1.5 text-[9px] font-bold leading-4 text-white">
+                                <span className="ms-1.5 inline-block rounded-full bg-deep-violet px-1.5 text-[9px] font-bold leading-4 text-white">
                                   {c.unread}
                                 </span>
                               )}
                               {c.important && (
-                                <span className="ml-1.5 inline-block rounded-full bg-[#FF4F6E]/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[#C4304B]">
+                                <span className="ms-1.5 inline-block rounded-full bg-[#FF4F6E]/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[#C4304B]">
                                   {u.important}
                                 </span>
                               )}

@@ -94,7 +94,7 @@ function ResponseTimeCard({ responseTime }: {
 }
 
 export default function OverviewPanel() {
-  const { t, locale } = useI18n();
+  const { t, locale, dir } = useI18n();
   const queryClient = useQueryClient();
   const [days, setDays] = useState<number>(30);
   const [channelId, setChannelId] = useState<string | null>(null);
@@ -202,7 +202,7 @@ export default function OverviewPanel() {
   return (
     <div className="h-full overflow-y-auto px-4 pb-4 sm:px-6 sm:pb-6">
       {/* Controls */}
-      <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+      <div className={`mb-5 flex flex-col gap-2 sm:flex-row sm:items-center ${dir === "rtl" ? "sm:justify-start" : "sm:justify-end"}`}>
         {channels.length > 1 && (
             <select
               value={channelId ?? ""}

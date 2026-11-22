@@ -135,7 +135,7 @@ function buildVideoHtml(opts: { business: string; primary: string; accent: strin
 }
 
 function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
-  const { t, locale } = useI18n();
+  const { t, locale, dir } = useI18n();
   const pc = t.publish.composer;
   const businessOptions = useMemo(() => {
     const names = new Set<string>();
@@ -248,7 +248,7 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
       <div className="overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)]">
         <div className="flex items-center gap-2 border-b border-[var(--ui-line)] px-3 py-2">
           <span className={`text-[11px] font-bold uppercase tracking-widest ${INK2}`}>{pc.aiPreview}</span>
-          <span className={`ml-auto text-[10px] ${INK2}`}>{generated ? pc.aiReady : pc.aiEmpty}</span>
+          <span className={`me-auto text-[10px] ${INK2}`}>{generated ? pc.aiReady : pc.aiEmpty}</span>
         </div>
         <div className="relative" style={{ aspectRatio: "16 / 9" }}>
           {html ? (
@@ -557,7 +557,7 @@ export default function PublishComposer({
   // The step id is derived, never a raw number: the message step disappears
   // for image-only formats, so "When" is step 3 or 4 depending on selection.
   const [postStep, setPostStep] = useState<WizardStepId>("media");
-  const { t: tr, locale } = useI18n();
+  const { t: tr, locale, dir } = useI18n();
   const pc: ComposerDict = tr.publish.composer;
   const methods = tr.publish.methods as MethodDict;
   const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
@@ -1443,7 +1443,7 @@ export default function PublishComposer({
                   type="button"
                   onClick={() => setPostStep(stepDef.id)}
                   aria-current={active ? "step" : undefined}
-                  className={`flex min-w-0 items-center gap-1.5 rounded-[8px] px-1 py-1 pr-1.5 transition duration-200 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:gap-2 sm:px-1.5 sm:pr-2.5 ${
+                  className={`flex min-w-0 items-center gap-1.5 rounded-[8px] px-1 py-1 ${dir === "rtl" ? "pe-1.5 sm:pe-2.5" : "pr-1.5 sm:pr-2.5"} transition duration-200 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:gap-2 ${
                     active
                       ? "bg-[var(--ui-surface)] text-[var(--ui-ink)] shadow-[0_8px_18px_-12px_rgba(61,29,110,0.55)]"
                       : done ? "text-[var(--ui-ink-2)]" : "text-[var(--ui-ink-2)] opacity-70"
@@ -2016,7 +2016,7 @@ export default function PublishComposer({
                 id="ai-video-h"
                 onClick={() => setAiOpen((v) => !v)}
                 aria-expanded={aiOpen}
-                className={`flex w-full items-center justify-between gap-2 text-left ${INK}`}
+                className={`flex w-full items-center justify-between gap-2 ${dir === "rtl" ? "text-start" : "text-left"} ${INK}`}
               >
                 <span className="flex items-center gap-2 text-[14px] font-bold">
                   <span aria-hidden>✨</span>

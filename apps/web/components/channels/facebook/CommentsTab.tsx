@@ -175,7 +175,7 @@ function CommentRow({
   };
 
   return (
-    <li className={child ? "border-l-2 border-[var(--ui-line)] py-2 pl-4" : "border-b border-[var(--ui-line)] py-3 last:border-0"}>
+    <li className={child ? "border-s-2 border-[var(--ui-line)] py-2 ps-4" : "border-b border-[var(--ui-line)] py-3 last:border-0"}>
       <div className="flex items-start gap-3">
         <Avatar name={inbound ? who : pageName || m.you} />
         <div className="min-w-0 flex-1">

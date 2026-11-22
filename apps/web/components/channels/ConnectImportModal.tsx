@@ -800,7 +800,7 @@ function WorkspaceStage({
           <button
             type="button"
             onClick={selectAllDrafts}
-            className="ml-auto text-[11px] font-bold text-deep-violet underline underline-offset-2"
+            className="me-auto text-[11px] font-bold text-deep-violet underline underline-offset-2"
           >
             Select all drafts
           </button>

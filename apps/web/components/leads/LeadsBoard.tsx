@@ -519,7 +519,7 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
             >
               {key === "all" ? c.allPriority : c.important}
               {key === "important" && importantCount > 0 && (
-                <span className="ml-1 tabular-nums">{fmt(importantCount)}</span>
+                <span className="ms-1 tabular-nums">{fmt(importantCount)}</span>
               )}
             </button>
           ))}
@@ -567,7 +567,7 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
             >
               {key === "all" ? c.all : c.stages[key]}
               {key !== "all" && counts[key] > 0 && (
-                <span className="ml-1 tabular-nums">{fmt(counts[key])}</span>
+                <span className="ms-1 tabular-nums">{fmt(counts[key])}</span>
               )}
             </button>
           ))}
@@ -631,7 +631,7 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
           value={age}
           onChange={(e) => setAge(e.target.value as AgeKey)}
           aria-label={c.ageAria}
-          className={`ml-auto h-8 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 text-[12px] font-semibold ${INK} ${FOCUS}`}
+          className={`me-auto h-8 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 text-[12px] font-semibold ${INK} ${FOCUS}`}
         >
           {AGES.map((a) => (
             <option key={a.key} value={a.key}>
