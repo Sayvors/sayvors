@@ -253,7 +253,7 @@ export default function BenchmarkPage() {
                             onClick={() => setMenuId(null)}
                             className={`block w-full rounded-[8px] px-2.5 py-2 text-left text-[11px] font-semibold text-[#14101F] hover:bg-[#F4F2F7] ${FOCUS}`}
                           >
-                            {b.compare}
+                            {b.compareAction}
                           </Link>
                         ) : (
                           <button type="button" disabled className="w-full rounded-[8px] px-2.5 py-2 text-left text-[11px] font-semibold text-[#7C7392]">{b.compareNotReady}</button>

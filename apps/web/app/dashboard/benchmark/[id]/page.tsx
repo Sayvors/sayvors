@@ -3,6 +3,7 @@
 import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 import { apiFetch } from "@/lib/api-rag";
 import {
   getBenchmarkPlaceDetails,
@@ -31,6 +32,8 @@ function fmt(value: number | null | undefined, suffix = ""): string {
 }
 
 export default function BenchmarkDetailPage() {
+  const { t } = useI18n();
+  const d = t.benchmark.detail;
   const params = useParams<{ id: string }>();
   const placeId = params.id;
 
@@ -74,14 +77,14 @@ export default function BenchmarkDetailPage() {
 
   const rows: Row[] = details
     ? [
-        { label: "Rating", theirs: fmt(details.rating, "★"), ours: comparisons.map((c) => fmt(c.overview?.avg_rating, "★")), betterWhenHigher: true },
-        { label: "Total reviews", theirs: fmt(details.review_count), ours: comparisons.map((c) => fmt(c.overview?.total_reviews)), betterWhenHigher: true },
-        { label: "Response rate", theirs: "—", ours: comparisons.map((c) => c.overview ? `${Math.round(c.overview.response_rate)}%` : "—"), betterWhenHigher: true },
-        { label: "Positive sentiment", theirs: "—", ours: comparisons.map((c) => c.overview ? `${Math.round(c.overview.sentiment.positive_pct)}%` : "—"), betterWhenHigher: true },
-        { label: "Sentiment split", theirs: "—", ours: comparisons.map((c) => c.overview
+        { label: d.rating, theirs: fmt(details.rating, "★"), ours: comparisons.map((c) => fmt(c.overview?.avg_rating, "★")), betterWhenHigher: true },
+        { label: d.totalReviews, theirs: fmt(details.review_count), ours: comparisons.map((c) => fmt(c.overview?.total_reviews)), betterWhenHigher: true },
+        { label: d.responseRate, theirs: "—", ours: comparisons.map((c) => c.overview ? `${Math.round(c.overview.response_rate)}%` : "—"), betterWhenHigher: true },
+        { label: d.positiveSentiment, theirs: "—", ours: comparisons.map((c) => c.overview ? `${Math.round(c.overview.sentiment.positive_pct)}%` : "—"), betterWhenHigher: true },
+        { label: d.sentimentSplit, theirs: "—", ours: comparisons.map((c) => c.overview
           ? `${Math.round(c.overview.sentiment.positive_pct)}% / ${Math.round(c.overview.sentiment.neutral_pct)}% / ${Math.round(c.overview.sentiment.negative_pct)}%`
           : "—"), betterWhenHigher: true },
-        { label: "Reputation score", theirs: "—", ours: comparisons.map((c) => fmt(c.overview?.reputation_score)), betterWhenHigher: true },
+        { label: d.reputationScore, theirs: "—", ours: comparisons.map((c) => fmt(c.overview?.reputation_score)), betterWhenHigher: true },
       ]
     : [];
 
@@ -121,7 +124,7 @@ export default function BenchmarkDetailPage() {
                     <th className="px-5 py-3 font-semibold">This business</th>
                     {comparisons.map((c) => (
                       <th key={c.channel.id} className="px-5 py-3 font-semibold">
-                        {c.channel.display_name || "Unnamed location"}
+                        {c.channel.display_name || d.unnamedLocation}
                       </th>
                     ))}
                   </tr>
@@ -141,7 +144,7 @@ export default function BenchmarkDetailPage() {
             </div>
           </section>
 
-          <section className="mt-6" aria-label="Sentiment by location">
+          <section className="mt-6" aria-label={d.sentimentByLocation}>
             <h2 className="mb-3 text-[14px] font-bold text-[#14101F]">
               Sentiment &amp; positive feedback
             </h2>
@@ -154,7 +157,7 @@ export default function BenchmarkDetailPage() {
                 {comparisons.map(({ channel, overview }) => (
                   <article key={channel.id} className="rounded-[8px] border border-[#3D1D6E]/12 bg-white p-4">
                     <h3 className="truncate text-[12px] font-bold text-[#14101F]">
-                      {channel.display_name || "Unnamed location"}
+                      {channel.display_name || d.unnamedLocation}
                     </h3>
                     {overview ? (
                       <>
@@ -180,7 +183,7 @@ export default function BenchmarkDetailPage() {
             )}
           </section>
 
-          <section className="mt-6" aria-label="Current reviews">
+          <section className="mt-6" aria-label={d.currentReviews}>
             <h2 className="mb-3 text-[14px] font-bold text-[#14101F]">Current reviews</h2>
             {details.reviews.length === 0 ? (
               <p className="text-[12px] text-[#3B2D5E]">No reviews returned by Google.</p>

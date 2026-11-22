@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
@@ -48,20 +49,22 @@ interface Row<T extends string> {
   higherIsBetter?: boolean;
 }
 
-const METRIC_ROWS: Row<MetricKey>[] = [
-  { key: "total_reviews", label: "Reviews total", value: (s) => s.metrics.total_reviews, render: (s) => num(s.metrics.total_reviews) },
-  { key: "reviews_last_day", label: "Reviews · last day", value: (s) => s.metrics.reviews_last_day, render: (s) => num(s.metrics.reviews_last_day) },
-  { key: "reviews_last_week", label: "Reviews · last week", value: (s) => s.metrics.reviews_last_week, render: (s) => num(s.metrics.reviews_last_week) },
-  { key: "reviews_last_month", label: "Reviews · last month", value: (s) => s.metrics.reviews_last_month, render: (s) => num(s.metrics.reviews_last_month) },
-  { key: "reviews_last_year", label: "Reviews · last year", value: (s) => s.metrics.reviews_last_year, render: (s) => num(s.metrics.reviews_last_year) },
-  { key: "avg_rating", label: "Average rating", value: (s) => s.metrics.avg_rating, tierValue: (s) => (s.metrics.total_ratings !== 0 ? s.metrics.avg_rating : null), render: (s) => rating(s) },
-  { key: "total_ratings", label: "Ratings total", value: (s) => s.metrics.total_ratings, render: (s) => num(s.metrics.total_ratings) },
-  { key: "five_star", label: "5-star ratings", value: (s) => s.metrics.five_star, render: (s) => num(s.metrics.five_star) },
-  { key: "four_star", label: "4-star ratings", value: (s) => s.metrics.four_star, render: (s) => num(s.metrics.four_star) },
-  { key: "one_star", label: "1-star ratings", value: (s) => s.metrics.one_star, higherIsBetter: false, render: (s) => num(s.metrics.one_star) },
-  { key: "impressions", label: "Impressions · 12 mo", value: (s) => s.metrics.impressions, render: (s) => ownerOnly(s, s.metrics.impressions) },
-  { key: "calls", label: "Calls · 12 mo", value: (s) => s.metrics.calls, render: (s) => ownerOnly(s, s.metrics.calls) },
-];
+function getMetricRows(c: Record<string, any>): Row<MetricKey>[] {
+  return [
+    { key: "total_reviews", label: c.reviewsTotal, value: (s) => s.metrics.total_reviews, render: (s) => num(s.metrics.total_reviews) },
+    { key: "reviews_last_day", label: c.reviewsLastDay, value: (s) => s.metrics.reviews_last_day, render: (s) => num(s.metrics.reviews_last_day) },
+    { key: "reviews_last_week", label: c.reviewsLastWeek, value: (s) => s.metrics.reviews_last_week, render: (s) => num(s.metrics.reviews_last_week) },
+    { key: "reviews_last_month", label: c.reviewsLastMonth, value: (s) => s.metrics.reviews_last_month, render: (s) => num(s.metrics.reviews_last_month) },
+    { key: "reviews_last_year", label: c.reviewsLastYear, value: (s) => s.metrics.reviews_last_year, render: (s) => num(s.metrics.reviews_last_year) },
+    { key: "avg_rating", label: c.averageRating, value: (s) => s.metrics.avg_rating, tierValue: (s) => (s.metrics.total_ratings !== 0 ? s.metrics.avg_rating : null), render: (s) => rating(s) },
+    { key: "total_ratings", label: c.ratingsTotal, value: (s) => s.metrics.total_ratings, render: (s) => num(s.metrics.total_ratings) },
+    { key: "five_star", label: c.fiveStarRatings, value: (s) => s.metrics.five_star, render: (s) => num(s.metrics.five_star) },
+    { key: "four_star", label: c.fourStarRatings, value: (s) => s.metrics.four_star, render: (s) => num(s.metrics.four_star) },
+    { key: "one_star", label: c.oneStarRatings, value: (s) => s.metrics.one_star, higherIsBetter: false, render: (s) => num(s.metrics.one_star) },
+    { key: "impressions", label: c.impressions12mo, value: (s) => s.metrics.impressions, render: (s) => ownerOnly(s, s.metrics.impressions) },
+    { key: "calls", label: c.calls12mo, value: (s) => s.metrics.calls, render: (s) => ownerOnly(s, s.metrics.calls) },
+  ];
+}
 
 type PeriodKey =
   | "period_reviews"
@@ -75,50 +78,47 @@ type PeriodKey =
  * lifetime number as a window number. Saved places compute it from snapshot
  * history plus today's live values; own locations from their stored reviews.
  */
-const PERIOD_ROWS: Row<PeriodKey>[] = [
-  { key: "period_reviews", label: "Reviews added", value: (s) => s.metrics.period_reviews, render: (s) => num(s.metrics.period_reviews) },
-  {
-    key: "period_avg_rating",
-    label: "Average rating in period",
-    value: (s) => s.metrics.period_avg_rating,
-    render: (s) => (s.metrics.period_avg_rating == null ? "—" : `${s.metrics.period_avg_rating} ★`),
-  },
-  {
-    key: "rating_change",
-    label: "Rating change",
-    value: (s) => s.metrics.rating_change,
-    render: (s) => signed(s.metrics.rating_change),
-  },
-  { key: "period_impressions", label: "Impressions", render: (s) => ownerOnly(s, s.metrics.period_impressions) },
-  { key: "period_calls", label: "Calls", render: (s) => ownerOnly(s, s.metrics.period_calls) },
-];
+function getPeriodRows(c: Record<string, any>): Row<PeriodKey>[] {
+  return [
+    { key: "period_reviews", label: c.reviewsAdded, value: (s) => s.metrics.period_reviews, render: (s) => num(s.metrics.period_reviews) },
+    { key: "period_avg_rating", label: c.averageRatingInPeriod, value: (s) => s.metrics.period_avg_rating, render: (s) => (s.metrics.period_avg_rating == null ? "—" : `${s.metrics.period_avg_rating} ★`) },
+    { key: "rating_change", label: c.ratingChange, value: (s) => s.metrics.rating_change, render: (s) => signed(s.metrics.rating_change) },
+    { key: "period_impressions", label: c.impressions, render: (s) => ownerOnly(s, s.metrics.period_impressions) },
+    { key: "period_calls", label: c.calls, render: (s) => ownerOnly(s, s.metrics.period_calls) },
+  ];
+}
 
 type RangeStatus = "ready" | "coming_soon";
 
-const RANGE_OPTIONS: { value: CompareRange; label: string; title: string; status: RangeStatus }[] = [
-  { value: "live", label: "Live", title: "Live values from Google, right now", status: "ready" },
-  { value: "30d", label: "30 days", title: "Values for the last 30 days", status: "ready" },
-  { value: "90d", label: "90 days", title: "Values for the last 90 days", status: "coming_soon" },
-  { value: "365d", label: "1 year", title: "Values for the last 12 months", status: "coming_soon" },
-];
+function getRangeOptions(c: Record<string, any>): { value: CompareRange; label: string; title: string; status: RangeStatus }[] {
+  return [
+    { value: "live", label: c.live, title: c.liveTitle, status: "ready" },
+    { value: "30d", label: c.days30, title: c.days30Title, status: "ready" },
+    { value: "90d", label: c.days90, title: c.days90Title, status: "coming_soon" },
+    { value: "365d", label: c.year1, title: c.year1Title, status: "coming_soon" },
+  ];
+}
 
 /** Disabled ranges fall back to Live so an old link still renders. */
 function normalizeRange(value: string | null): CompareRange {
   return value === "30d" ? "30d" : "live";
 }
 
-const FACT_ROWS: Row<FactKey>[] = [  { key: "positive_pct", label: "Positive sentiment", value: (s) => s.facts.positive_pct, render: (s) => pct(s.facts.positive_pct) },
-  { key: "negative_pct", label: "Negative sentiment", value: (s) => s.facts.negative_pct, higherIsBetter: false, render: (s) => pct(s.facts.negative_pct) },
-  { key: "branch", label: "Branch / location", render: (s) => s.facts.branch ?? "—" },
-  { key: "employee_mentions", label: "Team mentioned", value: (s) => s.facts.employee_mentions, render: (s) => num(s.facts.employee_mentions) },
-  { key: "working_hard_mentions", label: "Praised for hard work", value: (s) => s.facts.working_hard_mentions, render: (s) => num(s.facts.working_hard_mentions) },
-  { key: "menu_price_mentions", label: "Menu & price mentions", value: (s) => s.facts.menu_price_mentions, render: (s) => num(s.facts.menu_price_mentions) },
-  { key: "parking_praised", label: "Parking · positive", value: (s) => s.facts.parking_praised, render: (s) => num(s.facts.parking_praised) },
-  { key: "parking_criticised", label: "Parking · negative", value: (s) => s.facts.parking_criticised, higherIsBetter: false, render: (s) => num(s.facts.parking_criticised) },
-  { key: "services", label: "Services", render: (s, all) => serviceChips(s.facts.services, all) },
-  { key: "top_problems", label: "Top problems", render: (s) => chips(s.facts.top_problems) },
-  { key: "named_team", label: "Named team", render: (s) => namedTeam(s.facts.named_team) },
-];
+function getFactRows(c: Record<string, any>): Row<FactKey>[] {
+  return [
+    { key: "positive_pct", label: c.positiveSentiment, value: (s) => s.facts.positive_pct, render: (s) => pct(s.facts.positive_pct) },
+    { key: "negative_pct", label: c.negativeSentiment, value: (s) => s.facts.negative_pct, higherIsBetter: false, render: (s) => pct(s.facts.negative_pct) },
+    { key: "branch", label: c.branchLocation, render: (s) => s.facts.branch ?? "—" },
+    { key: "employee_mentions", label: c.teamMentioned, value: (s) => s.facts.employee_mentions, render: (s) => num(s.facts.employee_mentions) },
+    { key: "working_hard_mentions", label: c.praisedForHardWork, value: (s) => s.facts.working_hard_mentions, render: (s) => num(s.facts.working_hard_mentions) },
+    { key: "menu_price_mentions", label: c.menuPriceMentions, value: (s) => s.facts.menu_price_mentions, render: (s) => num(s.facts.menu_price_mentions) },
+    { key: "parking_praised", label: c.parkingPositive, value: (s) => s.facts.parking_praised, render: (s) => num(s.facts.parking_praised) },
+    { key: "parking_criticised", label: c.parkingNegative, value: (s) => s.facts.parking_criticised, higherIsBetter: false, render: (s) => num(s.facts.parking_criticised) },
+    { key: "services", label: c.services, render: (s, all) => serviceChips(s.facts.services, all) },
+    { key: "top_problems", label: c.topProblems, render: (s) => chips(s.facts.top_problems) },
+    { key: "named_team", label: c.namedTeam, render: (s) => namedTeam(s.facts.named_team) },
+  ];
+}
 
 /**
  * Overlap-level colors for the Services row. Green means the service is
@@ -305,6 +305,8 @@ function MatrixTable<T extends string>({
   subjects: ComparisonSubject[];
   mainKey: string | null;
 }) {
+  const { t } = useI18n();
+  const c = t.benchmark.compare;
   // On small screens the six business columns become one dropdown: the table
   // shows the fact rows for the selected business only.
   const [mobileIndex, setMobileIndex] = useState(0);
@@ -319,7 +321,7 @@ function MatrixTable<T extends string>({
       {/* Mobile: pick the business column to inspect. */}
       <div className="flex items-center gap-2 border-b border-[var(--ui-line)] bg-[#FAFAFB] px-3 py-2 md:hidden">
         <label htmlFor={`mobile-col-${title}`} className="text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]">
-          Business
+          {c.business}
         </label>
         <select
           id={`mobile-col-${title}`}
@@ -329,7 +331,7 @@ function MatrixTable<T extends string>({
         >
           {subjects.map((subject, index) => (
             <option key={subject.key} value={index}>
-              {subject.name || (subject.kind === "own" ? "Your location" : "Saved business")}
+              {subject.name || (subject.kind === "own" ? c.yourLocation : c.savedBusiness)}
             </option>
           ))}
         </select>
@@ -400,13 +402,13 @@ function MatrixTable<T extends string>({
                       className="block truncate text-[12px] font-bold text-[#14101F]"
                       title={subject.name || undefined}
                     >
-                      {subject.name || (subject.kind === "own" ? "Your location" : "Saved business")}
+                      {subject.name || (subject.kind === "own" ? c.yourLocation : c.savedBusiness)}
                     </span>
                     <span className="mt-0.5 block truncate text-[10px] font-normal text-[#3B2D5E]">
                       {subject.available
                         ? subject.kind === "saved"
-                          ? "Google listing"
-                          : "Your location"
+                          ? c.googleListing
+                          : c.yourLocation
                         : subject.reason}
                     </span>
                   </th>
@@ -483,6 +485,8 @@ function HistoryTable({
   loading: boolean;
   error: boolean;
 }) {
+  const { t } = useI18n();
+  const c = t.benchmark.compare;
   const rows = series
     .flatMap((subject) =>
       subject.points.map((point) => ({ ...point, subject }))
@@ -493,27 +497,27 @@ function HistoryTable({
     <section className="mt-4 overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white">
       <div className="border-b border-[var(--ui-line)] px-3 py-2">
         <h2 className="text-[12px] font-bold uppercase tracking-wide text-[#14101F]">
-          History · last {days} days
+          {c.historyTitle(days)}
         </h2>
         <p className="mt-0.5 text-[10px] text-[#3B2D5E]">
-          Rating and review count at the start and end of the selected period.
+          {c.historyDesc}
         </p>
       </div>
 
       {loading ? (
-        <p className="px-3 py-4 text-[12px] text-[#3B2D5E]">Loading history…</p>
+        <p className="px-3 py-4 text-[12px] text-[#3B2D5E]">{c.loadingHistory}</p>
       ) : error ? (
-        <p className="px-3 py-4 text-[12px] text-[#8E1230]">Could not load history.</p>
+        <p className="px-3 py-4 text-[12px] text-[#8E1230]">{c.couldNotLoadHistory}</p>
       ) : rows.length === 0 ? (
         <p className="px-3 py-4 text-[12px] text-[#3B2D5E]">
-          No data for this period yet.
+          {c.noDataPeriod}
         </p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left">
             <thead>
               <tr>
-                {["Business", "Date", "Rating", "Reviews"].map((label) => (
+                {[c.business, c.date, c.rating, c.reviews].map((label) => (
                   <th
                     key={label}
                     scope="col"
@@ -531,7 +535,7 @@ function HistoryTable({
                     scope="row"
                     className="border-b border-[var(--ui-line)] px-3 py-2 text-[11px] font-semibold text-[#14101F]"
                   >
-                    {row.subject.name || "Saved business"}
+                    {row.subject.name || c.savedBusiness}
                   </th>
                   <td className="border-b border-[var(--ui-line)] px-3 py-2 font-mono text-[11px] text-[#3B2D5E]">
                     {formatWhen(row.at)}
@@ -562,12 +566,9 @@ const SENTIMENT_CATEGORIES: SentimentCategory[] = [
   "complaining",
 ];
 
-const SENTIMENT_CATEGORY_LABELS: Record<SentimentCategory, string> = {
-  natural: "Natural",
-  positive: "Positive",
-  negative: "Negative",
-  complaining: "Complaining",
-};
+function getSentimentCategoryLabels(c: Record<string, any>): Record<SentimentCategory, string> {
+  return { natural: c.natural, positive: c.positive, negative: c.negative, complaining: c.complaining };
+}
 
 const SENTIMENT_CATEGORY_COLORS: Record<SentimentCategory, string> = {
   natural: "#14101F",
@@ -692,6 +693,8 @@ function FadedCell({
   color: string;
   onOpen: () => void;
 }) {
+  const { t } = useI18n();
+  const c = t.benchmark.compare;
   const items = categoryReviews(subject, category);
   if (!items.length) return <span className="text-[#8A8496]">—</span>;
   const shown = items.slice(0, 3);
@@ -717,7 +720,7 @@ function FadedCell({
               <div className="flex items-center gap-1.5 text-[10px]">
                 <ReviewAvatar name={review.author} photo={review.author_photo} size="sm" />
                 <span className="max-w-[62px] shrink-0 truncate font-semibold text-[#14101F]">
-                  {review.author || "Reviewer"}
+                  {review.author || c.reviewer}
                 </span>
                 <span className="shrink-0 font-semibold" style={{ color }}>
                   {review.rating != null ? `${review.rating}★` : "—"}
@@ -757,6 +760,9 @@ function ReviewsPopup({
   category: SentimentCategory;
   close: () => void;
 }) {
+  const { t } = useI18n();
+  const c = t.benchmark.compare;
+  const labels = getSentimentCategoryLabels(c);
   const [filter, setFilter] = useState<PopupFilter>("newest");
   const rows = popupReviews(subject, category, filter);
   const color = SENTIMENT_CATEGORY_COLORS[category];
@@ -770,14 +776,14 @@ function ReviewsPopup({
               <div className="flex items-center gap-1.5">
                 <GoogleMark size={13} />
                 <span className="text-[10px] font-semibold uppercase tracking-wide text-[#3B2D5E]">
-                  Google reviews
+                  {c.googleReviews}
                 </span>
               </div>
               <h2 className="text-[14px] font-bold text-[#14101F]">
                 {subject.name || "—"}
               </h2>
               <p className="text-[10px] text-[#8A8496]">
-                {SENTIMENT_CATEGORY_LABELS[category]} · {rows.length} reviews
+                {labels[category]} · {rows.length} {c.reviews.toLowerCase()}
               </p>
             </div>
           </div>
@@ -787,18 +793,18 @@ function ReviewsPopup({
               onChange={(event) => setFilter(event.target.value as PopupFilter)}
               className="rounded-[8px] border border-[var(--ui-line)] bg-white px-2 py-1.5 text-[11px] font-semibold text-[#3B2D5E]"
             >
-              <option value="newest">Newest</option>
-              <option value="oldest">Oldest</option>
+              <option value="newest">{c.newest}</option>
+              <option value="oldest">{c.oldest}</option>
               <option value="5">5★</option>
               <option value="4">4★</option>
-              <option value="all">All</option>
+              <option value="all">{c.all}</option>
             </select>
             <button
               type="button"
               onClick={close}
               className={`rounded-[8px] border border-[#3D1D6E]/30 bg-white px-3 py-1.5 text-[11px] font-semibold text-[#3D1D6E] ${FOCUS}`}
             >
-              Close
+              {c.close}
             </button>
           </div>
         </div>
@@ -806,7 +812,7 @@ function ReviewsPopup({
         <div className="scroll-smooth max-h-[540px] flex-1 overflow-y-auto bg-[#FAFAFB] px-4 py-4">
           {rows.length === 0 ? (
             <p className="py-10 text-center text-[12px] text-[#8A8496]">
-              No reviews in this category.
+              {c.noReviewsInCategory}
             </p>
           ) : (
             <div className="flex flex-col gap-3">
@@ -820,7 +826,7 @@ function ReviewsPopup({
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5">
                         <span className="truncate text-[11px] font-bold text-[#14101F]">
-                          {review.author || "Reviewer"}
+                          {review.author || c.reviewer}
                         </span>
                         <GoogleMark size={11} />
                         <span className="text-[10px] text-[#8A8496]">Google</span>
@@ -864,14 +870,14 @@ function ReviewsPopup({
 
         <div className="flex items-center justify-between border-t border-[var(--ui-line)] bg-white px-4 py-2">
           <span className="text-[10px] text-[#8A8496]">
-            Reviews are shown newest first unless you change the filter.
+            {c.reviewsNewestFirst}
           </span>
           <button
             type="button"
             onClick={close}
             className={`rounded-[8px] border border-[#3D1D6E]/30 bg-white px-3 py-1.5 text-[11px] font-semibold text-[#3D1D6E] ${FOCUS}`}
           >
-            Close
+            {c.close}
           </button>
         </div>
       </div>
@@ -897,17 +903,19 @@ function SentimentReviewsTable({
   loading: boolean;
   openPopup: (subject: SubjectReviews, category: SentimentCategory) => void;
 }) {
+  const { t } = useI18n();
+  const c = t.benchmark.compare;
   // On small screens the business columns become one dropdown: only the
   // selected business's category rows are shown, like the other tables.
   const [mobileIndex, setMobileIndex] = useState(0);
 
   if (loading) {
-    return <p className="mt-4 text-[12px] text-[#3B2D5E]">Loading reviews…</p>;
+    return <p className="mt-4 text-[12px] text-[#3B2D5E]">{t.common.loading}</p>;
   }
   if (!subjects.length) {
     return (
       <p className="mt-4 text-[12px] text-[#3B2D5E]">
-        No reviews are stored for these businesses yet.
+        {c.noDataAvailable}
       </p>
     );
   }
@@ -916,11 +924,11 @@ function SentimentReviewsTable({
     <section className="mt-4 overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white">
       <div className="flex items-center justify-between border-b border-[var(--ui-line)] px-3 py-2">
         <h2 className="text-[12px] font-bold uppercase tracking-wide text-[#14101F]">
-          Reviews by category
+          {c.reviews}
         </h2>
         <label className="flex items-center gap-2 md:hidden">
           <span className="text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]">
-            Business
+            {c.business}
           </span>
           <select
             value={mobileIndex}
@@ -950,7 +958,7 @@ function SentimentReviewsTable({
                       style={{ color: SENTIMENT_CATEGORY_COLORS[category] }}
                       className="w-[92px] border-b border-r border-[var(--ui-line)] bg-white px-3 py-2 text-[11px] font-semibold"
                     >
-                      {SENTIMENT_CATEGORY_LABELS[category]}
+                      {getSentimentCategoryLabels(c)[category]}
                     </th>
                     <td className="border-b border-[var(--ui-line)] px-3 py-2 align-top">
                       <FadedCell
@@ -1011,7 +1019,7 @@ function SentimentReviewsTable({
                   style={{ color: SENTIMENT_CATEGORY_COLORS[category] }}
                   className="sticky left-0 z-10 border-b border-r border-[var(--ui-line)] bg-white px-3 py-2 text-[11px] font-semibold"
                 >
-                  {SENTIMENT_CATEGORY_LABELS[category]}
+                  {getSentimentCategoryLabels(c)[category]}
                 </th>
                 {subjects.map((subject) => (
                   <td
@@ -1051,6 +1059,8 @@ function readSelection(params: URLSearchParams): CompareSelection {  const main 
 }
 
 export default function ComparePage() {
+  const { t } = useI18n();
+  const c = t.benchmark.compare;
   const router = useRouter();
   const params = useSearchParams();
 
@@ -1099,6 +1109,11 @@ export default function ComparePage() {
     category: SentimentCategory;
   } | null>(null);
 
+  const rangeOptions = useMemo(() => getRangeOptions(c as any), [c]);
+  const metricRows = useMemo(() => getMetricRows(c as any), [c]);
+  const periodRows = useMemo(() => getPeriodRows(c as any), [c]);
+  const factRows = useMemo(() => getFactRows(c as any), [c]);
+
   function applyUrl(next: CompareSelection, nextRange: CompareRange) {
     const query = new URLSearchParams();
     if (next.main) query.set("main", next.main);
@@ -1113,7 +1128,7 @@ export default function ComparePage() {
   }
 
   function updateRange(nextRange: CompareRange) {
-    const option = RANGE_OPTIONS.find((item) => item.value === nextRange);
+    const option = rangeOptions.find((item) => item.value === nextRange);
     // Coming-soon ranges must not be selected; they stay visible as context.
     if (!option || option.status !== "ready") return;
     applyUrl(selection, nextRange);
@@ -1122,23 +1137,20 @@ export default function ComparePage() {
   return (
     <div className="team-ui h-full overflow-y-auto p-4 sm:p-6">
       <Link href="/dashboard/benchmark" className={`text-[12px] font-semibold text-[#3D1D6E] ${FOCUS}`}>
-        ← Back to benchmark
+        ← {t.benchmark.title}
       </Link>
 
       {/* Half hero: the benchmarking sentence lives in the left half. */}
       <section className="mt-4 grid overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-[#F1F2F5] lg:grid-cols-2">
         <div className="px-6 py-7 sm:px-8 sm:py-9">
           <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#B0338A]">
-            Benchmark / Compare
+            {c.benchmarkCompare}
           </p>
           <h1 className="mt-2 max-w-lg text-[24px] font-bold leading-tight text-[#14101F] sm:text-[30px]">
-            Five businesses against yours.
+            {c.fiveBusinessesTitle}
           </h1>
           <p className="mt-3 max-w-lg text-[13px] leading-relaxed text-[#3B2D5E]">
-            Pick one business on the left and up to five on the right. Every row is
-            one fact, every column one business — the leader in each row is marked,
-            and anything Google does not publish stays blank instead of becoming a
-            zero.
+            {c.fiveBusinessesDesc}
           </p>
         </div>
         <div className="relative hidden min-h-[200px] items-center justify-center lg:flex">
@@ -1158,17 +1170,16 @@ export default function ComparePage() {
           <path d="M12 2 1 21h22L12 2zm1 14h-2v2h2v-2zm0-7h-2v5h2V9z" fill="currentColor" />
         </svg>
         <p className="text-[11px] leading-relaxed text-[#3D1D6E]">
-          Benchmarking works best on a desktop browser. On mobile, each table
-          shows one business at a time — pick it from the Business dropdown.
+          {c.desktopBest}
         </p>
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[8px] border border-[var(--ui-line)] bg-white px-3 py-2">
         <span className="text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]">
-          Period
+          {c.period}
         </span>
-        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Comparison period">
-          {RANGE_OPTIONS.map((option) => {
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label={c.comparisonPeriod}>
+          {rangeOptions.map((option) => {
             const active = option.value === range && option.status === "ready";
             const disabled = option.status !== "ready";
             return (
@@ -1190,7 +1201,7 @@ export default function ComparePage() {
                 {option.label}
                 {disabled ? (
                   <span className="ml-1.5 rounded-[8px] bg-[#F3F1F5] px-1.2 py-0.1 text-[8px] font-semibold uppercase tracking-wide text-[#A9A3B2]">
-                    coming soon
+                    {c.comingSoon}
                   </span>
                 ) : null}
               </button>
@@ -1198,43 +1209,43 @@ export default function ComparePage() {
           })}
         </div>
         <p className="text-[10px] text-[#A9A3B2]">
-          Live and 30 days are active. 90 days and 1 year unlock as the scraper fills history.
+          {c.rangeNote}
         </p>
       </div>
 
       {keys.length === 0 ? (
         <p className="mt-5 rounded-[8px] border border-dashed border-[var(--ui-line)] bg-white px-5 py-9 text-center text-[12px] text-[#3B2D5E]">
-          Pick a business in either dropdown to build the table.
+          {c.pickBusinessToBuild}
         </p>
       ) : compareQuery.isPending ? (
         <div className="mt-8 flex flex-col items-center justify-center gap-3 rounded-[8px] border border-[var(--ui-line)] bg-white px-5 py-14">
-          <LogoLoader size={44} label="Loading comparison…" showText />
-          <p className="text-[11px] text-[#7C7392]">Pulling the latest numbers and reviews.</p>
+          <LogoLoader size={44} label={c.loadingComparison} showText />
+          <p className="text-[11px] text-[#7C7392]">{c.pullingLatest}</p>
         </div>
       ) : compareQuery.isError ? (
-        <p className="mt-5 text-[12px] text-red-700">Could not load the comparison.</p>
+        <p className="mt-5 text-[12px] text-red-700">{c.couldNotLoadComparison}</p>
       ) : (
         <>
           {days != null ? (
             <MatrixTable
-              title={`Period · last ${days} days`}
-              description="Reviews added, rating movement, views and calls for the selected period. Blank means the data is not available, never a zero."
-              rows={PERIOD_ROWS}
+              title={c.periodLastDays(days)}
+              description={c.overTimeDesc}
+              rows={periodRows}
               subjects={subjects}
               mainKey={selection.main}
             />
           ) : null}
           <MatrixTable
-            title="Numbers from Google"
-            description="Reviews, ratings and listing performance. Views and calls are only released to the listing's owner, so a competitor's column stays blank there."
-            rows={METRIC_ROWS}
+            title={c.numbersFromGoogle}
+            description={c.numbersFromGoogleDesc}
+            rows={metricRows}
             subjects={subjects}
             mainKey={selection.main}
           />
           <MatrixTable
-            title="What customers say"
-            description="Scanned from the most recent reviews; owner-only facts stay blank for competitors."
-            rows={FACT_ROWS}
+            title={c.whatCustomersSay}
+            description={c.whatCustomersSayDesc}
+            rows={factRows}
             subjects={subjects}
             mainKey={selection.main}
           />

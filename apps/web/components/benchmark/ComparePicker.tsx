@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 import { subjectKey, type SavedPlace } from "@/lib/api-benchmark";
 
 const FOCUS = "focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[#3D1D6E]";
@@ -30,7 +31,7 @@ export interface CompareSelection {
   competitors: string[];
 }
 
-function buildOptions(saved: SavedPlace[], own: ChannelOption[]): Option[] {
+function buildOptions(saved: SavedPlace[], own: ChannelOption[], unnamed: string): Option[] {
   return [
     ...saved.map((place) => ({
       key: subjectKey("saved", place.place_id),
@@ -39,7 +40,7 @@ function buildOptions(saved: SavedPlace[], own: ChannelOption[]): Option[] {
     })),
     ...own.map((channel) => ({
       key: subjectKey("own", channel.id),
-      label: channel.display_name || "Unnamed location",
+      label: channel.display_name || unnamed,
       group: "own" as const,
     })),
   ];
@@ -60,7 +61,9 @@ export default function ComparePicker({
   saved: SavedPlace[];
   own: ChannelOption[];
 }) {
-  const options = buildOptions(saved, own);
+  const { t } = useI18n();
+  const c = t.benchmark.compare;
+  const options = buildOptions(saved, own, t.benchmark.unnamedLocation);
   const { main, competitors } = selection;
 
   function toggleMain(key: string) {
@@ -82,8 +85,8 @@ export default function ComparePicker({
   return (
     <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-start">
       <SidePicker
-        label="Your business"
-        hint="Pick 1"
+        label={c.yourBusiness}
+        hint={c.pick1}
         limit={1}
         selected={main ? [main] : []}
         blockedKeys={competitors}
@@ -98,8 +101,8 @@ export default function ComparePicker({
       </div>
 
       <SidePicker
-        label="Competitors"
-        hint={`Up to ${MAX_COMPETITORS}`}
+        label={c.competitors}
+        hint={c.upTo(MAX_COMPETITORS)}
         limit={MAX_COMPETITORS}
         selected={competitors}
         blockedKeys={main ? [main] : []}
@@ -108,8 +111,7 @@ export default function ComparePicker({
       />
 
       <p className="text-[10px] leading-relaxed text-[#3B2D5E] sm:col-span-3">
-        {MAX_COMPETITORS} businesses against 1 — six columns in the table below.
-        Each dropdown lists saved businesses and your own connected locations.
+        {c.comparePickerHelp(MAX_COMPETITORS)}
       </p>
     </div>
   );
@@ -132,6 +134,8 @@ function SidePicker({
   options: Option[];
   onToggle: (key: string) => void;
 }) {
+  const { t } = useI18n();
+  const c = t.benchmark.compare;
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
 
@@ -154,10 +158,10 @@ function SidePicker({
   const full = selected.length >= limit;
   const trigger =
     selected.length === 0
-      ? "Select a business…"
+      ? c.selectBusiness
       : selected.length === 1
       ? labelOf(options, selected[0])
-      : `${selected.length} selected`;
+      : `${selected.length} ${c.selected}`;
 
   return (
     <div ref={root} className="relative min-w-0">
@@ -193,7 +197,7 @@ function SidePicker({
               <span className="truncate">{labelOf(options, key)}</span>
               <button
                 type="button"
-                aria-label={`Remove ${labelOf(options, key)}`}
+                aria-label={`${c.remove} ${labelOf(options, key)}`}
                 onClick={() => onToggle(key)}
                 className={`rounded-[8px] px-0.5 leading-none text-[#3B2D5E] hover:bg-white ${FOCUS}`}
               >
@@ -208,12 +212,12 @@ function SidePicker({
         <div className="absolute left-0 right-0 top-full z-30 mt-1.5 max-h-[300px] overflow-y-auto rounded-[8px] border border-[var(--ui-line)] bg-white p-1.5 shadow-[0_6px_20px_rgba(20,16,31,0.14)]">
           {options.length === 0 ? (
             <p className="px-2 py-3 text-[11px] text-[#3B2D5E]">
-              Save a business or connect a Google location first.
+              {c.saveOrConnectFirst}
             </p>
           ) : (
             <>
               <OptionGroup
-                title="Saved businesses"
+                title={c.savedBusinesses}
                 options={options.filter((option) => option.group === "saved")}
                 selected={selected}
                 blockedKeys={blockedKeys}
@@ -222,7 +226,7 @@ function SidePicker({
               />
               <div className="my-1 border-t border-[var(--ui-line)]" />
               <OptionGroup
-                title="Our own business"
+                title={c.ourOwnBusiness}
                 options={options.filter((option) => option.group === "own")}
                 selected={selected}
                 blockedKeys={blockedKeys}
@@ -252,11 +256,13 @@ function OptionGroup({
   full: boolean;
   onToggle: (key: string) => void;
 }) {
+  const { t } = useI18n();
+  const c = t.benchmark.compare;
   return (
     <div>
       <p className="px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-[#B0338A]">{title}</p>
       {options.length === 0 ? (
-        <p className="px-2 py-1 text-[10px] text-[#8A8496]">None yet</p>
+        <p className="px-2 py-1 text-[10px] text-[#8A8496]">{c.noneYet}</p>
       ) : (
         options.map((option) => {
           const checked = selected.includes(option.key);
@@ -265,7 +271,7 @@ function OptionGroup({
           return (
             <label
               key={option.key}
-              title={otherSide ? "Already selected on the other side" : undefined}
+              title={otherSide ? c.alreadySelectedOtherSide : undefined}
               className={`flex items-center gap-2 rounded-[8px] px-2 py-1.5 text-[12px] text-[#14101F] ${
                 disabled ? "cursor-not-allowed opacity-40" : "cursor-pointer hover:bg-[#F4F2F7]"
               }`}

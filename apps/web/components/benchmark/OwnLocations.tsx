@@ -133,7 +133,7 @@ export default function OwnLocations() {
                         onClick={() => setMenuId(null)}
                         className={`block w-full rounded-[8px] px-2.5 py-2 text-left text-[11px] font-semibold text-[#14101F] hover:bg-[#F4F2F7] ${FOCUS}`}
                       >
-                        {b.compare}
+                        {b.compareAction}
                       </Link>
                       <Link
                         href={`/dashboard/locations?channel=${encodeURIComponent(location.id)}`}
@@ -213,7 +213,7 @@ export default function OwnLocations() {
                   href={`/dashboard/benchmark/compare?main=${encodeURIComponent(`own:${location.id}`)}`}
                   className={`rounded-[8px] border border-[#3D1D6E]/25 px-3 py-1.5 text-[11px] font-bold text-[#3D1D6E] ${FOCUS}`}
                 >
-                  {b.compare}
+                  {b.compareAction}
                 </Link>
                 {location.place_id ? (
                   !isOnHeatmap(location.place_id) ? (
