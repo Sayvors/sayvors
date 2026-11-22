@@ -9,9 +9,10 @@ import {
 } from "@/lib/api-review-issues";
 import { useInboxRealtime } from "@/lib/use-inbox-realtime";
 import { queryKeys } from "@/lib/query-keys";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 
 /**
- * Review tickets — a compact information card, not a ticket list.
+ * t.dashboard.reviewTickets.title — a compact information card, not a ticket list.
  *
  * Data layer: TanStack Query caches the per-status fetches under a single key
  * so navigating away and back reuses the cache instead of re-downloading.
@@ -84,6 +85,7 @@ async function fetchTicketStats(): Promise<TicketStats> {
 }
 
 export default function ReviewTicketsCard() {
+  const { t } = useI18n();
   const queryClient = useQueryClient();
   const [collapsed, setCollapsed] = useState(() => {
     try {
@@ -121,11 +123,11 @@ export default function ReviewTicketsCard() {
   }, [refreshQuietly]));
 
   const loading = isPending;
-  const errorMessage = isError ? (error instanceof Error ? error.message : "Could not load review tickets.") : null;
+  const errorMessage = isError ? (error instanceof Error ? error.message : t.dashboard.reviewTickets.loading) : null;
 
   return (
     <section
-      aria-label="Review tickets"
+      aria-label="t.dashboard.reviewTickets.title"
       className="rounded-[8px] border border-ink/[0.08] bg-white p-4 shadow-sm shadow-ink/[0.04] dark:border-fog/[0.08] dark:bg-[#1d1636] dark:shadow-none"
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
@@ -152,17 +154,16 @@ export default function ReviewTicketsCard() {
           <span className="min-w-0 flex-1">
             <span className="flex flex-wrap items-center gap-2">
               <span className="text-[14px] font-bold tracking-wide text-ink dark:text-fog">
-                Review tickets
+                t.dashboard.reviewTickets.title
               </span>
               {collapsed && (
                 <span className="rounded-[8px] bg-ink/[0.05] px-2 py-0.5 text-[10px] font-bold tabular-nums text-ink/50 dark:bg-fog/[0.08] dark:text-fog/50">
-                  {stats.unresolved} unresolved · {stats.waiting} waiting on you
+                  t.dashboard.reviewTickets.unresolvedWaiting(stats.unresolved, stats.waiting)
                 </span>
               )}
             </span>
             <span className="mt-0.5 block max-w-2xl text-[12px] leading-relaxed text-ink/55 dark:text-fog/55">
-              Customer complaints classified from Google reviews that need action, with
-              WhatsApp handoff for the ones needing care. Praise and neutral reviews are not tickets.
+               {t.dashboard.reviewTickets.description}
             </span>
           </span>
           <svg
@@ -180,34 +181,34 @@ export default function ReviewTicketsCard() {
           href="/dashboard/reviews/issues"
           className="inline-flex w-full shrink-0 items-center justify-center rounded-[8px] bg-deep-violet px-3.5 py-2 text-center text-[12px] font-bold text-white shadow-sm shadow-deep-violet/20 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] dark:focus-visible:ring-violet-soft/40 sm:w-auto"
         >
-          Open ticket queue
+          t.dashboard.reviewTickets.openTicketQueue
         </Link>
       </div>
 
       <div id="review-tickets-body" hidden={collapsed}>
-        {loading && <p className="mt-3 text-[12px] text-ink/55 dark:text-fog/55">Loading tickets…</p>}
+        {loading && <p className="mt-3 text-[12px] text-ink/55 dark:text-fog/55">t.dashboard.reviewTickets.loading</p>}
 
         {!loading && errorMessage && (
           <p className="mt-3 text-[12px] font-medium text-coral">
-            Ticket queue unavailable: {errorMessage}
+            t.dashboard.reviewTickets.unavailable + ": " + errorMessage
           </p>
         )}
 
         {!loading && !errorMessage && stats.total === 0 && (
           <p className="mt-3 rounded-[8px] border border-dashed border-ink/10 bg-ink/[0.02] px-4 py-4 text-center text-[12px] text-ink/55 dark:border-fog/10 dark:bg-fog/[0.03] dark:text-fog/55">
-            No review tickets yet. They appear after a review needs attention.
+            t.dashboard.reviewTickets.noTickets
           </p>
         )}
 
         {!loading && !errorMessage && stats.total > 0 && (
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
             <span className="text-[22px] font-bold tabular-nums text-ink dark:text-fog">
-              {stats.total} ticket{stats.total === 1 ? "" : "s"}
+              t.dashboard.reviewTickets.tickets(stats.total)
             </span>
             {stats.oldestTicket && (
               <span className="text-[11.5px] text-ink/50 dark:text-fog/50">
-                Oldest: <strong className="font-mono text-[11px] text-deep-violet dark:text-violet-soft">{stats.oldestTicket}</strong>
-                {stats.oldestDays !== null && (stats.oldestDays === 0 ? " · today" : ` · ${stats.oldestDays}d old`)}
+                t.dashboard.reviewTickets.oldest + ": "<strong className="font-mono text-[11px] text-deep-violet dark:text-violet-soft">{stats.oldestTicket}</strong>
+                {stats.oldestDays !== null && (stats.oldestDays === 0 ?  " · " + t.dashboard.reviewTickets.today : ` · ${t.dashboard.reviewTickets.daysOld(stats.oldestDays)}`)}
               </span>
             )}
           </div>
