@@ -218,13 +218,26 @@ export default function GoogleLiveGallery() {
               Select
             </button>
           ) : (
-            <button
-              type="button"
-              onClick={() => { setSelectionMode(false); setSelected(new Set()); }}
-              className="rounded-[8px] border border-ink/10 bg-white px-4 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:bg-white/[0.04] dark:text-fog"
-            >
-              Cancel
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  const allKeys = items.map(itemKey);
+                  const allSelected = allKeys.length > 0 && allKeys.every((k) => selected.has(k));
+                  setSelected(allSelected ? new Set() : new Set(allKeys));
+                }}
+                className="rounded-[8px] border border-ink/10 bg-white px-4 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:bg-white/[0.04] dark:text-fog"
+              >
+                {items.length > 0 && items.every((m) => selected.has(itemKey(m))) ? "Clear selection" : "Select all"}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setSelectionMode(false); setSelected(new Set()); }}
+                className="rounded-[8px] border border-ink/10 bg-white px-4 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:bg-white/[0.04] dark:text-fog"
+              >
+                Cancel
+              </button>
+            </>
           )}
           <button
             type="button"
@@ -327,7 +340,11 @@ export default function GoogleLiveGallery() {
             return (
               <div
                 key={key}
-                className={`group relative overflow-hidden rounded-[8px] border bg-white shadow-[0_12px_28px_-20px_rgba(20,16,31,0.35)] transition hover:-translate-y-0.5 hover:shadow-[0_20px_40px_-22px_rgba(20,16,31,0.5)] ${isSelected ? "ring-2 ring-deep-violet" : "ring-1 ring-ink/[0.06]"}`}
+                className={`group relative overflow-hidden rounded-[8px] border bg-white shadow-[0_12px_28px_-20px_rgba(20,16,31,0.35)] transition hover:-translate-y-0.5 hover:shadow-[0_20px_40px_-22px_rgba(20,16,31,0.5)] ${isSelected ? "ring-2 ring-deep-violet" : "ring-1 ring-ink/[0.06]"} ${selectionMode ? "cursor-pointer" : ""}`}
+                onClick={selectionMode ? () => setSelected((prev) => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; }) : undefined}
+                role={selectionMode ? "button" : undefined}
+                tabIndex={selectionMode ? 0 : undefined}
+                onKeyDown={selectionMode ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelected((prev) => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; }); } } : undefined}
               >
                 <div className="relative aspect-[4/3] overflow-hidden bg-ink/[0.04]">
                   {m.thumbnailUrl || m.googleUrl ? (
