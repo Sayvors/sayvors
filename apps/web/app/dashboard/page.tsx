@@ -100,6 +100,7 @@ function fmtWhen(iso: string): string {
 }
 
 function AttentionQueue() {
+  const { t, dir } = useI18n();
   const [items, setItems] = useState<AttentionItem[] | null>(null);
   const [drafts, setDrafts] = useState<ReviewReplyDTO[]>([]);
   const [draftTotal, setDraftTotal] = useState(0);
@@ -358,7 +359,7 @@ function AttentionQueue() {
     } catch (e) {
       // apiFetch throws the raw response body — extract the server's detail
       // (e.g. "Failed to post reply to Google: No refresh token available").
-      let msg = "Could not publish that reply. Try again.";
+      let msg = t.dashboard.attention.couldNotPublishReply;
       if (e instanceof Error) {
         try {
           const parsed = JSON.parse(e.message) as { detail?: unknown };
@@ -383,7 +384,7 @@ function AttentionQueue() {
       setDrafts((prev) => prev.map((x) => (x.id === d.id ? { ...x, reply_text: saved.reply_text } : x)));
       setEditingDraftId(null);
     } catch (e) {
-      setDraftError(detailFromError(e, "Could not save your edit. Try again."));
+      setDraftError(detailFromError(e, t.dashboard.attention.couldNotSaveEdit));
     } finally {
       setSavingDraftId(null);
     }
@@ -425,7 +426,7 @@ function AttentionQueue() {
         },
       }));
     } catch (e) {
-      setEditedError(detailFromError(e, "Engine rewrite failed. Try again."));
+      setEditedError(detailFromError(e, t.dashboard.attention.engineRewriteFailed));
     } finally {
       setEditedRewritingId(null);
     }
@@ -444,7 +445,7 @@ function AttentionQueue() {
       });
       setEditedDrafts((prev) => ({ ...prev, [d.review_id]: fresh }));
     } catch (e) {
-      setEditedError(detailFromError(e, "Could not draft a reply. Try again."));
+      setEditedError(detailFromError(e, t.dashboard.attention.couldNotDraftReply));
     } finally {
       setEditedGeneratingId(null);
     }
@@ -506,10 +507,10 @@ function AttentionQueue() {
       setDrafts((prev) => prev.filter((d) => failed.includes(d.id)));
       setDraftTotal((t) => Math.max(0, t - ok));
       if (failed.length > 0) {
-        setDraftError(`Published ${ok} of ${all.length}. ${failed.length} failed — try again.`);
+        setDraftError(t.dashboard.attention.publishedOfFailed(ok, all.length, failed.length));
       }
     } catch {
-      setDraftError("Could not publish. Try again.");
+      setDraftError(t.dashboard.attention.couldNotPublish);
     } finally {
       setApprovingAll(false);
       setApproveProgress({ done: 0, total: 0 });
@@ -535,7 +536,7 @@ function AttentionQueue() {
       setDrafts((prev) => dedupeDraftsByReview([...prev, fresh]).slice(0, 5));
       setDraftTotal((t) => t + 1);
     } catch {
-      setFailedError("Retry failed. Check the error and try again.");
+      setFailedError(t.dashboard.attention.retryFailed);
     } finally {
       setGeneratingId(null);
     }
@@ -584,7 +585,7 @@ function AttentionQueue() {
         setFailedError(`${stillFailed.length} could not be retried. Try again.`);
       }
     } catch {
-      setFailedError("Could not retry the drafts. Try again.");
+      setFailedError(t.dashboard.attention.couldNotRetryDrafts);
     } finally {
       setRemakingAll(false);
       setRemakeProgress({ done: 0, total: 0 });
@@ -598,21 +599,20 @@ function AttentionQueue() {
     const showFlagged = flaggedTotal > 0;
     const showEdited = editedTotal > 0;
     const allClear = !showDrafts && !showScheduled && !showFailed && !showFlagged && !showEdited && items.length === 0;
-    const draftTitle =
-      draftTotal === 1 ? "1 drafted reply needs your approval" : `${draftTotal} drafted replies across all locations need your approval`;
+    const draftTitle = t.dashboard.attention.draftsTitle(draftTotal);
     const scheduledTitle =
-      scheduledTotal === 1 ? "1 scheduled post or photo" : `${scheduledTotal} scheduled posts and photos`;
+      t.dashboard.attention.scheduledTitle(scheduledTotal);
    const failedTitle =
-     failedTotal === 1 ? "1 reply failed to publish" : `${failedTotal} replies failed to publish`;
+     t.dashboard.attention.failedTitle(failedTotal);
    // Token-flavored failures genuinely need a Google re-consent; anything
    // else (API hiccups, transient errors) just needs a retry.
    const needsReconnect = failed.some((d) =>
      /refresh token|access token|invalid_grant|expired|auth|401|permission/i.test(d.error ?? "")
    );
     const flaggedTitle =
-      flaggedTotal === 1 ? "1 review marked unavailable" : `${flaggedTotal} reviews marked unavailable on Google`;
+      t.dashboard.attention.flaggedTitle(flaggedTotal);
    const editedTitle =
-     editedTotal === 1 ? "1 review was edited by its author" : `${editedTotal} reviews were edited by their authors`;
+     t.dashboard.attention.editedTitle(editedTotal);
    return (
       <section
       aria-label="Needs attention"
@@ -621,8 +621,8 @@ function AttentionQueue() {
     >
       <div className="mb-2 flex items-center gap-2">
         <span className={`h-2 w-2 rounded-full ${allClear ? "bg-emerald-500" : "bg-coral"}`} aria-hidden />
-        <h2 className="text-[14px] font-bold text-ink dark:text-fog">{allClear ? "All clear" : "Needs attention"}</h2>
-        {allClear && <span className="text-[12px] text-ink/45 dark:text-fog/45">nothing urgent right now</span>}
+        <h2 className="text-[14px] font-bold text-ink dark:text-fog">{allClear ? t.dashboard.attention.allClear : t.dashboard.attention.needsAttention}</h2>
+        {allClear && <span className="text-[12px] text-ink/45 dark:text-fog/45">{t.dashboard.attention.nothingUrgent}</span>}
       </div>
       {!allClear && (
         <ul className="divide-y divide-ink/[0.05] dark:divide-fog/[0.05]">
@@ -637,7 +637,7 @@ function AttentionQueue() {
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-coral" aria-hidden />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13px] font-semibold text-ink dark:text-fog">{draftTitle}</span>
-                  <span className="block truncate text-[11px] text-ink/45 dark:text-fog/45">Check them and publish to Google</span>
+                  <span className="block truncate text-[11px] text-ink/45 dark:text-fog/45">{t.dashboard.attention.checkAndPublish}</span>
                 </span>
                 <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className={`h-3.5 w-3.5 shrink-0 text-ink/25 dark:text-fog/25 transition group-hover:text-deep-violet dark:group-hover:text-violet-soft ${draftsOpen ? "rotate-180" : ""}`}>
                   <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
@@ -681,14 +681,14 @@ function AttentionQueue() {
                                   disabled={savingDraftId !== null}
                                   className="rounded-[8px] px-2.5 py-1 text-[11px] font-semibold text-ink/50 dark:text-fog/50 hover:bg-ink/[0.04] dark:hover:bg-fog/[0.04] disabled:opacity-40"
                                 >
-                                  Cancel
+                                  {t.dashboard.attention.cancel}
                                 </button>
                                 <button
                                   onClick={() => void saveDraftText(d)}
                                   disabled={!editingDraftText.trim() || savingDraftId !== null}
                                   className="rounded-[8px] bg-deep-violet px-3 py-1 text-[11px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-50"
                                 >
-                                  {savingDraftId === d.id ? "Saving…" : "Save"}
+                                  {savingDraftId === d.id ? t.dashboard.attention.saving : t.dashboard.attention.save}
                                 </button>
                               </div>
                             </>
@@ -703,7 +703,7 @@ function AttentionQueue() {
                               disabled={enginingId !== null || approvingId !== null || approvingAll}
                               className="rounded-[8px] px-3 py-1.5 text-[11px] font-bold text-deep-violet dark:text-violet-soft outline-none transition hover:bg-deep-violet/[0.08] dark:hover:bg-violet-soft/[0.08] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40 disabled:opacity-50"
                             >
-                              Edit
+                              {t.dashboard.attention.edit}
                             </button>
                           )}
                           <button
@@ -713,13 +713,13 @@ function AttentionQueue() {
                             className="inline-flex items-center gap-1 rounded-[8px] bg-deep-violet/[0.08] dark:bg-violet-soft/[0.08] px-3 py-1.5 text-[11px] font-bold text-deep-violet dark:text-violet-soft outline-none transition hover:bg-deep-violet/[0.15] dark:hover:bg-violet-soft/[0.15] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40 disabled:opacity-50"
                           >
                             {enginingId === d.id ? (
-                              <><span className="h-3 w-3 animate-spin rounded-full border-2 border-deep-violet/30 border-t-deep-violet dark:border-violet-soft/30 dark:border-t-violet-soft" /> Engine…</>
+                              <><span className="h-3 w-3 animate-spin rounded-full border-2 border-deep-violet/30 border-t-deep-violet dark:border-violet-soft/30 dark:border-t-violet-soft" /> t.dashboard.attention.engineRewrite</>
                             ) : (
                               <>
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3" aria-hidden>
                                   <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z" strokeLinecap="round" strokeLinejoin="round" />
                                 </svg>
-                                Didn&apos;t like it? Rewrite
+                                {t.dashboard.attention.didntLikeRewrite}
                               </>
                             )}
                           </button>
@@ -728,7 +728,7 @@ function AttentionQueue() {
                             disabled={approvingId !== null || approvingAll || enginingId !== null || editingDraftId !== null}
                             className="rounded-[8px] bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40 active:scale-[0.98] disabled:opacity-50"
                           >
-                            {busy ? "Publishing…" : "Approve & publish"}
+                            {busy ? t.dashboard.attention.publishing : t.dashboard.attention.approvePublish}
                           </button>
                         </div>
                       </div>
@@ -739,7 +739,7 @@ function AttentionQueue() {
                       href="/dashboard/analytics"
                       className="flex items-center justify-center gap-1 rounded-[8px] bg-deep-violet/[0.06] dark:bg-violet-soft/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet dark:text-violet-soft outline-none transition hover:bg-deep-violet/[0.1] dark:hover:bg-violet-soft/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40"
                     >
-                      See all {draftTotal} and approve
+                      t.dashboard.attention.seeAllAndApprove(draftTotal)
                       <span aria-hidden> →</span>
                     </Link>
                   )}
@@ -750,14 +750,14 @@ function AttentionQueue() {
                       className="flex-1 rounded-[8px] bg-deep-violet px-3 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40 active:scale-[0.99] disabled:opacity-50"
                     >
                        {approvingAll
-                         ? `Publishing ${approveProgress.done} of ${approveProgress.total} across all locations…`
-                         : `Approve & publish all across all locations (${draftTotal})`}
+                         ? `t.dashboard.attention.publishingProgress(approveProgress.done, approveProgress.total)`
+                         : t.dashboard.attention.approvePublishAll(draftTotal)}
                      </button>
 <Link
                        href="/dashboard/reviews?tab=need_approval"
                        className="relative flex items-center justify-center gap-1 rounded-[8px] bg-deep-violet/[0.06] dark:bg-violet-soft/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet dark:text-violet-soft outline-none transition hover:bg-deep-violet/[0.1] dark:hover:bg-violet-soft/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40"
                      >
-                       Visit all reviews
+                       {t.dashboard.attention.visitAllReviews}
                        <span aria-hidden> →</span>
                        {draftTotal > 0 && (
                          <span aria-hidden className="absolute -right-1 -top-1 flex h-3 w-3">
@@ -784,8 +784,8 @@ function AttentionQueue() {
                   <span className="block truncate text-[13px] font-semibold text-ink dark:text-fog">{scheduledTitle}</span>
                   <span className="block truncate text-[11px] text-ink/45 dark:text-fog/45">
                     {scheduled[0]
-                      ? `Next: ${scheduled[0].title} Â· ${fmtWhen(scheduled[0].at)}`
-                      : "Queued to publish to Google"}
+                      ? `{t.dashboard.attention.next}: ${scheduled[0].title} Â· ${fmtWhen(scheduled[0].at)}`
+                      : t.dashboard.attention.queuedToPublish}
                   </span>
                 </span>
                 <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className={`h-3.5 w-3.5 shrink-0 text-ink/25 dark:text-fog/25 transition group-hover:text-deep-violet dark:group-hover:text-violet-soft ${scheduledOpen ? "rotate-180" : ""}`}>
@@ -811,7 +811,7 @@ function AttentionQueue() {
                         href="/dashboard/posts-media"
                         className="flex flex-1 items-center justify-center gap-1 rounded-[8px] bg-deep-violet/[0.06] dark:bg-violet-soft/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet dark:text-violet-soft outline-none transition hover:bg-deep-violet/[0.1] dark:hover:bg-violet-soft/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40"
                       >
-                        Manage posts <span aria-hidden> →</span>
+                        {t.dashboard.attention.managePosts} <span aria-hidden> →</span>
                       </Link>
                     )}
                     {scheduled.some((s) => s.kind === "photo") && (
@@ -819,7 +819,7 @@ function AttentionQueue() {
                         href="/dashboard/posts-media"
                         className="flex flex-1 items-center justify-center gap-1 rounded-[8px] bg-deep-violet/[0.06] dark:bg-violet-soft/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet dark:text-violet-soft outline-none transition hover:bg-deep-violet/[0.1] dark:hover:bg-violet-soft/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40"
                       >
-                        Manage media <span aria-hidden> →</span>
+                        {t.dashboard.attention.manageMedia} <span aria-hidden> →</span>
                       </Link>
                     )}
                   </div>
@@ -840,8 +840,8 @@ function AttentionQueue() {
                   <span className="block truncate text-[13px] font-semibold text-ink dark:text-fog">{failedTitle}</span>
                   <span className="block truncate text-[11px] text-ink/45 dark:text-fog/45">
                     {needsReconnect
-                      ? "Google access expired — reconnect, then make new drafts"
-                      : "Publishing failed — make new drafts and try again"}
+                      ? t.dashboard.attention.googleAccessExpired
+                      : t.dashboard.attention.publishingFailed}
                   </span>
                 </span>
                 <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className={`h-3.5 w-3.5 shrink-0 text-ink/25 dark:text-fog/25 transition group-hover:text-deep-violet dark:group-hover:text-violet-soft ${failedOpen ? "rotate-180" : ""}`}>
@@ -883,7 +883,7 @@ function AttentionQueue() {
                             disabled={generatingId !== null || remakingAll}
                             className="rounded-[8px] bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40 active:scale-[0.98] disabled:opacity-50"
                           >
-                            {busy ? "Retrying…" : d.reply_text ? "Retry publishing" : "Retry AI drafting"}
+                            {busy ? t.dashboard.attention.retrying : d.reply_text ? t.dashboard.attention.retryPublishing : t.dashboard.attention.retryAIDrafting}
                           </button>
                         </div>
                       </div>
@@ -894,14 +894,14 @@ function AttentionQueue() {
                       href="/dashboard/outbox"
                       className="flex flex-1 items-center justify-center gap-1 rounded-[8px] bg-deep-violet px-3 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40"
                     >
-                      Open outbox
+                      {t.dashboard.attention.openOutbox}
                       <span aria-hidden> →</span>
                     </Link>
                     <Link
                       href="/dashboard/channels"
                       className="flex flex-1 items-center justify-center gap-1 rounded-[8px] bg-ink/[0.04] dark:bg-fog/[0.04] px-3 py-2.5 text-[12px] font-bold text-ink/60 dark:text-fog/60 outline-none transition hover:bg-ink/[0.07] dark:hover:bg-fog/[0.07] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40"
                     >
-                      {needsReconnect ? "Reconnect Google" : "Manage connection"}
+                      {needsReconnect ? t.dashboard.attention.reconnectGoogle : t.dashboard.attention.manageConnection}
                       <span aria-hidden> →</span>
                     </Link>
                   </div>
@@ -911,8 +911,8 @@ function AttentionQueue() {
                     className="w-full rounded-[8px] bg-deep-violet px-3 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40 active:scale-[0.99] disabled:opacity-50"
                   >
                     {remakingAll
-                      ? `Retrying ${remakeProgress.done} of ${remakeProgress.total}…`
-                      : `Retry all (${failedTotal})`}
+                      ? `t.dashboard.attention.retryingProgress(remakeProgress.done, remakeProgress.total)`
+                      : `t.dashboard.attention.retryAll(failedTotal)`}
                   </button>
                 </div>
               )}
@@ -929,7 +929,7 @@ function AttentionQueue() {
                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-deep-violet" aria-hidden />
                  <span className="min-w-0 flex-1">
                    <span className="block truncate text-[13px] font-semibold text-ink dark:text-fog">{editedTitle}</span>
-                   <span className="block truncate text-[11px] text-ink/45 dark:text-fog/45">See what changed and respond to the new version</span>
+                   <span className="block truncate text-[11px] text-ink/45 dark:text-fog/45">{t.dashboard.attention.seeWhatChanged}</span>
                  </span>
                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className={`h-3.5 w-3.5 shrink-0 text-ink/25 dark:text-fog/25 transition group-hover:text-deep-violet dark:group-hover:text-violet-soft ${editedOpen ? "rotate-180" : ""}`}>
                    <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
@@ -970,14 +970,14 @@ function AttentionQueue() {
                                  title="Re-run the full AI pipeline on the new review text"
                                  className="inline-flex items-center gap-1 rounded-[8px] bg-deep-violet/[0.08] dark:bg-violet-soft/[0.08] px-3 py-1.5 text-[11px] font-bold text-deep-violet dark:text-violet-soft outline-none transition hover:bg-deep-violet/[0.15] dark:hover:bg-violet-soft/[0.15] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40 disabled:opacity-50"
                                >
-                                 {editedRewritingId === draft.id ? "Rewriting…" : "Rewrite"}
+                                 {editedRewritingId === draft.id ? t.dashboard.attention.rewriting : t.dashboard.attention.rewrite}
                                </button>
                                <button
                                  onClick={() => void approveEditedDraft(draft, d.review_id)}
                                  disabled={busy || editedApprovingId !== null}
                                  className="rounded-[8px] bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40 active:scale-[0.98] disabled:opacity-50"
                                >
-                                 {busy ? "Publishing…" : "Approve & publish"}
+                                 {busy ? t.dashboard.attention.publishing : t.dashboard.attention.approvePublish}
                                </button>
                              </div>
                            </div>
