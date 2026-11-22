@@ -44,6 +44,7 @@ def serialize(place: BenchmarkPlace) -> dict:
         "label": place.label,
         "notes": place.notes,
         "in_heatmap": place.in_heatmap,
+        "in_bench_set": place.in_bench_set,
         "name": place.name,
         "address": getattr(place, "address", None),
         "types": getattr(place, "types", None),
@@ -247,6 +248,49 @@ async def toggle_heatmap(
     if row is None:
         return None
     row.in_heatmap = (not row.in_heatmap) if enabled is None else bool(enabled)
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
+BENCH_SET_MAX = 5
+
+
+async def set_bench_set(
+    db: AsyncSession, tenant_id: str, place_id: str, *, enabled: bool | None = None
+) -> BenchmarkPlace:
+    """Toggle a saved place's membership in the tenant's benchmark set.
+
+    The cap is enforced under a row lock on the tenant's bench so two
+    concurrent toggles cannot both pass the count check (AGENTS.md: real
+    concurrency). Enabling an already-enabled member is a no-op that must
+    not trip the cap.
+    """
+    row = await get_saved(db, tenant_id, place_id)
+    if row is None:
+        raise BenchError("Saved place not found")
+    new_value = (not row.in_bench_set) if enabled is None else bool(enabled)
+    if new_value is False or row.in_bench_set is True:
+        row.in_bench_set = new_value
+        await db.commit()
+        await db.refresh(row)
+        return row
+    members = (
+        await db.execute(
+            select(BenchmarkPlace)
+            .where(
+                BenchmarkPlace.tenant_id == tenant_id,
+                BenchmarkPlace.in_bench_set.is_(True),
+            )
+            .with_for_update()
+        )
+    ).scalars().all()
+    if len(members) >= BENCH_SET_MAX:
+        raise BenchError(
+            f"Benchmark set is full ({BENCH_SET_MAX} places). "
+            "Remove one before adding another."
+        )
+    row.in_bench_set = True
     await db.commit()
     await db.refresh(row)
     return row

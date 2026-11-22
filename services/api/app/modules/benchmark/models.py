@@ -47,6 +47,10 @@ class BenchmarkPlace(Base):
     label: Mapped[str | None] = mapped_column(String(120), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     in_heatmap: Mapped[bool] = mapped_column(default=True)
+    # Membership in the tenant's named benchmark set (max 5, enforced in
+    # service.set_bench_set). Drives the compare page's default selection;
+    # in_heatmap stays independent (heatmap ≠ benchmark set).
+    in_bench_set: Mapped[bool] = mapped_column(default=False)
     # Cached provider fields (only written when place_cache_enabled).
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     address: Mapped[str | None] = mapped_column(String(500), nullable=True)

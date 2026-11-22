@@ -245,6 +245,22 @@ async def set_heatmap(
     return service.serialize(row)
 
 
+@router.post("/places/{place_id}/bench-set", response_model=dict)
+async def set_bench_set(
+    place_id: str,
+    enabled: bool | None = Query(default=None),
+    ctx: TenantContext = Depends(require_perm("benchmark.manage")),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        row = await service.set_bench_set(
+            db, tenant_id_of(ctx.user), place_id, enabled=enabled
+        )
+    except service.BenchError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return service.serialize(row)
+
+
 @router.post("/places/{place_id}/refresh", response_model=dict)
 async def refresh_place(
     place_id: str,
