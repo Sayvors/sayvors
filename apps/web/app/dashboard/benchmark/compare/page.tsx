@@ -112,7 +112,7 @@ function normalizeRange(value: string | null): CompareRange {
 
 function getFactRows(c: Record<string, any>): Row<FactKey>[] {
   return [
-    { key: "positive_pct", label: c.positiveSentiment, value: (s) => s.facts.positive_pct, render: (s) => pct(s.facts.positive_pct) },
+    { key: "positive_pct", label: c.positiveSentiment, value: (s) => s.facts.positive_pct, higherIsBetter: true, render: (s) => pct(s.facts.positive_pct) },
     { key: "negative_pct", label: c.negativeSentiment, value: (s) => s.facts.negative_pct, higherIsBetter: false, render: (s) => pct(s.facts.negative_pct) },
     { key: "branch", label: c.branchLocation, render: (s) => s.facts.branch ?? "—" },
     { key: "employee_mentions", label: c.teamMentioned, value: (s) => s.facts.employee_mentions, render: (s) => num(s.facts.employee_mentions) },
@@ -1173,8 +1173,10 @@ export default function ComparePage() {
     () => saved.filter((p) => p.in_bench_set).slice(0, 5),
     [saved]
   );
-  const bareUrl = !params.get("main") && !params.get("vs");
-  const defaultsReady = benchSet.length >= 0 && own.length >= 0 && (savedQuery.isSuccess || savedQuery.isError) && (channelsQuery.isSuccess || channelsQuery.isError);
+  // Truly bare URL only — a legacy ?s=/?left=/?right= link parses to a real
+  // selection and must not be clobbered by the defaults.
+  const bareUrl = !selection.main && selection.competitors.length === 0;
+  const defaultsReady = (savedQuery.isSuccess || savedQuery.isError) && (channelsQuery.isSuccess || channelsQuery.isError);
   const appliedDefaults = useRef(false);
   useEffect(() => {
     if (!bareUrl || !defaultsReady || appliedDefaults.current) return;
