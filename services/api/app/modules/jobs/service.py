@@ -448,6 +448,9 @@ ACTIVE_UI_STATUSES = {
     JobStatus.running.value,
     JobStatus.retrying.value,
     JobStatus.blocked.value,
+    JobStatus.failed.value,
+    JobStatus.dead.value,
+    JobStatus.cancelled.value,
 }
 
 
@@ -522,14 +525,19 @@ async def update_job_progress(
 
 
 async def list_active_ui_jobs(db: AsyncSession, *, tenant_id: str, limit: int = 20) -> list[Job]:
-    """In-flight UI-visible jobs for the tenant progress panel."""
+    """In-flight and recent terminal UI-visible jobs for the tenant progress panel."""
     limit = max(1, min(int(limit), 20))
+    terminal_cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
+    terminal = {JobStatus.failed.value, JobStatus.dead.value, JobStatus.cancelled.value, JobStatus.succeeded.value}
     stmt = (
         select(Job)
         .where(
             Job.tenant_id == tenant_id,
             Job.ui_visible.is_(True),
-            Job.status.in_(ACTIVE_UI_STATUSES),
+            (
+                Job.status.in_([s for s in ACTIVE_UI_STATUSES if s not in terminal])
+                | ((Job.status.in_(terminal)) & (Job.updated_at >= terminal_cutoff))
+            ),
         )
         .order_by(Job.created_at.desc(), Job.id.desc())
         .limit(limit)

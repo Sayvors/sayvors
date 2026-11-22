@@ -3,6 +3,7 @@ import { Geist, Geist_Mono, IBM_Plex_Sans_Arabic } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth-context";
 import QueryProvider from "@/components/QueryProvider";
+import JobProgressProvider from "@/components/jobs/JobProgressProvider";
 import WebVitalsReporter from "@/components/WebVitalsReporter";
 
 const geistSans = Geist({
@@ -59,7 +60,9 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col">
         <AuthProvider>
-          <QueryProvider>{children}</QueryProvider>
+          <QueryProvider>
+            <JobProgressProvider>{children}</JobProgressProvider>
+          </QueryProvider>
           <WebVitalsReporter />
         </AuthProvider>
       </body>

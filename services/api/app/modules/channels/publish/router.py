@@ -396,6 +396,18 @@ async def publish_post(
                     subject_id=str(uuid.uuid4()),
                     lane_key=f"{tenant_id}:{platform}:{asset_id}:{method}",
                 )
+                platform_label = {
+                    "google_reviews": "Google Business Profile",
+                    "facebook": "Facebook",
+                    "instagram": "Instagram",
+                }.get(str(platform), "channel")
+                job.ui_visible = True
+                job.ui_kind = "publish"
+                job.ui_title = f"Publishing to {platform_label}"
+                job.progress_label = "Queued"
+                job.ui_subject_type = "post"
+                job.ui_subject_id = job.subject_id
+                db.add(job)
                 jobs_out.append(_to_out(job))
         await db.commit()
     except ValueError as e:

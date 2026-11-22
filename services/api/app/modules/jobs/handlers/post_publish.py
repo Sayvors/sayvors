@@ -55,6 +55,11 @@ async def handle_post_publish(job: Job, db: AsyncSession) -> dict | None:
     Returns a result dict persisted on Job.result.
     """
     payload = job.payload or {}
+    if getattr(job, "ui_visible", False):
+        job.progress = 10
+        job.progress_label = "Preparing"
+        db.add(job)
+        await db.flush()
     media_url = payload.get("media_url")
     media_type = payload.get("media_type")
     media_key = payload.get("media_key")
@@ -173,6 +178,9 @@ async def handle_post_publish(job: Job, db: AsyncSession) -> dict | None:
             scheduled_at=scheduled_at,
         )
 
+    if getattr(job, "ui_visible", False):
+        job.progress = 100
+        job.progress_label = "Completed"
     await complete_job(db, job=job, result=result)
 
     # A promotional post has an end date. Now that the post is live and
