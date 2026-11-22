@@ -325,22 +325,24 @@ function BannerCheckCard({
   /** When true, an idle state is surfaced as a required step, not hidden. */
   required?: boolean;
 }) {
+  const { t } = useI18n();
+  const pc = t.publish.photoCheck;
   if (check.state === "idle") {
     if (!required) return null;
     return (
       <div className="mt-3 rounded-[8px] border border-deep-violet/25 bg-deep-violet/[0.04] px-3.5 py-3">
         <p className="text-[12px] font-bold text-deep-violet dark:text-fog">
-          Photo check required
+          {pc.required}
         </p>
         <p className="mt-1 text-[11px] leading-relaxed text-ink/60 dark:text-fog/60">
-          Check this photo before publishing it as your Google cover. It looks at size, shape, sharpness, and whether it fits a Google banner.
+          {pc.requiredDesc}
         </p>
         <button
           type="button"
           onClick={onRun}
           className="clay-btn-primary mt-2.5 px-4 py-2 text-[11px] font-bold focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
         >
-          Check photo
+          {pc.checkPhoto}
         </button>
       </div>
     );
@@ -351,7 +353,7 @@ function BannerCheckCard({
         <svg className="h-4 w-4 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
           <path d="M12 3a9 9 0 1 0 9 9" strokeLinecap="round" />
         </svg>
-        Checking this photo for Google…
+        {pc.checking}
       </div>
     );
   }
@@ -359,10 +361,10 @@ function BannerCheckCard({
     return (
       <div className="mt-3 flex items-start justify-between gap-2 rounded-[8px] border border-red-500/30 bg-red-500/[0.06] px-3.5 py-2.5">
         <span className="text-[11.5px] font-semibold text-red-700 dark:text-red-400">
-          {check.error || "The photo check could not run right now."}
+          {check.error || pc.couldNotRun}
         </span>
         <button type="button" onClick={onRetry} className="shrink-0 text-[11px] font-bold text-red-700 underline dark:text-red-400">
-          Retry
+          {pc.retry}
         </button>
       </div>
     );
@@ -377,13 +379,13 @@ function BannerCheckCard({
       : suitable === "no"
         ? { border: "border-red-500/30", bg: "bg-red-500/[0.06]", text: "text-red-700 dark:text-red-400" }
         : { border: "border-amber-500/30", bg: "bg-amber-500/10", text: "text-amber-800 dark:text-amber-300" };
-  const label = suitable === "yes" ? "Good for a Google cover" : suitable === "no" ? "Not a good Google cover" : "Might work as a Google cover";
+  const label = suitable === "yes" ? pc.good : suitable === "no" ? pc.bad : pc.maybe;
   const aiLooked = Boolean(result.ai_verdict);
   const reasons = (result.reasons && result.reasons.length > 0)
     ? result.reasons
     : (result.ai_verdict?.reasons?.length
       ? result.ai_verdict.reasons
-      : (result.checks ?? []).filter((c) => !c.pass).map((c) => (c.note ? `${c.label}: ${c.note}` : c.label)));
+      : (result.checks ?? []).filter((ck) => !ck.pass).map((ck) => (ck.note ? `${ck.label}: ${ck.note}` : ck.label)));
 
   return (
     <div className={`mt-3 rounded-[8px] border ${tone.border} ${tone.bg} px-3.5 py-3`}>
@@ -394,7 +396,7 @@ function BannerCheckCard({
           </svg>
           <span className={`text-[11.5px] font-bold ${tone.text}`}>{label}</span>
         </div>
-        <span className={`text-[11.5px] font-bold ${tone.text}`}>{confidence}% confident</span>
+        <span className={`text-[11.5px] font-bold ${tone.text}`}>{pc.confident.replace("{n}", String(confidence))}</span>
       </div>
       <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
         <div
@@ -403,10 +405,10 @@ function BannerCheckCard({
         />
       </div>
       <p className={`mt-2 text-[11px] leading-relaxed ${tone.text}`}>
-        {result.summary ?? "No summary."}
+        {result.summary ?? pc.noSummary}
       </p>
       <p className={`mt-1 text-[10px] font-bold uppercase tracking-wide ${tone.text} opacity-70`}>
-        {aiLooked ? "Checked by AI" : "Checked by photo rules"}
+        {aiLooked ? pc.checkedByAi : pc.checkedByRules}
       </p>
       {reasons.length > 0 ? (
         <ul className="mt-2 space-y-1 border-t border-current/10 pt-2">
@@ -1916,13 +1918,13 @@ export default function PublishComposer({
                       <div className="p-3 sm:p-4">
                         {postFormats.length > 0 && (
                           <>
-                            <p className={`mb-2 text-[10px] font-bold uppercase tracking-[0.12em] ${INK2}`}>Posts</p>
+                            <p className={`mb-2 text-[10px] font-bold uppercase tracking-[0.12em] ${INK2}`}>{tr.publish.photoCheck.posts}</p>
                             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">{postFormats.map(renderFormat)}</div>
                           </>
                         )}
                         {surfaceFormats.length > 0 && (
                           <>
-                            <p className={`mb-2 mt-4 text-[10px] font-bold uppercase tracking-[0.12em] ${INK2}`}>Location media</p>
+                            <p className={`mb-2 mt-4 text-[10px] font-bold uppercase tracking-[0.12em] ${INK2}`}>{tr.publish.photoCheck.locationMedia}</p>
                             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">{surfaceFormats.map(renderFormat)}</div>
                           </>
                         )}
@@ -2121,14 +2123,14 @@ export default function PublishComposer({
                           <option key={c} value={c}>{c.replace(/_/g, " ")}</option>
                         ))}
                       </select>
-                      <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">Choose where this photo appears in the location gallery on Google.</p>
+                      <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">{tr.publish.photoCheck.chooseGalleryCategory}</p>
                     </div>
                   )}
                   {modalCtx.method === "banner" && media?.type === "image" && (
                     <div>
-                      <p className="text-[12px] font-bold text-[var(--ui-ink)]">Photo check</p>
+                      <p className="text-[12px] font-bold text-[var(--ui-ink)]">{tr.publish.photoCheck.title}</p>
                       <p className="mt-0.5 text-[11px] leading-relaxed text-[var(--ui-ink-2)]">
-                        Required before publishing this Promotion. Keep this dialog open while the check runs.
+                        {tr.publish.photoCheck.requiredBeforePublishing}
                       </p>
                     </div>
                   )}
