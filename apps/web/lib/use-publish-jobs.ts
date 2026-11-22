@@ -1,18 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./api-rag";
 import { fetchPublishTargets } from "./publish-targets";
+import { queryKeys } from "./query-keys";
 import type { PlatformKey, PostMethod } from "@/components/dashboard/publish/types";
 
 /*
- * The publish jobs behind the posts feed: one row per destination+format of
- * one push, newest first. The feed renders them as cards next to the Google
- * posts and media library, so the same fetch serves both the cards and the
- * "remove from platform" actions.
- *
- * Polls every 15s while mounted (the publishing worker moves rows through
- * queued → running → succeeded) and re-reads on demand after a publish.
+ * Publish jobs feed: one row per destination+format of one push, newest first.
+ * Uses TanStack Query for shared caching, dedupe, and background refresh.
  */
 
 export interface PublishJob {
@@ -34,97 +31,66 @@ export interface PublishJob {
   cta_url?: string | null;
   start_date?: string | null;
   end_date?: string | null;
-  /** When the post is due to be taken down again (a promotional post
-   * with an end date). */
+  /** When the post is due to be taken down again (a promotional post with an end date). */
   delete_at?: string | null;
 }
 
-/** Rows a delete/cancel can still act on: everything not mid-flight and not
- * already gone. A running row is left alone — deleting a post the worker is
- * uploading right now races the publish call itself. */
+/** Rows a delete/cancel can still act on. */
 export const DELETABLE_STATUSES = new Set(["succeeded", "accepted", "queued", "retrying", "blocked"]);
 /** Rows that have not gone out yet — these get cancelled, never deleted. */
 export const QUEUED_STATUSES = new Set(["accepted", "queued", "retrying", "blocked"]);
-
-/** Terminal rows that never produced a platform artifact. They can be
- *  dismissed from the feed even for account surfaces (profile/banner),
- *  because there is nothing on the platform to remove. */
+/** Terminal rows that never produced a platform artifact. */
 export const TERMINAL_STATUSES = new Set(["failed", "dead", "cancelled"]);
+const ACTIVE_STATUSES = new Set(["accepted", "queued", "running", "retrying", "blocked"]);
 
-/**
- * Only in-flight work is left alone — deleting a post the worker is
- * uploading right now races the publish call itself. Everything else
- * (including a published profile picture or banner) can be dismissed from
- * the feed: account surfaces can't be removed from Google, but their feed
- * row is just a record, so removing it never touches the platform.
- */
+/** Only in-flight work is left alone; everything else can be dismissed/removed. */
 export function isRemovableJob(job: Pick<PublishJob, "status" | "method">): boolean {
   if (job.status === "running") return false;
   return DELETABLE_STATUSES.has(job.status) || TERMINAL_STATUSES.has(job.status);
 }
 
 export function usePublishJobs() {
-  const [jobs, setJobs] = useState<PublishJob[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [names, setNames] = useState<Map<string, string>>(new Map());
+  const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
-  const mounted = useRef(true);
 
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
+  const jobsQuery = useQuery({
+    queryKey: queryKeys.posts.publishJobs(50),
+    queryFn: async () => (await apiFetch("/api/v1/channels/publish?limit=50")) as PublishJob[],
+    staleTime: 15_000,
+    refetchInterval: (query) => {
+      const rows = (query.state.data as PublishJob[] | undefined) ?? [];
+      return rows.some((j) => ACTIVE_STATUSES.has(j.status)) ? 15_000 : 60_000;
+    },
+  });
 
-  const refresh = useCallback(async (silent = false) => {
-    if (!silent) setError(null);
-    try {
-      const rows = (await apiFetch("/api/v1/channels/publish?limit=50")) as PublishJob[];
-      if (!mounted.current) return;
-      setJobs(Array.isArray(rows) ? rows : []);
-    } catch (e) {
-      if (!mounted.current) return;
-      if (!silent) setError(e instanceof Error ? e.message : "Could not load the published posts.");
-    }
-  }, []);
+  const targetsQuery = useQuery({
+    queryKey: queryKeys.posts.publishTargets(),
+    queryFn: fetchPublishTargets,
+    staleTime: 5 * 60_000,
+  });
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial load
-    void refresh();
-  }, [refresh]);
+  const jobs = jobsQuery.data ?? null;
+  const error = jobsQuery.error instanceof Error ? jobsQuery.error.message : jobsQuery.error ? "Could not load the published posts." : null;
 
-  // The worker moves rows between states after the page is already open.
-  useEffect(() => {
-    const id = setInterval(() => void refresh(true), 15000);
-    return () => clearInterval(id);
-  }, [refresh]);
+  const names = useMemo(() => {
+    const byAsset = new Map<string, string>();
+    const set = targetsQuery.data;
+    if (!set) return byAsset;
+    [...set.social, ...set.google].forEach((t) => {
+      const raw =
+        t.platform === "google_reviews"
+          ? (t.locationId ?? null)
+          : t.id.includes(":")
+            ? t.id.slice(t.id.indexOf(":") + 1)
+            : null;
+      if (raw) byAsset.set(`${t.platform}:${raw}`, t.name);
+    });
+    return byAsset;
+  }, [targetsQuery.data]);
 
-  // Destination display names from the same source the composer uses, so a
-  // raw asset id renders as the business name.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const set = await fetchPublishTargets();
-      if (cancelled) return;
-      const byAsset = new Map<string, string>();
-      [...set.social, ...set.google].forEach((t) => {
-        // A Google job names its branch by location id. The target row is
-        // keyed by the channel id, so Google targets are indexed by location.
-        const raw =
-          t.platform === "google_reviews"
-            ? (t.locationId ?? null)
-            : t.id.includes(":")
-              ? t.id.slice(t.id.indexOf(":") + 1)
-              : null;
-        if (raw) byAsset.set(`${t.platform}:${raw}`, t.name);
-      });
-      setNames(byAsset);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const refresh = useCallback(async (_silent = false) => {
+    await queryClient.invalidateQueries({ queryKey: queryKeys.posts.publishJobs(50) });
+  }, [queryClient]);
 
   const displayName = useCallback(
     (job: PublishJob) => {
@@ -159,15 +125,15 @@ export function usePublishJobs() {
   const cancelJob = useCallback(async (jobId: string) => {
     setBusy(true);
     try {
-      const u = (await apiFetch(`/api/v1/channels/publish/${jobId}/cancel`, { method: "POST" })) as PublishJob;
-      setJobs((prev) => (prev ?? []).map((j) => (j.job_id === u.job_id ? { ...j, status: u.status } : j)));
+      await apiFetch(`/api/v1/channels/publish/${jobId}/cancel`, { method: "POST" });
+      await refresh(true);
       return { ok: true as const, error: null as string | null };
     } catch (e) {
       return { ok: false as const, error: e instanceof Error ? e.message : "Cancelling failed." };
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [refresh]);
 
   const deletableIds = useMemo(
     () => (jobs ?? []).filter(isRemovableJob).map((j) => j.job_id),
