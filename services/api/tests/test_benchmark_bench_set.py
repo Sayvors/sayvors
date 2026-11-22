@@ -30,6 +30,7 @@ async def test_toggle_and_serialize(db, user_id):
 
 @pytest.mark.asyncio
 async def test_toggle_unknown_place_raises(db, user_id):
+    assert issubclass(service.BenchNotFound, service.BenchError)
     with pytest.raises(service.BenchError):
         await service.set_bench_set(db, user_id, "nope", enabled=True)
 

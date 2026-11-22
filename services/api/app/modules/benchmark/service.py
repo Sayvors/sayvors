@@ -24,6 +24,10 @@ class BenchError(ValueError):
     """A validation or quota failure safe to show to the tenant."""
 
 
+class BenchNotFound(BenchError):
+    """The place is not on this tenant's bench."""
+
+
 async def get_config(db: AsyncSession) -> BenchmarkConfig:
     """Single config row, created with defaults on first use."""
     row = (
@@ -268,7 +272,7 @@ async def set_bench_set(
     """
     row = await get_saved(db, tenant_id, place_id)
     if row is None:
-        raise BenchError("Saved place not found")
+        raise BenchNotFound("Saved place not found")
     new_value = (not row.in_bench_set) if enabled is None else bool(enabled)
     if new_value is False or row.in_bench_set is True:
         row.in_bench_set = new_value

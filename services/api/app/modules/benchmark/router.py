@@ -256,6 +256,8 @@ async def set_bench_set(
         row = await service.set_bench_set(
             db, tenant_id_of(ctx.user), place_id, enabled=enabled
         )
+    except service.BenchNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
     except service.BenchError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     return service.serialize(row)
