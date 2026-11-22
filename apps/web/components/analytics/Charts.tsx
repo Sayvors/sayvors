@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { TimeseriesPoint } from "@/lib/api-analytics";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 import { FactSource } from "@/components/analytics/FactSource";
 
 /* ── Metric switcher + area chart ─────────────────────────────────── */
@@ -80,9 +81,23 @@ export function MetricChart({
   sourceHref?: string;
   sourceLinkLabel?: string;
 }) {
+  const { t } = useI18n();
+  const c = t.analytics.charts;
   const [metric, setMetric] = useState<MetricKey>("reviews");
   const [hover, setHover] = useState<number | null>(null);
-  const chartLabels = labels ?? DEFAULT_METRIC_CHART_LABELS;
+  const chartLabels = labels ?? {
+    activityOverTime: c.activityOverTime,
+    metric: c.metric,
+    reviews: c.reviews,
+    sentiment: c.sentiment,
+    google: c.google,
+    mapsImpressions: c.mapsImpressions,
+    positive: c.positive,
+    neutral: c.neutral,
+    negative: c.negative,
+    noActivity: c.noActivity,
+    chartLabel: c.chartLabel,
+  };
   const metricLabels: Record<MetricKey, string> = {
     reviews: chartLabels.reviews,
     sentiment: chartLabels.sentiment,
@@ -282,7 +297,7 @@ const STAR_COLORS: Record<number, string> = {
 export function RatingDistribution({
   distribution,
   total,
-  labels = { ariaLabel: "Rating distribution", reviewsTooltip: "{count} reviews ({percent}%)" },
+  labels,
   source,
   sourceDetail,
   sourceHref,
@@ -296,9 +311,11 @@ export function RatingDistribution({
   sourceHref?: string;
   sourceLinkLabel?: string;
 }) {
+  const { t } = useI18n();
+  const l = labels ?? { ariaLabel: t.analytics.charts.ratingDistribution, reviewsTooltip: t.analytics.charts.reviewsTooltip };
   const max = Math.max(1, ...Object.values(distribution));
   return (
-    <div className="space-y-3" aria-label={labels.ariaLabel}>
+    <div className="space-y-3" aria-label={l.ariaLabel}>
       {[5, 4, 3, 2, 1].map((star) => {
         const count = distribution[String(star)] ?? 0;
         const pct = total ? Math.round((count / total) * 100) : 0;
@@ -317,7 +334,7 @@ export function RatingDistribution({
                 style={{ width: `${(count / max) * 100}%`, background: STAR_COLORS[star] }}
               />
             </div>
-            <span className="w-14 shrink-0 text-right text-[11px] font-semibold tabular-nums text-[var(--ui-ink)]" title={labels.reviewsTooltip.replace("{count}", String(count)).replace("{percent}", String(pct))}>
+            <span className="w-14 shrink-0 text-right text-[11px] font-semibold tabular-nums text-[var(--ui-ink)]" title={l.reviewsTooltip.replace("{count}", String(count)).replace("{percent}", String(pct))}>
               {count} · {pct}%
             </span>
           </div>
@@ -354,16 +371,18 @@ export function SentimentSplitBar({
   sourceHref?: string;
   sourceLinkLabel?: string;
 }) {
+  const { t } = useI18n();
+  const c = t.analytics.charts;
   const total = positive + neutral + negative;
   const seg = (n: number) => (total ? (n / total) * 100 : 0);
   const rows = [
-    { label: "Positive", value: positive, color: "var(--ui-ink)", pct: seg(positive) },
-    { label: "Neutral", value: neutral, color: "var(--ui-ink-2)", pct: seg(neutral) },
-    { label: "Negative", value: negative, color: "var(--ui-line-strong)", pct: seg(negative) },
+    { label: c.positive, value: positive, color: "var(--ui-ink)", pct: seg(positive) },
+    { label: c.neutral, value: neutral, color: "var(--ui-ink-2)", pct: seg(neutral) },
+    { label: c.negative, value: negative, color: "var(--ui-line-strong)", pct: seg(negative) },
   ];
   return (
     <div>
-      <div className="flex h-3 overflow-hidden rounded-full bg-[var(--ui-sunken)]" role="img" aria-label="Sentiment split">
+      <div className="flex h-3 overflow-hidden rounded-full bg-[var(--ui-sunken)]" role="img" aria-label={c.sentimentSplit}>
         {rows.map((r) => (
           <div
             key={r.label}
@@ -380,7 +399,7 @@ export function SentimentSplitBar({
               {r.label}
             </p>
             <p className="text-[16px] font-bold text-[var(--ui-ink)]">{total ? Math.round(r.pct) : 0}%</p>
-            <p className="text-[10px] text-[var(--ui-ink-2)]">{r.value} reviews</p>
+            <p className="text-[10px] text-[var(--ui-ink-2)]">{c.reviewsCount.replace("{count}", String(r.value))}</p>
           </div>
         ))}
       </div>

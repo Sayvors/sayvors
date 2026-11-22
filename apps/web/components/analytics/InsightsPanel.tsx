@@ -221,9 +221,9 @@ function ComplaintsByArea({
       </ul>
       <FactSource
         source="Connected review text"
-        detail={`last ${days} days vs the prior ${days}`}
+        detail={t.analytics.lastDaysVsPrior(days)}
         href={googleConnected ? GBP_DASHBOARD_URL : null}
-        linkLabel="Open GBP dashboard"
+        linkLabel={t.analytics.pulse.openGbpDashboard}
       />
     </section>
   );
@@ -412,9 +412,9 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
               </div>
               <FactSource
                 source="Connected review text"
-                detail={`last ${days} days`}
+                detail={t.analytics.pulse.lastDays(days)}
                 href={channels.length > 0 ? GBP_DASHBOARD_URL : null}
-                linkLabel="Open GBP dashboard"
+                linkLabel={t.analytics.pulse.openGbpDashboard}
               />
             </div>
           ) : null}
@@ -457,9 +457,9 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
               </ul>
               <FactSource
                 source="Connected review text"
-                detail={`last ${days} days`}
+                detail={t.analytics.pulse.lastDays(days)}
                 href={channels.length > 0 ? GBP_DASHBOARD_URL : null}
-                linkLabel="Open GBP dashboard"
+                linkLabel={t.analytics.pulse.openGbpDashboard}
               />
             </section>
           ) : null}
@@ -565,7 +565,7 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
               </div>
               <FactSource
                 source="Sayvors message rollup"
-                detail={`last ${days} days`}
+                detail={t.analytics.pulse.lastDays(days)}
               />
             </div>
           ) : null}

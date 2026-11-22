@@ -55,7 +55,7 @@ export default function PresenceSection({
   const verifyHref = mapsHref ?? GBP_DASHBOARD_URL;
   const synced = timeAgo(p.syncedAt);
   const branchNote =
-    p.branchCount && p.branchCount > 1 ? `${p.branchCount} branches` : null;
+    p.branchCount && p.branchCount > 1 ? t.analytics.branchesCount(p.branchCount) : null;
   const fmtNum = (value: number) => new Intl.NumberFormat(locale).format(value);
   const snapshotTiles = [
     { label: copy.searchViews, value: p.searchViews },
@@ -104,7 +104,7 @@ export default function PresenceSection({
           source="Google Business Profile"
           sourceDetail={p.windowLabel ?? copy.last30Days}
           sourceHref={verifyHref}
-          sourceLinkLabel={mapsHref ? "Verify on Google Maps" : "Open GBP dashboard"}
+          sourceLinkLabel={mapsHref ? t.analytics.verifyOnGoogleMaps : t.analytics.pulse.openGbpDashboard}
         />
         <PresenceChart
           points={points}
@@ -117,7 +117,7 @@ export default function PresenceSection({
           source="Google Business Profile"
           sourceDetail={p.windowLabel ?? copy.last30Days}
           sourceHref={verifyHref}
-          sourceLinkLabel={mapsHref ? "Verify on Google Maps" : "Open GBP dashboard"}
+          sourceLinkLabel={mapsHref ? t.analytics.verifyOnGoogleMaps : t.analytics.pulse.openGbpDashboard}
         />
       </div>
       <div className="ui-card p-4 sm:p-5">
@@ -158,11 +158,11 @@ export default function PresenceSection({
         <FactSource
           source="Google Business Profile"
           detail={p.windowLabel ?? copy.last30Days}
-          note={[branchNote, synced ? `synced ${synced}` : null]
+          note={[branchNote, synced ? t.analytics.pulse.synced(synced) : null]
             .filter(Boolean)
             .join(" · ") || null}
           href={verifyHref}
-          linkLabel={mapsHref ? "Verify on Google Maps" : "Open GBP dashboard"}
+          linkLabel={mapsHref ? t.analytics.verifyOnGoogleMaps : t.analytics.pulse.openGbpDashboard}
         />
       </div>
     </div>

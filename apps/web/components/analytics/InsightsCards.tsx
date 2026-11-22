@@ -4,6 +4,7 @@ import Link from "next/link";
 import type { InsightsCards, ThemeCard } from "@/lib/api-analytics";
 import { FactSource } from "@/components/analytics/FactSource";
 import { GBP_DASHBOARD_URL } from "@/lib/google-links";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 import { timeAgo } from "@/lib/relative-time";
 
 function Trend({ value }: { value: number | null }) {
@@ -64,6 +65,7 @@ export default function InsightsCardsSection({
   /** Whether a Google Business Profile is connected; gates the GBP link. */
   googleConnected?: boolean;
 }) {
+  const { t } = useI18n();
   if (loading && !cards) {
     return <div className="ui-card h-40 animate-pulse" aria-hidden />;
   }
@@ -126,7 +128,7 @@ export default function InsightsCardsSection({
                 source="Connected review text"
                 detail={`last ${cards.days} days`}
                 href={googleConnected ? GBP_DASHBOARD_URL : null}
-                linkLabel="Open GBP dashboard"
+                linkLabel={t.analytics.pulse.openGbpDashboard}
               />
             </section>
           )}
@@ -184,7 +186,7 @@ export default function InsightsCardsSection({
                 source="Connected review ratings"
                 detail="last 7 days vs the prior 7"
                 href={googleConnected ? GBP_DASHBOARD_URL : null}
-                linkLabel="Open GBP dashboard"
+                linkLabel={t.analytics.pulse.openGbpDashboard}
               />
             </section>
           )}
@@ -263,7 +265,7 @@ export default function InsightsCardsSection({
                 source="Connected review ratings"
                 detail="90-day rating trend"
                 href={googleConnected ? GBP_DASHBOARD_URL : null}
-                linkLabel="Open GBP dashboard"
+                linkLabel={t.analytics.pulse.openGbpDashboard}
               />
             </section>
           )}
@@ -300,7 +302,7 @@ export default function InsightsCardsSection({
                   analyzedAgo ? ` · computed ${analyzedAgo}` : ""
                 }`}
                 href={googleConnected ? GBP_DASHBOARD_URL : null}
-                linkLabel="Open GBP dashboard"
+                linkLabel={t.analytics.pulse.openGbpDashboard}
               />
             </section>
           )}

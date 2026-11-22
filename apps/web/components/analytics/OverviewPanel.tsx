@@ -174,7 +174,7 @@ export default function OverviewPanel() {
       listingName:
         selected?.label ??
         (channels.length > 1
-          ? `All businesses (${channels.length} branches)`
+          ? t.analytics.allBusinesses(channels.length)
           : channels[0]?.label ?? "Google Business"),
       windowLabel: `last ${days} days`,
       searchViews: sum(points.map((p) => p.impressions_search)),
@@ -360,13 +360,13 @@ export default function OverviewPanel() {
                   source="Connected review channels"
                   sourceDetail={`last ${days} days`}
                   sourceHref={channels.length > 0 ? GBP_DASHBOARD_URL : undefined}
-                  sourceLinkLabel="Open GBP dashboard"
+                  sourceLinkLabel={t.analytics.pulse.openGbpDashboard}
                 />
               )}
             </div>
             <div className="space-y-5 sm:space-y-6">
               <div className="ui-card p-4 sm:p-5">
-                <h3 className="mb-3 text-[13px] font-bold text-[var(--ui-ink)]">Rating distribution</h3>
+                <h3 className="mb-3 text-[13px] font-bold text-[var(--ui-ink)]">{t.analytics.charts.ratingDistribution}</h3>
                 {loading ? (
                   <div className="space-y-2" aria-hidden>
                     {[0, 1, 2, 3, 4].map((i) => (
@@ -381,13 +381,13 @@ export default function OverviewPanel() {
                       source="Connected review channels"
                       sourceDetail={`last ${days} days`}
                       sourceHref={channels.length > 0 ? GBP_DASHBOARD_URL : undefined}
-                      sourceLinkLabel="Open GBP dashboard"
+                      sourceLinkLabel={t.analytics.pulse.openGbpDashboard}
                     />
                   )
                 )}
               </div>
               <div className="ui-card p-4 sm:p-5">
-                <h3 className="mb-3 text-[13px] font-bold text-[var(--ui-ink)]">Sentiment</h3>
+                <h3 className="mb-3 text-[13px] font-bold text-[var(--ui-ink)]">{t.analytics.charts.sentiment}</h3>
                 {loading ? (
                   <div className="h-3 animate-pulse rounded-full bg-[var(--ui-sunken)]" aria-hidden />
                 ) : (
@@ -399,7 +399,7 @@ export default function OverviewPanel() {
                       source="Sayvors sentiment model"
                       sourceDetail={`connected review text · last ${days} days`}
                       sourceHref={channels.length > 0 ? GBP_DASHBOARD_URL : undefined}
-                      sourceLinkLabel="Open GBP dashboard"
+                      sourceLinkLabel={t.analytics.pulse.openGbpDashboard}
                     />
                   )
                 )}
