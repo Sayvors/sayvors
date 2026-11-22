@@ -98,27 +98,17 @@ async def test_details_maps_reviews_and_photos(monkeypatch, key):
     assert result["photos"][0]["name"] == "places/abc/photos/p1"
 
 
-async def test_outscraper_get_place_caps_reviews_and_passes_cutoff(monkeypatch):
-    import app.modules.benchmark.outscraper as outscraper_mod
-
-    monkeypatch.setattr(settings, "OUTSCRAPER_API_KEY", "test-os-key")
-    monkeypatch.setattr(settings, "GOOGLE_PLACES_API_KEY", "")
-
-    calls = {}
-
-    async def _fake_get_place(place_id, *, reviews_limit=10, start=None, cutoff=None):
-        calls["place_id"] = place_id
-        calls["reviews_limit"] = reviews_limit
-        calls["start"] = start
-        calls["cutoff"] = cutoff
-        return {"place_id": place_id, "name": "Cafe", "reviews": []}
-
-    monkeypatch.setattr(outscraper_mod, "configured", lambda: True)
-    monkeypatch.setattr(outscraper_mod, "get_place", _fake_get_place)
+async def test_get_place_caps_reviews_limit(monkeypatch, key):
+    client = _Client(_Response(payload={
+        "id": "places/abc", "displayName": {"text": "Cafe"},
+        "rating": 4.2, "userRatingCount": 50,
+        "reviews": [{"rating": i, "text": {"text": f"r{i}"}, "publishTime": "2026-01-01T00:00:00Z"} for i in range(20)],
+        "photos": [],
+    }))
+    monkeypatch.setattr(places.httpx, "AsyncClient", lambda **kw: client)
     monkeypatch.setattr(places, "_cache_get_json", lambda *a, **k: _async_none())
     monkeypatch.setattr(places, "_cache_set_json", lambda *a, **k: _async_none())
 
-    result = await places.get_place("abc", reviews_limit=999, cutoff=123)
+    result = await places.get_place("places/abc", reviews_limit=999)
     assert result["place_id"] == "abc"
-    assert calls["reviews_limit"] == 10
-    assert calls["cutoff"] == 123
+    assert len(result["reviews"]) == 10

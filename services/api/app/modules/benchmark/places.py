@@ -13,7 +13,6 @@ import httpx
 
 from ...config import settings
 from ..redis.service import cache_get, cache_set
-from . import outscraper
 
 logger = logging.getLogger(__name__)
 
@@ -150,18 +149,10 @@ async def search_places(
     text = str(query or "").strip()[:255]
     if not text:
         return []
-    cache_key = f"bm:search:{outscraper.configured()}:{language or 'en'}:{region or 'SA'}:{text.lower()}"
+    cache_key = f"bm:search:google:{language or 'en'}:{region or 'SA'}:{text.lower()}"
     cached = await _cache_get_json(cache_key)
     if isinstance(cached, list):
         return cached
-
-    if outscraper.configured():
-        try:
-            result = await outscraper.search_places(text, limit=MAX_SEARCH_RESULTS)
-        except outscraper.OutscraperError as exc:
-            raise PlacesError(str(exc), exc.status_code) from exc
-        await _cache_set_json(cache_key, result, SEARCH_CACHE_TTL_SECONDS)
-        return result
 
     key = _key()
     headers = {"X-Goog-Api-Key": key, "X-Goog-FieldMask": SEARCH_FIELD_MASK}
@@ -201,18 +192,10 @@ async def get_place(
     if not pid:
         raise PlacesError("Unknown place")
     reviews_limit = max(1, min(int(reviews_limit), 10))
-    cache_key = f"bm:place:{outscraper.configured()}:{language or 'en'}:{pid}:{reviews_limit}:{start or 0}:{cutoff or 0}"
+    cache_key = f"bm:place:google:{language or 'en'}:{pid}:{reviews_limit}:{start or 0}:{cutoff or 0}"
     cached = await _cache_get_json(cache_key)
     if isinstance(cached, dict) and cached.get("place_id"):
         return cached
-
-    if outscraper.configured():
-        try:
-            result = await outscraper.get_place(pid, reviews_limit=reviews_limit, start=start, cutoff=cutoff)
-        except outscraper.OutscraperError as exc:
-            raise PlacesError(str(exc), exc.status_code) from exc
-        await _cache_set_json(cache_key, result, DETAILS_CACHE_TTL_SECONDS)
-        return result
 
     key = _key()
     headers = {"X-Goog-Api-Key": key, "X-Goog-FieldMask": DETAILS_FIELD_MASK}
