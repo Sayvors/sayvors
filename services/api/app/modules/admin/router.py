@@ -201,8 +201,12 @@ async def admin_login(
         logger.warning("Failed admin login (unknown/inactive operator) from %s (global failures=%d)", ip, failures)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Wrong credentials.")
     now = datetime.now(timezone.utc)
-    if row.locked_until is not None and row.locked_until > now:
-        raise HTTPException(status_code=status.HTTP_423_LOCKED, detail="Account is locked. Try again later.")
+    locked_until = row.locked_until
+    if locked_until is not None:
+        if locked_until.tzinfo is None:
+            locked_until = locked_until.replace(tzinfo=timezone.utc)
+        if locked_until > now:
+            raise HTTPException(status_code=status.HTTP_423_LOCKED, detail="Account is locked. Try again later.")
     if not verify_password(body.password, row.password_hash):
         r = await db.get(PlatformOperator, row.id)
         if r is not None:
