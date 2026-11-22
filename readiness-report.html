@@ -258,6 +258,29 @@
     <tr><td>AI promotion/banner photo check</td><td><span class="chip ok">Done</span> — when a Promotion has a photo, Sayvors checks whether it works as a Google cover. The photo is measured (size, shape, sharpness, brightness) and, when an admin-configured vision model is available, that model looks at the actual photo and returns one plain-language verdict with short reasons. The model is chosen on <strong>Admin → AI image check</strong> (<code>platform_config.banner_vision_model</code>, never exposed to tenants); if no model is configured or the model fails, the rule-based verdict stands. One verdict, one reason list — no internal plumbing shown to tenants. Advice only — never blocks publishing.</td></tr>
   </table></div>
 
+  <h3><span class="chip med">PLANNED — benchmark detail plan (charts &amp; graphs)</span></h3>
+  <p class="note">Detail plan added 2026-11-22 (see conversation). What to add to the benchmark page(s) — ranked Now / P0 / P1 / P2 — grounded in the 2026-09 repo research doc, Radorescent 2026 dashboard blog, HN threads (Whither Dashboard Design / Ask HN great dashboards / Lessons learned), Reddit (r/agency, r/localseo, r/reviewlyai, r/smallbusiness), G2 community (Birdeye vs Reputation vs Experience.com vs Sprinklr), and SaaS CFO interactive reports. No new deps — inline SVG/Canvas only; everything runs on existing endpoints (<code>/benchmark</code>, <code>/benchmark/compare</code>, <code>/benchmark/places</code>, <code>/benchmark/history</code>).</p>
+  <div class="scroll"><table>
+    <tr><th>Item</th><th>What it adds</th><th>Status</th></tr>
+    <tr><td>Now — trend charts</td><td>Line chart of rating + reviews/month per subject (from <code>/benchmark/history</code>). The flagship chart — answers "where is it going," not just "where is it."</td><td><span class="chip med">Planned</span></td></tr>
+    <tr><td>Now — north star card</td><td>Rank "X of Y" + gap-to-leader + health pill (RAG) + fix-first CTA over the leaderboard. Backend already computes <code>benchmark_text</code>/rank/gap.</td><td><span class="chip med">Planned</span></td></tr>
+    <tr><td>Now — distribution strip</td><td>Best/Median/Worst/Gap bars for rep score, rating, response rate, velocity. <code>_distribution</code> already computed in <code>get_benchmark</code> — just expose + draw.</td><td><span class="chip med">Planned</span></td></tr>
+    <tr><td>Now — own-locations scorecards</td><td>Per-branch rating/response rate/velocity/top problem + variance flag (&gt;30-40%).</td><td><span class="chip med">Planned</span></td></tr>
+    <tr><td>P0 — named local competitor set (up to 5)</td><td>Places search + save flow becomes "select my benchmark set." Not synthetic — replaces the demo aggregate as the primary comparison.</td><td><span class="chip med">Planned</span></td></tr>
+    <tr><td>P0 — color-coded gap matrix</td><td>Birdeye-style: rows = metrics, cols = us + 5 named, traffic-light cells + gap bars.</td><td><span class="chip med">Planned</span></td></tr>
+    <tr><td>P0 — sentiment-share + velocity bars</td><td>Stacked sentiment bar + reviews/month bar per subject (already computable from <code>facts</code> + <code>branches</code>).</td><td><span class="chip med">Planned</span></td></tr>
+    <tr><td>P1 — action rate KPI</td><td>actions ÷ impressions with "strong zone" interpretation (from existing Localith stats).</td><td><span class="chip med">Planned</span></td></tr>
+    <tr><td>P1 — completeness &amp; freshness checklist</td><td>0-100 score per subject (rating/recency/response/sentiment spread) with a 30-day fix list.</td><td><span class="chip med">Planned</span></td></tr>
+    <tr><td>P1 — fix-first tickets</td><td>Impact-ranked "fix X first" cards with owner + deadline + expected lift.</td><td><span class="chip med">Planned</span></td></tr>
+    <tr><td>P1 — AI plain-English summary</td><td><code>plain_summary</code> card: "You're #2 of 6 — lead on rating, trail on velocity."</td><td><span class="chip med">Planned</span></td></tr>
+    <tr><td>P1 — rank-trajectory sparkline</td><td>Mini sparkline per subject row (from <code>/benchmark/history</code>).</td><td><span class="chip med">Planned</span></td></tr>
+    <tr><td>P2 — peer cohorts / role tags</td><td><code>Channel.metadata_json</code> tags + "compare within cohort" toggle.</td><td><span class="chip med">Planned</span></td></tr>
+    <tr><td>P2 — baseline-deviation alerts</td><td>8-12 week baseline + arrow + 2-week streak alert.</td><td><span class="chip med">Planned</span></td></tr>
+    <tr><td>P2 — drill-down from red cell</td><td>Red cell → filtered reviews/topics + one-click reply.</td><td><span class="chip med">Planned</span></td></tr>
+    <tr><td>P2 — search-AI visibility band</td><td>Optional (Gloo pattern) — deferrable.</td><td><span class="chip med">Planned</span></td></tr>
+    <tr><td>Guardrails (HN rules)</td><td>No metric sprawl (5-9 visible), no national averages as headline, every chart carries a question-as-title + comparison, no new deps.</td><td><span class="chip med">Planned</span></td></tr>
+  </table></div>
+
   <h3><span class="chip warn">PENDING — code (no infra needed)</span></h3>
   <div class="scroll"><table>
     <tr><th>Item</th><th>What remains</th><th>Size</th></tr>
