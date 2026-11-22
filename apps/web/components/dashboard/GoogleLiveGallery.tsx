@@ -46,7 +46,24 @@ const CATEGORY_FILTERS: { value: string; label: string }[] = [
 
 export default function GoogleLiveGallery() {
   const { t } = useI18n();
-  const gl = t.googleLive;
+  const gl = t.googleLive ?? {
+    removeTitleOne: "Remove this photo from Google?",
+    removeTitleMany: (n: number) => `Remove ${n} photos from Google?`,
+    removeSubtitle: "This removes them from your Google Business Profile. This cannot be undone.",
+    removeBodyOne: "The photo will be removed from Google.",
+    removeBodyMany: (n: number) => `${n} photos will be removed from Google.`,
+    keepThem: "Keep them",
+    remove: "Remove",
+    removing: "Removing…",
+    removedOne: "Removed 1 photo from Google.",
+    removedMany: (n: number) => `Removed ${n} photos from Google.`,
+    removedPartial: (ok: number, fail: number) => `${ok} removed, ${fail} failed.`,
+    removingProgress: (done: number, total: number) => `Removing ${done} of ${total}…`,
+    selectAll: "Select all",
+    clearSelection: "Clear selection",
+    select: "Select",
+    cancel: "Cancel",
+  };
   const queryClient = useQueryClient();
   const { groups } = useLocationGroups();
   const [selectedId, setSelectedId] = useState<string>(ALL_BRANCHES);
