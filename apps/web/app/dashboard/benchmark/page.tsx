@@ -13,6 +13,7 @@ import {
   saveBenchmarkPlace,
   searchPlaces,
   setBenchmarkHeatmap,
+  setBenchmarkSet,
   type BenchmarkSearchResponse,
   type PlaceResult,
   type SavedPlace,
@@ -32,6 +33,7 @@ export default function BenchmarkPage() {
 
   const savedQuery = useQuery({ queryKey: ["benchmark", "saved"], queryFn: fetchSavedPlaces });
   const saved = savedQuery.data ?? [];
+  const benchSetCount = saved.filter((p) => p.in_bench_set).length;
 
   const search = useCallback(async () => {
     const q = query.trim();
@@ -82,6 +84,16 @@ export default function BenchmarkPage() {
     setBusyId(place.place_id);
     try {
       await setBenchmarkHeatmap(place.place_id, !place.in_heatmap);
+      await queryClient.invalidateQueries({ queryKey: ["benchmark", "saved"] });
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function toggleBenchSet(place: SavedPlace) {
+    setBusyId(place.place_id);
+    try {
+      await setBenchmarkSet(place.place_id, !place.in_bench_set);
       await queryClient.invalidateQueries({ queryKey: ["benchmark", "saved"] });
     } finally {
       setBusyId(null);
@@ -207,9 +219,12 @@ export default function BenchmarkPage() {
 
       {/* 3 — Saved business cards */}
       <section aria-label={b.savedBusinesses.replace("{n}", String(saved.length))}>
-        <h2 className="mb-3 text-[14px] font-bold text-[var(--ui-ink)]">
+        <h2 className="mb-1 text-[14px] font-bold text-[var(--ui-ink)]">
           {b.savedBusinesses.replace("{n}", String(saved.length))}
         </h2>
+        <p className="mb-3 text-[11px] text-[#3B2D5E]">
+          {b.benchSetCount.replace("{n}", String(benchSetCount)).replace("{max}", "5")}
+        </p>
         {savedQuery.isPending ? (
           <p className="text-[12px] text-[var(--ui-ink-2)]">{b.loading}</p>
         ) : saved.length === 0 ? (
@@ -319,6 +334,15 @@ export default function BenchmarkPage() {
                         {b.addToHeatmap}
                       </button>
                     ) : null}
+                    <button
+                      type="button"
+                      onClick={() => void toggleBenchSet(place)}
+                      disabled={fetching || (!place.in_bench_set && benchSetCount >= 5)}
+                      title={!place.in_bench_set && benchSetCount >= 5 ? b.benchSetFull : undefined}
+                      className={`rounded-[8px] border border-[#3D1D6E]/25 px-3 py-1.5 text-[11px] font-bold text-[#3D1D6E] disabled:opacity-50 ${FOCUS}`}
+                    >
+                      {place.in_bench_set ? b.benchSetIn : b.benchSetOut}
+                    </button>
                   </div>
                 )}
               </article>

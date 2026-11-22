@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -13,6 +13,7 @@ import {
   fetchReviews,
   fetchSavedPlaces,
   RANGE_DAYS,
+  subjectKey,
   type CompareRange,
   type ComparisonSubject,
   type SavedPlace,
@@ -26,6 +27,7 @@ import TrendChart from "@/components/benchmark/TrendChart";
 import NorthStarCard from "@/components/benchmark/NorthStarCard";
 import DistributionStrip from "@/components/benchmark/DistributionStrip";
 import OwnScorecards from "@/components/benchmark/OwnScorecards";
+import SentimentVelocityBars from "@/components/benchmark/SentimentVelocityBars";
 
 const FOCUS = "focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[#3D1D6E]";
 
@@ -55,12 +57,12 @@ interface Row<T extends string> {
 
 function getMetricRows(c: Record<string, any>): Row<MetricKey>[] {
   return [
-    { key: "total_reviews", label: c.reviewsTotal, value: (s) => s.metrics.total_reviews, render: (s) => num(s.metrics.total_reviews) },
+    { key: "total_reviews", label: c.reviewsTotal, value: (s) => s.metrics.total_reviews, higherIsBetter: true, render: (s) => num(s.metrics.total_reviews) },
     { key: "reviews_last_day", label: c.reviewsLastDay, value: (s) => s.metrics.reviews_last_day, render: (s) => num(s.metrics.reviews_last_day) },
     { key: "reviews_last_week", label: c.reviewsLastWeek, value: (s) => s.metrics.reviews_last_week, render: (s) => num(s.metrics.reviews_last_week) },
-    { key: "reviews_last_month", label: c.reviewsLastMonth, value: (s) => s.metrics.reviews_last_month, render: (s) => num(s.metrics.reviews_last_month) },
+    { key: "reviews_last_month", label: c.reviewsLastMonth, value: (s) => s.metrics.reviews_last_month, higherIsBetter: true, render: (s) => num(s.metrics.reviews_last_month) },
     { key: "reviews_last_year", label: c.reviewsLastYear, value: (s) => s.metrics.reviews_last_year, render: (s) => num(s.metrics.reviews_last_year) },
-    { key: "avg_rating", label: c.averageRating, value: (s) => s.metrics.avg_rating, tierValue: (s) => (s.metrics.total_ratings !== 0 ? s.metrics.avg_rating : null), render: (s) => rating(s) },
+    { key: "avg_rating", label: c.averageRating, value: (s) => s.metrics.avg_rating, tierValue: (s) => (s.metrics.total_ratings !== 0 ? s.metrics.avg_rating : null), higherIsBetter: true, render: (s) => rating(s) },
     { key: "total_ratings", label: c.ratingsTotal, value: (s) => s.metrics.total_ratings, render: (s) => num(s.metrics.total_ratings) },
     { key: "five_star", label: c.fiveStarRatings, value: (s) => s.metrics.five_star, render: (s) => num(s.metrics.five_star) },
     { key: "four_star", label: c.fourStarRatings, value: (s) => s.metrics.four_star, render: (s) => num(s.metrics.four_star) },
@@ -290,6 +292,28 @@ function namedTeam(members: ComparisonSubject["facts"]["named_team"]): ReactNode
 }
 
 /**
+ * Gap chip: how this business differs from the tenant's own column.
+ * Signed diff, colored by whether the direction helps (row-defined).
+ */
+function gapChip(
+  value: number | null,
+  mainValue: number | null,
+  higherIsBetter: boolean
+): { text: string; className: string } | null {
+  if (value == null || mainValue == null || value === mainValue) return null;
+  if (!Number.isFinite(value) || !Number.isFinite(mainValue)) return null;
+  const diff = value - mainValue;
+  const helps = higherIsBetter ? diff > 0 : diff < 0;
+  const sign = diff > 0 ? "+" : "\u2212";
+  return {
+    text: `${sign}${Math.abs(Math.round(diff * 10) / 10)}`,
+    className: helps
+      ? "bg-[#E7F6EC] text-[#116631]"
+      : "bg-[#FDE8EC] text-[#B3123A]",
+  };
+}
+
+/**
  * One table per fact group, in the shape the comparison is read in:
  * `Reviews total | 300 | 500 | 500 | 500 | 500 | 500`.
  *
@@ -422,6 +446,10 @@ function MatrixTable<T extends string>({
           </thead>
           <tbody>
             {rows.map((row) => {
+              // Gap chips are computed against the main (own) column; rows
+              // without the higherIsBetter flag never show one.
+              const mainSubject = mainKey != null ? subjects.find((s) => s.key === mainKey) : undefined;
+              const mainValue = mainSubject && mainSubject.available && row.value ? row.value(mainSubject) : null;
               return (
                 <tr key={row.key} className="align-top">
                   <th
@@ -433,6 +461,10 @@ function MatrixTable<T extends string>({
                   {subjects.map((subject) => {
                     const value = subject.available && row.value ? row.value(subject) : null;
                     const tier = cellTier(row, subjects, subject, value);
+                    const chip =
+                      row.higherIsBetter === true && subject.key !== mainKey
+                        ? gapChip(value, mainValue, row.higherIsBetter)
+                        : null;
                     return (
                       <td
                         key={subject.key}
@@ -447,6 +479,11 @@ function MatrixTable<T extends string>({
                         ) : (
                           <span>—</span>
                         )}
+                        {chip ? (
+                          <span className={`mt-1 block w-fit rounded-full px-1.5 py-0.5 text-[10px] font-bold ${chip.className}`}>
+                            {chip.text}
+                          </span>
+                        ) : null}
                       </td>
                     );
                   })}
@@ -1132,6 +1169,27 @@ export default function ComparePage() {
     applyUrl(next, range);
   }
 
+  const benchSet = useMemo(
+    () => saved.filter((p) => p.in_bench_set).slice(0, 5),
+    [saved]
+  );
+  const bareUrl = !params.get("main") && !params.get("vs");
+  const defaultsReady = benchSet.length >= 0 && own.length >= 0 && (savedQuery.isSuccess || savedQuery.isError) && (channelsQuery.isSuccess || channelsQuery.isError);
+  const appliedDefaults = useRef(false);
+  useEffect(() => {
+    if (!bareUrl || !defaultsReady || appliedDefaults.current) return;
+    appliedDefaults.current = true;
+    const main = own[0] ? subjectKey("own", own[0].id) : null;
+    const competitors = benchSet
+      .map((p) => subjectKey("saved", p.place_id))
+      .filter((key) => key !== main)
+      .slice(0, 5);
+    if (main || competitors.length > 0) {
+      update({ main, competitors });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once when data is ready
+  }, [bareUrl, defaultsReady]);
+
   function updateRange(nextRange: CompareRange) {
     const option = rangeOptions.find((item) => item.value === nextRange);
     // Coming-soon ranges must not be selected; they stay visible as context.
@@ -1241,6 +1299,7 @@ export default function ComparePage() {
           {compareQuery.data?.distribution ? (
             <DistributionStrip distribution={compareQuery.data.distribution} />
           ) : null}
+          <SentimentVelocityBars subjects={compareQuery.data?.subjects ?? []} />
           <TrendChart history={historyQuery.data?.subjects ?? []} title={b.trendTitle} />
           <OwnScorecards subjects={compareQuery.data?.subjects ?? []} />
           {days != null ? (

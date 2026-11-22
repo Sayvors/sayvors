@@ -24,6 +24,16 @@ export default function DistributionStrip({ distribution }: { distribution: Comp
         {visible.map(([key, label]) => {
           const row = distribution[key];
           const scale = row.max_scale ?? (row.best.value || 1);
+          // When every subject shares one value, the three bars carry no
+          // information — one compact line says it all.
+          if (row.gap === 0) {
+            return (
+              <div key={key} className="mt-1 flex items-center justify-between text-[11px] text-[#3B2D5E]">
+                <span className="font-bold text-[#14101F]">{label}</span>
+                <span>{b.tiedLine.replace("{value}", fmt(key, row.best.value))}</span>
+              </div>
+            );
+          }
           return (
             <div key={key}>
               <div className="flex items-center justify-between text-[11px] text-[#3B2D5E]">
