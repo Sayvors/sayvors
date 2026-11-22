@@ -144,11 +144,18 @@ async def compare_places(
     except Exception:
         pass
 
+    from .summary import distribution as metric_distribution, north_star
+
+    subject_records = await compare.compare_subjects(
+        db, tenant_id, subjects, days=compare.RANGES[period]
+    )
     payload = {
         "range": period,
         "days": compare.RANGES[period],
-        "subjects": await compare.compare_subjects(
-            db, tenant_id, subjects, days=compare.RANGES[period]
+        "subjects": subject_records,
+        "distribution": metric_distribution(subject_records),
+        "summary": north_star(
+            subject_records, [s for s in subjects if s.startswith("own:")]
         ),
     }
     try:
