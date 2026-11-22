@@ -2662,6 +2662,9 @@ const ar: Dict = {
       ],
       rejectOrReplace: "قد ترفض Google هذه الصورة أو تستبدلها بأخرى.",
       replacePhoto: "استبدال الصورة",
+      galleryCategory: "فئة المعرض",
+      galleryCategoryTip: "بعض وسوم الصور تعتمد على نوع نشاطك التجاري على Google. إذا لم يسمح Google بوسم، تنشر Sayvors الصورة كـ \"إضافية\" بدلًا من ذلك.",
+      categoryFallback: (target: string, requested: string, used: string) => `${target}: لا يسمح Google بوسم الصورة ${requested} لهذا الموقع — تم النشر كـ ${used} بدلًا من ذلك.`,
     },
     crop: {
       frameAria: "إطار القص — اسحب لإعادة تموضع الصورة",
@@ -2834,6 +2837,7 @@ const ar: Dict = {
       cropFallback: "تعذّر قص هذه الصورة في المتصفح — نُشرت بدون قص.",
       cropVideoFallback: "يُنشر الفيديو بدون قص — إطار القص معاينة فقط.",
       publishFailed: "فشل النشر — أعد المحاولة.",
+      categoryFallback: (target: string, requested: string, used: string) => `${target}: لا يسمح Google بوسم الصورة ${requested} لهذا الموقع — تم النشر كـ ${used} بدلًا من ذلك.`,
     },
     confirm: {
       title: "المراجعة قبل النشر",

@@ -1319,7 +1319,11 @@ export default function PublishComposer({
           const fb = res?.categoryFallback;
           if (fb?.requested && fb.requested !== fb.used) {
             fallbacks.push(
-              `${g.target.name}: Google does not allow the ${String(fb.requested).replace(/_/g, " ")} photo tag for this location — published as ${String(fb.used).replace(/_/g, " ")} instead.`,
+              pc.categoryFallback(
+                g.target.name,
+                String(fb.requested).replace(/_/g, " "),
+                String(fb.used).replace(/_/g, " "),
+              ),
             );
           }
         } catch (e) {
@@ -2129,7 +2133,7 @@ export default function PublishComposer({
                 <div className="w-full max-w-[320px] shrink-0 space-y-3">
                   {modalCtx.method === "gallery" && (
                     <div>
-                      <label className="mb-1 block text-[12px] font-semibold text-[var(--ui-ink)]">Gallery category</label>
+                      <label className="mb-1 block text-[12px] font-semibold text-[var(--ui-ink)]">{tr.publish.photoCheck.galleryCategory}</label>
                       <select
                         value={draftGalleryCategory}
                         onChange={(e) => setDraftGalleryCategory(e.target.value)}
@@ -2140,6 +2144,7 @@ export default function PublishComposer({
                         ))}
                       </select>
                       <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">{tr.publish.photoCheck.chooseGalleryCategory}</p>
+                      <p className="mt-1 text-[11px] leading-relaxed text-[var(--ui-ink-2)]">{tr.publish.photoCheck.galleryCategoryTip}</p>
                     </div>
                   )}
                   {modalCtx.method === "banner" && media?.type === "image" && (

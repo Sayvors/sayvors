@@ -2656,6 +2656,9 @@ const en = {
       ],
       rejectOrReplace: "Google may reject this photo or replace it with another one.",
       replacePhoto: "Replace photo",
+      galleryCategory: "Gallery category",
+      galleryCategoryTip: "Some photo tags depend on your Google business type. If Google doesn't allow a tag, Sayvors publishes the photo as Additional instead.",
+      categoryFallback: (target: string, requested: string, used: string) => `${target}: Google does not allow the ${requested} photo tag for this location — published as ${used} instead.`,
     },
     crop: {
       frameAria: "Crop frame — drag to reposition the image",
@@ -2829,6 +2832,7 @@ const en = {
       cropFallback: "This image could not be cropped in the browser — it was published uncropped.",
       cropVideoFallback: "Video is published uncropped — the crop frame is a preview.",
       publishFailed: "Publishing failed — try again.",
+      categoryFallback: (target: string, requested: string, used: string) => `${target}: Google does not allow the ${requested} photo tag for this location — published as ${used} instead.`,
     },
     confirm: {
       title: "Review before publishing",
