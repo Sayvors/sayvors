@@ -2,14 +2,22 @@
 
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { median } from "@/lib/benchmark-stats";
-import type { ComparisonSubject } from "@/lib/api-benchmark";
+import type { ComparisonSubject, HistoryPoint } from "@/lib/api-benchmark";
+import Sparkline from "@/components/benchmark/Sparkline";
 
 // One-sided on purpose: a branch above the own-set median is healthy, so the
 // flag fires only when a rating trails the median by more than 35%.
 const VARIANCE_FLAG_THRESHOLD = 0.35;
 
 /** One scorecard per own branch + a variance flag (>35% off the own median). */
-export default function OwnScorecards({ subjects }: { subjects: ComparisonSubject[] }) {
+export default function OwnScorecards({
+  subjects,
+  historyBySubject,
+}: {
+  subjects: ComparisonSubject[];
+  /** Subject key → stored history points, for the inline rating sparkline. */
+  historyBySubject?: Record<string, HistoryPoint[]>;
+}) {
   const { t } = useI18n();
   const b = t.benchmark;
   const own = subjects.filter((s) => s.kind === "own" && s.available);
@@ -27,6 +35,10 @@ export default function OwnScorecards({ subjects }: { subjects: ComparisonSubjec
           const belowMedian = rating != null && ownMedian != null && ownMedian > 0 && rating < ownMedian;
           const variance = belowMedian ? (ownMedian - rating) / ownMedian : null;
           const flagged = variance != null && variance > VARIANCE_FLAG_THRESHOLD;
+          const history = historyBySubject?.[s.key] ?? [];
+          // Same drawable rule Sparkline applies: one rated point is a dot,
+          // not a trend, so the whole caption row stays hidden.
+          const drawableHistory = history.filter((p) => p.at && p.rating != null).length >= 2;
           return (
             <article key={s.key} className={`rounded-[8px] border bg-white p-3 ${flagged ? "border-[#B3123A]" : "border-[var(--ui-line)]"}`}>
               <header className="flex items-center justify-between">
@@ -44,6 +56,15 @@ export default function OwnScorecards({ subjects }: { subjects: ComparisonSubjec
               </dl>
               {s.facts.top_problems.length > 0 ? (
                 <p className="mt-2 text-[11px] text-[#3B2D5E]">{b.topProblemLine.replace("{problem}", s.facts.top_problems[0])}</p>
+              ) : null}
+              {drawableHistory ? (
+                <div className="mt-2 flex items-center gap-2 border-t border-[#EFEDF2] pt-2">
+                  <Sparkline
+                    points={history}
+                    label={b.sparklineAria.replace("{name}", s.name ?? "")}
+                  />
+                  <p className="min-w-0 flex-1 truncate text-[10px] text-[#3B2D5E]">{b.trendRatingLabel}</p>
+                </div>
               ) : null}
             </article>
           );

@@ -157,6 +157,8 @@ export interface ComparisonSubject {
     named_team: { name: string; mentions: number; positive: number }[];
   };
   notes: string[];
+  /** Cohort tags from the channel's metadata; own subjects only, [] otherwise. */
+  tags: string[];
 }
 
 /** Period filter: live reads now; the others compute a window from history. */
@@ -244,4 +246,22 @@ export interface SubjectReviews {
 export function fetchReviews(subjects: string[]): Promise<{ subjects: SubjectReviews[] }> {
   const q = subjects.map((s) => `subjects=${encodeURIComponent(s)}`).join("&");
   return apiFetch(`/api/v1/benchmark/reviews?${q}`);
+}
+
+/* ── AI summary (fail-open: the endpoint answers with a template fallback) ─ */
+
+export interface AiSummaryResponse {
+  summary: string;
+  source: "ai" | "template";
+}
+
+/** The endpoint accepts at most 6 subjects — the picker's cap; slice anyway. */
+const AI_SUMMARY_MAX_SUBJECTS = 6;
+
+export function fetchAiSummary(subjects: string[]): Promise<AiSummaryResponse> {
+  const body = JSON.stringify({ subjects: subjects.slice(0, AI_SUMMARY_MAX_SUBJECTS) });
+  return apiFetch("/api/v1/benchmark/ai-summary", {
+    method: "POST",
+    body,
+  });
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -16,6 +16,7 @@ import {
   subjectKey,
   type CompareRange,
   type ComparisonSubject,
+  type HistoryPoint,
   type SavedPlace,
   type SubjectReviews,
 } from "@/lib/api-benchmark";
@@ -28,6 +29,10 @@ import NorthStarCard from "@/components/benchmark/NorthStarCard";
 import DistributionStrip from "@/components/benchmark/DistributionStrip";
 import OwnScorecards from "@/components/benchmark/OwnScorecards";
 import SentimentVelocityBars from "@/components/benchmark/SentimentVelocityBars";
+import AiSummaryCard from "@/components/benchmark/AiSummaryCard";
+import BaselineAlert from "@/components/benchmark/BaselineAlert";
+import CompletenessCard from "@/components/benchmark/CompletenessCard";
+import FixFirstTickets from "@/components/benchmark/FixFirstTickets";
 
 const FOCUS = "focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[#3D1D6E]";
 
@@ -322,6 +327,10 @@ function gapChip(
  *
  * The label column is sticky so the fact name stays readable while the six
  * business columns scroll horizontally on a narrow screen.
+ *
+ * Drill-down: when `onDrillDown` is set, a cell colored as the row's worst
+ * tier becomes a button — the one column that trails the row is exactly the
+ * one whose reviews explain why.
  */
 function MatrixTable<T extends string>({
   title,
@@ -329,18 +338,40 @@ function MatrixTable<T extends string>({
   rows,
   subjects,
   mainKey,
+  onDrillDown,
 }: {
   title: string;
   description?: string;
   rows: Row<T>[];
   subjects: ComparisonSubject[];
   mainKey: string | null;
+  onDrillDown?: (subject: ComparisonSubject) => void;
 }) {
   const { t } = useI18n();
+  const b = t.benchmark;
   const c = t.benchmark.compare;
   // On small screens the six business columns become one dropdown: the table
   // shows the fact rows for the selected business only.
   const [mobileIndex, setMobileIndex] = useState(0);
+
+  /** Props that turn a worst-tier cell into an accessible drill-down button. */
+  function drillProps(row: Row<T>, subject: ComparisonSubject) {
+    const interactive = onDrillDown != null && subject.available;
+    if (!interactive) return {};
+    return {
+      role: "button" as const,
+      tabIndex: 0,
+      title: b.drillDownHint,
+      "aria-label": `${row.label} · ${subject.name ?? subject.key} — ${b.drillDownHint}`,
+      onClick: () => onDrillDown?.(subject),
+      onKeyDown: (event: ReactKeyboardEvent) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onDrillDown?.(subject);
+        }
+      },
+    };
+  }
 
   return (
     <section className="mt-4 overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white">
@@ -376,17 +407,19 @@ function MatrixTable<T extends string>({
               const subject = subjects[mobileIndex];
               const value = subject.available && row.value ? row.value(subject) : null;
               const tier = cellTier(row, subjects, subject, value);
+              const drillable = tier === "worst" && subject.available && onDrillDown != null;
               return (
                 <li key={row.key} className="flex items-center justify-between gap-2 border-b border-[var(--ui-line)] px-3 py-2 last:border-b-0">
                   <span className="text-[11px] font-semibold text-[#14101F]">{row.label}</span>
                   <span
-                    className="min-w-0 flex-1 text-right text-[12px] font-mono"
+                    className={`min-w-0 flex-1 text-right text-[12px] font-mono ${drillable ? `cursor-pointer ${FOCUS}` : ""}`}
                     style={{
                       backgroundColor: CELL_COLORS[tier].bg,
                       color: CELL_COLORS[tier].fg,
                       padding: "2px 6px",
                       borderRadius: 6,
                     }}
+                    {...(drillable ? drillProps(row, subject) : {})}
                   >
                     {subject.available ? row.render(subject, subjects) : <span>—</span>}
                   </span>
@@ -468,14 +501,18 @@ function MatrixTable<T extends string>({
                       row.higherIsBetter === true && subject.key !== mainKey
                         ? gapChip(value, mainValue, row.higherIsBetter)
                         : null;
+                    const drillable = tier === "worst" && subject.available && onDrillDown != null;
                     return (
                       <td
                         key={subject.key}
-                        className="border-b border-r border-[var(--ui-line)] px-3 py-2 text-[12px] font-mono last:border-r-0"
+                        className={`border-b border-r border-[var(--ui-line)] px-3 py-2 text-[12px] font-mono last:border-r-0 ${
+                          drillable ? `cursor-pointer ${FOCUS}` : ""
+                        }`}
                         style={{
                           backgroundColor: CELL_COLORS[tier].bg,
                           color: CELL_COLORS[tier].fg,
                         }}
+                        {...(drillable ? drillProps(row, subject) : {})}
                       >
                         {subject.available ? (
                           row.render(subject, subjects)
@@ -1154,6 +1191,47 @@ export default function ComparePage() {
     category: SentimentCategory;
   } | null>(null);
 
+  // Subject key → stored history points, feeding the scorecard sparklines
+  // and the baseline alert.
+  const historyBySubject = useMemo(() => {
+    const map: Record<string, HistoryPoint[]> = {};
+    for (const subject of historyQuery.data?.subjects ?? []) {
+      map[subject.key] = subject.points;
+    }
+    return map;
+  }, [historyQuery.data]);
+
+  // Cohort tags travel on the compare response's own subjects — the only
+  // place the API exposes them — so the chip filter offers exactly the
+  // cohorts present in the current comparison.
+  const [cohortTag, setCohortTag] = useState<string | null>(null);
+  const cohortTags = useMemo(
+    () => [...new Set(subjects.flatMap((s) => (s.kind === "own" ? (s.tags ?? []) : [])))].sort(),
+    [subjects]
+  );
+  // A stale chip (selection changed, tag gone) matches nothing instead of
+  // silently filtering — deactivate it.
+  const activeCohortTag = cohortTag != null && cohortTags.includes(cohortTag) ? cohortTag : null;
+  const ownOptions = useMemo(() => {
+    if (!activeCohortTag) return own;
+    const tagged = new Set(
+      subjects
+        .filter((s) => s.kind === "own" && (s.tags ?? []).includes(activeCohortTag))
+        .map((s) => s.id)
+    );
+    return own.filter((channel) => tagged.has(channel.id));
+  }, [own, activeCohortTag, subjects]);
+
+  const mainOwnSubject =
+    subjects.find((s) => s.key === selection.main && s.kind === "own") ?? null;
+
+  /** Drill-down from a worst-tier matrix cell: that subject's negative reviews. */
+  function openWorstReviews(subject: ComparisonSubject) {
+    const reviews = reviewSubjects.find((r) => r.key === subject.key);
+    if (!reviews) return;
+    setReviewsPopup({ subject: reviews, category: "negative" });
+  }
+
   const rangeOptions = useMemo(() => getRangeOptions(c as any), [c]);
   const metricRows = useMemo(() => getMetricRows(c as any), [c]);
   const periodRows = useMemo(() => getPeriodRows(c as any), [c]);
@@ -1229,8 +1307,34 @@ export default function ComparePage() {
         </div>
       </section>
 
+      {cohortTags.length > 0 ? (
+        <div className="mt-4 flex flex-wrap items-center gap-1.5 rounded-[8px] border border-[var(--ui-line)] bg-white px-3 py-2">
+          <span className="text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]">
+            {b.cohortFilterLabel}
+          </span>
+          {cohortTags.map((tag) => {
+            const active = tag === activeCohortTag;
+            return (
+              <button
+                key={tag}
+                type="button"
+                aria-pressed={active}
+                onClick={() => setCohortTag(active ? null : tag)}
+                className={`rounded-[8px] border px-2 py-1 text-[11px] font-semibold transition-colors ${FOCUS} ${
+                  active
+                    ? "border-[#3D1D6E] bg-[#3D1D6E] text-white"
+                    : "border-[var(--ui-line)] bg-[#F4F2F7] text-[#3B2D5E] hover:bg-[#F1F2F5]"
+                }`}
+              >
+                {tag}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
       <section className="mt-4 rounded-[8px] border border-[var(--ui-line)] bg-white p-3 sm:p-4">
-        <ComparePicker selection={selection} onChange={update} saved={saved} own={own} />
+        <ComparePicker selection={selection} onChange={update} saved={saved} own={ownOptions} />
       </section>
 
       <div className="mt-4 flex items-start gap-2 rounded-[8px] border border-[#3D1D6E]/20 bg-[#F3EEFB] px-3 py-2 md:hidden">
@@ -1294,19 +1398,29 @@ export default function ComparePage() {
         <p className="mt-5 text-[12px] text-red-700">{c.couldNotLoadComparison}</p>
       ) : (
         <>
-          {/* Now-tier summary: rank, distribution, trends, own-branch cards. */}
+          {/* Now-tier summary: baseline drift, rank, AI read, distribution,
+              fix-first tickets, completeness, trends, own-branch cards. */}
+          <BaselineAlert points={mainOwnSubject ? (historyBySubject[mainOwnSubject.key] ?? []) : []} />
           {compareQuery.data?.summary ? (
             <NorthStarCard
               summary={compareQuery.data.summary}
               problemTopic={null}
             />
           ) : null}
+          <AiSummaryCard subjects={keys} />
           {compareQuery.data?.distribution ? (
             <DistributionStrip distribution={compareQuery.data.distribution} />
           ) : null}
+          {compareQuery.data?.summary ? (
+            <FixFirstTickets summary={compareQuery.data.summary} subjects={subjects} />
+          ) : null}
+          <CompletenessCard subjects={subjects} />
           <SentimentVelocityBars subjects={compareQuery.data?.subjects ?? []} />
           <TrendChart history={historyQuery.data?.subjects ?? []} title={b.trendTitle} />
-          <OwnScorecards subjects={compareQuery.data?.subjects ?? []} />
+          <OwnScorecards
+            subjects={compareQuery.data?.subjects ?? []}
+            historyBySubject={historyBySubject}
+          />
           {days != null ? (
             <MatrixTable
               title={c.periodLastDays(days)}
@@ -1314,6 +1428,7 @@ export default function ComparePage() {
               rows={periodRows}
               subjects={subjects}
               mainKey={selection.main}
+              onDrillDown={openWorstReviews}
             />
           ) : null}
           <MatrixTable
@@ -1322,6 +1437,7 @@ export default function ComparePage() {
             rows={metricRows}
             subjects={subjects}
             mainKey={selection.main}
+            onDrillDown={openWorstReviews}
           />
           <MatrixTable
             title={c.whatCustomersSay}
@@ -1329,6 +1445,7 @@ export default function ComparePage() {
             rows={factRows}
             subjects={subjects}
             mainKey={selection.main}
+            onDrillDown={openWorstReviews}
           />
           <SentimentReviewsTable
             subjects={reviewSubjects}
