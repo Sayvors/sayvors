@@ -13,6 +13,7 @@ from ...core.deps import get_db
 from ..redis.service import cache_get, cache_set
 from ..team.context import TenantContext, require_perm, tenant_id_of
 from . import compare, places, service
+from .summary import distribution as metric_distribution, north_star
 
 router = APIRouter(prefix="/api/v1/benchmark", tags=["benchmark"])
 
@@ -144,19 +145,18 @@ async def compare_places(
     except Exception:
         pass
 
-    from .summary import distribution as metric_distribution, north_star
-
+    days = compare.RANGES[period]
     subject_records = await compare.compare_subjects(
-        db, tenant_id, subjects, days=compare.RANGES[period]
+        db, tenant_id, subjects, days=days
     )
+    # Query params may carry stray spaces; match own keys on the stripped form.
+    own_keys = [s.strip() for s in subjects if s.strip().startswith("own:")]
     payload = {
         "range": period,
-        "days": compare.RANGES[period],
+        "days": days,
         "subjects": subject_records,
         "distribution": metric_distribution(subject_records),
-        "summary": north_star(
-            subject_records, [s for s in subjects if s.startswith("own:")]
-        ),
+        "summary": north_star(subject_records, own_keys),
     }
     try:
         await cache_set(key, json.dumps(payload, default=str), ttl=60)

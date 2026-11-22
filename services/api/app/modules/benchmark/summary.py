@@ -10,14 +10,18 @@ from __future__ import annotations
 from statistics import median
 from typing import Any
 
-# The four headline metrics the compare page opens with. ``max`` powers the
-# distribution bar scaling (None = scale to the observed best).
+# The four headline metrics the compare page opens with; all are
+# higher-is-better (the best/worst ordering below assumes it). ``max``
+# powers the distribution bar scaling (None = scale to the observed best).
 METRIC_SPECS: dict[str, dict[str, Any]] = {
-    "avg_rating": {"higher_is_better": True, "max": 5.0},
-    "reviews_per_month": {"higher_is_better": True, "max": None},
-    "total_reviews": {"higher_is_better": True, "max": None},
-    "positive_pct": {"higher_is_better": True, "max": 100.0},
+    "avg_rating": {"max": 5.0},
+    "reviews_per_month": {"max": None},
+    "total_reviews": {"max": None},
+    "positive_pct": {"max": 100.0},
 }
+
+# Sentiment lives in `facts`, not `metrics` (see compare._blank_facts).
+_FACT_METRICS = frozenset({"positive_pct"})
 
 _HEALTH_BAD_RATING = 3.5
 _HEALTH_WARN_RATING = 4.3
@@ -40,7 +44,8 @@ def velocity_per_month(subject: dict[str, Any]) -> float | None:
 def _value(subject: dict[str, Any], metric: str) -> float | None:
     if metric == "reviews_per_month":
         return velocity_per_month(subject)
-    value = (subject.get("metrics") or {}).get(metric)
+    container = "facts" if metric in _FACT_METRICS else "metrics"
+    value = (subject.get(container) or {}).get(metric)
     if value is None and metric == "total_reviews":
         value = (subject.get("metrics") or {}).get("total_ratings")
     return float(value) if value is not None else None

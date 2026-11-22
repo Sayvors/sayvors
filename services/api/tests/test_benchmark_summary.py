@@ -34,6 +34,10 @@ def test_distribution_best_median_worst_and_gap():
     assert rating["median"] == 4.0
     assert rating["worst"]["name"] == "Gamma" and rating["worst"]["value"] == 3.2
     assert rating["gap"] == 1.6
+    sentiment = rows["positive_pct"]
+    assert sentiment["best"]["value"] == 90
+    assert sentiment["median"] == 70
+    assert sentiment["gap"] == 50
 
 
 def test_distribution_skips_unavailable_and_null_metrics():
@@ -68,6 +72,7 @@ def test_north_star_ranks_own_subject_with_gaps():
     assert out["leader"]["name"] == "Alpha"
     assert out["gaps"]["avg_rating"] == 0.7
     assert out["gaps"]["reviews_per_month"] == 15
+    assert out["gaps"]["positive_pct"] == 35  # leader 95 − own 60
     assert out["health"] == "warn"
 
 
@@ -75,9 +80,30 @@ def test_north_star_none_without_own_subject():
     assert north_star([_subject("saved:a", "Alpha", avg=4.0)], own_keys=[]) is None
 
 
+def test_north_star_skips_unavailable_own_subject():
+    rows = [
+        _subject("saved:a", "Alpha", avg=4.0),
+        _subject("own:c1", "Mine", kind="own", available=False),
+    ]
+    assert north_star(rows, own_keys=["own:c1"]) is None
+
+
+def test_north_star_unrated_own_sorts_last_with_null_gap():
+    out = north_star(
+        [
+            _subject("saved:a", "Alpha", avg=4.0),
+            _subject("own:c1", "Mine", kind="own"),
+        ],
+        own_keys=["own:c1"],
+    )
+    assert out["rank"] == 2 and out["of"] == 2
+    assert out["gaps"]["avg_rating"] is None
+
+
 def test_health_buckets():
     from app.modules.benchmark.summary import health_of
     assert health_of(_subject("s", "A", avg=4.5, pos=85)) == "good"
     assert health_of(_subject("s", "A", avg=3.6, pos=60)) == "warn"
     assert health_of(_subject("s", "A", avg=2.9, pos=30)) == "bad"
+    assert health_of(_subject("s", "A", avg=None, pos=85)) == "good"  # sentiment-only
     assert health_of(_subject("s", "A", avg=None, pos=None)) == "warn"  # unknown → not good
