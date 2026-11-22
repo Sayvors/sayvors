@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { fetchSavedPlaces, type SavedPlace } from "@/lib/api-benchmark";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 import VerificationBadge from "@/components/shared/VerificationBadge";
 
 const FOCUS = "focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[#3D1D6E]";
@@ -49,6 +50,8 @@ function compareHref(place: SavedPlace): string {
 }
 
 export default function HeatmapGrid() {
+  const { t } = useI18n();
+  const b = t.benchmark;
   const query = useQuery({
     queryKey: ["benchmark", "saved"],
     queryFn: fetchSavedPlaces,
@@ -56,16 +59,16 @@ export default function HeatmapGrid() {
   const places = (query.data ?? []).filter((place) => place.in_heatmap);
 
   return (
-    <section aria-label="Market heatmap">
+    <section aria-label={b.marketHeatmap}>
       <div className="mb-3 flex items-baseline justify-between gap-3">
-        <h2 className="text-[14px] font-bold text-[var(--ui-ink)]">Market heatmap</h2>
+        <h2 className="text-[14px] font-bold text-[var(--ui-ink)]">{b.marketHeatmap}</h2>
         <p className="hidden text-[10px] text-[#3B2D5E] sm:block">
-          Tile size is fixed · colour intensity is review volume · click a business to compare
+          {b.heatmapHint}
         </p>
       </div>
 
       {query.isPending ? (
-        <p className="text-[12px] text-[#3B2D5E]">Loading heatmap…</p>
+        <p className="text-[12px] text-[#3B2D5E]">{b.loadingHeatmap}</p>
       ) : places.length === 0 ? (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           {Array.from({ length: 8 }, (_, i) => (
@@ -99,10 +102,10 @@ export default function HeatmapGrid() {
                     <span aria-hidden className="ms-0.5 text-[15px]">★</span>
                   </p>
                   <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide" style={{ color: tone.sub }}>
-                    Avg rating
+                    {b.avgRating}
                   </p>
                   <p className="mt-2 font-mono text-[13px] font-bold" style={{ color: tone.sub }}>
-                    {place.review_count ?? 0} <span className="text-[10px] font-semibold">total reviews</span>
+                    {place.review_count ?? 0} <span className="text-[10px] font-semibold">{b.totalReviews}</span>
                   </p>
                 </div>
               </Link>
@@ -111,7 +114,7 @@ export default function HeatmapGrid() {
         </div>
       )}
 
-      <div className="mt-3 flex items-center gap-2" aria-label="Intensity scale">
+      <div className="mt-3 flex items-center gap-2" aria-label={b.marketHeatmap}>
         {["#F1F2F5", "#F6DCEB", "#D8459F", "#B0338A"].map((color) => (
           <span
             key={color}
