@@ -154,11 +154,11 @@ export default function ReviewTicketsCard() {
           <span className="min-w-0 flex-1">
             <span className="flex flex-wrap items-center gap-2">
               <span className="text-[14px] font-bold tracking-wide text-ink dark:text-fog">
-                t.dashboard.reviewTickets.title
+                {t.dashboard.reviewTickets.title}
               </span>
               {collapsed && (
                 <span className="rounded-[8px] bg-ink/[0.05] px-2 py-0.5 text-[10px] font-bold tabular-nums text-ink/50 dark:bg-fog/[0.08] dark:text-fog/50">
-                  t.dashboard.reviewTickets.unresolvedWaiting(stats.unresolved, stats.waiting)
+                  {t.dashboard.reviewTickets.unresolvedWaiting(stats.unresolved, stats.waiting)}
                 </span>
               )}
             </span>
@@ -181,12 +181,12 @@ export default function ReviewTicketsCard() {
           href="/dashboard/reviews/issues"
           className="inline-flex w-full shrink-0 items-center justify-center rounded-[8px] bg-deep-violet px-3.5 py-2 text-center text-[12px] font-bold text-white shadow-sm shadow-deep-violet/20 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] dark:focus-visible:ring-violet-soft/40 sm:w-auto"
         >
-          t.dashboard.reviewTickets.openTicketQueue
+          {t.dashboard.reviewTickets.openTicketQueue}
         </Link>
       </div>
 
       <div id="review-tickets-body" hidden={collapsed}>
-        {loading && <p className="mt-3 text-[12px] text-ink/55 dark:text-fog/55">t.dashboard.reviewTickets.loading</p>}
+        {loading && <p className="mt-3 text-[12px] text-ink/55 dark:text-fog/55">{t.dashboard.reviewTickets.loading}</p>}
 
         {!loading && errorMessage && (
           <p className="mt-3 text-[12px] font-medium text-coral">
@@ -196,18 +196,18 @@ export default function ReviewTicketsCard() {
 
         {!loading && !errorMessage && stats.total === 0 && (
           <p className="mt-3 rounded-[8px] border border-dashed border-ink/10 bg-ink/[0.02] px-4 py-4 text-center text-[12px] text-ink/55 dark:border-fog/10 dark:bg-fog/[0.03] dark:text-fog/55">
-            t.dashboard.reviewTickets.noTickets
+            {t.dashboard.reviewTickets.noTickets}
           </p>
         )}
 
         {!loading && !errorMessage && stats.total > 0 && (
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
             <span className="text-[22px] font-bold tabular-nums text-ink dark:text-fog">
-              t.dashboard.reviewTickets.tickets(stats.total)
+              {t.dashboard.reviewTickets.tickets(stats.total)}
             </span>
             {stats.oldestTicket && (
               <span className="text-[11.5px] text-ink/50 dark:text-fog/50">
-                t.dashboard.reviewTickets.oldest + ": "<strong className="font-mono text-[11px] text-deep-violet dark:text-violet-soft">{stats.oldestTicket}</strong>
+                {t.dashboard.reviewTickets.oldest}: <strong className="font-mono text-[11px] text-deep-violet dark:text-violet-soft">{stats.oldestTicket}</strong>
                 {stats.oldestDays !== null && (stats.oldestDays === 0 ?  " · " + t.dashboard.reviewTickets.today : ` · ${t.dashboard.reviewTickets.daysOld(stats.oldestDays)}`)}
               </span>
             )}
