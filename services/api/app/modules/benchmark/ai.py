@@ -53,12 +53,12 @@ _METRIC_LABELS = {
 def _headline_metrics(subject: dict[str, Any]) -> dict[str, float | None]:
     """The four headline numbers for one subject (or nulls when unknown).
 
-    Reads through ``summary._value`` so the payload matches the distribution
+    Reads through ``summary.value`` so the payload matches the distribution
     and north-star numbers exactly (velocity derivation, sentiment container,
     total_ratings fallback) instead of drifting into its own semantics.
     """
     return {
-        metric: summary_metrics._value(subject, metric)
+        metric: summary_metrics.value(subject, metric)
         for metric in METRIC_SPECS
     }
 
@@ -100,11 +100,13 @@ def template_summary(payload: dict[str, Any]) -> str:
             behind = f", behind {leader_name}" if leader_name else ""
             lines = [f"{own_name} ranks {rank} of {of}{behind}."]
         # The ranking metric is avg_rating, so prefer its gap; the first
-        # non-null gap in spec order keeps the sentence deterministic.
+        # positive gap in spec order keeps the sentence deterministic. A
+        # negative gap means own beats the leader — "closing" it would be
+        # nonsense, so only positive gaps become the lever sentence.
         gaps = ns.get("gaps") or {}
         for metric in METRIC_SPECS:
             gap = gaps.get(metric)
-            if gap:
+            if gap and gap > 0:
                 label = _METRIC_LABELS[metric]
                 lines.append(
                     f"Closing the {label} gap ({gap}) is the biggest lever."

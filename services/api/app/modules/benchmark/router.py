@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_db
@@ -168,8 +168,14 @@ async def compare_places(
     return payload
 
 
+# One subject key ("own:<channel_id>" / "saved:<place_id>"): bounded per item
+# so an oversized string cannot ride in as a cache-key or LLM-payload
+# amplifier; the list itself stays 1–6 via the model below.
+SubjectKey = Annotated[str, StringConstraints(min_length=1, max_length=255)]
+
+
 class AiSummaryIn(BaseModel):
-    subjects: list[str] = Field(min_length=1, max_length=MAX_COMPARE_SUBJECTS)
+    subjects: list[SubjectKey] = Field(min_length=1, max_length=MAX_COMPARE_SUBJECTS)
 
 
 @router.post("/ai-summary", response_model=dict)

@@ -13,14 +13,22 @@ const H = 24;
 const PAD = 2;
 const STROKE = "#3D1D6E";
 
+/**
+ * The points a trend can honestly draw: rated, timestamped, parseable, in
+ * date order. Shared so callers gate captions on the same series the
+ * Sparkline draws instead of duplicating the predicate.
+ */
+export function drawablePoints(points: HistoryPoint[]): HistoryPoint[] {
+  return points
+    .filter((p) => p.at && p.rating != null && !Number.isNaN(new Date(p.at as string).getTime()))
+    .sort((a, b) => new Date(a.at as string).getTime() - new Date(b.at as string).getTime());
+}
+
 export default function Sparkline({ points, label }: { points: HistoryPoint[]; label: string }) {
-  const series = points
-    .filter((p) => p.at && p.rating != null)
-    .map((p) => ({ t: new Date(p.at as string).getTime(), y: p.rating as number }))
-    .filter((p) => !Number.isNaN(p.t))
-    .sort((a, b) => a.t - b.t);
+  const drawable = drawablePoints(points);
   // One point is a dot, not a trend — drawing it would invent a shape.
-  if (series.length < 2) return null;
+  if (drawable.length < 2) return null;
+  const series = drawable.map((p) => ({ t: new Date(p.at as string).getTime(), y: p.rating as number }));
   const spanX = Math.max(series[series.length - 1].t - series[0].t, 1);
   const polyline = series
     .map((p) => {

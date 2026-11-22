@@ -17,8 +17,10 @@ from app.modules.benchmark import ai as benchmark_ai
 from app.modules.benchmark import router as benchmark_router
 from app.modules.llm.providers.base import LLMResponse, LLMUsage
 
-pytestmark = pytest.mark.asyncio
-
+# No module-level asyncio mark: this file mixes async endpoint tests with
+# sync pure-function tests, and marking the sync ones produces
+# "marked with asyncio but not async" warnings. Async tests are marked
+# individually instead.
 AI_URL = "/api/v1/benchmark/ai-summary"
 AI_TEXT = "You rank second of two. The rating gap is your biggest lever."
 SECRET = "CONFIDENTIAL-REVIEW-BODY"
@@ -61,6 +63,7 @@ def _bypass_cache(monkeypatch):
     monkeypatch.setattr(benchmark_router, "cache_set", _keep)
 
 
+@pytest.mark.asyncio
 async def test_ai_summary_green_path_sends_numbers_only(
     client, db, channel_id, user_id, monkeypatch
 ):
@@ -89,6 +92,7 @@ async def test_ai_summary_green_path_sends_numbers_only(
     assert "avg_rating" in sent, "the payload carries the headline numbers"
 
 
+@pytest.mark.asyncio
 async def test_llm_failure_fails_open_to_template(client, channel_id, monkeypatch):
     """Any LLM failure is a 200 with a rule-based template, never a 5xx:
     the compare page must always have a summary to render."""
@@ -102,6 +106,7 @@ async def test_llm_failure_fails_open_to_template(client, channel_id, monkeypatc
     assert body["summary"].strip()
 
 
+@pytest.mark.asyncio
 async def test_llm_timeout_fails_open_to_template(client, channel_id, monkeypatch):
     async def _slow(**kwargs):
         raise asyncio.TimeoutError()
@@ -114,6 +119,7 @@ async def test_llm_timeout_fails_open_to_template(client, channel_id, monkeypatc
     assert res.json()["source"] == "template"
 
 
+@pytest.mark.asyncio
 async def test_no_enabled_model_fails_open_to_template(
     client, channel_id, monkeypatch
 ):
@@ -128,6 +134,7 @@ async def test_no_enabled_model_fails_open_to_template(
     assert res.json()["source"] == "template"
 
 
+@pytest.mark.asyncio
 async def test_unknown_subject_is_not_an_error(client, monkeypatch):
     """Unknown subjects ride through compare_subjects as unavailable records;
     with no data at all the answer is the template's not-enough-data line."""
@@ -141,14 +148,22 @@ async def test_unknown_subject_is_not_an_error(client, monkeypatch):
     assert "not enough" in body["summary"].lower()
 
 
+@pytest.mark.asyncio
 async def test_subject_bounds_enforced(client):
     assert client.post(AI_URL, json={"subjects": []}).status_code == 422
     seven = client.post(
         AI_URL, json={"subjects": [f"own:n{i}" for i in range(7)]}
     )
     assert seven.status_code == 422
+    # Per-item bound: one oversized key is rejected, a key at the limit passes.
+    too_long = "own:" + "x" * 255  # 259 chars > 255
+    assert client.post(AI_URL, json={"subjects": [too_long]}).status_code == 422
+    at_limit = "own:" + "x" * 251  # exactly 255
+    at_limit_res = client.post(AI_URL, json={"subjects": [at_limit]})
+    assert at_limit_res.status_code == 200, at_limit_res.text
 
 
+@pytest.mark.asyncio
 async def test_cache_hit_skips_second_llm_call(client, db, channel_id, user_id,
                                                monkeypatch):
     """Cache is keyed on sha1(sorted subjects): a reordered repeat is a hit."""

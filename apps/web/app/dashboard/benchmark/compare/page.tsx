@@ -339,6 +339,7 @@ function MatrixTable<T extends string>({
   subjects,
   mainKey,
   onDrillDown,
+  drillLoading = false,
 }: {
   title: string;
   description?: string;
@@ -346,6 +347,8 @@ function MatrixTable<T extends string>({
   subjects: ComparisonSubject[];
   mainKey: string | null;
   onDrillDown?: (subject: ComparisonSubject) => void;
+  /** Reviews behind the drill-down still loading: clicks may no-op, so the cursor shows progress instead of a ready pointer. */
+  drillLoading?: boolean;
 }) {
   const { t } = useI18n();
   const b = t.benchmark;
@@ -354,7 +357,13 @@ function MatrixTable<T extends string>({
   // shows the fact rows for the selected business only.
   const [mobileIndex, setMobileIndex] = useState(0);
 
-  /** Props that turn a worst-tier cell into an accessible drill-down button. */
+  /**
+   * Props that turn a worst-tier cell's nested element into an accessible
+   * drill-down button. The table cell itself stays a plain cell so screen
+   * readers keep walking the table; this spread goes on the interactive
+   * element inside it (a native button on desktop, a role-button span on
+   * mobile).
+   */
   function drillProps(row: Row<T>, subject: ComparisonSubject) {
     const interactive = onDrillDown != null && subject.available;
     if (!interactive) return {};
@@ -371,6 +380,12 @@ function MatrixTable<T extends string>({
         }
       },
     };
+  }
+
+  /** Drill cursor reflects readiness: reviews still loading → progress. */
+  function drillCursorClass(drillable: boolean): string {
+    if (!drillable) return "";
+    return drillLoading ? "cursor-progress" : "cursor-pointer";
   }
 
   return (
@@ -412,7 +427,7 @@ function MatrixTable<T extends string>({
                 <li key={row.key} className="flex items-center justify-between gap-2 border-b border-[var(--ui-line)] px-3 py-2 last:border-b-0">
                   <span className="text-[11px] font-semibold text-[#14101F]">{row.label}</span>
                   <span
-                    className={`min-w-0 flex-1 text-right text-[12px] font-mono ${drillable ? `cursor-pointer ${FOCUS}` : ""}`}
+                    className={`min-w-0 flex-1 text-right text-[12px] font-mono ${drillable ? `${drillCursorClass(drillable)} ${FOCUS}` : ""}`}
                     style={{
                       backgroundColor: CELL_COLORS[tier].bg,
                       color: CELL_COLORS[tier].fg,
@@ -502,18 +517,8 @@ function MatrixTable<T extends string>({
                         ? gapChip(value, mainValue, row.higherIsBetter)
                         : null;
                     const drillable = tier === "worst" && subject.available && onDrillDown != null;
-                    return (
-                      <td
-                        key={subject.key}
-                        className={`border-b border-r border-[var(--ui-line)] px-3 py-2 text-[12px] font-mono last:border-r-0 ${
-                          drillable ? `cursor-pointer ${FOCUS}` : ""
-                        }`}
-                        style={{
-                          backgroundColor: CELL_COLORS[tier].bg,
-                          color: CELL_COLORS[tier].fg,
-                        }}
-                        {...(drillable ? drillProps(row, subject) : {})}
-                      >
+                    const content = (
+                      <>
                         {subject.available ? (
                           row.render(subject, subjects)
                         ) : (
@@ -524,6 +529,31 @@ function MatrixTable<T extends string>({
                             {chip.text}
                           </span>
                         ) : null}
+                      </>
+                    );
+                    return (
+                      <td
+                        key={subject.key}
+                        className="border-b border-r border-[var(--ui-line)] px-3 py-2 text-[12px] font-mono last:border-r-0"
+                        style={{
+                          backgroundColor: CELL_COLORS[tier].bg,
+                          color: CELL_COLORS[tier].fg,
+                        }}
+                      >
+                        {drillable ? (
+                          // The interactive element nests INSIDE the cell: a
+                          // role/button on the td itself would pull the cell
+                          // out of the SR table walk.
+                          <button
+                            type="button"
+                            className={`h-full w-full text-left ${drillCursorClass(drillable)} ${FOCUS}`}
+                            {...drillProps(row, subject)}
+                          >
+                            {content}
+                          </button>
+                        ) : (
+                          content
+                        )}
                       </td>
                     );
                   })}
@@ -1212,6 +1242,9 @@ export default function ComparePage() {
   // A stale chip (selection changed, tag gone) matches nothing instead of
   // silently filtering — deactivate it.
   const activeCohortTag = cohortTag != null && cohortTags.includes(cohortTag) ? cohortTag : null;
+  const mainOwnSubject =
+    subjects.find((s) => s.key === selection.main && s.kind === "own") ?? null;
+
   const ownOptions = useMemo(() => {
     if (!activeCohortTag) return own;
     const tagged = new Set(
@@ -1219,11 +1252,12 @@ export default function ComparePage() {
         .filter((s) => s.kind === "own" && (s.tags ?? []).includes(activeCohortTag))
         .map((s) => s.id)
     );
-    return own.filter((channel) => tagged.has(channel.id));
-  }, [own, activeCohortTag, subjects]);
-
-  const mainOwnSubject =
-    subjects.find((s) => s.key === selection.main && s.kind === "own") ?? null;
+    // The active main selection must never vanish from its own dropdown: an
+    // untagged location the user already picked stays listed, so the filter
+    // narrows the choice without hiding what is currently selected.
+    const mainOwnId = mainOwnSubject?.id ?? null;
+    return own.filter((channel) => tagged.has(channel.id) || channel.id === mainOwnId);
+  }, [own, activeCohortTag, subjects, mainOwnSubject]);
 
   /** Drill-down from a worst-tier matrix cell: that subject's negative reviews. */
   function openWorstReviews(subject: ComparisonSubject) {
@@ -1429,6 +1463,7 @@ export default function ComparePage() {
               subjects={subjects}
               mainKey={selection.main}
               onDrillDown={openWorstReviews}
+              drillLoading={reviewsQuery.isPending}
             />
           ) : null}
           <MatrixTable
@@ -1438,6 +1473,7 @@ export default function ComparePage() {
             subjects={subjects}
             mainKey={selection.main}
             onDrillDown={openWorstReviews}
+            drillLoading={reviewsQuery.isPending}
           />
           <MatrixTable
             title={c.whatCustomersSay}
@@ -1446,6 +1482,7 @@ export default function ComparePage() {
             subjects={subjects}
             mainKey={selection.main}
             onDrillDown={openWorstReviews}
+            drillLoading={reviewsQuery.isPending}
           />
           <SentimentReviewsTable
             subjects={reviewSubjects}

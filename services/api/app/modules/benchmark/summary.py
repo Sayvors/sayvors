@@ -51,6 +51,17 @@ def _value(subject: dict[str, Any], metric: str) -> float | None:
     return float(value) if value is not None else None
 
 
+def value(subject: dict[str, Any], metric: str) -> float | None:
+    """Public seam for cross-module consumers of the metric semantics.
+
+    ``_value`` stays the internal name inside this module; this thin alias
+    lets e.g. the AI payload builder read through the exact same rules
+    (velocity derivation, sentiment container, total_ratings fallback)
+    without touching a private symbol.
+    """
+    return _value(subject, metric)
+
+
 def health_of(subject: dict[str, Any]) -> str:
     """good / warn / bad — worst bucket across rating and sentiment."""
     rating = _value(subject, "avg_rating")

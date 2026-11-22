@@ -3,7 +3,7 @@
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { median } from "@/lib/benchmark-stats";
 import type { ComparisonSubject, HistoryPoint } from "@/lib/api-benchmark";
-import Sparkline from "@/components/benchmark/Sparkline";
+import Sparkline, { drawablePoints } from "@/components/benchmark/Sparkline";
 
 // One-sided on purpose: a branch above the own-set median is healthy, so the
 // flag fires only when a rating trails the median by more than 35%.
@@ -38,7 +38,7 @@ export default function OwnScorecards({
           const history = historyBySubject?.[s.key] ?? [];
           // Same drawable rule Sparkline applies: one rated point is a dot,
           // not a trend, so the whole caption row stays hidden.
-          const drawableHistory = history.filter((p) => p.at && p.rating != null).length >= 2;
+          const drawableHistory = drawablePoints(history).length >= 2;
           return (
             <article key={s.key} className={`rounded-[8px] border bg-white p-3 ${flagged ? "border-[#B3123A]" : "border-[var(--ui-line)]"}`}>
               <header className="flex items-center justify-between">
