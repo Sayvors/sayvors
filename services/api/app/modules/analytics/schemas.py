@@ -872,6 +872,8 @@ class ReviewRequestIn(BaseModel):
     status: str = "sent"
     # Server-side send for sms/email. WhatsApp/in-person stay client-side.
     deliver: bool = False
+    # Optional; defaults to the tenant's currently active campaign.
+    campaign_id: str | None = Field(default=None, max_length=36)
 
 
 class ReviewRequestOut(BaseModel):
@@ -902,6 +904,8 @@ class ReviewRequestBulkIn(BaseModel):
     trigger: str = "campaign"
     subject: str | None = None
     body: str | None = None
+    # Optional; defaults to the tenant's currently active campaign.
+    campaign_id: str | None = Field(default=None, max_length=36)
 
 
 class BulkQuotaOut(BaseModel):

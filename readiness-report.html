@@ -263,7 +263,7 @@
     <tr><th>Item</th><th>What remains</th><th>Size</th></tr>
     <tr><td>LAUNCH-S10 remainder</td><td><span class="chip ok">Done 2026-11-18</span></td><td>AST audit + permanent guardrail; email errors sanitized.</td><td class="chip ok">—</td></tr>
     <tr><td>LAUNCH-M9 (b)</td><td><span class="chip ok">Done 2026-11-18</span></td><td>Shared path-based counters and direct p90/p95 gauges in <code>/metrics</code>. See the LAUNCH-M9 ledger row.</td><td class="chip ok">—</td></tr>
-    <tr><td>FACT-9</td><td><span class="chip warn">Core shipped</span></td><td>Plan-limited campaign CRUD, reuse and results are live; send-path gating and recipient-list reuse remain.</td><td>4–5 days total</td></tr>
+    <tr><td>FACT-9</td><td><span class="chip ok">Done 2026-11-22</span></td><td>Send-path gating now requires an active campaign for single/bulk review-request sends; duplicate copies distinct recipient contacts as draft rows (no jobs enqueued). Scoped tests pass.</td><td class="chip ok">—</td></tr>
     <tr><td>WA-9 (part)</td><td><span class="chip ok">Done 2026-11-19</span></td><td>Meta conversation analytics wired; shown on WhatsApp settings.</td><td class="chip ok">—</td></tr>
     <tr><td>RAG P1 / P3</td><td>P1 (task_type, chunking, query context, attribution) needs a real databank and re-index. P3 context cuts need measurement before touching prompt content.</td><td>blocked on data</td></tr>
   </table></div>
@@ -316,7 +316,7 @@
   <div class="stat"><div class="n calm">2,718</div><div class="l">backend tests passed / 4 skipped (last full run 2026-11-19) — CI gates every staging deploy on them; supersedes the older 2,708 figure in the history below</div></div>
   <div class="stat"><div class="n amber">1</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — INS-5 still open (infra: box overcommitted). INS-1/2/3/4/6/7 fixed</div></div>
   <div class="stat"><div class="n amber">2</div><div class="l"><a href="#pass-2026-11-01">Nov 1 launch audit</a> — LAUNCH-S8 and S9 still open (both infra); M9 and S10 done. Detail: docs/tracking/2026-11-01-launch-readiness-audit-phase1.md</div></div>
-  <div class="stat"><div class="n amber">4</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — FACT-4 (buy), FACT-5 (spike) open. FACT-6, FACT-7 and FACT-8 fixed; FACT-9 core shipped; FACT-1 obsolete</div></div>
+  <div class="stat"><div class="n amber">3</div><div class="l"><a href="#pass-2026-11-02">Nov 2 facts audit</a> — FACT-4 (buy), FACT-5 (spike) open. FACT-6, FACT-7, FACT-8 and FACT-9 fixed; FACT-1 obsolete</div></div>
 </div>
 
 <section id="model">
@@ -737,11 +737,11 @@
       <td class="num">1 day</td>
     </tr>
     <tr>
-      <td class="num">FACT-9</td><td><span class="chip warn">Core shipped 2026-11-18</span></td>
-      <td><strong>Review Campaigns shipped (core).</strong> <code>review_campaigns</code> table with tenant, name, window, copy, status and sent/clicked/reviewed counters; <code>ReviewRequest.campaign_id</code> links individual asks; plan columns <code>max_campaigns_per_month</code> and <code>max_campaign_days</code> feed <code>Entitlements.campaign_quota_ok()</code> / <code>campaign_days_ok()</code> (trial 4×7d, starter 2×7d, pro/growth 2×14d, enterprise unlimited×30d). CRUD, duplicate/reuse, cancel, result refresh and a Growth-tab results card are live. <strong>Still open:</strong> gating the existing review-request send path behind an active campaign, and copying a past campaign's recipient list on duplicate — both change existing customer flows and need a product decision, so they were not shipped silently.</td>
-      <td class="path">app/modules/analytics/{campaigns.py,models.py,router.py}; billing/{models.py,entitlements.py}; alembic/versions/20261118160000; components/analytics/CampaignsSection.tsx</td>
-      <td>Done: plan-limited CRUD, reuse, results. Remaining: send-path gating + recipient-list reuse.</td>
-      <td class="num">4–5 days</td>
+      <td class="num">FACT-9</td><td><span class="chip ok">Done 2026-11-22</span></td>
+      <td><strong>Review Campaigns complete.</strong> <code>review_campaigns</code> + <code>ReviewRequest.campaign_id</code> power plan-limited CRUD, reuse, results, and Growth reporting. Send-path gating: single and bulk review-request sends/queues require an active campaign (explicit <code>campaign_id</code> or current active campaign); requests are linked to that campaign and clear 409 is returned when none is active. Recipient-list reuse: duplicate copies distinct prior recipients as <code>draft</code> ReviewRequest rows on the new campaign (no jobs enqueued), and result refresh counts drafts as recipients but not sent.</td>
+      <td class="path">app/modules/analytics/{campaigns.py,review_requests.py,router.py,schemas.py}; tests/test_campaigns.py; tests/test_analytics_review_requests.py; tests/test_email_bulk_quota.py</td>
+      <td>Done: CRUD, reuse, results, send-path gating, recipient-list reuse.</td>
+      <td class="num"><span class="chip ok">Done</span></td>
     </tr>
   </table></div>
 

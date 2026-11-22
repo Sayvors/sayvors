@@ -501,6 +501,7 @@ export async function recordReviewRequest(input: {
   channel?: "whatsapp" | "sms" | "email" | "in_person";
   trigger?: "manual" | "qr" | "after_visit" | "campaign";
   deliver?: boolean;
+  campaign_id?: string | null;
 }): Promise<ReviewRequestResult> {
   return apiFetch("/api/v1/analytics/review-requests", {
     method: "POST",
@@ -518,6 +519,7 @@ export async function bulkReviewRequests(input: {
   trigger?: string;
   subject?: string | null;
   body?: string | null;
+  campaign_id?: string | null;
 }): Promise<{
   queued: number;
   sent_now: number;

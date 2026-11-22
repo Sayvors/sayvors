@@ -219,13 +219,21 @@ async def create_and_deliver(
     deliver: bool,
     subject: str | None = None,
     body: str | None = None,
+    campaign_id: str | None = None,
 ) -> ReviewRequest:
-    """Create the request, optionally deliver it, and commit once."""
+    """Create the request, optionally deliver it, and commit once.
+
+    Send-path gating (FACT-9): new sends must belong to an active campaign.
+    """
+    from .campaigns import get_active_campaign
+
+    campaign = await get_active_campaign(db, user_id, campaign_id=campaign_id)
     token = secrets.token_urlsafe(24)
     review_url = await resolve_review_url(db, user_id, channel_id)
     row = ReviewRequest(
         user_id=user_id,
         channel_id=channel_id or None,
+        campaign_id=campaign.id,
         contact=(contact or "")[:255] or None,
         contact_name=(contact_name or "")[:120] or None,
         channel=channel,
@@ -282,13 +290,21 @@ async def create_queued(
     trigger: str,
     subject: str | None,
     body: str | None,
+    campaign_id: str | None = None,
 ) -> ReviewRequest:
-    """Create a queued row for the scheduled job, without sending."""
+    """Create a queued row for the scheduled job, without sending.
+
+    Send-path gating (FACT-9): new queued sends must belong to an active campaign.
+    """
+    from .campaigns import get_active_campaign
+
+    campaign = await get_active_campaign(db, user_id, campaign_id=campaign_id)
     token = secrets.token_urlsafe(24)
     review_url = await resolve_review_url(db, user_id, channel_id)
     row = ReviewRequest(
         user_id=user_id,
         channel_id=channel_id or None,
+        campaign_id=campaign.id,
         contact=(contact or "")[:255] or None,
         contact_name=(contact_name or "")[:120] or None,
         channel=channel,
