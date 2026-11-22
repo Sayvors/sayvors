@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api-rag";
@@ -44,6 +45,8 @@ const CATEGORY_FILTERS: { value: string; label: string }[] = [
 ];
 
 export default function GoogleLiveGallery() {
+  const { t } = useI18n();
+  const gl = t.googleLive;
   const queryClient = useQueryClient();
   const { groups } = useLocationGroups();
   const [selectedId, setSelectedId] = useState<string>(ALL_BRANCHES);
@@ -53,6 +56,7 @@ export default function GoogleLiveGallery() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirmRemove, setConfirmRemove] = useState<{ items: { name: string; channelId: string }[] } | null>(null);
   const [removing, setRemoving] = useState(false);
+  const [removeProgress, setRemoveProgress] = useState<{ done: number; total: number } | null>(null);
   const [importing, setImporting] = useState(false);
 
   const channelsQuery = useQuery({
@@ -153,25 +157,37 @@ export default function GoogleLiveGallery() {
 
   const removeMany = async (toRemove: { name: string; channelId: string }[]) => {
     setRemoving(true);
+    setRemoveProgress({ done: 0, total: toRemove.length });
     let ok = 0, fail = 0;
-    for (const it of toRemove) {
-      try {
-        await apiFetch(
-          `/api/v1/channels/${encodeURIComponent(it.channelId)}/google-media?name=${encodeURIComponent(it.name)}`,
-          { method: "DELETE" },
-        );
-        ok++;
-      } catch {
-        fail++;
+    let done = 0;
+    const concurrency = 4;
+    let index = 0;
+    const runNext = async (): Promise<void> => {
+      while (index < toRemove.length) {
+        const it = toRemove[index++];
+        try {
+          await apiFetch(
+            `/api/v1/channels/${encodeURIComponent(it.channelId)}/google-media?name=${encodeURIComponent(it.name)}`,
+            { method: "DELETE" },
+          );
+          ok++;
+        } catch {
+          fail++;
+        } finally {
+          done++;
+          setRemoveProgress({ done, total: toRemove.length });
+        }
       }
-    }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, toRemove.length) }, () => runNext()));
     await invalidateMedia();
     setRemoving(false);
+    setRemoveProgress(null);
     setConfirmRemove(null);
     setSelected(new Set());
     setSelectionMode(false);
-    if (fail === 0) setNotice({ kind: "ok", text: `Removed ${ok} photo${ok === 1 ? "" : "s"} from Google.` });
-    else setNotice({ kind: "err", text: `${ok} removed, ${fail} failed.` });
+    if (fail === 0) setNotice({ kind: "ok", text: ok === 1 ? gl.removedOne : gl.removedMany(ok) });
+    else setNotice({ kind: "err", text: gl.removedPartial(ok, fail) });
   };
 
   useEffect(() => {
@@ -215,7 +231,7 @@ export default function GoogleLiveGallery() {
               disabled={items.length === 0}
               className="rounded-[8px] border border-ink/10 bg-white px-4 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] disabled:opacity-40 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:bg-white/[0.04] dark:text-fog"
             >
-              Select
+              {gl.select}
             </button>
           ) : (
             <>
@@ -228,14 +244,14 @@ export default function GoogleLiveGallery() {
                 }}
                 className="rounded-[8px] border border-ink/10 bg-white px-4 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:bg-white/[0.04] dark:text-fog"
               >
-                {items.length > 0 && items.every((m) => selected.has(itemKey(m))) ? "Clear selection" : "Select all"}
+                {items.length > 0 && items.every((m) => selected.has(itemKey(m))) ? gl.clearSelection : gl.selectAll}
               </button>
               <button
                 type="button"
                 onClick={() => { setSelectionMode(false); setSelected(new Set()); }}
                 className="rounded-[8px] border border-ink/10 bg-white px-4 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:bg-white/[0.04] dark:text-fog"
               >
-                Cancel
+                {gl.cancel}
               </button>
             </>
           )}
@@ -422,15 +438,27 @@ export default function GoogleLiveGallery() {
       )}
 
       {confirmRemove && (
-        <Modal open onClose={() => setConfirmRemove(null)} title={`Remove ${confirmRemove.items.length === 1 ? "this photo" : `${confirmRemove.items.length} photos`} from Google?`} subtitle="This removes them from your Google Business Profile. This cannot be undone." busy={removing} width="max-w-[440px]">
+        <Modal
+          open
+          onClose={() => { if (!removing) setConfirmRemove(null); }}
+          title={confirmRemove.items.length === 1 ? gl.removeTitleOne : gl.removeTitleMany(confirmRemove.items.length)}
+          subtitle={gl.removeSubtitle}
+          busy={removing}
+          width="max-w-[440px]"
+        >
           <div className="space-y-4">
             <p className="text-[13px] text-ink/65">
-              {confirmRemove.items.length === 1 ? "The photo will be removed from Google." : `${confirmRemove.items.length} photos will be removed from Google.`}
+              {confirmRemove.items.length === 1 ? gl.removeBodyOne : gl.removeBodyMany(confirmRemove.items.length)}
             </p>
+            {removing && removeProgress ? (
+              <p className="text-[12px] font-semibold text-ink/70" role="status">
+                {gl.removingProgress(removeProgress.done, removeProgress.total)}
+              </p>
+            ) : null}
             <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <button type="button" onClick={() => setConfirmRemove(null)} disabled={removing} className="rounded-[8px] border border-ink/10 bg-white px-5 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] disabled:opacity-50">Keep them</button>
+              <button type="button" onClick={() => setConfirmRemove(null)} disabled={removing} className="rounded-[8px] border border-ink/10 bg-white px-5 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] disabled:opacity-50">{gl.keepThem}</button>
               <button type="button" onClick={() => void removeMany(confirmRemove.items)} disabled={removing} className="rounded-[8px] bg-red-600 px-5 py-2.5 text-[13px] font-bold text-white transition hover:bg-red-700 disabled:opacity-60">
-                {removing ? "Removing…" : "Remove"}
+                {removing && removeProgress ? gl.removingProgress(removeProgress.done, removeProgress.total) : gl.remove}
               </button>
             </div>
           </div>
