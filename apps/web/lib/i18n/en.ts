@@ -470,6 +470,8 @@ const en = {
       closedLabel: "Closed",
       toLabel: "to",
       saveHours: "Save Hours",
+      hoursIncomplete: "Set open and close times for each open day, or mark it as 24h or closed.",
+      hoursPrefilledFromGoogle: "Showing the hours currently live on Google. Change anything and save to update.",
       hoursSaved: "Hours saved.",
       hoursAllClosed: "Regular hours → all days closed",
       hoursSummary: "Regular hours → {days}",

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api-rag";
@@ -2263,10 +2263,33 @@ function HoursTab({ initial, onSave, bulk, copy, synced, status, reason, current
 
 }) {
   const blank = () => Object.fromEntries(HOURS_DAYS.map((d) => [d, { open: "", close: "", closed: false }]));
+  const googleRegular = current?.["hours.regular"] as
+    | Record<string, { open: string; close: string; closed: boolean; all_day?: boolean }>
+    | undefined;
+  const dayIsComplete = (
+    cfg: { open: string; close: string; closed: boolean; all_day?: boolean } | undefined,
+  ): boolean => !!cfg && (cfg.closed || !!cfg.all_day || (!!cfg.open && !!cfg.close));
+  // Per-day merge, not a whole-record choice: a saved week where only Friday
+  // is closed used to count as "meaningful" and the other six days rendered
+  // as blank rows. Complete saved days win (local edits first); every other
+  // day takes Google's live value so the form never shows an empty template.
+  const mergedInitial = {} as Record<string, { open: string; close: string; closed: boolean; all_day?: boolean }>;
+  let prefilledFromGoogle = false;
+  for (const day of HOURS_DAYS) {
+    const saved = initial?.[day];
+    const live = googleRegular?.[day];
+    if (dayIsComplete(saved) && saved) mergedInitial[day] = saved;
+    else if (dayIsComplete(live) && live) {
+      mergedInitial[day] = live;
+      prefilledFromGoogle = true;
+    } else mergedInitial[day] = { open: "", close: "", closed: true };
+  }
   const [hours, setHours] = useState<Record<string, { open: string; close: string; closed: boolean; all_day?: boolean }>>(
-    { ...blank(), ...(initial ?? {}) }
+    { ...blank(), ...mergedInitial }
   );
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const userEdited = useRef(false);
 
   // Google reports one stage for the whole hours block; the exact waiting
   // rows are our local values that differ from what Google shows today.
@@ -2284,14 +2307,20 @@ function HoursTab({ initial, onSave, bulk, copy, synced, status, reason, current
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reset form when switching locations
-    setHours({ ...blank(), ...(initial ?? {}) });
+    setHours({ ...blank(), ...mergedInitial });
+    setError(null);
+    userEdited.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(initial)]);
+  }, [JSON.stringify(initial), JSON.stringify(googleRegular)]);
 
   const updateDay = (day: string, field: string, value: string | boolean) => {
+    userEdited.current = true;
+    setError(null);
     setHours({ ...hours, [day]: { ...hours[day], [field]: value, ...(field === "open" || field === "close" ? { all_day: false } : {}) } });
   };
   const toggleAllDay = (day: string) => {
+    userEdited.current = true;
+    setError(null);
     const next = !hours[day].all_day;
     setHours({
       ...hours,
@@ -2300,6 +2329,15 @@ function HoursTab({ initial, onSave, bulk, copy, synced, status, reason, current
   };
 
   const handleSave = async () => {
+    const incomplete = HOURS_DAYS.filter((day) => {
+      const cfg = hours[day];
+      return !cfg?.closed && !cfg?.all_day && (!cfg?.open || !cfg?.close);
+    });
+    if (incomplete.length > 0) {
+      setError(copy.hoursIncomplete);
+      return;
+    }
+    setError(null);
     setSaving(true);
     try {
       await onSave(hours);
@@ -2320,6 +2358,9 @@ function HoursTab({ initial, onSave, bulk, copy, synced, status, reason, current
         </div>
       </div>
       <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.hoursHint}</p>
+      {prefilledFromGoogle ? (
+        <p className="-mt-2 text-[11px] font-medium text-sky-700 dark:text-sky-300">{copy.hoursPrefilledFromGoogle}</p>
+      ) : null}
       <TemplatePicker
         templates={HOURS_TEMPLATES}
         copy={copy}
@@ -2371,6 +2412,11 @@ function HoursTab({ initial, onSave, bulk, copy, synced, status, reason, current
           </div>
         ))}
       </div>
+      {error ? (
+        <p className="text-[12px] font-medium text-red-600 dark:text-red-400" role="alert">
+          {error}
+        </p>
+      ) : null}
       <div className="pt-2 sm:flex sm:justify-end">
         <button onClick={handleSave} disabled={saving} className="btn-primary disabled:opacity-50">
           {saving

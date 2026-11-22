@@ -471,6 +471,8 @@ const ar: Dict = {
       closedLabel: "مغلق",
       toLabel: "إلى",
       saveHours: "حفظ الساعات",
+      hoursIncomplete: "حدد وقت الفتح والإغلاق لكل يوم مفتوح، أو اجعله مفتوحًا 24 ساعة أو مغلقًا.",
+      hoursPrefilledFromGoogle: "تُعرض الساعات المنشورة حاليًا على Google. عدّل ما تريد ثم احفظ لتحديثها.",
       hoursSaved: "تم حفظ الساعات.",
       hoursAllClosed: "ساعات العمل العادية → جميع الأيام مغلقة",
       hoursSummary: "ساعات العمل العادية → {days}",
