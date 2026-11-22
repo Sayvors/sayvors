@@ -6,6 +6,9 @@ const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
   reactStrictMode: true,
+  experimental: {
+    agentUpgrade: "security",
+  },
   // The dev server rejects requests whose Origin is not on this list, and it
   // answers a blocked HMR websocket upgrade with 503. Facebook Login needs an
   // HTTPS origin, so local Meta testing goes through a tunnel — ngrok was
