@@ -193,6 +193,24 @@ async def test_cache_hit_skips_second_llm_call(client, db, channel_id, user_id,
 
 # ── Template fallback: useful sentences from the numbers alone ─────────────
 
+def test_payload_metrics_match_summary_semantics():
+    """Per-subject numbers must derive like the distribution does: velocity
+    from the review windows, sentiment from facts — never raw-key lookups."""
+    subject = {
+        "available": True,
+        "key": "own:1",
+        "name": "Mine",
+        "metrics": {"reviews_last_year": 24, "avg_rating": 4.0},
+        "facts": {"positive_pct": 80},
+    }
+    payload = benchmark_ai.build_numeric_payload([subject], ["own:1"])
+    subj = payload["subjects"][0]
+    assert subj["own"] is True
+    assert subj["metrics"]["reviews_per_month"] == 2.0  # 24/12 via summary
+    assert subj["metrics"]["avg_rating"] == 4.0
+    assert subj["metrics"]["positive_pct"] == 80.0
+
+
 def test_template_summary_uses_rank_leader_and_gap():
     payload = {
         "north_star": {

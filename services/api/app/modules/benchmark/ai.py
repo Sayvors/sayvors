@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..llm.gateway import LLMMessage, complete, resolve_tenant_model
 from . import compare
+from . import summary as summary_metrics
 from .summary import METRIC_SPECS, north_star
 from .summary import distribution as metric_distribution
 
@@ -50,15 +51,16 @@ _METRIC_LABELS = {
 
 
 def _headline_metrics(subject: dict[str, Any]) -> dict[str, float | None]:
-    """The four headline numbers for one subject (or nulls when unknown)."""
-    out: dict[str, float | None] = {}
-    for metric in METRIC_SPECS:
-        container = "facts" if metric == "positive_pct" else "metrics"
-        value = (subject.get(container) or {}).get(metric)
-        if value is None and metric == "total_reviews":
-            value = (subject.get("metrics") or {}).get("total_ratings")
-        out[metric] = float(value) if value is not None else None
-    return out
+    """The four headline numbers for one subject (or nulls when unknown).
+
+    Reads through ``summary._value`` so the payload matches the distribution
+    and north-star numbers exactly (velocity derivation, sentiment container,
+    total_ratings fallback) instead of drifting into its own semantics.
+    """
+    return {
+        metric: summary_metrics._value(subject, metric)
+        for metric in METRIC_SPECS
+    }
 
 
 def build_numeric_payload(
