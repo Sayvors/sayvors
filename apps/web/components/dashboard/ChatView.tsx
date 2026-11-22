@@ -68,7 +68,7 @@ export default function ChatView({ conversation, messages, onToggleAgent }: Chat
       <div className="flex-1 overflow-y-auto bg-fog/30 p-4 dark:bg-ink/30">
         <div className="space-y-3">
           {messages.map((msg) => (
-            <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-start" : "justify-end"}`}>
+            <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
               <div className={`max-w-[75%] rounded-[8px] px-4 py-2.5 ${
                 msg.role === "user"
                   ? "bg-white text-ink shadow-sm dark:bg-ink dark:text-fog dark:border dark:border-fog/[0.06]"

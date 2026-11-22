@@ -11,7 +11,7 @@ interface ChatListProps {
 }
 
 export default function ChatList({ conversations, selectedId, onSelect }: ChatListProps) {
-  const { t } = useI18n();
+  const { t, dir } = useI18n();
   const ws = t.channelHub.workspace;
   const [search, setSearch] = useState("");
 
@@ -31,7 +31,7 @@ export default function ChatList({ conversations, selectedId, onSelect }: ChatLi
             strokeWidth="1.5"
             strokeLinecap="round"
             strokeLinejoin="round"
-            className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink/25 dark:text-fog/25"
+            className={`absolute ${dir === "rtl" ? "end-2.5" : "start-2.5"} top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink/25 dark:text-fog/25`}
           >
             <circle cx="11" cy="11" r="8" />
             <line x1="21" y1="21" x2="16.65" y2="16.65" />
@@ -42,7 +42,7 @@ export default function ChatList({ conversations, selectedId, onSelect }: ChatLi
             aria-label={ws.searchPh}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="h-8 w-full rounded-[8px] border border-ink/[0.08] bg-fog/40 pl-8 pr-3 text-[12px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/30 focus:bg-white focus:ring-2 focus:ring-deep-violet/[0.06] dark:border-fog/[0.08] dark:bg-ink/40 dark:text-fog dark:placeholder:text-fog/30 dark:focus:bg-ink"
+            className="h-8 w-full rounded-[8px] border border-ink/[0.08] bg-fog/40 ps-8 pe-3 text-[12px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/30 focus:bg-white focus:ring-2 focus:ring-deep-violet/[0.06] dark:border-fog/[0.08] dark:bg-ink/40 dark:text-fog dark:placeholder:text-fog/30 dark:focus:bg-ink"
           />
         </div>
       </div>
@@ -63,7 +63,7 @@ export default function ChatList({ conversations, selectedId, onSelect }: ChatLi
             <button
               key={conv.id}
               onClick={() => onSelect(conv.id)}
-              className={`flex w-full items-center gap-3 border-b border-ink/[0.04] px-4 py-3 text-left transition hover:bg-fog/60 dark:border-fog/[0.04] dark:hover:bg-fog/[0.04] ${
+              className={`flex w-full items-center gap-3 border-b border-ink/[0.04] px-4 py-3 text-start transition hover:bg-fog/60 dark:border-fog/[0.04] dark:hover:bg-fog/[0.04] ${
                 selectedId === conv.id ? "bg-deep-violet/[0.04]" : ""
               } ${conv.unread ? "bg-deep-violet/[0.02]" : ""}`}
             >
@@ -83,7 +83,7 @@ export default function ChatList({ conversations, selectedId, onSelect }: ChatLi
                 <div className="flex items-center justify-between">
                   <p className="truncate text-[11px] text-ink/40 dark:text-fog/40">{conv.lastMsg}</p>
                   {conv.unread && (
-                    <span className="ml-2 h-1.5 w-1.5 shrink-0 rounded-full bg-deep-violet" />
+                    <span className="ms-2 h-1.5 w-1.5 shrink-0 rounded-full bg-deep-violet" />
                   )}
                 </div>
               </div>

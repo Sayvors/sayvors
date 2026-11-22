@@ -9,6 +9,7 @@ import { streamAssistantChat } from "@/lib/api-assistant";
 import { isChatChart, type ChatChart } from "@/lib/chat-charts";
 import ChatChartView from "@/components/chat/ChatChart";
 import FeedbackPanel from "@/components/FeedbackPanel";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 
 interface ChatMsg {
   role: "user" | "assistant";
@@ -214,7 +215,7 @@ function renderMarkdown(text: string): React.ReactNode {
     ));
     blocks.push(
       list.ordered ? (
-        <ol key={`b-${bi++}`} className="ml-4 list-decimal space-y-0.5">{items}</ol>
+        <ol key={`b-${bi++}`} className="ms-4 list-decimal space-y-0.5">{items}</ol>
       ) : (
         <ul key={`b-${bi++}`} className="ml-4 list-disc space-y-0.5">{items}</ul>
       )
@@ -244,7 +245,7 @@ function renderMarkdown(text: string): React.ReactNode {
             <thead>
               <tr>
                 {header.map((h, ci) => (
-                  <th key={ci} className="border-b border-ink/15 px-2 py-1 text-left font-bold dark:border-fog/20">
+                  <th key={ci} className="border-b border-ink/15 px-2 py-1 text-start font-bold dark:border-fog/20">
                     {renderInline(h, `th-${tkey}-${ci}`)}
                   </th>
                 ))}
@@ -313,6 +314,7 @@ function StepTrail({
   done: boolean;
   elapsedMs?: number | null;
 }) {
+  const { dir } = useI18n();
   const [open, setOpen] = useState(!done);
   const running = !done;
   const active = steps[steps.length - 1];
@@ -329,7 +331,7 @@ function StepTrail({
         type="button"
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
-        className="flex w-full items-center gap-2 px-2.5 py-2 text-left outline-none transition hover:bg-ink/[0.02] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:hover:bg-fog/[0.04]"
+        className={`flex w-full items-center gap-2 px-2.5 py-2 ${dir === "rtl" ? "text-start" : "text-left"} outline-none transition hover:bg-ink/[0.02] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:hover:bg-fog/[0.04]`}
       >
         <span
           aria-hidden
@@ -402,7 +404,7 @@ function StepTrail({
                   {s.label}
                 </span>
                 {s.detail && (
-                  <span className="max-w-[45%] shrink-0 truncate text-right text-[10px] text-ink/35 dark:text-fog/35">
+                  <span className={`max-w-[45%] shrink-0 truncate ${dir === "rtl" ? "text-start" : "text-right"} text-[10px] text-ink/35 dark:text-fog/35`}>
                     {s.detail}
                   </span>
                 )}
@@ -422,6 +424,7 @@ function StepTrail({
  */
 export default function SayvorsChat() {
   const open = useChatOpen();
+  const { dir } = useI18n();
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeId, setActiveId] = useState<string>("");
   const [loaded, setLoaded] = useState(false);
@@ -787,7 +790,7 @@ export default function SayvorsChat() {
                   {live.text ? (
                     <div className="max-w-[88%] space-y-1 rounded-[8px] bg-ink/[0.05] px-3.5 py-2 text-[12.5px] text-ink dark:bg-fog/[0.08] dark:text-fog">
                       {renderMarkdown(live.text)}
-                      <span className="ml-0.5 inline-block h-3 w-[2px] translate-y-[2px] animate-pulse rounded-full bg-deep-violet align-middle" aria-hidden />
+                      <span className="ms-0.5 inline-block h-3 w-[2px] translate-y-[2px] animate-pulse rounded-full bg-deep-violet align-middle" aria-hidden />
                     </div>
                   ) : live.steps.length === 0 ? (
                     <p className="flex items-center gap-1.5 rounded-[8px] bg-ink/[0.05] px-3.5 py-2.5 dark:bg-fog/[0.08]">
@@ -884,7 +887,7 @@ export default function SayvorsChat() {
               New chat
             </button>
             <div className="relative">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink/25 dark:text-fog/25" aria-hidden>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className={`absolute ${dir === "rtl" ? "end-2.5" : "start-2.5"} top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink/25 dark:text-fog/25`} aria-hidden>
                 <circle cx="11" cy="11" r="8" />
                 <line x1="21" y1="21" x2="16.65" y2="16.65" strokeLinecap="round" />
               </svg>
@@ -894,7 +897,7 @@ export default function SayvorsChat() {
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search chats…"
                 aria-label="Search chats"
-                className="w-full rounded-[8px] border border-ink/[0.08] bg-ink/[0.02] py-1.5 pl-8 pr-3 text-[12px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/30 focus:bg-white focus:ring-2 focus:ring-deep-violet/[0.08] dark:border-fog/[0.1] dark:bg-fog/[0.04] dark:text-fog"
+                className="w-full rounded-[8px] border border-ink/[0.08] bg-ink/[0.02] py-1.5 ps-8 pe-3 text-[12px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/30 focus:bg-white focus:ring-2 focus:ring-deep-violet/[0.08] dark:border-fog/[0.1] dark:bg-fog/[0.04] dark:text-fog"
               />
             </div>
           </div>
