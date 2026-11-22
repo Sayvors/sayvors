@@ -34,7 +34,7 @@ export default function SentimentVelocityBars({ subjects }: { subjects: Comparis
               {subject.name ?? subject.key}
             </span>
             <div className="flex h-4 flex-1 overflow-hidden rounded-full bg-[#F1F2F5]" role="img"
-              aria-label={`${subject.name}: ${Math.round(p)}% ${b.sentimentPositive}, ${Math.round(neutral)}% ${b.sentimentNeutral}, ${Math.round(n)}% ${b.sentimentNegative}`}>
+              aria-label={`${subject.name ?? subject.key}: ${Math.round(p)}% ${b.sentimentPositive}, ${Math.round(neutral)}% ${b.sentimentNeutral}, ${Math.round(n)}% ${b.sentimentNegative}`}>
               <div className="h-full" style={{ width: `${p}%`, background: "#116631" }} />
               <div className="h-full" style={{ width: `${neutral}%`, background: "#D8D8DC" }} />
               <div className="h-full" style={{ width: `${n}%`, background: "#B3123A" }} />

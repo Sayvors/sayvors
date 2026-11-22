@@ -95,6 +95,10 @@ export default function BenchmarkPage() {
     try {
       await setBenchmarkSet(place.place_id, !place.in_bench_set);
       await queryClient.invalidateQueries({ queryKey: ["benchmark", "saved"] });
+    } catch {
+      // A rejected toggle (e.g. losing a cap race) re-syncs the counter from
+      // the server instead of failing silently.
+      await queryClient.invalidateQueries({ queryKey: ["benchmark", "saved"] });
     } finally {
       setBusyId(null);
     }

@@ -303,10 +303,13 @@ function gapChip(
   if (value == null || mainValue == null || value === mainValue) return null;
   if (!Number.isFinite(value) || !Number.isFinite(mainValue)) return null;
   const diff = value - mainValue;
+  const rounded = Math.round(diff * 10) / 10;
+  // A ±0 chip asserts a difference that doesn't exist (e.g. 4.96 vs 5.0).
+  if (rounded === 0) return null;
   const helps = higherIsBetter ? diff > 0 : diff < 0;
   const sign = diff > 0 ? "+" : "\u2212";
   return {
-    text: `${sign}${Math.abs(Math.round(diff * 10) / 10)}`,
+    text: `${sign}${Math.abs(rounded)}`,
     className: helps
       ? "bg-[#E7F6EC] text-[#116631]"
       : "bg-[#FDE8EC] text-[#B3123A]",
