@@ -3,6 +3,11 @@
 Talks to a gosom sidecar's embedded web API (no auth). Exposes the same
 interface as ``places`` and ``outscraper`` so the benchmark worker can swap
 providers without changes in downstream consumers.
+
+gosom owns discovery and place metadata. Its reviews are only the handful
+Google renders for a signed-out browser, so ``get_place`` deepens them with the
+free BOQ panel endpoint (see ``boq``) — same business, same window, far more
+reviews.
 """
 from __future__ import annotations
 
@@ -12,16 +17,21 @@ import io
 import json
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
 
 from ...config import settings
+from . import boq
 
 logger = logging.getLogger(__name__)
 
 MAX_REVIEWS = 500
+# Review history we keep per place. Benchmarking cares about recent momentum
+# (last 30 days), not a multi-year archive: the aggregate rating/count still
+# come through untouched, only the stored review *text* list is windowed.
+DEFAULT_REVIEW_WINDOW_DAYS = 30
 REQUEST_TIMEOUT_SECONDS = 30.0
 POLL_INTERVAL_SECONDS = 3.0
 JOB_TIMEOUT_SECONDS = 600.0
@@ -102,6 +112,21 @@ def _parse_csv(text: str) -> list[dict[str, Any]]:
         return []
 
 
+def _first(item: dict[str, Any], *keys: str) -> Any:
+    """First non-empty value among possibly-cased JSON keys.
+
+    gosom's Review struct tags only SOME fields (published_at, reply_text are
+    lowercase; Name/Rating/Description/ProfilePicture marshal capitalised).
+    Reading one case silently blanks the other, which is exactly how reviews
+    ended up stored with a date and an owner reply but no author/rating/text.
+    """
+    for key in keys:
+        value = item.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
 def _parse_reviews(row: dict[str, Any]) -> list[dict[str, Any]]:
     reviews: list[dict[str, Any]] = []
     seen: set[Any] = set()
@@ -124,19 +149,28 @@ def _parse_reviews(row: dict[str, Any]) -> list[dict[str, Any]]:
                 continue
             if review_id is not None:
                 seen.add(review_id)
+            rating = _first(item, "rating", "Rating")
+            try:
+                rating_int = int(rating) if rating not in (None, "") else None
+            except (TypeError, ValueError):
+                rating_int = None
             reviews.append({
-                "rating": item.get("rating"),
-                "text": str(item.get("description") or "")[:CSV_TEXT_LIMIT],
-                "publish_time": _rfc3339_or_none(item.get("published_at")),
-                "author": str(item.get("name") or "")[:CSV_AUTHOR_LIMIT] or None,
-                "author_photo": str(item.get("profile_picture") or "")[:1024] or None,
-                "owner_answer": str(item.get("reply_text") or "")[:CSV_TEXT_LIMIT] or None,
-                "owner_answer_time": _rfc3339_or_none(item.get("reply_published_at")),
+                # Google star ratings are 1-5; 0 means the parse found none.
+                "rating": rating_int if rating_int and 1 <= rating_int <= 5 else None,
+                "text": str(_first(item, "description", "Description") or "")[:CSV_TEXT_LIMIT],
+                "publish_time": _rfc3339_or_none(_first(item, "published_at", "PublishedAt")),
+                "author": str(_first(item, "name", "Name") or "")[:CSV_AUTHOR_LIMIT] or None,
+                "author_photo": str(_first(item, "profile_picture", "ProfilePicture") or "")[:1024] or None,
+                "owner_answer": str(_first(item, "reply_text", "ReplyText") or "")[:CSV_TEXT_LIMIT] or None,
+                "owner_answer_time": _rfc3339_or_none(_first(item, "reply_published_at", "ReplyPublishedAt")),
             })
             if len(reviews) >= MAX_REVIEWS:
                 break
         if len(reviews) >= MAX_REVIEWS:
             break
+    # Newest first so the reviews table's "Newest" label is true (gosom
+    # returns Google's order, which is not date-sorted). Undated last.
+    reviews.sort(key=lambda r: r["publish_time"] or "", reverse=True)
     return reviews[:MAX_REVIEWS]
 
 
@@ -164,24 +198,37 @@ def _map_place(row: dict[str, Any]) -> dict[str, Any]:
         "reviews": _parse_reviews(row),
         "photos": [],
         "reviews_per_score": reviews_per_score,
+        # The Maps URL (row["link"]) is the canonical place URL gosom scraped.
+        # Storing it at save time lets get_place() target the exact listing
+        # without relying on the cid/place_id string alone.
+        "maps_url": str(row.get("link") or "")[:1024] or None,
+        # Google place photo URL for the card avatar.
+        "thumbnail": str(row.get("thumbnail") or "")[:1024] or None,
         "source": "gosom",
     }
 
 
-async def _create_job(client: httpx.AsyncClient, query: str) -> str:
+async def _create_job(
+    client: httpx.AsyncClient, query: str, *, extra_reviews: bool = True
+) -> str:
     url = f"{_base_url()}/api/v1/jobs"
     body = {
         "name": str(query or "")[:255],
         "keywords": [str(query)],
         "lang": "en",
         "zoom": 15,
-        "lat": 0.0,
-        "lon": 0.0,
+        "lat": "",
+        "lon": "",
         "fast_mode": False,
         "radius": 10000,
         "depth": 1,
         "email": False,
-        "extra_reviews": True,
+        # Search passes False: it only needs place listings (name, address,
+        # rating, count), which gosom returns without opening each place's
+        # review panel. Only a saved place's scrape sets True — that is the
+        # expensive per-place review pagination, and it should run for the
+        # few places a user actually saved, never for a whole search page.
+        "extra_reviews": extra_reviews,
         "max_time": max(MIN_MAX_TIME_SECONDS, 600),
         "proxies": _proxies(),
     }
@@ -229,11 +276,16 @@ async def _poll_job(client: httpx.AsyncClient, job_id: str) -> dict[str, Any]:
             continue
         if not isinstance(job, dict):
             continue
-        status = str(job.get("status") or "").lower()
+        # gosom's web.Job Go struct has NO json tags, so it marshals with
+        # capitalised field names ("Status", "ID", ...). Read both cases so a
+        # future gosom that adds tags (lowercase) still works. Reading only
+        # lowercase made every real poll miss "ok" and time out at 504 while
+        # the job actually completed server-side.
+        status = str(job.get("Status") or job.get("status") or "").lower()
         if status == "ok":
             return job
         if status == "failed":
-            error = job.get("error") or job.get("message") or "job failed"
+            error = job.get("Error") or job.get("error") or job.get("message") or "job failed"
             raise GosomError(str(error)[:500])
         # pending / working: keep polling
     raise GosomError("gosom job timed out", 504)
@@ -260,13 +312,53 @@ async def _delete_job(client: httpx.AsyncClient, job_id: str) -> None:
         logger.debug("gosom delete job failed: %s", type(exc).__name__, exc_info=True)
 
 
+def _filter_recent(
+    reviews: list[dict[str, Any]], days: int | None
+) -> list[dict[str, Any]]:
+    """Keep only reviews published within the last ``days`` days.
+
+    A review with no parseable publish date cannot be proven recent, so it is
+    excluded from the window rather than guessed in. ``days=None`` disables the
+    filter (returns everything). Ordering is preserved (gosom returns newest
+    first).
+    """
+    if not days or days <= 0:
+        return reviews
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    kept: list[dict[str, Any]] = []
+    for review in reviews:
+        raw = review.get("publish_time")
+        if not raw:
+            continue
+        try:
+            published = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if published.tzinfo is None:
+            published = published.replace(tzinfo=timezone.utc)
+        if published >= cutoff:
+            kept.append(review)
+    return kept
+
+
 async def get_place(
     place_id: str,
     *,
     reviews_limit: int = 500,
     cutoff: Any = None,
     maps_url: str | None = None,
+    days: int | None = DEFAULT_REVIEW_WINDOW_DAYS,
 ) -> dict[str, Any]:
+    """Scrape one saved place's details and recent reviews.
+
+    This is the expensive path (one browser render + review pagination) and runs
+    only for a place the user actually saved. Reviews are windowed to the last
+    ``days`` days (default 30) so the stored text stays focused on recent
+    momentum; the aggregate rating and review count are always full.
+
+    ``cutoff`` is accepted for signature parity with ``places.get_place`` but is
+    ignored — the window is expressed in ``days`` instead.
+    """
     pid = str(place_id or "").strip()[:255]
     if not pid:
         raise GosomError("Unknown place", 400)
@@ -283,7 +375,7 @@ async def get_place(
         limit = MAX_REVIEWS
 
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS) as client:
-        job_id = await _create_job(client, query)
+        job_id = await _create_job(client, query, extra_reviews=True)
         try:
             await _poll_job(client, job_id)
             csv_text = await _download_csv(client, job_id)
@@ -296,14 +388,65 @@ async def get_place(
     place = _map_place(rows[0])
     if not place.get("place_id"):
         place["place_id"] = pid or str(place_id or "").strip()[:255]
+    reviews = _filter_recent(place.get("reviews") or [], days)
     if limit >= 0:
-        place["reviews"] = (place.get("reviews") or [])[:limit]
-    # cutoff accepted for signature parity; gosom returns full history.
+        reviews = reviews[:limit]
+    place["reviews"] = await _deepen_reviews(
+        place, reviews, limit=limit, days=days, maps_url=maps_url
+    )
+    # cutoff accepted for signature parity; the window is `days` above.
     _ = cutoff
     return place
 
 
+async def _deepen_reviews(
+    place: dict[str, Any],
+    reviews: list[dict[str, Any]],
+    *,
+    limit: int,
+    days: int | None,
+    maps_url: str | None,
+) -> list[dict[str, Any]]:
+    """Replace gosom's handful of reviews with the full recent set from BOQ.
+
+    gosom sees only the reviews Google serves a signed-out browser (~5 since the
+    2026 sign-in wall), which cannot answer "what changed this month". The BOQ
+    panel endpoint returns the same public reviews at real depth, for free.
+
+    Metadata (rating, count, address, photos) stays gosom's: the BOQ payload has
+    none. A BOQ failure is logged and the shallow reviews are kept, because
+    losing depth must never blank a competitor's review column.
+    """
+    if limit == 0:
+        return []
+    if not bool(getattr(settings, "BOQ_REVIEWS_ENABLED", True)):
+        return reviews
+    url = place.get("maps_url") or maps_url
+    if not boq.feature_id(url):
+        # No canonical Maps URL means no feature id; a guess would scrape a
+        # different business than the one the user saved.
+        return reviews
+    try:
+        deep = await boq.reviews_for_place(
+            str(place.get("place_id") or ""),
+            maps_url=url,
+            max_reviews=MAX_REVIEWS if limit < 0 else max(limit, len(reviews)),
+            days=days,
+        )
+    except boq.BoqError as exc:
+        logger.warning("BOQ review depth failed for %s: %s", url, exc)
+        return reviews
+    return deep or reviews
+
+
 async def search_places(query: str, *, limit: int = 20) -> list[dict[str, Any]]:
+    """Find places matching a query — listings only, no reviews.
+
+    This is the fast path: gosom returns name, address, rating, review count,
+    coordinates and the Maps URL for each result without opening any review
+    panel. Review scraping is deferred to ``get_place`` when the user saves a
+    place, so a search never pays the per-place review cost.
+    """
     if not configured():
         return []
     q = str(query or "").strip()[:255]
@@ -315,7 +458,7 @@ async def search_places(query: str, *, limit: int = 20) -> list[dict[str, Any]]:
         cap = MAX_SEARCH_RESULTS
 
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS) as client:
-        job_id = await _create_job(client, q)
+        job_id = await _create_job(client, q, extra_reviews=False)
         try:
             await _poll_job(client, job_id)
             csv_text = await _download_csv(client, job_id)
@@ -323,5 +466,12 @@ async def search_places(query: str, *, limit: int = 20) -> list[dict[str, Any]]:
             await _delete_job(client, job_id)
 
     rows = _parse_csv(csv_text)
-    places = [_map_place(row) for row in rows]
-    return places[:cap]
+    results: list[dict[str, Any]] = []
+    for row in rows:
+        place = _map_place(row)
+        # Search never carries reviews; keep the field empty and explicit.
+        place["reviews"] = []
+        results.append(place)
+        if len(results) >= cap:
+            break
+    return results

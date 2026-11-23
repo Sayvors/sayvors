@@ -25,6 +25,8 @@ from ..analytics.models import LocationDailyMetric, ReviewInsight
 from ..analytics.service import get_overview
 from ..analytics.staff_mentions import listing_id_for_channel, staff_summary
 from ..channels.models import BusinessService, Channel, VerificationRecord
+from . import gosom
+from . import outscraper
 from . import places
 from . import service
 from .models import BenchmarkSnapshot
@@ -313,11 +315,56 @@ async def _baseline_snapshot(
     ).scalar_one_or_none()
 
 
+async def _provider_details(
+    source: str,
+    place_id: str,
+    *,
+    reviews_limit: int,
+    maps_url: str | None = None,
+    cutoff: int | None = None,
+) -> dict[str, Any]:
+    """Provider-routed place details with a Places fallback.
+
+    ``source`` is the admin-selected provider (``BenchmarkConfig.source``).
+    gosom pulls up to ``reviews_limit`` reviews and needs the canonical
+    ``maps_url``; outscraper and the Places fallback are capped at 10 by cost.
+    A gosom/outscraper failure falls back to Places (metadata + 10 reviews) so a
+    single-provider outage never blanks the comparison column. When every
+    provider fails the last error is re-raised, so the caller records one
+    outage and can read its ``status_code``.
+    """
+    source = str(source or "").strip()
+    last_error: Exception | None = None
+    if source == "gosom":
+        try:
+            return await gosom.get_place(
+                place_id, reviews_limit=reviews_limit, maps_url=maps_url
+            )
+        except gosom.GosomError as exc:
+            logger.warning("gosom details failed for %s: %s", place_id, exc)
+            last_error = exc
+    elif source == "outscraper":
+        try:
+            return await outscraper.get_place(
+                place_id, reviews_limit=10, cutoff=cutoff
+            )
+        except outscraper.OutscraperError as exc:
+            logger.warning("outscraper details failed for %s: %s", place_id, exc)
+            last_error = exc
+    try:
+        return await places.get_place(place_id, reviews_limit=10, cutoff=cutoff)
+    except places.PlacesError:
+        if last_error is not None:
+            raise last_error
+        raise
+
+
 async def _saved_subject(db: AsyncSession, tenant_id: str, raw: str,
                          place_id: str, *,
                          days: int | None = None,
                          max_age_hours: int | None = None,
-                         cache_enabled: bool = True) -> dict[str, Any]:
+                         cache_enabled: bool = True,
+                         source: str = "google_places") -> dict[str, Any]:
     saved = await service.get_saved(db, tenant_id, place_id)
     if saved is None:
         return _subject(raw, "saved", place_id, available=False,
@@ -338,12 +385,15 @@ async def _saved_subject(db: AsyncSession, tenant_id: str, raw: str,
     # the merchant for page views. Live (days=None) always calls Google, so
     # the "Live" button keeps its meaning; the cadence defaults to the admin
     # configured scrape interval.
+    # gosom scraping drives a real browser (~60s+) and must NEVER run inside an
+    # HTTP read handler: doing so made /compare and /reviews hang for 600s and
+    # killed DB connections. For gosom, always serve the cache that the worker
+    # (or an explicit refresh) filled. Places/outscraper keep their live path.
     use_cache = bool(
-        days is not None
-        and cache_enabled
-        and max_age_hours
-        and cached_at
-        and now - cached_at <= timedelta(hours=max_age_hours)
+        source == "gosom" or (
+            cache_enabled and days is not None and max_age_hours
+            and cached_at and now - cached_at <= timedelta(hours=max_age_hours)
+        )
     )
     live_failed = False
     if use_cache:
@@ -356,14 +406,16 @@ async def _saved_subject(db: AsyncSession, tenant_id: str, raw: str,
             "reviews": saved.reviews,
         }
     else:
+        cutoff_ts = int(now.timestamp()) - 7 * 24 * 3600
         try:
-            details = await places.get_place(
-                saved.place_id,
-                reviews_limit=10,
-                cutoff=int(now.timestamp()) - 7 * 24 * 3600,
+            details = await _provider_details(
+                source, saved.place_id,
+                reviews_limit=500, maps_url=saved.maps_url, cutoff=cutoff_ts,
             )
-        except places.PlacesError as exc:
-            logger.warning("Comparison details failed for place %s: %s", saved.place_id, exc)
+        except (places.PlacesError, gosom.GosomError, outscraper.OutscraperError) as exc:
+            logger.warning(
+                "Comparison details failed for place %s: %s", saved.place_id, exc
+            )
             details = {}
             live_failed = True
     if not use_cache and not live_failed and cache_enabled:
@@ -679,6 +731,7 @@ async def compare_subjects(db: AsyncSession, tenant_id: str,
                     days=days,
                     max_age_hours=config.refresh_hours,
                     cache_enabled=config.place_cache_enabled,
+                    source=config.source,
                 ))
             else:
                 out.append(await _own_subject(db, tenant_id, raw, ident, days=days))
@@ -826,25 +879,29 @@ def _sentiment_label(rating: Any) -> str:
 
 
 async def _saved_reviews(
-    db: AsyncSession, tenant_id: str, place_id: str, *, limit: int
+    db: AsyncSession, tenant_id: str, place_id: str, *, limit: int,
+    source: str = "google_places",
 ) -> tuple[str | None, list[dict[str, Any]]]:
     """Newest cached review sample for a saved place.
 
     The cached sample wins so the reviews table costs nothing per page load;
-    a live Places call fills it when empty (bounded, and honest).
+    a live provider call fills it when empty (bounded, and honest).
     """
     saved = await service.get_saved(db, tenant_id, place_id)
     if saved is None:
         return None, []
     name = saved.name or saved.label
     reviews = list(saved.reviews or [])
-    if not reviews:
+    # gosom never scrapes inside a read handler (would hang 600s). The worker /
+    # explicit refresh fills the cache; serve only that here.
+    if not reviews and source != "gosom":
+        cutoff_ts = int(datetime.now(timezone.utc).timestamp()) - 7 * 24 * 3600
         try:
-            now_ts = int(datetime.now(timezone.utc).timestamp())
-            details = await places.get_place(
-                saved.place_id, reviews_limit=10, cutoff=now_ts - 7 * 24 * 3600
+            details = await _provider_details(
+                source, saved.place_id,
+                reviews_limit=50, maps_url=saved.maps_url, cutoff=cutoff_ts,
             )
-        except places.PlacesError:
+        except (places.PlacesError, gosom.GosomError, outscraper.OutscraperError):
             details = {}
         reviews = list(details.get("reviews") or [])
     out = []
@@ -933,12 +990,15 @@ async def reviews_for(
     if not raw_subjects or len(raw_subjects) > MAX_SUBJECTS:
         raise CompareError(f"Ask for reviews of one to {MAX_SUBJECTS} subjects.")
     limit = max(1, min(int(limit), MAX_REVIEWS_PER_SUBJECT))
+    config = await service.get_config(db)
     out = []
     for raw in raw_subjects:
         try:
             kind, ident = parse_subject(raw)
             if kind == "saved":
-                name, reviews = await _saved_reviews(db, tenant_id, ident, limit=limit)
+                name, reviews = await _saved_reviews(
+                    db, tenant_id, ident, limit=limit, source=config.source
+                )
             else:
                 name, reviews = await _own_reviews(db, tenant_id, ident, limit=limit)
         except CompareError:

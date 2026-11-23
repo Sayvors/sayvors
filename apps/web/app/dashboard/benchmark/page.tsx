@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -28,6 +28,9 @@ export default function BenchmarkPage() {
   const [searchRes, setSearchRes] = useState<BenchmarkSearchResponse | null>(null);
   const [searching, setSearching] = useState(false);
   const [searched, setSearched] = useState(false);
+  // Distinguish "the search failed / timed out" from "genuinely no matches".
+  // Showing "No businesses found" for a timeout hides the real problem.
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [menuId, setMenuId] = useState<string | null>(null);
 
@@ -35,24 +38,30 @@ export default function BenchmarkPage() {
   const saved = savedQuery.data ?? [];
   const benchSetCount = saved.filter((p) => p.in_bench_set).length;
 
+  // gosom scrapes Google Maps in a real browser (~60s per search), so search is
+  // explicit (button/Enter), never search-as-you-type. The ref guards against a
+  // second submit starting while one is in flight — the disabled button covers
+  // the UI, this covers programmatic/rapid Enter presses and stale closures.
+  const searchingRef = useRef(false);
+
   const search = useCallback(async () => {
     const q = query.trim();
-    if (q.length < 2) return;
+    if (q.length < 2 || searchingRef.current) return;
+    searchingRef.current = true;
     setSearching(true);
     setSearched(true);
+    setSearchError(null);
     try {
       setSearchRes(await searchPlaces(q));
-    } catch {
-      setSearchRes({ query: q, location: {}, nearby: [], other: [] });
+    } catch (e) {
+      // A failed/timed-out search is NOT "no matches" — say so, and keep any
+      // previous results visible so the tenant isn't left with a blank page.
+      setSearchError(e instanceof Error ? e.message : b.searchFailed);
     } finally {
+      searchingRef.current = false;
       setSearching(false);
     }
-  }, [query]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => { void search(); }, 400);
-    return () => clearTimeout(timer);
-  }, [search]);
+  }, [query, b.searchFailed]);
 
   async function save(place: PlaceResult) {
     setBusyId(place.place_id);
@@ -62,6 +71,11 @@ export default function BenchmarkPage() {
         label: place.name,
         latitude: place.latitude,
         longitude: place.longitude,
+        rating: place.rating,
+        review_count: place.review_count,
+        // The Maps URL lets the gosom scraper target this exact listing for the
+        // review pull instead of relying on the id string alone.
+        maps_url: place.maps_url,
       });
       await queryClient.invalidateQueries({ queryKey: ["benchmark", "saved"] });
       setSearchRes((prev) => prev ? {
@@ -140,15 +154,42 @@ export default function BenchmarkPage() {
               <path d="M20 20l-3.5-3.5" strokeLinecap="round" />
             </svg>
             <input
+              id="benchmark-search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void search();
+                }
+              }}
               placeholder={b.searchPlaceholder}
               aria-label={b.searchAria}
               className={`min-w-0 flex-1 bg-transparent text-[13px] text-[#14101F] outline-none placeholder:text-[#3B2D5E]/70 ${FOCUS}`}
             />
+            {/* Explicit submit: gosom search takes ~60s, so search-as-you-type
+                would flood the single-worker scraper queue. The button stays
+                disabled for the whole request. */}
+            <button
+              type="button"
+              onClick={() => void search()}
+              disabled={searching || query.trim().length < 2}
+              aria-label={b.searchAria}
+              className={`flex shrink-0 items-center justify-center gap-1.5 rounded-[8px] bg-[#3D1D6E] px-4 py-1.5 text-[12px] font-bold text-white disabled:opacity-50 ${FOCUS}`}
+            >
+              {searching ? (
+                <svg viewBox="0 0 24 24" fill="none" className="h-3.5 w-3.5 animate-spin" aria-hidden>
+                  <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3" className="opacity-25" />
+                  <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                </svg>
+              ) : null}
+              <span className="min-w-[52px] text-center">{searching ? b.searching : b.searchButton}</span>
+            </button>
           </div>
           {searching ? (
-            <p className="mt-2 text-[11px] text-[#3B2D5E]">{b.searching}</p>
+            <p className="mt-2 text-[11px] text-[#3B2D5E]">{b.searchSlowHint}</p>
+          ) : searchError ? (
+            <p role="alert" className="mt-2 text-[11px] text-red-600">{searchError}</p>
           ) : searched && (searchRes?.nearby.length ?? 0) === 0 && (searchRes?.other.length ?? 0) === 0 && query.length >= 2 ? (
             <p className="mt-2 text-[11px] text-[#3B2D5E]">{b.noBusinessesFound}</p>
           ) : null}
@@ -241,26 +282,77 @@ export default function BenchmarkPage() {
               const ready = Boolean(place.fetched_at) && !place.last_scrape_error;
               const fetching = busyId === place.place_id;
               const name = place.label || place.name || b.savedBusiness;
+              // Two-letter monogram keeps the avatar legible even for long business names.
+              const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join("").toUpperCase() || "?";
+              const reviewCount = place.review_count != null ? place.review_count.toLocaleString("en-US") : "—";
+              const statusClass = ready
+                ? "bg-[#E6F4EA] text-[#1B7A43]"
+                : fetching
+                  ? "bg-[#EDE6F7] text-[#3D1D6E]"
+                  : "bg-[#F4F2F7] text-[#7C7392]";
+              const statusDot = ready ? "bg-[#2E9E5B]" : fetching ? "bg-[#3D1D6E]" : "bg-[#9C94AE]";
               return (
-              <article key={place.id} className="relative rounded-[8px] border border-[var(--ui-line)] bg-white p-4">
-                <div className="flex items-start gap-2">
-                  {ready ? (
-                    <Link
-                      href={`/dashboard/benchmark/compare?vs=${encodeURIComponent(`saved:${place.place_id}`)}`}
-                      className="min-w-0 flex-1 truncate text-[13px] font-bold text-[#14101F] hover:underline"
-                    >
-                      {name}
-                    </Link>
-                  ) : (
-                    <p className="min-w-0 flex-1 truncate text-[13px] font-bold text-[#14101F]">{name}</p>
-                  )}
+              <article key={place.id} className="relative flex h-full flex-col rounded-[8px] border border-[var(--ui-line)] bg-white p-4 shadow-[0_2px_6px_rgba(20,16,31,0.05)]">
+                <div className="flex items-start gap-3">
+                  {/* Google-sourced logo: photo when available, monogram otherwise. */}
+                  <div className="relative shrink-0">
+                    <div className="flex h-[52px] w-[52px] items-center justify-center overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-[#F4F2F7]">
+                      {place.thumbnail ? (
+                        <img
+                          src={place.thumbnail}
+                          alt=""
+                          loading="lazy"
+                          referrerPolicy="no-referrer"
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <span aria-hidden className="text-[16px] font-bold text-[#3D1D6E]">{initials}</span>
+                      )}
+                    </div>
+                    {/* Official Google G — four solid colours, no gradient. */}
+                    <span aria-hidden className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full border border-[var(--ui-line)] bg-white shadow-[0_1px_3px_rgba(20,16,31,0.15)]">
+                      <svg viewBox="0 0 48 48" className="h-3 w-3">
+                        <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+                        <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
+                        <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
+                        <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+                      </svg>
+                    </span>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    {ready ? (
+                      <Link
+                        href={`/dashboard/benchmark/compare?vs=${encodeURIComponent(`saved:${place.place_id}`)}`}
+                        className={`block truncate text-[13px] font-bold text-[#14101F] transition hover:text-[#3D1D6E] active:translate-y-[2px] active:scale-[0.98] ${FOCUS}`}
+                      >
+                        {name}
+                      </Link>
+                    ) : (
+                      <p className="truncate text-[13px] font-bold text-[#14101F]">{name}</p>
+                    )}
+                    {place.address ? (
+                      <p className="mt-0.5 truncate text-[11px] text-[#3B2D5E]" title={place.address}>{place.address}</p>
+                    ) : null}
+                    <div className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                      <span className="font-mono text-[17px] font-bold leading-none text-[#3D1D6E]">
+                        {place.rating != null ? place.rating.toFixed(1) : "—"}<span className="text-[11px]">★</span>
+                      </span>
+                      <span className="text-[10px] text-[#3B2D5E]">{reviewCount} {b.reviews}</span>
+                    </div>
+                    <div className="mt-2">
+                      <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ${statusClass}`}>
+                        <span aria-hidden className={`h-1.5 w-1.5 rounded-full ${statusDot}`} />
+                        {ready ? b.readyToCompare : fetching ? b.fetchingDetails : b.detailsNotReady}
+                      </span>
+                    </div>
+                  </div>
                   <div className="relative shrink-0">
                     <button
                       type="button"
                       aria-label={b.actionsFor.replace("{name}", name)}
                       aria-expanded={menuId === place.id}
                       onClick={() => setMenuId((v) => v === place.id ? null : place.id)}
-                      className={`rounded-[8px] px-2 py-1 text-[15px] leading-none text-[#3B2D5E] hover:bg-[#F4F2F7] ${FOCUS}`}
+                      className={`rounded-[8px] px-2 py-1 text-[15px] leading-none text-[#3B2D5E] transition hover:bg-[#F4F2F7] active:translate-y-[2px] active:scale-[0.98] ${FOCUS}`}
                     >
                       ⋯
                     </button>
@@ -270,7 +362,7 @@ export default function BenchmarkPage() {
                           <Link
                             href={`/dashboard/benchmark/compare?vs=${encodeURIComponent(`saved:${place.place_id}`)}`}
                             onClick={() => setMenuId(null)}
-                            className={`block w-full rounded-[8px] px-2.5 py-2 text-left text-[11px] font-semibold text-[#14101F] hover:bg-[#F4F2F7] ${FOCUS}`}
+                            className={`block w-full rounded-[8px] px-2.5 py-2 text-left text-[11px] font-semibold text-[#14101F] transition hover:bg-[#F4F2F7] active:translate-y-[2px] active:scale-[0.98] ${FOCUS}`}
                           >
                             {b.compareAction}
                           </Link>
@@ -281,7 +373,7 @@ export default function BenchmarkPage() {
                           type="button"
                           onClick={() => { setMenuId(null); void toggleHeatmap(place); }}
                           disabled={fetching}
-                          className={`w-full rounded-[8px] px-2.5 py-2 text-left text-[11px] font-semibold text-[#14101F] hover:bg-[#F4F2F7] ${FOCUS}`}
+                          className={`w-full rounded-[8px] px-2.5 py-2 text-left text-[11px] font-semibold text-[#14101F] transition hover:bg-[#F4F2F7] active:translate-y-[2px] active:scale-[0.98] ${FOCUS}`}
                         >
                           {place.in_heatmap ? b.removeFromHeatmap : b.addToHeatmap}
                         </button>
@@ -289,7 +381,7 @@ export default function BenchmarkPage() {
                           <button
                             type="button"
                             onClick={() => { setMenuId(null); setBusyId(place.place_id); void refreshBenchmarkPlace(place.place_id).finally(() => { void queryClient.invalidateQueries({ queryKey: ["benchmark", "saved"] }); setBusyId(null); }); }}
-                            className={`w-full rounded-[8px] px-2.5 py-2 text-left text-[11px] font-semibold text-[#14101F] hover:bg-[#F4F2F7] ${FOCUS}`}
+                            className={`w-full rounded-[8px] px-2.5 py-2 text-left text-[11px] font-semibold text-[#14101F] transition hover:bg-[#F4F2F7] active:translate-y-[2px] active:scale-[0.98] ${FOCUS}`}
                           >
                             {b.fetchDetails}
                           </button>
@@ -298,7 +390,7 @@ export default function BenchmarkPage() {
                           type="button"
                           onClick={() => { setMenuId(null); void remove(place.place_id); }}
                           disabled={fetching}
-                          className={`w-full rounded-[8px] px-2.5 py-2 text-left text-[11px] font-semibold text-red-600 hover:bg-[#F4F2F7] ${FOCUS}`}
+                          className={`w-full rounded-[8px] px-2.5 py-2 text-left text-[11px] font-semibold text-red-600 transition hover:bg-[#F4F2F7] active:translate-y-[2px] active:scale-[0.98] ${FOCUS}`}
                         >
                           {b.removeFromBench}
                         </button>
@@ -306,22 +398,17 @@ export default function BenchmarkPage() {
                     ) : null}
                   </div>
                 </div>
-                <p className="mt-0.5 truncate text-[10px] text-[#3B2D5E]">{ready ? b.readyToCompare : fetching ? b.fetchingDetails : b.detailsNotReady}</p>
-                <p className="mt-3 font-mono text-[17px] font-bold text-[#14101F]">
-                  {place.rating != null ? place.rating.toFixed(1) : "—"}<span className="text-[11px]">★</span>
-                </p>
-                <p className="font-mono text-[10px] text-[#3B2D5E]">{place.review_count ?? "—"} {b.reviews}</p>
                 {fetching ? (
-                  <div className="mt-3">
+                  <div className="mt-auto rounded-[8px] border border-[#E9E3F3] bg-[#F4F2F7] px-3 py-2">
                     <p className="text-[10px] font-semibold text-[#3D1D6E]">{b.fetchingLastWeek}</p>
                     <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[#E9E3F3]"><div className="h-full w-2/3 animate-pulse rounded-full bg-[#3D1D6E]" /></div>
                   </div>
                 ) : (
-                  <div className="mt-3 flex gap-2">
+                  <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-[var(--ui-line)] pt-3">
                     {ready ? (
                       <Link
                         href={`/dashboard/benchmark/${encodeURIComponent(place.place_id)}`}
-                        className={`rounded-[8px] bg-[#3D1D6E] px-3 py-1.5 text-[11px] font-bold text-white ${FOCUS}`}
+                        className={`rounded-[8px] bg-[#3D1D6E] px-3 py-1.5 text-[11px] font-bold text-white shadow-[0_1px_2px_rgba(61,29,110,0.25)] transition hover:bg-[#4A2A80] active:translate-y-[2px] active:scale-[0.98] ${FOCUS}`}
                       >
                         {b.open}
                       </Link>
@@ -333,7 +420,7 @@ export default function BenchmarkPage() {
                         type="button"
                         onClick={() => void toggleHeatmap(place)}
                         disabled={fetching}
-                        className={`rounded-[8px] border border-[#3D1D6E]/25 px-3 py-1.5 text-[11px] font-bold text-[#3D1D6E] ${FOCUS}`}
+                        className={`rounded-[8px] border border-[#3D1D6E]/25 bg-white px-3 py-1.5 text-[11px] font-bold text-[#3D1D6E] transition hover:bg-[#F4F2F7] active:translate-y-[2px] active:scale-[0.98] ${FOCUS}`}
                       >
                         {b.addToHeatmap}
                       </button>
@@ -343,7 +430,7 @@ export default function BenchmarkPage() {
                       onClick={() => void toggleBenchSet(place)}
                       disabled={fetching || (!place.in_bench_set && benchSetCount >= 5)}
                       title={!place.in_bench_set && benchSetCount >= 5 ? b.benchSetFull : undefined}
-                      className={`rounded-[8px] border border-[#3D1D6E]/25 px-3 py-1.5 text-[11px] font-bold text-[#3D1D6E] disabled:opacity-50 ${FOCUS}`}
+                      className={`rounded-[8px] border border-[#3D1D6E]/25 bg-white px-3 py-1.5 text-[11px] font-bold text-[#3D1D6E] transition hover:bg-[#F4F2F7] active:translate-y-[2px] active:scale-[0.98] disabled:opacity-50 ${FOCUS}`}
                     >
                       {place.in_bench_set ? b.benchSetIn : b.benchSetOut}
                     </button>

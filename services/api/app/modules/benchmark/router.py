@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.deps import get_db
 from ..redis.service import cache_get, cache_set
 from ..team.context import TenantContext, require_perm, tenant_id_of
-from . import ai, compare, places, service
+from . import ai, compare, gosom, outscraper, places, service
 from .summary import distribution as metric_distribution, north_star
 
 router = APIRouter(prefix="/api/v1/benchmark", tags=["benchmark"])
@@ -31,6 +31,9 @@ class SavePlaceIn(BaseModel):
     longitude: float | None = Field(default=None, ge=-180, le=180)
     rating: float | None = Field(default=None, ge=0, le=5)
     review_count: int | None = Field(default=None, ge=0)
+    # Canonical Google Maps URL from the search result (gosom) or Places
+    # details. Used as the scrape target so gosom hits the exact listing.
+    maps_url: str | None = Field(default=None, max_length=1024)
 
 
 def _norm(s: str | None) -> str:
@@ -74,10 +77,39 @@ async def search_places(
     if loc_hint and not has_explicit_location and loc_hint.lower() not in raw_q.lower():
         search_q = f"{raw_q}, {loc_hint}"
 
+    config = await service.get_config(db)
+    use_gosom = config.source == "gosom" or not places.configured()
+
+    # gosom search drives a real browser (~60s), so cache results: a repeat
+    # query — or a retry after the client gave up on a slow first attempt — is
+    # served instantly instead of paying for a second scrape. Keyed on the
+    # resolved (location-biased) query, provider and limit.
+    cache_key = (
+        "bm:search:" + ("gosom" if use_gosom else "places")
+        + f":{limit}:{search_q.lower()}"
+    )
+    cached = None
     try:
-        results = await places.search_places(search_q)
-    except places.PlacesError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+        raw_cached = await cache_get(cache_key)
+        if raw_cached:
+            cached = json.loads(raw_cached)
+    except Exception:
+        cached = None
+    if isinstance(cached, dict) and ("nearby" in cached or "other" in cached):
+        return {**cached, "query": raw_q}
+
+    if use_gosom:
+        if not gosom.configured():
+            raise HTTPException(status_code=503, detail="Search is not configured.")
+        try:
+            results = await gosom.search_places(search_q, limit=limit)
+        except gosom.GosomError as exc:
+            raise HTTPException(status_code=exc.status_code, detail="Search is temporarily unavailable.")
+    else:
+        try:
+            results = await places.search_places(search_q)
+        except places.PlacesError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc))
 
     # De-dupe by place_id preserving order.
     seen = set()
@@ -102,12 +134,21 @@ async def search_places(
     nearby = nearby[: max(1, min(limit, 20))]
     remaining = max(0, min(limit, 20) - len(nearby))
     other = other[:remaining]
-    return {
+    payload = {
         "query": raw_q,
         "location": {"city": loc.get("city"), "country": loc.get("country")},
         "nearby": nearby,
         "other": other,
     }
+    # Only cache non-empty results: a transient empty (Google throttled the
+    # anonymous scrape) must not stick for the whole TTL and look like "no
+    # matches" on the next attempt.
+    if nearby or other:
+        try:
+            await cache_set(cache_key, json.dumps(payload, default=str), ttl=SEARCH_CACHE_TTL_SECONDS)
+        except Exception:
+            pass
+    return payload
 
 
 @router.get("/heatmap", response_model=dict)
@@ -273,6 +314,7 @@ async def save_place(
             place_id=body.place_id, label=body.label, notes=body.notes,
             latitude=body.latitude, longitude=body.longitude,
             rating=body.rating, review_count=body.review_count,
+            maps_url=body.maps_url,
         )
     except service.BenchError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -325,16 +367,21 @@ async def refresh_place(
     saved = await service.get_saved(db, tenant_id_of(ctx.user), place_id)
     if saved is None:
         raise HTTPException(status_code=404, detail="Saved place not found")
+    config = await service.get_config(db)
     now_ts = int(_time.time())
+    cutoff_ts = now_ts - 7 * 24 * 3600
     try:
-        details = await places.get_place(
-            saved.place_id, reviews_limit=10, cutoff=now_ts - 7 * 24 * 3600
+        details = await compare._provider_details(
+            config.source, saved.place_id,
+            reviews_limit=10, maps_url=saved.maps_url, cutoff=cutoff_ts,
         )
-    except places.PlacesError as exc:
+    except (places.PlacesError, gosom.GosomError, outscraper.OutscraperError) as exc:
         saved.last_scrape_error = str(exc)[:500]
         await db.commit()
         await db.refresh(saved)
-        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+        raise HTTPException(
+            status_code=getattr(exc, "status_code", 502), detail=str(exc)
+        )
     await service.store_place_details(db, saved, details, append_snapshot=True)
     await db.refresh(saved)
     return service.serialize(saved)
@@ -356,13 +403,36 @@ async def place_details(
     saved = await service.get_saved(db, tenant_id_of(ctx.user), place_id)
     if saved is None:
         raise HTTPException(status_code=404, detail="Saved place not found")
+    config = await service.get_config(db)
+    # gosom scraping drives a real browser (~60s+) and must NEVER run inside an
+    # HTTP read handler: it held the request 120s+ and killed the DB session on
+    # close. For gosom, serve the cached row the worker / explicit refresh
+    # filled. Places/outscraper keep their live path (fast).
+    if config.source == "gosom":
+        details = {
+            "place_id": saved.place_id,
+            "name": saved.name,
+            "address": saved.address,
+            "types": saved.types,
+            "rating": saved.rating,
+            "review_count": saved.review_count,
+            "reviews": saved.reviews or [],
+            "photos": saved.photos or [],
+            "thumbnail": saved.thumbnail,
+            "source": "gosom",
+        }
+        return {**details, "saved_id": saved.id, "label": saved.label}
     now_ts = int(_time.time())
+    cutoff_ts = now_ts - 7 * 24 * 3600
     try:
-        details = await places.get_place(
-            saved.place_id, reviews_limit=10, cutoff=now_ts - 7 * 24 * 3600
+        details = await compare._provider_details(
+            config.source, saved.place_id,
+            reviews_limit=10, maps_url=saved.maps_url, cutoff=cutoff_ts,
         )
-    except places.PlacesError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    except (places.PlacesError, gosom.GosomError, outscraper.OutscraperError) as exc:
+        raise HTTPException(
+            status_code=getattr(exc, "status_code", 502), detail=str(exc)
+        )
     return {**details, "saved_id": saved.id, "label": saved.label}
 
 
@@ -389,4 +459,5 @@ async def get_config(
         "retention_days": config.retention_days,
         "refresh_hours": config.refresh_hours,
         "max_saved_places": config.max_saved_places,
+        "source": config.source,
     }

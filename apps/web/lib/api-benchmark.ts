@@ -10,6 +10,11 @@ export interface PlaceResult {
   latitude: number | null;
   longitude: number | null;
   types: string[];
+  // Canonical Google Maps URL from the search result. Passed through on save so
+  // the gosom scraper can target the exact listing for the review pull.
+  maps_url?: string | null;
+  /** Google place photo URL, used as the saved card's logo/avatar. */
+  thumbnail?: string | null;
 }
 
 export interface BenchmarkSearchResponse {
@@ -20,7 +25,16 @@ export interface BenchmarkSearchResponse {
 }
 
 export interface PlaceDetails extends PlaceResult {
-  reviews: { rating: number | null; text: string | null; publish_time: string | null; author: string | null }[];
+  reviews: {
+    rating: number | null;
+    text: string | null;
+    publish_time: string | null;
+    author: string | null;
+    author_photo?: string | null;
+    owner_answer?: string | null;
+    owner_answer_time?: string | null;
+    review_id?: string | null;
+  }[];
   photos: { name: string; width: number | null; height: number | null }[];
   saved_id: string;
   label: string | null;
@@ -41,10 +55,21 @@ export interface SavedPlace {
   fetched_at: string | null;
   last_scrape_error: string | null;
   created_at: string | null;
+  maps_url?: string | null;
+  /** Google place photo URL, used as the card avatar; falls back to initials. */
+  thumbnail?: string | null;
+  /** Google Maps address returned by the search/scrape; shown on the card. */
+  address?: string | null;
 }
 
 export async function searchPlaces(query: string): Promise<BenchmarkSearchResponse> {
-  const res = await apiFetch(`/api/v1/benchmark/search?q=${encodeURIComponent(query)}`) as any;
+  // gosom scrapes Google Maps in a real browser, so a search can take ~60s.
+  // The default 60s apiFetch timeout is a race against that; give it headroom.
+  const res = await apiFetch(
+    `/api/v1/benchmark/search?q=${encodeURIComponent(query)}`,
+    {},
+    150000,
+  ) as any;
   if (Array.isArray(res)) {
     return { query, location: {}, nearby: res, other: [] };
   }
@@ -68,6 +93,7 @@ export function saveBenchmarkPlace(input: {
   longitude?: number | null;
   rating?: number | null;
   review_count?: number | null;
+  maps_url?: string | null;
 }): Promise<SavedPlace> {
   return apiFetch("/api/v1/benchmark/places", {
     method: "POST",

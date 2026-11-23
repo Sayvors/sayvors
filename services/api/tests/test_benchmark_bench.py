@@ -74,6 +74,8 @@ pytestmark = pytest.mark.asyncio
 async def test_search_requires_permission(client, monkeypatch):
     import app.modules.benchmark.places as places_module
 
+    monkeypatch.setattr(places_module, "configured", lambda: True)
+
     async def _fake(query, **kwargs):
         return [{"place_id": "p1", "name": "Cafe", "address": None,
                  "rating": 4.5, "review_count": 10, "types": []}]
@@ -127,3 +129,168 @@ async def test_save_returns_not_ready_then_refresh_makes_ready(client, monkeypat
     assert ready["fetched_at"] is not None
     assert ready["last_scrape_error"] is None
     assert ready["name"] == "Cafe"
+
+
+# -- maps_url / reviews_per_score --------------------------------------------
+
+async def test_save_place_stores_maps_url_and_serializes_new_fields(db):
+    row = await service.save_place(
+        db, TENANT_A, place_id="p-maps",
+        maps_url="https://maps.google.com/?cid=99",
+    )
+    assert row.maps_url == "https://maps.google.com/?cid=99"
+    data = service.serialize(row)
+    assert data["maps_url"] == "https://maps.google.com/?cid=99"
+    assert data["reviews_per_score"] is None
+
+    # Updating a duplicate with a new URL overwrites it.
+    again = await service.save_place(
+        db, TENANT_A, place_id="p-maps",
+        maps_url="https://maps.google.com/?cid=100",
+    )
+    assert again.id == row.id
+    assert again.maps_url == "https://maps.google.com/?cid=100"
+
+    # Omitting maps_url on a duplicate leaves the stored value intact.
+    kept = await service.save_place(db, TENANT_A, place_id="p-maps")
+    assert kept.maps_url == "https://maps.google.com/?cid=100"
+
+
+async def test_save_place_truncates_oversized_maps_url(db):
+    row = await service.save_place(
+        db, TENANT_A, place_id="p-long", maps_url="x" * 5000
+    )
+    assert len(row.maps_url) == service.MAX_MAPS_URL
+
+
+async def test_store_place_details_records_reviews_per_score(db):
+    row = await service.save_place(
+        db, TENANT_A, place_id="p-rps", rating=4.0, review_count=10
+    )
+    await service.store_place_details(
+        db, row,
+        {"rating": 4.3, "review_count": 20, "reviews_per_score": {"5": 15, "1": 5}},
+    )
+    await db.refresh(row)
+    assert row.reviews_per_score == {"5": 15, "1": 5}
+    assert row.rating == 4.3
+
+    # A payload without reviews_per_score leaves the stored value intact.
+    await service.store_place_details(db, row, {"rating": 4.4})
+    await db.refresh(row)
+    assert row.reviews_per_score == {"5": 15, "1": 5}
+
+
+# -- Provider routing on the refresh / details endpoints ---------------------
+
+async def _select_source(db, source):
+    config = await service.get_config(db)
+    config.source = source
+    await db.commit()
+
+
+async def test_refresh_uses_gosom_when_selected(client, db, monkeypatch):
+    import app.modules.benchmark.gosom as gosom_module
+
+    await _select_source(db, "gosom")
+    res = client.post(
+        "/api/v1/benchmark/places", json={"place_id": "g-ready", "label": "G"}
+    )
+    assert res.status_code == 201, res.text
+
+    async def _fake_gosom(place_id, **kwargs):
+        return {
+            "place_id": place_id, "name": "G Cafe", "address": "Riyadh",
+            "rating": 4.7, "review_count": 33, "types": [], "reviews": [],
+            "reviews_per_score": {"5": 20},
+        }
+
+    monkeypatch.setattr(gosom_module, "get_place", _fake_gosom)
+
+    ref = client.post("/api/v1/benchmark/places/g-ready/refresh")
+    assert ref.status_code == 200, ref.text
+    body = ref.json()
+    assert body["name"] == "G Cafe"
+    assert body["reviews_per_score"] == {"5": 20}
+
+
+async def test_refresh_falls_back_to_places_when_gosom_fails(client, db, monkeypatch):
+    import app.modules.benchmark.gosom as gosom_module
+    import app.modules.benchmark.places as places_module
+
+    await _select_source(db, "gosom")
+    client.post("/api/v1/benchmark/places", json={"place_id": "g-fb", "label": "FB"})
+
+    async def _gosom_boom(place_id, **kwargs):
+        raise gosom_module.GosomError("gosom down", status_code=502)
+
+    async def _places_ok(place_id, **kwargs):
+        return {
+            "place_id": place_id, "name": "FB Cafe", "address": None,
+            "rating": 4.0, "review_count": 5, "types": [], "reviews": [],
+        }
+
+    monkeypatch.setattr(gosom_module, "get_place", _gosom_boom)
+    monkeypatch.setattr(places_module, "get_place", _places_ok)
+
+    ref = client.post("/api/v1/benchmark/places/g-fb/refresh")
+    assert ref.status_code == 200, ref.text
+    assert ref.json()["name"] == "FB Cafe"
+
+
+async def test_refresh_records_error_when_all_providers_fail(client, db, user_id, monkeypatch):
+    import app.modules.benchmark.gosom as gosom_module
+    import app.modules.benchmark.places as places_module
+
+    await _select_source(db, "gosom")
+    client.post("/api/v1/benchmark/places", json={"place_id": "g-err", "label": "Err"})
+
+    async def _gosom_boom(place_id, **kwargs):
+        raise gosom_module.GosomError("gosom down", status_code=502)
+
+    async def _places_boom(place_id, **kwargs):
+        raise places_module.PlacesError("places down", status_code=503)
+
+    monkeypatch.setattr(gosom_module, "get_place", _gosom_boom)
+    monkeypatch.setattr(places_module, "get_place", _places_boom)
+
+    ref = client.post("/api/v1/benchmark/places/g-err/refresh")
+    assert ref.status_code == 502, ref.text
+
+    saved = await service.get_saved(db, user_id, "g-err")
+    assert saved is not None
+    assert saved.last_scrape_error
+
+
+async def test_place_details_gosom_serves_cached_no_live_scrape(client, db, user_id, monkeypatch):
+    """place_details must not live-scrape gosom (120s+ hold killed the DB
+    session); it serves the cached row the worker / refresh filled."""
+    import app.modules.benchmark.gosom as gosom_module
+    from app.modules.benchmark import service as bench_service
+
+    await _select_source(db, "gosom")
+    row = await bench_service.save_place(db, user_id, place_id="g-det", label="Det")
+    await bench_service.store_place_details(db, row, {
+        "name": "Det Cafe", "rating": 4.9, "review_count": 8,
+        "reviews": [{"rating": 5, "text": "nice"}],
+        "thumbnail": "https://lh3.googleusercontent.com/x",
+    })
+
+    async def _must_not_call(*args, **kwargs):
+        raise AssertionError("place_details must not live-scrape gosom")
+
+    monkeypatch.setattr(gosom_module, "get_place", _must_not_call)
+
+    res = client.get("/api/v1/benchmark/places/g-det/details")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["name"] == "Det Cafe"
+    assert body["rating"] == 4.9
+    assert body["thumbnail"] == "https://lh3.googleusercontent.com/x"
+    assert body["saved_id"]
+
+
+async def test_get_config_includes_source(client, db):
+    res = client.get("/api/v1/benchmark/config")
+    assert res.status_code == 200, res.text
+    assert res.json()["source"] == "google_places"

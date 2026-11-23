@@ -18,6 +18,8 @@ from .models import BenchmarkConfig, BenchmarkPlace, BenchmarkSnapshot
 MAX_LABEL = 120
 MAX_NOTES = 2000
 MAX_LIST = 100
+# Canonical Google Maps URL for gosom, bounded to the column width.
+MAX_MAPS_URL = 1024
 
 
 class BenchError(ValueError):
@@ -58,6 +60,10 @@ def serialize(place: BenchmarkPlace) -> dict:
         "longitude": place.longitude,
         "reviews": place.reviews,
         "photos": place.photos,
+        "maps_url": place.maps_url,
+        "reviews_per_score": place.reviews_per_score,
+        "maps_url": getattr(place, "maps_url", None),
+        "thumbnail": getattr(place, "thumbnail", None),
         "fetched_at": place.fetched_at.isoformat() if place.fetched_at else None,
         "last_scrape_error": place.last_scrape_error,
         "created_at": place.created_at.isoformat() if place.created_at else None,
@@ -86,6 +92,7 @@ async def save_place(
     longitude: float | None = None,
     rating: float | None = None,
     review_count: int | None = None,
+    maps_url: str | None = None,
 ) -> BenchmarkPlace:
     """Save one place to this tenant's bench, idempotent on (tenant, place)."""
     pid = str(place_id or "").strip()[:255]
@@ -93,6 +100,7 @@ async def save_place(
         raise BenchError("Choose a place to save.")
     clean_label = (label or "").strip()[:MAX_LABEL] or None
     clean_notes = (notes or "").strip()[:MAX_NOTES] or None
+    clean_maps_url = str(maps_url or "").strip()[:MAX_MAPS_URL] or None
 
     dup = (
         await db.execute(
@@ -113,6 +121,8 @@ async def save_place(
             dup.rating = rating
         if review_count is not None:
             dup.review_count = review_count
+        if clean_maps_url is not None:
+            dup.maps_url = clean_maps_url
         await db.commit()
         await db.refresh(dup)
         return dup
@@ -135,6 +145,7 @@ async def save_place(
         label=clean_label, notes=clean_notes,
         latitude=latitude, longitude=longitude,
         rating=rating, review_count=review_count,
+        maps_url=clean_maps_url,
     )
     db.add(row)
     try:
@@ -396,6 +407,9 @@ async def store_place_details(
     place.rating = rating if rating is not None else place.rating
     place.review_count = review_count if review_count is not None else place.review_count
     place.reviews = details.get("reviews") or place.reviews
+    place.reviews_per_score = details.get("reviews_per_score") or place.reviews_per_score
+    place.maps_url = details.get("maps_url") or place.maps_url
+    place.thumbnail = details.get("thumbnail") or place.thumbnail
     place.fetched_at = moment
     place.last_scrape_error = None
     if append_snapshot:

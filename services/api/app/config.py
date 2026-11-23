@@ -360,6 +360,11 @@ class Settings(BaseSettings):
     # named-competitor scale). Set when Google starts returning empty/limited
     # results — see modules/benchmark/gosom.py docstring.
     GOSOM_PROXIES: str = ""
+    # Deepen gosom's reviews with Google's own BOQ panel endpoint (free, no
+    # login). gosom alone only sees ~5 reviews per place, which is too few to
+    # measure recent momentum. Disable to fall back to gosom-only reviews
+    # without changing the selected provider.
+    BOQ_REVIEWS_ENABLED: bool = True
     # ── Analytics / business intelligence ────────────────────────────────
     # How often the Google Business Profile performance sync runs (impressions,
     # website clicks, calls, direction requests -> location_daily_metrics).

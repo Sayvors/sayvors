@@ -816,3 +816,127 @@ async def test_saved_and_unavailable_subjects_carry_empty_tags(db, monkeypatch):
     assert results[0]["tags"] == []
     assert results[1]["available"] is False
     assert results[1]["tags"] == []
+
+
+# ── Provider routing (google_places / gosom / outscraper) ──────────────────
+
+
+async def _select_source(db, source):
+    """Point the benchmark config at a provider (no public setter exists)."""
+    from app.modules.benchmark import service as bench_service
+
+    config = await bench_service.get_config(db)
+    config.source = source
+    await db.commit()
+
+
+async def test_saved_subject_gosom_uses_cached_no_live_scrape(db, monkeypatch):
+    """gosom read paths must use the cached row, never a 600s live scrape."""
+    from app.modules.benchmark import gosom as gosom_module
+    from app.modules.benchmark import places as places_module
+    from app.modules.benchmark import service as bench_service
+
+    await _select_source(db, "gosom")
+    row = await bench_service.save_place(
+        db, TENANT, place_id="gosom-1", label="Gosom Rival",
+        maps_url="https://maps.google.com/?cid=1",
+    )
+    now = datetime.now(timezone.utc)
+    await bench_service.store_place_details(db, row, {
+        "name": "Gosom Rival", "address": "Riyadh", "rating": 4.6,
+        "review_count": 700, "types": ["cafe"],
+        "reviews": [{"rating": 5, "text": "great",
+                     "publish_time": (now - timedelta(days=1)).isoformat()}],
+    })
+
+    async def _must_not_call(*args, **kwargs):
+        raise AssertionError("read path must not call a live provider")
+
+    monkeypatch.setattr(gosom_module, "get_place", _must_not_call)
+    monkeypatch.setattr(places_module, "get_place", _must_not_call)
+
+    result = (await compare.compare_subjects(db, TENANT, ["saved:gosom-1"]))[0]
+    assert result["available"] is True
+    assert result["name"] == "Gosom Rival"
+    assert result["metrics"]["avg_rating"] == 4.6
+    assert result["metrics"]["total_reviews"] == 700
+
+
+async def test_saved_subject_gosom_no_cache_returns_last_known(db, monkeypatch):
+    """With no cached details yet, gosom source still returns the saved identity
+    + numbers (no provider call), instead of hanging on a live scrape."""
+    from app.modules.benchmark import gosom as gosom_module
+    from app.modules.benchmark import places as places_module
+    from app.modules.benchmark import service as bench_service
+
+    await _select_source(db, "gosom")
+    await bench_service.save_place(
+        db, TENANT, place_id="gosom-both", label="Offline Rival",
+        rating=4.2, review_count=300,
+    )
+
+    async def _must_not_call(*args, **kwargs):
+        raise AssertionError("read path must not call a live provider")
+
+    monkeypatch.setattr(gosom_module, "get_place", _must_not_call)
+    monkeypatch.setattr(places_module, "get_place", _must_not_call)
+
+    result = (await compare.compare_subjects(db, TENANT, ["saved:gosom-both"]))[0]
+    assert result["available"] is True
+    assert result["name"] == "Offline Rival"
+    assert result["metrics"]["avg_rating"] == 4.2
+    assert result["metrics"]["total_reviews"] == 300
+
+
+async def test_saved_reviews_gosom_serve_cached_no_live_scrape(db, monkeypatch):
+    from app.modules.benchmark import gosom as gosom_module
+    from app.modules.benchmark import service as bench_service
+
+    await _select_source(db, "gosom")
+    row = await bench_service.save_place(db, TENANT, place_id="gosom-rev", label="Rev Rival")
+    now = datetime.now(timezone.utc)
+    await bench_service.store_place_details(db, row, {
+        "reviews": [
+            {"rating": 5, "text": "love it",
+             "publish_time": (now - timedelta(days=2)).isoformat()},
+            {"rating": 2, "text": "bad",
+             "publish_time": (now - timedelta(days=3)).isoformat()},
+        ],
+    })
+
+    async def _must_not_call(*args, **kwargs):
+        raise AssertionError("read path must not call a live provider")
+
+    monkeypatch.setattr(gosom_module, "get_place", _must_not_call)
+
+    body = await compare.reviews_for(db, TENANT, ["saved:gosom-rev"], limit=10)
+    subj = body["subjects"][0]
+    assert subj["name"] == "Rev Rival"
+    assert len(subj["reviews"]) == 2
+    assert subj["reviews"][0]["rating"] == 5
+
+
+async def test_saved_subject_uses_outscraper_when_selected(db, monkeypatch):
+    from app.modules.benchmark import outscraper as outscraper_module
+    from app.modules.benchmark import service as bench_service
+
+    await _select_source(db, "outscraper")
+    await bench_service.save_place(db, TENANT, place_id="out-1", label="Out Rival")
+
+    seen: dict = {}
+
+    async def _fake_outscraper(place_id, **kwargs):
+        seen.update(kwargs)
+        return {
+            "place_id": place_id, "name": "Out Rival", "address": None,
+            "rating": 4.1, "review_count": 55, "types": [], "reviews": [],
+        }
+
+    monkeypatch.setattr(outscraper_module, "get_place", _fake_outscraper)
+
+    result = (await compare.compare_subjects(db, TENANT, ["saved:out-1"]))[0]
+
+    assert result["available"] is True
+    assert result["name"] == "Out Rival"
+    assert seen["reviews_limit"] == 10
+    assert "cutoff" in seen

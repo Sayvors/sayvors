@@ -63,6 +63,11 @@ class PlacesError(Exception):
         super().__init__(message)
 
 
+def configured() -> bool:
+    """True when the Places API key is set."""
+    return bool((settings.GOOGLE_PLACES_API_KEY or "").strip())
+
+
 def _key() -> str:
     key = (settings.GOOGLE_PLACES_API_KEY or "").strip()
     if not key:
