@@ -27,7 +27,14 @@ from ...core.upstream_errors import upstream_http_error
 from ..users.models import User
 from . import cover_monitor, image_check, service
 from .models import CoverMonitor
-from .schemas import MediaCreate, MediaOut, MediaPublishResult, MediaSyncResult, MediaUpdate
+from .schemas import (
+    CoverAutoReplaceIn,
+    MediaCreate,
+    MediaOut,
+    MediaPublishResult,
+    MediaSyncResult,
+    MediaUpdate,
+)
 from ..team.context import tenant_id_of, require_perm, TenantContext
 
 router = APIRouter(prefix="/api/v1/media", tags=["media"])
@@ -61,6 +68,22 @@ async def acknowledge_cover_monitor(
     """Accept Google's current cover as the new baseline after a replace."""
     result = await cover_monitor.acknowledge(db, tenant_id_of(ctx.user), monitor_id)
     if result["status"] == "not_found":
+        raise HTTPException(status_code=404, detail="Cover monitor not found.")
+    return result
+
+
+@router.post("/cover-monitors/{monitor_id}/auto-replace", response_model=dict)
+async def set_cover_auto_replace(
+    monitor_id: str,
+    body: CoverAutoReplaceIn,
+    ctx: TenantContext = Depends(require_perm("media.manage")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Toggle silent auto-repair when Google replaces the cover."""
+    result = await cover_monitor.set_auto_replace(
+        db, tenant_id_of(ctx.user), monitor_id, body.enabled
+    )
+    if result is None:
         raise HTTPException(status_code=404, detail="Cover monitor not found.")
     return result
 

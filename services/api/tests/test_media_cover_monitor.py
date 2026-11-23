@@ -116,6 +116,82 @@ async def test_acknowledge_rebases_the_expected_cover(db):
     assert row.drift_count == 0
 
 
+def test_auto_replace_is_allowed_when_changed_and_under_the_limit():
+    row = cover_monitor.CoverMonitor(
+        status="changed", auto_replace=True, auto_replace_count=0,
+        last_auto_replace_at=None,
+    )
+
+    assert cover_monitor.should_auto_replace(row) is True
+
+
+def test_auto_replace_stops_after_the_limit():
+    row = cover_monitor.CoverMonitor(
+        status="changed", auto_replace=True,
+        auto_replace_count=cover_monitor.MAX_AUTO_REPLACES,
+        last_auto_replace_at=None,
+    )
+
+    assert cover_monitor.should_auto_replace(row) is False
+
+
+def test_auto_replace_respects_the_cooldown():
+    row = cover_monitor.CoverMonitor(
+        status="changed", auto_replace=True, auto_replace_count=1,
+        last_auto_replace_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+    )
+
+    assert cover_monitor.should_auto_replace(row) is False
+
+
+def test_auto_replace_can_be_switched_off():
+    row = cover_monitor.CoverMonitor(
+        status="changed", auto_replace=False, auto_replace_count=0,
+        last_auto_replace_at=None,
+    )
+
+    assert cover_monitor.should_auto_replace(row) is False
+
+
+async def test_changed_cover_enqueues_one_auto_replace(db):
+    row = await cover_monitor.record_publish(
+        db, tenant_id=TENANT, channel_id=CHANNEL, user_id=TENANT,
+        account_id="accounts/1", location_id="locations/9",
+        expected_name="locations/9/media/a", image_url="https://example.com/a.jpg",
+    )
+    await cover_monitor.check_one(
+        db, row, _FakeClient([_item("locations/9/media/b")])
+    )
+    queued: list[dict] = []
+
+    await cover_monitor.maybe_auto_replace(db, row, enqueue=lambda **kw: queued.append(kw))
+
+    assert len(queued) == 1
+    assert queued[0]["payload"]["media_url"] == "https://example.com/a.jpg"
+    assert queued[0]["payload"]["external_asset_id"] == CHANNEL
+    assert queued[0]["payload"]["method"] == "banner"
+    assert row.auto_replace_count == 1
+    assert row.last_auto_replace_at is not None
+
+
+async def test_auto_replace_is_not_queued_after_the_limit(db):
+    row = await cover_monitor.record_publish(
+        db, tenant_id=TENANT, channel_id=CHANNEL, user_id=TENANT,
+        account_id="accounts/1", location_id="locations/9",
+        expected_name="locations/9/media/a", image_url="https://example.com/a.jpg",
+    )
+    await cover_monitor.check_one(db, row, _FakeClient([_item("locations/9/media/b")]))
+    row.auto_replace_count = cover_monitor.MAX_AUTO_REPLACES
+    await db.commit()
+    queued: list[dict] = []
+
+    await cover_monitor.maybe_auto_replace(db, row, enqueue=lambda **kw: queued.append(kw))
+
+    assert queued == []
+    assert row.status == "changed"
+    assert "keeps" in (row.error or "").lower()
+
+
 async def test_channel_client_factory_returns_none_for_missing_channel(db):
     factory = cover_monitor.channel_client_factory(db)
 

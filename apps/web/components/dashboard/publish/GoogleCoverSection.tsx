@@ -24,6 +24,9 @@ type Monitor = {
   message: string;
   drift_count: number;
   last_checked_at: string | null;
+  auto_replace: boolean;
+  auto_replace_count: number;
+  max_auto_replaces: number;
 };
 
 const COPY = {
@@ -40,7 +43,10 @@ const COPY = {
     dismiss: "Dismiss",
     never: "Not checked yet",
     checked: "Last checked",
+    autoReplace: "Re-publish it automatically when Google changes it",
+    autoLimit: "Stops after 3 tries, then asks you.",
   },
+
   ar: {
     title: "صورة غلاف جوجل",
     subtitle: "الصورة التي تعرضها جوجل حالياً لملف نشاطك التجاري.",
@@ -54,6 +60,8 @@ const COPY = {
     dismiss: "تجاهل",
     never: "لم يتم التحقق بعد",
     checked: "آخر تحقق",
+    autoReplace: "أعد نشرها تلقائياً عندما تغيّرها جوجل",
+    autoLimit: "يتوقف بعد 3 محاولات ثم يسألك.",
   },
 };
 
@@ -82,6 +90,19 @@ export default function GoogleCoverSection({
     const id = setInterval(() => void load(), 60_000);
     return () => clearInterval(id);
   }, [load]);
+
+  const setAuto = async (id: string, enabled: boolean) => {
+    setBusy(true);
+    try {
+      await apiFetch(`/api/v1/media/cover-monitors/${encodeURIComponent(id)}/auto-replace`, {
+        method: "POST",
+        body: JSON.stringify({ enabled }),
+      });
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const dismiss = async (id: string) => {
     setBusy(true);
@@ -170,6 +191,19 @@ export default function GoogleCoverSection({
                       </button>
                     ) : null}
                   </div>
+                  <label className="mt-2 flex cursor-pointer items-start gap-2">
+                    <input
+                      type="checkbox"
+                      checked={row.auto_replace}
+                      disabled={busy}
+                      onChange={(e) => void setAuto(row.id, e.target.checked)}
+                      className="mt-0.5 h-3.5 w-3.5 accent-[#3D1D6E]"
+                    />
+                    <span className={`text-[10.5px] leading-snug ${INK2}`}>
+                      {t.autoReplace}
+                      <span className="block opacity-70">{t.autoLimit}</span>
+                    </span>
+                  </label>
                 </div>
               </article>
             );

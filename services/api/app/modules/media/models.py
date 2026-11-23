@@ -102,6 +102,14 @@ class CoverMonitor(Base):
     # ok | changed | error
     status: Mapped[str] = mapped_column(String(12), default="ok", index=True)
     drift_count: Mapped[int] = mapped_column(default=0, server_default="0")
+    # Bounded auto-replace: re-upload the same image when Google swaps it, but
+    # only a few times. An endless loop looks like spam and would not fix a
+    # photo Google refuses for quality/category reasons.
+    auto_replace: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    auto_replace_count: Mapped[int] = mapped_column(default=0, server_default="0")
+    last_auto_replace_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     error: Mapped[str | None] = mapped_column(String(500), nullable=True)
     last_checked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

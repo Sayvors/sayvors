@@ -45,6 +45,24 @@ async def test_acknowledge_clears_the_change_warning(client, db, user_id):
     assert listed[0]["drift_count"] == 0
 
 
+async def test_auto_replace_can_be_toggled_off(client, db, user_id):
+    row = await cover_monitor.record_publish(
+        db, tenant_id=user_id, channel_id="google:3", user_id=user_id,
+        account_id="accounts/1", location_id="locations/3",
+        expected_name="locations/3/media/a", image_url="https://example.com/a.jpg",
+    )
+
+    res = client.post(
+        f"/api/v1/media/cover-monitors/{row.id}/auto-replace",
+        json={"enabled": False},
+    )
+
+    assert res.status_code == 200, res.text
+    assert res.json()["auto_replace"] is False
+    await db.refresh(row)
+    assert row.auto_replace is False
+
+
 async def test_cover_monitors_is_tenant_scoped(client, db, user_id):
     await cover_monitor.record_publish(
         db, tenant_id=user_id, channel_id="google:mine", user_id=user_id,

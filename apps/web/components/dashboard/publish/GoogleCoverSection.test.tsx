@@ -13,6 +13,9 @@ const monitor = (status: string) => ({
   message: "Google replaced your cover photo. Replace it again.",
   drift_count: 1,
   last_checked_at: "2026-11-23T10:00:00Z",
+  auto_replace: true,
+  auto_replace_count: 1,
+  max_auto_replaces: 3,
 });
 
 vi.mock("@/lib/api-rag", () => ({
