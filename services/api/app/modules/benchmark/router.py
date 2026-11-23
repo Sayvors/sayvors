@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.deps import get_db
 from ..redis.service import cache_get, cache_set
 from ..team.context import TenantContext, require_perm, tenant_id_of
-from . import ai, compare, gosom, outscraper, places, service
+from . import ai, compare, gosom, mapsearch, outscraper, places, service
 from .summary import distribution as metric_distribution, north_star
 
 router = APIRouter(prefix="/api/v1/benchmark", tags=["benchmark"])
@@ -78,16 +78,17 @@ async def search_places(
         search_q = f"{raw_q}, {loc_hint}"
 
     config = await service.get_config(db)
-    use_gosom = config.source == "gosom" or not places.configured()
+    # gosom's browser search is unreliable (Google's Maps page throws a
+    # Playwright scrollHeight error and gosom still reports success on an empty
+    # result). The free tbm=map JSON endpoint does the same listings-only job
+    # in one request, so it is the default whenever Places is not configured.
+    use_places = bool(places.configured()) and config.source == "google_places"
+    provider_name = "places" if use_places else "mapsearch"
 
-    # gosom search drives a real browser (~60s), so cache results: a repeat
-    # query — or a retry after the client gave up on a slow first attempt — is
-    # served instantly instead of paying for a second scrape. Keyed on the
-    # resolved (location-biased) query, provider and limit.
-    cache_key = (
-        "bm:search:" + ("gosom" if use_gosom else "places")
-        + f":{limit}:{search_q.lower()}"
-    )
+    # Cache results: a repeat query — or a retry after the client gave up on a
+    # slow first attempt — is served instantly instead of paying for a second
+    # scrape. Keyed on the resolved (location-biased) query, provider and limit.
+    cache_key = f"bm:search:{provider_name}:{limit}:{search_q.lower()}"
     cached = None
     try:
         raw_cached = await cache_get(cache_key)
@@ -98,18 +99,18 @@ async def search_places(
     if isinstance(cached, dict) and ("nearby" in cached or "other" in cached):
         return {**cached, "query": raw_q}
 
-    if use_gosom:
-        if not gosom.configured():
-            raise HTTPException(status_code=503, detail="Search is not configured.")
-        try:
-            results = await gosom.search_places(search_q, limit=limit)
-        except gosom.GosomError as exc:
-            raise HTTPException(status_code=exc.status_code, detail="Search is temporarily unavailable.")
-    else:
+    if use_places:
         try:
             results = await places.search_places(search_q)
         except places.PlacesError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    else:
+        try:
+            results = await mapsearch.search_places(search_q, limit=limit)
+        except mapsearch.MapSearchError as exc:
+            raise HTTPException(
+                status_code=exc.status_code, detail="Search is temporarily unavailable."
+            )
 
     # De-dupe by place_id preserving order.
     seen = set()
