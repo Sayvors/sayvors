@@ -72,3 +72,70 @@ async def test_the_call_to_action_reaches_the_google_publisher(monkeypatch):
     assert captured["cta_type"] == "shop"
     assert captured["cta_url"] == "https://shop.example.com"
     assert captured["result"]["state"] == "LIVE"
+
+
+@pytest.mark.asyncio
+async def test_google_banner_publish_starts_cover_monitor(monkeypatch):
+    """A successful Promotion must start tracking the cover we just set."""
+    from app.modules.media import cover_monitor
+
+    recorded: dict = {}
+    channel = SimpleNamespace(
+        user_id="tenant-1", platform="google_reviews", platform_user_id="117",
+        listing_key="loc-1", metadata_json='{"location_id": "loc-1"}',
+        access_token="enc", refresh_token="enc", token_expires_at=None,
+    )
+
+    async def fake_resolve(db, tenant_id, platform, external_asset_id):
+        return channel
+
+    class FakePublisher:
+        def __init__(self, token, refresh=None):
+            pass
+
+        def set_token_persister(self, persister):
+            pass
+
+        def set_known_expiry(self, expires_at):
+            pass
+
+        async def set_location_image(self, **kwargs):
+            return {
+                "name": "accounts/117/locations/loc-1/media/cover-new",
+                "googleUrl": "https://lh3.googleusercontent.com/cover-new",
+                "category": "COVER",
+            }
+
+    async def fake_record(db, **kwargs):
+        recorded.update(kwargs)
+        return SimpleNamespace(id="monitor-1")
+
+    async def fake_complete(db, job, result):
+        return None
+
+    monkeypatch.setattr(post_publish, "_resolve_channel", fake_resolve)
+    monkeypatch.setattr(post_publish, "GoogleBusinessPublisher", FakePublisher)
+    monkeypatch.setattr(post_publish, "decrypt_token", lambda value: "plain")
+    monkeypatch.setattr(post_publish, "complete_job", fake_complete)
+    from app.core import storage as storage_module
+
+    monkeypatch.setattr(
+        storage_module, "media_bytes_from_url",
+        lambda user, url: (b"fake-image-bytes", "image/jpeg"),
+    )
+    monkeypatch.setattr(cover_monitor, "record_publish", fake_record)
+
+    job = SimpleNamespace(
+        id="job-banner", tenant_id="tenant-1",
+        payload={
+            "platform": "google_reviews", "external_asset_id": "google:9",
+            "method": "banner", "caption": "", "description": "",
+            "media_url": "https://example.com/promo.jpg", "media_type": "image",
+            "scheduled_at": None,
+        },
+    )
+    await post_publish.handle_post_publish(job, db=None)
+
+    assert recorded["expected_name"] == "accounts/117/locations/loc-1/media/cover-new"
+    assert recorded["image_url"] == "https://example.com/promo.jpg"
+    assert recorded["channel_id"] == "google:9"

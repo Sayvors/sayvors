@@ -279,6 +279,26 @@ async def _publish_account_surface(
             media_data=media_data,
             content_type=content_type or "image/jpeg",
         )
+        if method == "banner":
+            # Start watching this cover. Google can replace it without asking;
+            # the monitor is what turns that silent drift into a visible
+            # "changed — replace again" warning in the publish composer.
+            try:
+                from ...media import cover_monitor
+
+                await cover_monitor.record_publish(
+                    db,
+                    tenant_id=job.tenant_id,
+                    channel_id=external_asset_id,
+                    user_id=channel.user_id,
+                    account_id=account_id,
+                    location_id=location_id,
+                    expected_name=str((result or {}).get("name") or ""),
+                    image_url=media_url,
+                    google_url=str((result or {}).get("googleUrl") or ""),
+                )
+            except Exception:
+                logger.exception("Could not start cover monitor after banner publish")
         return {
             "provider": "google_reviews",
             "method": method,

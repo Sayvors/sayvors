@@ -25,11 +25,44 @@ from ...core.deps import get_current_user, get_db, require_admin
 from ...core.storage import public_media_base
 from ...core.upstream_errors import upstream_http_error
 from ..users.models import User
-from . import image_check, service
+from . import cover_monitor, image_check, service
+from .models import CoverMonitor
 from .schemas import MediaCreate, MediaOut, MediaPublishResult, MediaSyncResult, MediaUpdate
 from ..team.context import tenant_id_of, require_perm, TenantContext
 
 router = APIRouter(prefix="/api/v1/media", tags=["media"])
+
+
+@router.get("/cover-monitors", response_model=list[dict])
+async def list_cover_monitors(
+    ctx: TenantContext = Depends(require_perm("media.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """The Google cover image we set, and whether Google replaced it."""
+    from sqlalchemy import select
+
+    rows = (
+        await db.execute(
+            select(CoverMonitor)
+            .where(CoverMonitor.tenant_id == tenant_id_of(ctx.user))
+            .order_by(CoverMonitor.created_at.desc())
+            .limit(50)
+        )
+    ).scalars().all()
+    return [cover_monitor.serialize(row) for row in rows]
+
+
+@router.post("/cover-monitors/{monitor_id}/acknowledge", response_model=dict)
+async def acknowledge_cover_monitor(
+    monitor_id: str,
+    ctx: TenantContext = Depends(require_perm("media.manage")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Accept Google's current cover as the new baseline after a replace."""
+    result = await cover_monitor.acknowledge(db, tenant_id_of(ctx.user), monitor_id)
+    if result["status"] == "not_found":
+        raise HTTPException(status_code=404, detail="Cover monitor not found.")
+    return result
 
 
 @router.post("/upload")

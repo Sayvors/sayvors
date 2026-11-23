@@ -16,6 +16,7 @@ import {
 import { cropSignature, cropSourceRect, exportCroppedImage } from "@/lib/crop-image";
 import { inspectImageFile, probeImageUrl } from "@/lib/media-validation";
 import MediaSink from "./MediaSink";
+import GoogleCoverSection from "./GoogleCoverSection";
 import DestinationSelector from "./DestinationSelector";
 import DestinationPreview from "./DestinationPreview";
 import ConfirmModal from "./ConfirmModal";
@@ -821,6 +822,25 @@ export default function PublishComposer({
     });
   };
 
+  // The cover section's Replace button returns the merchant here with the
+  // Promotion format already chosen for the same Google Business Profile.
+  const replaceCover = (channelId: string) => {
+    const target =
+      googleTargets.find((x) => x.id === channelId) ??
+      googleTargets.find((x) => `google:${x.id}` === channelId) ??
+      googleTargets[0];
+    if (target) {
+      setSelected(new Set([target.id]));
+      setFormats((prev) => ({ ...prev, [target.id]: ["banner"] }));
+      const key = cropKeyFor(target.id, "banner");
+      setCrops((prev) => ({
+        ...prev,
+        [key]: prev[key] ?? defaultCropFor(target.platform, "banner"),
+      }));
+    }
+    setPostStep("media");
+  };
+
   // ── Media blob lifecycle ────────────────────────────────────────
   const pickMedia = (type: "image" | "video", url: string, fileName?: string, sizeBytes?: number, file?: File, width?: number, height?: number) => {
     if (blobRef.current && blobRef.current !== url) {
@@ -1542,6 +1562,8 @@ export default function PublishComposer({
               </p>
             )}
           </section>
+
+          <GoogleCoverSection locale={locale} onReplace={replaceCover} />
 
           </div>{/* end media step */}
 

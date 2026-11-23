@@ -14,7 +14,7 @@ import random
 
 from ...config import settings
 from ...database import async_session
-from ..media import service as media_service
+from ..media import cover_monitor, service as media_service
 from . import service as posts_service
 
 logger = logging.getLogger(__name__)
@@ -34,10 +34,15 @@ async def run_post_publish_worker() -> None:
                 totals["deleted"] = gone["deleted"]
                 media = await media_service.publish_due(db)
                 media_gone = await media_service.delete_due(db)
-            if totals["checked"] or gone["checked"] or media["checked"] or media_gone["checked"]:
-                logger.info("Scheduled posts sync: %s | media: %s", totals, {
+                covers = await cover_monitor.check_due(
+                    db,
+                    cover_monitor.channel_client_factory(db),
+                    min_interval_hours=max(1, settings.COVER_MONITOR_INTERVAL_HOURS),
+                )
+            if totals["checked"] or gone["checked"] or media["checked"] or media_gone["checked"] or covers["checked"]:
+                logger.info("Scheduled posts sync: %s | media: %s | covers: %s", totals, {
                     **media, "deleted": media_gone["deleted"],
-                })
+                }, covers)
         except asyncio.CancelledError:
             raise
         except Exception as e:

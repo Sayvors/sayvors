@@ -400,6 +400,9 @@ class Settings(BaseSettings):
     POSTS_PUBLISH_INTERVAL_SECONDS: int = 300  # 5 min
     # Scheduled-media publisher: how often due photos go live on Google.
     MEDIA_PUBLISH_INTERVAL_SECONDS: int = 300  # 5 min
+    # How often the cover-monitor checks whether Google kept the banner we set.
+    # Six hours is enough to notice a swap the same day without polling Google.
+    COVER_MONITOR_INTERVAL_HOURS: int = 6
 
     # ── Platform admin (separate password, no user record) ──────
     # Bcrypt hash of the admin password. Empty = admin API disabled.
