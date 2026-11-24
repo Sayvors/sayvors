@@ -77,4 +77,7 @@ export const queryKeys = {
     media: (channelIds: string[], category: string) =>
       ["google", "media", [...channelIds].sort().join(","), category || "all"] as const,
   },
+  benchmark: {
+    reviewThemes: (keys: string[]) => ["benchmark", "review-themes", keys.join("|")] as const,
+  },
 };

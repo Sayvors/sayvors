@@ -4,14 +4,16 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboa
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import LogoLoader from "@/components/LogoLoader";
 import { apiFetch } from "@/lib/api-rag";
 import {
   fetchComparison,
   fetchHistory,
+  fetchReviewThemes,
   fetchReviews,
   fetchSavedPlaces,
+  retryReviewThemes,
   RANGE_DAYS,
   subjectKey,
   type CompareRange,
@@ -34,8 +36,11 @@ import AiSummaryCard from "@/components/benchmark/AiSummaryCard";
 import BaselineAlert from "@/components/benchmark/BaselineAlert";
 import CompletenessCard from "@/components/benchmark/CompletenessCard";
 import FixFirstTickets from "@/components/benchmark/FixFirstTickets";
+import ReviewKeywords from "@/components/benchmark/ReviewKeywords";
+import { queryKeys } from "@/lib/query-keys";
 
 const FOCUS = "focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[#3D1D6E]";
+const REVIEW_THEME_POLL_MS = 3000;
 
 interface ChannelOption {
   id: string;
@@ -1225,6 +1230,7 @@ export default function ComparePage() {
   const c = t.benchmark.compare;
   const router = useRouter();
   const params = useSearchParams();
+  const queryClient = useQueryClient();
 
   const savedQuery = useQuery({ queryKey: ["benchmark", "saved"], queryFn: fetchSavedPlaces });
   const saved: SavedPlace[] = savedQuery.data ?? [];
@@ -1246,6 +1252,7 @@ export default function ComparePage() {
   const keys = [selection.main, ...selection.competitors].filter(
     (key): key is string => Boolean(key)
   );
+  const reviewThemeQueryKey = queryKeys.benchmark.reviewThemes(keys);
 
   const compareQuery = useQuery({
     queryKey: ["benchmark", "compare", keys.join("|"), range],
@@ -1266,6 +1273,18 @@ export default function ComparePage() {
     enabled: keys.length > 0,
   });
   const reviewSubjects: SubjectReviews[] = reviewsQuery.data?.subjects ?? [];
+  const reviewThemesQuery = useQuery({
+    queryKey: reviewThemeQueryKey,
+    queryFn: ({ signal }) => fetchReviewThemes(keys, signal),
+    enabled: keys.length > 0,
+    refetchInterval: (query) => {
+      if (typeof document === "undefined" || document.visibilityState !== "visible") return false;
+      return query.state.data?.subjects.some((subject) => subject.status === "pending")
+        ? REVIEW_THEME_POLL_MS
+        : false;
+    },
+    refetchIntervalInBackground: false,
+  });
   const [reviewsPopup, setReviewsPopup] = useState<{
     subject: SubjectReviews;
     category: SentimentCategory;
@@ -1314,6 +1333,19 @@ export default function ComparePage() {
     const reviews = reviewSubjects.find((r) => r.key === subject.key);
     if (!reviews) return;
     setReviewsPopup({ subject: reviews, category: "negative" });
+  }
+
+  async function retryReviewKeywords() {
+    // Stop an in-flight poll from racing the retry, then let invalidation refetch
+    // the active query with the newly enqueued analysis status.
+    await queryClient.cancelQueries({ queryKey: reviewThemeQueryKey });
+    try {
+      await retryReviewThemes(keys);
+    } catch (cause) {
+      console.error("Could not retry benchmark review theme analysis", cause);
+    } finally {
+      await queryClient.invalidateQueries({ queryKey: reviewThemeQueryKey });
+    }
   }
 
   const rangeOptions = useMemo(() => getRangeOptions(c as any), [c]);
@@ -1561,6 +1593,15 @@ export default function ComparePage() {
             subjects={reviewSubjects}
             loading={reviewsQuery.isPending}
             openPopup={(subject, category) => setReviewsPopup({ subject, category })}
+          />
+          <ReviewKeywords
+            key={keys.join("|")}
+            data={reviewThemesQuery.data}
+            mainKey={selection.main}
+            loading={reviewThemesQuery.isPending}
+            fetching={reviewThemesQuery.isFetching}
+            error={reviewThemesQuery.error}
+            onRetry={() => void retryReviewKeywords()}
           />
           {reviewsPopup ? (
             <ReviewsPopup

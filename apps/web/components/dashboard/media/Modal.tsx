@@ -10,12 +10,13 @@ export interface ModalProps {
   labelledBy?: string;
   width?: string;
   busy?: boolean;
+  closeLabel?: string;
   children: ReactNode;
 }
 
 const FOCUSABLE = 'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])';
 
-export default function Modal({ open, onClose, title, subtitle, labelledBy, width = "max-w-[600px]", busy, children }: ModalProps) {
+export default function Modal({ open, onClose, title, subtitle, labelledBy, width = "max-w-[600px]", busy, closeLabel = "Close", children }: ModalProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const prevFocus = useRef<HTMLElement | null>(null);
 
@@ -81,7 +82,7 @@ export default function Modal({ open, onClose, title, subtitle, labelledBy, widt
               type="button"
               onClick={onClose}
               disabled={busy}
-              aria-label="Close"
+              aria-label={closeLabel}
               className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[16px] font-bold text-ink/45 transition hover:bg-ink/[0.05] hover:text-ink disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:text-fog/45"
             >
               ×

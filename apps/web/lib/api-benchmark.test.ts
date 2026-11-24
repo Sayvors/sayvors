@@ -5,7 +5,13 @@ vi.mock("@/lib/api-rag", () => ({
 }));
 
 import { apiFetch } from "@/lib/api-rag";
-import { isSavedPlaceReady, saveBenchmarkPlace, searchPlaces } from "./api-benchmark";
+import {
+  fetchReviewThemes,
+  isSavedPlaceReady,
+  retryReviewThemes,
+  saveBenchmarkPlace,
+  searchPlaces,
+} from "./api-benchmark";
 
 const api = vi.mocked(apiFetch);
 
@@ -29,6 +35,30 @@ describe("benchmark API client", () => {
     await searchPlaces("Wahmy Riyadh");
 
     expect(api.mock.calls[0][2]).toBe(30_000);
+  });
+});
+
+describe("review theme API client", () => {
+  it("URL-encodes every subject and forwards the abort signal", async () => {
+    const controller = new AbortController();
+
+    await fetchReviewThemes(["own:channel/a b", "saved:place&one"], controller.signal);
+
+    expect(api).toHaveBeenCalledWith(
+      "/api/v1/benchmark/themes?subjects=own%3Achannel%2Fa%20b&subjects=saved%3Aplace%26one",
+      { signal: controller.signal },
+    );
+  });
+
+  it("posts the exact subject list when retrying failed analyses", async () => {
+    const subjects = ["own:mine", "saved:peer"];
+
+    await retryReviewThemes(subjects);
+
+    expect(api).toHaveBeenCalledWith("/api/v1/benchmark/themes/retry", {
+      method: "POST",
+      body: JSON.stringify({ subjects }),
+    });
   });
 });
 

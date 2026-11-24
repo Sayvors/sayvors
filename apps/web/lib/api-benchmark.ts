@@ -298,6 +298,75 @@ export function fetchReviews(subjects: string[]): Promise<{ subjects: SubjectRev
   return apiFetch(`/api/v1/benchmark/reviews?${q}`);
 }
 
+/* ── Dynamic review themes ─────────────────────────────────────────────── */
+
+export type ReviewThemeStatus = "ready" | "pending" | "unavailable" | "error";
+export type ReviewThemeSentiment = "positive" | "negative" | "mixed";
+
+export interface ReviewThemeSubject {
+  key: string;
+  name: string | null;
+  kind: CompareKind;
+  status: ReviewThemeStatus;
+  sample_size: number;
+  sample_hash: string | null;
+  analyzed_at: string | null;
+  source?: "llm" | "local";
+  error_code?: string | null;
+  error_message?: string | null;
+}
+
+export interface ReviewThemeQuote {
+  review_id: string;
+  quote: string;
+  review_text: string;
+  rating: number | null;
+  author: string | null;
+  author_photo: string | null;
+  reviewed_at: string | null;
+  review_url: string | null;
+}
+
+export interface ReviewThemeCell {
+  mentions: number;
+  sample_size: number;
+  percentage: number;
+  positive: number;
+  negative: number;
+  quotes: ReviewThemeQuote[];
+}
+
+export interface ReviewThemeRow {
+  key: string;
+  label: string;
+  sentiment: ReviewThemeSentiment;
+  cells: Record<string, ReviewThemeCell>;
+  /** Server-computed comparison values; the UI falls back to ready cells. */
+  own_pct?: number | null;
+  peer_median_pct?: number | null;
+  gap_pct?: number | null;
+}
+
+export interface ReviewThemesResponse {
+  subjects: ReviewThemeSubject[];
+  rows: ReviewThemeRow[];
+}
+
+export function fetchReviewThemes(
+  subjects: string[],
+  signal?: AbortSignal,
+): Promise<ReviewThemesResponse> {
+  const q = subjects.map((s) => `subjects=${encodeURIComponent(s)}`).join("&");
+  return apiFetch(`/api/v1/benchmark/themes?${q}`, { signal });
+}
+
+export function retryReviewThemes(subjects: string[]): Promise<ReviewThemesResponse> {
+  return apiFetch("/api/v1/benchmark/themes/retry", {
+    method: "POST",
+    body: JSON.stringify({ subjects }),
+  });
+}
+
 /* ── AI summary (fail-open: the endpoint answers with a template fallback) ─ */
 
 export interface AiSummaryResponse {
