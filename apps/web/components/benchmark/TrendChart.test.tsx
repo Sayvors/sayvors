@@ -77,12 +77,31 @@ describe("TrendChart", () => {
   it("renders an explicit insufficient-history state", () => {
     render(
       <TrendChart
-        history={[{ key: "own:mine", kind: "own", name: "Your Branch", points: [history[0].points[0]] }]}
+        history={[{ key: "own:mine", kind: "own", name: "Your Branch", points: [] }]}
         title="Where is it heading?"
         mainKey="own:mine"
       />,
     );
 
     expect(screen.getByText(/Not enough history yet/i)).toBeInTheDocument();
+  });
+
+  it("shows a current-only dot for businesses with one snapshot", () => {
+    const { container } = render(
+      <TrendChart
+        history={[
+          ...history,
+          { key: "saved:new", kind: "saved", name: "New Competitor", points: [history[1].points[0]] },
+        ]}
+        title="Where is it heading?"
+        mainKey="own:mine"
+      />,
+    );
+
+    expect(
+      screen.getAllByText("New Competitor").some((el) => el.closest("li")?.textContent?.includes("current only")),
+    ).toBe(true);
+    const line = container.querySelector('polyline[data-label="New Competitor"]');
+    expect(line?.parentElement?.querySelector("circle")).toBeInTheDocument();
   });
 });

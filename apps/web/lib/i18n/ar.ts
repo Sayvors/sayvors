@@ -3704,6 +3704,7 @@ const ar: Dict = {
     trendEmpty:
       "لا يوجد سجل كافٍ بعد. عد بعد لقطتين على الأقل.",
     trendNoSeries: "لا يوجد سجل قابل للمقارنة لهذا المقياس بعد.",
+    trendCurrentOnly: "اللقطة الحالية فقط",
     trendHistoryNote:
       "المنافسون المحفوظون يستخدمون اللقطات المخزنة؛ فروعك تُعاد بناءها من تواريخ التقييمات المحفوظة.",
     trendDeltaReviews: "أضاف {name} {count} تقييماً",
@@ -3891,16 +3892,17 @@ const ar: Dict = {
         positive: "إيجابي",
         negative: "سلبي",
         mixed: "مختلط",
+        notMentioned: "غير مذكور",
         themeComparison: "الموضوع والمقارنة",
         business: "النشاط التجاري",
         sampleSize: (n: number) => `${n} ${n === 1 ? "تقييماً" : "تقييمات"} تم تحليلها`,
         lowSample: "عينة صغيرة",
         mentions: (count: number, total: number, pct: string) =>
-          `${count} من ${total} تقييمات تم تحليلها (${pct})`,
+          `${count} من ${total} تقييمات تذكر هذا (${pct})`,
         barLabel: (theme: string, business: string) => `نسبة ذكر ${theme} في ${business}`,
         openQuotes: "افتح الاقتباسات",
         quoteButton: (theme: string, business: string, count: number, total: number, pct: string) =>
-          `${theme}، ${business}: ${count} من ${total} تقييمات تم تحليلها (${pct}). افتح الاقتباسات.`,
+          `${theme}، ${business}: ${count} من ${total} تقييمات تذكر هذا (${pct}). افتح الاقتباسات.`,
         peerMedian: (pct: string) => `وسيط الأقران: ${pct}`,
         noPeerMedian: "وسيط الأقران: —",
         gapAbove: (gap: string) => `المحدد: ${gap} نقطة أعلى من وسيط الأقران`,

@@ -3698,6 +3698,7 @@ const en = {
     trendEmpty:
       "Not enough history yet. Check back after at least two snapshots.",
     trendNoSeries: "No comparable history for this metric yet.",
+    trendCurrentOnly: "current only",
     trendHistoryNote:
       "Saved competitors use stored snapshots; your branches are reconstructed from stored review timestamps.",
     trendDeltaReviews: "{name} added {count} reviews",
@@ -3885,16 +3886,17 @@ const en = {
         positive: "Positive",
         negative: "Negative",
         mixed: "Mixed",
+        notMentioned: "Not mentioned",
         themeComparison: "Theme & comparison",
         business: "Business",
         sampleSize: (n: number) => `${n} ${n === 1 ? "review" : "reviews"} analyzed`,
         lowSample: "Low sample",
         mentions: (count: number, total: number, pct: string) =>
-          `${count} of ${total} reviews analyzed (${pct})`,
+          `${count} of ${total} reviews mention this (${pct})`,
         barLabel: (theme: string, business: string) => `${theme} mention share for ${business}`,
         openQuotes: "Open quotes",
         quoteButton: (theme: string, business: string, count: number, total: number, pct: string) =>
-          `${theme}, ${business}: ${count} of ${total} reviews analyzed (${pct}). Open quotes.`,
+          `${theme}, ${business}: ${count} of ${total} reviews mention this (${pct}). Open quotes.`,
         peerMedian: (pct: string) => `Peer median: ${pct}`,
         noPeerMedian: "Peer median: —",
         gapAbove: (gap: string) => `Selected: ${gap} pts above peer median`,
@@ -3921,7 +3923,7 @@ const en = {
         noReady: "No cached review sample is ready yet.",
         quotesTitle: (theme: string) => `${theme} — review quotes`,
         quotesSubtitle: (business: string, count: number, total: number, pct: string) =>
-          `${business} · ${count} of ${total} reviews analyzed (${pct})`,
+          `${business} · ${count} of ${total} reviews mention this (${pct})`,
         quoteEvidence: "Verbatim review",
         reviewer: "Reviewer",
         noRating: "No rating",

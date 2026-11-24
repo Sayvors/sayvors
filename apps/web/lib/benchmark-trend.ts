@@ -38,7 +38,7 @@ export function buildTrendSeries(
       points.push({ at, value });
     }
     points.sort((a, b) => a.at - b.at);
-    if (points.length >= 2) {
+    if (points.length >= 1) {
       out.push({
         key: subject.key,
         name: subject.name ?? subject.key,
