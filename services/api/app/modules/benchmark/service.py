@@ -534,7 +534,18 @@ async def tenant_location_context(db: AsyncSession, tenant_id: str) -> dict:
         if not isinstance(meta, dict):
             meta = {}
         addr = str(meta.get("address") or meta.get("formatted_address") or "").strip()
-        country = str(meta.get("country") or "").strip()
+        raw_country = str(meta.get("country") or meta.get("region_code") or "").strip()
+        country_code = raw_country.upper() if len(raw_country) == 2 and raw_country.isalpha() else None
+        country = raw_country
+        if country_code:
+            try:
+                from babel import Locale
+
+                country_name = Locale("en").territories.get(country_code)
+                if country_name:
+                    country = country_name
+            except Exception:  # pragma: no cover - babel is a declared dependency
+                pass
         city = str(meta.get("city") or meta.get("locality") or "").strip()
         lat = meta.get("latitude") or meta.get("lat")
         lng = meta.get("longitude") or meta.get("lng")
@@ -556,6 +567,7 @@ async def tenant_location_context(db: AsyncSession, tenant_id: str) -> dict:
             "address": addr or None,
             "city": city or None,
             "country": country or None,
+            "country_code": country_code,
             "latitude": lat,
             "longitude": lng,
         }

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -24,6 +25,9 @@ AI_SUMMARY_CACHE_TTL = 600
 # A synchronous refresh after Save stays short: ~100 reviews is enough to make
 # the card ready immediately; the worker deepens the 30-day set later.
 REFRESH_REVIEWS_LIMIT = 100
+# Search results are stable for a few minutes; cache misses make a slow first
+# attempt look like "no matches" on retry.
+SEARCH_CACHE_TTL_SECONDS = 300
 
 
 class SavePlaceIn(BaseModel):
@@ -45,15 +49,69 @@ def _norm(s: str | None) -> str:
     return " ".join(str(s or "").lower().split())
 
 
+# Google's public endpoint accepts a two-letter market code. A full country name
+# in metadata is still useful for filtering, but it is not a valid ``gl`` value.
+def _country_code(value: str | None) -> str | None:
+    value = str(value or "").strip().upper()
+    return value.lower() if len(value) == 2 and value.isalpha() else None
+
+
+def _country_aliases(loc: dict) -> set[str]:
+    """Names a Google address may use for the tenant's country."""
+    aliases: set[str] = set()
+    raw_country = str(loc.get("country") or "").strip()
+    if raw_country:
+        aliases.add(_norm(raw_country))
+    code = _country_code(loc.get("country_code") or raw_country)
+    if code:
+        try:
+            from babel import Locale
+
+            name = Locale("en").territories.get(code.upper())
+            if name:
+                aliases.add(_norm(name))
+        except Exception:  # pragma: no cover - babel is a declared dependency
+            pass
+    # Two-letter codes are market parameters, not address text. Matching them
+    # by substring made "SA" claim "Sandton" and "South Africa".
+    return {alias for alias in aliases if len(alias) > 2}
+
+
+def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    radius = 6371.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlmb = math.radians(lng2 - lng1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlmb / 2) ** 2
+    return radius * 2 * math.asin(math.sqrt(a))
+
+
+# A business is "nearby" only when it is genuinely in the tenant's market. A
+# two-letter country code is never compared by substring: "SA" must not match
+# "Sandton" or "South Africa".
+NEARBY_RADIUS_KM = 50.0
+
+
 def _is_nearby(place: dict, loc: dict) -> bool:
     addr = _norm(place.get("address"))
     city = _norm(loc.get("city"))
-    country = _norm(loc.get("country"))
     if city and city in addr:
         return True
-    if country and country in addr:
-        # Same country counts as nearby-ish when we have no city; city match is stronger.
-        return bool(city) or True
+
+    place_lat = place.get("latitude")
+    place_lng = place.get("longitude")
+    loc_lat = loc.get("latitude")
+    loc_lng = loc.get("longitude")
+    try:
+        if None not in (place_lat, place_lng, loc_lat, loc_lng):
+            return _haversine_km(float(loc_lat), float(loc_lng), float(place_lat), float(place_lng)) <= NEARBY_RADIUS_KM
+    except (TypeError, ValueError):
+        pass
+
+    country_aliases = _country_aliases(loc)
+    if country_aliases and any(alias in addr for alias in country_aliases):
+        return True
+    # With no market context at all, every result is effectively "other".
     return False
 
 
@@ -74,11 +132,13 @@ async def search_places(
     tenant_id = tenant_id_of(ctx.user)
     loc = await service.tenant_location_context(db, tenant_id)
     raw_q = str(q or "").strip()[:255]
+    has_explicit_location = "," in raw_q or " in " in raw_q.lower() or " near " in raw_q.lower()
+    # An explicit location in the query wins: do not re-bias it to the tenant's
+    # home market or label those results with the wrong country.
+    if has_explicit_location:
+        loc = {}
     search_q = raw_q
     loc_hint = ", ".join([p for p in [loc.get("city"), loc.get("country")] if p])
-    # Bias keyword/category searches to the tenant location, but don't fight an
-    # explicit location the user already typed.
-    has_explicit_location = "," in raw_q or " in " in raw_q.lower() or " near " in raw_q.lower()
     if loc_hint and not has_explicit_location and loc_hint.lower() not in raw_q.lower():
         search_q = f"{raw_q}, {loc_hint}"
 
@@ -92,7 +152,10 @@ async def search_places(
     # Cache results: a repeat query — or a retry after the client gave up on a
     # slow first attempt — is served instantly instead of paying for a second
     # scrape. Keyed on the resolved (location-biased) query, provider and limit.
-    cache_key = f"bm:search:{provider_name}:{limit}:{search_q.lower()}"
+    location_signature = "|".join(
+        str(loc.get(key) or "") for key in ("city", "country", "country_code", "latitude", "longitude")
+    )
+    cache_key = f"bm:search:{provider_name}:{limit}:{search_q.lower()}:{location_signature.lower()}"
     cached = None
     try:
         raw_cached = await cache_get(cache_key)
@@ -110,7 +173,13 @@ async def search_places(
             raise HTTPException(status_code=exc.status_code, detail=str(exc))
     else:
         try:
-            results = await mapsearch.search_places(search_q, limit=limit)
+            results = await mapsearch.search_places(
+                search_q,
+                limit=limit,
+                latitude=loc.get("latitude"),
+                longitude=loc.get("longitude"),
+                country_code=loc.get("country_code"),
+            )
         except mapsearch.MapSearchError as exc:
             raise HTTPException(
                 status_code=exc.status_code, detail="Search is temporarily unavailable."
@@ -130,8 +199,9 @@ async def search_places(
     for p in deduped:
         (nearby if _is_nearby(p, loc) else other).append(p)
 
-    # If we have no location context, treat all as nearby to avoid a confusing split.
-    if not loc_hint:
+    # If we have no location context, or the user named a location, keep the
+    # results together instead of inventing a Nearby/Other split.
+    if not loc_hint or has_explicit_location:
         nearby, other = deduped, []
 
     nearby.sort(key=_popularity, reverse=True)

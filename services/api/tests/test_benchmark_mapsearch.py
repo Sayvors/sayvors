@@ -111,8 +111,27 @@ async def test_search_empty_query_makes_no_request():
     assert client.requests == []
 
 
-async def test_search_rate_limit_maps_to_503():
-    client = _Client("", status=429)
-    with pytest.raises(mapsearch.MapSearchError) as exc:
-        await mapsearch.search_places("cafe", client=client)
-    assert exc.value.status_code == 503
+async def test_search_uses_local_viewport_and_market():
+    client = _Client(_body(_place_darray()))
+    result = await mapsearch.search_places(
+        "cafe",
+        client=client,
+        latitude=24.7028865,
+        longitude=46.6979563,
+        country_code="SA",
+        radius_km=50,
+    )
+    assert len(result) == 1
+    params = client.requests[0]["params"]
+    assert params["gl"] == "sa"
+    assert "!3d24.7028865" in params["pb"]
+    assert "!2d46.6979563" in params["pb"]
+    assert "!1d100000.0" in params["pb"]
+
+
+async def test_search_defaults_remain_global():
+    client = _Client(_body(_place_darray()))
+    await mapsearch.search_places("cafe", client=client)
+    params = client.requests[0]["params"]
+    assert params["gl"] == "us"
+    assert "!1d25000000.0" in params["pb"]

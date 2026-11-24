@@ -354,3 +354,109 @@ async def test_get_config_includes_source(client, db):
     res = client.get("/api/v1/benchmark/config")
     assert res.status_code == 200, res.text
     assert res.json()["source"] == "boq"
+import json
+
+
+async def test_search_nearby_is_strict_and_location_aware(client, db, user_id, monkeypatch):
+    """A two-letter market code must not be substring-matched into addresses."""
+    import app.modules.benchmark.mapsearch as mapsearch_module
+    import app.modules.benchmark.service as service_module
+
+    config = await service_module.get_config(db)
+    config.source = "mapsearch"
+    await db.commit()
+
+    from app.modules.channels.models import Channel
+    from app.modules.channels.service import encrypt_token
+
+    db.add(Channel(
+        id="ch-nearby",
+        user_id=user_id,
+        platform="google_reviews",
+        platform_user_id="acc-nearby",
+        display_name="Riyadh Branch",
+        access_token=encrypt_token("at"),
+        refresh_token=encrypt_token("rt"),
+        status="active",
+        listing_key="loc-nearby",
+        metadata_json=json.dumps({
+            "location_id": "loc-nearby",
+            "address": "RIYADH Al Malqa Dist. Al Dahnaa, Al Malqa",
+            "country": "SA",
+        }),
+    ))
+    await db.commit()
+
+    captured = {}
+
+    async def _fake(query, **kwargs):
+        captured["query"] = query
+        captured["kwargs"] = kwargs
+        return [
+            {"place_id": "p-local", "name": "Local Cafe", "address": "Al Malqa, Riyadh, Saudi Arabia", "rating": 4.5, "review_count": 10, "types": []},
+            {"place_id": "p-foreign", "name": "Foreign Cafe", "address": "Fairview, Gqeberha, South Africa", "rating": 4.9, "review_count": 20, "types": []},
+            {"place_id": "p-code", "name": "Code Match", "address": "Sandton, Johannesburg, South Africa", "rating": 4.2, "review_count": 5, "types": []},
+        ]
+
+    monkeypatch.setattr(mapsearch_module, "search_places", _fake)
+    monkeypatch.setattr("app.modules.benchmark.router.cache_get", lambda *a, **k: None)
+    monkeypatch.setattr("app.modules.benchmark.router.cache_set", lambda *a, **k: None)
+
+    res = client.get("/api/v1/benchmark/search?q=software company unique test")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["location"]["country"] == "Saudi Arabia"
+    assert [p["place_id"] for p in body["nearby"]] == ["p-local"]
+    assert [p["place_id"] for p in body["other"]] == ["p-foreign", "p-code"]
+    assert "Saudi Arabia" in captured["query"]
+    assert captured["kwargs"]["country_code"] == "SA"
+
+
+async def test_search_explicit_location_is_not_rebiased(client, db, user_id, monkeypatch):
+    """An explicit location in the query wins over the tenant's home market."""
+    import json
+
+    import app.modules.benchmark.mapsearch as mapsearch_module
+
+    from app.modules.benchmark import service as service_module
+
+    config = await service_module.get_config(db)
+    config.source = "mapsearch"
+    await db.commit()
+
+    from app.modules.channels.models import Channel
+    from app.modules.channels.service import encrypt_token
+
+    db.add(Channel(
+        id="ch-explicit",
+        user_id=user_id,
+        platform="google_reviews",
+        platform_user_id="acc-explicit",
+        display_name="Riyadh Branch",
+        access_token=encrypt_token("at"),
+        refresh_token=encrypt_token("rt"),
+        status="active",
+        listing_key="loc-explicit",
+        metadata_json=json.dumps({"location_id": "loc-explicit", "address": "RIYADH Al Malqa", "country": "SA"}),
+    ))
+    await db.commit()
+
+    captured = {}
+
+    async def _fake(query, **kwargs):
+        captured["query"] = query
+        captured["kwargs"] = kwargs
+        return [{"place_id": "p1", "name": "Cafe", "address": "Cape Town, South Africa", "rating": 4.5, "review_count": 10, "types": []}]
+
+    monkeypatch.setattr(mapsearch_module, "search_places", _fake)
+    monkeypatch.setattr("app.modules.benchmark.router.cache_get", lambda *a, **k: None)
+    monkeypatch.setattr("app.modules.benchmark.router.cache_set", lambda *a, **k: None)
+
+    res = client.get("/api/v1/benchmark/search?q=software company unique test in Cape Town")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert captured["query"] == "software company unique test in Cape Town"
+    assert captured["kwargs"]["country_code"] is None
+    assert captured["kwargs"]["latitude"] is None
+    assert [p["place_id"] for p in body["nearby"]] == ["p1"]
+    assert body["other"] == []

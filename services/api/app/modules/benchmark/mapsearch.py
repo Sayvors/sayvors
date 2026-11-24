@@ -151,20 +151,38 @@ def _parse(body: str) -> list[dict[str, Any]]:
 
 
 async def _search_on_client(
-    q: str, cap: int, session: Any
+    q: str,
+    cap: int,
+    session: Any,
+    *,
+    latitude: float | None = None,
+    longitude: float | None = None,
+    country_code: str | None = None,
+    radius_km: float = 50.0,
 ) -> list[dict[str, Any]]:
+    # A bounded viewport is what makes the search actually local. The previous
+    # whole-earth viewport let Google return a global mix for a local query.
+    if latitude is not None and longitude is not None:
+        diameter = max(1000.0, float(radius_km) * 2000.0)
+        lat = float(latitude)
+        lng = float(longitude)
+    else:
+        diameter = _EARTH_DIAMETER_METERS
+        lat = 0.0
+        lng = 0.0
     pb = _SEARCH_PB.format(
-        diameter=_EARTH_DIAMETER_METERS,
-        lat=0.0,
-        lng=0.0,
+        diameter=diameter,
+        lat=lat,
+        lng=lng,
         per_page=MAX_RESULTS,
         offset=0,
     )
+    gl = str(country_code or "").strip().lower() or "us"
     try:
         response = await session.get(
             SEARCH_URL,
             params={
-                "tbm": "map", "authuser": "0", "hl": "en", "gl": "us",
+                "tbm": "map", "authuser": "0", "hl": "en", "gl": gl,
                 "q": q, "pb": pb,
             },
             headers=_HEADERS,
@@ -186,12 +204,20 @@ async def _search_on_client(
 
 
 async def search_places(
-    query: str, *, limit: int = MAX_RESULTS, client: Any | None = None
+    query: str,
+    *,
+    limit: int = MAX_RESULTS,
+    latitude: float | None = None,
+    longitude: float | None = None,
+    country_code: str | None = None,
+    radius_km: float = 50.0,
+    client: Any | None = None,
 ) -> list[dict[str, Any]]:
     """Find places for ``query``; listings only, no reviews and no browser.
 
-    ``client`` is injectable for tests; production tries one route per place,
-    keeping each search on one IP and moving off a refused route automatically.
+    Location arguments keep the search in the tenant's market. ``client`` is
+    injectable for tests; production tries one route per place, keeping each
+    search on one IP and moving off a refused route automatically.
     """
     q = str(query or "").strip()[:255]
     if not q:
@@ -200,9 +226,15 @@ async def search_places(
         cap = max(1, min(int(limit), MAX_RESULTS))
     except (TypeError, ValueError):
         cap = MAX_RESULTS
+    kwargs = {
+        "latitude": latitude,
+        "longitude": longitude,
+        "country_code": country_code,
+        "radius_km": radius_km,
+    }
     if client is not None:
         try:
-            return await _search_on_client(q, cap, client)
+            return await _search_on_client(q, cap, client, **kwargs)
         except net.Blocked as exc:
             raise MapSearchError(str(exc), exc.status_code) from exc
 
@@ -210,7 +242,7 @@ async def search_places(
     for route in net.routes_for(f"search:{q.lower()}"):
         async with net.client_for(route, timeout=REQUEST_TIMEOUT_SECONDS) as session:
             try:
-                places = await _search_on_client(q, cap, session)
+                places = await _search_on_client(q, cap, session, **kwargs)
             except net.Blocked as exc:
                 net.note_result(route, ok=False)
                 last_error = exc
