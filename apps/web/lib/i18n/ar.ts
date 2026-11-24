@@ -3885,7 +3885,7 @@ const ar: Dict = {
       reviewKeywords: {
         title: "كلمات المراجعات",
         description:
-          "تظهر الموضوعات من تكرار نص المراجعات. كل عدد هو عدد التقييمات المميزة في العينة التي تذكر الموضوع (X من Y)، وليس إجمالي تقييمات مدى الحياة.",
+          "تظهر الموضوعات من تكرار نص المراجعات. توضح الأعداد كم من أحدث التقييمات المخزنة التي تم تحليلها تذكر الموضوع (X من Y)، وليس إجمالي تقييمات مدى الحياة.",
         filterLabel: "تصفية الموضوعات",
         all: "الكل",
         positive: "إيجابي",
@@ -3893,14 +3893,14 @@ const ar: Dict = {
         mixed: "مختلط",
         themeComparison: "الموضوع والمقارنة",
         business: "النشاط التجاري",
-        sampleSize: (n: number) => `${n} تقييمات في العينة`,
+        sampleSize: (n: number) => `${n} ${n === 1 ? "تقييماً" : "تقييمات"} تم تحليلها`,
         lowSample: "عينة صغيرة",
         mentions: (count: number, total: number, pct: string) =>
-          `${count} من ${total} تقييمات في العينة (${pct})`,
+          `${count} من ${total} تقييمات تم تحليلها (${pct})`,
         barLabel: (theme: string, business: string) => `نسبة ذكر ${theme} في ${business}`,
         openQuotes: "افتح الاقتباسات",
         quoteButton: (theme: string, business: string, count: number, total: number, pct: string) =>
-          `${theme}، ${business}: ${count} من ${total} تقييمات في العينة (${pct}). افتح الاقتباسات.`,
+          `${theme}، ${business}: ${count} من ${total} تقييمات تم تحليلها (${pct}). افتح الاقتباسات.`,
         peerMedian: (pct: string) => `وسيط الأقران: ${pct}`,
         noPeerMedian: "وسيط الأقران: —",
         gapAbove: (gap: string) => `المحدد: ${gap} نقطة أعلى من وسيط الأقران`,
@@ -3927,7 +3927,7 @@ const ar: Dict = {
         noReady: "لا توجد عينة مراجعات مخزنة جاهزة بعد.",
         quotesTitle: (theme: string) => `${theme} — اقتباسات المراجعات`,
         quotesSubtitle: (business: string, count: number, total: number, pct: string) =>
-          `${business} · ${count} من ${total} تقييمات في العينة (${pct})`,
+          `${business} · ${count} من ${total} تقييمات تم تحليلها (${pct})`,
         quoteEvidence: "اقتباس حرفي من المراجعة",
         reviewer: "مراجع",
         noRating: "بدون تقييم",

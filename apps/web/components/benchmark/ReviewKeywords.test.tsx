@@ -85,12 +85,28 @@ describe("ReviewKeywords grid", () => {
 
     expect(screen.getByRole("heading", { name: "Review keywords" })).toBeInTheDocument();
     expect(screen.getByRole("table", { name: "Review keywords" })).toBeInTheDocument();
-    expect(screen.getByText("2 of 10 sampled reviews (20%)")).toBeInTheDocument();
+    expect(screen.getByText("2 of 10 reviews analyzed (20%)")).toBeInTheDocument();
     expect(screen.getAllByText("Positive").length).toBeGreaterThan(0);
     expect(screen.getByText("Peer median: 35%")).toBeInTheDocument();
     expect(screen.getByText("Selected: 15 pts below peer median")).toBeInTheDocument();
-    expect(screen.getByText("10 sampled reviews")).toBeInTheDocument();
+    expect(screen.getByText("10 reviews analyzed")).toBeInTheDocument();
     expect(screen.getByLabelText("Friendly service mention share for My Branch").style.width).toBe("20%");
+  });
+
+  it("uses each cell's own sentiment instead of the row-wide sentiment", () => {
+    const negativePeer = { ...cell(4, 20), positive: 0, negative: 4 };
+    renderKeywords({
+      data: {
+        subjects: readyData.subjects,
+        rows: [{
+          ...readyData.rows[0],
+          cells: { ...readyData.rows[0].cells, "saved:peer1": negativePeer },
+        }],
+      },
+    });
+
+    const count = screen.getByText("4 of 20 reviews analyzed (20%)");
+    expect(within(count.closest("td")!).getByText("Negative")).toBeInTheDocument();
   });
 
   it("filters positive and negative themes while keeping mixed themes only under All", () => {
@@ -149,7 +165,7 @@ describe("ReviewKeywords grid", () => {
       },
     });
 
-    expect(screen.getByText("0 of 10 sampled reviews (0%)")).toBeInTheDocument();
+    expect(screen.getByText("0 of 10 reviews analyzed (0%)")).toBeInTheDocument();
     expect(screen.queryByText("No cached sample")).not.toBeInTheDocument();
   });
 
@@ -172,7 +188,7 @@ describe("ReviewKeywords grid", () => {
     });
 
     expect(screen.getByText("Low sample")).toBeInTheDocument();
-    expect(screen.getByText("4 sampled reviews")).toBeInTheDocument();
+    expect(screen.getByText("4 reviews analyzed")).toBeInTheDocument();
   });
 });
 
@@ -243,7 +259,7 @@ describe("ReviewKeywords states", () => {
 
     expect(screen.getByText(/Analyzing review themes for 1 business/)).toBeInTheDocument();
     expect(screen.getAllByText("Analyzing…").length).toBeGreaterThan(0);
-    expect(screen.getByText("2 of 10 sampled reviews (20%)")).toBeInTheDocument();
+    expect(screen.getByText("2 of 10 reviews analyzed (20%)")).toBeInTheDocument();
   });
 
   it("shows per-subject errors with retry instead of inventing zero mentions", () => {
@@ -257,7 +273,7 @@ describe("ReviewKeywords states", () => {
     });
 
     expect(screen.getByText("Theme analysis failed.")).toBeInTheDocument();
-    expect(screen.queryByText("0 of 0 sampled reviews (0%)")).not.toBeInTheDocument();
+    expect(screen.queryByText("0 of 0 reviews analyzed (0%)")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry Peer One" }));
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
@@ -283,13 +299,13 @@ describe("ReviewKeywords quote dialog", () => {
   it("opens an accessible native quote button and restores focus after close", async () => {
     renderKeywords();
     const trigger = screen.getByRole("button", {
-      name: "Friendly service, My Branch: 2 of 10 sampled reviews (20%). Open quotes.",
+      name: "Friendly service, My Branch: 2 of 10 reviews analyzed (20%). Open quotes.",
     });
 
     trigger.focus();
     fireEvent.click(trigger);
     const dialog = screen.getByRole("dialog", { name: "Friendly service — review quotes" });
-    expect(dialog).toHaveTextContent("My Branch · 2 of 10 sampled reviews (20%)");
+    expect(dialog).toHaveTextContent("My Branch · 2 of 10 reviews analyzed (20%)");
     expect(within(dialog).getByText("Sara A")).toBeInTheDocument();
     expect(within(dialog).getByText("5★")).toBeInTheDocument();
     expect(within(dialog).getByText(/2026/)).toBeInTheDocument();

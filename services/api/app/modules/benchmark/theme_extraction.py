@@ -131,7 +131,7 @@ def _build_theme(
 
 
 def extract_local_themes(reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Extract repeated 1–3 word phrases from review text.
+    """Extract repeated 2–3 word phrases from review text.
 
     Candidate vocabulary is entirely data-driven. Only function words are
     removed; there is no restaurant/software/etc. keyword list.
@@ -202,7 +202,7 @@ def _label_evidence_overlap(label: str, review_text: str) -> bool:
     if not label_tokens:
         return False
     review_tokens = set(_tokens(review_text))
-    return len(label_tokens & review_tokens) >= max(1, len(label_tokens) // 2)
+    return label_tokens.issubset(review_tokens)
 
 
 def validate_llm_themes(
@@ -228,7 +228,12 @@ def validate_llm_themes(
         normalized = normalize_theme_key(label)
         mentions = item.get("mentions")
         indices = item.get("review_indices")
-        if not normalized or len(label) > MAX_LABEL_LEN or len(normalized.split()) < MIN_THEME_WORDS:
+        if (
+            not normalized
+            or len(label) > MAX_LABEL_LEN
+            or len(normalized.split()) < MIN_THEME_WORDS
+            or len(normalized.split()) > MAX_NGRAM
+        ):
             return None
         if not isinstance(mentions, int) or isinstance(mentions, bool):
             return None
@@ -278,9 +283,13 @@ def group_theme_comparison(
         if own:
             group["label"] = own.get("label") or group["label"]
             group["sentiment"] = own.get("sentiment") or group["sentiment"]
-        peer_pcts = [cell.get("pct") for key, cell in cells.items() if key != own_key and cell.get("pct") is not None]
+        peer_pcts = [
+            cells.get(subject["key"], {}).get("pct", 0.0)
+            for subject in subjects
+            if subject["key"] != own_key
+        ]
         peer_median = median(peer_pcts) if peer_pcts else None
-        own_pct = own.get("pct") if own else None
+        own_pct = cells.get(own_key, {}).get("pct", 0.0) if own_key and any(s["key"] == own_key for s in subjects) else None
         rows.append({
             "key": normalized,
             "label": group["label"],

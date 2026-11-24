@@ -306,7 +306,7 @@ export type ReviewThemeSentiment = "positive" | "negative" | "mixed";
 export interface ReviewThemeSubject {
   key: string;
   name: string | null;
-  kind: CompareKind;
+  kind: CompareKind | "unknown";
   status: ReviewThemeStatus;
   sample_size: number;
   sample_hash: string | null;
@@ -345,6 +345,7 @@ export interface ReviewThemeRow {
   own_pct?: number | null;
   peer_median_pct?: number | null;
   gap_pct?: number | null;
+  max_mentions?: number;
 }
 
 export interface ReviewThemesResponse {

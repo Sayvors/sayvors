@@ -71,6 +71,7 @@ def normalize_reviews(reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Bound provider/analytics rows and synthesize stable ids when absent."""
     normalized: list[dict[str, Any]] = []
     duplicate_counts: dict[str, int] = {}
+    seen_ids: set[str] = set()
     for raw in reviews:
         if not isinstance(raw, dict):
             continue
@@ -95,6 +96,9 @@ def normalize_reviews(reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
             occurrence = duplicate_counts.get(digest, 0)
             duplicate_counts[digest] = occurrence + 1
             review_id = f"synthetic:{digest}" + (f":{occurrence}" if occurrence else "")
+        if review_id in seen_ids:
+            continue
+        seen_ids.add(review_id)
         normalized.append({
             "review_id": review_id,
             "review_url": review_url,
@@ -209,6 +213,7 @@ async def _analysis_for_update(
                 BenchmarkThemeAnalysis.subject_id == subject_id,
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
 
@@ -413,7 +418,9 @@ def assemble_theme_response(
             )
         }
         subjects.append(subject)
-        if record.get("status") == "ready" or record.get("themes"):
+        if record.get("status") == "ready" or (
+            record.get("status") == "pending" and record.get("themes")
+        ):
             ready.append({"key": record["key"], "themes": record.get("themes") or []})
 
     own_key = own_key or next(

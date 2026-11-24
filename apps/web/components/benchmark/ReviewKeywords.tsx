@@ -191,6 +191,15 @@ function SentimentLabel({ sentiment }: { sentiment: ReviewThemeSentiment }) {
   );
 }
 
+function cellSentiment(cell: ReviewThemeCell, fallback: ReviewThemeSentiment): ReviewThemeSentiment {
+  const total = cell.positive + cell.negative;
+  if (total <= 0) return fallback;
+  if (cell.positive > 0 && cell.negative > 0 && cell.positive / total < 0.6 && cell.negative / total < 0.6) {
+    return "mixed";
+  }
+  return cell.positive >= cell.negative ? "positive" : "negative";
+}
+
 function ThemeCell({
   row,
   subject,
@@ -206,6 +215,7 @@ function ThemeCell({
   const k = t.benchmark.compare.reviewKeywords;
   const business = subject.name ?? subject.key;
   const percentage = formatPercent(cell.percentage);
+  const sentiment = cellSentiment(cell, row.sentiment);
   const barWidth = `${Math.min(100, Math.max(0, cell.percentage))}%`;
   return (
     <div className="min-w-0">
@@ -216,12 +226,12 @@ function ThemeCell({
         <div
           role="img"
           aria-label={k.barLabel(row.label, business)}
-          className={`h-full rounded-full ${SENTIMENT_BAR_CLASS[row.sentiment]}`}
+          className={`h-full rounded-full ${SENTIMENT_BAR_CLASS[sentiment]}`}
           style={{ width: barWidth }}
         />
       </div>
       <div className="mt-2 flex items-center justify-between gap-2">
-        <SentimentLabel sentiment={row.sentiment} />
+        <SentimentLabel sentiment={sentiment} />
         {cell.quotes.length > 0 ? (
           <button
             type="button"
@@ -410,7 +420,7 @@ export default function ReviewKeywords({
               <li key={subject.key} className={`rounded-[8px] border bg-white px-3 py-2 ${subject.key === mainKey ? "border-[#3D1D6E]/35" : "border-[var(--ui-line)]"}`}>
                 <div className="flex flex-wrap items-center justify-between gap-1">
                   <span dir="auto" className="truncate text-[11px] font-bold text-[#14101F]">{subject.name ?? subject.key}</span>
-                  {subject.status === "ready" && subject.sample_size < LOW_SAMPLE_THRESHOLD ? (
+                  {subject.sample_size > 0 && subject.sample_size < LOW_SAMPLE_THRESHOLD ? (
                     <span className="rounded-full bg-[#FFF3D6] px-2 py-0.5 text-[9px] font-bold text-[#8A6100]">{k.lowSample}</span>
                   ) : null}
                 </div>

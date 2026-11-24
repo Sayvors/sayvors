@@ -411,6 +411,7 @@ async def benchmark_themes(
     main: SubjectKey | None = Query(None),
     x_requested_with: str | None = Header(None, alias="X-Requested-With"),
     sec_fetch_site: str | None = Header(None, alias="Sec-Fetch-Site"),
+    authorization: str | None = Header(None),
     response: Response = None,
     ctx: TenantContext = Depends(require_perm("benchmark.view")),
     db: AsyncSession = Depends(get_db),
@@ -422,7 +423,8 @@ async def benchmark_themes(
     """
     # GET is state-mutating (idempotent enqueue), so require the same-origin
     # fetch metadata that cross-site <img> navigations cannot set.
-    if sec_fetch_site == "cross-site" or x_requested_with != "XMLHttpRequest":
+    is_bearer = bool(authorization and authorization.lower().startswith("bearer "))
+    if not is_bearer and (sec_fetch_site == "cross-site" or x_requested_with != "XMLHttpRequest"):
         raise HTTPException(status_code=403, detail="Cross-site theme requests are not allowed")
     if response is not None:
         response.headers["Cache-Control"] = "no-store"

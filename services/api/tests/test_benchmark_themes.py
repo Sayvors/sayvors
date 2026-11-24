@@ -561,7 +561,6 @@ def test_theme_response_uses_explicit_main_for_gap():
     assert row["own_pct"] == 50.0
     assert row["peer_median_pct"] == 10.0
     assert row["gap_pct"] == 40.0
-import pytest
 
 
 @pytest.mark.asyncio
@@ -573,3 +572,56 @@ async def test_themes_get_rejects_cross_site_requests(client):
         headers={"Sec-Fetch-Site": "cross-site"},
     )
     assert response.status_code == 403
+def test_llm_validation_rejects_partial_label_evidence():
+    from app.modules.benchmark.theme_extraction import validate_llm_themes
+
+    reviews = [
+        {"text": "staff were great", "rating": 5},
+        {"text": "staff were kind", "rating": 5},
+    ]
+    payload = {"themes": [{"label": "friendly staff", "mentions": 2, "review_indices": [0, 1]}]}
+    assert validate_llm_themes(payload, reviews) is None
+
+
+def test_group_theme_comparison_counts_missing_ready_cells_as_zero():
+    from app.modules.benchmark.theme_extraction import group_theme_comparison
+
+    subjects = [
+        {"key": "own:mine", "themes": [{"label": "helpful staff", "normalized": "helpful staff", "mentions": 5, "sample_size": 10, "pct": 50.0}]},
+        {"key": "saved:a", "themes": []},
+        {"key": "saved:b", "themes": []},
+    ]
+    row = group_theme_comparison(subjects, own_key="own:mine")[0]
+    assert row["peer_median_pct"] == 0.0
+    assert row["gap_pct"] == 50.0
+
+
+def test_normalize_reviews_deduplicates_explicit_ids():
+    from app.modules.benchmark.theme_service import normalize_reviews
+
+    review = {"review_id": "r1", "text": "Helpful staff", "rating": 5}
+    assert normalize_reviews([review, review]) == [normalize_reviews([review])[0]]
+
+
+def test_failed_analysis_does_not_contribute_stale_themes():
+    from app.modules.benchmark.theme_service import assemble_theme_response
+
+    payload = assemble_theme_response([{
+        "key": "own:mine", "name": "Mine", "kind": "own", "status": "error",
+        "sample_size": 2, "sample_hash": "a" * 64, "analyzed_at": None,
+        "reviews": [{"review_id": "r1", "text": "Helpful staff", "rating": 5}],
+        "themes": [{"label": "helpful staff", "normalized": "helpful staff", "mentions": 2, "sample_size": 2, "pct": 100.0, "positive_mentions": 2, "negative_mentions": 0, "examples": []}],
+    }])
+    assert payload["rows"] == []
+
+
+@pytest.mark.asyncio
+async def test_themes_get_allows_bearer_without_csrf_header(client):
+    client.headers.pop("X-Requested-With", None)
+    client.cookies.clear()
+    response = client.get(
+        "/api/v1/benchmark/themes",
+        params=[("subjects", "own:test-channel-0000-0000-0000-000000000001")],
+        headers={"Authorization": "Bearer invalid"},
+    )
+    assert response.status_code == 200

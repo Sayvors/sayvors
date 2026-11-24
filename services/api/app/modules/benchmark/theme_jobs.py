@@ -82,6 +82,8 @@ async def _persist_failure(db: AsyncSession, job: Any, payload: dict[str, Any], 
         await db.commit()
         return
     analysis.status = "failed"
+    analysis.themes = []
+    analysis.source = None
     analysis.error = str(error)[:2000] or type(error).__name__
     analysis.updated_at = datetime.now(timezone.utc)
     await db.commit()
