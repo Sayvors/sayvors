@@ -627,8 +627,10 @@ async def test_admin_remote_models_parses_shapes(client, monkeypatch):
     assert r.status_code == 200
     body = r.json()
     assert body == [
-        {"id": "groq:model-a", "name": "model-a"},
-        {"id": "groq:model-b", "name": "model-b"},
+        # `expiration_date` is part of the RemoteModel contract; it is only
+        # known for OpenRouter, so other providers report None.
+        {"id": "groq:model-a", "name": "model-a", "expiration_date": None},
+        {"id": "groq:model-b", "name": "model-b", "expiration_date": None},
     ]
 
 

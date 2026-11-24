@@ -190,7 +190,7 @@ export default function ReviewTicketsCard() {
 
         {!loading && errorMessage && (
           <p className="mt-3 text-[12px] font-medium text-coral">
-            t.dashboard.reviewTickets.unavailable + ": " + errorMessage
+            {t.dashboard.reviewTickets.unavailable + ": " + errorMessage}
           </p>
         )}
 
