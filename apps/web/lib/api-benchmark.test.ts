@@ -50,7 +50,7 @@ describe("review theme API client", () => {
 
     expect(api).toHaveBeenCalledWith(
       "/api/v1/benchmark/themes?subjects=own%3Achannel%2Fa%20b&subjects=saved%3Aplace%26one&main=own%3Achannel%2Fa%20b",
-      { signal: controller.signal },
+      { signal: controller.signal, headers: { "X-Requested-With": "XMLHttpRequest" } },
     );
   });
 

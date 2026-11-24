@@ -15,14 +15,17 @@ from typing import Any
 MAX_THEMES = 12
 MIN_MENTIONS = 2
 MIN_SAMPLE_SHARE = 0.02
+MIN_THEME_WORDS = 2
 MAX_NGRAM = 3
 MAX_LABEL_LEN = 80
+# Bump when extraction/normalization rules change so cached analyses rebuild.
+THEME_EXTRACTOR_VERSION = 2
 
 _EN_STOPWORDS = set(
     "a an and are as at be been being but by can could did do does for from had has have he her hers him his how i if in into is it its just me more most my no not of on or our ours out over really she should so some than that the their them then there these they this those through to too under up us very was we were what when where which who why will with would you your yours".split()
 )
 _AR_STOPWORDS = set(
-    "من في على عن الى إلى أن إن ان مع هذا هذه ذلك تلك كان كانت يكون تكون قد لقد لم لن ما لا هل و أو ثم لكن أيضا أيضًا جدا جداً غير ليس ليست عند لدى هناك هنا".split()
+    "من في على علي عن الى إلى أن إن ان مع هذا هذه ذلك تلك كان كانت يكون تكون قد لقد لم لن ما لا هل و أو ثم لكن أيضا أيضًا جدا جداً غير ليس ليست عند لدى هناك هنا الله له شركة شركه افضل أفضل ممتاز ممتازه ممتازة جديد جديده جديدا كل شيء شي".split()
 )
 
 
@@ -148,7 +151,7 @@ def extract_local_themes(reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
         tokens = [normalized for _surface, normalized in pairs]
         surface_tokens = [surface for surface, _normalized in pairs]
         seen_in_review: set[str] = set()
-        for size in range(1, MAX_NGRAM + 1):
+        for size in range(MIN_THEME_WORDS, MAX_NGRAM + 1):
             for start in range(0, len(tokens) - size + 1):
                 phrase = tokens[start : start + size]
                 surface = " ".join(surface_tokens[start : start + size])
@@ -225,7 +228,7 @@ def validate_llm_themes(
         normalized = normalize_theme_key(label)
         mentions = item.get("mentions")
         indices = item.get("review_indices")
-        if not normalized or len(label) > MAX_LABEL_LEN:
+        if not normalized or len(label) > MAX_LABEL_LEN or len(normalized.split()) < MIN_THEME_WORDS:
             return None
         if not isinstance(mentions, int) or isinstance(mentions, bool):
             return None

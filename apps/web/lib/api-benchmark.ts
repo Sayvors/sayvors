@@ -359,7 +359,10 @@ export function fetchReviewThemes(
 ): Promise<ReviewThemesResponse> {
   const q = subjects.map((s) => `subjects=${encodeURIComponent(s)}`).join("&");
   const main = mainKey ? `&main=${encodeURIComponent(mainKey)}` : "";
-  return apiFetch(`/api/v1/benchmark/themes?${q}${main}`, { signal });
+  return apiFetch(`/api/v1/benchmark/themes?${q}${main}`, {
+    signal,
+    headers: { "X-Requested-With": "XMLHttpRequest" },
+  });
 }
 
 export function retryReviewThemes(

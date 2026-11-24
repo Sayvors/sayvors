@@ -468,7 +468,6 @@ export default function ReviewKeywords({
                       </th>
                       {subjects.map((subject) => {
                         const selected = selectedMobileKey === subject.key;
-                        const cell = readyCell(row, subject);
                         return (
                           <td
                             key={subject.key}
@@ -476,16 +475,21 @@ export default function ReviewKeywords({
                               selected ? "" : "hidden md:table-cell"
                             } ${subject.key === mainKey ? "bg-[#F8F6FB]" : "bg-white"}`}
                           >
-                            {subject.status === "ready" ? (
+                            {subject.status === "ready" || (subject.status === "pending" && row.cells[subject.key]) ? (
                               <ThemeCell
                                 row={row}
                                 subject={subject}
-                                cell={cell}
-                                onOpenQuotes={() => setQuoteSelection({ row, subject, cell })}
+                                cell={readyCell(row, subject)}
+                                onOpenQuotes={() => setQuoteSelection({ row, subject, cell: readyCell(row, subject) })}
                               />
                             ) : (
                               <SubjectStatus subject={subject} onRetry={onRetry} />
                             )}
+                            {subject.status === "pending" && row.cells[subject.key] ? (
+                              <p role="status" className="mt-2 text-[9px] font-semibold text-[#6F6685]">
+                                {k.analyzing}
+                              </p>
+                            ) : null}
                           </td>
                         );
                       })}

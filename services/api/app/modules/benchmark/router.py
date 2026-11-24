@@ -7,7 +7,7 @@ import math
 from functools import lru_cache
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -409,6 +409,9 @@ async def benchmark_reviews(
 async def benchmark_themes(
     subjects: list[SubjectKey] = Query(..., min_length=1, max_length=MAX_COMPARE_SUBJECTS),
     main: SubjectKey | None = Query(None),
+    x_requested_with: str | None = Header(None, alias="X-Requested-With"),
+    sec_fetch_site: str | None = Header(None, alias="Sec-Fetch-Site"),
+    response: Response = None,
     ctx: TenantContext = Depends(require_perm("benchmark.view")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -417,6 +420,12 @@ async def benchmark_themes(
     This endpoint never calls an LLM. Workers do the paid work, so a page load
     can only create one bounded job per subject and remains safe without workers.
     """
+    # GET is state-mutating (idempotent enqueue), so require the same-origin
+    # fetch metadata that cross-site <img> navigations cannot set.
+    if sec_fetch_site == "cross-site" or x_requested_with != "XMLHttpRequest":
+        raise HTTPException(status_code=403, detail="Cross-site theme requests are not allowed")
+    if response is not None:
+        response.headers["Cache-Control"] = "no-store"
     try:
         return await theme_service.theme_response(
             db, tenant_id_of(ctx.user), subjects, main_key=main

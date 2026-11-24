@@ -53,6 +53,16 @@ def test_local_extractor_prefers_specific_phrase_when_evidence_is_identical():
     assert not any(theme["normalized"] == "خدمه" for theme in themes)
 
 
+def test_local_extractor_ignores_single_word_and_generic_filler_themes():
+    reviews = [
+        {"text": "الله شركة على", "rating": 5, "sentiment": "positive"},
+        {"text": "الله شركة على", "rating": 5, "sentiment": "positive"},
+        {"text": "parking", "rating": 4, "sentiment": "positive"},
+        {"text": "parking", "rating": 4, "sentiment": "positive"},
+    ]
+    assert extract_local_themes(reviews) == []
+
+
 def test_normalize_theme_key_is_stable():
     assert normalize_theme_key("Helpful staff") == normalize_theme_key("helpful staff")
     assert normalize_theme_key("الخدمة البطيئة") == normalize_theme_key("الخدمه البطيئه")

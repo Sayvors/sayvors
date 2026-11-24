@@ -1,6 +1,6 @@
 # Review Keyword Extraction Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use subagent-driven-development (recommended) or executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use subagent-driven-development (recommended) or executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Extract repeatable praise and complaint themes from cached BOQ/own reviews, store them durably per business, and show an evidence-backed comparison grid on the Benchmark compare page.
 
@@ -85,7 +85,7 @@
 - [x] Write failing tests for distinct-review counting, single-mention rejection, Arabic normalization, LLM count/index validation, real evidence selection, and cross-business grouping.
 - [x] Run `python -m pytest tests/test_benchmark_theme_extraction.py -q -n 0` and confirm the expected failures.
 - [x] Implement `normalize_theme_key`, `_token_pairs`, `extract_local_themes`, `_build_theme`, `validate_llm_themes`, and `group_theme_comparison`.
-- [x] Keep only function-word stoplists; never add domain keywords.
+- [x] Keep only function-word and generic-filler stoplists (never domain keywords); require multi-word themes so names, religious phrases, and single filler words do not become rows.
 - [x] Count document frequency per review, sort bigram/trigram tokens for order-insensitive matching, preserve original surface labels/quotes, and compute sentiment from real review ratings/classification.
 - [x] Validate LLM `mentions` and `review_indices` against the real bounded sample; reject the whole payload on invented counts/indices.
 - [x] Run the focused tests and confirm all eight pass.
@@ -104,13 +104,13 @@
 - Modify: `services/api/migration_guard.py`
 - Modify: `services/api/app/modules/benchmark/service.py`
 
-- [ ] Add `BenchmarkThemeAnalysis` with unique `(tenant_id, subject_type, subject_id)` and fields for sample hash/JSON, themes, status, source, model, error, job, and timestamps.
-- [ ] Add the idempotent table/index migration and `job_type` enum value under an autocommit block.
-- [ ] Register `benchmark.theme_extract` on the bulk lane and register its thin handler.
-- [ ] Implement cache-only sample building, stable hashing, idempotent analysis/job creation, hash reuse, and tenant-scoped status assembly.
-- [ ] Implement the job core with tenant/job/hash guards, commit-before-LLM, strict JSON prompt, bounded input, gateway call, validation/fallback, and stale-write protection.
-- [ ] Delete saved-place analyses in the same transaction as saved-place deletion.
-- [ ] Run focused job/migration tests and confirm no regressions.
+- [x] Add `BenchmarkThemeAnalysis` with unique `(tenant_id, subject_type, subject_id)` and fields for sample hash/JSON, themes, status, source, model, error, job, and timestamps.
+- [x] Add the idempotent table/index migration and `job_type` enum value under an autocommit block.
+- [x] Register `benchmark.theme_extract` on the bulk lane and register its thin handler.
+- [x] Implement cache-only sample building, stable hashing, idempotent analysis/job creation, hash reuse, and tenant-scoped status assembly.
+- [x] Implement the job core with tenant/job/hash guards, commit-before-LLM, strict JSON prompt, bounded input, gateway call, validation/fallback, and stale-write protection.
+- [x] Delete saved-place analyses in the same transaction as saved-place deletion.
+- [x] Run focused job/migration tests and confirm no regressions.
 
 ### Task 3: Benchmark theme API
 
@@ -119,11 +119,11 @@
 - Modify: `services/api/app/modules/benchmark/compare.py`
 - Create: `services/api/tests/test_benchmark_themes.py`
 
-- [ ] Add bounded `GET /themes` and `POST /themes/retry` routes using `benchmark.view`.
-- [ ] Ensure GET only reads/enqueues durable work and never calls the LLM or a live review provider.
-- [ ] Return per-subject ready/pending/unavailable/error status and grouped cross-business rows with real quotes.
-- [ ] Cache response assembly briefly in Redis, fail open to Postgres, and never cache pending long-term.
-- [ ] Test sample scoping/bounds/hash stability, idempotent enqueue, handler guards, LLM success/fallback, retry, deletion cleanup, API bounds, and tenant isolation.
+- [x] Add bounded `GET /themes` and `POST /themes/retry` routes using `benchmark.view`.
+- [x] Ensure GET only reads/enqueues durable work and never calls the LLM or a live review provider.
+- [x] Return per-subject ready/pending/unavailable/error status and grouped cross-business rows with real quotes.
+- [x] Cache response assembly briefly in Redis, fail open to Postgres, and never cache pending long-term.
+- [x] Test sample scoping/bounds/hash stability, idempotent enqueue, handler guards, LLM success/fallback, retry, deletion cleanup, API bounds, and tenant isolation.
 
 ### Task 4: Compare-page evidence grid
 
@@ -137,19 +137,19 @@
 - Modify: `apps/web/lib/i18n/en.ts` and `ar.ts`
 - Modify: `apps/web/lib/api-benchmark.test.ts`
 
-- [ ] Add typed theme API contracts and abort-aware fetch/retry functions.
-- [ ] Add the selection-keyed query and visibility-aware 3s polling only while a subject is pending.
-- [ ] Build the semantic evidence grid with All/Positive/Negative filters, sample percentages, mini-bars, low-sample badges, selected-column highlight, peer median, and gap.
-- [ ] Implement loading, partial pending, unavailable, error/retry, empty, zero-mention, and background-refresh states.
-- [ ] Add an accessible quote modal with focus trap, Escape, focus restoration, verbatim highlighting, Arabic `dir="auto"`, and safe Google links.
-- [ ] Add English/Arabic copy and focused API/component tests.
-- [ ] Run frontend tests, `tsc`, touched-file ESLint, and production build.
+- [x] Add typed theme API contracts and abort-aware fetch/retry functions.
+- [x] Add the selection-keyed query and visibility-aware 3s polling only while a subject is pending.
+- [x] Build the semantic evidence grid with All/Positive/Negative filters, sample percentages, mini-bars, low-sample badges, selected-column highlight, peer median, and gap.
+- [x] Implement loading, partial pending, unavailable, error/retry, empty, zero-mention, and background-refresh states.
+- [x] Add an accessible quote modal with focus trap, Escape, focus restoration, verbatim highlighting, Arabic `dir="auto"`, and safe Google links.
+- [x] Add English/Arabic copy and focused API/component tests.
+- [x] Run frontend tests, `tsc`, touched-file ESLint, and production build.
 
 ### Task 5: Verification and rollout
 
-- [ ] Run all focused backend and frontend tests together.
-- [ ] Run the full backend suite because this changes models, migrations, jobs, and worker infrastructure.
-- [ ] Run `npx tsc --noEmit`, touched-file ESLint with zero errors, and `npm run build`.
-- [ ] Render Compare at 1440px and 390px with ready, pending, empty, and quote-open states; inspect screenshots.
-- [ ] Run axe on the new section and fix section-specific violations.
-- [ ] Review `git diff`, update `readiness-report.html`, and commit without pushing.
+- [x] Run all focused backend and frontend tests together.
+- [x] Run the full backend suite because this changes models, migrations, jobs, and worker infrastructure.
+- [x] Run `npx tsc --noEmit`, touched-file ESLint with zero errors, and `npm run build`.
+- [x] Render Compare at 1440px and 390px with ready, pending, empty, and quote-open states; inspect screenshots.
+- [x] Run axe on the new section and fix section-specific violations.
+- [x] Review `git diff`, update `readiness-report.html`, and commit without pushing.

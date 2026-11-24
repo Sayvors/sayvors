@@ -18,7 +18,7 @@ from ..jobs.service import submit_job
 from ..jobs.types import JobType
 from . import compare, service
 from .models import BenchmarkThemeAnalysis
-from .theme_extraction import group_theme_comparison, normalize_theme_key
+from .theme_extraction import THEME_EXTRACTOR_VERSION, extract_local_themes, group_theme_comparison, normalize_theme_key
 
 MAX_SAMPLE_REVIEWS = 50
 MAX_REVIEW_TEXT = 600
@@ -112,7 +112,12 @@ def normalize_reviews(reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def hash_sample(reviews: list[dict[str, Any]]) -> str:
     """Content hash of the exact normalized evidence in newest-first order."""
-    canonical = json.dumps(reviews, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    canonical = json.dumps(
+        {"version": THEME_EXTRACTOR_VERSION, "reviews": reviews},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
@@ -265,13 +270,13 @@ async def ensure_theme_analysis(
             return analysis
 
     # A normal GET reports a terminal error; only the explicit retry endpoint
-    # re-runs it. Stale ready samples still refresh on the next GET, subject to
-    # the same cooldown that bounds explicit retries.
+    # re-runs it. Stale ready samples rebuild immediately on the next GET so a
+    # deployed extractor-version change cannot leave noisy cached themes.
     if analysis.status == "failed" and not retry:
         await db.commit()
         return analysis
 
-    if not is_new:
+    if not is_new and analysis.status != "ready":
         updated_at = _aware(analysis.updated_at)
         age = (datetime.now(timezone.utc) - updated_at).total_seconds()
         if age < RETRY_COOLDOWN_SECONDS:
@@ -408,7 +413,7 @@ def assemble_theme_response(
             )
         }
         subjects.append(subject)
-        if record.get("status") == "ready":
+        if record.get("status") == "ready" or record.get("themes"):
             ready.append({"key": record["key"], "themes": record.get("themes") or []})
 
     own_key = own_key or next(
@@ -481,6 +486,14 @@ async def theme_response(
         status = {"pending": "pending", "running": "pending", "ready": "ready", "failed": "error"}.get(
             analysis.status, "error"
         )
+        if status == "pending" and not analysis.themes:
+            # Local extraction is deterministic and fast (~30ms for 50 reviews).
+            # Show useful evidence immediately while the LLM refinement runs in
+            # the background; the worker replaces these themes when it finishes.
+            analysis.themes = extract_local_themes(analysis.sample_json or [])
+            analysis.source = "local"
+            analysis.updated_at = datetime.now(timezone.utc)
+            await db.commit()
         record = {
             "key": key,
             "name": sample["name"],

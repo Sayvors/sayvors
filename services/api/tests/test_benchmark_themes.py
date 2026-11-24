@@ -21,6 +21,11 @@ TENANT = "test-user-0000-0000-0000-000000000001"
 OTHER_TENANT = "test-user-0000-0000-0000-000000000002"
 
 
+@pytest.fixture(autouse=True)
+def _same_site_theme_requests(client):
+    client.headers.update({"X-Requested-With": "XMLHttpRequest"})
+
+
 async def _resolve_ok(_db):
     return "fake:model"
 
@@ -238,7 +243,7 @@ async def test_themes_api_pending_ready_error_retry_and_bounds(
     assert pending.status_code == 200, pending.text
     body = pending.json()
     assert [subject["status"] for subject in body["subjects"]] == ["pending", "unavailable"]
-    assert body["rows"] == []
+    assert body["rows"]  # instant local evidence is visible while the job runs
     assert body["subjects"][0]["sample_size"] == 3
     assert len(body["subjects"][0]["sample_hash"]) == 64
     assert await db.scalar(select(func.count(Job.id))) == 1
@@ -556,3 +561,15 @@ def test_theme_response_uses_explicit_main_for_gap():
     assert row["own_pct"] == 50.0
     assert row["peer_median_pct"] == 10.0
     assert row["gap_pct"] == 40.0
+import pytest
+
+
+@pytest.mark.asyncio
+async def test_themes_get_rejects_cross_site_requests(client):
+    client.headers.pop("X-Requested-With", None)
+    response = client.get(
+        "/api/v1/benchmark/themes",
+        params=[("subjects", "own:test-channel-0000-0000-0000-000000000001")],
+        headers={"Sec-Fetch-Site": "cross-site"},
+    )
+    assert response.status_code == 403
