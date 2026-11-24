@@ -23,6 +23,7 @@ interface ApiChannel {
 
 import { FEATURE_LABELS, FEATURE_LABELS_AR, FEATURE_ORDER } from "@/lib/feature-labels";
 import { useI18n } from "@/lib/i18n/I18nProvider";
+import { planLabel } from "@/lib/plan-gating";
 
 function fmtCents(c: number, locale: string): string {
   const n = new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US", {
@@ -35,20 +36,6 @@ function fmtNum(n: number, locale: string): string {
   return new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US", {
     maximumFractionDigits: 0,
   }).format(n);
-}
-
-const PLAN_SLUG_KEYS: Record<string, keyof NonNullable<ReturnType<typeof useI18n>["t"]["dashboard"]["plans"]["planNames"]>> = {
-  "free-trial": "trial",
-  free: "free",
-  starter: "starter",
-  pro: "pro",
-  growth: "growth",
-  enterprise: "enterprise",
-};
-
-function planLabel(slug: string | undefined, names: { trial: string; free: string; starter: string; pro: string; growth: string; enterprise: string }, fallback = ""): string {
-  const key = slug ? PLAN_SLUG_KEYS[slug] : undefined;
-  return (key && names[key]) || fallback || slug || names.trial;
 }
 
 // Online card payments are not connected yet. Until they are, only the

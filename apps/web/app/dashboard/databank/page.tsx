@@ -24,7 +24,6 @@ import {
 import BusinessDetailsSection from "@/components/databank/BusinessDetailsSection";
 import IntakeProgressCard from "@/components/databank/IntakeProgressCard";
 import { useI18n } from "@/lib/i18n/I18nProvider";
-import FeatureLock from "@/components/billing/FeatureLock";
 
 type Databank = {
   id: string;
@@ -1312,9 +1311,6 @@ function DatabankPageContent() {
 }
 
 export default function DatabankPage() {
-  return (
-    <FeatureLock feature="databank">
-      <DatabankPageContent />
-    </FeatureLock>
-  );
+  // Plan-gated by this route's layout.tsx — the page never mounts without it.
+  return <DatabankPageContent />;
 }

@@ -9,7 +9,6 @@ import { apiFetch } from "@/lib/api-rag";
 import { GBP_DASHBOARD_URL } from "@/lib/google-links";
 import LogoLoader from "@/components/LogoLoader";
 import GoogleBusinessLogo from "@/components/channels/GoogleBusinessLogo";
-import FeatureLock from "@/components/billing/FeatureLock";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import type { Dict } from "@/lib/i18n/en";
 
@@ -658,9 +657,6 @@ function Info({ label, value }: { label: string; value: string }) {
 }
 
 export default function VerificationPage() {
-  return (
-    <FeatureLock feature="verifications">
-      <VerificationPageContent />
-    </FeatureLock>
-  );
+  // Plan-gated by this route's layout.tsx — the page never mounts without it.
+  return <VerificationPageContent />;
 }

@@ -52,6 +52,8 @@ const en = {
     mainNavigation: "Main navigation",
     postsMedia: "Posts & Media",
   customers: "Customers",
+    requiresPlan: "Requires the {plan} plan",
+    requiresUpgrade: "Requires a higher plan",
     advanced: "Advanced",
     automations: "Automations",
     benchmark: "Benchmark",
@@ -4646,6 +4648,14 @@ const en = {
       premiumTitle: "This feature is premium",
       premiumBody: "{feature} isn't included in your current plan.",
       viewPremiumPlans: "View plans",
+      planGateTitle: "{feature} is on {plan}",
+      planGateTitleFallback: "{feature} needs a higher plan",
+      planGateBody:
+        "Your {current} plan doesn't include {feature}. Upgrade and it unlocks right away.",
+      planGateBodyFallback:
+        "{feature} isn't included in your current plan. Upgrade and it unlocks right away.",
+      planGateNotNow: "Not now",
+      planGateError: "We couldn't check your plan.",
       footer:
         "Prices in USD. Every plan includes AI credit equal to its monthly price.",
       planNames: {

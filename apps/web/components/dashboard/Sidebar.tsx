@@ -7,9 +7,16 @@ import { useEffect, useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { NAV_DRAWER_EVENTS } from "@/lib/tour/nav-drawer";
 import { visibleChannelNav, type ChannelNavRow } from "@/lib/channel-nav";
-import { getBudget, getEntitlements, type Budget } from "@/lib/api-billing";
+import { getBudget, getEntitlements, getPlans, type Budget } from "@/lib/api-billing";
 import { useQuery } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
+import {
+  cheapestPlanFor,
+  featureForPath,
+  isPathLocked,
+  planLabel,
+} from "@/lib/plan-gating";
+import CrownIcon from "@/components/billing/CrownIcon";
 
 interface NavItem {
   key: string;
@@ -39,13 +46,6 @@ const ADVANCED_ITEMS: NavItem[] = [
   { key: "billing", icon: <CardIcon />, href: "/dashboard/billing" },
   { key: "plans", icon: <CardIcon />, href: "/dashboard/plans" },
 ];
-
-// Nav entries whose surface is a plan feature: hide them when the tenant's
-// plan does not include the feature. Keys must match billing/features.py.
-const NAV_FEATURE: Record<string, string> = {
-  databank: "databank",
-  verification: "verifications",
-};
 
 function isActive(pathname: string, item: NavItem) {
   const { href } = item;
@@ -122,18 +122,36 @@ export default function Sidebar() {
   const pathname = usePathname();
   const { t, dir } = useI18n();
 
-  // Feature-gated nav: fetch entitlements once; items whose feature is off
-  // are hidden. While loading, show everything (no jarring pop-in).
+  // Plan-gated nav: every surface stays listed. A route the current plan does
+  // not include keeps its link and gets a crown, so the page can sell itself
+  // on click instead of vanishing. Unknown entitlements crown nothing (no
+  // paywall flash for a tenant who is entitled); the API still enforces.
   const { data: entitlements } = useQuery({
     queryKey: queryKeys.billing.entitlements(),
     queryFn: getEntitlements,
   });
-  const featureEnabled = (item: NavItem) => {
-    const feature = NAV_FEATURE[item.key];
-    return !feature || !!entitlements?.features?.[feature];
+  const features = entitlements?.features;
+  const anyLocked = [...MAIN_ITEMS, ...ADVANCED_ITEMS].some((item) =>
+    isPathLocked(item.href, features),
+  );
+
+  // Shared cache with PlanGate, and only fetched when a crown is on screen.
+  const { data: plans } = useQuery({
+    queryKey: queryKeys.billing.plans(),
+    queryFn: getPlans,
+    enabled: anyLocked,
+    retry: false,
+    staleTime: 5 * 60_000,
+  });
+
+  const lockHint = (item: NavItem): string | null => {
+    if (!isPathLocked(item.href, features)) return null;
+    const feature = featureForPath(item.href);
+    const plan = feature ? cheapestPlanFor(plans, feature) : null;
+    if (!plan) return t.nav.requiresUpgrade;
+    const name = planLabel(plan.slug, t.dashboard.plans.planNames, plan.name);
+    return t.nav.requiresPlan.replace("{plan}", name);
   };
-  const mainItems = MAIN_ITEMS.filter(featureEnabled);
-  const advancedItems = ADVANCED_ITEMS.filter(featureEnabled);
 
   // Channel workspaces (WhatsApp / Instagram / Facebook, and the inbox) are
   // reading-heavy: the nav column is noise there. Fold it on entry, but leave
@@ -253,8 +271,8 @@ export default function Sidebar() {
           }}
         >
           <div className="space-y-0.5">
-            {mainItems.slice(0, 3).map((item) => (
-              <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} label={labelFor(item)} />
+            {MAIN_ITEMS.slice(0, 3).map((item) => (
+              <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} label={labelFor(item)} hint={lockHint(item)} />
             ))}
           </div>
           <ChannelsNav
@@ -264,8 +282,8 @@ export default function Sidebar() {
             loadingLabel={t.common.loading}
           />
           <div className="mt-0.5 space-y-0.5">
-            {mainItems.slice(3).map((item) => (
-              <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} label={labelFor(item)} />
+            {MAIN_ITEMS.slice(3).map((item) => (
+              <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} label={labelFor(item)} hint={lockHint(item)} />
             ))}
           </div>
 
@@ -289,8 +307,8 @@ export default function Sidebar() {
             </button>
             {advancedOpen && (
               <div className="mt-0.5 space-y-0.5">
-                {advancedItems.map((item) => (
-                  <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} label={labelFor(item)} />
+                {ADVANCED_ITEMS.map((item) => (
+                  <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} label={labelFor(item)} hint={lockHint(item)} />
                 ))}
               </div>
             )}
@@ -331,18 +349,24 @@ function NavRow({
   active,
   rail,
   label,
+  hint,
 }: {
   item: NavItem;
   active: boolean;
   rail: boolean;
   label: string;
+  /** Plan hint for a crowned surface; null when the plan includes it. */
+  hint: string | null;
 }) {
+  const locked = hint !== null;
   return (
     <Link
       href={item.href}
       data-tour={`nav-${item.key}`}
       aria-current={active ? "page" : undefined}
-      title={rail ? label : undefined}
+      // The rail has no visible label, so the crown hint rides on the title;
+      // the full sentence is always in the accessible name below.
+      title={rail ? (locked ? `${label} — ${hint}` : label) : undefined}
       className={`group relative flex h-9 items-center rounded-full text-[13px] font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-violet-soft/70 dark:focus-visible:ring-offset-[#1d1636] ${
         rail ? "justify-center px-0" : "gap-2.5 px-3"
       } ${
@@ -359,7 +383,18 @@ function NavRow({
       >
         {item.icon}
       </span>
-      {!rail && <span className="flex-1 truncate">{label}</span>}
+      {/* Always rendered: in the rail it is the link's only accessible name.
+          (A title attribute is not a substitute for one.) */}
+      <span className={rail ? "sr-only" : "flex-1 truncate"}>{label}</span>
+      {locked && (
+        <span
+          className={rail ? "absolute end-0.5 top-0.5" : "shrink-0"}
+          title={rail ? undefined : hint}
+        >
+          <CrownIcon className="h-3.5 w-3.5 text-[#B7791F] dark:text-[#F2C14E]" />
+          <span className="sr-only"> — {hint}</span>
+        </span>
+      )}
     </Link>
   );
 }

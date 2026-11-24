@@ -53,6 +53,8 @@ const ar: Dict = {
     mainNavigation: "التنقل الرئيسي",
     postsMedia: "المنشورات والوسائط",
   customers: "العملاء",
+    requiresPlan: "تتطلب خطة {plan}",
+    requiresUpgrade: "تتطلب خطة أعلى",
     advanced: "متقدم",
     automations: "الأتمتة",
     benchmark: "المقارنة المرجعية",
@@ -4652,6 +4654,14 @@ const ar: Dict = {
       premiumTitle: "هذه الميزة مميزة",
       premiumBody: "{feature} غير مشمولة في خطتك الحالية.",
       viewPremiumPlans: "عرض الخطط",
+      planGateTitle: "{feature} متاحة في خطة {plan}",
+      planGateTitleFallback: "{feature} تتطلب خطة أعلى",
+      planGateBody:
+        "خطتك الحالية ({current}) لا تشمل {feature}. قم بالترقية لتُفتح فوراً.",
+      planGateBodyFallback:
+        "{feature} غير مشمولة في خطتك الحالية. قم بالترقية لتُفتح فوراً.",
+      planGateNotNow: "ليس الآن",
+      planGateError: "تعذّر التحقق من خطتك.",
       footer:
         "الأسعار بالدولار الأمريكي. تشمل كل خطة رصيد ذكاء اصطناعي يساوي ثمنها الشهري.",
       planNames: {
