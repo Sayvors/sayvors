@@ -3679,9 +3679,9 @@ const ar: Dict = {
       "الحصة الإيجابية: {n} من {total} نشاطاً لديها نصوص تقييمات.",
     sentimentVolumeTitle: "السمعة والزخم",
     sentimentVolumeSubtitle:
-      "كيف يشعر أصحاب التقييمات، وكم تقييماً جديداً يكسبه كل نشاط. المصادر موضحة لأنها ليست متطابقة.",
+      "مزيج السمعة يوضح شعور التقييمات. التقييمات الجديدة شهرياً توضح سرعة اكتساب كل نشاط للتقييمات. المصادر موضحة لأنها ليست متطابقة.",
     reputationMixTitle: "مزيج السمعة",
-    reviewMomentumTitle: "زخم التقييمات",
+    reviewMomentumTitle: "تقييمات جديدة شهرياً",
     sentimentSourceStars: "من نجوم التقييم",
     sentimentSourceClassified: "تصنيف نصوص التقييمات",
     sentimentSourceNote:
@@ -3691,6 +3691,9 @@ const ar: Dict = {
     lowSampleBadge: "عينة صغيرة",
     sentimentEmpty:
       "لا توجد بيانات تقييمات بعد. احفظ منافساً أو اربط موقع Google لبدء المقارنة.",
+    basedOnReviews: "بناءً على {n} تقييم",
+    velocityWindow30: "آخر 30 يوماً",
+    velocityWindowYear: "تقدير من آخر 12 شهراً",
     sentimentPositive: "إيجابي",
     sentimentNeutral: "محايد",
     sentimentNegative: "سلبي",

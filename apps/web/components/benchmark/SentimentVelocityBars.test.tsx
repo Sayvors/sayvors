@@ -82,7 +82,7 @@ describe("SentimentVelocityBars", () => {
     render(<SentimentVelocityBars subjects={[own, saved]} mainKey={own.key} />);
 
     expect(screen.getByRole("heading", { name: "Reputation mix" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Review momentum" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "New reviews per month" })).toBeInTheDocument();
   });
 
   it("labels the sentiment source instead of comparing unlike methods as equals", () => {

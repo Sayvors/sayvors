@@ -13,6 +13,12 @@ interface Row {
   index: number;
 }
 
+function fill(template: string, vars: Record<string, string>): string {
+  return Object.entries(vars).reduce(
+    (out, [key, value]) => out.replaceAll(`{${key}}`, value),
+    template,
+  );
+}
 function clampPct(value: number): number {
   return Math.max(0, Math.min(100, value));
 }
@@ -163,7 +169,7 @@ export default function SentimentVelocityBars({
                     </div>
                     <div className="text-end">
                       <p className="font-mono text-[10px] font-bold text-[#3B2D5E]">
-                        n={sampleSize(row.subject)}
+                        {fill(b.basedOnReviews, { n: String(sampleSize(row.subject)) })}
                       </p>
                       {lowSample(row.subject) && (
                         <p className="mt-0.5 text-[8px] font-bold uppercase tracking-wide text-[#8A6100]">
@@ -233,6 +239,14 @@ export default function SentimentVelocityBars({
                     </div>
                     <span className="min-w-8 text-end font-mono text-[12px] font-bold text-[#3D1D6E]">
                       {formatHeadlineValue("reviews_per_month", row.velocity)}
+                      <span className="ml-1 text-[9px] font-semibold text-[#6F6685]">
+                        {b.metricVelocityShort}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-[8px] font-semibold text-[#6F6685]">
+                      {row.subject.metrics.reviews_last_month != null
+                        ? b.velocityWindow30
+                        : b.velocityWindowYear}
                     </span>
                   </li>
                 );

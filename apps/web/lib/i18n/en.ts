@@ -3673,9 +3673,9 @@ const en = {
       "Positive share: {n} of {total} businesses have review text.",
     sentimentVolumeTitle: "Reputation & momentum",
     sentimentVolumeSubtitle:
-      "How reviews feel, and how many new reviews each business is earning. Sources are labelled because they are not identical.",
+      "Reputation mix shows how reviews feel. New reviews per month shows how fast each business is earning reviews. Sources are labelled because they are not identical.",
     reputationMixTitle: "Reputation mix",
-    reviewMomentumTitle: "Review momentum",
+    reviewMomentumTitle: "New reviews per month",
     sentimentSourceStars: "From star ratings",
     sentimentSourceClassified: "Classified from review text",
     sentimentSourceNote:
@@ -3685,6 +3685,9 @@ const en = {
     lowSampleBadge: "Small sample",
     sentimentEmpty:
       "No review data yet. Save a competitor or connect a Google location to start comparing.",
+    basedOnReviews: "Based on {n} reviews",
+    velocityWindow30: "last 30 days",
+    velocityWindowYear: "estimated from last 12 months",
     sentimentPositive: "Positive",
     sentimentNeutral: "Neutral",
     sentimentNegative: "Negative",
