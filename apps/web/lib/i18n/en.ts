@@ -3671,7 +3671,20 @@ const en = {
       "Total reviews: {n} of {total} businesses report review counts.",
     distributionSentimentSummary:
       "Positive share: {n} of {total} businesses have review text.",
-    sentimentVolumeTitle: "Sentiment & review volume",
+    sentimentVolumeTitle: "Reputation & momentum",
+    sentimentVolumeSubtitle:
+      "How reviews feel, and how many new reviews each business is earning. Sources are labelled because they are not identical.",
+    reputationMixTitle: "Reputation mix",
+    reviewMomentumTitle: "Review momentum",
+    sentimentSourceStars: "From star ratings",
+    sentimentSourceClassified: "Classified from review text",
+    sentimentSourceNote:
+      "Saved competitors use star ratings from the cached review sample; your branches use classified stored review text.",
+    velocitySourceNote:
+      "Saved competitor velocity is sample-based; your branches use stored review timestamps. Treat small sets as directional.",
+    lowSampleBadge: "Small sample",
+    sentimentEmpty:
+      "No review data yet. Save a competitor or connect a Google location to start comparing.",
     sentimentPositive: "Positive",
     sentimentNeutral: "Neutral",
     sentimentNegative: "Negative",

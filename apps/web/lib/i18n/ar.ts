@@ -3677,7 +3677,20 @@ const ar: Dict = {
       "إجمالي التقييمات: {n} من {total} نشاطاً لديها أعداد تقييمات.",
     distributionSentimentSummary:
       "الحصة الإيجابية: {n} من {total} نشاطاً لديها نصوص تقييمات.",
-    sentimentVolumeTitle: "الانطباع وحجم المراجعات",
+    sentimentVolumeTitle: "السمعة والزخم",
+    sentimentVolumeSubtitle:
+      "كيف يشعر أصحاب التقييمات، وكم تقييماً جديداً يكسبه كل نشاط. المصادر موضحة لأنها ليست متطابقة.",
+    reputationMixTitle: "مزيج السمعة",
+    reviewMomentumTitle: "زخم التقييمات",
+    sentimentSourceStars: "من نجوم التقييم",
+    sentimentSourceClassified: "تصنيف نصوص التقييمات",
+    sentimentSourceNote:
+      "المنافسون المحفوظون يستخدمون نجوم عينة التقييمات المخزنة؛ فروعك تستخدم تصنيف نصوص التقييمات المحفوظة.",
+    velocitySourceNote:
+      "سرعة المنافسين المحفوظين مبنية على العينة؛ فروعك تستخدم تواريخ التقييمات المحفوظة. اعتبر المجموعات الصغيرة استرشادية.",
+    lowSampleBadge: "عينة صغيرة",
+    sentimentEmpty:
+      "لا توجد بيانات تقييمات بعد. احفظ منافساً أو اربط موقع Google لبدء المقارنة.",
     sentimentPositive: "إيجابي",
     sentimentNeutral: "محايد",
     sentimentNegative: "سلبي",

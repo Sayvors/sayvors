@@ -1460,7 +1460,10 @@ export default function ComparePage() {
             <FixFirstTickets summary={compareQuery.data.summary} subjects={subjects} />
           ) : null}
           <CompletenessCard subjects={subjects} />
-          <SentimentVelocityBars subjects={compareQuery.data?.subjects ?? []} />
+          <SentimentVelocityBars
+            subjects={compareQuery.data?.subjects ?? []}
+            mainKey={selection.main}
+          />
           <TrendChart history={historyQuery.data?.subjects ?? []} title={b.trendTitle} />
           <OwnScorecards
             subjects={compareQuery.data?.subjects ?? []}
