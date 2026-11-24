@@ -368,16 +368,20 @@ export default function OverviewPanel() {
               <div className="ui-card p-4 sm:p-5">
                 <h3 className="mb-3 text-[13px] font-bold text-[var(--ui-ink)]">{t.analytics.charts.ratingDistribution}</h3>
                 {loading ? (
-                  <div className="space-y-2" aria-hidden>
-                    {[0, 1, 2, 3, 4].map((i) => (
-                      <div key={i} className="h-2.5 animate-pulse rounded-full bg-[var(--ui-sunken)]" style={{ width: `${90 - i * 12}%` }} />
-                    ))}
+                  <div className="flex items-center gap-4" aria-hidden>
+                    <div className="h-36 w-36 shrink-0 animate-pulse rounded-full bg-[var(--ui-sunken)]" />
+                    <div className="w-full space-y-2">
+                      {[0, 1, 2, 3, 4].map((i) => (
+                        <div key={i} className="h-2.5 animate-pulse rounded-full bg-[var(--ui-sunken)]" style={{ width: `${90 - i * 12}%` }} />
+                      ))}
+                    </div>
                   </div>
                 ) : (
                   overview && (
                     <RatingDistribution
                       distribution={overview.rating_distribution}
                       total={overview.total_reviews}
+                      averageRating={overview.avg_rating}
                       source="Connected review channels"
                       sourceDetail={`last ${days} days`}
                       sourceHref={channels.length > 0 ? GBP_DASHBOARD_URL : undefined}
@@ -389,7 +393,14 @@ export default function OverviewPanel() {
               <div className="ui-card p-4 sm:p-5">
                 <h3 className="mb-3 text-[13px] font-bold text-[var(--ui-ink)]">{t.analytics.charts.sentiment}</h3>
                 {loading ? (
-                  <div className="h-3 animate-pulse rounded-full bg-[var(--ui-sunken)]" aria-hidden />
+                  <div className="flex items-center gap-4" aria-hidden>
+                    <div className="h-36 w-36 shrink-0 animate-pulse rounded-full bg-[var(--ui-sunken)]" />
+                    <div className="w-full space-y-2">
+                      {[0, 1, 2].map((i) => (
+                        <div key={i} className="h-2.5 animate-pulse rounded-full bg-[var(--ui-sunken)]" style={{ width: `${90 - i * 18}%` }} />
+                      ))}
+                    </div>
+                  </div>
                 ) : (
                   overview && (
                     <SentimentSplitBar

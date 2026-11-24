@@ -4,6 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api-rag";
 import { clearActiveConnectImport } from "@/lib/connect-import";
+import {
+  ImportOutcomesDonut,
+  RatingTrend,
+  ReviewVolumeBars,
+} from "@/components/analytics/ReputationCharts";
 
 export type ImportItem = {
   id: string;
@@ -1013,14 +1018,39 @@ function SummaryStage({ session, onClose }: { session: ImportSession; onClose: (
           {summary.reviews_total} reviews were imported in this pass.
         </p>
       </div>
-      <div className="grid gap-3 lg:grid-cols-2">
+      <div className="grid gap-3 lg:grid-cols-3">
+        <div className="rounded-[8px] border border-ink/[0.08] bg-white p-4">
+          <p className="text-[12px] font-bold text-ink">Import outcomes</p>
+          <div className="mt-3">
+            <ImportOutcomesDonut
+              labels={{
+                unanswered: "Unanswered before",
+                published: "Published now",
+                alreadyAnswered: "Already answered",
+                needsAttention: "Needs attention",
+              }}
+              counts={{
+                unanswered: summary.unanswered_before,
+                published: summary.published_now,
+                alreadyAnswered: summary.already_answered,
+                needsAttention: summary.failed,
+              }}
+            />
+          </div>
+        </div>
         <div className="rounded-[8px] border border-ink/[0.08] bg-white p-4">
           <p className="text-[12px] font-bold text-ink">Reviews received, last 12 months</p>
-          <VolumeBars data={summary.review_volume} />
+          <ReviewVolumeBars
+            ariaLabel="Reviews received, last 12 months"
+            data={summary.review_volume.map((row) => ({ label: row.month, value: row.count }))}
+          />
         </div>
         <div className="rounded-[8px] border border-ink/[0.08] bg-white p-4">
           <p className="text-[12px] font-bold text-ink">Rating over time</p>
-          <RatingScatter data={summary.rating_scatter} />
+          <RatingTrend
+            ariaLabel="Rating over time"
+            data={summary.rating_scatter.map((row) => ({ date: row.date, rating: row.rating }))}
+          />
         </div>
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1052,49 +1082,5 @@ function Metric({ label, value }: { label: string; value: string }) {
       <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/35">{label}</p>
       <p className="mt-1.5 text-[16px] font-bold tabular-nums text-ink">{value}</p>
     </div>
-  );
-}
-
-function VolumeBars({ data }: { data: { month: string; count: number }[] }) {
-  if (!data.length) return <p className="mt-3 text-[11px] text-ink/40">No review volume yet.</p>;
-  const max = Math.max(1, ...data.map((d) => d.count));
-  return (
-    <div className="mt-3 flex h-24 items-end gap-1.5">
-      {data.map((d) => (
-        <div key={d.month} className="flex min-w-0 flex-1 flex-col items-center justify-end gap-1">
-          <div
-            className="w-full rounded-t-[8px] bg-deep-violet/70"
-            style={{ height: `${Math.max(4, (d.count / max) * 76)}px` }}
-            title={`${d.month}: ${d.count}`}
-          />
-          <span className="max-w-full truncate text-[8px] text-ink/35">{d.month.slice(5)}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function RatingScatter({ data }: { data: { date: string; rating: number }[] }) {
-  if (!data.length) return <p className="mt-3 text-[11px] text-ink/40">No rating history yet.</p>;
-  const points = data.slice(0, 80);
-  return (
-    <svg viewBox="0 0 300 110" className="mt-2 h-28 w-full" role="img" aria-label="Rating over time">
-      {[1, 2, 3, 4, 5].map((rating) => (
-        <line
-          key={rating}
-          x1="6"
-          x2="294"
-          y1={96 - (rating - 1) * 20}
-          y2={96 - (rating - 1) * 20}
-          stroke="rgba(20,16,31,0.06)"
-          strokeWidth="1"
-        />
-      ))}
-      {points.map((point, index) => {
-        const x = 8 + (index / Math.max(1, points.length - 1)) * 284;
-        const y = 96 - (Math.max(1, Math.min(5, point.rating)) - 1) * 20;
-        return <circle key={`${point.date}-${index}`} cx={x} cy={y} r="2.6" fill="#3D1D6E" opacity="0.7" />;
-      })}
-    </svg>
   );
 }

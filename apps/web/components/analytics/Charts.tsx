@@ -1,9 +1,10 @@
-"use client";
+﻿"use client";
 
 import { useMemo, useState } from "react";
 import type { TimeseriesPoint } from "@/lib/api-analytics";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { FactSource } from "@/components/analytics/FactSource";
+import { CHART_COLORS, DonutChart } from "@/components/analytics/ReputationCharts";
 
 /* ── Metric switcher + area chart ─────────────────────────────────── */
 
@@ -104,34 +105,54 @@ export function MetricChart({
     google: chartLabels.google,
   };
 
-  // Monochrome ink ramp (needs the .team-ui ancestor for the --ui-* vars):
-  // primary series = ink, secondary = ink-2, tertiary = line-strong. The
-  // colour strings live in style props, never SVG presentation attributes,
-  // because var() does not resolve there.
+  const seriesPoints = useMemo(() => {
+    const byDate = new Map<string, TimeseriesPoint>();
+    for (const point of points) {
+      const existing = byDate.get(point.date);
+      if (!existing) {
+        byDate.set(point.date, { ...point });
+        continue;
+      }
+      existing.reviews_count += point.reviews_count;
+      existing.positive_count += point.positive_count;
+      existing.neutral_count += point.neutral_count;
+      existing.negative_count += point.negative_count;
+      existing.impressions_maps += point.impressions_maps;
+      existing.replies_count += point.replies_count;
+      existing.website_clicks += point.website_clicks;
+      existing.call_clicks += point.call_clicks;
+      existing.direction_requests += point.direction_requests;
+    }
+    return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+  }, [points]);
+
+  // Chart-series palette: color is data ink, never a surface treatment.
   const series = useMemo(() => {
     if (metric === "reviews") {
-      return [{ key: "reviews_count", label: chartLabels.reviews, color: "var(--ui-ink)", values: points.map((p) => p.reviews_count) }];
+      return [{ key: "reviews_count", label: chartLabels.reviews, color: CHART_COLORS.violet, values: seriesPoints.map((p) => p.reviews_count) }];
     }
     if (metric === "google") {
-      return [{ key: "impressions", label: chartLabels.mapsImpressions, color: "var(--ui-ink)", values: points.map((p) => p.impressions_maps) }];
+      return [{ key: "impressions", label: chartLabels.mapsImpressions, color: CHART_COLORS.blue, values: seriesPoints.map((p) => p.impressions_maps) }];
     }
     return [
-      { key: "pos", label: chartLabels.positive, color: "var(--ui-ink)", values: points.map((p) => p.positive_count) },
-      { key: "neu", label: chartLabels.neutral, color: "var(--ui-ink-2)", values: points.map((p) => p.neutral_count) },
-      { key: "neg", label: chartLabels.negative, color: "var(--ui-line-strong)", values: points.map((p) => p.negative_count) },
+      { key: "pos", label: chartLabels.positive, color: CHART_COLORS.green, values: seriesPoints.map((p) => p.positive_count) },
+      { key: "neu", label: chartLabels.neutral, color: CHART_COLORS.amber, values: seriesPoints.map((p) => p.neutral_count) },
+      { key: "neg", label: chartLabels.negative, color: CHART_COLORS.red, values: seriesPoints.map((p) => p.negative_count) },
     ];
-  }, [chartLabels, metric, points]);
+  }, [chartLabels, metric, seriesPoints]);
 
-  const max = Math.max(1, ...series.flatMap((s) => s.values));
+  const max = metric === "sentiment"
+    ? Math.max(1, ...seriesPoints.map((p) => p.positive_count + p.neutral_count + p.negative_count))
+    : Math.max(1, ...series.flatMap((s) => s.values));
   const W = 600;
   const H = 170;
   const PAD = 10;
-  const hasData = points.length > 0;
+  const hasData = seriesPoints.length > 0;
 
   const hoverInfo =
-    hover !== null && points[hover]
+    hover !== null && seriesPoints[hover]
       ? {
-          date: fmtDay(points[hover].date, locale),
+          date: fmtDay(seriesPoints[hover].date, locale),
           rows: series.map((s) => ({ label: s.label, color: s.color, value: s.values[hover] ?? 0 })),
         }
       : null;
@@ -182,25 +203,83 @@ export function MetricChart({
               onMouseMove={(e) => {
                 const rect = e.currentTarget.getBoundingClientRect();
                 const frac = (e.clientX - rect.left) / rect.width;
-                setHover(Math.min(points.length - 1, Math.max(0, Math.round(frac * (points.length - 1)))));
+                setHover(Math.min(seriesPoints.length - 1, Math.max(0, Math.round(frac * (seriesPoints.length - 1)))));
               }}
             >
               {[0.25, 0.5, 0.75].map((f) => (
                 <line key={f} x1="0" x2={W} y1={H * f} y2={H * f} className="stroke-[var(--ui-line)]" strokeWidth="1" vectorEffect="non-scaling-stroke" />
               ))}
-              {[...series].reverse().map((s) => {
-                const { line, area } = buildPath(s.values, max, W, H, PAD);
-                return (
-                  <g key={s.key}>
-                    <path d={area} style={{ fill: s.color }} fillOpacity="0.06" />
-                    <path d={line} fill="none" style={{ stroke: s.color }} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
-                  </g>
-                );
-              })}
-              {hover !== null && points.length > 1 && (
+              {metric === "reviews" ? (
+                seriesPoints.map((point, index) => {
+                  const slot = W / Math.max(1, seriesPoints.length);
+                  const barWidth = Math.min(30, slot * 0.62);
+                  const x = index * slot + (slot - barWidth) / 2;
+                  const height = (Math.max(0, point.reviews_count) / max) * (H - PAD * 2);
+                  const latest = index === seriesPoints.length - 1;
+                  return (
+                    <rect
+                      key={`${point.date}-${index}`}
+                      data-metric-bar
+                      x={x}
+                      y={H - PAD - height}
+                      width={barWidth}
+                      height={Math.max(2, height)}
+                      rx="3"
+                      fill={latest ? CHART_COLORS.coral : CHART_COLORS.violet}
+                      opacity={latest ? 1 : 0.78}
+                    >
+                      <title>{`${fmtDay(point.date, locale)}: ${point.reviews_count}`}</title>
+                    </rect>
+                  );
+                })
+              ) : metric === "sentiment" ? (
+                seriesPoints.map((point, index) => {
+                  const slot = W / Math.max(1, seriesPoints.length);
+                  const barWidth = Math.min(30, slot * 0.62);
+                  const x = index * slot + (slot - barWidth) / 2;
+                  let yBase = H - PAD;
+                  const stack = [
+                    { key: "negative", value: point.negative_count, color: CHART_COLORS.red },
+                    { key: "neutral", value: point.neutral_count, color: CHART_COLORS.amber },
+                    { key: "positive", value: point.positive_count, color: CHART_COLORS.green },
+                  ];
+                  return (
+                    <g key={`${point.date}-${index}`}>
+                      {stack.map((segment) => {
+                        const height = (Math.max(0, segment.value) / max) * (H - PAD * 2);
+                        yBase -= height;
+                        return (
+                          <rect
+                            key={segment.key}
+                            data-stack={segment.key}
+                            x={x}
+                            y={yBase}
+                            width={barWidth}
+                            height={Math.max(0, height)}
+                            fill={segment.color}
+                          >
+                            <title>{`${fmtDay(point.date, locale)} Â· ${segment.key}: ${segment.value}`}</title>
+                          </rect>
+                        );
+                      })}
+                    </g>
+                  );
+                })
+              ) : (
+                [...series].reverse().map((s) => {
+                  const { line, area } = buildPath(s.values, max, W, H, PAD);
+                  return (
+                    <g key={s.key}>
+                      <path d={area} style={{ fill: s.color }} fillOpacity="0.08" />
+                      <path d={line} fill="none" style={{ stroke: s.color }} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+                    </g>
+                  );
+                })
+              )}
+              {hover !== null && seriesPoints.length > 1 && (
                 <line
-                  x1={(hover / (points.length - 1)) * W}
-                  x2={(hover / (points.length - 1)) * W}
+                  x1={(hover / (seriesPoints.length - 1)) * W}
+                  x2={(hover / (seriesPoints.length - 1)) * W}
                   y1="0"
                   y2={H}
                   className="stroke-[var(--ui-line-strong)]"
@@ -218,7 +297,7 @@ export function MetricChart({
               <div
                 className="pointer-events-none absolute top-1 z-10 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2.5 py-1.5"
                 style={{
-                  left: `min(max(${(hover! / Math.max(1, points.length - 1)) * 100}%, 60px), calc(100% - 60px))`,
+                  left: `min(max(${(hover! / Math.max(1, seriesPoints.length - 1)) * 100}%, 60px), calc(100% - 60px))`,
                   transform: "translateX(-50%)",
                 }}
               >
@@ -235,9 +314,9 @@ export function MetricChart({
 
           {/* x labels */}
           <div className="mt-1 flex justify-between text-[9px] text-[var(--ui-ink-2)]">
-            <span>{fmtDay(points[0].date, locale)}</span>
-            {points.length > 2 && <span>{fmtDay(points[Math.floor(points.length / 2)].date, locale)}</span>}
-            <span>{fmtDay(points[points.length - 1].date, locale)}</span>
+            <span>{fmtDay(seriesPoints[0].date, locale)}</span>
+            {seriesPoints.length > 2 && <span>{fmtDay(seriesPoints[Math.floor(seriesPoints.length / 2)].date, locale)}</span>}
+            <span>{fmtDay(seriesPoints[seriesPoints.length - 1].date, locale)}</span>
           </div>
         </div>
       )}
@@ -285,18 +364,19 @@ export function Sparkline({
 
 /* ── Rating distribution ──────────────────────────────────────────── */
 
-// No hue: more stars = heavier ink, so the ramp reads by weight alone.
+// Star colors are ordered from healthy to critical, not decorative hues.
 const STAR_COLORS: Record<number, string> = {
-  5: "var(--ui-ink)",
-  4: "var(--ui-ink)",
-  3: "var(--ui-ink-2)",
-  2: "var(--ui-line-strong)",
-  1: "var(--ui-line-strong)",
+  5: CHART_COLORS.green,
+  4: CHART_COLORS.teal,
+  3: CHART_COLORS.amber,
+  2: CHART_COLORS.orange,
+  1: CHART_COLORS.red,
 };
 
 export function RatingDistribution({
   distribution,
   total,
+  averageRating = null,
   labels,
   source,
   sourceDetail,
@@ -305,6 +385,7 @@ export function RatingDistribution({
 }: {
   distribution: Record<string, number>;
   total: number;
+  averageRating?: number | null;
   labels?: { ariaLabel: string; reviewsTooltip: string };
   source?: string;
   sourceDetail?: string;
@@ -313,33 +394,30 @@ export function RatingDistribution({
 }) {
   const { t } = useI18n();
   const l = labels ?? { ariaLabel: t.analytics.charts.ratingDistribution, reviewsTooltip: t.analytics.charts.reviewsTooltip };
-  const max = Math.max(1, ...Object.values(distribution));
+  const c = t.analytics.charts;
+  const segments = [5, 4, 3, 2, 1].map((star) => ({
+    label: `${star}★`,
+    value: Math.max(0, distribution[String(star)] ?? 0),
+    color: STAR_COLORS[star],
+  }));
+  if (total <= 0 || segments.every((segment) => segment.value === 0)) {
+    return <p className="py-6 text-center text-[12px] text-[var(--ui-ink-2,#3B2D5E)]">{c.noRatings}</p>;
+  }
   return (
-    <div className="space-y-3" aria-label={l.ariaLabel}>
-      {[5, 4, 3, 2, 1].map((star) => {
-        const count = distribution[String(star)] ?? 0;
-        const pct = total ? Math.round((count / total) * 100) : 0;
-        return (
-          <div key={star} className="flex items-center gap-3">
-            <span className="flex w-8 shrink-0 items-center justify-end gap-1 text-[12px] font-bold tabular-nums text-[var(--ui-ink)]">
-              {star}
-              <svg viewBox="0 0 24 24" fill="currentColor" className="h-3 w-3 text-[var(--ui-ink-2)]" aria-hidden>
-                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z" />
-              </svg>
-            </span>
-            {/* Bar length scales to the biggest star so the graph fills the card */}
-            <div className="h-4 flex-1 overflow-hidden rounded-[8px] bg-[var(--ui-sunken)]">
-              <div
-                className="h-full rounded-[8px] transition-all duration-500"
-                style={{ width: `${(count / max) * 100}%`, background: STAR_COLORS[star] }}
-              />
-            </div>
-            <span className="w-14 shrink-0 text-right text-[11px] font-semibold tabular-nums text-[var(--ui-ink)]" title={l.reviewsTooltip.replace("{count}", String(count)).replace("{percent}", String(pct))}>
-              {count} · {pct}%
-            </span>
-          </div>
-        );
-      })}
+    <div className="space-y-3">
+      <DonutChart
+        ariaLabel={l.ariaLabel}
+        centerValue={averageRating != null ? averageRating.toFixed(1) : "—"}
+        centerLabel={c.average}
+        emptyLabel={c.noRatings}
+        segmentAttribute="star-segment"
+        segments={segments}
+        size={156}
+        thickness={16}
+      />
+      <p className="text-center font-mono text-[10px] text-[var(--ui-ink-2,#3B2D5E)]">
+        {c.reviewsTotal.replace("{count}", String(total))}
+      </p>
       {source && (
         <FactSource
           source={source}
@@ -373,36 +451,27 @@ export function SentimentSplitBar({
 }) {
   const { t } = useI18n();
   const c = t.analytics.charts;
-  const total = positive + neutral + negative;
-  const seg = (n: number) => (total ? (n / total) * 100 : 0);
-  const rows = [
-    { label: c.positive, value: positive, color: "var(--ui-ink)", pct: seg(positive) },
-    { label: c.neutral, value: neutral, color: "var(--ui-ink-2)", pct: seg(neutral) },
-    { label: c.negative, value: negative, color: "var(--ui-line-strong)", pct: seg(negative) },
+  const total = Math.max(0, positive) + Math.max(0, neutral) + Math.max(0, negative);
+  const positivePct = total ? Math.round((Math.max(0, positive) / total) * 100) : 0;
+  const segments = [
+    { label: c.positive, value: Math.max(0, positive), color: CHART_COLORS.green },
+    { label: c.neutral, value: Math.max(0, neutral), color: CHART_COLORS.amber },
+    { label: c.negative, value: Math.max(0, negative), color: CHART_COLORS.red },
   ];
   return (
-    <div>
-      <div className="flex h-3 overflow-hidden rounded-full bg-[var(--ui-sunken)]" role="img" aria-label={c.sentimentSplit}>
-        {rows.map((r) => (
-          <div
-            key={r.label}
-            className="h-full transition-all duration-500"
-            style={{ width: `${r.pct}%`, background: r.color }}
-          />
-        ))}
-      </div>
-      <div className="mt-3 grid grid-cols-3 gap-2">
-        {rows.map((r) => (
-          <div key={r.label} className="text-center">
-            <p className="flex items-center justify-center gap-1.5 text-[11px] font-semibold text-[var(--ui-ink)]">
-              <span className="h-2 w-2 rounded-full" style={{ background: r.color }} aria-hidden />
-              {r.label}
-            </p>
-            <p className="text-[16px] font-bold text-[var(--ui-ink)]">{total ? Math.round(r.pct) : 0}%</p>
-            <p className="text-[10px] text-[var(--ui-ink-2)]">{c.reviewsCount.replace("{count}", String(r.value))}</p>
-          </div>
-        ))}
-      </div>
+    <div className="space-y-3">
+      <DonutChart
+        ariaLabel="Sentiment mix"
+        centerValue={`${positivePct}%`}
+        centerLabel={c.positive}
+        emptyLabel={c.noActivity}
+        segments={segments}
+        size={156}
+        thickness={16}
+      />
+      <p className="text-center font-mono text-[10px] text-[var(--ui-ink-2,#3B2D5E)]">
+        {c.reviewsTotal.replace("{count}", String(total))}
+      </p>
       {source && (
         <FactSource
           source={source}
