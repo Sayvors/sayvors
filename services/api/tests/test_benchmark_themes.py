@@ -524,3 +524,35 @@ async def test_delete_saved_removes_theme_analysis(db, user_id):
     analysis = await theme_service.ensure_theme_analysis(db, TENANT, "saved:delete-me")
     assert await bench_service.delete_saved(db, TENANT, "delete-me") is True
     assert await db.get(BenchmarkThemeAnalysis, analysis.id) is None
+import json
+
+
+def test_theme_response_uses_explicit_main_for_gap():
+    from app.modules.benchmark import theme_service
+
+    def theme(label, mentions, positive, negative, review_id):
+        return {
+            "label": label, "normalized": label,
+            "mentions": mentions, "sample_size": 10, "pct": mentions * 10.0,
+            "positive_mentions": positive, "negative_mentions": negative,
+            "neutral_mentions": mentions - positive - negative,
+            "examples": [{"review_id": review_id, "text": label}],
+        }
+
+    def record(key, name, mentions):
+        return {
+            "key": key, "name": name, "kind": "own", "status": "ready",
+            "sample_size": 10, "sample_hash": "a" * 64,
+            "analyzed_at": "2026-11-24T00:00:00Z", "source": "local",
+            "reviews": [{"review_id": "r", "text": "helpful staff", "rating": 5}],
+            "themes": [theme("helpful staff", mentions, mentions, 0, "r")],
+        }
+
+    payload = theme_service.assemble_theme_response(
+        [record("own:first", "First", 1), record("own:main", "Main", 5)],
+        own_key="own:main",
+    )
+    row = payload["rows"][0]
+    assert row["own_pct"] == 50.0
+    assert row["peer_median_pct"] == 10.0
+    assert row["gap_pct"] == 40.0

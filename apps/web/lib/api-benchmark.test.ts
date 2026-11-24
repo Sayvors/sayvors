@@ -42,10 +42,14 @@ describe("review theme API client", () => {
   it("URL-encodes every subject and forwards the abort signal", async () => {
     const controller = new AbortController();
 
-    await fetchReviewThemes(["own:channel/a b", "saved:place&one"], controller.signal);
+    await fetchReviewThemes(
+      ["own:channel/a b", "saved:place&one"],
+      "own:channel/a b",
+      controller.signal,
+    );
 
     expect(api).toHaveBeenCalledWith(
-      "/api/v1/benchmark/themes?subjects=own%3Achannel%2Fa%20b&subjects=saved%3Aplace%26one",
+      "/api/v1/benchmark/themes?subjects=own%3Achannel%2Fa%20b&subjects=saved%3Aplace%26one&main=own%3Achannel%2Fa%20b",
       { signal: controller.signal },
     );
   });
@@ -53,11 +57,11 @@ describe("review theme API client", () => {
   it("posts the exact subject list when retrying failed analyses", async () => {
     const subjects = ["own:mine", "saved:peer"];
 
-    await retryReviewThemes(subjects);
+    await retryReviewThemes(subjects, "own:mine");
 
     expect(api).toHaveBeenCalledWith("/api/v1/benchmark/themes/retry", {
       method: "POST",
-      body: JSON.stringify({ subjects }),
+      body: JSON.stringify({ subjects, main: "own:mine" }),
     });
   });
 });

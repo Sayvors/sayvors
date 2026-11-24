@@ -111,7 +111,7 @@ def normalize_reviews(reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def hash_sample(reviews: list[dict[str, Any]]) -> str:
-    """Content hash of the exact normalized evidence, independent of key order."""
+    """Content hash of the exact normalized evidence in newest-first order."""
     canonical = json.dumps(reviews, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode()).hexdigest()
 
@@ -391,7 +391,11 @@ def _cell(theme: dict[str, Any], reviews: dict[str, dict[str, Any]]) -> dict[str
     }
 
 
-def assemble_theme_response(records: list[dict[str, Any]]) -> dict[str, Any]:
+def assemble_theme_response(
+    records: list[dict[str, Any]],
+    *,
+    own_key: str | None = None,
+) -> dict[str, Any]:
     """Map persisted themes through the shared grouper into the API contract."""
     subjects = []
     ready = []
@@ -407,7 +411,9 @@ def assemble_theme_response(records: list[dict[str, Any]]) -> dict[str, Any]:
         if record.get("status") == "ready":
             ready.append({"key": record["key"], "themes": record.get("themes") or []})
 
-    own_key = next((record["key"] for record in records if record.get("kind") == "own"), None)
+    own_key = own_key or next(
+        (record["key"] for record in records if record.get("kind") == "own"), None
+    )
     records_by_key = {record["key"]: record for record in records}
     rows = []
     for grouped in group_theme_comparison(ready, own_key=own_key):
@@ -440,6 +446,7 @@ async def theme_response(
     raw_subjects: list[str],
     *,
     retry: bool = False,
+    main_key: str | None = None,
 ) -> dict[str, Any]:
     """Read/enqueue up to six subjects and assemble only persisted results."""
     if not 1 <= len(raw_subjects) <= compare.MAX_SUBJECTS:
@@ -491,4 +498,4 @@ async def theme_response(
             record["error_code"] = "analysis_failed"
             record["error_message"] = analysis.error or "Theme analysis failed."
         records.append(record)
-    return assemble_theme_response(records)
+    return assemble_theme_response(records, own_key=main_key)

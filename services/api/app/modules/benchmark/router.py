@@ -329,6 +329,7 @@ class AiSummaryIn(BaseModel):
 
 class ThemeSubjectsIn(BaseModel):
     subjects: list[SubjectKey] = Field(min_length=1, max_length=MAX_COMPARE_SUBJECTS)
+    main: SubjectKey | None = None
 
 
 @router.post("/ai-summary", response_model=dict)
@@ -407,6 +408,7 @@ async def benchmark_reviews(
 @router.get("/themes", response_model=dict)
 async def benchmark_themes(
     subjects: list[SubjectKey] = Query(..., min_length=1, max_length=MAX_COMPARE_SUBJECTS),
+    main: SubjectKey | None = Query(None),
     ctx: TenantContext = Depends(require_perm("benchmark.view")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -417,7 +419,7 @@ async def benchmark_themes(
     """
     try:
         return await theme_service.theme_response(
-            db, tenant_id_of(ctx.user), subjects
+            db, tenant_id_of(ctx.user), subjects, main_key=main
         )
     except compare.CompareError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -432,7 +434,7 @@ async def retry_benchmark_themes(
     """Retry failed/stale analyses, bounded by the service cooldown."""
     try:
         return await theme_service.theme_response(
-            db, tenant_id_of(ctx.user), body.subjects, retry=True
+            db, tenant_id_of(ctx.user), body.subjects, retry=True, main_key=body.main
         )
     except compare.CompareError as exc:
         raise HTTPException(status_code=422, detail=str(exc))

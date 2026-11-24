@@ -354,16 +354,21 @@ export interface ReviewThemesResponse {
 
 export function fetchReviewThemes(
   subjects: string[],
+  mainKey: string | null,
   signal?: AbortSignal,
 ): Promise<ReviewThemesResponse> {
   const q = subjects.map((s) => `subjects=${encodeURIComponent(s)}`).join("&");
-  return apiFetch(`/api/v1/benchmark/themes?${q}`, { signal });
+  const main = mainKey ? `&main=${encodeURIComponent(mainKey)}` : "";
+  return apiFetch(`/api/v1/benchmark/themes?${q}${main}`, { signal });
 }
 
-export function retryReviewThemes(subjects: string[]): Promise<ReviewThemesResponse> {
+export function retryReviewThemes(
+  subjects: string[],
+  mainKey: string | null,
+): Promise<ReviewThemesResponse> {
   return apiFetch("/api/v1/benchmark/themes/retry", {
     method: "POST",
-    body: JSON.stringify({ subjects }),
+    body: JSON.stringify({ subjects, main: mainKey }),
   });
 }
 

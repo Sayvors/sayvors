@@ -169,17 +169,23 @@ function QuoteDialog({ selection, onClose }: { selection: QuoteSelection; onClos
   );
 }
 
-const SENTIMENT_CLASS: Record<ReviewThemeSentiment, string> = {
-  positive: "bg-[#3D1D6E] text-white",
-  negative: "bg-[#FF4F6E] text-[#14101F]",
-  mixed: "bg-[#B0338A] text-white",
+const SENTIMENT_LABEL_CLASS: Record<ReviewThemeSentiment, string> = {
+  positive: "bg-[#E7F6EC] text-[#116631] dark:bg-[#E7F6EC] dark:text-[#116631]",
+  negative: "bg-[#FDE8EC] text-[#B3123A] dark:bg-[#FDE8EC] dark:text-[#B3123A]",
+  mixed: "bg-[#FFF3D6] text-[#8A6100] dark:bg-[#FFF3D6] dark:text-[#8A6100]",
+};
+
+const SENTIMENT_BAR_CLASS: Record<ReviewThemeSentiment, string> = {
+  positive: "bg-[#116631]",
+  negative: "bg-[#B3123A]",
+  mixed: "bg-[#8A6100]",
 };
 
 function SentimentLabel({ sentiment }: { sentiment: ReviewThemeSentiment }) {
   const { t } = useI18n();
   const k = t.benchmark.compare.reviewKeywords;
   return (
-    <span className={`inline-flex rounded-full px-2 py-0.5 text-[9px] font-bold ${SENTIMENT_CLASS[sentiment]}`}>
+    <span className={`inline-flex rounded-full px-2 py-0.5 text-[9px] font-bold ${SENTIMENT_LABEL_CLASS[sentiment]}`}>
       {k[sentiment]}
     </span>
   );
@@ -210,7 +216,7 @@ function ThemeCell({
         <div
           role="img"
           aria-label={k.barLabel(row.label, business)}
-          className={`h-full rounded-full ${SENTIMENT_CLASS[row.sentiment]}`}
+          className={`h-full rounded-full ${SENTIMENT_BAR_CLASS[row.sentiment]}`}
           style={{ width: barWidth }}
         />
       </div>

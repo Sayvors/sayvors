@@ -1275,7 +1275,7 @@ export default function ComparePage() {
   const reviewSubjects: SubjectReviews[] = reviewsQuery.data?.subjects ?? [];
   const reviewThemesQuery = useQuery({
     queryKey: reviewThemeQueryKey,
-    queryFn: ({ signal }) => fetchReviewThemes(keys, signal),
+    queryFn: ({ signal }) => fetchReviewThemes(keys, selection.main, signal),
     enabled: keys.length > 0,
     refetchInterval: (query) => {
       if (typeof document === "undefined" || document.visibilityState !== "visible") return false;
@@ -1340,7 +1340,7 @@ export default function ComparePage() {
     // the active query with the newly enqueued analysis status.
     await queryClient.cancelQueries({ queryKey: reviewThemeQueryKey });
     try {
-      await retryReviewThemes(keys);
+      await retryReviewThemes(keys, selection.main);
     } catch (cause) {
       console.error("Could not retry benchmark review theme analysis", cause);
     } finally {
