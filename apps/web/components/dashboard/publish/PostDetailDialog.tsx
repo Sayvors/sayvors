@@ -42,7 +42,7 @@ const API_FIELD: Record<keyof Draft, string> = {
 };
 
 const DATE_FIELDS = new Set<keyof Draft>(["startDate", "endDate", "scheduleAt", "removeAt"]);
-const GOOGLE_TEXT_METHODS = new Set<string>(["update", "event", "offer"]);
+const GOOGLE_POST_METHODS = new Set<string>(["update", "event", "offer"]);
 const EVENT_METHODS = new Set<string>(["event", "offer"]);
 const CTA_VALUES = ["book", "order", "shop", "learn_more", "sign_up", "call"] as const;
 const FIELD =
@@ -51,7 +51,7 @@ const FIELD =
 function editRights(job: PublishJob) {
   const queued = QUEUED_STATUSES.has(job.status);
   const live = job.status === "succeeded";
-  const googleText = job.platform === "google_reviews" && GOOGLE_TEXT_METHODS.has(job.method ?? "");
+  const googleText = job.platform === "google_reviews" && GOOGLE_POST_METHODS.has(job.method ?? "");
   const text = queued || (live && googleText);
   return {
     text,
@@ -114,7 +114,13 @@ export default function PostDetailDialog({
     ? (t.publish.methods[job.method as keyof typeof t.publish.methods]?.label ?? job.method)
     : null;
   const googleLink = typeof job.result?.searchUrl === "string" ? job.result.searchUrl : null;
-  const googlePost = job.platform === "google_reviews" && job.status === "succeeded";
+  // Only text posts have a /localPosts resource to re-read. Promotions,
+  // profiles and gallery uploads are media; offering "Check on Google" for
+  // those produces a 409 with no post id and makes the feed look broken.
+  const googlePost =
+    job.platform === "google_reviews" &&
+    job.status === "succeeded" &&
+    GOOGLE_POST_METHODS.has(job.method ?? "");
   const removable = isRemovableJob(job);
 
   const [editing, setEditing] = useState(false);

@@ -1398,6 +1398,17 @@ async def refresh_publish_job(
             status_code=409,
             detail="only a published Google post can be checked on Google",
         )
+    if payload.get("method") not in {"update", "event", "offer"}:
+        # Promotion/profile/gallery uploads create media resources, not
+        # localPosts. They have no post status to refresh — the gallery is
+        # their source of truth. Do not make the UI retry a doomed check.
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Promotion, profile and gallery uploads are media, not Google "
+                "posts — check them in the location gallery."
+            ),
+        )
     publisher, post_name = await _google_publisher_for(db, tenant_id, job_row)
     try:
         current = await publisher.get_post(post_name)
