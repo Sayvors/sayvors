@@ -319,6 +319,34 @@ async def test_admin_health_structure(db):
 
 
 @pytest.mark.asyncio
+async def test_admin_health_ignores_superseded_ingest_jobs(db):
+    """A reindex job superseded by a re-crawl must not appear as a failure."""
+    from app.modules.admin import service as admin_service
+    from app.modules.rag.models import Databank, IngestJob
+
+    bank = Databank(id="bank-health", user_id="tenant-health", name="Health")
+    db.add(bank)
+    db.add_all([
+        IngestJob(
+            id="job-superseded", user_id="tenant-health", databank_id=bank.id,
+            job_type="reindex", status="failed", error="superseded by re-crawl",
+        ),
+        IngestJob(
+            id="job-real-fail", user_id="tenant-health", databank_id=bank.id,
+            job_type="scrape", status="failed", error="HTTP 500",
+        ),
+    ])
+    await db.commit()
+
+    health = await admin_service.get_health(db, probe=False)
+    failures = health["recent_failures"]
+    ingest_failures = [f for f in failures if f["source"] == "ingest"]
+    assert ingest_failures, "the real failure must still show"
+    assert all("superseded" not in (f.get("message") or "") for f in ingest_failures)
+    assert ingest_failures[0]["message"] == "HTTP 500"
+
+
+@pytest.mark.asyncio
 async def test_admin_health_http(client, monkeypatch):
     headers = _admin_headers(client, monkeypatch)
     for url in ("/api/v1/admin/health", "/api/v1/admin/health?probe=false"):
@@ -520,6 +548,38 @@ async def test_admin_models_list(client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_admin_models_list_reports_supports_vision(client, monkeypatch):
+    """The saved-model list carries the vision flag the admin UI binds to."""
+    headers = _admin_headers(client, monkeypatch)
+    payload = {
+        "id": "groq:vision-custom-1", "name": "Vision Custom",
+        "provider": "groq", "api_model": "vision-custom-1",
+        "context_window": 8000, "max_output": 1000,
+        "supports_stream": False, "supports_vision": True,
+    }
+    r = client.post("/api/v1/admin/llm/models", json=payload, headers=headers)
+    assert r.status_code == 201, r.text[:300]
+
+    r = client.get("/api/v1/admin/models", headers=headers)
+    assert r.status_code == 200
+    row = next(m for m in r.json() if m["id"] == payload["id"])
+    assert row["supports_vision"] is True
+
+    # A catalog model defaults to no vision; an explicit admin override wins
+    # in both directions (checking and unchecking the box).
+    for value in (True, False):
+        put = client.put(
+            "/api/v1/admin/llm/groq/models/groq:oss-120b",
+            json={"enabled": True, "supports_vision": value},
+            headers=headers,
+        )
+        assert put.status_code == 200, put.text[:300]
+        r = client.get("/api/v1/admin/models", headers=headers)
+        row = next(m for m in r.json() if m["id"] == "groq:oss-120b")
+        assert row["supports_vision"] is value
+
+
+@pytest.mark.asyncio
 async def test_admin_remote_models_unknown_provider(client, monkeypatch):
     headers = _admin_headers(client, monkeypatch)
     r = client.get("/api/v1/admin/llm/nope/remote-models", headers=headers)
@@ -567,8 +627,10 @@ async def test_admin_remote_models_parses_shapes(client, monkeypatch):
     assert r.status_code == 200
     body = r.json()
     assert body == [
-        {"id": "groq:model-a", "name": "model-a"},
-        {"id": "groq:model-b", "name": "model-b"},
+        # `expiration_date` is part of the RemoteModel contract; it is only
+        # known for OpenRouter, so other providers report None.
+        {"id": "groq:model-a", "name": "model-a", "expiration_date": None},
+        {"id": "groq:model-b", "name": "model-b", "expiration_date": None},
     ]
 
 

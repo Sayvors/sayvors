@@ -134,10 +134,12 @@ class LlmModelStatus(BaseModel):
     tested_ok: bool | None = None
     tested_at: str | None = None
     custom: bool = False
+    supports_vision: bool | None = None
 
 
 class LlmModelUpdate(BaseModel):
     enabled: bool
+    supports_vision: bool | None = None
 
 
 class LlmModelCreate(BaseModel):
@@ -149,6 +151,7 @@ class LlmModelCreate(BaseModel):
     context_window: int = Field(32000, ge=1024, le=2000000)
     max_output: int = Field(4096, ge=128, le=200000)
     supports_stream: bool = True
+    supports_vision: bool = False
     enabled: bool = True
 
 
@@ -163,6 +166,7 @@ class LlmModelTestResult(BaseModel):
 class RemoteModel(BaseModel):
     id: str
     name: str
+    expiration_date: str | int | None = None
 
 
 class SavedModel(BaseModel):
@@ -174,6 +178,8 @@ class SavedModel(BaseModel):
     custom: bool = False
     tested_ok: bool | None = None
     tested_at: str | None = None
+    supports_vision: bool | None = None
+    expiration_date: str | int | None = None
 
 
 class LlmProviderUpdate(BaseModel):

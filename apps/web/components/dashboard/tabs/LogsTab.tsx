@@ -117,13 +117,13 @@ export default function LogsTab({ channelSlug, channelName }: LogsTabProps) {
         <section>
           <h2 className="mb-1 text-[15px] font-bold text-ink">{tb.logSettings}</h2>
           <p className="mb-4 text-[13px] text-ink/60">{tb.logSettingsSub}</p>
-          <div className="rounded-xl border-2 border-white bg-white/80 p-4 sm:p-5 space-y-3">
+          <div className="rounded-[8px] border-2 border-white bg-white/80 p-4 sm:p-5 space-y-3">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-[13px] font-semibold text-ink">{tb.logRetention}</p>
                 <p className="text-[11px] text-ink/50">{tb.logRetentionDesc}</p>
               </div>
-              <span className="rounded-xl bg-ink/[0.04] px-3 py-1.5 text-[12px] font-semibold text-ink/60">{fill(tb.retentionDays, { n: fmt(30) })}</span>
+              <span className="rounded-[8px] bg-ink/[0.04] px-3 py-1.5 text-[12px] font-semibold text-ink/60">{fill(tb.retentionDays, { n: fmt(30) })}</span>
             </div>
             <div className="flex items-center justify-between">
               <div>

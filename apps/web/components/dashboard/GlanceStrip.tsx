@@ -5,6 +5,7 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/api-rag";
 import { fetchOverview } from "@/lib/api-analytics";
 import { fetchLeads } from "@/lib/api-leads";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 
 interface ChannelRow {
   id: string;
@@ -47,6 +48,7 @@ function PlatformIcon({ name }: { name: string }) {
 }
 
 export default function GlanceStrip() {
+  const { t } = useI18n();
   const [platformMsgs, setPlatformMsgs] = useState<Record<string, number>>({});
   const [channels, setChannels] = useState<ChannelRow[]>([]);
   const [biz, setBiz] = useState<BizRow[]>([]);
@@ -190,9 +192,9 @@ export default function GlanceStrip() {
       {/* Messages card. Distinguishes "connected, nothing received yet" from
           "not connected" — a bare 0 next to a channel icon reads as the second
           when it is usually the first. */}
-      <div className="rounded-[2px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-[#1d1636]">
+      <div className="rounded-[8px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-[#1d1636]">
         <div className="flex items-center justify-between">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">Messages</p>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">{t.dashboard.glance.messages}</p>
           <Image src="/meta.png" alt="Meta" width={32} height={32} />
         </div>
         <p className="mt-1 text-[22px] font-bold text-ink dark:text-fog">{totalMsgs}</p>
@@ -201,7 +203,7 @@ export default function GlanceStrip() {
             const linked = channels.filter((c) => c.platform === key);
             const count = platformMsgs[key] ?? 0;
             return (
-              <div key={key} className={`rounded-[2px] border ${linked.length ? `${border} ${bg}` : "border-ink/[0.06] dark:border-fog/[0.06]"} px-2.5 py-1.5`}>
+              <div key={key} className={`rounded-[8px] border ${linked.length ? `${border} ${bg}` : "border-ink/[0.06] dark:border-fog/[0.06]"} px-2.5 py-1.5`}>
                 <div className="flex items-center gap-2">
                   <span className={linked.length ? text : "opacity-40"}><PlatformIcon name={key} /></span>
                   <span className="flex-1 text-[12px] font-medium text-ink/70 dark:text-fog/70">{label}</span>
@@ -210,9 +212,9 @@ export default function GlanceStrip() {
                 {/* The real state, so a zero is never a guess. */}
                 <p className="mt-0.5 pl-6 text-[11px] leading-snug text-ink/45 dark:text-fog/45">
                   {linked.length === 0
-                    ? "Not connected"
+                    ? t.dashboard.glance.notConnected
                     : count === 0
-                      ? `Connected · ${linked.map((c) => c.name).filter(Boolean).join(", ")} — no messages yet`
+                      ? `${t.dashboard.glance.connectedNoMessages} · ${linked.map((c) => c.name).filter(Boolean).join(", ")}`
                       : linked.map((c) => c.name).filter(Boolean).join(", ") || label}
                 </p>
               </div>
@@ -225,49 +227,48 @@ export default function GlanceStrip() {
           from inbound messages, so a zero with no messages is an explanation,
           not a failure. */}
       <Link href="/dashboard/leads" aria-label="Open leads">
-        <div className="h-full rounded-[2px] border border-ink/[0.06] bg-white p-4 transition hover:border-deep-violet/30 dark:border-fog/[0.06] dark:bg-[#1d1636] dark:hover:border-violet-soft/30">
+        <div className="h-full rounded-[8px] border border-ink/[0.06] bg-white p-4 transition hover:border-deep-violet/30 dark:border-fog/[0.06] dark:bg-[#1d1636] dark:hover:border-violet-soft/30">
           <div className="flex items-center justify-between">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">Leads</p>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">{t.dashboard.glance.leads}</p>
             <Image src="/leads.png" alt="Leads" width={32} height={32} />
           </div>
           <p className="mt-1 text-[22px] font-bold text-ink dark:text-fog">{leadStats ? leadStats.total : "-"}</p>
           {leadStats ? (
             <div className="mt-3 space-y-1.5">
               <div className="flex items-center justify-between text-[12px]">
-                <span className="text-ink/55 dark:text-fog/55">New</span>
+                <span className="text-ink/55 dark:text-fog/55">{t.dashboard.glance.new}</span>
                 <span className="font-bold text-ink dark:text-fog">{leadStats.new}</span>
               </div>
               <div className="flex items-center justify-between text-[12px]">
-                <span className="text-ink/55 dark:text-fog/55">In follow-up</span>
+                <span className="text-ink/55 dark:text-fog/55">{t.dashboard.glance.inFollowUp}</span>
                 <span className="font-bold text-deep-violet dark:text-violet-soft">{leadStats.followUp}</span>
               </div>
               <div className="flex items-center justify-between text-[12px]">
-                <span className="text-ink/55 dark:text-fog/55">Converted</span>
+                <span className="text-ink/55 dark:text-fog/55">{t.dashboard.glance.converted}</span>
                 <span className="font-bold text-ink dark:text-fog">{leadStats.converted}</span>
               </div>
             </div>
           ) : (
-            <p className="mt-2 text-[11px] text-ink/40 dark:text-fog/40">All channels</p>
+            <p className="mt-2 text-[11px] text-ink/40 dark:text-fog/40">{t.dashboard.glance.allChannels}</p>
           )}
           {leadStats && leadStats.total === 0 && totalMsgs === 0 ? (
             <p className="mt-2 text-[11px] leading-snug text-ink/45 dark:text-fog/45">
               Captured from inbound messages. Nothing has come in yet, so there are no leads to
-              show.
             </p>
           ) : null}
         </div>
       </Link>
 
       <Link href="/dashboard/reviews" aria-label="Open reviews">
-        <div className="h-full rounded-[2px] border border-ink/[0.06] bg-white p-4 transition hover:border-deep-violet/30 dark:border-fog/[0.06] dark:bg-[#1d1636] dark:hover:border-violet-soft/30">
+        <div className="h-full rounded-[8px] border border-ink/[0.06] bg-white p-4 transition hover:border-deep-violet/30 dark:border-fog/[0.06] dark:bg-[#1d1636] dark:hover:border-violet-soft/30">
           <div className="flex items-center justify-between">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">Reviews</p>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">{t.dashboard.glance.reviews}</p>
             <Image src="/google-review.png" alt="Google Reviews" width={32} height={32} />
           </div>
           <p className="mt-1 text-[22px] font-bold text-ink dark:text-fog">{totalReviews ?? "-"}</p>
           <div className="mt-3 space-y-2">
             {biz.slice(0, 4).map((b) => (
-              <div key={b.id} className="flex items-center gap-2 rounded-[2px] border border-amber-500/20 bg-amber-500/10 px-2.5 py-1.5">
+              <div key={b.id} className="flex items-center gap-2 rounded-[8px] border border-amber-500/20 bg-amber-500/10 px-2.5 py-1.5">
                 <span className="text-amber-400">
                   <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
                     <path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 16.8l-6.2 4.5 2.4-7.4L2 9.4h7.6z" />
@@ -281,15 +282,15 @@ export default function GlanceStrip() {
         </div>
       </Link>
 
-      <div className="rounded-[2px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-[#1d1636]">
+      <div className="rounded-[8px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-[#1d1636]">
         <div className="flex items-center justify-between">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">Avg rating</p>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">{t.dashboard.glance.avgRating}</p>
           <Image src="/google-business.png" alt="Google Business" width={32} height={32} />
         </div>
         <p className="mt-1 text-[22px] font-bold text-amber-500">{avgRating != null ? avgRating.toFixed(1) : "-"}</p>
         <div className="mt-3 space-y-2">
           {biz.slice(0, 4).map((b) => (
-            <div key={b.id} className="flex items-center gap-2 rounded-[2px] border border-amber-500/20 bg-amber-500/10 px-2.5 py-1.5">
+            <div key={b.id} className="flex items-center gap-2 rounded-[8px] border border-amber-500/20 bg-amber-500/10 px-2.5 py-1.5">
               <span className="text-amber-400">
                 <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
                   <path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 16.8l-6.2 4.5 2.4-7.4L2 9.4h7.6z" />
@@ -304,9 +305,9 @@ export default function GlanceStrip() {
 
       {/* Posts card — everything in one view */}
       <Link href="/dashboard/posts-media" aria-label="Open posts and media">
-        <div className="h-full rounded-[2px] border border-ink/[0.06] bg-white p-4 transition hover:border-deep-violet/30 dark:border-fog/[0.06] dark:bg-[#1d1636] dark:hover:border-violet-soft/30">
+        <div className="h-full rounded-[8px] border border-ink/[0.06] bg-white p-4 transition hover:border-deep-violet/30 dark:border-fog/[0.06] dark:bg-[#1d1636] dark:hover:border-violet-soft/30">
           <div className="flex items-center justify-between">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">Posts</p>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">{t.dashboard.glance.posts}</p>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-5 w-5 text-deep-violet/70 dark:text-violet-soft/70" aria-hidden>
               <rect x="3" y="4" width="18" height="17" rx="2" />
               <path d="M3 9h18M8 2v4M16 2v4" />
@@ -316,15 +317,15 @@ export default function GlanceStrip() {
           {postStats ? (
             <div className="mt-3 space-y-1.5">
               <div className="flex items-center justify-between text-[12px]">
-                <span className="text-ink/55 dark:text-fog/55">Published</span>
+                <span className="text-ink/55 dark:text-fog/55">{t.dashboard.glance.published}</span>
                 <span className="font-bold text-ink dark:text-fog">{postStats.published}</span>
               </div>
               <div className="flex items-center justify-between text-[12px]">
-                <span className="text-ink/55 dark:text-fog/55">Scheduled</span>
+                <span className="text-ink/55 dark:text-fog/55">{t.dashboard.glance.scheduled}</span>
                 <span className="font-bold text-deep-violet dark:text-violet-soft">{postStats.scheduled}</span>
               </div>
               <div className="flex items-center justify-between text-[12px]">
-                <span className="text-ink/55 dark:text-fog/55">Draft</span>
+                <span className="text-ink/55 dark:text-fog/55">{t.dashboard.glance.draft}</span>
                 <span className="font-bold text-ink/60 dark:text-fog/60">{postStats.draft}</span>
               </div>
             </div>

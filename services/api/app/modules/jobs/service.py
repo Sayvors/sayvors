@@ -440,3 +440,107 @@ async def list_jobs(
     stmt = stmt.order_by(Job.created_at.desc(), Job.id.desc()).limit(limit)
     result = await db.execute(stmt)
     return list(result.scalars().all())
+
+
+ACTIVE_UI_STATUSES = {
+    JobStatus.accepted.value,
+    JobStatus.queued.value,
+    JobStatus.running.value,
+    JobStatus.retrying.value,
+    JobStatus.blocked.value,
+    JobStatus.failed.value,
+    JobStatus.dead.value,
+    JobStatus.cancelled.value,
+}
+
+
+async def create_ui_job(
+    db: AsyncSession,
+    *,
+    tenant_id: str,
+    job_type: str,
+    ui_title: str,
+    ui_kind: str,
+    payload: dict | None = None,
+    lane: str | None = None,
+    priority: int = 50,
+    max_attempts: int | None = None,
+    idempotency_key: str | None = None,
+    subject_type: str | None = None,
+    subject_id: str | None = None,
+    lane_key: str | None = None,
+    next_run_at: datetime | None = None,
+    hard_deadline_at: datetime | None = None,
+    progress: int = 0,
+    progress_label: str | None = None,
+) -> Job:
+    """Create a tenant-visible job for the background progress UI."""
+    job = await submit_job(
+        db,
+        tenant_id=tenant_id,
+        job_type=job_type,
+        payload=payload,
+        lane=lane,
+        priority=priority,
+        max_attempts=max_attempts,
+        idempotency_key=idempotency_key,
+        subject_type=subject_type,
+        subject_id=subject_id,
+        lane_key=lane_key,
+        next_run_at=next_run_at,
+        hard_deadline_at=hard_deadline_at,
+    )
+    job.ui_visible = True
+    job.ui_title = (ui_title or "")[:200] or None
+    job.ui_kind = (ui_kind or "")[:50] or None
+    job.progress = max(0, min(int(progress), 100))
+    job.progress_label = (progress_label[:120] if progress_label else None)
+    job.ui_subject_type = (subject_type[:50] if subject_type else None)
+    job.ui_subject_id = (subject_id[:36] if subject_id else None)
+    job.updated_at = datetime.now(timezone.utc)
+    db.add(job)
+    await db.flush()
+    return job
+
+
+async def update_job_progress(
+    db: AsyncSession,
+    *,
+    job: Job,
+    progress: int | None = None,
+    progress_label: str | None = None,
+    ui_title: str | None = None,
+) -> Job:
+    """Update UI progress fields for a tenant-visible job."""
+    if progress is not None:
+        job.progress = max(0, min(int(progress), 100))
+    if progress_label is not None:
+        job.progress_label = progress_label[:120] or None
+    if ui_title is not None:
+        job.ui_title = ui_title[:200] or None
+    job.updated_at = datetime.now(timezone.utc)
+    db.add(job)
+    await db.flush()
+    return job
+
+
+async def list_active_ui_jobs(db: AsyncSession, *, tenant_id: str, limit: int = 20) -> list[Job]:
+    """In-flight and recent terminal UI-visible jobs for the tenant progress panel."""
+    limit = max(1, min(int(limit), 20))
+    terminal_cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
+    terminal = {JobStatus.failed.value, JobStatus.dead.value, JobStatus.cancelled.value, JobStatus.succeeded.value}
+    stmt = (
+        select(Job)
+        .where(
+            Job.tenant_id == tenant_id,
+            Job.ui_visible.is_(True),
+            (
+                Job.status.in_([s for s in ACTIVE_UI_STATUSES if s not in terminal])
+                | ((Job.status.in_(terminal)) & (Job.updated_at >= terminal_cutoff))
+            ),
+        )
+        .order_by(Job.created_at.desc(), Job.id.desc())
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    return list(result.scalars().all())

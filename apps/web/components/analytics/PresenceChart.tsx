@@ -239,8 +239,8 @@ export default function PresenceChart({
     return (
       <section aria-label={group === "discovery" ? labels.discovery : labels.actions} className="ui-card p-3.5 sm:p-4">
         <div className="h-3.5 w-28 animate-pulse rounded bg-[var(--ui-sunken)]" />
-        <div className="mt-3 h-9 animate-pulse rounded-[2px] bg-[var(--ui-sunken)]" />
-        <div className="mt-2 h-40 animate-pulse rounded-[2px] bg-[var(--ui-sunken)]" />
+        <div className="mt-3 h-9 animate-pulse rounded-[8px] bg-[var(--ui-sunken)]" />
+        <div className="mt-2 h-40 animate-pulse rounded-[8px] bg-[var(--ui-sunken)]" />
       </section>
     );
   }
@@ -255,7 +255,7 @@ export default function PresenceChart({
           {group === "discovery" ? labels.discovery : labels.actions}
         </h3>
         {branchSeries.length > 1 && (
-          <div className="flex rounded-[2px] bg-[var(--ui-sunken)] p-0.5" role="group" aria-label={scopeLabel}>
+          <div className="flex rounded-[8px] bg-[var(--ui-sunken)] p-0.5" role="group" aria-label={scopeLabel}>
             {[
               { key: false, label: labels.scopeTotal },
               { key: true, label: labels.scopeByBranch },
@@ -264,7 +264,7 @@ export default function PresenceChart({
                 key={String(s.key)}
                 onClick={() => setByBranch(s.key)}
                 aria-pressed={byBranch === s.key}
-                className={`rounded-[2px] px-2 py-0.5 text-[10px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+                className={`rounded-[8px] px-2 py-0.5 text-[10px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
                   byBranch === s.key ? "border border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink)]" : "text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
                 }`}
               >
@@ -285,7 +285,7 @@ export default function PresenceChart({
               key={m.key}
               onClick={() => setMetricKey(m.key)}
               aria-pressed={activeKey === m.key}
-              className={`shrink-0 whitespace-nowrap rounded-[2px] px-2 py-1 text-[10px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+              className={`shrink-0 whitespace-nowrap rounded-[8px] px-2 py-1 text-[10px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
                 activeKey === m.key
                   ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
                   : "bg-[var(--ui-sunken)] text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
@@ -317,7 +317,7 @@ export default function PresenceChart({
 
       {/* Chart */}
       {!hasData ? (
-        <div className="mt-3 flex h-32 flex-col items-center justify-center gap-1 rounded-[2px] border border-dashed border-[var(--ui-line)] px-3 text-center">
+        <div className="mt-3 flex h-32 flex-col items-center justify-center gap-1 rounded-[8px] border border-dashed border-[var(--ui-line)] px-3 text-center">
           <p className="text-[11px] font-semibold text-[var(--ui-ink-2)]">
             {labels.noMetricYet.replace("{metric}", metricLabel.toLowerCase())}
           </p>
@@ -435,7 +435,7 @@ export default function PresenceChart({
           {/* Tooltip */}
           {hover !== null && dates[hover] && (
             <div
-              className="pointer-events-none absolute top-0.5 z-10 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 py-1"
+              className="pointer-events-none absolute top-0.5 z-10 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 py-1"
               style={{
                 left: `min(max(${xPct(hover)}%, 62px), calc(100% - 62px))`,
                 transform: "translateX(-50%)",

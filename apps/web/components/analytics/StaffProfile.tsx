@@ -342,7 +342,7 @@ export default function StaffProfile() {
   if (error && !profile) {
     return (
       <div className="p-4 sm:p-6">
-        <p role="alert" className="rounded-[2px] border border-[var(--ui-ink)] bg-[var(--ui-sunken)] px-4 py-3 text-[13px] font-semibold text-[var(--ui-ink)]">
+        <p role="alert" className="rounded-[8px] border border-[var(--ui-ink)] bg-[var(--ui-sunken)] px-4 py-3 text-[13px] font-semibold text-[var(--ui-ink)]">
           {error}
         </p>
         <Link href="/dashboard/analytics?tab=staff" className="mt-3 inline-block text-[12px] font-semibold text-[var(--ui-ink-2)] underline">
@@ -378,12 +378,12 @@ export default function StaffProfile() {
         </div>
 
         {notice && (
-          <p role="status" className="rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] px-3 py-2 text-[12px] font-medium text-[var(--ui-ink)]">
+          <p role="status" className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] px-3 py-2 text-[12px] font-medium text-[var(--ui-ink)]">
             {notice}
           </p>
         )}
         {error && (
-          <p role="alert" className="rounded-[2px] border border-[var(--ui-ink)] bg-[var(--ui-sunken)] px-3 py-2 text-[12px] font-bold text-[var(--ui-ink)]">
+          <p role="alert" className="rounded-[8px] border border-[var(--ui-ink)] bg-[var(--ui-sunken)] px-3 py-2 text-[12px] font-bold text-[var(--ui-ink)]">
             {error}
           </p>
         )}
@@ -585,7 +585,7 @@ export default function StaffProfile() {
 
           {stats.mentions > 0 && (
             <div className="mt-4">
-              <div className="flex h-2 w-full overflow-hidden rounded-[2px] bg-[var(--ui-sunken)]" aria-hidden>
+              <div className="flex h-2 w-full overflow-hidden rounded-[8px] bg-[var(--ui-sunken)]" aria-hidden>
                 <div className="bg-emerald-500" style={{ width: `${(stats.positive / stats.mentions) * 100}%` }} />
                 <div className="bg-[var(--ui-line-strong)]" style={{ width: `${(stats.neutral / stats.mentions) * 100}%` }} />
                 <div className="bg-red-500" style={{ width: `${(stats.negative / stats.mentions) * 100}%` }} />
@@ -616,7 +616,7 @@ export default function StaffProfile() {
           )}
 
           {analysis.needs_human > 0 && (
-            <p className="mt-3 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] px-3 py-2 text-[11px] text-[var(--ui-ink-2)]">
+            <p className="mt-3 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] px-3 py-2 text-[11px] text-[var(--ui-ink-2)]">
               {analysis.needs_human} review{analysis.needs_human === 1 ? "" : "s"} need a person to confirm what the AI understood. Those reviews are marked below.
             </p>
           )}
@@ -629,7 +629,7 @@ export default function StaffProfile() {
               ) : (
                 <ul className="mt-2 space-y-2">
                   {analysis.highlights.map((q) => (
-                    <li key={q.review_id} className="rounded-[2px] border border-[var(--ui-line)] p-3">
+                    <li key={q.review_id} className="rounded-[8px] border border-[var(--ui-line)] p-3">
                       <p className="text-[12px] leading-relaxed text-[var(--ui-ink)]">“{q.quote}”</p>
                       <p className="mt-1.5 text-[10px] text-[var(--ui-ink-2)]">
                         ★{q.rating} · {q.reviewer_name || "Customer"} · {fmtDate(q.review_created_at)}
@@ -646,7 +646,7 @@ export default function StaffProfile() {
               ) : (
                 <ul className="mt-2 space-y-2">
                   {analysis.concerns.map((q) => (
-                    <li key={q.review_id} className="rounded-[2px] border border-[var(--ui-line)] p-3">
+                    <li key={q.review_id} className="rounded-[8px] border border-[var(--ui-line)] p-3">
                       <p className="text-[12px] leading-relaxed text-[var(--ui-ink)]">“{q.quote}”</p>
                       <p className="mt-1.5 text-[10px] text-[var(--ui-ink-2)]">
                         ★{q.rating} · {q.reviewer_name || "Customer"} · {fmtDate(q.review_created_at)}
@@ -668,7 +668,7 @@ export default function StaffProfile() {
                 Only reviews where a customer named them. {profile.window_days === null ? "All time" : `Last ${profile.window_days} days`}.
               </p>
             </div>
-            <div className="flex gap-1 rounded-[2px] bg-[var(--ui-sunken)] p-1" role="tablist" aria-label="Review window">
+            <div className="flex gap-1 rounded-[8px] bg-[var(--ui-sunken)] p-1" role="tablist" aria-label="Review window">
               {WINDOWS.map((w) => {
                 const active = w.value === days;
                 return (
@@ -678,7 +678,7 @@ export default function StaffProfile() {
                     role="tab"
                     aria-selected={active}
                     onClick={() => setDays(w.value)}
-                    className={`rounded-[2px] px-2.5 py-1 text-[11px] font-semibold transition ${
+                    className={`rounded-[8px] px-2.5 py-1 text-[11px] font-semibold transition ${
                       active
                         ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
                         : "text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"

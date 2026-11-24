@@ -347,12 +347,11 @@ async def test_banner_is_a_cover_category_media_item():
 
 
 @pytest.mark.asyncio
-async def test_banner_fails_when_google_files_it_in_the_gallery():
-    """A 200 from Google is not success unless the response says COVER.
+async def test_banner_falls_back_to_gallery_when_google_wont_set_cover():
+    """A banner Google won't file as COVER is saved to the gallery, not lost.
 
-    This is the guarantee behind "your banner is now your Google cover":
-    if Google silently downgrades the photo to ADDITIONAL, the publish must
-    fail instead of telling the merchant it worked.
+    The merchant gets an honest fallback: the photo is available in the
+    gallery, but it is not the live cover/banner.
     """
     publisher = GoogleBusinessPublisher("token", "refresh")
 
@@ -367,14 +366,17 @@ async def test_banner_fails_when_google_files_it_in_the_gallery():
         )
 
     publisher._client._authed_request = _fake_authed_request
-    with pytest.raises(GoogleReviewsError, match="instead of COVER"):
-        await publisher.set_location_image(
-            token="token",
-            asset_id="locations/2",
-            method="banner",
-            media_url="https://cdn.example/banner.jpg",
-            account_id="accounts/1",
-        )
+    result = await publisher.set_location_image(
+        token="token",
+        asset_id="locations/2",
+        method="banner",
+        media_url="https://cdn.example/banner.jpg",
+        account_id="accounts/1",
+    )
+    assert result["category"] == "ADDITIONAL"
+    assert result["categoryConfirmed"] is False
+    assert result["categoryFallback"]["requested"] == "COVER"
+    assert result["categoryFallback"]["used"] == "ADDITIONAL"
 
 
 @pytest.mark.asyncio

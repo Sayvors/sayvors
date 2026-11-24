@@ -71,7 +71,7 @@ export default function WhatsAppSettings({
   phone: string | null;
   businessName: string | null;
 }) {
-  const { t, locale } = useI18n();
+  const { t, locale, dir } = useI18n();
   const s = t.dashboard.whatsapp.settings;
   const st = { saving: s.saving, saved: s.saved, error: s.error };
   // ── Usage (Sayvors plan quota — never Meta's messaging tier) ──
@@ -464,7 +464,7 @@ export default function WhatsAppSettings({
                 onClick={() => chooseResponseStyle(opt.value)}
                 disabled={styleState === "saving"}
                 aria-pressed={selected}
-                className={`rounded-lg border px-3 py-2 text-left transition disabled:opacity-60 ${
+                className={`rounded-lg border px-3 py-2 ${dir === "rtl" ? "text-start" : "text-left"} transition disabled:opacity-60 ${
                   selected ? "border-[var(--wa-accent)] bg-[var(--wa-accent)]/[0.06]" : "border-[var(--wa-border)] hover:border-[var(--wa-accent)]/40"
                 }`}
               >
@@ -501,7 +501,7 @@ export default function WhatsAppSettings({
                 onClick={() => chooseVoiceReplies(opt.value)}
                 disabled={voiceState === "saving"}
                 aria-pressed={selected}
-                className={`rounded-lg border px-3 py-2 text-left transition disabled:opacity-60 ${
+                className={`rounded-lg border px-3 py-2 ${dir === "rtl" ? "text-start" : "text-left"} transition disabled:opacity-60 ${
                   selected ? "border-[var(--wa-accent)] bg-[var(--wa-accent)]/[0.06]" : "border-[var(--wa-border)] hover:border-[var(--wa-accent)]/40"
                 }`}
               >

@@ -19,9 +19,9 @@ export default function CrawlerTab({ onCrawl }: CrawlerTabProps) {
   return (
     <div className="space-y-4">
       {/* Crawler Input */}
-      <div className="rounded-xl border-2 border-white bg-white/60 p-5">
+      <div className="rounded-[8px] border-2 border-white bg-white/60 p-5">
         <div className="flex items-center gap-3 mb-4">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-600">
+          <div className="flex h-10 w-10 items-center justify-center rounded-[8px] bg-emerald-100 text-emerald-600">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
               <circle cx="12" cy="12" r="10" />
               <path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z" />
@@ -41,7 +41,7 @@ export default function CrawlerTab({ onCrawl }: CrawlerTabProps) {
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder="https://example.com"
-              className="w-full rounded-xl border-2 border-white bg-ink/[0.03] px-4 py-2.5 text-[13px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/40"
+              className="w-full rounded-[8px] border-2 border-white bg-ink/[0.03] px-4 py-2.5 text-[13px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/40"
             />
           </div>
 
@@ -50,7 +50,7 @@ export default function CrawlerTab({ onCrawl }: CrawlerTabProps) {
             <div className="flex gap-2">
               <button
                 onClick={() => setMode("single")}
-                className={`flex-1 rounded-xl px-4 py-2.5 text-[12px] font-semibold transition ${
+                className={`flex-1 rounded-[8px] px-4 py-2.5 text-[12px] font-semibold transition ${
                   mode === "single"
                     ? "bg-deep-violet text-white shadow-md"
                     : "bg-ink/[0.04] text-ink/50 hover:bg-ink/[0.08]"
@@ -65,7 +65,7 @@ export default function CrawlerTab({ onCrawl }: CrawlerTabProps) {
               </button>
               <button
                 onClick={() => setMode("full")}
-                className={`flex-1 rounded-xl px-4 py-2.5 text-[12px] font-semibold transition ${
+                className={`flex-1 rounded-[8px] px-4 py-2.5 text-[12px] font-semibold transition ${
                   mode === "full"
                     ? "bg-deep-violet text-white shadow-md"
                     : "bg-ink/[0.04] text-ink/50 hover:bg-ink/[0.08]"
@@ -84,12 +84,12 @@ export default function CrawlerTab({ onCrawl }: CrawlerTabProps) {
           <button
             onClick={handleCrawl}
             disabled={!url.trim()}
-            className="w-full rounded-xl bg-emerald-500 px-4 py-2.5 text-[12px] font-bold text-white shadow-md transition hover:bg-emerald-600 disabled:opacity-40"
+            className="w-full rounded-[8px] bg-emerald-500 px-4 py-2.5 text-[12px] font-bold text-white shadow-md transition hover:bg-emerald-600 disabled:opacity-40"
           >
             Add to Queue
           </button>
 
-          <details className="rounded-xl border border-ink/[0.06] bg-ink/[0.02]">
+          <details className="rounded-[8px] border border-ink/[0.06] bg-ink/[0.02]">
             <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-ink/50 hover:text-ink/70">
               Single page vs. full site — which one?
             </summary>
@@ -109,11 +109,11 @@ export default function CrawlerTab({ onCrawl }: CrawlerTabProps) {
 
       {/* Crawl Stats */}
       <div className="grid grid-cols-2 gap-3">
-        <div className="rounded-xl border-2 border-white bg-white/60 p-4 text-center">
+        <div className="rounded-[8px] border-2 border-white bg-white/60 p-4 text-center">
           <p className="text-[20px] font-bold text-ink">0</p>
           <p className="text-[10px] text-ink/40">Pages Crawled</p>
         </div>
-        <div className="rounded-xl border-2 border-white bg-white/60 p-4 text-center">
+        <div className="rounded-[8px] border-2 border-white bg-white/60 p-4 text-center">
           <p className="text-[20px] font-bold text-ink">0</p>
           <p className="text-[10px] text-ink/40">Documents Created</p>
         </div>

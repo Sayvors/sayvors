@@ -18,10 +18,12 @@ class JobType(str, Enum):
     # ── realtime lane ── customer-facing, latency-critical
     meta_send_reply = "meta.send_reply"      # WhatsApp / IG / FB AI reply
     meta_send_template = "meta.send_template"  # template message send
+    media_banner_check = "media.banner_check"  # AI photo check; publication waits on it
 
     # ── publishing lane ── provider-quota-bound
     post_publish = "post.publish"            # Google Business Profile post
     post_delete = "post.delete"              # take a published post down on schedule
+    post_remove = "post.remove"              # remove published posts from platforms now
     media_publish = "media.publish"          # Google media upload
 
     # ── media lane ── memory-bound image processing
@@ -34,6 +36,7 @@ class JobType(str, Enum):
     scrape_url = "scrape.url"                # URL scraping
     stt_job = "stt.job"                      # speech-to-text
     tts_job = "tts.job"                      # text-to-speech
+    benchmark_theme_extract = "benchmark.theme_extract"  # bounded review-theme analysis
 
     @classmethod
     def lane_for(cls, job_type: "JobType") -> JobLane:
@@ -46,8 +49,10 @@ class JobType(str, Enum):
 _LANE_MAP: dict[JobType, JobLane] = {
     JobType.meta_send_reply: JobLane.realtime,
     JobType.meta_send_template: JobLane.realtime,
+    JobType.media_banner_check: JobLane.realtime,
     JobType.post_publish: JobLane.publishing,
     JobType.post_delete: JobLane.publishing,
+    JobType.post_remove: JobLane.publishing,
     JobType.media_publish: JobLane.publishing,
     JobType.media_process: JobLane.media,
     JobType.review_request_send: JobLane.bulk,
@@ -56,6 +61,7 @@ _LANE_MAP: dict[JobType, JobLane] = {
     JobType.scrape_url: JobLane.bulk,
     JobType.stt_job: JobLane.bulk,
     JobType.tts_job: JobLane.bulk,
+    JobType.benchmark_theme_extract: JobLane.bulk,
 }
 
 

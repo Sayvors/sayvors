@@ -142,7 +142,7 @@ function PostedCard({ r, branchName, showBranch }: {
   const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
   const reviewUrl = (r as ReviewReplyDTO & { review_url?: string }).review_url;
   return (
-    <article className="overflow-hidden rounded-2xl border border-ink/[0.06] bg-white shadow-sm dark:border-fog/[0.06] dark:bg-ink">
+    <article className="overflow-hidden rounded-[8px] border border-ink/[0.06] bg-white shadow-sm dark:border-fog/[0.06] dark:bg-ink">
       <button
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
@@ -180,12 +180,12 @@ function PostedCard({ r, branchName, showBranch }: {
       {open && (
         <div className="border-t border-ink/[0.06] px-4 pb-4 pt-3 dark:border-fog/[0.06]">
           {r.review_text && (
-            <blockquote className="rounded-r-xl border-l-[3px] border-ink/15 bg-ink/[0.025] py-2.5 pl-3 pr-2 dark:border-fog/15 dark:bg-fog/[0.04]">
+            <blockquote className="rounded-r-[8px] border-l-[3px] border-ink/15 bg-ink/[0.025] py-2.5 pl-3 pr-2 dark:border-fog/15 dark:bg-fog/[0.04]">
               <p className="text-[13px] italic leading-6 text-ink/70 dark:text-fog/70">“{r.review_text}”</p>
             </blockquote>
           )}
 
-          <div className="mt-3 rounded-xl border border-emerald-600/15 bg-emerald-600/[0.05] p-3 dark:bg-emerald-500/[0.06]">
+          <div className="mt-3 rounded-[8px] border border-emerald-600/15 bg-emerald-600/[0.05] p-3 dark:bg-emerald-500/[0.06]">
             <p className="mb-1.5 text-[9px] font-bold uppercase tracking-wider text-emerald-700/70 dark:text-emerald-300/70">
               {ob.replyLive}
             </p>
@@ -486,7 +486,7 @@ export default function OutboxPage() {
             <select
               value={selected ?? ""}
               onChange={(e) => changeScope(e.target.value)}
-              className="w-56 appearance-none rounded-xl border border-ink/[0.08] bg-white py-2 pl-3 pr-9 text-[13px] font-medium text-ink outline-none transition focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.1] dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+              className="w-56 appearance-none rounded-[8px] border border-ink/[0.08] bg-white py-2 pl-3 pr-9 text-[13px] font-medium text-ink outline-none transition focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.1] dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
             >
               <option value={ALL_BRANCHES}>{fill(ob.allBranches, { n: fmt(channels.length) })}</option>
               {groups
@@ -517,7 +517,7 @@ export default function OutboxPage() {
       {banner && (
         <div
           role="status"
-          className={`rounded-xl border p-3 text-[13px] ${
+          className={`rounded-[8px] border p-3 text-[13px] ${
             banner.kind === "ok"
               ? "border-emerald-200 bg-emerald-50 text-emerald-700"
               : "border-red-200 bg-red-50 text-red-700"
@@ -547,7 +547,7 @@ export default function OutboxPage() {
             key={t.key}
             onClick={() => { setTab(t.key); setPage(1); }}
             aria-pressed={tab === t.key}
-            className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
+            className={`flex-1 rounded-[8px] px-2 py-1.5 text-[11px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
               tab === t.key
                 ? "bg-white text-deep-violet shadow-sm dark:bg-ink"
                 : "text-ink/45 hover:text-ink/70 dark:text-fog/45"
@@ -561,7 +561,7 @@ export default function OutboxPage() {
       {/* The strip is legend + action ("Re-check any time"), so a member who
           cannot re-check is better served by no strip than a dead promise. */}
       {tab === "posted" && counts.posted > 0 && canVerify && (
-        <div className="flex items-center justify-between gap-3 rounded-xl border border-ink/[0.06] bg-white px-4 py-3 dark:border-fog/[0.06] dark:bg-ink">
+        <div className="flex items-center justify-between gap-3 rounded-[8px] border border-ink/[0.06] bg-white px-4 py-3 dark:border-fog/[0.06] dark:bg-ink">
           <p className="text-[12px] text-ink/55 dark:text-fog/55">
             {ob.postedHint}
           </p>
@@ -580,7 +580,7 @@ export default function OutboxPage() {
           <LogoLoader size={28} />
         </div>
       ) : channels.length === 0 ? (
-        <div className="flex flex-col items-center gap-3 rounded-xl border border-ink/[0.06] bg-white py-14 text-center dark:border-fog/[0.06] dark:bg-ink">
+        <div className="flex flex-col items-center gap-3 rounded-[8px] border border-ink/[0.06] bg-white py-14 text-center dark:border-fog/[0.06] dark:bg-ink">
           <p className="text-[14px] font-semibold text-ink/70 dark:text-fog/70">{ob.noLocations}</p>
           <p className="max-w-sm text-[12px] text-ink/45 dark:text-fog/45">
             {ob.noLocBody}
@@ -594,7 +594,7 @@ export default function OutboxPage() {
         </div>
       ) : tab === "flagged" ? (
         flagged.length === 0 ? (
-          <div className="rounded-xl border border-ink/[0.06] bg-white py-12 text-center text-[13px] text-ink/40 dark:border-fog/[0.06] dark:bg-ink dark:text-fog/40">
+          <div className="rounded-[8px] border border-ink/[0.06] bg-white py-12 text-center text-[13px] text-ink/40 dark:border-fog/[0.06] dark:bg-ink dark:text-fog/40">
             {ob.flaggedEmpty}
           </div>
         ) : (
@@ -603,7 +603,7 @@ export default function OutboxPage() {
             {pagedFlagged.map((r) => (
               <div
                 key={r.id}
-                className="rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink"
+                className="rounded-[8px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink"
               >
                 <div className="flex items-center gap-1.5 text-[11px] text-ink/50 dark:text-fog/50">
                   <span aria-label={fill(ob.starAria, { value: fmt(r.rating) })} className="font-bold text-amber-600">
@@ -631,7 +631,7 @@ export default function OutboxPage() {
           </>
         )
       ) : visible.length === 0 ? (
-        <div className="rounded-xl border border-ink/[0.06] bg-white py-12 text-center text-[13px] text-ink/40 dark:border-fog/[0.06] dark:bg-ink dark:text-fog/40">
+        <div className="rounded-[8px] border border-ink/[0.06] bg-white py-12 text-center text-[13px] text-ink/40 dark:border-fog/[0.06] dark:bg-ink dark:text-fog/40">
           {tab === "pending" && ob.pendingEmpty}
           {tab === "posted" && ob.postedEmpty}
           {tab === "failed" && ob.failedEmpty}
@@ -657,7 +657,7 @@ export default function OutboxPage() {
             return (
             <div
               key={r.id}
-              className="rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink"
+              className="rounded-[8px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink"
             >
               <div className="flex items-center gap-1.5 text-[11px] text-ink/50 dark:text-fog/50">
                 <span aria-label={fill(ob.starAria, { value: fmt(r.rating) })} className="font-bold text-amber-600">

@@ -1,18 +1,24 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import LogoLoader from "@/components/LogoLoader";
 import { apiFetch } from "@/lib/api-rag";
 import {
   fetchComparison,
   fetchHistory,
+  fetchReviewThemes,
   fetchReviews,
   fetchSavedPlaces,
+  retryReviewThemes,
   RANGE_DAYS,
+  subjectKey,
   type CompareRange,
   type ComparisonSubject,
+  type HistoryPoint,
   type SavedPlace,
   type SubjectReviews,
 } from "@/lib/api-benchmark";
@@ -20,8 +26,21 @@ import ComparePicker, {
   MAX_COMPETITORS,
   type CompareSelection,
 } from "@/components/benchmark/ComparePicker";
+import TrendChart from "@/components/benchmark/TrendChart";
+import NorthStarCard from "@/components/benchmark/NorthStarCard";
+import DistributionStrip from "@/components/benchmark/DistributionStrip";
+import OwnScorecards from "@/components/benchmark/OwnScorecards";
+import ReviewResponseTable from "@/components/benchmark/ReviewResponseTable";
+import SentimentVelocityBars from "@/components/benchmark/SentimentVelocityBars";
+import AiSummaryCard from "@/components/benchmark/AiSummaryCard";
+import BaselineAlert from "@/components/benchmark/BaselineAlert";
+import CompletenessCard from "@/components/benchmark/CompletenessCard";
+import FixFirstTickets from "@/components/benchmark/FixFirstTickets";
+import ReviewKeywords from "@/components/benchmark/ReviewKeywords";
+import { queryKeys } from "@/lib/query-keys";
 
 const FOCUS = "focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[#3D1D6E]";
+const REVIEW_THEME_POLL_MS = 3000;
 
 interface ChannelOption {
   id: string;
@@ -29,7 +48,10 @@ interface ChannelOption {
   platform: string;
 }
 
-type MetricKey = keyof ComparisonSubject["metrics"];
+type MetricKey =
+  | keyof ComparisonSubject["metrics"]
+  | "five_star_pct"
+  | "one_star_pct";
 type FactKey = keyof ComparisonSubject["facts"];
 
 interface Row<T extends string> {
@@ -47,77 +69,71 @@ interface Row<T extends string> {
   higherIsBetter?: boolean;
 }
 
-const METRIC_ROWS: Row<MetricKey>[] = [
-  { key: "total_reviews", label: "Reviews total", value: (s) => s.metrics.total_reviews, render: (s) => num(s.metrics.total_reviews) },
-  { key: "reviews_last_day", label: "Reviews · last day", value: (s) => s.metrics.reviews_last_day, render: (s) => num(s.metrics.reviews_last_day) },
-  { key: "reviews_last_week", label: "Reviews · last week", value: (s) => s.metrics.reviews_last_week, render: (s) => num(s.metrics.reviews_last_week) },
-  { key: "reviews_last_month", label: "Reviews · last month", value: (s) => s.metrics.reviews_last_month, render: (s) => num(s.metrics.reviews_last_month) },
-  { key: "reviews_last_year", label: "Reviews · last year", value: (s) => s.metrics.reviews_last_year, render: (s) => num(s.metrics.reviews_last_year) },
-  { key: "avg_rating", label: "Average rating", value: (s) => s.metrics.avg_rating, tierValue: (s) => (s.metrics.total_ratings !== 0 ? s.metrics.avg_rating : null), render: (s) => rating(s) },
-  { key: "total_ratings", label: "Ratings total", value: (s) => s.metrics.total_ratings, render: (s) => num(s.metrics.total_ratings) },
-  { key: "five_star", label: "5-star ratings", value: (s) => s.metrics.five_star, render: (s) => num(s.metrics.five_star) },
-  { key: "four_star", label: "4-star ratings", value: (s) => s.metrics.four_star, render: (s) => num(s.metrics.four_star) },
-  { key: "one_star", label: "1-star ratings", value: (s) => s.metrics.one_star, higherIsBetter: false, render: (s) => num(s.metrics.one_star) },
-  { key: "impressions", label: "Impressions · 12 mo", value: (s) => s.metrics.impressions, render: (s) => ownerOnly(s, s.metrics.impressions) },
-  { key: "calls", label: "Calls · 12 mo", value: (s) => s.metrics.calls, render: (s) => ownerOnly(s, s.metrics.calls) },
-];
+function getMetricRows(c: Record<string, any>): Row<MetricKey>[] {
+  const starShare = (s: ComparisonSubject, star: number) => {
+    const total = s.metrics.total_ratings ?? s.metrics.total_reviews ?? 0;
+    const count = star === 5 ? s.metrics.five_star : s.metrics.one_star;
+    return total > 0 && count != null ? (count / total) * 100 : null;
+  };
+  return [
+    { key: "total_reviews", label: c.reviewsTotal, value: (s) => s.metrics.total_reviews, higherIsBetter: true, render: (s) => num(s.metrics.total_reviews) },
+    { key: "avg_rating", label: c.averageRating, value: (s) => s.metrics.avg_rating, tierValue: (s) => (s.metrics.total_ratings !== 0 ? s.metrics.avg_rating : null), higherIsBetter: true, render: (s) => rating(s) },
+    { key: "reviews_last_month", label: c.reviewsLastMonth, value: (s) => s.metrics.reviews_last_month, higherIsBetter: true, render: (s) => num(s.metrics.reviews_last_month) },
+    { key: "reviews_last_year", label: c.reviewsLastYear, value: (s) => s.metrics.reviews_last_year, render: (s) => num(s.metrics.reviews_last_year) },
+    { key: "five_star_pct", label: c.fiveStarRatings, value: (s) => starShare(s, 5), higherIsBetter: true, render: (s) => pct(starShare(s, 5)) },
+    { key: "one_star_pct", label: c.oneStarRatings, value: (s) => starShare(s, 1), higherIsBetter: false, render: (s) => pct(starShare(s, 1)) },
+  ];
+}
 
 type PeriodKey =
   | "period_reviews"
   | "period_avg_rating"
-  | "rating_change"
-  | "period_impressions"
-  | "period_calls";
+  | "rating_change";
 
 /**
  * The period table answers "what changed in this window", never re-labels a
  * lifetime number as a window number. Saved places compute it from snapshot
  * history plus today's live values; own locations from their stored reviews.
  */
-const PERIOD_ROWS: Row<PeriodKey>[] = [
-  { key: "period_reviews", label: "Reviews added", value: (s) => s.metrics.period_reviews, render: (s) => num(s.metrics.period_reviews) },
-  {
-    key: "period_avg_rating",
-    label: "Average rating in period",
-    value: (s) => s.metrics.period_avg_rating,
-    render: (s) => (s.metrics.period_avg_rating == null ? "—" : `${s.metrics.period_avg_rating} ★`),
-  },
-  {
-    key: "rating_change",
-    label: "Rating change",
-    value: (s) => s.metrics.rating_change,
-    render: (s) => signed(s.metrics.rating_change),
-  },
-  { key: "period_impressions", label: "Impressions", render: (s) => ownerOnly(s, s.metrics.period_impressions) },
-  { key: "period_calls", label: "Calls", render: (s) => ownerOnly(s, s.metrics.period_calls) },
-];
+function getPeriodRows(c: Record<string, any>): Row<PeriodKey>[] {
+  return [
+    { key: "period_reviews", label: c.reviewsAdded, value: (s) => s.metrics.period_reviews, render: (s) => num(s.metrics.period_reviews) },
+    { key: "period_avg_rating", label: c.averageRatingInPeriod, value: (s) => s.metrics.period_avg_rating, render: (s) => (s.metrics.period_avg_rating == null ? "—" : `${s.metrics.period_avg_rating} ★`) },
+    { key: "rating_change", label: c.ratingChange, value: (s) => s.metrics.rating_change, render: (s) => signed(s.metrics.rating_change) },
+  ];
+}
 
 type RangeStatus = "ready" | "coming_soon";
 
-const RANGE_OPTIONS: { value: CompareRange; label: string; title: string; status: RangeStatus }[] = [
-  { value: "live", label: "Live", title: "Live values from Google, right now", status: "ready" },
-  { value: "30d", label: "30 days", title: "Values for the last 30 days", status: "ready" },
-  { value: "90d", label: "90 days", title: "Values for the last 90 days", status: "coming_soon" },
-  { value: "365d", label: "1 year", title: "Values for the last 12 months", status: "coming_soon" },
-];
+function getRangeOptions(c: Record<string, any>): { value: CompareRange; label: string; title: string; status: RangeStatus }[] {
+  return [
+    { value: "live", label: c.live, title: c.liveTitle, status: "ready" },
+    { value: "30d", label: c.days30, title: c.days30Title, status: "ready" },
+    { value: "90d", label: c.days90, title: c.days90Title, status: "coming_soon" },
+    { value: "365d", label: c.year1, title: c.year1Title, status: "coming_soon" },
+  ];
+}
 
 /** Disabled ranges fall back to Live so an old link still renders. */
 function normalizeRange(value: string | null): CompareRange {
   return value === "30d" ? "30d" : "live";
 }
 
-const FACT_ROWS: Row<FactKey>[] = [  { key: "positive_pct", label: "Positive sentiment", value: (s) => s.facts.positive_pct, render: (s) => pct(s.facts.positive_pct) },
-  { key: "negative_pct", label: "Negative sentiment", value: (s) => s.facts.negative_pct, higherIsBetter: false, render: (s) => pct(s.facts.negative_pct) },
-  { key: "branch", label: "Branch / location", render: (s) => s.facts.branch ?? "—" },
-  { key: "employee_mentions", label: "Team mentioned", value: (s) => s.facts.employee_mentions, render: (s) => num(s.facts.employee_mentions) },
-  { key: "working_hard_mentions", label: "Praised for hard work", value: (s) => s.facts.working_hard_mentions, render: (s) => num(s.facts.working_hard_mentions) },
-  { key: "menu_price_mentions", label: "Menu & price mentions", value: (s) => s.facts.menu_price_mentions, render: (s) => num(s.facts.menu_price_mentions) },
-  { key: "parking_praised", label: "Parking · positive", value: (s) => s.facts.parking_praised, render: (s) => num(s.facts.parking_praised) },
-  { key: "parking_criticised", label: "Parking · negative", value: (s) => s.facts.parking_criticised, higherIsBetter: false, render: (s) => num(s.facts.parking_criticised) },
-  { key: "services", label: "Services", render: (s, all) => serviceChips(s.facts.services, all) },
-  { key: "top_problems", label: "Top problems", render: (s) => chips(s.facts.top_problems) },
-  { key: "named_team", label: "Named team", render: (s) => namedTeam(s.facts.named_team) },
-];
+function getFactRows(c: Record<string, any>): Row<FactKey>[] {
+  return [
+    { key: "positive_pct", label: c.positiveSentiment, value: (s) => s.facts.positive_pct, higherIsBetter: true, render: (s) => pct(s.facts.positive_pct) },
+    { key: "negative_pct", label: c.negativeSentiment, value: (s) => s.facts.negative_pct, higherIsBetter: false, render: (s) => pct(s.facts.negative_pct) },
+    { key: "branch", label: c.branchLocation, render: (s) => s.facts.branch ?? "—" },
+    { key: "employee_mentions", label: c.teamMentioned, value: (s) => s.facts.employee_mentions, render: (s) => num(s.facts.employee_mentions) },
+    { key: "working_hard_mentions", label: c.praisedForHardWork, value: (s) => s.facts.working_hard_mentions, render: (s) => num(s.facts.working_hard_mentions) },
+    { key: "menu_price_mentions", label: c.menuPriceMentions, value: (s) => s.facts.menu_price_mentions, render: (s) => num(s.facts.menu_price_mentions) },
+    { key: "parking_praised", label: c.parkingPositive, value: (s) => s.facts.parking_praised, render: (s) => num(s.facts.parking_praised) },
+    { key: "parking_criticised", label: c.parkingNegative, value: (s) => s.facts.parking_criticised, higherIsBetter: false, render: (s) => num(s.facts.parking_criticised) },
+    { key: "services", label: c.services, render: (s, all) => serviceChips(s.facts.services, all) },
+    { key: "top_problems", label: c.topProblems, render: (s) => chips(s.facts.top_problems) },
+    { key: "named_team", label: c.namedTeam, render: (s) => namedTeam(s.facts.named_team) },
+  ];
+}
 
 /**
  * Overlap-level colors for the Services row. Green means the service is
@@ -169,7 +185,7 @@ function serviceChips(
           <span
             key={name}
             style={{ backgroundColor: SERVICE_LEVEL_COLORS[level], color: "#FFFFFF" }}
-            className="rounded-[6px] px-1.5 py-0.5 text-[10px] font-semibold"
+            className="rounded-[8px] px-1.5 py-0.5 text-[10px] font-semibold"
           >
             {name}
           </span>
@@ -261,7 +277,7 @@ function chips(items: string[] | undefined): ReactNode {
       {items.map((item) => (
         <span
           key={item}
-          className="rounded-[6px] bg-[#F4F2F7] px-1.5 py-0.5 text-[10px] font-semibold text-[#3B2D5E]"
+          className="rounded-[8px] bg-[#F4F2F7] px-1.5 py-0.5 text-[10px] font-semibold text-[#3B2D5E]"
         >
           {item}
         </span>
@@ -285,11 +301,40 @@ function namedTeam(members: ComparisonSubject["facts"]["named_team"]): ReactNode
 }
 
 /**
+ * Gap chip: how this business differs from the tenant's own column.
+ * Signed diff, colored by whether the direction helps (row-defined).
+ */
+function gapChip(
+  value: number | null,
+  mainValue: number | null,
+  higherIsBetter: boolean
+): { text: string; className: string } | null {
+  if (value == null || mainValue == null || value === mainValue) return null;
+  if (!Number.isFinite(value) || !Number.isFinite(mainValue)) return null;
+  const diff = value - mainValue;
+  const rounded = Math.round(diff * 10) / 10;
+  // A ±0 chip asserts a difference that doesn't exist (e.g. 4.96 vs 5.0).
+  if (rounded === 0) return null;
+  const helps = higherIsBetter ? diff > 0 : diff < 0;
+  const sign = diff > 0 ? "+" : "\u2212";
+  return {
+    text: `${sign}${Math.abs(rounded)}`,
+    className: helps
+      ? "bg-[#E7F6EC] text-[#116631]"
+      : "bg-[#FDE8EC] text-[#B3123A]",
+  };
+}
+
+/**
  * One table per fact group, in the shape the comparison is read in:
  * `Reviews total | 300 | 500 | 500 | 500 | 500 | 500`.
  *
  * The label column is sticky so the fact name stays readable while the six
  * business columns scroll horizontally on a narrow screen.
+ *
+ * Drill-down: when `onDrillDown` is set, a cell colored as the row's worst
+ * tier becomes a button — the one column that trails the row is exactly the
+ * one whose reviews explain why.
  */
 function MatrixTable<T extends string>({
   title,
@@ -297,19 +342,58 @@ function MatrixTable<T extends string>({
   rows,
   subjects,
   mainKey,
+  onDrillDown,
+  drillLoading = false,
 }: {
   title: string;
   description?: string;
   rows: Row<T>[];
   subjects: ComparisonSubject[];
   mainKey: string | null;
+  onDrillDown?: (subject: ComparisonSubject) => void;
+  /** Reviews behind the drill-down still loading: clicks may no-op, so the cursor shows progress instead of a ready pointer. */
+  drillLoading?: boolean;
 }) {
+  const { t } = useI18n();
+  const b = t.benchmark;
+  const c = t.benchmark.compare;
   // On small screens the six business columns become one dropdown: the table
   // shows the fact rows for the selected business only.
   const [mobileIndex, setMobileIndex] = useState(0);
 
+  /**
+   * Props that turn a worst-tier cell's nested element into an accessible
+   * drill-down button. The table cell itself stays a plain cell so screen
+   * readers keep walking the table; this spread goes on the interactive
+   * element inside it (a native button on desktop, a role-button span on
+   * mobile).
+   */
+  function drillProps(row: Row<T>, subject: ComparisonSubject) {
+    const interactive = onDrillDown != null && subject.available;
+    if (!interactive) return {};
+    return {
+      role: "button" as const,
+      tabIndex: 0,
+      title: b.drillDownHint,
+      "aria-label": `${row.label} · ${subject.name ?? subject.key} — ${b.drillDownHint}`,
+      onClick: () => onDrillDown?.(subject),
+      onKeyDown: (event: ReactKeyboardEvent) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onDrillDown?.(subject);
+        }
+      },
+    };
+  }
+
+  /** Drill cursor reflects readiness: reviews still loading → progress. */
+  function drillCursorClass(drillable: boolean): string {
+    if (!drillable) return "";
+    return drillLoading ? "cursor-progress" : "cursor-pointer";
+  }
+
   return (
-    <section className="mt-4 overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-white">
+    <section className="mt-4 overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white">
       <div className="border-b border-[var(--ui-line)] px-3 py-2">
         <h2 className="text-[12px] font-bold uppercase tracking-wide text-[#14101F]">{title}</h2>
         {description ? <p className="mt-0.5 text-[10px] text-[#3B2D5E]">{description}</p> : null}
@@ -318,7 +402,7 @@ function MatrixTable<T extends string>({
       {/* Mobile: pick the business column to inspect. */}
       <div className="flex items-center gap-2 border-b border-[var(--ui-line)] bg-[#FAFAFB] px-3 py-2 md:hidden">
         <label htmlFor={`mobile-col-${title}`} className="text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]">
-          Business
+          {c.business}
         </label>
         <select
           id={`mobile-col-${title}`}
@@ -328,7 +412,7 @@ function MatrixTable<T extends string>({
         >
           {subjects.map((subject, index) => (
             <option key={subject.key} value={index}>
-              {subject.name || (subject.kind === "own" ? "Your location" : "Saved business")}
+              {subject.name || (subject.kind === "own" ? c.yourLocation : c.savedBusiness)}
             </option>
           ))}
         </select>
@@ -342,17 +426,19 @@ function MatrixTable<T extends string>({
               const subject = subjects[mobileIndex];
               const value = subject.available && row.value ? row.value(subject) : null;
               const tier = cellTier(row, subjects, subject, value);
+              const drillable = tier === "worst" && subject.available && onDrillDown != null;
               return (
                 <li key={row.key} className="flex items-center justify-between gap-2 border-b border-[var(--ui-line)] px-3 py-2 last:border-b-0">
                   <span className="text-[11px] font-semibold text-[#14101F]">{row.label}</span>
                   <span
-                    className="min-w-0 flex-1 text-right text-[12px] font-mono"
+                    className={`min-w-0 flex-1 text-right text-[12px] font-mono ${drillable ? `${drillCursorClass(drillable)} ${FOCUS}` : ""}`}
                     style={{
                       backgroundColor: CELL_COLORS[tier].bg,
                       color: CELL_COLORS[tier].fg,
                       padding: "2px 6px",
                       borderRadius: 6,
                     }}
+                    {...(drillable ? drillProps(row, subject) : {})}
                   >
                     {subject.available ? row.render(subject, subjects) : <span>—</span>}
                   </span>
@@ -399,13 +485,13 @@ function MatrixTable<T extends string>({
                       className="block truncate text-[12px] font-bold text-[#14101F]"
                       title={subject.name || undefined}
                     >
-                      {subject.name || (subject.kind === "own" ? "Your location" : "Saved business")}
+                      {subject.name || (subject.kind === "own" ? c.yourLocation : c.savedBusiness)}
                     </span>
                     <span className="mt-0.5 block truncate text-[10px] font-normal text-[#3B2D5E]">
                       {subject.available
                         ? subject.kind === "saved"
-                          ? "Google listing"
-                          : "Your location"
+                          ? c.googleListing
+                          : c.yourLocation
                         : subject.reason}
                     </span>
                   </th>
@@ -415,6 +501,10 @@ function MatrixTable<T extends string>({
           </thead>
           <tbody>
             {rows.map((row) => {
+              // Gap chips are computed against the main (own) column; rows
+              // without the higherIsBetter flag never show one.
+              const mainSubject = mainKey != null ? subjects.find((s) => s.key === mainKey) : undefined;
+              const mainValue = mainSubject && mainSubject.available && row.value ? row.value(mainSubject) : null;
               return (
                 <tr key={row.key} className="align-top">
                   <th
@@ -426,6 +516,25 @@ function MatrixTable<T extends string>({
                   {subjects.map((subject) => {
                     const value = subject.available && row.value ? row.value(subject) : null;
                     const tier = cellTier(row, subjects, subject, value);
+                    const chip =
+                      row.higherIsBetter === true && subject.key !== mainKey
+                        ? gapChip(value, mainValue, row.higherIsBetter)
+                        : null;
+                    const drillable = tier === "worst" && subject.available && onDrillDown != null;
+                    const content = (
+                      <>
+                        {subject.available ? (
+                          row.render(subject, subjects)
+                        ) : (
+                          <span>—</span>
+                        )}
+                        {chip ? (
+                          <span className={`mt-1 block w-fit rounded-full px-1.5 py-0.5 text-[10px] font-bold ${chip.className}`}>
+                            {chip.text}
+                          </span>
+                        ) : null}
+                      </>
+                    );
                     return (
                       <td
                         key={subject.key}
@@ -435,10 +544,19 @@ function MatrixTable<T extends string>({
                           color: CELL_COLORS[tier].fg,
                         }}
                       >
-                        {subject.available ? (
-                          row.render(subject, subjects)
+                        {drillable ? (
+                          // The interactive element nests INSIDE the cell: a
+                          // role/button on the td itself would pull the cell
+                          // out of the SR table walk.
+                          <button
+                            type="button"
+                            className={`h-full w-full text-left ${drillCursorClass(drillable)} ${FOCUS}`}
+                            {...drillProps(row, subject)}
+                          >
+                            {content}
+                          </button>
                         ) : (
-                          <span>—</span>
+                          content
                         )}
                       </td>
                     );
@@ -482,6 +600,8 @@ function HistoryTable({
   loading: boolean;
   error: boolean;
 }) {
+  const { t } = useI18n();
+  const c = t.benchmark.compare;
   const rows = series
     .flatMap((subject) =>
       subject.points.map((point) => ({ ...point, subject }))
@@ -489,30 +609,30 @@ function HistoryTable({
     .sort((a, b) => (b.at ?? "").localeCompare(a.at ?? ""));
 
   return (
-    <section className="mt-4 overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-white">
+    <section className="mt-4 overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white">
       <div className="border-b border-[var(--ui-line)] px-3 py-2">
         <h2 className="text-[12px] font-bold uppercase tracking-wide text-[#14101F]">
-          History · last {days} days
+          {c.historyTitle(days)}
         </h2>
         <p className="mt-0.5 text-[10px] text-[#3B2D5E]">
-          Rating and review count at the start and end of the selected period.
+          {c.historyDesc}
         </p>
       </div>
 
       {loading ? (
-        <p className="px-3 py-4 text-[12px] text-[#3B2D5E]">Loading history…</p>
+        <p className="px-3 py-4 text-[12px] text-[#3B2D5E]">{c.loadingHistory}</p>
       ) : error ? (
-        <p className="px-3 py-4 text-[12px] text-[#8E1230]">Could not load history.</p>
+        <p className="px-3 py-4 text-[12px] text-[#8E1230]">{c.couldNotLoadHistory}</p>
       ) : rows.length === 0 ? (
         <p className="px-3 py-4 text-[12px] text-[#3B2D5E]">
-          No data for this period yet.
+          {c.noDataPeriod}
         </p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left">
             <thead>
               <tr>
-                {["Business", "Date", "Rating", "Reviews"].map((label) => (
+                {[c.business, c.date, c.rating, c.reviews].map((label) => (
                   <th
                     key={label}
                     scope="col"
@@ -530,7 +650,7 @@ function HistoryTable({
                     scope="row"
                     className="border-b border-[var(--ui-line)] px-3 py-2 text-[11px] font-semibold text-[#14101F]"
                   >
-                    {row.subject.name || "Saved business"}
+                    {row.subject.name || c.savedBusiness}
                   </th>
                   <td className="border-b border-[var(--ui-line)] px-3 py-2 font-mono text-[11px] text-[#3B2D5E]">
                     {formatWhen(row.at)}
@@ -561,12 +681,9 @@ const SENTIMENT_CATEGORIES: SentimentCategory[] = [
   "complaining",
 ];
 
-const SENTIMENT_CATEGORY_LABELS: Record<SentimentCategory, string> = {
-  natural: "Natural",
-  positive: "Positive",
-  negative: "Negative",
-  complaining: "Complaining",
-};
+function getSentimentCategoryLabels(c: Record<string, any>): Record<SentimentCategory, string> {
+  return { natural: c.natural, positive: c.positive, negative: c.negative, complaining: c.complaining };
+}
 
 const SENTIMENT_CATEGORY_COLORS: Record<SentimentCategory, string> = {
   natural: "#14101F",
@@ -680,6 +797,26 @@ function ReviewAvatar({
  * the reviews sit as an open list with breathing room, and the whole cell is
  * the trigger for the popup.
  */
+function ResponseBadge({ answered }: { answered: boolean }) {
+  const { t } = useI18n();
+  const c = t.benchmark.compare;
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[8px] font-bold ${
+        answered
+          ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+          : "bg-[#F4F2F7] text-[#6F6685] dark:bg-white/10 dark:text-fog/60"
+      }`}
+    >
+      <span
+        aria-hidden
+        className={`h-1.5 w-1.5 rounded-full ${answered ? "bg-emerald-500" : "bg-[#9C94AE]"}`}
+      />
+      {answered ? c.answered : c.notAnswered}
+    </span>
+  );
+}
+
 function FadedCell({
   subject,
   category,
@@ -691,15 +828,26 @@ function FadedCell({
   color: string;
   onOpen: () => void;
 }) {
+  const { t } = useI18n();
+  const c = t.benchmark.compare;
   const items = categoryReviews(subject, category);
-  if (!items.length) return <span className="text-[#8A8496]">—</span>;
+  if (!items.length) {
+    if (subject.reviews.length === 0) {
+      return (
+        <span className="text-[10px] font-semibold text-[#8A8496]">
+          {subject.key.startsWith("own:") ? c.noReviewsYet : c.noRecentReviews}
+        </span>
+      );
+    }
+    return <span className="text-[#8A8496]">—</span>;
+  }
   const shown = items.slice(0, 3);
   return (
     <div
       role="button"
       tabIndex={0}
       onClick={onOpen}
-      className={`h-[132px] cursor-pointer overflow-hidden rounded-[10px] px-1.5 py-1.5 transition-colors hover:bg-[#F4F2F7] ${FOCUS}`}
+      className={`h-[132px] cursor-pointer overflow-hidden rounded-[8px] px-1.5 py-1.5 transition-colors hover:bg-[#F4F2F7] ${FOCUS}`}
     >
       <ul className="flex flex-col gap-1.5">
         {shown.map((review, index) => {
@@ -716,7 +864,7 @@ function FadedCell({
               <div className="flex items-center gap-1.5 text-[10px]">
                 <ReviewAvatar name={review.author} photo={review.author_photo} size="sm" />
                 <span className="max-w-[62px] shrink-0 truncate font-semibold text-[#14101F]">
-                  {review.author || "Reviewer"}
+                  {review.author || c.reviewer}
                 </span>
                 <span className="shrink-0 font-semibold" style={{ color }}>
                   {review.rating != null ? `${review.rating}★` : "—"}
@@ -729,6 +877,7 @@ function FadedCell({
                 <span className="font-mono text-[9px] text-[#8A8496]">
                   {formatWhen(review.time)}
                 </span>
+                <ResponseBadge answered={review.answered} />
                 <span className="min-w-0 truncate text-[9px] font-semibold text-[#14101F]">
                   {subject.name}
                 </span>
@@ -756,12 +905,15 @@ function ReviewsPopup({
   category: SentimentCategory;
   close: () => void;
 }) {
+  const { t } = useI18n();
+  const c = t.benchmark.compare;
+  const labels = getSentimentCategoryLabels(c);
   const [filter, setFilter] = useState<PopupFilter>("newest");
   const rows = popupReviews(subject, category, filter);
   const color = SENTIMENT_CATEGORY_COLORS[category];
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/50 p-4">
-      <div className="flex max-h-[86vh] w-full max-w-[860px] flex-col overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-white shadow-[0_24px_80px_rgba(20,16,31,0.35)]">
+      <div className="flex max-h-[86vh] w-full max-w-[860px] flex-col overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white shadow-[0_24px_80px_rgba(20,16,31,0.35)]">
         <div className="flex items-start justify-between gap-3 border-b border-[var(--ui-line)] bg-[#FAFAFB] px-4 py-3">
           <div className="flex items-center gap-2.5">
             <GoogleMark size={22} />
@@ -769,14 +921,14 @@ function ReviewsPopup({
               <div className="flex items-center gap-1.5">
                 <GoogleMark size={13} />
                 <span className="text-[10px] font-semibold uppercase tracking-wide text-[#3B2D5E]">
-                  Google reviews
+                  {c.googleReviews}
                 </span>
               </div>
               <h2 className="text-[14px] font-bold text-[#14101F]">
                 {subject.name || "—"}
               </h2>
               <p className="text-[10px] text-[#8A8496]">
-                {SENTIMENT_CATEGORY_LABELS[category]} · {rows.length} reviews
+                {labels[category]} · {rows.length} {c.reviews.toLowerCase()}
               </p>
             </div>
           </div>
@@ -786,18 +938,18 @@ function ReviewsPopup({
               onChange={(event) => setFilter(event.target.value as PopupFilter)}
               className="rounded-[8px] border border-[var(--ui-line)] bg-white px-2 py-1.5 text-[11px] font-semibold text-[#3B2D5E]"
             >
-              <option value="newest">Newest</option>
-              <option value="oldest">Oldest</option>
+              <option value="newest">{c.newest}</option>
+              <option value="oldest">{c.oldest}</option>
               <option value="5">5★</option>
               <option value="4">4★</option>
-              <option value="all">All</option>
+              <option value="all">{c.all}</option>
             </select>
             <button
               type="button"
               onClick={close}
               className={`rounded-[8px] border border-[#3D1D6E]/30 bg-white px-3 py-1.5 text-[11px] font-semibold text-[#3D1D6E] ${FOCUS}`}
             >
-              Close
+              {c.close}
             </button>
           </div>
         </div>
@@ -805,21 +957,21 @@ function ReviewsPopup({
         <div className="scroll-smooth max-h-[540px] flex-1 overflow-y-auto bg-[#FAFAFB] px-4 py-4">
           {rows.length === 0 ? (
             <p className="py-10 text-center text-[12px] text-[#8A8496]">
-              No reviews in this category.
+              {c.noReviewsInCategory}
             </p>
           ) : (
             <div className="flex flex-col gap-3">
               {rows.map((review, index) => (
                 <article
                   key={`${review.time}-${index}`}
-                  className="rounded-[12px] border border-[#EFEDF2] bg-white p-4 shadow-[0_2px_8px_rgba(20,16,31,0.06)]"
+                  className="rounded-[8px] border border-[#EFEDF2] bg-white p-4 shadow-[0_2px_8px_rgba(20,16,31,0.06)]"
                 >
                   <div className="flex items-start gap-2">
                     <ReviewAvatar name={review.author} photo={review.author_photo} size="md" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5">
                         <span className="truncate text-[11px] font-bold text-[#14101F]">
-                          {review.author || "Reviewer"}
+                          {review.author || c.reviewer}
                         </span>
                         <GoogleMark size={11} />
                         <span className="text-[10px] text-[#8A8496]">Google</span>
@@ -829,7 +981,7 @@ function ReviewsPopup({
                       </p>
                     </div>
                     <span
-                      className="shrink-0 rounded-[6px] px-2 py-1 text-[12px] font-bold"
+                      className="shrink-0 rounded-[8px] px-2 py-1 text-[12px] font-bold"
                       style={{ backgroundColor: `${color}1A`, color }}
                     >
                       {review.rating != null ? `${review.rating}★` : "—"}
@@ -839,16 +991,32 @@ function ReviewsPopup({
                     <span className="font-mono text-[10px] text-[#8A8496]">
                       {formatWhen(review.time)}
                     </span>
+                    <ResponseBadge answered={review.answered} />
                     <span className="text-[10px] font-semibold text-[#3B2D5E]">
                       {subject.name}
                     </span>
                   </div>
+                  {review.owner_answer ? (
+                    <div className="mt-3 rounded-[8px] bg-[#F4F2F7] px-3 py-2">
+                      <p className="text-[9px] font-bold uppercase tracking-wide text-[#6F6685]">
+                        {t.benchmark.compare.ownerReply}
+                      </p>
+                      <p className="mt-1 text-[11px] leading-relaxed text-[#3B2D5E]">
+                        {review.owner_answer}
+                      </p>
+                      {review.owner_answer_time ? (
+                        <p className="mt-1 font-mono text-[9px] text-[#8A8496]">
+                          {formatWhen(review.owner_answer_time)}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {review.problems && review.problems.length > 0 ? (
                     <div className="mt-2 flex flex-wrap gap-1">
                       {review.problems.map((problem, position) => (
                         <span
                           key={position}
-                          className="rounded-[6px] bg-[#F4F2F7] px-1.5 py-0.5 text-[10px] text-[#3B2D5E]"
+                          className="rounded-[8px] bg-[#F4F2F7] px-1.5 py-0.5 text-[10px] text-[#3B2D5E]"
                         >
                           {problem}
                         </span>
@@ -863,14 +1031,14 @@ function ReviewsPopup({
 
         <div className="flex items-center justify-between border-t border-[var(--ui-line)] bg-white px-4 py-2">
           <span className="text-[10px] text-[#8A8496]">
-            Reviews are shown newest first unless you change the filter.
+            {c.reviewsNewestFirst}
           </span>
           <button
             type="button"
             onClick={close}
             className={`rounded-[8px] border border-[#3D1D6E]/30 bg-white px-3 py-1.5 text-[11px] font-semibold text-[#3D1D6E] ${FOCUS}`}
           >
-            Close
+            {c.close}
           </button>
         </div>
       </div>
@@ -896,30 +1064,32 @@ function SentimentReviewsTable({
   loading: boolean;
   openPopup: (subject: SubjectReviews, category: SentimentCategory) => void;
 }) {
+  const { t } = useI18n();
+  const c = t.benchmark.compare;
   // On small screens the business columns become one dropdown: only the
   // selected business's category rows are shown, like the other tables.
   const [mobileIndex, setMobileIndex] = useState(0);
 
   if (loading) {
-    return <p className="mt-4 text-[12px] text-[#3B2D5E]">Loading reviews…</p>;
+    return <p className="mt-4 text-[12px] text-[#3B2D5E]">{t.common.loading}</p>;
   }
   if (!subjects.length) {
     return (
       <p className="mt-4 text-[12px] text-[#3B2D5E]">
-        No reviews are stored for these businesses yet.
+        {c.noDataAvailable}
       </p>
     );
   }
 
   return (
-    <section className="mt-4 overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-white">
+    <section className="mt-4 overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white">
       <div className="flex items-center justify-between border-b border-[var(--ui-line)] px-3 py-2">
         <h2 className="text-[12px] font-bold uppercase tracking-wide text-[#14101F]">
-          Reviews by category
+          {c.reviews}
         </h2>
         <label className="flex items-center gap-2 md:hidden">
           <span className="text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]">
-            Business
+            {c.business}
           </span>
           <select
             value={mobileIndex}
@@ -949,7 +1119,7 @@ function SentimentReviewsTable({
                       style={{ color: SENTIMENT_CATEGORY_COLORS[category] }}
                       className="w-[92px] border-b border-r border-[var(--ui-line)] bg-white px-3 py-2 text-[11px] font-semibold"
                     >
-                      {SENTIMENT_CATEGORY_LABELS[category]}
+                      {getSentimentCategoryLabels(c)[category]}
                     </th>
                     <td className="border-b border-[var(--ui-line)] px-3 py-2 align-top">
                       <FadedCell
@@ -1010,7 +1180,7 @@ function SentimentReviewsTable({
                   style={{ color: SENTIMENT_CATEGORY_COLORS[category] }}
                   className="sticky left-0 z-10 border-b border-r border-[var(--ui-line)] bg-white px-3 py-2 text-[11px] font-semibold"
                 >
-                  {SENTIMENT_CATEGORY_LABELS[category]}
+                  {getSentimentCategoryLabels(c)[category]}
                 </th>
                 {subjects.map((subject) => (
                   <td
@@ -1030,6 +1200,11 @@ function SentimentReviewsTable({
           </tbody>
         </table>
       </div>
+      {subjects.some((subject) => subject.reviews.length === 0) && (
+        <p className="border-t border-[var(--ui-line)] px-3 py-2 text-[11px] leading-relaxed text-[#3B2D5E]">
+          {c.reviewsEmptyNote}
+        </p>
+      )}
     </section>
   );
 }
@@ -1050,8 +1225,12 @@ function readSelection(params: URLSearchParams): CompareSelection {  const main 
 }
 
 export default function ComparePage() {
+  const { t } = useI18n();
+  const b = t.benchmark;
+  const c = t.benchmark.compare;
   const router = useRouter();
   const params = useSearchParams();
+  const queryClient = useQueryClient();
 
   const savedQuery = useQuery({ queryKey: ["benchmark", "saved"], queryFn: fetchSavedPlaces });
   const saved: SavedPlace[] = savedQuery.data ?? [];
@@ -1073,6 +1252,7 @@ export default function ComparePage() {
   const keys = [selection.main, ...selection.competitors].filter(
     (key): key is string => Boolean(key)
   );
+  const reviewThemeQueryKey = queryKeys.benchmark.reviewThemes(keys);
 
   const compareQuery = useQuery({
     queryKey: ["benchmark", "compare", keys.join("|"), range],
@@ -1093,10 +1273,85 @@ export default function ComparePage() {
     enabled: keys.length > 0,
   });
   const reviewSubjects: SubjectReviews[] = reviewsQuery.data?.subjects ?? [];
+  const reviewThemesQuery = useQuery({
+    queryKey: reviewThemeQueryKey,
+    queryFn: ({ signal }) => fetchReviewThemes(keys, selection.main, signal),
+    enabled: keys.length > 0,
+    refetchInterval: (query) => {
+      if (typeof document === "undefined" || document.visibilityState !== "visible") return false;
+      return query.state.data?.subjects.some((subject) => subject.status === "pending")
+        ? REVIEW_THEME_POLL_MS
+        : false;
+    },
+    refetchIntervalInBackground: false,
+  });
   const [reviewsPopup, setReviewsPopup] = useState<{
     subject: SubjectReviews;
     category: SentimentCategory;
   } | null>(null);
+
+  // Subject key → stored history points, feeding the scorecard sparklines
+  // and the baseline alert.
+  const historyBySubject = useMemo(() => {
+    const map: Record<string, HistoryPoint[]> = {};
+    for (const subject of historyQuery.data?.subjects ?? []) {
+      map[subject.key] = subject.points;
+    }
+    return map;
+  }, [historyQuery.data]);
+
+  // Cohort tags travel on the compare response's own subjects — the only
+  // place the API exposes them — so the chip filter offers exactly the
+  // cohorts present in the current comparison.
+  const [cohortTag, setCohortTag] = useState<string | null>(null);
+  const cohortTags = useMemo(
+    () => [...new Set(subjects.flatMap((s) => (s.kind === "own" ? (s.tags ?? []) : [])))].sort(),
+    [subjects]
+  );
+  // A stale chip (selection changed, tag gone) matches nothing instead of
+  // silently filtering — deactivate it.
+  const activeCohortTag = cohortTag != null && cohortTags.includes(cohortTag) ? cohortTag : null;
+  const mainOwnSubject =
+    subjects.find((s) => s.key === selection.main && s.kind === "own") ?? null;
+
+  const ownOptions = useMemo(() => {
+    if (!activeCohortTag) return own;
+    const tagged = new Set(
+      subjects
+        .filter((s) => s.kind === "own" && (s.tags ?? []).includes(activeCohortTag))
+        .map((s) => s.id)
+    );
+    // The active main selection must never vanish from its own dropdown: an
+    // untagged location the user already picked stays listed, so the filter
+    // narrows the choice without hiding what is currently selected.
+    const mainOwnId = mainOwnSubject?.id ?? null;
+    return own.filter((channel) => tagged.has(channel.id) || channel.id === mainOwnId);
+  }, [own, activeCohortTag, subjects, mainOwnSubject]);
+
+  /** Drill-down from a worst-tier matrix cell: that subject's negative reviews. */
+  function openWorstReviews(subject: ComparisonSubject) {
+    const reviews = reviewSubjects.find((r) => r.key === subject.key);
+    if (!reviews) return;
+    setReviewsPopup({ subject: reviews, category: "negative" });
+  }
+
+  async function retryReviewKeywords() {
+    // Stop an in-flight poll from racing the retry, then let invalidation refetch
+    // the active query with the newly enqueued analysis status.
+    await queryClient.cancelQueries({ queryKey: reviewThemeQueryKey });
+    try {
+      await retryReviewThemes(keys, selection.main);
+    } catch (cause) {
+      console.error("Could not retry benchmark review theme analysis", cause);
+    } finally {
+      await queryClient.invalidateQueries({ queryKey: reviewThemeQueryKey });
+    }
+  }
+
+  const rangeOptions = useMemo(() => getRangeOptions(c as any), [c]);
+  const metricRows = useMemo(() => getMetricRows(c as any), [c]);
+  const periodRows = useMemo(() => getPeriodRows(c as any), [c]);
+  const factRows = useMemo(() => getFactRows(c as any), [c]);
 
   function applyUrl(next: CompareSelection, nextRange: CompareRange) {
     const query = new URLSearchParams();
@@ -1111,8 +1366,31 @@ export default function ComparePage() {
     applyUrl(next, range);
   }
 
+  const benchSet = useMemo(
+    () => saved.filter((p) => p.in_bench_set).slice(0, 5),
+    [saved]
+  );
+  // Truly bare URL only — a legacy ?s=/?left=/?right= link parses to a real
+  // selection and must not be clobbered by the defaults.
+  const bareUrl = !selection.main && selection.competitors.length === 0;
+  const defaultsReady = (savedQuery.isSuccess || savedQuery.isError) && (channelsQuery.isSuccess || channelsQuery.isError);
+  const appliedDefaults = useRef(false);
+  useEffect(() => {
+    if (!bareUrl || !defaultsReady || appliedDefaults.current) return;
+    appliedDefaults.current = true;
+    const main = own[0] ? subjectKey("own", own[0].id) : null;
+    const competitors = benchSet
+      .map((p) => subjectKey("saved", p.place_id))
+      .filter((key) => key !== main)
+      .slice(0, 5);
+    if (main || competitors.length > 0) {
+      update({ main, competitors });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once when data is ready
+  }, [bareUrl, defaultsReady]);
+
   function updateRange(nextRange: CompareRange) {
-    const option = RANGE_OPTIONS.find((item) => item.value === nextRange);
+    const option = rangeOptions.find((item) => item.value === nextRange);
     // Coming-soon ranges must not be selected; they stay visible as context.
     if (!option || option.status !== "ready") return;
     applyUrl(selection, nextRange);
@@ -1121,53 +1399,75 @@ export default function ComparePage() {
   return (
     <div className="team-ui h-full overflow-y-auto p-4 sm:p-6">
       <Link href="/dashboard/benchmark" className={`text-[12px] font-semibold text-[#3D1D6E] ${FOCUS}`}>
-        ← Back to benchmark
+        ← {t.benchmark.title}
       </Link>
 
       {/* Half hero: the benchmarking sentence lives in the left half. */}
-      <section className="mt-4 grid overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-[#F1F2F5] lg:grid-cols-2">
+      <section className="mt-4 grid overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-[#F1F2F5] lg:grid-cols-2">
         <div className="px-6 py-7 sm:px-8 sm:py-9">
           <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#B0338A]">
-            Benchmark / Compare
+            {c.benchmarkCompare}
           </p>
           <h1 className="mt-2 max-w-lg text-[24px] font-bold leading-tight text-[#14101F] sm:text-[30px]">
-            Five businesses against yours.
+            {c.fiveBusinessesTitle}
           </h1>
           <p className="mt-3 max-w-lg text-[13px] leading-relaxed text-[#3B2D5E]">
-            Pick one business on the left and up to five on the right. Every row is
-            one fact, every column one business — the leader in each row is marked,
-            and anything Google does not publish stays blank instead of becoming a
-            zero.
+            {c.fiveBusinessesDesc}
           </p>
         </div>
         <div className="relative hidden min-h-[200px] items-center justify-center lg:flex">
-          <div className="absolute left-[8%] top-[16%] h-16 w-24 rounded-[10px] bg-white shadow-[0_2px_8px_rgba(20,16,31,0.08)]" />
-          <div className="absolute left-[38%] top-[38%] h-16 w-24 rounded-[10px] bg-[#F6DCEB]" />
-          <div className="absolute right-[34%] top-[14%] h-16 w-24 rounded-[10px] bg-[#D8459F]" />
-          <div className="absolute right-[8%] top-[40%] h-16 w-24 rounded-[10px] bg-[#B0338A] shadow-[0_2px_8px_rgba(20,16,31,0.12)]" />
+          <div className="absolute left-[8%] top-[16%] h-16 w-24 rounded-[8px] bg-white shadow-[0_2px_8px_rgba(20,16,31,0.08)]" />
+          <div className="absolute left-[38%] top-[38%] h-16 w-24 rounded-[8px] bg-[#F6DCEB]" />
+          <div className="absolute right-[34%] top-[14%] h-16 w-24 rounded-[8px] bg-[#D8459F]" />
+          <div className="absolute right-[8%] top-[40%] h-16 w-24 rounded-[8px] bg-[#B0338A] shadow-[0_2px_8px_rgba(20,16,31,0.12)]" />
         </div>
       </section>
 
-      <section className="mt-4 rounded-[12px] border border-[var(--ui-line)] bg-white p-3 sm:p-4">
-        <ComparePicker selection={selection} onChange={update} saved={saved} own={own} />
+      {cohortTags.length > 0 ? (
+        <div className="mt-4 flex flex-wrap items-center gap-1.5 rounded-[8px] border border-[var(--ui-line)] bg-white px-3 py-2">
+          <span className="text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]">
+            {b.cohortFilterLabel}
+          </span>
+          {cohortTags.map((tag) => {
+            const active = tag === activeCohortTag;
+            return (
+              <button
+                key={tag}
+                type="button"
+                aria-pressed={active}
+                onClick={() => setCohortTag(active ? null : tag)}
+                className={`rounded-[8px] border px-2 py-1 text-[11px] font-semibold transition-colors ${FOCUS} ${
+                  active
+                    ? "border-[#3D1D6E] bg-[#3D1D6E] text-white"
+                    : "border-[var(--ui-line)] bg-[#F4F2F7] text-[#3B2D5E] hover:bg-[#F1F2F5]"
+                }`}
+              >
+                {tag}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
+      <section className="mt-4 rounded-[8px] border border-[var(--ui-line)] bg-white p-3 sm:p-4">
+        <ComparePicker selection={selection} onChange={update} saved={saved} own={ownOptions} />
       </section>
 
-      <div className="mt-4 flex items-start gap-2 rounded-[12px] border border-[#3D1D6E]/20 bg-[#F3EEFB] px-3 py-2 md:hidden">
+      <div className="mt-4 flex items-start gap-2 rounded-[8px] border border-[#3D1D6E]/20 bg-[#F3EEFB] px-3 py-2 md:hidden">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="mt-0.5 shrink-0 text-[#3D1D6E]">
           <path d="M12 2 1 21h22L12 2zm1 14h-2v2h2v-2zm0-7h-2v5h2V9z" fill="currentColor" />
         </svg>
         <p className="text-[11px] leading-relaxed text-[#3D1D6E]">
-          Benchmarking works best on a desktop browser. On mobile, each table
-          shows one business at a time — pick it from the Business dropdown.
+          {c.desktopBest}
         </p>
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[12px] border border-[var(--ui-line)] bg-white px-3 py-2">
+      <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[8px] border border-[var(--ui-line)] bg-white px-3 py-2">
         <span className="text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]">
-          Period
+          {c.period}
         </span>
-        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Comparison period">
-          {RANGE_OPTIONS.map((option) => {
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label={c.comparisonPeriod}>
+          {rangeOptions.map((option) => {
             const active = option.value === range && option.status === "ready";
             const disabled = option.status !== "ready";
             return (
@@ -1188,8 +1488,8 @@ export default function ComparePage() {
               >
                 {option.label}
                 {disabled ? (
-                  <span className="ml-1.5 rounded-[4px] bg-[#F3F1F5] px-1.2 py-0.1 text-[8px] font-semibold uppercase tracking-wide text-[#A9A3B2]">
-                    coming soon
+                  <span className="ml-1.5 rounded-[8px] bg-[#F3F1F5] px-1.2 py-0.1 text-[8px] font-semibold uppercase tracking-wide text-[#A9A3B2]">
+                    {c.comingSoon}
                   </span>
                 ) : null}
               </button>
@@ -1197,47 +1497,111 @@ export default function ComparePage() {
           })}
         </div>
         <p className="text-[10px] text-[#A9A3B2]">
-          Live and 30 days are active. 90 days and 1 year unlock as the scraper fills history.
+          {c.rangeNote}
         </p>
       </div>
 
       {keys.length === 0 ? (
-        <p className="mt-5 rounded-[12px] border border-dashed border-[var(--ui-line)] bg-white px-5 py-9 text-center text-[12px] text-[#3B2D5E]">
-          Pick a business in either dropdown to build the table.
+        <p className="mt-5 rounded-[8px] border border-dashed border-[var(--ui-line)] bg-white px-5 py-9 text-center text-[12px] text-[#3B2D5E]">
+          {c.pickBusinessToBuild}
         </p>
       ) : compareQuery.isPending ? (
-        <p className="mt-5 text-[12px] text-[#3B2D5E]">Loading comparison…</p>
+        <div className="mt-8 flex flex-col items-center justify-center gap-3 rounded-[8px] border border-[var(--ui-line)] bg-white px-5 py-14">
+          <LogoLoader size={44} label={c.loadingComparison} showText />
+          <p className="text-[11px] text-[#7C7392]">{c.pullingLatest}</p>
+        </div>
       ) : compareQuery.isError ? (
-        <p className="mt-5 text-[12px] text-red-700">Could not load the comparison.</p>
+        <div className="mt-5 rounded-[8px] border border-[#FF4F6E]/25 bg-white px-5 py-6">
+          <p role="alert" className="text-[12px] font-semibold text-[#B32442]">{c.couldNotLoadComparison}</p>
+          <button
+            type="button"
+            onClick={() => void compareQuery.refetch()}
+            className={`mt-3 rounded-[8px] border border-[#3D1D6E]/25 bg-white px-3 py-1.5 text-[11px] font-bold text-[#3D1D6E] ${FOCUS}`}
+          >
+            {t.common.retry}
+          </button>
+        </div>
       ) : (
         <>
-          {days != null ? (
-            <MatrixTable
-              title={`Period · last ${days} days`}
-              description="Reviews added, rating movement, views and calls for the selected period. Blank means the data is not available, never a zero."
-              rows={PERIOD_ROWS}
-              subjects={subjects}
+          {/* Now-tier summary: baseline drift, rank, AI read, distribution,
+              fix-first tickets, completeness, trends, own-branch cards. */}
+          <BaselineAlert points={mainOwnSubject ? (historyBySubject[mainOwnSubject.key] ?? []) : []} />
+          {compareQuery.data?.summary ? (
+            <NorthStarCard
+              summary={compareQuery.data.summary}
+            />
+          ) : null}
+          <AiSummaryCard subjects={keys} />
+          {compareQuery.data?.distribution ? (
+            <DistributionStrip
+              subjects={compareQuery.data.subjects}
               mainKey={selection.main}
             />
           ) : null}
-          <MatrixTable
-            title="Numbers from Google"
-            description="Reviews, ratings and listing performance. Views and calls are only released to the listing's owner, so a competitor's column stays blank there."
-            rows={METRIC_ROWS}
-            subjects={subjects}
+          {compareQuery.data?.summary ? (
+            <FixFirstTickets summary={compareQuery.data.summary} subjects={subjects} />
+          ) : null}
+          <CompletenessCard subjects={subjects} />
+          <SentimentVelocityBars
+            subjects={compareQuery.data?.subjects ?? []}
             mainKey={selection.main}
           />
+          <TrendChart
+            history={historyQuery.data?.subjects ?? []}
+            title={b.trendTitle}
+            mainKey={selection.main}
+          />
+          <OwnScorecards
+            subjects={compareQuery.data?.subjects ?? []}
+            historyBySubject={historyBySubject}
+            mainKey={selection.main}
+          />
+          {days != null ? (
+            <MatrixTable
+              title={c.periodLastDays(days)}
+              description={c.overTimeDesc}
+              rows={periodRows}
+              subjects={subjects}
+              mainKey={selection.main}
+              onDrillDown={openWorstReviews}
+              drillLoading={reviewsQuery.isPending}
+            />
+          ) : null}
           <MatrixTable
-            title="What customers say"
-            description="Scanned from the most recent reviews; owner-only facts stay blank for competitors."
-            rows={FACT_ROWS}
+            title={c.numbersFromGoogle}
+            description={c.numbersFromGoogleDesc}
+            rows={metricRows}
             subjects={subjects}
             mainKey={selection.main}
+            onDrillDown={openWorstReviews}
+            drillLoading={reviewsQuery.isPending}
+          />
+          <MatrixTable
+            title={c.whatCustomersSay}
+            description={c.whatCustomersSayDesc}
+            rows={factRows}
+            subjects={subjects}
+            mainKey={selection.main}
+            onDrillDown={openWorstReviews}
+            drillLoading={reviewsQuery.isPending}
+          />
+          <ReviewResponseTable
+            subjects={reviewSubjects}
+            loading={reviewsQuery.isPending}
           />
           <SentimentReviewsTable
             subjects={reviewSubjects}
             loading={reviewsQuery.isPending}
             openPopup={(subject, category) => setReviewsPopup({ subject, category })}
+          />
+          <ReviewKeywords
+            key={keys.join("|")}
+            data={reviewThemesQuery.data}
+            mainKey={selection.main}
+            loading={reviewThemesQuery.isPending}
+            fetching={reviewThemesQuery.isFetching}
+            error={reviewThemesQuery.error}
+            onRetry={() => void retryReviewKeywords()}
           />
           {reviewsPopup ? (
             <ReviewsPopup

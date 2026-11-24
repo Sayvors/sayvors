@@ -8,12 +8,12 @@ export default function ProfileSupport({
   sessions: Session[];
 }) {
   return (
-    <section aria-label="Security and support" className="rounded-2xl border border-ink/10 bg-white p-5 shadow-sm">
+    <section aria-label="Security and support" className="rounded-[8px] border border-ink/10 bg-white p-5 shadow-sm">
       <h3 className="text-[14px] font-bold text-ink">Security & support</h3>
       <p className="mb-4 text-[11px] text-ink/45">Sessions, version, and help in one place.</p>
 
       <div className="space-y-3">
-        <div className="rounded-xl bg-fog/60 px-4 py-3">
+        <div className="rounded-[8px] bg-fog/60 px-4 py-3">
           <div className="flex items-center justify-between">
             <p className="text-[12px] font-semibold text-ink">Active sessions</p>
             <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold tabular-nums text-ink/60 ring-1 ring-ink/10">
@@ -34,7 +34,7 @@ export default function ProfileSupport({
           )}
         </div>
 
-        <div className="flex items-center justify-between rounded-xl bg-fog/60 px-4 py-3">
+        <div className="flex items-center justify-between rounded-[8px] bg-fog/60 px-4 py-3">
           <div>
             <p className="text-[12px] font-semibold text-ink">App version</p>
             <p className="text-[10px] text-ink/40">Latest stable release</p>
@@ -44,7 +44,7 @@ export default function ProfileSupport({
           </span>
         </div>
 
-        <div className="flex items-center justify-between rounded-xl bg-fog/60 px-4 py-3">
+        <div className="flex items-center justify-between rounded-[8px] bg-fog/60 px-4 py-3">
           <div>
             <p className="text-[12px] font-semibold text-ink">System status</p>
             <p className="text-[10px] text-ink/40">All systems operational</p>

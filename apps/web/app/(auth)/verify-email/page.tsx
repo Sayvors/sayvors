@@ -32,7 +32,7 @@ function VerifyEmailContent() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-fog dark:bg-ink">
-      <div className="w-full max-w-sm rounded-2xl border border-ink/[0.06] bg-white p-8 text-center dark:border-fog/[0.06] dark:bg-ink">
+      <div className="w-full max-w-sm rounded-[8px] border border-ink/[0.06] bg-white p-8 text-center dark:border-fog/[0.06] dark:bg-ink">
         {status === "loading" && (
           <div className="flex flex-col items-center gap-3">
             <LogoLoader size={40} label="Verifying your email…" showText />

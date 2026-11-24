@@ -71,7 +71,7 @@ function ReviewCard({ review, onReplied }: { review: ReviewInsight; onReplied: (
           </p>
         </div>
         <span
-          className={`shrink-0 rounded-[2px] px-2 py-0.5 text-[10px] font-semibold capitalize ${SENTIMENT_STYLES[review.sentiment] ?? SENTIMENT_STYLES.neutral}`}
+          className={`shrink-0 rounded-[8px] px-2 py-0.5 text-[10px] font-semibold capitalize ${SENTIMENT_STYLES[review.sentiment] ?? SENTIMENT_STYLES.neutral}`}
         >
           {review.sentiment}
         </span>
@@ -93,17 +93,17 @@ function ReviewCard({ review, onReplied }: { review: ReviewInsight; onReplied: (
       {(review.topics.length > 0 || review.problems.length > 0 || review.products.length > 0) && (
         <div className="flex flex-wrap gap-1.5 px-4 pt-2.5">
           {(review.problems ?? []).map((p, i) => (
-            <span key={`pr-${p.name}-${i}`} className={`rounded-[2px] px-1.5 py-0.5 text-[10px] font-medium ${SEVERITY_STYLES[p.severity] ?? SEVERITY_STYLES.low}`}>
+            <span key={`pr-${p.name}-${i}`} className={`rounded-[8px] px-1.5 py-0.5 text-[10px] font-medium ${SEVERITY_STYLES[p.severity] ?? SEVERITY_STYLES.low}`}>
               {p.name}
             </span>
           ))}
           {(review.topics ?? []).map((t, i) => (
-            <span key={`t-${t.name}-${i}`} className="rounded-[2px] bg-[var(--ui-sunken)] px-1.5 py-0.5 text-[10px] text-[var(--ui-ink-2)]">
+            <span key={`t-${t.name}-${i}`} className="rounded-[8px] bg-[var(--ui-sunken)] px-1.5 py-0.5 text-[10px] text-[var(--ui-ink-2)]">
               {t.name}
             </span>
           ))}
           {(review.products ?? []).map((p, i) => (
-            <span key={`p-${p.name}-${i}`} className="rounded-[2px] bg-[var(--ui-sunken)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--ui-ink)]">
+            <span key={`p-${p.name}-${i}`} className="rounded-[8px] bg-[var(--ui-sunken)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--ui-ink)]">
               {p.name}
             </span>
           ))}
@@ -203,7 +203,7 @@ export function ReviewInbox({ channelId, refreshToken }: { channelId: string | n
 
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const filterBtn = (active: boolean) =>
-    `rounded-[2px] px-2.5 py-1 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+    `rounded-[8px] px-2.5 py-1 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
       active
         ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
         : "bg-[var(--ui-sunken)] text-[var(--ui-ink-2)] hover:bg-[var(--ui-line)]"

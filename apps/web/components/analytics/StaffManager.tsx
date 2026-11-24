@@ -121,17 +121,17 @@ export default function StaffManager() {
   return (
     <div className="space-y-4">
       {notice && (
-        <p role="status" className="rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] px-3 py-2 text-[12px] font-medium text-[var(--ui-ink)]">
+        <p role="status" className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] px-3 py-2 text-[12px] font-medium text-[var(--ui-ink)]">
           {notice}
         </p>
       )}
       {error && (
-        <p role="alert" className="rounded-[10px] border border-red-500/40 bg-red-500/10 px-3 py-2 text-[12px] font-medium text-red-700 dark:text-red-400">
+        <p role="alert" className="rounded-[8px] border border-red-500/40 bg-red-500/10 px-3 py-2 text-[12px] font-medium text-red-700 dark:text-red-400">
           {error}
         </p>
       )}
 
-      <div className="rounded-[10px] border border-[var(--ui-line)] p-4">
+      <div className="rounded-[8px] border border-[var(--ui-line)] p-4">
         <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">
           {addName ? `Add "${addName}" as an employee` : "Add an employee"}
         </h3>
@@ -144,13 +144,13 @@ export default function StaffManager() {
             onChange={(e) => setName(e.target.value)}
             placeholder="Name (e.g. Ahmad)"
             aria-label="Employee name"
-            className="rounded-[10px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+            className="rounded-[8px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
           />
           <select
             value={listingId}
             onChange={(e) => setListingId(e.target.value)}
             aria-label="Branch"
-            className="rounded-[10px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)]"
+            className="rounded-[8px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)]"
           >
             {branches.length === 0 && <option value="">No branches connected</option>}
             {branches.map((b) => (
@@ -161,7 +161,7 @@ export default function StaffManager() {
             type="button"
             onClick={add}
             disabled={busy || !name.trim() || !listingId}
-            className="rounded-[10px] bg-[var(--ui-ink)] px-4 py-2 text-[13px] font-bold text-[var(--ui-on-ink)] transition hover:opacity-90 disabled:opacity-50"
+            className="rounded-[8px] bg-[var(--ui-ink)] px-4 py-2 text-[13px] font-bold text-[var(--ui-on-ink)] transition hover:opacity-90 disabled:opacity-50"
           >
             {busy ? "Adding…" : "Add"}
           </button>
@@ -171,20 +171,20 @@ export default function StaffManager() {
           onChange={(e) => setAliases(e.target.value)}
           placeholder="Aliases, comma-separated (e.g. Ahmed, Ahmad Ali)"
           aria-label="Name aliases"
-          className="mt-2 w-full rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[12px] text-[var(--ui-ink)] outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+          className="mt-2 w-full rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[12px] text-[var(--ui-ink)] outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
         />
       </div>
 
       {loading ? (
         <p className="py-6 text-center text-[13px] text-[var(--ui-ink-2)]">Loading employees…</p>
       ) : employees.length === 0 ? (
-        <p className="rounded-[10px] border border-dashed border-[var(--ui-line)] px-4 py-8 text-center text-[13px] text-[var(--ui-ink-2)]">
+        <p className="rounded-[8px] border border-dashed border-[var(--ui-line)] px-4 py-8 text-center text-[13px] text-[var(--ui-ink-2)]">
           No employees yet. Add your first one above — reviews naming them will count toward their record.
         </p>
       ) : (
         <ul className="space-y-2">
           {employees.map((emp) => (
-            <li key={emp.id} className="flex flex-wrap items-center gap-2 rounded-[10px] border border-[var(--ui-line)] px-3 py-2.5">
+            <li key={emp.id} className="flex flex-wrap items-center gap-2 rounded-[8px] border border-[var(--ui-line)] px-3 py-2.5">
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[13px] font-bold text-[var(--ui-ink)]">
                   {emp.name}
@@ -199,21 +199,21 @@ export default function StaffManager() {
               </div>
               <Link
                 href={`/dashboard/analytics/staff/${emp.id}`}
-                className="rounded-[10px] border border-[var(--ui-line-strong)] px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)]"
+                className="rounded-[8px] border border-[var(--ui-line-strong)] px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)]"
               >
                 View profile
               </Link>
               <button
                 type="button"
                 onClick={() => toggleActive(emp)}
-                className="rounded-[10px] border border-[var(--ui-line-strong)] px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)]"
+                className="rounded-[8px] border border-[var(--ui-line-strong)] px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)]"
               >
                 {emp.active ? "Deactivate" : "Activate"}
               </button>
               <button
                 type="button"
                 onClick={() => remove(emp)}
-                className="rounded-[10px] border border-red-300 px-3 py-1.5 text-[12px] font-semibold text-red-600 transition hover:bg-red-50 dark:hover:bg-red-500/10"
+                className="rounded-[8px] border border-red-300 px-3 py-1.5 text-[12px] font-semibold text-red-600 transition hover:bg-red-50 dark:hover:bg-red-500/10"
               >
                 Remove
               </button>

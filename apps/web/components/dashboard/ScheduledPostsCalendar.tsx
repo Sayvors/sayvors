@@ -142,7 +142,7 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
   const isSelectedPast = selectedDay !== null && new Date(year, month, selectedDay) < todayStart;
 
   return (
-    <div className="overflow-hidden rounded-[24px] border border-ink/[0.06] bg-white shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)] dark:border-fog/[0.08] dark:bg-ink">
+    <div className="overflow-hidden rounded-[8px] border border-ink/[0.06] bg-white shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)] dark:border-fog/[0.08] dark:bg-ink">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -150,7 +150,7 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
         aria-expanded={open}
       >
         <div className="flex items-center gap-3.5 min-w-0">
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[16px] bg-deep-violet/10 text-deep-violet">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[8px] bg-deep-violet/10 text-deep-violet">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
               <rect x="3" y="4" width="18" height="18" rx="2" />
               <path d="M16 2v4M8 2v4M3 10h18" strokeLinecap="round" />
@@ -171,7 +171,7 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
         </div>
         <div className="flex items-center gap-2">
           {scheduled.length > 0 && (
-            <span className="rounded-[20px] bg-deep-violet/10 px-3 py-1 text-[11px] font-bold text-deep-violet">
+            <span className="rounded-[8px] bg-deep-violet/10 px-3 py-1 text-[11px] font-bold text-deep-violet">
               {fmt(scheduled.length)}
             </span>
           )}
@@ -185,15 +185,15 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
         <div className="border-t border-ink/[0.06] p-5 dark:border-fog/[0.06]">
           <div className="mb-4 flex items-center justify-between">
             <div className="flex items-center gap-1">
-              <button type="button" onClick={() => setCursor(new Date(year, month - 1, 1))} className="rounded-[16px] p-1.5 text-ink/50 transition duration-200 hover:bg-ink/[0.06] active:scale-95 dark:text-fog/50 dark:hover:bg-fog/[0.06]" aria-label={c.prevMonth}>
+              <button type="button" onClick={() => setCursor(new Date(year, month - 1, 1))} className="rounded-[8px] p-1.5 text-ink/50 transition duration-200 hover:bg-ink/[0.06] active:scale-95 dark:text-fog/50 dark:hover:bg-fog/[0.06]" aria-label={c.prevMonth}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
               </button>
-              <button type="button" onClick={() => setCursor(new Date(year, month + 1, 1))} className="rounded-[16px] p-1.5 text-ink/50 transition duration-200 hover:bg-ink/[0.06] active:scale-95 dark:text-fog/50 dark:hover:bg-fog/[0.06]" aria-label={c.nextMonth}>
+              <button type="button" onClick={() => setCursor(new Date(year, month + 1, 1))} className="rounded-[8px] p-1.5 text-ink/50 transition duration-200 hover:bg-ink/[0.06] active:scale-95 dark:text-fog/50 dark:hover:bg-fog/[0.06]" aria-label={c.nextMonth}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
               </button>
             </div>
             <p className="text-[15px] font-semibold text-ink dark:text-fog">{monthName} {fmt(year)}</p>
-            <button type="button" onClick={() => setCursor(new Date())} className="rounded-[20px] border border-ink/[0.1] px-3.5 py-1.5 text-[12px] font-bold text-ink/60 transition duration-200 hover:bg-ink/[0.04] active:scale-95 dark:border-fog/[0.1] dark:text-fog/60 dark:hover:bg-fog/[0.04]">{c.today}</button>
+            <button type="button" onClick={() => setCursor(new Date())} className="rounded-[8px] border border-ink/[0.1] px-3.5 py-1.5 text-[12px] font-bold text-ink/60 transition duration-200 hover:bg-ink/[0.04] active:scale-95 dark:border-fog/[0.1] dark:text-fog/60 dark:hover:bg-fog/[0.04]">{c.today}</button>
           </div>
 
           <div className="grid grid-cols-7 gap-1 mb-1">
@@ -216,7 +216,7 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
                   type="button"
                   onClick={(e) => !isPast && handleDayClick(day, e)}
                   disabled={isPast}
-                  className={`relative flex flex-col items-start p-1.5 sm:p-2 h-16 sm:h-20 rounded-[14px] text-left transition duration-200 ${
+                  className={`relative flex flex-col items-start p-1.5 sm:p-2 h-16 sm:h-20 rounded-[8px] text-left transition duration-200 ${
                     isPast
                       ? "text-ink/30 dark:text-fog/30 cursor-not-allowed"
                       : has
@@ -252,7 +252,7 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
             <div className="mt-4 flex flex-wrap gap-3 border-t border-ink/[0.06] dark:border-fog/[0.06] pt-3">
               {Object.entries(PLATFORM_COLORS).filter(([p]) => scheduled.some(s => s.platform === p)).map(([platform, color]) => (
                 <div key={platform} className="flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: color }} />
+                  <span className="h-2.5 w-2.5 rounded-[8px]" style={{ backgroundColor: color }} />
                   <span className="text-[11px] text-ink/50 dark:text-fog/50">{platform}</span>
                 </div>
               ))}
@@ -266,7 +266,7 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
         <>
           <div className="fixed inset-0 z-40" onClick={() => { setSelectedDay(null); setAnchor(null); }} />
           <div
-            className="fixed z-50 w-72 rounded-[24px] border border-ink/[0.08] bg-white p-4 shadow-[0_24px_48px_-24px_rgba(20,16,31,0.55)] dark:border-fog/[0.1] dark:bg-ink"
+            className="fixed z-50 w-72 rounded-[8px] border border-ink/[0.08] bg-white p-4 shadow-[0_24px_48px_-24px_rgba(20,16,31,0.55)] dark:border-fog/[0.1] dark:bg-ink"
             style={{ left: Math.min(anchor.x - 144, window.innerWidth - 300), top: anchor.y + 8 }}
           >
             <p className="text-[10px] font-bold uppercase tracking-widest text-ink/40 dark:text-fog/40 mb-2">
@@ -307,7 +307,7 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
                   setSelectedDay(null);
                   setAnchor(null);
                 }}
-                className="w-full rounded-[20px] bg-deep-violet py-2.5 text-[12px] font-bold text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)] transition duration-200 hover:bg-deep-violet/90 active:translate-y-0.5 active:scale-[0.98]"
+                className="w-full rounded-[8px] bg-deep-violet py-2.5 text-[12px] font-bold text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)] transition duration-200 hover:bg-deep-violet/90 active:translate-y-0.5 active:scale-[0.98]"
               >
                 {c.scheduleBtn}
               </button>
@@ -315,7 +315,7 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
             <button
               type="button"
               onClick={() => { setSelectedDay(null); setAnchor(null); }}
-              className="mt-2 w-full rounded-[20px] border border-ink/[0.1] bg-ink/[0.04] py-2 text-[11px] font-bold text-ink/60 transition duration-200 hover:bg-ink/[0.06] active:scale-[0.98] dark:border-fog/[0.1] dark:bg-fog/[0.04] dark:text-fog/60 dark:hover:bg-fog/[0.06]"
+              className="mt-2 w-full rounded-[8px] border border-ink/[0.1] bg-ink/[0.04] py-2 text-[11px] font-bold text-ink/60 transition duration-200 hover:bg-ink/[0.06] active:scale-[0.98] dark:border-fog/[0.1] dark:bg-fog/[0.04] dark:text-fog/60 dark:hover:bg-fog/[0.06]"
             >
               {c.close}
             </button>

@@ -37,9 +37,9 @@ export default function ProfileTab({ channelSlug, channelName }: ProfileTabProps
       </div>
 
       {/* Profile Card */}
-      <div className="rounded-2xl border-2 border-white bg-white/80 p-5 sm:p-6">
+      <div className="rounded-[8px] border-2 border-white bg-white/80 p-5 sm:p-6">
         <div className="flex flex-col sm:flex-row items-start gap-4">
-          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-deep-violet to-magenta text-[28px] text-white shadow-lg shadow-deep-violet/20 overflow-hidden">
+          <div className="flex h-16 w-16 items-center justify-center rounded-[8px] bg-gradient-to-br from-deep-violet to-magenta text-[28px] text-white shadow-lg shadow-deep-violet/20 overflow-hidden">
             <ChannelLogo channel={channelSlug} className="h-10 w-10" />
           </div>
           <div className="flex-1">
@@ -74,7 +74,7 @@ export default function ProfileTab({ channelSlug, channelName }: ProfileTabProps
       </div>
 
       {/* Edit Profile */}
-      <div className="rounded-2xl border-2 border-white bg-white/80 p-5 sm:p-6">
+      <div className="rounded-[8px] border-2 border-white bg-white/80 p-5 sm:p-6">
         <h3 className="mb-4 text-[14px] font-bold text-ink">{tb.editProfile}</h3>
         <div className="space-y-4">
           <div>
@@ -82,7 +82,7 @@ export default function ProfileTab({ channelSlug, channelName }: ProfileTabProps
             <input
               type="text"
               defaultValue={profile.username}
-              className="w-full rounded-xl border-2 border-white bg-white px-4 py-2.5 text-[13px] text-ink outline-none focus:border-deep-violet/40 focus:ring-2 focus:ring-deep-violet/10"
+              className="w-full rounded-[8px] border-2 border-white bg-white px-4 py-2.5 text-[13px] text-ink outline-none focus:border-deep-violet/40 focus:ring-2 focus:ring-deep-violet/10"
             />
           </div>
           <div>
@@ -90,10 +90,10 @@ export default function ProfileTab({ channelSlug, channelName }: ProfileTabProps
             <textarea
               defaultValue={profile.bio}
               rows={3}
-              className="w-full rounded-xl border-2 border-white bg-white px-4 py-2.5 text-[13px] text-ink outline-none focus:border-deep-violet/40 focus:ring-2 focus:ring-deep-violet/10"
+              className="w-full rounded-[8px] border-2 border-white bg-white px-4 py-2.5 text-[13px] text-ink outline-none focus:border-deep-violet/40 focus:ring-2 focus:ring-deep-violet/10"
             />
           </div>
-          <button className="rounded-xl bg-deep-violet px-5 py-2.5 text-[12px] font-bold text-white shadow-md shadow-deep-violet/25 transition hover:bg-deep-violet/90 active:scale-[0.98]">
+          <button className="rounded-[8px] bg-deep-violet px-5 py-2.5 text-[12px] font-bold text-white shadow-md shadow-deep-violet/25 transition hover:bg-deep-violet/90 active:scale-[0.98]">
             {tb.saveProfile}
           </button>
         </div>

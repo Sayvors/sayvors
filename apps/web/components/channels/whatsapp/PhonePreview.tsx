@@ -13,8 +13,8 @@ export default function PhonePreview({ draft, photoPreview, businessName }: { dr
   return (
     <div className="md:sticky md:top-4">
       <p className="mb-2 text-center text-[11px] font-semibold uppercase tracking-widest text-[var(--wa-text-2)]">{pv.label}</p>
-      <div className="mx-auto w-[300px] overflow-hidden rounded-[32px] bg-[var(--wa-frame)] p-2 shadow-[0_8px_30px_rgba(0,0,0,0.35)]">
-        <div className="overflow-hidden rounded-[24px] bg-[var(--wa-panel)]">
+      <div className="mx-auto w-[300px] overflow-hidden rounded-[8px] bg-[var(--wa-frame)] p-2 shadow-[0_8px_30px_rgba(0,0,0,0.35)]">
+        <div className="overflow-hidden rounded-[8px] bg-[var(--wa-panel)]">
           {/* WA chat header */}
           <div className="flex items-center gap-2 bg-[var(--wa-deep)] px-3 py-2 text-[var(--wa-on-deep)]">
             <span className="text-[16px]">‹</span>

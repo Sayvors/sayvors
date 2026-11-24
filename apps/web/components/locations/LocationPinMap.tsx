@@ -137,7 +137,7 @@ export default function LocationPinMap({
 
   if (!apiKey) {
     return (
-      <div className="rounded-xl border border-dashed border-ink/15 bg-ink/[0.02] p-4 text-[12px] leading-relaxed text-ink/55 dark:border-fog/15 dark:bg-fog/[0.02] dark:text-fog/55">
+      <div className="rounded-[8px] border border-dashed border-ink/15 bg-ink/[0.02] p-4 text-[12px] leading-relaxed text-ink/55 dark:border-fog/15 dark:bg-fog/[0.02] dark:text-fog/55">
         Map pin is unavailable because <code>NEXT_PUBLIC_GOOGLE_MAPS_API_KEY</code> is not set.
         You can still create the location; Google will geocode the address.
       </div>
@@ -148,7 +148,7 @@ export default function LocationPinMap({
     <div className="space-y-2">
       <div
         ref={mountRef}
-        className="h-[280px] w-full overflow-hidden rounded-xl border border-ink/[0.08] dark:border-fog/[0.08]"
+        className="h-[280px] w-full overflow-hidden rounded-[8px] border border-ink/[0.08] dark:border-fog/[0.08]"
       />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[11px] text-ink/45 dark:text-fog/45">

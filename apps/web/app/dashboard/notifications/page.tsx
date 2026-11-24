@@ -126,7 +126,7 @@ function NotificationPrefs() {
   }
 
   return (
-    <div className="team-ui rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4">
+    <div className="team-ui rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4">
       <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
         {pf.title}
       </p>
@@ -267,7 +267,7 @@ export default function NotificationsPage() {
                     <button
                       key={c}
                       onClick={() => setCategory(c)}
-                      className={`relative rounded-md px-3 py-1.5 text-[12px] font-semibold capitalize outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
+                      className={`relative rounded-[8px] px-3 py-1.5 text-[12px] font-semibold capitalize outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
                         category === c ? "bg-white text-ink shadow-sm dark:bg-ink dark:text-fog" : "text-ink/45 dark:text-fog/45"
                       }`}
                     >
@@ -286,7 +286,7 @@ export default function NotificationsPage() {
                   <button
                     key={f}
                     onClick={() => setFilter(f)}
-                    className={`rounded-md px-3 py-1.5 text-[12px] font-semibold capitalize outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
+                    className={`rounded-[8px] px-3 py-1.5 text-[12px] font-semibold capitalize outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
                       filter === f ? "bg-white text-ink shadow-sm dark:bg-ink dark:text-fog" : "text-ink/45 dark:text-fog/45"
                     }`}
                   >
@@ -313,7 +313,7 @@ export default function NotificationsPage() {
             <LogoLoader size={28} />
           </div>
         ) : items.length === 0 ? (
-          <div className="rounded-2xl border-2 border-white bg-white/80 p-10 text-center backdrop-blur-sm">
+          <div className="rounded-[8px] border-2 border-white bg-white/80 p-10 text-center backdrop-blur-sm">
             <p className="text-[14px] font-semibold text-ink/70 dark:text-fog/70">
               {filter === "unread" ? nt.emptyUnreadTitle : nt.emptyTitle}
             </p>
@@ -322,7 +322,7 @@ export default function NotificationsPage() {
             </p>
           </div>
         ) : (
-          <div className="overflow-hidden rounded-2xl border-2 border-white bg-white/80 backdrop-blur-sm">
+          <div className="overflow-hidden rounded-[8px] border-2 border-white bg-white/80 backdrop-blur-sm">
             {items.map((n) => {
               const meta = TYPE_META[n.type];
               const label = meta ? typeLabel(n.type) : n.type;
@@ -336,7 +336,7 @@ export default function NotificationsPage() {
                       n.read_at ? "" : "bg-deep-violet/[0.025]"
                     }`}
                   >
-                    <span aria-hidden className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[15px] font-bold ${tint}`}>
+                    <span aria-hidden className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] text-[15px] font-bold ${tint}`}>
                       {icon}
                     </span>
                     <span className="min-w-0 flex-1">
@@ -371,7 +371,7 @@ export default function NotificationsPage() {
             <button
               onClick={() => void load(items.length, true)}
               disabled={loadingMore}
-              className="rounded-xl bg-ink/[0.04] px-4 py-2 text-[12.5px] font-semibold text-ink/60 outline-none transition hover:bg-ink/[0.07] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50 dark:bg-fog/[0.06] dark:text-fog/60"
+              className="rounded-[8px] bg-ink/[0.04] px-4 py-2 text-[12.5px] font-semibold text-ink/60 outline-none transition hover:bg-ink/[0.07] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50 dark:bg-fog/[0.06] dark:text-fog/60"
             >
               {loadingMore ? nt.loading : fill(nt.loadMore, { n: fmt(total - items.length) })}
             </button>

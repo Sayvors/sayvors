@@ -368,7 +368,7 @@ export default function InstagramHub() {
             }`}
           >
             {h.tabs[tabDef.key]}
-            {!tabDef.live && <span className="ml-1.5 text-[11px] font-normal text-[var(--ui-ink-2)]">{h.soon}</span>}
+            {!tabDef.live && <span className="ms-1.5 text-[11px] font-normal text-[var(--ui-ink-2)]">{h.soon}</span>}
           </button>
         ))}
       </nav>

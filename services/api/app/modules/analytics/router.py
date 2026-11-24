@@ -847,6 +847,7 @@ async def record_review_request(
     deep link). SMS/email go through the env-gated provider and store the real
     outcome; a provider failure is visible on the row, never hidden.
     """
+    from .campaigns import CampaignError
     from .review_requests import (
         create_and_deliver,
         email_requests_in_window,
@@ -867,16 +868,20 @@ async def record_review_request(
                     "Try again later."
                 ),
             )
-    row = await create_and_deliver(
-        db,
-        uid,
-        channel_id=body.channel_id,
-        contact=body.contact,
-        contact_name=body.contact_name,
-        channel=body.channel if body.channel in allowed_channels else "whatsapp",
-        trigger=body.trigger if body.trigger in allowed_triggers else "manual",
-        deliver=body.deliver,
-    )
+    try:
+        row = await create_and_deliver(
+            db,
+            uid,
+            channel_id=body.channel_id,
+            contact=body.contact,
+            contact_name=body.contact_name,
+            channel=body.channel if body.channel in allowed_channels else "whatsapp",
+            trigger=body.trigger if body.trigger in allowed_triggers else "manual",
+            deliver=body.deliver,
+            campaign_id=body.campaign_id,
+        )
+    except CampaignError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return ReviewRequestOut(
         id=row.id,
         status=row.status,
@@ -925,6 +930,7 @@ async def bulk_review_requests(
 
     from ..billing.entitlements import count_messages_this_month, get_entitlements
     from ..jobs.service import submit_job
+    from .campaigns import CampaignError, get_active_campaign
     from .review_requests import create_queued, email_requests_in_window
 
     if body.channel not in ("email", "whatsapp"):
@@ -933,6 +939,10 @@ async def bulk_review_requests(
         raise HTTPException(status_code=400, detail="No contacts supplied.")
 
     uid = tenant_id_of(user)
+    try:
+        campaign = await get_active_campaign(db, uid, campaign_id=body.campaign_id)
+    except CampaignError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     now = datetime.now(timezone.utc)
     valid = []
     for contact in body.contacts:
@@ -976,31 +986,36 @@ async def bulk_review_requests(
         }
 
     queued = 0
-    for value, name in valid[:allowed]:
-        row = await create_queued(
-            db,
-            uid,
-            channel_id=body.channel_id,
-            contact=value,
-            contact_name=name,
-            channel=body.channel,
-            trigger=body.trigger,
-            subject=body.subject,
-            body=body.body,
-        )
-        delay = 0 if body.mode == "now" else (queued // body.batch_size) * body.interval_minutes
-        await submit_job(
-            db,
-            tenant_id=uid,
-            job_type="review_request.send",
-            payload={"request_id": row.id},
-            subject_type="review_request",
-            subject_id=row.id,
-            idempotency_key=f"review_request:{row.id}",
-            next_run_at=now + timedelta(minutes=delay),
-        )
-        queued += 1
-    await db.commit()
+    try:
+        for value, name in valid[:allowed]:
+            row = await create_queued(
+                db,
+                uid,
+                channel_id=body.channel_id,
+                contact=value,
+                contact_name=name,
+                channel=body.channel,
+                trigger=body.trigger,
+                subject=body.subject,
+                body=body.body,
+                campaign_id=campaign.id,
+            )
+            delay = 0 if body.mode == "now" else (queued // body.batch_size) * body.interval_minutes
+            await submit_job(
+                db,
+                tenant_id=uid,
+                job_type="review_request.send",
+                payload={"request_id": row.id},
+                subject_type="review_request",
+                subject_id=row.id,
+                idempotency_key=f"review_request:{row.id}",
+                next_run_at=now + timedelta(minutes=delay),
+            )
+            queued += 1
+        await db.commit()
+    except CampaignError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return ReviewRequestBulkOut(
         queued=queued,
         sent_now=queued if body.mode == "now" else 0,

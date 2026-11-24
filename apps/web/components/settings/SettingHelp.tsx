@@ -155,7 +155,7 @@ export default function SettingHelp({
             id={bodyId}
             role="status"
             aria-live="polite"
-            className="min-w-0 rounded-[16px] border border-ink/[0.08] bg-white px-3 py-2 shadow-[0_1px_0_0_rgba(255,255,255,0.9)_inset,0_2px_10px_rgba(20,16,31,0.10)] dark:border-fog/[0.08] dark:bg-ink dark:shadow-[0_1px_0_0_rgba(255,255,255,0.06)_inset,0_2px_10px_rgba(0,0,0,0.4)]"
+            className="min-w-0 rounded-[8px] border border-ink/[0.08] bg-white px-3 py-2 shadow-[0_1px_0_0_rgba(255,255,255,0.9)_inset,0_2px_10px_rgba(20,16,31,0.10)] dark:border-fog/[0.08] dark:bg-ink dark:shadow-[0_1px_0_0_rgba(255,255,255,0.06)_inset,0_2px_10px_rgba(0,0,0,0.4)]"
           >
             {title && (
               <p className="mb-1 text-[11px] font-bold text-ink dark:text-fog">{title}</p>

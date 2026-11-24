@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import LeadsBoard from "@/components/leads/LeadsBoard";
-import FeatureLock from "@/components/billing/FeatureLock";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 
 function fill(s: string, vars: Record<string, string | number>): string {
@@ -38,7 +37,7 @@ function LeadsPageContent() {
         </div>
         <Link
           href="/dashboard/settings"
-          className="rounded-[3px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] focus-visible:outline focus-visible:outline-[2px] focus-visible:outline-offset-[-1px] focus-visible:outline-[var(--ui-ink)]"
+          className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] focus-visible:outline focus-visible:outline-[2px] focus-visible:outline-offset-[-1px] focus-visible:outline-[var(--ui-ink)]"
         >
           {b.settingsLink}
         </Link>
@@ -49,9 +48,6 @@ function LeadsPageContent() {
 }
 
 export default function LeadsPage() {
-  return (
-    <FeatureLock feature="leads">
-      <LeadsPageContent />
-    </FeatureLock>
-  );
+  // Plan-gated by this route's layout.tsx — the page never mounts without it.
+  return <LeadsPageContent />;
 }

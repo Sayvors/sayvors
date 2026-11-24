@@ -268,6 +268,122 @@ async def test_upload_from_computer_returns_public_url(monkeypatch, tmp_path, db
     assert res["media"]["status"] == "draft"
 
 
+@pytest.mark.asyncio
+async def test_convert_reencodes_browser_undecodable_image(client):
+    """CMYK JPEGs render as an empty frame in Chrome; the server re-encodes them."""
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("CMYK", (800, 450), (90, 120, 60, 10)).save(buf, format="JPEG", quality=90)
+    r = client.post(
+        "/api/v1/media/convert",
+        files={"file": ("print.jpg", buf.getvalue(), "image/jpeg")},
+        headers={"host": "localhost"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("image/jpeg")
+    assert r.headers["x-image-size"] == "800x450"
+    check = Image.open(io.BytesIO(r.content))
+    assert check.mode == "RGB"
+
+    # An oversized scan comes back capped at the browser-friendly edge.
+    huge = io.BytesIO()
+    Image.new("RGB", (6000, 2000), (255, 0, 0)).save(huge, format="JPEG", quality=85)
+    r2 = client.post(
+        "/api/v1/media/convert",
+        files={"file": ("scan.jpg", huge.getvalue(), "image/jpeg")},
+        headers={"host": "localhost"},
+    )
+    assert r2.status_code == 200, r2.text
+    assert r2.headers["x-image-size"] == "4096x1365"
+
+    # Bytes no decoder can open fail with the merchant-facing reason.
+    r3 = client.post(
+        "/api/v1/media/convert",
+        files={"file": ("junk.jpg", b"not-an-image-at-all", "image/jpeg")},
+        headers={"host": "localhost"},
+    )
+    assert r3.status_code == 400
+    assert "not a readable image" in r3.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_upload_repairs_a_lying_extension(monkeypatch, tmp_path, client):
+    """A JPEG downloaded as .png is a good photo with a bad name: repair, don't reject."""
+    import io
+
+    from PIL import Image
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "MEDIA_DIR", str(tmp_path))
+    monkeypatch.setattr(settings, "S3_MEDIA_BUCKET", "")
+    monkeypatch.setattr(settings, "AWS_S3_BUCKET", "")
+    monkeypatch.setattr(settings, "GCS_PUBLIC_BUCKET", "")
+
+    buf = io.BytesIO()
+    Image.new("RGB", (300, 200), (200, 30, 30)).save(buf, format="JPEG", quality=85)
+    r = client.post(
+        "/api/v1/media/upload",
+        files={"file": ("download.png", buf.getvalue(), "image/png")},
+        headers={"host": "localhost"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["content_type"] == "image/jpeg"
+    assert body["image_url"].endswith(".jpg")
+
+
+@pytest.mark.asyncio
+async def test_upload_still_rejects_unknown_bytes(monkeypatch, tmp_path, client):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "MEDIA_DIR", str(tmp_path))
+    monkeypatch.setattr(settings, "S3_MEDIA_BUCKET", "")
+    monkeypatch.setattr(settings, "AWS_S3_BUCKET", "")
+    monkeypatch.setattr(settings, "GCS_PUBLIC_BUCKET", "")
+    r = client.post(
+        "/api/v1/media/upload",
+        files={"file": ("x.jpg", b"definitely not an image", "image/jpeg")},
+        headers={"host": "localhost"},
+    )
+    assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_server_side_crop_clamps_and_returns_image(client):
+    """The Pillow crop rescue honours the editor's rect and never 500s on drift."""
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (900, 600), (10, 200, 30)).save(buf, format="JPEG", quality=90)
+    r = client.post(
+        "/api/v1/media/crop",
+        files={"file": ("photo.jpg", buf.getvalue(), "image/jpeg")},
+        data={"x": "100", "y": "50", "w": "400", "h": "300"},
+        headers={"host": "localhost"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("image/jpeg")
+    check = Image.open(io.BytesIO(r.content))
+    assert check.size == (400, 300)
+
+    # A rect that drifts outside the image (dims probed before a re-encode)
+    # is clamped to a sane crop, not rejected.
+    r2 = client.post(
+        "/api/v1/media/crop",
+        files={"file": ("photo.jpg", buf.getvalue(), "image/jpeg")},
+        data={"x": "800", "y": "500", "w": "500", "h": "500"},
+        headers={"host": "localhost"},
+    )
+    assert r2.status_code == 200, r2.text
+    check2 = Image.open(io.BytesIO(r2.content))
+    assert check2.size[0] <= 100 and check2.size[1] <= 100
+
+
 def test_generic_storage_routes_upload_get_list_update_delete(monkeypatch, tmp_path, client, user_id):
     from app.config import settings
 

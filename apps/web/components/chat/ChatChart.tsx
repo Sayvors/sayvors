@@ -795,7 +795,7 @@ function HeatmapChart({ chart }: { chart: ChatChartData }) {
         {[0.15, 0.35, 0.55, 0.75, 1].map((step) => (
           <span
             key={step}
-            className="h-2 w-3 rounded-[1px] bg-deep-violet"
+            className="h-2 w-3 rounded-[8px] bg-deep-violet"
             style={{ opacity: step }}
             aria-hidden
           />
@@ -1093,7 +1093,7 @@ export default function ChatChart({ chart }: { chart: ChatChartData }) {
   const kpis = (chart.kpis ?? []).filter((kpi) => kpi.value != null);
   const hasChart = chart.type !== "kpi" && chart.rows.length > 0;
   return (
-    <figure className="overflow-hidden rounded-xl border border-ink/[0.08] bg-white p-3 text-ink shadow-sm dark:border-fog/[0.1] dark:bg-[#1d1636] dark:text-fog">
+    <figure className="overflow-hidden rounded-[8px] border border-ink/[0.08] bg-white p-3 text-ink shadow-sm dark:border-fog/[0.1] dark:bg-[#1d1636] dark:text-fog">
       <figcaption className="mb-2">
         <p className="text-[12.5px] font-bold leading-snug text-ink dark:text-fog">{chart.title}</p>
         {chart.subtitle && (

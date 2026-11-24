@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 import pytest
 
 from app.config import settings
-from app.modules.analytics.models import ReviewRequest
+from app.modules.analytics.models import ReviewCampaign, ReviewRequest
 
 
 async def _seed_emails(db, user_id: str, count: int) -> None:
@@ -28,11 +28,27 @@ async def _seed_emails(db, user_id: str, count: int) -> None:
     await db.commit()
 
 
+async def _seed_active_campaign(db, user_id: str) -> ReviewCampaign:
+    today = datetime.now(timezone.utc).date()
+    row = ReviewCampaign(
+        tenant_id=user_id,
+        name="Email quota campaign",
+        from_date=today,
+        to_date=today,
+        status="active",
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
 async def test_bulk_email_queues_only_the_remaining_headroom(
     client, db, user_id, monkeypatch
 ):
     monkeypatch.setattr(settings, "BULK_EMAIL_DAILY_LIMIT", 2)
     await _seed_emails(db, user_id, 1)
+    await _seed_active_campaign(db, user_id)
 
     response = client.post(
         "/api/v1/analytics/review-requests/bulk",
@@ -80,9 +96,10 @@ async def test_single_email_delivery_is_blocked_at_the_cap(
     assert "Daily email limit reached" in response.json()["detail"]
 
 
-async def test_whatsapp_bulk_ignores_the_email_cap(client, monkeypatch):
+async def test_whatsapp_bulk_ignores_the_email_cap(client, db, user_id, monkeypatch):
     """The email ceiling must not leak into the plan's WhatsApp allowance."""
     monkeypatch.setattr(settings, "BULK_EMAIL_DAILY_LIMIT", 0)
+    await _seed_active_campaign(db, user_id)
 
     response = client.post(
         "/api/v1/analytics/review-requests/bulk",

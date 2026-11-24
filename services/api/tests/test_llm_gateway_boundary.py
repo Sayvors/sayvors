@@ -150,3 +150,33 @@ def test_resolve_model_returns_resolved_model():
     assert resolved.model_id == "groq:oss-120b"
     assert resolved.provider == "groq"
     assert resolved.api_model
+
+
+def test_complete_can_forward_inline_images():
+    """Multimodal callers must reach providers through the metered path.
+
+    Regression: the banner vision call passed images= to complete(), but the
+    public gateway had no such parameter — every call raised TypeError and
+    silently degraded to rules-only.
+    """
+    from app.modules.llm.providers.base import LLMMessage
+
+    assert "images" in inspect.signature(gateway.complete).parameters
+    resolved = gateway.ResolvedModel(
+        model_id="openai:gpt-4o", api_model="gpt-4o", provider="openai"
+    )
+    req = gateway._build_request(
+        model_id="openai:gpt-4o",
+        resolved=resolved,
+        messages=[LLMMessage(role="user", content="look")],
+        purpose="test.images",
+        system_prompt=None,
+        temperature=0.2,
+        max_tokens=10,
+        stream=False,
+        tools=None,
+        tenant_id=None,
+        channel_id=None,
+        images=[("image/png", b"png-bytes")],
+    )
+    assert req.images == [("image/png", b"png-bytes")]

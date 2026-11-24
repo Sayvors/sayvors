@@ -34,7 +34,7 @@ export default function ProfileRatings({
   }
 
   return (
-    <section aria-label="Feedback" className="rounded-2xl border border-ink/10 bg-white p-5 shadow-sm">
+    <section aria-label="Feedback" className="rounded-[8px] border border-ink/10 bg-white p-5 shadow-sm">
       <div className="mb-1">
         <h3 className="text-[14px] font-bold text-ink">Feedback</h3>
         <p className="text-[11px] text-ink/45">Tap a star — it saves instantly.</p>

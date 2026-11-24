@@ -9,6 +9,7 @@ interface LlmStatus {
   key_source: "database" | "none" | "disabled";
   enabled: boolean;
   has_key: boolean;
+  models?: Array<{ id: string; supports_vision?: boolean | null }>;
 }
 
 interface SavedModel {
@@ -20,11 +21,14 @@ interface SavedModel {
   custom: boolean;
   tested_ok: boolean | null;
   tested_at: string | null;
+  supports_vision: boolean | null;
+  expiration_date?: string | number | null;
 }
 
 interface RemoteModel {
   id: string;
   name: string;
+  expiration_date?: string | number | null;
 }
 
 interface TestResult {
@@ -80,6 +84,28 @@ const PROVIDER_API_URL: Record<string, string> = {
   kimi: "https://api.moonshot.cn/v1",
 };
 
+function parseExpiry(value: string | number | null | undefined): Date | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "number") {
+    const ms = value > 1_000_000_000_000 ? value : value * 1000;
+    const d = new Date(ms);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function expiryLabel(value: string | number | null | undefined): { text: string; tone: "ok" | "warn" | "expired" | "none" } {
+  const d = parseExpiry(value);
+  if (!d) return { text: "No expiry date", tone: "none" };
+  const now = Date.now();
+  const days = Math.ceil((d.getTime() - now) / 86_400_000);
+  const date = d.toLocaleDateString();
+  if (days <= 0) return { text: `Expired ${date}`, tone: "expired" };
+  if (days <= 30) return { text: `Expires ${date} (${days}d)`, tone: "warn" };
+  return { text: `Expires ${date}`, tone: "ok" };
+}
+
 function ProviderLogo({ provider }: { provider: string }) {
   const [failed, setFailed] = useState(false);
   const brand = BRAND[provider] ?? { gradient: "from-deep-violet to-magenta", initial: provider.slice(0, 1).toUpperCase() };
@@ -132,6 +158,7 @@ export default function AdminLlmsPage() {
   const [addApiUrl, setAddApiUrl] = useState("");
   const [addCtx, setAddCtx] = useState("32000");
   const [addMax, setAddMax] = useState("4096");
+  const [addVision, setAddVision] = useState(false);
   const [apiCache, setApiCache] = useState<Record<string, RemoteModel[]>>({});
 
   const load = useCallback(async () => {
@@ -141,8 +168,21 @@ export default function AdminLlmsPage() {
         adminFetch<LlmStatus[]>("/api/v1/admin/llm"),
         adminFetch<SavedModel[]>("/api/v1/admin/models"),
       ]);
+      // Older API builds omit supports_vision from /admin/models; the provider
+      // list already carries it, so merge instead of losing the checkbox state.
+      const visionById = new Map<string, boolean | null>();
+      for (const p of providers) {
+        for (const m of p.models ?? []) {
+          visionById.set(m.id, m.supports_vision ?? null);
+        }
+      }
       setItems(providers);
-      setSavedModels(models);
+      setSavedModels(
+        models.map((m) => ({
+          ...m,
+          supports_vision: m.supports_vision ?? visionById.get(m.id) ?? null,
+        }))
+      );
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Load failed.");
@@ -315,6 +355,7 @@ export default function AdminLlmsPage() {
           context_window: Math.max(1024, Number(addCtx) || 32000),
           max_output: Math.max(128, Number(addMax) || 4096),
           supports_stream: true,
+          supports_vision: addVision,
         }),
       });
       setAdding(false);
@@ -344,6 +385,29 @@ export default function AdminLlmsPage() {
       });
       await load();
     } catch (e) {
+      flash(e instanceof Error ? e.message : "Toggle failed.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const toggleVision = async (provider: string, modelId: string, supportsVision: boolean) => {
+    const key = `saved:${modelId}`;
+    // Flip immediately: the round trip reload is fast but a controlled
+    // checkbox that waits for the server looks broken while it is in flight.
+    const previous = savedModels;
+    setSavedModels((prev) =>
+      prev.map((m) => (m.id === modelId ? { ...m, supports_vision: supportsVision } : m))
+    );
+    setBusy(key);
+    try {
+      await adminFetch(`/api/v1/admin/llm/${provider}/models/${encodeURIComponent(modelId)}`, {
+        method: "PUT",
+        body: JSON.stringify({ enabled: savedModels.find((m) => m.id === modelId)?.enabled ?? true, supports_vision: supportsVision }),
+      });
+      await load();
+    } catch (e) {
+      setSavedModels(previous);
       flash(e instanceof Error ? e.message : "Toggle failed.");
     } finally {
       setBusy(null);
@@ -664,9 +728,11 @@ export default function AdminLlmsPage() {
                 className="input-field disabled:opacity-50"
               >
                 <option value="">{remoteLoading ? "Loading…" : remoteModels.length > 0 ? "Select model…" : "No models yet — fetch first"}</option>
-                {remoteModels.map((m) => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
-                ))}
+                {remoteModels.map((m) => {
+                  const expiry = expiryLabel(m.expiration_date);
+                  const suffix = expiry.tone === "none" ? "" : ` — ${expiry.text}`;
+                  return <option key={m.id} value={m.id}>{m.name}{suffix}</option>;
+                })}
               </select>
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -681,6 +747,17 @@ export default function AdminLlmsPage() {
               <div>
                 <label className="mb-1 block text-[11px] font-semibold text-ink/50">Context window</label>
                 <input value={addCtx} onChange={(e) => setAddCtx(e.target.value)} inputMode="numeric" className="input-field" />
+              </div>
+              <div className="flex items-center gap-2 pt-6">
+                <label className="flex items-center gap-1.5 text-[11px] font-semibold text-ink/60">
+                  <input
+                    type="checkbox"
+                    checked={addVision}
+                    onChange={(e) => setAddVision(e.target.checked)}
+                    className="h-3.5 w-3.5 accent-deep-violet"
+                  />
+                  Supports vision
+                </label>
               </div>
               <div>
                 <label className="mb-1 block text-[11px] font-semibold text-ink/50">Max output</label>
@@ -733,6 +810,25 @@ export default function AdminLlmsPage() {
                         failed
                       </span>
                     )}
+                    {m.supports_vision ? (
+                      <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[9px] font-bold uppercase text-blue-700">
+                        vision
+                      </span>
+                    ) : null}
+                    {(() => {
+                      const expiry = expiryLabel(m.expiration_date);
+                      if (expiry.tone === "none") return null;
+                      const cls = expiry.tone === "expired"
+                        ? "bg-red-100 text-red-700"
+                        : expiry.tone === "warn"
+                          ? "bg-amber-100 text-amber-800"
+                          : "bg-ink/[0.05] text-ink/55";
+                      return (
+                        <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase ${cls}`} title={expiry.text}>
+                          {expiry.text}
+                        </span>
+                      );
+                    })()}
                     <select
                       value={m.enabled ? "enabled" : "disabled"}
                       disabled={mbusy}
@@ -743,6 +839,16 @@ export default function AdminLlmsPage() {
                       <option value="enabled">On</option>
                       <option value="disabled">Off</option>
                     </select>
+                    <label className="flex items-center gap-1 text-[10px] font-semibold text-ink/60" title="Vision-capable (supports image input)">
+                      <input
+                        type="checkbox"
+                        checked={!!m.supports_vision}
+                        disabled={mbusy}
+                        onChange={(e) => void toggleVision(m.provider, m.id, e.target.checked)}
+                        className="h-3.5 w-3.5 accent-deep-violet"
+                      />
+                      vision
+                    </label>
                     <button
                       onClick={() => void testSavedModel(m.provider, m.id)}
                       disabled={mbusy}

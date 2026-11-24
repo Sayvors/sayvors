@@ -15,7 +15,7 @@ type Phase = "idle" | "manual" | "generating" | "editing" | "publishing" | "done
 /* Team-ui button base: .ui-btn owns border, radius, hover-invert and disabled
  * states — no shadows, no hue. Fill/text per variant in the classNames below. */
 const btn =
-  "ui-btn rounded-[2px] px-3 py-1.5 text-[11px] font-semibold focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]";
+  "ui-btn rounded-[8px] px-3 py-1.5 text-[11px] font-semibold focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]";
 
 export function ReplyComposer({
   channelId,
@@ -177,7 +177,7 @@ export function ReplyComposer({
   }
 
   return (
-    <div className="mt-3 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3">
+    <div className="mt-3 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3">
       <div className="mb-2 flex items-center justify-between">
         <p className="text-[11px] font-semibold text-[var(--ui-ink)]">AI draft — review before publishing</p>
         {dirty && <span className="text-[10px] font-medium text-[var(--ui-ink-2)]">unsaved edits</span>}
@@ -232,7 +232,7 @@ export function ReplyComposer({
         <button
           onClick={discard}
           disabled={busy}
-          className="ui-btn-danger rounded-[2px] px-3 py-1.5 text-[11px] font-semibold focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] disabled:cursor-not-allowed disabled:opacity-45"
+          className="ui-btn-danger rounded-[8px] px-3 py-1.5 text-[11px] font-semibold focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] disabled:cursor-not-allowed disabled:opacity-45"
         >
           Discard
         </button>

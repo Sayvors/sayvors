@@ -184,13 +184,13 @@ export default function CreditLedgerPage() {
   if (!billing) {
     return (
       <div className="p-6">
-        <div className="rounded-2xl border border-coral/30 bg-coral/5 p-6 text-center">
+        <div className="rounded-[8px] border border-coral/30 bg-coral/5 p-6 text-center">
           <p className="text-[14px] font-bold text-ink dark:text-fog">{error ?? c.loadFailed}</p>
           <p className="mt-1 text-[12px] text-ink/45 dark:text-fog/45">{c.couldNot}</p>
           <button
             type="button"
             onClick={() => setReloadKey((k) => k + 1)}
-            className="mt-4 rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-semibold text-white"
+            className="mt-4 rounded-[8px] bg-deep-violet px-4 py-2 text-[12px] font-semibold text-white"
           >
             {c.tryAgain}
           </button>
@@ -227,7 +227,7 @@ export default function CreditLedgerPage() {
           { label: c.held, value: billing && billing.held_cents > 0 ? fmtMoney(billing.held_cents, locale) : "—", note: fill(c.holds, { count: billing?.holds.length ?? 0 }), tone: "text-deep-violet dark:text-violet-soft" },
           { label: c.committed, value: fmtMoney(billing?.total_cents ?? 0, locale), note: c.heldNote, tone: "text-ink dark:text-fog" },
         ].map((c) => (
-          <div key={c.label} className="rounded-2xl border border-ink/[0.06] bg-white p-5 shadow-sm dark:border-fog/[0.06] dark:bg-ink">
+          <div key={c.label} className="rounded-[8px] border border-ink/[0.06] bg-white p-5 shadow-sm dark:border-fog/[0.06] dark:bg-ink">
             <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-ink/40 dark:text-fog/40">{c.label}</p>
             <p className={`mt-2 text-[26px] font-bold tabular-nums leading-none ${c.tone}`}>{c.value}</p>
             <p className="mt-1.5 text-[11px] text-ink/45 dark:text-fog/45">{c.note}</p>
@@ -236,7 +236,7 @@ export default function CreditLedgerPage() {
       </section>
 
       {/* Plan + status */}
-      <section className="rounded-2xl border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.06] dark:bg-ink">
+      <section className="rounded-[8px] border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.06] dark:bg-ink">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-ink/40 dark:text-fog/40">{c.plan}</p>
@@ -250,7 +250,7 @@ export default function CreditLedgerPage() {
           )}
           <Link
             href="/dashboard/billing"
-            className="inline-flex items-center gap-1.5 rounded-[14px] bg-deep-violet px-4 py-2 text-[12px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90 active:translate-y-px"
+            className="inline-flex items-center gap-1.5 rounded-[8px] bg-deep-violet px-4 py-2 text-[12px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90 active:translate-y-px"
           >
             {c.manageMethods}
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden><path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg>
@@ -260,7 +260,7 @@ export default function CreditLedgerPage() {
 
       {/* Pending holds */}
       {billing && billing.holds.length > 0 && (
-        <section className="rounded-2xl border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.06] dark:bg-ink">
+        <section className="rounded-[8px] border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.06] dark:bg-ink">
           <h2 className="text-[15px] font-bold text-ink dark:text-fog">{fill(c.holdsTitle, { count: billing.holds.length })}</h2>
           <p className="mt-0.5 text-[12px] text-ink/45 dark:text-fog/45">{c.holdsDesc}</p>
           <div className="mt-4 overflow-x-auto">
@@ -287,7 +287,7 @@ export default function CreditLedgerPage() {
       )}
 
       {/* Ledger history */}
-      <section className="rounded-2xl border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.06] dark:bg-ink">
+      <section className="rounded-[8px] border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.06] dark:bg-ink">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h2 className="text-[15px] font-bold text-ink dark:text-fog">{c.history}</h2>
@@ -306,7 +306,7 @@ export default function CreditLedgerPage() {
                 setOffset(0);
               }}
               aria-label={c.sortAria}
-              className="h-9 flex-1 rounded-xl border border-ink/[0.08] bg-white px-2.5 text-[12px] font-semibold text-ink outline-none dark:border-fog/[0.1] dark:bg-ink dark:text-fog sm:flex-none"
+              className="h-9 flex-1 rounded-[8px] border border-ink/[0.08] bg-white px-2.5 text-[12px] font-semibold text-ink outline-none dark:border-fog/[0.1] dark:bg-ink dark:text-fog sm:flex-none"
             >
               {SORT_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>{o.label}</option>
@@ -316,7 +316,7 @@ export default function CreditLedgerPage() {
         </div>
 
         {error && (
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-coral/30 bg-coral/5 px-3 py-2">
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-[8px] border border-coral/30 bg-coral/5 px-3 py-2">
             <p className="text-[12px] font-semibold text-coral">{c.pageError}</p>
             <button
               type="button"
@@ -329,7 +329,7 @@ export default function CreditLedgerPage() {
         )}
 
         {billing.ledger.length === 0 ? (
-          <div className="mt-4 rounded-2xl border border-dashed border-ink/[0.1] p-8 text-center dark:border-fog/[0.1]">
+          <div className="mt-4 rounded-[8px] border border-dashed border-ink/[0.1] p-8 text-center dark:border-fog/[0.1]">
             <p className="text-[13px] font-semibold text-ink/70 dark:text-fog/70">
               {total > 0 ? c.emptyPage : c.emptyAll}
             </p>
@@ -385,7 +385,7 @@ export default function CreditLedgerPage() {
             {billing.ledger.map((e: BillingLedgerEntry) => (
               <div
                 key={e.id}
-                className="rounded-xl border border-ink/[0.06] bg-white p-3 dark:border-fog/[0.08] dark:bg-ink"
+                className="rounded-[8px] border border-ink/[0.06] bg-white p-3 dark:border-fog/[0.08] dark:bg-ink"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -424,7 +424,7 @@ export default function CreditLedgerPage() {
                 type="button"
                 onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
                 disabled={offset === 0 || pageLoading}
-                className="rounded-xl border border-ink/[0.08] bg-white px-3 py-1.5 text-[12px] font-semibold text-ink transition hover:border-deep-violet/30 disabled:cursor-not-allowed disabled:opacity-40 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+                className="rounded-[8px] border border-ink/[0.08] bg-white px-3 py-1.5 text-[12px] font-semibold text-ink transition hover:border-deep-violet/30 disabled:cursor-not-allowed disabled:opacity-40 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
               >
                 {c.previous}
               </button>
@@ -435,7 +435,7 @@ export default function CreditLedgerPage() {
                 type="button"
                 onClick={() => setOffset(offset + PAGE_SIZE)}
                 disabled={offset + PAGE_SIZE >= total || pageLoading}
-                className="rounded-xl border border-ink/[0.08] bg-white px-3 py-1.5 text-[12px] font-semibold text-ink transition hover:border-deep-violet/30 disabled:cursor-not-allowed disabled:opacity-40 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+                className="rounded-[8px] border border-ink/[0.08] bg-white px-3 py-1.5 text-[12px] font-semibold text-ink transition hover:border-deep-violet/30 disabled:cursor-not-allowed disabled:opacity-40 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
               >
                 {c.next}
               </button>

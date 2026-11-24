@@ -12,6 +12,7 @@ most recent reviews and labelled as such in the UI.
 """
 from __future__ import annotations
 
+import json
 import logging
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -24,8 +25,7 @@ from ..analytics.models import LocationDailyMetric, ReviewInsight
 from ..analytics.service import get_overview
 from ..analytics.staff_mentions import listing_id_for_channel, staff_summary
 from ..channels.models import BusinessService, Channel, VerificationRecord
-from . import places
-from . import service
+from . import boq, outscraper, places, service
 from .models import BenchmarkSnapshot
 
 logger = logging.getLogger(__name__)
@@ -48,6 +48,10 @@ WINDOW_DAYS = {
     "reviews_last_month": 30,
     "reviews_last_year": 365,
 }
+# Cohort tags come from merchant-supplied channel metadata, so they are
+# bounded before they reach the comparison page's filter chips.
+MAX_TAGS = 5
+MAX_TAG_LENGTH = 30
 TEXT_FACT_KEYS = (
     "employee_mentions", "working_hard_mentions", "menu_price_mentions",
     "parking_praised", "parking_criticised", "parking_mentions",
@@ -140,6 +144,32 @@ def _blank_facts() -> dict[str, Any]:
     }
 
 
+def _channel_tags(channel: Channel) -> list[str]:
+    """Cohort tags of an own location, from its channel metadata.
+
+    Metadata is merchant-supplied free-text JSON, so the parse is defensive
+    (malformed JSON means no tags, not a failed comparison) and the values are
+    normalized before they drive the UI's filter chips: trimmed, lowercased,
+    deduplicated preserving first-seen order, capped at MAX_TAGS tags of at
+    most MAX_TAG_LENGTH characters. Non-string entries are dropped.
+    """
+    try:
+        meta = json.loads(channel.metadata_json or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return []
+    raw = meta.get("tags") if isinstance(meta, dict) else None
+    if not isinstance(raw, list):
+        return []
+    tags = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        tag = item.strip().lower()[:MAX_TAG_LENGTH]
+        if tag:
+            tags.append(tag)
+    return list(dict.fromkeys(tags))[:MAX_TAGS]
+
+
 def _subject(raw: str, kind: str, ident: str, *, available: bool,
              reason: str | None = None, **fields: Any) -> dict[str, Any]:
     return {
@@ -152,6 +182,7 @@ def _subject(raw: str, kind: str, ident: str, *, available: bool,
         "address": None,
         "verified": False,
         "data_source": "sayvors_analytics" if kind == "own" else "google_places",
+        "tags": [],
         "metrics": _blank_metrics(),
         "facts": _blank_facts(),
         "notes": [],
@@ -281,11 +312,82 @@ async def _baseline_snapshot(
     ).scalar_one_or_none()
 
 
+# Read handlers never call the free provider live: it is a paged scrape, not a
+# page-load API. The worker / explicit refresh fills the cache.
+CACHE_ONLY_SOURCES = {"boq", "gosom"}
+
+
+def can_fetch_live(source: str) -> bool:
+    """Whether a read handler can call the selected provider safely.
+
+    On staging the default row may still say ``google_places`` without a key.
+    Treating that as a live provider is what made saved-place details return
+    503 and cards stick on "not ready". A source with no credentials serves the
+    cache instead.
+    """
+    source = str(source or "").strip()
+    if source in CACHE_ONLY_SOURCES:
+        return False
+    if source == "outscraper":
+        return bool(outscraper.configured())
+    if source == "google_places":
+        return bool(places.configured())
+    return False
+
+
+async def _provider_details(
+    source: str,
+    place_id: str,
+    *,
+    reviews_limit: int,
+    maps_url: str | None = None,
+    cutoff: int | None = None,
+    review_days: int | None = None,
+) -> dict[str, Any]:
+    """Provider-routed place details with an optional Places fallback.
+
+    ``boq`` composes Google's public place-detail and review endpoints. Paid
+    providers stay available when explicitly configured. A primary-provider
+    failure falls back to Places only when a key exists; otherwise the original
+    error is re-raised instead of making a doomed HTTP request.
+    """
+    source = str(source or "").strip()
+    last_error: Exception | None = None
+    if source in {"boq", "gosom"}:
+        try:
+            return await boq.get_place(
+                place_id, reviews_limit=reviews_limit, maps_url=maps_url,
+                days=review_days,
+            )
+        except boq.BoqError as exc:
+            logger.warning("Free Google details failed for %s: %s", place_id, exc)
+            last_error = exc
+    elif source == "outscraper":
+        try:
+            return await outscraper.get_place(
+                place_id, reviews_limit=10, cutoff=cutoff
+            )
+        except outscraper.OutscraperError as exc:
+            logger.warning("outscraper details failed for %s: %s", place_id, exc)
+            last_error = exc
+    if not places.configured():
+        if last_error is not None:
+            raise last_error
+        raise places.PlacesError("Google Places is not configured", 503)
+    try:
+        return await places.get_place(place_id, reviews_limit=10, cutoff=cutoff)
+    except places.PlacesError:
+        if last_error is not None:
+            raise last_error
+        raise
+
+
 async def _saved_subject(db: AsyncSession, tenant_id: str, raw: str,
                          place_id: str, *,
                          days: int | None = None,
                          max_age_hours: int | None = None,
-                         cache_enabled: bool = True) -> dict[str, Any]:
+                         cache_enabled: bool = True,
+                         source: str = "google_places") -> dict[str, Any]:
     saved = await service.get_saved(db, tenant_id, place_id)
     if saved is None:
         return _subject(raw, "saved", place_id, available=False,
@@ -301,17 +403,14 @@ async def _saved_subject(db: AsyncSession, tenant_id: str, raw: str,
     if cached_at and cached_at.tzinfo is None:
         cached_at = cached_at.replace(tzinfo=timezone.utc)
 
-    # The period views serve from the cache when it is fresh: a comparison
-    # page that hits Places six times a load just because it can is charging
-    # the merchant for page views. Live (days=None) always calls Google, so
-    # the "Live" button keeps its meaning; the cadence defaults to the admin
-    # configured scrape interval.
+    # Period views serve from the cache when it is fresh; Live uses a live paid
+    # provider when one exists. The free provider is always cache-only because
+    # paging reviews inside a read handler would hold the DB session for seconds.
     use_cache = bool(
-        days is not None
-        and cache_enabled
-        and max_age_hours
-        and cached_at
-        and now - cached_at <= timedelta(hours=max_age_hours)
+        not can_fetch_live(source) or (
+            cache_enabled and days is not None and max_age_hours
+            and cached_at and now - cached_at <= timedelta(hours=max_age_hours)
+        )
     )
     live_failed = False
     if use_cache:
@@ -324,10 +423,16 @@ async def _saved_subject(db: AsyncSession, tenant_id: str, raw: str,
             "reviews": saved.reviews,
         }
     else:
+        cutoff_ts = int(now.timestamp()) - 7 * 24 * 3600
         try:
-            details = await places.get_place(saved.place_id)
-        except places.PlacesError as exc:
-            logger.warning("Comparison details failed for place %s: %s", saved.place_id, exc)
+            details = await _provider_details(
+                source, saved.place_id,
+                reviews_limit=500, maps_url=saved.maps_url, cutoff=cutoff_ts,
+            )
+        except (places.PlacesError, boq.BoqError, outscraper.OutscraperError) as exc:
+            logger.warning(
+                "Comparison details failed for place %s: %s", saved.place_id, exc
+            )
             details = {}
             live_failed = True
     if not use_cache and not live_failed and cache_enabled:
@@ -612,6 +717,7 @@ async def _own_subject(db: AsyncSession, tenant_id: str, raw: str,
         name=channel.display_name,
         address=None,
         verified=verified,
+        tags=_channel_tags(channel),
         metrics=metrics, facts=facts,
         notes=notes,
     )
@@ -642,6 +748,7 @@ async def compare_subjects(db: AsyncSession, tenant_id: str,
                     days=days,
                     max_age_hours=config.refresh_hours,
                     cache_enabled=config.place_cache_enabled,
+                    source=config.source,
                 ))
             else:
                 out.append(await _own_subject(db, tenant_id, raw, ident, days=days))
@@ -789,47 +896,66 @@ def _sentiment_label(rating: Any) -> str:
 
 
 async def _saved_reviews(
-    db: AsyncSession, tenant_id: str, place_id: str, *, limit: int
-) -> tuple[str | None, list[dict[str, Any]]]:
+    db: AsyncSession, tenant_id: str, place_id: str, *, limit: int,
+    source: str = "google_places",
+) -> tuple[str | None, list[dict[str, Any]], dict[str, Any]]:
     """Newest cached review sample for a saved place.
 
     The cached sample wins so the reviews table costs nothing per page load;
-    a live Places call fills it when empty (bounded, and honest).
+    a live provider call fills it when empty (bounded, and honest).
     """
     saved = await service.get_saved(db, tenant_id, place_id)
     if saved is None:
-        return None, []
+        return None, [], {"total": None, "sampled": 0, "answered": 0, "unanswered": 0, "response_rate": None}
     name = saved.name or saved.label
     reviews = list(saved.reviews or [])
-    if not reviews:
+    # The free provider never scrapes inside a read handler. The worker /
+    # explicit refresh fills the cache; paid providers may fill an empty sample.
+    if not reviews and can_fetch_live(source):
+        cutoff_ts = int(datetime.now(timezone.utc).timestamp()) - 7 * 24 * 3600
         try:
-            details = await places.get_place(saved.place_id)
-        except places.PlacesError:
+            details = await _provider_details(
+                source, saved.place_id,
+                reviews_limit=50, maps_url=saved.maps_url, cutoff=cutoff_ts,
+            )
+        except (places.PlacesError, boq.BoqError, outscraper.OutscraperError):
             details = {}
         reviews = list(details.get("reviews") or [])
+    sample = reviews[:limit]
     out = []
-    for review in reviews[:limit]:
+    for review in sample:
         rating = review.get("rating")
         published = _publish_time(review.get("publish_time") or review.get("created_at"))
+        answer = str(review.get("owner_answer") or "").strip()
+        answer_time = _publish_time(review.get("owner_answer_time"))
         out.append({
             "rating": rating,
             "time": published.isoformat() if published else None,
             "sentiment": _sentiment_label(rating),
             "text": str(review.get("text") or "")[:REVIEW_TEXT_MAX],
-            # Reviewer attribution is part of the Places reviews payload — no
-            # extra API call. Cached rows written before this field existed
-            # simply have no author, and the UI falls back to initials.
             "author": review.get("author"),
             "author_photo": review.get("author_photo"),
+            "answered": bool(answer),
+            "owner_answer": answer[:REVIEW_TEXT_MAX] or None,
+            "owner_answer_time": answer_time.isoformat() if answer_time else None,
             # Places-sourced reviews carry no complaint themes.
             "problems": [],
         })
-    return name, out
+    answered = sum(1 for review in out if review["answered"])
+    sampled = len(out)
+    summary = {
+        "total": saved.review_count if saved.review_count is not None else len(reviews),
+        "sampled": sampled,
+        "answered": answered,
+        "unanswered": sampled - answered,
+        "response_rate": round(answered / sampled * 100, 1) if sampled else None,
+    }
+    return name, out, summary
 
 
 async def _own_reviews(
     db: AsyncSession, tenant_id: str, channel_id: str, *, limit: int
-) -> tuple[str | None, list[dict[str, Any]]]:
+) -> tuple[str | None, list[dict[str, Any]], dict[str, Any]]:
     """Newest stored reviews of one of the tenant's own locations, from analytics."""
     channel = (
         await db.execute(
@@ -837,7 +963,7 @@ async def _own_reviews(
         )
     ).scalar_one_or_none()
     if channel is None:
-        return None, []
+        return None, [], {"total": None, "sampled": 0, "answered": 0, "unanswered": 0, "response_rate": None}
     bucket = func.coalesce(ReviewInsight.review_updated_at, ReviewInsight.created_at)
     rows = (
         await db.execute(
@@ -848,6 +974,7 @@ async def _own_reviews(
                 ReviewInsight.problems,
                 ReviewInsight.reviewer_name,
                 ReviewInsight.reviewer_photo_url,
+                ReviewInsight.replied,
                 bucket,
             ).where(
                 ReviewInsight.user_id == tenant_id,
@@ -857,7 +984,7 @@ async def _own_reviews(
         )
     ).all()
     out = []
-    for rating, text, sentiment, problems, reviewer, photo, published in rows:
+    for rating, text, sentiment, problems, reviewer, photo, replied, published in rows:
         stored = (
             sentiment if sentiment in ("positive", "neutral", "negative")
             else None
@@ -868,14 +995,35 @@ async def _own_reviews(
             # Prefer the team-classified sentiment for our own locations.
             "sentiment": stored or _sentiment_label(rating),
             "text": str(text or "")[:REVIEW_TEXT_MAX],
-            # Reviewer name/photo are already stored on the review — free to show.
             "author": str(reviewer)[:255] if reviewer else None,
             "author_photo": str(photo)[:1024] if photo else None,
-            # Genuine complaint themes from the review-engine enrichment — the
-            # "Complaining" row groups reviews that carry problems.
+            "answered": bool(replied),
+            "owner_answer": None,
+            "owner_answer_time": None,
             "problems": [str(item)[:120] for item in (problems or [])][:10],
         })
-    return channel.display_name, out
+    totals = (
+        await db.execute(
+            select(
+                func.count(),
+                func.sum(case((ReviewInsight.replied.is_(True), 1), else_=0)),
+            ).where(
+                ReviewInsight.user_id == tenant_id,
+                ReviewInsight.channel_id == channel_id,
+                ReviewInsight.removed_at.is_(None),
+            )
+        )
+    ).one()
+    total = int(totals[0] or 0)
+    answered = int(totals[1] or 0)
+    summary = {
+        "total": total,
+        "sampled": len(out),
+        "answered": answered,
+        "unanswered": total - answered,
+        "response_rate": round(answered / total * 100, 1) if total else None,
+    }
+    return channel.display_name, out, summary
 
 
 async def reviews_for(
@@ -893,18 +1041,22 @@ async def reviews_for(
     if not raw_subjects or len(raw_subjects) > MAX_SUBJECTS:
         raise CompareError(f"Ask for reviews of one to {MAX_SUBJECTS} subjects.")
     limit = max(1, min(int(limit), MAX_REVIEWS_PER_SUBJECT))
+    config = await service.get_config(db)
     out = []
     for raw in raw_subjects:
+        summary = {"total": None, "sampled": 0, "answered": 0, "unanswered": 0, "response_rate": None}
         try:
             kind, ident = parse_subject(raw)
             if kind == "saved":
-                name, reviews = await _saved_reviews(db, tenant_id, ident, limit=limit)
+                name, reviews, summary = await _saved_reviews(
+                    db, tenant_id, ident, limit=limit, source=config.source
+                )
             else:
-                name, reviews = await _own_reviews(db, tenant_id, ident, limit=limit)
+                name, reviews, summary = await _own_reviews(db, tenant_id, ident, limit=limit)
         except CompareError:
             name, reviews = None, []
         except Exception:
             logger.exception("Reviews failed for subject: %s", raw)
             name, reviews = None, []
-        out.append({"key": str(raw), "name": name, "reviews": reviews})
+        out.append({"key": str(raw), "name": name, "reviews": reviews, "summary": summary})
     return {"subjects": out}

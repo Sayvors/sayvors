@@ -9,12 +9,15 @@ from app.modules.llm.providers.gemini import GeminiProvider
 def _req():
     from types import SimpleNamespace
 
+    # Mirrors LLMRequest, whose `images` always exists (empty by default): the
+    # providers read it to forward inline images.
     return SimpleNamespace(
         messages=[SimpleNamespace(role="user", content="hi")],
         system_prompt="",
         temperature=0.2,
         max_tokens=50,
         tools=None,
+        images=[],
         model="gpt-4o-mini",
     )
 

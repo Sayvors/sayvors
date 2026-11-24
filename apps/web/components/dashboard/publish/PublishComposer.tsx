@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PlatformMark from "@/components/channels/PlatformMark";
 import { INK, INK2 } from "@/components/channels/instagram/ui";
-import { apiFetch } from "@/lib/api-rag";
+import { apiFetch, apiFetchBlob } from "@/lib/api-rag";
 import { externalAssetIdFor } from "@/lib/publish-targets";
 import { checkWindow, minLocalInput } from "@/lib/publish-schedule";
 import {
@@ -13,8 +13,10 @@ import {
   wizardSteps,
   type WizardStepId,
 } from "@/lib/publish-wizard";
-import { cropSignature, exportCroppedImage } from "@/lib/crop-image";
+import { cropSignature, cropSourceRect, exportCroppedImage } from "@/lib/crop-image";
+import { inspectImageFile, probeImageUrl } from "@/lib/media-validation";
 import MediaSink from "./MediaSink";
+import GoogleCoverSection from "./GoogleCoverSection";
 import DestinationSelector from "./DestinationSelector";
 import DestinationPreview from "./DestinationPreview";
 import ConfirmModal from "./ConfirmModal";
@@ -134,7 +136,7 @@ function buildVideoHtml(opts: { business: string; primary: string; accent: strin
 }
 
 function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
-  const { t, locale } = useI18n();
+  const { t, locale, dir } = useI18n();
   const pc = t.publish.composer;
   const businessOptions = useMemo(() => {
     const names = new Set<string>();
@@ -195,17 +197,17 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
           <div>
             <span className={`block text-[10px] ${INK2} mb-1`}>{pc.aiPrimary}</span>
             <input type="color" value={primary} onChange={(e) => setPrimary(e.target.value)}
-              className="h-9 w-full cursor-pointer rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
+              className="h-9 w-full cursor-pointer rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
           </div>
           <div>
             <span className={`block text-[10px] ${INK2} mb-1`}>{pc.aiAccent}</span>
             <input type="color" value={accent} onChange={(e) => setAccent(e.target.value)}
-              className="h-9 w-full cursor-pointer rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
+              className="h-9 w-full cursor-pointer rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
           </div>
           <div>
             <span className={`block text-[10px] ${INK2} mb-1`}>{pc.aiBg}</span>
             <input type="color" value={bg} onChange={(e) => setBg(e.target.value)}
-              className="h-9 w-full cursor-pointer rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
+              className="h-9 w-full cursor-pointer rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
           </div>
         </div>
         <div className="mt-2 flex flex-wrap gap-1.5">
@@ -228,7 +230,7 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
       </div>
 
       {/* file name */}
-      <div className={`rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] px-3 py-2 text-[11px] ${INK2}`}>
+      <div className={`rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] px-3 py-2 text-[11px] ${INK2}`}>
         {fill(pc.aiFile, { name: fileName })}
       </div>
 
@@ -244,10 +246,10 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
       </div>
 
       {/* video player / preview */}
-      <div className="overflow-hidden rounded-[24px] border border-[var(--ui-line)] bg-[var(--ui-sunken)]">
+      <div className="overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)]">
         <div className="flex items-center gap-2 border-b border-[var(--ui-line)] px-3 py-2">
           <span className={`text-[11px] font-bold uppercase tracking-widest ${INK2}`}>{pc.aiPreview}</span>
-          <span className={`ml-auto text-[10px] ${INK2}`}>{generated ? pc.aiReady : pc.aiEmpty}</span>
+          <span className={`me-auto text-[10px] ${INK2}`}>{generated ? pc.aiReady : pc.aiEmpty}</span>
         </div>
         <div className="relative" style={{ aspectRatio: "16 / 9" }}>
           {html ? (
@@ -287,10 +289,167 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
         type="button"
         disabled
         title={fill(pc.aiPublishSoonTitle, { name: business })}
-        className="w-full rounded-[16px] border border-dashed border-[var(--ui-line-strong)] bg-[var(--ui-sunken)] px-3 py-2 text-[12px] font-semibold text-[var(--ui-ink-2)] opacity-60 cursor-not-allowed"
+        className="w-full rounded-[8px] border border-dashed border-[var(--ui-line-strong)] bg-[var(--ui-sunken)] px-3 py-2 text-[12px] font-semibold text-[var(--ui-ink-2)] opacity-60 cursor-not-allowed"
       >
         {pc.aiPublishSoon}
       </button>
+    </div>
+  );
+}
+
+/** AI suitability verdict for a promotion/banner photo. */
+function BannerCheckCard({
+  check,
+  onRetry,
+  onReplace,
+  onRun,
+  required = false,
+}: {
+  check: {
+    state: "idle" | "loading" | "done" | "error";
+    error?: string;
+    result?: {
+      suitable?: string;
+      confidence?: number;
+      summary?: string;
+      reasons?: string[];
+      checks?: { key: string; label: string; pass: boolean; severity: string; note: string }[];
+      ai_verdict?: { suitable?: string; confidence?: number; reasons?: string[] } | null;
+      decision?: { suitable?: string; confidence?: number; summary?: string; reasons?: string[] } | null;
+    };
+  };
+  onRetry: () => void;
+  /** Opens the file picker directly — the fix for every failed check. */
+  onReplace: () => void;
+  /** Starts the queued AI analysis. */
+  onRun: () => void;
+  /** When true, an idle state is surfaced as a required step, not hidden. */
+  required?: boolean;
+}) {
+  const { t } = useI18n();
+  const pc = t.publish.photoCheck;
+  if (check.state === "idle") {
+    if (!required) return null;
+    return (
+      <div className="mt-3 rounded-[8px] border border-deep-violet/25 bg-deep-violet/[0.04] px-3.5 py-3">
+        <p className="text-[12px] font-bold text-deep-violet dark:text-fog">
+          {pc.required}
+        </p>
+        <p className="mt-1 text-[11px] leading-relaxed text-ink/60 dark:text-fog/60">
+          {pc.requiredDesc}
+        </p>
+        <button
+          type="button"
+          onClick={onRun}
+          className="clay-btn-primary mt-2.5 px-4 py-2 text-[11px] font-bold focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+        >
+          {pc.checkPhoto}
+        </button>
+        <div className="mt-3 border-t border-deep-violet/15 pt-2.5">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-deep-violet/70 dark:text-fog/70">{pc.expectTitle}</p>
+          <ul className="mt-1.5 space-y-1">
+            {pc.expectTips.map((tip: string, i: number) => (
+              <li key={i} className="text-[10.5px] leading-snug text-ink/60 dark:text-fog/60">• {tip}</li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    );
+  }
+  if (check.state === "loading") {
+    return (
+      <div className="mt-3 flex items-center gap-2.5 rounded-[8px] border border-deep-violet/20 bg-deep-violet/[0.04] px-3.5 py-2.5 text-[11.5px] font-semibold text-deep-violet dark:border-fog/10 dark:bg-fog/[0.04] dark:text-fog">
+        <svg className="h-4 w-4 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+          <path d="M12 3a9 9 0 1 0 9 9" strokeLinecap="round" />
+        </svg>
+        {pc.checking}
+      </div>
+    );
+  }
+  if (check.state === "error") {
+    return (
+      <div className="mt-3 flex items-start justify-between gap-2 rounded-[8px] border border-red-500/30 bg-red-500/[0.06] px-3.5 py-2.5">
+        <span className="text-[11.5px] font-semibold text-red-700 dark:text-red-400">
+          {check.error || pc.couldNotRun}
+        </span>
+        <button type="button" onClick={onRetry} className="shrink-0 text-[11px] font-bold text-red-700 underline dark:text-red-400">
+          {pc.retry}
+        </button>
+      </div>
+    );
+  }
+
+  const result = check.result ?? {};
+  const suitable = result.suitable ?? "maybe";
+  const confidence = Math.max(0, Math.min(100, Number(result.confidence ?? 0)));
+  const tone =
+    suitable === "yes"
+      ? { border: "border-emerald-500/30", bg: "bg-emerald-500/[0.07]", text: "text-emerald-700 dark:text-emerald-400" }
+      : suitable === "no"
+        ? { border: "border-red-500/30", bg: "bg-red-500/[0.06]", text: "text-red-700 dark:text-red-400" }
+        : { border: "border-amber-500/30", bg: "bg-amber-500/10", text: "text-amber-800 dark:text-amber-300" };
+  const label = suitable === "yes" ? pc.good : suitable === "no" ? pc.bad : pc.maybe;
+  const aiLooked = Boolean(result.ai_verdict);
+  const reasons = (result.reasons && result.reasons.length > 0)
+    ? result.reasons
+    : (result.ai_verdict?.reasons?.length
+      ? result.ai_verdict.reasons
+      : (result.checks ?? []).filter((ck) => !ck.pass).map((ck) => (ck.note ? `${ck.label}: ${ck.note}` : ck.label)));
+
+  return (
+    <div className={`mt-3 rounded-[8px] border ${tone.border} ${tone.bg} px-3.5 py-3`}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4 shrink-0" aria-hidden>
+            <path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4z" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          <span className={`text-[11.5px] font-bold ${tone.text}`}>{label}</span>
+        </div>
+        <span className={`text-[11.5px] font-bold ${tone.text}`}>{pc.confident.replace("{n}", String(confidence))}</span>
+      </div>
+      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+        <div
+          className="h-full rounded-full bg-current transition-all"
+          style={{ width: `${Math.max(2, Math.min(100, confidence))}%`, color: "currentColor" }}
+        />
+      </div>
+      <p className={`mt-2 text-[11px] leading-relaxed ${tone.text}`}>
+        {result.summary ?? pc.noSummary}
+      </p>
+      <p className={`mt-1 text-[10px] font-bold uppercase tracking-wide ${tone.text} opacity-70`}>
+        {aiLooked ? pc.checkedByAi : pc.checkedByRules}
+      </p>
+      {reasons.length > 0 ? (
+        <ul className="mt-2 space-y-1 border-t border-current/10 pt-2">
+          {reasons.slice(0, 5).map((reason, i) => (
+            <li key={i} className={`text-[10.5px] leading-snug ${tone.text} opacity-80`}>
+              • {reason}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {suitable === "no" && (
+        <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-current/10 pt-2.5">
+          <span className={`text-[10.5px] font-semibold ${tone.text} opacity-80`}>
+            {pc.rejectOrReplace}
+          </span>
+          <button
+            type="button"
+            onClick={onReplace}
+            className="shrink-0 rounded-[8px] bg-white px-3 py-1.5 text-[11px] font-bold text-deep-violet shadow-[0_8px_16px_-10px_rgba(61,29,110,0.55)] transition duration-200 hover:bg-fog/60 active:translate-y-[2px] active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] dark:bg-[var(--ui-surface)] dark:text-fog"
+          >
+            {pc.replacePhoto}
+          </button>
+        </div>
+      )}
+      <div className="mt-3 border-t border-current/10 pt-2.5">
+        <p className={`text-[10px] font-bold uppercase tracking-wide ${tone.text} opacity-70`}>{pc.expectTitle}</p>
+        <ul className="mt-1.5 space-y-1">
+          {pc.expectTips.map((tip: string, i: number) => (
+            <li key={i} className={`text-[10.5px] leading-snug ${tone.text} opacity-80`}>• {tip}</li>
+          ))}
+        </ul>
+      </div>
     </div>
   );
 }
@@ -417,7 +576,7 @@ export default function PublishComposer({
   // The step id is derived, never a raw number: the message step disappears
   // for image-only formats, so "When" is step 3 or 4 depending on selection.
   const [postStep, setPostStep] = useState<WizardStepId>("media");
-  const { t: tr, locale } = useI18n();
+  const { t: tr, locale, dir } = useI18n();
   const pc: ComposerDict = tr.publish.composer;
   const methods = tr.publish.methods as MethodDict;
   const dateLocale = locale === "ar" ? "ar-SA" : "en-US";
@@ -473,6 +632,108 @@ export default function PublishComposer({
   };
 
   const bannerSelected = selectedTargets.some((t) => chosenFor(t).includes("banner"));
+
+  // One-click recovery: close the confirm dialog (if open), land on the media
+  // step and open the file picker. Every "this photo can't be published"
+  // path funnels here, so the merchant never walks back through the wizard.
+  const [replaceSignal, setReplaceSignal] = useState(0);
+  const requestPhotoReplace = () => {
+    setConfirmOpen(false);
+    setPostStep("media");
+    setReplaceSignal((n) => n + 1);
+  };
+
+  // AI suitability check for the promotion/banner photo. Publication of a
+  // banner REQUIRES a completed check, so the merchant runs it explicitly
+  // (media step or the banner crop modal) and the result is reused. The
+  // analysis runs on the realtime job lane — the same queue that drives
+  // publishing — because publication waits on it; the composer polls the
+  // check row until it is done or failed.
+  const [bannerCheck, setBannerCheck] = useState<{
+    state: "idle" | "loading" | "done" | "error";
+    error?: string;
+    result?: {
+      suitable?: string;
+      confidence?: number;
+      summary?: string;
+      checks?: { key: string; label: string; pass: boolean; severity: string; note: string }[];
+      reasons?: string[];
+      ai_verdict?: { suitable?: string; confidence?: number; reasons?: string[] } | null;
+      decision?: { suitable?: string; confidence?: number; summary?: string; reasons?: string[] } | null;
+    };
+  }>({ state: "idle" });
+
+  // A new photo invalidates the previous check — the gate closes again.
+  useEffect(() => {
+    setBannerCheck({ state: "idle" });
+  }, [media?.url, bannerSelected]);
+
+  const runBannerCheck = useCallback(async () => {
+    if (!media) {
+      setBannerCheck({ state: "error" });
+      return;
+    }
+    setBannerCheck({ state: "loading" });
+    try {
+      const form = new FormData();
+      const localFile = media.file && media.file.size > 0 ? media.file : null;
+      const remoteUrl =
+        media.url && !media.url.startsWith("blob:") && /^https?:\/\//.test(media.url)
+          ? media.url
+          : null;
+      if (localFile) {
+        form.append("file", localFile, media.fileName || "banner.png");
+      } else if (remoteUrl) {
+        // Library / URL media has no local File — the server reads the
+        // bytes from its own storage (or the guarded fetcher).
+        form.append("url", remoteUrl);
+      } else {
+        // A blob: URL with no File means the picked bytes are gone (tab
+        // restored, file GC'd). Sending an empty part would only produce a
+        // confusing server error — say what to do instead.
+        setBannerCheck({ state: "error" });
+        setNotice?.(
+          "The photo's bytes are no longer in this tab — pick the photo again, then run the AI check.",
+        );
+        return;
+      }
+      const queued = await apiFetch("/api/v1/media/banner-checks", {
+        method: "POST",
+        body: form,
+      }) as { id: string };
+      // Publication is blocked while this runs, so poll briskly but give the
+      // vision/decision models their headroom before declaring a timeout.
+      const deadline = Date.now() + 45_000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 1200));
+        const row = await apiFetch(`/api/v1/media/banner-checks/${encodeURIComponent(queued.id)}`) as {
+          status: "queued" | "running" | "done" | "failed";
+          error?: string | null;
+          suitable?: string;
+          confidence?: number;
+          summary?: string;
+          checks?: { key: string; label: string; pass: boolean; severity: string; note: string }[];
+          reasons?: string[];
+          ai_verdict?: { suitable?: string; confidence?: number; reasons?: string[] } | null;
+          decision?: { suitable?: string; confidence?: number; summary?: string; reasons?: string[] } | null;
+        };
+        if (row.status === "done") {
+          setBannerCheck({ state: "done", result: row });
+          return;
+        }
+        if (row.status === "failed") {
+          setBannerCheck({ state: "error", error: row.error || undefined });
+          return;
+        }
+      }
+      setBannerCheck({ state: "error" });
+    } catch (e) {
+      setBannerCheck({
+        state: "error",
+        error: e instanceof Error ? e.message : undefined,
+      });
+    }
+  }, [media]);
 
   // Write the description from the caption + the selected branch/business.
   // The endpoint already grounds copy in the tenant's own Databank facts, so
@@ -559,6 +820,25 @@ export default function PublishComposer({
         });
       }
     });
+  };
+
+  // The cover section's Replace button returns the merchant here with the
+  // Promotion format already chosen for the same Google Business Profile.
+  const replaceCover = (channelId: string) => {
+    const target =
+      googleTargets.find((x) => x.id === channelId) ??
+      googleTargets.find((x) => `google:${x.id}` === channelId) ??
+      googleTargets[0];
+    if (target) {
+      setSelected(new Set([target.id]));
+      setFormats((prev) => ({ ...prev, [target.id]: ["banner"] }));
+      const key = cropKeyFor(target.id, "banner");
+      setCrops((prev) => ({
+        ...prev,
+        [key]: prev[key] ?? defaultCropFor(target.platform, "banner"),
+      }));
+    }
+    setPostStep("media");
   };
 
   // ── Media blob lifecycle ────────────────────────────────────────
@@ -706,6 +986,20 @@ export default function PublishComposer({
       setNotice(problems[0]);
       return;
     }
+    // A Promotion publishes the photo as the Google cover image, so the AI
+    // photo check is a required step: no completed check, no confirm dialog.
+    // The verdict itself stays advice — a "Not suitable" result shows on the
+    // check card, but the merchant decides.
+    if (bannerSelected && bannerCheck.state !== "done") {
+      setNotice(
+        bannerCheck.state === "loading"
+          ? "The photo check is still running — it finishes in a few seconds."
+          : "Check the photo before publishing this Promotion. Open the photo crop settings or the media step and press \"Check photo\".",
+      );
+      setConfirmOpen(false);
+      setPostStep(bannerCheck.state === "loading" ? postStep : "media");
+      return;
+    }
     if (media && media.type === "image" && media.width && media.height) {
       const googleSelected = confirmItems.some(({ target }) => target.platform === "google_reviews");
       if (googleSelected && (media.width < 250 || media.height < 250)) {
@@ -792,6 +1086,54 @@ export default function PublishComposer({
       // One upload per distinct crop, reused by every format that shares it.
       const notices = new Set<string>();
       const cropUploads = new Map<string, { url: string | null; key: string | null }>();
+      // Server-side rescue: when the browser cannot bake the crop (canvas
+      // tainted by a cross-origin/library image, undecodable bytes), the
+      // crop rect — computed with the same canonical function as the editor
+      // preview — is sent to Pillow, which crops and returns usable bytes.
+      // The merchant's framing survives; the notice stays a last resort.
+      // `asFile` returns the bytes un-uploaded (gallery sends bytes directly
+      // to the location-media endpoint, which takes a file, not a URL).
+      const serverCrop = async (
+        crop: CropState,
+        asFile = false,
+      ): Promise<{ url: string | null; key: string | null } | File | null> => {
+        if (!media || crop.key === "orig") return null;
+        let width = media.width ?? 0;
+        let height = media.height ?? 0;
+        try {
+          if ((!width || !height) && media.file) {
+            const d = await inspectImageFile(media.file);
+            width = d.width; height = d.height;
+          } else if ((!width || !height) && mediaUrl && !media.url.startsWith("blob:")) {
+            const d = await probeImageUrl(mediaUrl);
+            width = d.width; height = d.height;
+          }
+        } catch { /* dims unknown: the server still clamps a partial rect */ }
+        if (!width || !height) return null;
+        const rect = cropSourceRect(width, height, crop);
+        if (!rect) return null;
+        const form = new FormData();
+        form.append("x", String(Math.round(rect.x)));
+        form.append("y", String(Math.round(rect.y)));
+        form.append("w", String(Math.round(rect.w)));
+        form.append("h", String(Math.round(rect.h)));
+        if (media.file) {
+          form.append("file", media.file);
+        } else if (mediaUrl && !media.url.startsWith("blob:")) {
+          form.append("url", mediaUrl);
+        } else {
+          return null;
+        }
+        const blob = await apiFetchBlob("/api/v1/media/crop", { method: "POST", body: form });
+        const ext = blob.type === "image/png" ? "png" : "jpg";
+        const cropped = new File([blob], `crop-${Date.now()}.${ext}`, { type: blob.type });
+        if (asFile) return cropped;
+        const up = new FormData();
+        up.append("file", cropped);
+        const uploaded = await apiFetch("/api/v1/media/upload", { method: "POST", body: up });
+        if (!uploaded.image_url) throw new Error(pc.uploadEmptyErr);
+        return { url: uploaded.image_url, key: uploaded.key ?? null };
+      };
       const mediaForCrop = async (crop: CropState) => {
         if (!media || crop.key === "orig") {
           return { url: mediaUrl, key: mediaKey };
@@ -818,7 +1160,21 @@ export default function PublishComposer({
             if (!up.image_url) throw new Error(pc.uploadEmptyErr);
             out = { url: up.image_url, key: up.key ?? null };
           }
-        } catch {
+        } catch (err) {
+          // Browser bake failed. Try the server crop before giving up: an
+          // uncropped publish is the outcome we are trying to avoid, so the
+          // notice is only shown when BOTH paths failed. The underlying
+          // error is logged for support ("why was it uncropped?").
+          console.warn("crop bake failed; trying server crop:", err);
+          try {
+            const rescued = await serverCrop(crop);
+            if (rescued && !(rescued instanceof File)) {
+              cropUploads.set(sig, rescued);
+              return rescued;
+            }
+          } catch (serverErr) {
+            console.warn("server crop fallback failed:", serverErr);
+          }
           // A pasted image on another origin can refuse to be read into a
           // canvas. Publishing the original beats failing the whole draft,
           // but the merchant is told the crop was not applied.
@@ -933,8 +1289,19 @@ export default function PublishComposer({
             { url: mediaUrl ?? media.url, file: media.file, type: mediaType },
             crop,
           );
-        } catch {
-          notices.add(pc.cropFallback);
+        } catch (err) {
+          // Same rescue as the post pipeline: when the browser cannot bake
+          // the crop, Pillow crops server-side so the framing survives.
+          console.warn("gallery crop bake failed; trying server crop:", err);
+          try {
+            const rescued = await serverCrop(crop, true);
+            if (rescued instanceof File) {
+              file = rescued;
+            }
+          } catch (serverErr) {
+            console.warn("gallery server crop fallback failed:", serverErr);
+          }
+          if (!file) notices.add(pc.cropFallback);
         }
         galleryCrops.set(sig, file);
         return file;
@@ -942,6 +1309,7 @@ export default function PublishComposer({
 
       const galleryErrors: string[] = [];
       const fallbacks: string[] = [];
+      let bannerCoverSet = false;
       for (const g of gallerySelections) {
         if (!media && !mediaUrl) throw new Error(pc.needMedia);
         const channelId = g.target.id.startsWith("google:") ? g.target.id.slice(7) : g.target.id;
@@ -969,10 +1337,18 @@ export default function PublishComposer({
             body: form,
           });
           attempt.galleryDone.add(channelId);
+          const actualCategory = String(res?.media?.category || "").toUpperCase();
+          if (actualCategory === "COVER") {
+            bannerCoverSet = true;
+          }
           const fb = res?.categoryFallback;
           if (fb?.requested && fb.requested !== fb.used) {
             fallbacks.push(
-              `${g.target.name}: Google does not allow the ${String(fb.requested).replace(/_/g, " ")} photo tag for this location — published as ${String(fb.used).replace(/_/g, " ")} instead.`,
+              pc.categoryFallback(
+                g.target.name,
+                String(fb.requested).replace(/_/g, " "),
+                String(fb.used).replace(/_/g, " "),
+              ),
             );
           }
         } catch (e) {
@@ -982,17 +1358,11 @@ export default function PublishComposer({
         }
       }
 
-      // A Promotion on Google is a cover photo. Confirm what actually happened
-      // so the merchant is never left guessing whether it went to the gallery.
-      const bannerPublished = confirmItems.some(
-        ({ target, methods }) =>
-          target.platform === "google_reviews" && methods.includes("banner"),
-      );
-
-      // Crop fallbacks and category fallbacks are both things the merchant
-      // must hear about, so they share one banner.
+      // A Promotion on Google becomes the cover photo only when Google
+      // actually files it as COVER. A fallback-to-gallery upload is already
+      // explained by the category fallback notice.
       const allNotices = [...notices, ...fallbacks];
-      if (bannerPublished) allNotices.push(pc.bannerSetNotice);
+      if (bannerCoverSet) allNotices.push(pc.bannerSetNotice);
       if (galleryErrors.length) {
         // The draft stays open so the merchant can pick another category and
         // retry; the posts are not re-queued (same idempotency key).
@@ -1086,7 +1456,7 @@ export default function PublishComposer({
           <button
             type="button"
             onClick={onCancel}
-            className="mb-3 inline-flex items-center gap-1.5 rounded-[20px] border border-[var(--ui-line)] px-3 py-1.5 text-[12px] font-bold text-[var(--ui-ink-2)] transition duration-200 hover:bg-[var(--ui-sunken)] hover:text-[var(--ui-ink)] active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+            className="mb-3 inline-flex items-center gap-1.5 rounded-[8px] border border-[var(--ui-line)] px-3 py-1.5 text-[12px] font-bold text-[var(--ui-ink-2)] transition duration-200 hover:bg-[var(--ui-sunken)] hover:text-[var(--ui-ink)] active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
           >
             <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
               <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
@@ -1103,7 +1473,7 @@ export default function PublishComposer({
           </div>
         </div>
         {/* Step wizard — visual navigation only; all steps stay mounted. */}
-        <ol className="mt-4 flex items-center gap-1 rounded-[24px] bg-[var(--ui-sunken)] p-1.5 sm:gap-2" aria-label="Post steps">
+        <ol className="mt-4 flex items-center gap-1 rounded-[8px] bg-[var(--ui-sunken)] p-1.5 sm:gap-2" aria-label="Post steps">
           {steps.map((stepDef, index) => {
             const position = stepNav(steps, stepDef.id);
             const active = step === stepDef.id;
@@ -1114,13 +1484,13 @@ export default function PublishComposer({
                   type="button"
                   onClick={() => setPostStep(stepDef.id)}
                   aria-current={active ? "step" : undefined}
-                  className={`flex min-w-0 items-center gap-1.5 rounded-[20px] px-1 py-1 pr-1.5 transition duration-200 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:gap-2 sm:px-1.5 sm:pr-2.5 ${
+                  className={`flex min-w-0 items-center gap-1.5 rounded-[8px] px-1 py-1 ${dir === "rtl" ? "pe-1.5 sm:pe-2.5" : "pr-1.5 sm:pr-2.5"} transition duration-200 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:gap-2 ${
                     active
                       ? "bg-[var(--ui-surface)] text-[var(--ui-ink)] shadow-[0_8px_18px_-12px_rgba(61,29,110,0.55)]"
                       : done ? "text-[var(--ui-ink-2)]" : "text-[var(--ui-ink-2)] opacity-70"
                   }`}
                 >
-                  <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[16px] text-[12px] font-bold transition ${
+                  <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] text-[12px] font-bold transition ${
                     active
                       ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
                       : done
@@ -1144,8 +1514,8 @@ export default function PublishComposer({
 
       {notice && (
         <div className="shrink-0 px-4 pt-3 sm:px-6">
-          <div className="mx-auto max-w-[1280px]">
-            <p role="alert" className="rounded-[20px] border border-red-500/40 bg-red-50 px-4 py-3 text-[13px] font-semibold text-red-700 shadow-[0_12px_28px_-22px_rgba(61,29,110,0.45)] dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-300">
+          <div className="mx-auto max-w-[1280px] xl:max-w-[1600px] 2xl:max-w-[1800px]">
+            <p role="alert" className="rounded-[8px] border border-red-500/40 bg-red-50 px-4 py-3 text-[13px] font-semibold text-red-700 shadow-[0_12px_28px_-22px_rgba(61,29,110,0.45)] dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-300">
               {notice}
             </p>
           </div>
@@ -1153,7 +1523,7 @@ export default function PublishComposer({
       )}
 
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto grid max-w-[1280px] gap-5 px-4 pb-8 pt-5 sm:px-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="mx-auto grid max-w-[1280px] gap-5 px-4 pb-8 pt-5 sm:px-6 lg:grid-cols-[minmax(0,1fr)_360px] xl:max-w-[1600px] 2xl:max-w-[1800px]">
           {/* One working column. Steps use `hidden`, not unmounting: every
               input, ref and preview stays alive while navigating. */}
           <div className="min-w-0 space-y-5">
@@ -1174,13 +1544,25 @@ export default function PublishComposer({
               thumb={thumb}
               thumbLabel={thumbLabel}
               platforms={confirmItems.map(({ target }) => target.platform)}
+              replaceSignal={replaceSignal}
             />
+            {bannerSelected && media?.type === "image" ? (
+              <BannerCheckCard
+                check={bannerCheck}
+                onRetry={() => void runBannerCheck()}
+                onReplace={requestPhotoReplace}
+                onRun={() => void runBannerCheck()}
+                required
+              />
+            ) : null}
             {needsMedia && media === null && (
               <p className="mt-3 text-[12px] font-semibold text-amber-700 dark:text-amber-400">
                 An image or video is required for the selected destinations.
               </p>
             )}
           </section>
+
+          <GoogleCoverSection locale={locale} onReplace={replaceCover} />
 
           </div>{/* end media step */}
 
@@ -1220,7 +1602,7 @@ export default function PublishComposer({
                 {showCaptionWarn && (
                   <p
                     role="status"
-                    className="mt-1.5 rounded-[16px] border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-[12px] font-medium text-amber-700 dark:text-amber-400"
+                    className="mt-1.5 rounded-[8px] border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-[12px] font-medium text-amber-700 dark:text-amber-400"
                   >
                     {fill(pc.truncates, { names: captionOver.map((t) => fill(pc.truncName, { name: PLATFORM_META[t.platform].label, max: fmt(PLATFORM_META[t.platform].captionMax) })).join(" · ") })}
                   </p>
@@ -1237,7 +1619,7 @@ export default function PublishComposer({
                       onClick={writeDescriptionWithAI}
                       disabled={descDrafting}
                       title={pc.aiWriteDescHint}
-                      className="inline-flex items-center gap-1 rounded-[20px] border border-deep-violet/25 bg-deep-violet/[0.06] px-2.5 py-1 text-[11px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.12] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] disabled:opacity-50 dark:border-fog/15 dark:text-fog dark:hover:bg-fog/[0.08]"
+                      className="inline-flex items-center gap-1 rounded-[8px] border border-deep-violet/25 bg-deep-violet/[0.06] px-2.5 py-1 text-[11px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.12] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] disabled:opacity-50 dark:border-fog/15 dark:text-fog dark:hover:bg-fog/[0.08]"
                     >
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5" aria-hidden>
                         <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z" strokeLinejoin="round" />
@@ -1260,7 +1642,7 @@ export default function PublishComposer({
                 {descNotice && (
                   <p
                     role="status"
-                    className={`mt-1.5 rounded-[16px] border px-3 py-2 text-[12px] font-medium ${
+                    className={`mt-1.5 rounded-[8px] border px-3 py-2 text-[12px] font-medium ${
                       descNotice.kind === "err"
                         ? "border-coral/40 bg-coral/10 text-coral"
                         : descNotice.kind === "ok"
@@ -1391,7 +1773,7 @@ export default function PublishComposer({
                       type="button"
                       onClick={() => openRow(target.id)}
                       title={hasFormat ? fill(pc.reviewRow, { name: target.name }) : fill(pc.noFormatRow, { name: target.name })}
-                      className={`inline-flex max-w-full items-center gap-1.5 rounded-[20px] border px-2.5 py-1.5 text-[11px] font-bold transition duration-200 hover:bg-[var(--ui-sunken)] active:scale-[0.97] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+                      className={`inline-flex max-w-full items-center gap-1.5 rounded-[8px] border px-2.5 py-1.5 text-[11px] font-bold transition duration-200 hover:bg-[var(--ui-sunken)] active:scale-[0.97] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
                         hasFormat
                           ? "border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink)]"
                           : "border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-400"
@@ -1422,14 +1804,14 @@ export default function PublishComposer({
                     {pc.formatsSub}
                   </p>
                 </div>
-                <span className="rounded-[20px] bg-[var(--ui-sunken)] px-3 py-1 text-[11px] font-bold text-[var(--ui-ink)]">
+                <span className="rounded-[8px] bg-[var(--ui-sunken)] px-3 py-1 text-[11px] font-bold text-[var(--ui-ink)]">
                   {fmt(formatCount)} selected
                 </span>
               </div>
               {selectedTargets.some((t) =>
                 availableFor(t).some((m) => m === "profile" || m === "banner" || m === "gallery"),
               ) && (
-                <div className="mt-3 flex items-start gap-2.5 rounded-[20px] border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5">
+                <div className="mt-3 flex items-start gap-2.5 rounded-[8px] border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5">
                   <svg className="mt-0.5 h-4 w-4 shrink-0 text-amber-700 dark:text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
                     <circle cx="12" cy="12" r="9" />
                     <path d="M12 11v5" strokeLinecap="round" />
@@ -1441,7 +1823,7 @@ export default function PublishComposer({
                 </div>
               )}
               {bannerSelected && (
-                <details className="group mt-3 rounded-[20px] border border-deep-violet/20 bg-deep-violet/[0.04] px-3.5 py-2.5 dark:border-fog/10 dark:bg-fog/[0.04]">
+                <details className="group mt-3 rounded-[8px] border border-deep-violet/20 bg-deep-violet/[0.04] px-3.5 py-2.5 dark:border-fog/10 dark:bg-fog/[0.04]">
                   <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-[11.5px] font-bold text-deep-violet outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] dark:text-fog">
                     <span className="flex items-center gap-2">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4 shrink-0" aria-hidden>
@@ -1467,7 +1849,7 @@ export default function PublishComposer({
                 </details>
               )}
               {sharedMode && (
-                <div className="mt-3 flex items-center gap-2 rounded-[20px] border border-emerald-500/30 bg-emerald-500/[0.07] px-3.5 py-2.5 text-[11.5px] font-semibold text-emerald-700 dark:text-emerald-400">
+                <div className="mt-3 flex items-center gap-2 rounded-[8px] border border-emerald-500/30 bg-emerald-500/[0.07] px-3.5 py-2.5 text-[11.5px] font-semibold text-emerald-700 dark:text-emerald-400">
                   <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
                     <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" strokeLinecap="round" />
                     <circle cx="9" cy="7" r="4" />
@@ -1512,13 +1894,13 @@ export default function PublishComposer({
                           }
                         }}
                         aria-pressed={isOn}
-                        className={`flex items-center gap-3 rounded-[20px] border p-2.5 text-left transition duration-200 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+                        className={`flex items-center gap-3 rounded-[8px] border p-2.5 text-left transition duration-200 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
                           isOn
                             ? "border-emerald-500/70 bg-[var(--ui-surface)] shadow-[0_12px_26px_-16px_rgba(16,185,129,0.85)]"
                             : "border-[var(--ui-line)] bg-[var(--ui-sunken)] hover:border-[var(--ui-ink)]/30 hover:bg-[var(--ui-surface)]"
                         }`}
                       >
-                        <FormatThumb media={media} crop={crop} size={40} className="rounded-[12px]" />
+                        <FormatThumb media={media} crop={crop} size={40} className="rounded-[8px]" />
                         <span className="min-w-0 flex-1">
                           <span className="flex items-center gap-1.5">
                             <span className={`truncate text-[12px] font-bold ${INK}`}>{methodLabel(m)}</span>
@@ -1548,10 +1930,10 @@ export default function PublishComposer({
                     );
                   };
                   return (
-                    <div key={t.id} id={`dest-row-${t.id}`} className="overflow-hidden rounded-[24px] border border-[var(--ui-line)] bg-[var(--ui-sunken)]">
+                    <div key={t.id} id={`dest-row-${t.id}`} className="overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)]">
                       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--ui-line)] px-4 py-3">
                         <div className="flex items-center gap-3">
-                          <span className="flex h-10 w-10 items-center justify-center rounded-[16px] bg-[var(--ui-surface)] shadow-[0_8px_18px_-12px_rgba(61,29,110,0.6)]">
+                          <span className="flex h-10 w-10 items-center justify-center rounded-[8px] bg-[var(--ui-surface)] shadow-[0_8px_18px_-12px_rgba(61,29,110,0.6)]">
                             <PlatformMark platform={t.platform} size={16} />
                           </span>
                           <div className="min-w-0">
@@ -1569,7 +1951,7 @@ export default function PublishComposer({
                           type="button"
                           onClick={() => toggleAllFormats(t, applyTargets)}
                           title={pc.allTitle}
-                          className="rounded-[20px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-1.5 text-[11px] font-bold text-[var(--ui-ink-2)] transition duration-200 hover:bg-[var(--ui-sunken)] active:scale-[0.97] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+                          className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-1.5 text-[11px] font-bold text-[var(--ui-ink-2)] transition duration-200 hover:bg-[var(--ui-sunken)] active:scale-[0.97] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
                         >
                           {pc.allPill}
                         </button>
@@ -1577,13 +1959,13 @@ export default function PublishComposer({
                       <div className="p-3 sm:p-4">
                         {postFormats.length > 0 && (
                           <>
-                            <p className={`mb-2 text-[10px] font-bold uppercase tracking-[0.12em] ${INK2}`}>Posts</p>
+                            <p className={`mb-2 text-[10px] font-bold uppercase tracking-[0.12em] ${INK2}`}>{tr.publish.photoCheck.posts}</p>
                             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">{postFormats.map(renderFormat)}</div>
                           </>
                         )}
                         {surfaceFormats.length > 0 && (
                           <>
-                            <p className={`mb-2 mt-4 text-[10px] font-bold uppercase tracking-[0.12em] ${INK2}`}>Location media</p>
+                            <p className={`mb-2 mt-4 text-[10px] font-bold uppercase tracking-[0.12em] ${INK2}`}>{tr.publish.photoCheck.locationMedia}</p>
                             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">{surfaceFormats.map(renderFormat)}</div>
                           </>
                         )}
@@ -1599,7 +1981,7 @@ export default function PublishComposer({
 
           {/* Step-local footer: navigation belongs to the step, and the
               publish action only exists on the final step. */}
-          <div className="rounded-[24px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)] sm:p-5">
+          <div className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)] sm:p-5">
             {step === "when" && galleryFallbacks.length > 0 && (
               <div className="mb-3 space-y-1" role="status">
                 {galleryFallbacks.map((f) => (
@@ -1610,7 +1992,7 @@ export default function PublishComposer({
               </div>
             )}
             {stepProblems(step).length > 0 && (
-              <div className="mb-3 space-y-1 rounded-[20px] border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5" role="status">
+              <div className="mb-3 space-y-1 rounded-[8px] border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5" role="status">
                 {stepProblems(step).map((problem) => (
                   <p key={problem} className="text-[12px] font-semibold text-amber-800 dark:text-amber-300">
                     {problem}
@@ -1677,7 +2059,7 @@ export default function PublishComposer({
                 id="ai-video-h"
                 onClick={() => setAiOpen((v) => !v)}
                 aria-expanded={aiOpen}
-                className={`flex w-full items-center justify-between gap-2 text-left ${INK}`}
+                className={`flex w-full items-center justify-between gap-2 ${dir === "rtl" ? "text-start" : "text-left"} ${INK}`}
               >
                 <span className="flex items-center gap-2 text-[14px] font-bold">
                   <span aria-hidden>✨</span>
@@ -1735,7 +2117,7 @@ export default function PublishComposer({
           }}
           className="fixed inset-0 z-50 bg-[rgba(0,0,0,0.45)] sm:flex sm:items-center sm:justify-center sm:p-4"
         >
-          <div className="flex h-[100dvh] w-full flex-col overflow-hidden bg-[var(--ui-surface)] sm:h-auto sm:max-h-[90dvh] sm:max-w-5xl sm:rounded-[32px] sm:border sm:border-[var(--ui-line)] sm:shadow-2xl">
+          <div className="flex h-[100dvh] w-full flex-col overflow-hidden bg-[var(--ui-surface)] sm:h-auto sm:max-h-[90dvh] sm:max-w-5xl sm:rounded-[8px] sm:border sm:border-[var(--ui-line)] sm:shadow-2xl">
             <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--ui-line)] p-4 sm:border-0 sm:p-5 sm:pb-0">
               <div>
                 <h2 className="text-[15px] font-bold text-[var(--ui-ink)] sm:text-[16px]">
@@ -1772,7 +2154,7 @@ export default function PublishComposer({
                 <div className="w-full max-w-[320px] shrink-0 space-y-3">
                   {modalCtx.method === "gallery" && (
                     <div>
-                      <label className="mb-1 block text-[12px] font-semibold text-[var(--ui-ink)]">Gallery category</label>
+                      <label className="mb-1 block text-[12px] font-semibold text-[var(--ui-ink)]">{tr.publish.photoCheck.galleryCategory}</label>
                       <select
                         value={draftGalleryCategory}
                         onChange={(e) => setDraftGalleryCategory(e.target.value)}
@@ -1782,9 +2164,27 @@ export default function PublishComposer({
                           <option key={c} value={c}>{c.replace(/_/g, " ")}</option>
                         ))}
                       </select>
-                      <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">Choose where this photo appears in the location gallery on Google.</p>
+                      <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">{tr.publish.photoCheck.chooseGalleryCategory}</p>
+                      <p className="mt-1 text-[11px] leading-relaxed text-[var(--ui-ink-2)]">{tr.publish.photoCheck.galleryCategoryTip}</p>
                     </div>
                   )}
+                  {modalCtx.method === "banner" && media?.type === "image" && (
+                    <div>
+                      <p className="text-[12px] font-bold text-[var(--ui-ink)]">{tr.publish.photoCheck.title}</p>
+                      <p className="mt-0.5 text-[11px] leading-relaxed text-[var(--ui-ink-2)]">
+                        {tr.publish.photoCheck.requiredBeforePublishing}
+                      </p>
+                    </div>
+                  )}
+                  {modalCtx.method === "banner" && media?.type === "image" ? (
+                    <BannerCheckCard
+                      check={bannerCheck}
+                      onRetry={() => void runBannerCheck()}
+                      onReplace={requestPhotoReplace}
+                      onRun={() => void runBannerCheck()}
+                      required
+                    />
+                  ) : null}
                   <CropFrame
                     key={`${modalCtx.targetId}-${modalCtx.method}`}
                     url={media?.url ?? null}
@@ -1832,6 +2232,7 @@ export default function PublishComposer({
         error={publishError}
         onConfirm={publishNow}
         onClose={() => setConfirmOpen(false)}
+        onChangePhoto={requestPhotoReplace}
       />
     </div>
   );

@@ -105,14 +105,14 @@ export default function InvitePage() {
       {mode === "loading" && <p className="text-[13px] text-ink/40 dark:text-fog/40">Loading invite…</p>}
 
       {mode === "invalid" && (
-        <div className="rounded-2xl border border-red-200 bg-red-50/50 p-5 dark:border-red-500/20 dark:bg-red-500/[0.06]">
+        <div className="rounded-[8px] border border-red-200 bg-red-50/50 p-5 dark:border-red-500/20 dark:bg-red-500/[0.06]">
           <p className="text-[14px] font-semibold text-red-700 dark:text-red-300">This invite cannot be used</p>
           <p className="mt-1 text-[13px] text-ink/60 dark:text-fog/60">{msg || "This invite link is invalid or was already used."}</p>
         </div>
       )}
 
       {mode === "preview" && (
-        <div className="rounded-2xl border border-ink/10 bg-white p-5 shadow-sm dark:border-fog/10 dark:bg-ink">
+        <div className="rounded-[8px] border border-ink/10 bg-white p-5 shadow-sm dark:border-fog/10 dark:bg-ink">
           <p className="text-[13px] text-ink/70 dark:text-fog/70">
             <strong>{preview?.business_name || "A workspace"}</strong> invited you, via{" "}
             <strong>{preview?.inviter_name || "the workspace owner"}</strong>.
@@ -156,7 +156,7 @@ export default function InvitePage() {
       )}
 
       {mode === "new" && (
-        <div className="rounded-2xl border border-ink/10 bg-white p-5 shadow-sm dark:border-fog/10 dark:bg-ink space-y-4">
+        <div className="rounded-[8px] border border-ink/10 bg-white p-5 shadow-sm dark:border-fog/10 dark:bg-ink space-y-4">
           <p className="text-[14px] font-semibold text-ink dark:text-fog">Create your account</p>
           <div className="space-y-2">
             <label className="text-[12px] font-medium text-ink/60 dark:text-fog/60">Email</label>
@@ -209,7 +209,7 @@ export default function InvitePage() {
       )}
 
       {mode === "signin" && (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50/50 p-5 dark:border-amber-500/20 dark:bg-amber-500/[0.06] space-y-3">
+        <div className="rounded-[8px] border border-amber-200 bg-amber-50/50 p-5 dark:border-amber-500/20 dark:bg-amber-500/[0.06] space-y-3">
           <p className="text-[14px] font-semibold text-amber-700 dark:text-amber-300">
             {user && emailMatches ? "Finish joining" : "Sign in to continue"}
           </p>
@@ -259,7 +259,7 @@ export default function InvitePage() {
       )}
 
       {mode === "done" && (
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50/40 p-5 dark:border-emerald-500/20 dark:bg-emerald-500/[0.06]">
+        <div className="rounded-[8px] border border-emerald-200 bg-emerald-50/40 p-5 dark:border-emerald-500/20 dark:bg-emerald-500/[0.06]">
           <p className="text-[15px] font-bold text-emerald-700 dark:text-emerald-300">Welcome to the team!</p>
           <p className="mt-1 text-[13px] text-ink/60 dark:text-fog/60">You are now a member of this workspace.</p>
           <a

@@ -105,7 +105,7 @@ export function LogoTailCursor() {
     <svg
       viewBox="0 0 26 20"
       aria-hidden
-      className="ml-1 inline-block h-[0.95em] w-auto align-[-0.12em]"
+      className="ms-1 inline-block h-[0.95em] w-auto align-[-0.12em]"
     >
       <defs>
         <linearGradient id="sayvors-tail" x1="0" y1="0" x2="1" y2="0">

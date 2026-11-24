@@ -72,9 +72,9 @@ export default function ChannelWorkspace({ slug }: ChannelWorkspaceProps) {
       <div className="flex h-full flex-col">
         <div className="flex-1 overflow-y-auto p-6">
           <div className="mx-auto max-w-md">
-            <div className="rounded-2xl border-2 border-white bg-white/80 p-6">
+            <div className="rounded-[8px] border-2 border-white bg-white/80 p-6">
               <div className="flex flex-col items-center text-center">
-                <div className={`flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br ${channel.color} text-[32px] text-white shadow-lg`}>
+                <div className={`flex h-16 w-16 items-center justify-center rounded-[8px] bg-gradient-to-br ${channel.color} text-[32px] text-white shadow-lg`}>
                   {channel.icon}
                 </div>
                 <h2 className="mt-4 text-[18px] font-bold text-ink">{fill(ws.connectTitle, { name: channel.name })}</h2>
@@ -101,7 +101,7 @@ export default function ChannelWorkspace({ slug }: ChannelWorkspaceProps) {
               {/* Connect button */}
               <button
                 onClick={handleConnect}
-                className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-deep-violet px-6 py-3 text-[13px] font-bold text-white shadow-lg shadow-deep-violet/25 transition hover:bg-deep-violet/90 active:scale-[0.98]"
+                className="mt-6 flex w-full items-center justify-center gap-2 rounded-[8px] bg-deep-violet px-6 py-3 text-[13px] font-bold text-white shadow-lg shadow-deep-violet/25 transition hover:bg-deep-violet/90 active:scale-[0.98]"
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
                   <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
@@ -152,7 +152,7 @@ export default function ChannelWorkspace({ slug }: ChannelWorkspaceProps) {
               </div>
             ) : (
               <div className="hidden flex-1 flex-col items-center justify-center bg-white/40 md:flex">
-                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-deep-violet/[0.06]">
+                <div className="flex h-16 w-16 items-center justify-center rounded-[8px] bg-deep-violet/[0.06]">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-8 w-8 text-deep-violet/30">
                     <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
                   </svg>

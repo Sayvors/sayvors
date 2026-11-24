@@ -41,7 +41,7 @@ function TrendChip({ trend, copy }: { trend: number | null; copy: InsightsCopy }
   const flat = trend === 0;
   return (
     <span
-      className={`inline-flex items-center gap-0.5 rounded-[2px] px-2 py-0.5 text-[10px] font-semibold ${
+      className={`inline-flex items-center gap-0.5 rounded-[8px] px-2 py-0.5 text-[10px] font-semibold ${
         flat
           ? "bg-[var(--ui-sunken)] text-[var(--ui-ink-2)]"
           : up
@@ -76,7 +76,7 @@ function SkeletonList({ rows = 5 }: { rows?: number }) {
       {Array.from({ length: rows }).map((_, i) => (
         <div
           key={i}
-          className="h-8 animate-pulse rounded-[2px] bg-[var(--ui-sunken)]"
+          className="h-8 animate-pulse rounded-[8px] bg-[var(--ui-sunken)]"
           style={{ width: `${95 - i * 8}%` }}
         />
       ))}
@@ -94,7 +94,7 @@ function HeroStat({
   sub: string;
 }) {
   return (
-    <div className="min-w-0 flex-1 rounded-[2px] bg-[var(--ui-sunken)] px-3.5 py-2.5">
+    <div className="min-w-0 flex-1 rounded-[8px] bg-[var(--ui-sunken)] px-3.5 py-2.5">
       <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
         {label}
       </p>
@@ -109,19 +109,22 @@ function HeroStat({
   );
 }
 
-const COMPLAINT_AREAS: { key: string; label: string }[] = [
-  { key: "waiting_time", label: "Waiting time" },
-  { key: "staff_service", label: "Staff & service" },
-  { key: "order_accuracy", label: "Order accuracy" },
-  { key: "cleanliness", label: "Cleanliness" },
-  { key: "price_value", label: "Price & value" },
-  { key: "quality", label: "Food / product quality" },
-  { key: "other", label: "Other" },
-];
+function complaintAreas(t: ReturnType<typeof useI18n>["t"]): { key: string; label: string }[] {
+  const ca = t.analytics.complaintAreas;
+  return [
+    { key: "waiting_time", label: ca.waiting_time },
+    { key: "staff_service", label: ca.staff_service },
+    { key: "order_accuracy", label: ca.order_accuracy },
+    { key: "cleanliness", label: ca.cleanliness },
+    { key: "price_value", label: ca.price_value },
+    { key: "quality", label: ca.quality },
+    { key: "other", label: ca.other },
+  ];
+}
 
-function areaLabel(category: string): string {
+function areaLabel(t: ReturnType<typeof useI18n>["t"], category: string): string {
   return (
-    COMPLAINT_AREAS.find((a) => a.key === category)?.label ??
+    complaintAreas(t).find((a) => a.key === category)?.label ??
     category.replace(/_/g, " ")
   );
 }
@@ -131,45 +134,47 @@ function ComplaintsByArea({
   days,
   loading,
   copy,
+  t,
   googleConnected,
 }: {
   areas: import("@/lib/api-analytics").ComplaintArea[];
   days: number;
   loading: boolean;
   copy: InsightsCopy;
+  t: ReturnType<typeof useI18n>["t"];
   googleConnected: boolean;
 }) {
   if (loading) {
     return (
-      <section aria-label="Complaints by area" className="ui-card p-5">
+      <section aria-label={t.analytics.complaintsByArea} className="ui-card p-5">
         <SkeletonList rows={4} />
       </section>
     );
   }
   const top = areas[0];
   return (
-    <section aria-label="Complaints by area" className="ui-card p-5">
+    <section aria-label={t.analytics.complaintsByArea} className="ui-card p-5">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
         <div>
           <h3 className="text-[14px] font-bold text-[var(--ui-ink)]">
-            Complaints by area
+            {t.analytics.complaintsByArea}
           </h3>
           <p className="text-[11px] text-[var(--ui-ink-2)]">
-            Last {days} days vs the prior {days}. Ranked by serious incidents,
+            {t.analytics.lastDaysVsPrior(days)}. Ranked by serious incidents,
             then volume.
           </p>
         </div>
         <div className="flex items-center gap-2">
           {top && (
-            <span className="rounded-[2px] bg-[var(--ui-sunken)] px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">
-              Main complaint: {areaLabel(top.category)}
+            <span className="rounded-[8px] bg-[var(--ui-sunken)] px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">
+              Main complaint: {areaLabel(t, top.category)}
             </span>
           )}
           <Link
             href="/dashboard/reviews"
-            className="ui-btn rounded-[2px] bg-[var(--ui-ink)] px-3 py-1.5 text-[11px] font-bold text-[var(--ui-on-ink)]"
+            className="ui-btn rounded-[8px] bg-[var(--ui-ink)] px-3 py-1.5 text-[11px] font-bold text-[var(--ui-on-ink)]"
           >
-            Read reviews
+            {t.analytics.readReviews}
           </Link>
         </div>
       </div>
@@ -180,7 +185,7 @@ function ComplaintsByArea({
             <li key={a.category}>
               <div className="flex items-center gap-2">
                 <span className="w-36 shrink-0 truncate text-[12px] font-semibold text-[var(--ui-ink)]">
-                  {areaLabel(a.category)}
+                  {areaLabel(t, a.category)}
                 </span>
                 <span className="relative h-2 flex-1 overflow-hidden rounded-full bg-[var(--ui-sunken)]">
                   <span
@@ -195,12 +200,12 @@ function ComplaintsByArea({
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-1.5 pl-[152px] text-[10px] text-[var(--ui-ink-2)]">
                 {a.staff_named > 0 && (
-                  <span className="rounded-[2px] bg-[var(--ui-sunken)] px-1.5 py-px font-semibold text-[var(--ui-ink)]">
+                  <span className="rounded-[8px] bg-[var(--ui-sunken)] px-1.5 py-px font-semibold text-[var(--ui-ink)]">
                     {a.staff_named} staff named
                   </span>
                 )}
                 {a.serious > 0 && (
-                  <span className="rounded-[2px] border border-[var(--ui-line-strong)] px-1.5 py-px font-bold text-[var(--ui-ink)]">
+                  <span className="rounded-[8px] border border-[var(--ui-line-strong)] px-1.5 py-px font-bold text-[var(--ui-ink)]">
                     {a.serious} serious
                   </span>
                 )}
@@ -216,9 +221,9 @@ function ComplaintsByArea({
       </ul>
       <FactSource
         source="Connected review text"
-        detail={`last ${days} days vs the prior ${days}`}
+        detail={t.analytics.lastDaysVsPrior(days)}
         href={googleConnected ? GBP_DASHBOARD_URL : null}
-        linkLabel="Open GBP dashboard"
+        linkLabel={t.analytics.pulse.openGbpDashboard}
       />
     </section>
   );
@@ -375,7 +380,7 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
           </p>
           <button
             onClick={retry}
-            className="ui-btn rounded-[2px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)]"
+            className="ui-btn rounded-[8px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)]"
           >
             {copy.retry}
           </button>
@@ -385,14 +390,14 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
           {[1, 2, 3, 4, 5].map((i) => (
             <div
               key={i}
-              className="h-9 animate-pulse rounded-[2px] bg-[var(--ui-sunken)]"
+              className="h-9 animate-pulse rounded-[8px] bg-[var(--ui-sunken)]"
             />
           ))}
         </div>
       ) : (
         <>
           {insightsQuery.data?.failed ? (
-            <p className="mb-3 rounded-[2px] bg-[var(--ui-sunken)] px-3 py-2 text-[10.5px] leading-relaxed text-[var(--ui-ink-2)]">
+            <p className="mb-3 rounded-[8px] bg-[var(--ui-sunken)] px-3 py-2 text-[10.5px] leading-relaxed text-[var(--ui-ink-2)]">
               Some intelligence panels could not load just now. Showing what is
               available.
             </p>
@@ -407,9 +412,9 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
               </div>
               <FactSource
                 source="Connected review text"
-                detail={`last ${days} days`}
+                detail={t.analytics.pulse.lastDays(days)}
                 href={channels.length > 0 ? GBP_DASHBOARD_URL : null}
-                linkLabel="Open GBP dashboard"
+                linkLabel={t.analytics.pulse.openGbpDashboard}
               />
             </div>
           ) : null}
@@ -452,9 +457,9 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
               </ul>
               <FactSource
                 source="Connected review text"
-                detail={`last ${days} days`}
+                detail={t.analytics.pulse.lastDays(days)}
                 href={channels.length > 0 ? GBP_DASHBOARD_URL : null}
-                linkLabel="Open GBP dashboard"
+                linkLabel={t.analytics.pulse.openGbpDashboard}
               />
             </section>
           ) : null}
@@ -466,6 +471,7 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
                 days={days}
                 loading={false}
                 copy={copy}
+          t={t}
                 googleConnected={channels.length > 0}
               />
             </div>
@@ -559,7 +565,7 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
               </div>
               <FactSource
                 source="Sayvors message rollup"
-                detail={`last ${days} days`}
+                detail={t.analytics.pulse.lastDays(days)}
               />
             </div>
           ) : null}
@@ -596,7 +602,7 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
                         <span className="min-w-0 flex-1 truncate text-[12.5px] text-[var(--ui-ink)]">
                           {question.question}
                         </span>
-                        <span className="shrink-0 rounded-[2px] bg-[var(--ui-sunken)] px-2 py-0.5 text-[11px] font-bold tabular-nums text-[var(--ui-ink)]">
+                        <span className="shrink-0 rounded-[8px] bg-[var(--ui-sunken)] px-2 py-0.5 text-[11px] font-bold tabular-nums text-[var(--ui-ink)]">
                           {question.count}
                         </span>
                       </li>
@@ -620,7 +626,7 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
                       .map((intent, index) => (
                         <span
                           key={index}
-                          className="rounded-[2px] bg-[var(--ui-sunken)] px-2.5 py-1 text-[11px] font-semibold text-[var(--ui-ink)]"
+                          className="rounded-[8px] bg-[var(--ui-sunken)] px-2.5 py-1 text-[11px] font-semibold text-[var(--ui-ink)]"
                         >
                           {intent.intent}{" "}
                           <span className="text-[var(--ui-ink-2)]">
@@ -654,7 +660,7 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
               </p>
               <Link
                 href="/dashboard/reviews"
-                className="ui-btn rounded-[2px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)]"
+                className="ui-btn rounded-[8px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)]"
               >
                 {copy.readReviews}
               </Link>

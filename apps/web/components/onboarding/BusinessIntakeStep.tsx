@@ -38,7 +38,7 @@ function fill(s: string, vars: Record<string, string | number>): string {
 }
 
 const CARD =
-  "rounded-[24px] border border-ink/[0.08] bg-white p-4 shadow-[0_12px_28px_-24px_rgba(20,16,31,0.5)]";
+  "rounded-[8px] border border-ink/[0.08] bg-white p-4 shadow-[0_12px_28px_-24px_rgba(20,16,31,0.5)]";
 const FOCUS =
   "focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet";
 const DRAFT_DELAY_MS = 900;
@@ -326,7 +326,7 @@ export default function BusinessIntakeStep({
       </div>
 
       {error && (
-        <p role="alert" className="rounded-[16px] border border-red-300 bg-red-50 px-3 py-2 text-[12px] text-red-700">
+        <p role="alert" className="rounded-[8px] border border-red-300 bg-red-50 px-3 py-2 text-[12px] text-red-700">
           {error}
         </p>
       )}
@@ -338,7 +338,7 @@ export default function BusinessIntakeStep({
           {/* Chosen path stays visible, so a tenant never wonders where the
               questions came from. Either crumb can be changed in one tap. */}
           {(vertical || focus) && (
-            <div className="flex flex-wrap items-center gap-2 rounded-[16px] border border-ink/[0.08] bg-white px-3 py-2 dark:bg-[#241a45]">
+            <div className="flex flex-wrap items-center gap-2 rounded-[8px] border border-ink/[0.08] bg-white px-3 py-2 dark:bg-[#241a45]">
               <span className="text-[11px] font-semibold text-ink/45 dark:text-fog/45">
                 {c.yourBusiness}
               </span>
@@ -370,14 +370,14 @@ export default function BusinessIntakeStep({
             <div className="space-y-3">
               <p className="text-[13px] font-bold text-ink dark:text-fog">{c.pickVertical}</p>
               {data.google_suggestion && (
-                <div className="rounded-[20px] border border-deep-violet/20 bg-deep-violet/[0.04] p-3">
+                <div className="rounded-[8px] border border-deep-violet/20 bg-deep-violet/[0.04] p-3">
                   <p className="text-[12px] text-ink/70 dark:text-fog/70">
                     {fill(c.googleSuggestion, { name: data.google_suggestion.vertical_label })}
                   </p>
                   <button
                     type="button"
                     onClick={() => selectVertical(data.google_suggestion!.vertical_key)}
-                    className={`mt-2 rounded-[14px] bg-deep-violet px-3 py-1.5 text-[12px] font-bold text-white transition hover:brightness-110 ${FOCUS}`}
+                    className={`mt-2 rounded-[8px] bg-deep-violet px-3 py-1.5 text-[12px] font-bold text-white transition hover:brightness-110 ${FOCUS}`}
                   >
                     {c.googleConfirm}
                   </button>
@@ -482,7 +482,7 @@ export default function BusinessIntakeStep({
               {question.google_value &&
                 selection?.source !== "google_confirmed" &&
                 !googleDismissed[question.key] && (
-                  <div className="rounded-[20px] border border-deep-violet/20 bg-deep-violet/[0.04] p-4">
+                  <div className="rounded-[8px] border border-deep-violet/20 bg-deep-violet/[0.04] p-4">
                     <p className="text-[13px] font-bold text-ink dark:text-fog">
                       {fill(c.googleAsk, { value: question.google_value })}
                     </p>
@@ -491,14 +491,14 @@ export default function BusinessIntakeStep({
                       <button
                         type="button"
                         onClick={() => confirmGoogle(question)}
-                        className={`${FOCUS} rounded-[14px] bg-deep-violet px-3 py-2 text-[12px] font-bold text-white transition hover:brightness-110`}
+                        className={`${FOCUS} rounded-[8px] bg-deep-violet px-3 py-2 text-[12px] font-bold text-white transition hover:brightness-110`}
                       >
                         {c.googleUse}
                       </button>
                       <button
                         type="button"
                         onClick={() => setGoogleDismissed((prev) => ({ ...prev, [question.key]: true }))}
-                        className={`${FOCUS} rounded-[14px] border border-ink/15 bg-white px-3 py-2 text-[12px] font-bold text-ink/70 transition hover:border-deep-violet/40 dark:bg-[#241a45] dark:text-fog/70`}
+                        className={`${FOCUS} rounded-[8px] border border-ink/15 bg-white px-3 py-2 text-[12px] font-bold text-ink/70 transition hover:border-deep-violet/40 dark:bg-[#241a45] dark:text-fog/70`}
                       >
                         {c.googleDifferent}
                       </button>
@@ -507,7 +507,7 @@ export default function BusinessIntakeStep({
                 )}
 
               {selection?.source === "google_confirmed" && question.google_value && (
-                <p className="rounded-[16px] bg-emerald-50 px-3 py-2 text-[11px] font-semibold text-emerald-700">
+                <p className="rounded-[8px] bg-emerald-50 px-3 py-2 text-[11px] font-semibold text-emerald-700">
                   {fill(c.googleValue, { value: question.google_value })} · {c.googleConfirmed}
                 </p>
               )}
@@ -532,13 +532,13 @@ export default function BusinessIntakeStep({
                     value={typeof selection?.values[0] === "string" ? selection.values[0] : ""}
                     onChange={(e) => setFreeText(question, e.target.value)}
                     placeholder={c.freeTextPlaceholder}
-                    className={`${FOCUS} mt-2 w-full rounded-[20px] border border-ink/15 bg-white px-3 py-2 text-[13px] text-ink dark:bg-[#241a45] dark:text-fog`}
+                    className={`${FOCUS} mt-2 w-full rounded-[8px] border border-ink/15 bg-white px-3 py-2 text-[13px] text-ink dark:bg-[#241a45] dark:text-fog`}
                   />
                 </div>
               )}
 
               {selection?.skipped && (
-                <p role="status" className="rounded-[16px] bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+                <p role="status" className="rounded-[8px] bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
                   {c.notSureHint}
                 </p>
               )}
@@ -551,7 +551,7 @@ export default function BusinessIntakeStep({
                 <button
                   type="button"
                   onClick={goBack}
-                  className={`${FOCUS} rounded-[14px] border border-ink/15 px-4 py-2 text-[12px] font-semibold text-ink/70 transition hover:border-deep-violet/40 dark:text-fog/70`}
+                  className={`${FOCUS} rounded-[8px] border border-ink/15 px-4 py-2 text-[12px] font-semibold text-ink/70 transition hover:border-deep-violet/40 dark:text-fog/70`}
                 >
                   {c.back}
                 </button>
@@ -573,7 +573,7 @@ export default function BusinessIntakeStep({
               type="button"
               onClick={goNext}
               disabled={!canAdvance || saving}
-              className={`${FOCUS} rounded-[14px] bg-deep-violet px-5 py-2 text-[13px] font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40`}
+              className={`${FOCUS} rounded-[8px] bg-deep-violet px-5 py-2 text-[13px] font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40`}
             >
               {phase === 2 && !hasLaterPending
                 ? c.finish

@@ -178,6 +178,10 @@ class Settings(BaseSettings):
     # (RAG uploads/scrapes) is unaffected.
     MEDIA_FORCE_LOCAL: bool = False
     MEDIA_MAX_MB: int = 25
+    # Optional vision model ("provider:model" catalog id) used to give a
+    # multimodal AI verdict on banner/promotion photos. Empty = rule-based
+    # check only (no LLM cost).
+    BANNER_VISION_MODEL: str = ""
     # Storage (optional; empty = local disk). GCS remains supported; S3 can
     # be selected independently for public media and private documents. S3
     # private docs require their own bucket; never reuse the media fallback.
@@ -340,6 +344,29 @@ class Settings(BaseSettings):
     BENCHMARK_PEER_MAX_RESULTS: int = 20
     BENCHMARK_SNAPSHOT_TTL_HOURS: int = 24
 
+    # ── Outscraper (public Google Maps data for benchmarking) ───────────
+    # Used for competitor benchmark snapshots/reviews when configured. The
+    # tenant's own connected location still comes from GBP OAuth. Never log
+    # or return this value.
+    OUTSCRAPER_API_KEY: str = ""
+
+    # ── Free Google benchmark endpoints ────────────────────────────────────
+    # Deprecated compatibility fields: existing staging .env files may still
+    # contain these. They are accepted so Settings' extra-forbid guard does not
+    # crash boot, but nothing reads them — the gosom sidecar is retired.
+    GOSOM_SCRAPER_URL: str = ""
+    GOSOM_PROXIES: str = ""
+    # Search + place facts + BOQ review history need no key or sidecar.
+    # Disable review paging to refresh metadata only, without changing the
+    # selected provider.
+    BOQ_REVIEWS_ENABLED: bool = True
+    # Optional proxy pool for the free Google endpoints (benchmark search,
+    # place detail, reviews), comma-separated: http://user:pass@host:port.
+    # Empty = direct from the server IP. Routes are sticky per place and a
+    # blocked proxy is rested automatically — see modules/benchmark/net.py.
+    # Set this the moment Google starts answering the server with empty
+    # responses or 429s. Never log or return this value.
+    GOOGLE_SCRAPER_PROXIES: str = ""
     # ── Analytics / business intelligence ────────────────────────────────
     # How often the Google Business Profile performance sync runs (impressions,
     # website clicks, calls, direction requests -> location_daily_metrics).
@@ -375,6 +402,9 @@ class Settings(BaseSettings):
     POSTS_PUBLISH_INTERVAL_SECONDS: int = 300  # 5 min
     # Scheduled-media publisher: how often due photos go live on Google.
     MEDIA_PUBLISH_INTERVAL_SECONDS: int = 300  # 5 min
+    # How often the cover-monitor checks whether Google kept the banner we set.
+    # Six hours is enough to notice a swap the same day without polling Google.
+    COVER_MONITOR_INTERVAL_HOURS: int = 6
 
     # ── Platform admin (separate password, no user record) ──────
     # Bcrypt hash of the admin password. Empty = admin API disabled.

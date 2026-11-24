@@ -201,8 +201,12 @@ async def admin_login(
         logger.warning("Failed admin login (unknown/inactive operator) from %s (global failures=%d)", ip, failures)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Wrong credentials.")
     now = datetime.now(timezone.utc)
-    if row.locked_until is not None and row.locked_until > now:
-        raise HTTPException(status_code=status.HTTP_423_LOCKED, detail="Account is locked. Try again later.")
+    locked_until = row.locked_until
+    if locked_until is not None:
+        if locked_until.tzinfo is None:
+            locked_until = locked_until.replace(tzinfo=timezone.utc)
+        if locked_until > now:
+            raise HTTPException(status_code=status.HTTP_423_LOCKED, detail="Account is locked. Try again later.")
     if not verify_password(body.password, row.password_hash):
         r = await db.get(PlatformOperator, row.id)
         if r is not None:
@@ -311,6 +315,46 @@ class BenchmarkConfigIn(BaseModel):
     retention_days: int | None = Field(default=None, ge=7, le=3650)
     max_saved_places: int | None = Field(default=None, ge=1, le=500)
     place_cache_enabled: bool | None = None
+
+
+class PlatformConfigIn(BaseModel):
+    """Admin-set platform AI config. The model id is never exposed to tenants."""
+
+    banner_vision_model: str | None = Field(default=None, max_length=160)
+    banner_decision_model: str | None = Field(default=None, max_length=160)
+
+
+@router.get("/config/ai")
+async def admin_ai_config(
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """The admin-configured AI/vision settings (banner photo check)."""
+    row = await admin_service.get_platform_config(db)
+    return {
+        "banner_vision_model": row.banner_vision_model,
+        "banner_decision_model": row.banner_decision_model,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@router.put("/config/ai")
+async def admin_update_ai_config(
+    body: PlatformConfigIn,
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set the models used by the banner/promotion photo check."""
+    row = await admin_service.update_platform_config(
+        db,
+        banner_vision_model=body.banner_vision_model,
+        banner_decision_model=body.banner_decision_model,
+    )
+    return {
+        "banner_vision_model": row.banner_vision_model,
+        "banner_decision_model": row.banner_decision_model,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
 
 
 @router.get("/benchmark/config")
@@ -1449,6 +1493,11 @@ async def admin_llm_list(
                     else None
                 ),
                 custom=False,
+                supports_vision=(
+                    model_row.supports_vision
+                    if model_row is not None and model_row.supports_vision is not None
+                    else m.supports_vision
+                ),
             ))
         for model_id, model_row in sorted(model_rows.items()):
             if not (model_row.provider and model_row.api_model) or model_row.provider != name:
@@ -1459,6 +1508,7 @@ async def admin_llm_list(
                 tested_ok=model_row.tested_ok,
                 tested_at=model_row.tested_at.isoformat() if model_row.tested_at else None,
                 custom=True,
+                supports_vision=model_row.supports_vision,
             ))
         out.append(LlmProviderStatus(
             provider=name,
@@ -1758,6 +1808,8 @@ async def admin_llm_model_update(
         db.add(row)
     else:
         row.enabled = body.enabled
+    if body.supports_vision is not None:
+        row.supports_vision = body.supports_vision
     row.updated_at = datetime.now(timezone.utc)
     await db.commit()
 
@@ -1771,6 +1823,9 @@ async def admin_llm_model_update(
         tested_ok=row.tested_ok,
         tested_at=row.tested_at.isoformat() if row.tested_at else None,
         custom=bool(row.provider and row.api_model),
+        supports_vision=(
+            row.supports_vision if row.supports_vision is not None else info.supports_vision
+        ),
     )
 
 
@@ -1860,6 +1915,7 @@ async def admin_llm_model_create(
         context_window=body.context_window,
         max_output=body.max_output,
         supports_stream=body.supports_stream,
+        supports_vision=body.supports_vision,
     )
     db.add(row)
     await db.commit()
@@ -1870,6 +1926,7 @@ async def admin_llm_model_create(
     return LlmModelStatus(
         id=row.model_id, name=body.name, enabled=row.enabled,
         tested_ok=None, tested_at=None, custom=True,
+        supports_vision=row.supports_vision,
     )
 
 
@@ -2086,6 +2143,54 @@ async def admin_tone_delete(
     logger.info("Admin deleted tone %s", code)
 
 
+async def _openrouter_expiration_map() -> dict[str, str | int | None]:
+    """Best-effort OpenRouter model expiration map keyed by model id (e.g. openai/gpt-4o)."""
+    from ..redis.service import cache_get, cache_set
+    import json as _json
+    import httpx
+
+    cache_key = "openrouter:models:expirations:v1"
+    try:
+        cached = await cache_get(cache_key)
+        if cached:
+            data = _json.loads(cached)
+            if isinstance(data, dict):
+                return data
+    except Exception:
+        pass
+
+    headers: dict[str, str] = {}
+    try:
+        from ..llm.providers import registry
+
+        key, _source = registry.resolve_provider_key("openrouter")
+        if key:
+            headers["Authorization"] = f"Bearer {key}"
+    except Exception:
+        pass
+
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.get("https://openrouter.ai/api/v1/models", headers=headers)
+            resp.raise_for_status()
+            payload = resp.json()
+        items = payload.get("data", []) if isinstance(payload, dict) else []
+        out: dict[str, str | int | None] = {}
+        for m in items:
+            if not isinstance(m, dict):
+                continue
+            mid = m.get("id")
+            if isinstance(mid, str) and mid:
+                out[mid] = m.get("expiration_date")
+        try:
+            await cache_set(cache_key, _json.dumps(out), ttl=600)
+        except Exception:
+            pass
+        return out
+    except Exception:
+        return {}
+
+
 @router.get("/models", response_model=list[SavedModel])
 async def admin_models_list(
     _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
@@ -2096,19 +2201,37 @@ async def admin_models_list(
     from ..llm.providers.catalog import get_model_by_id
 
     rows = (await db.execute(select(ModelConfig))).scalars().all()
+    needs_openrouter = any(
+        (r.provider or (get_model_by_id(r.model_id).provider if get_model_by_id(r.model_id) else "")) == "openrouter"
+        or r.model_id.startswith("openrouter:")
+        for r in rows
+    )
+    openrouter_exp = await _openrouter_expiration_map() if needs_openrouter else {}
+
     out = []
     for row in sorted(rows, key=lambda r: r.model_id):
         info = get_model_by_id(row.model_id)
         custom = bool(row.provider and row.api_model)
+        provider = row.provider or (info.provider if info else "")
+        api_model = row.api_model or (info.api_model if info else "")
+        expiration_date = None
+        if provider == "openrouter":
+            expiration_date = openrouter_exp.get(api_model) or openrouter_exp.get(row.model_id.removeprefix("openrouter:"))
         out.append(SavedModel(
             id=row.model_id,
             name=row.display_name or (info.name if info else row.model_id),
-            provider=row.provider or (info.provider if info else ""),
-            api_model=row.api_model or (info.api_model if info else ""),
+            provider=provider,
+            api_model=api_model,
             enabled=row.enabled,
             custom=custom,
             tested_ok=row.tested_ok,
             tested_at=row.tested_at.isoformat() if row.tested_at else None,
+            supports_vision=(
+                row.supports_vision
+                if row.supports_vision is not None
+                else (info.supports_vision if info is not None else None)
+            ),
+            expiration_date=expiration_date,
         ))
     return out
 
@@ -2178,7 +2301,11 @@ async def admin_remote_models(
         data = resp.json()
         items = data.get("data", []) if isinstance(data, dict) else []
         return [
-            RemoteModel(id=f"{provider}:{m.get('id', '')}", name=str(m.get("id", "")))
+            RemoteModel(
+                id=f"{provider}:{m.get('id', '')}",
+                name=str(m.get("id", "")),
+                expiration_date=m.get("expiration_date"),
+            )
             for m in items
             if isinstance(m, dict) and m.get("id")
         ]

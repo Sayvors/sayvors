@@ -118,13 +118,13 @@ export default function AnalyticsTab({ channelSlug, channelName }: AnalyticsTabP
       )}
 
       {!loading && error && (
-        <div className="rounded-2xl border border-ink/[0.06] bg-white/80 p-6 text-center">
+        <div className="rounded-[8px] border border-ink/[0.06] bg-white/80 p-6 text-center">
           <p className="text-[13px] text-ink/60">{tb.loadError}</p>
         </div>
       )}
 
       {!loading && !error && !data && (
-        <div className="rounded-2xl border border-ink/[0.06] bg-white/80 p-6 text-center">
+        <div className="rounded-[8px] border border-ink/[0.06] bg-white/80 p-6 text-center">
           <p className="text-[13px] text-ink/60">{tb.noData}</p>
         </div>
       )}
@@ -134,7 +134,7 @@ export default function AnalyticsTab({ channelSlug, channelName }: AnalyticsTabP
           {/* KPI Cards */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {stats.map((s) => (
-              <div key={s.label} className="rounded-2xl border-2 border-white bg-white/80 p-4">
+              <div key={s.label} className="rounded-[8px] border-2 border-white bg-white/80 p-4">
                 <p className="text-[11px] font-semibold text-ink/50">{s.label}</p>
                 <div className="mt-1 flex items-baseline gap-2">
                   <span className="text-[22px] font-bold text-ink">{s.value}</span>
@@ -144,7 +144,7 @@ export default function AnalyticsTab({ channelSlug, channelName }: AnalyticsTabP
           </div>
 
           {/* Response health */}
-          <div className="rounded-2xl border-2 border-white bg-white/80 p-4 sm:p-5">
+          <div className="rounded-[8px] border-2 border-white bg-white/80 p-4 sm:p-5">
             <h3 className="mb-3 text-[13px] font-bold text-ink">{tb.respHealth}</h3>
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
               <div>

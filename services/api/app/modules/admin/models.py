@@ -39,6 +39,26 @@ class PlatformOperator(Base):
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class PlatformConfig(Base):
+    """Single admin-owned row of platform-wide AI/vision settings."""
+
+    __tablename__ = "platform_config"
+
+    id: Mapped[str] = mapped_column(String(16), primary_key=True, default="default")
+    # "provider:model" catalog id used for the banner/promotion photo check.
+    # Empty disables the multimodal verdict (rule-based check only).
+    banner_vision_model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Optional plain-text model that reads the rule measurements (and the
+    # vision verdict, when present) and writes the final suitability call.
+    # Any enabled model qualifies; NULL keeps the built-in weighted scoring.
+    banner_decision_model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
 class PurgedAccount(Base):
     """Trace of an account the platform removed without the owner asking.
 

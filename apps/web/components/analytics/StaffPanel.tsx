@@ -103,11 +103,11 @@ export default function StaffPanel() {
       setBranches(
         google.map((c: ChannelRow) => ({
           id: c.listing_id ?? c.id,
-          name: c.display_name ?? "Branch",
+          name: c.display_name ?? sc.branch,
         })),
       );
     } catch (e) {
-      setError(e instanceof Error ? e.message.slice(0, 200) : "Could not load staff data.");
+      setError(e instanceof Error ? e.message.slice(0, 200) : sc.couldNotLoad);
     } finally {
       setLoading(false);
     }
@@ -127,11 +127,11 @@ export default function StaffPanel() {
         body: JSON.stringify({ days: 90, limit: 300, reextract: false }),
       });
       setNotice(
-        `Scanned ${result.scanned} reviews, linked ${result.mentions} mentions. Run again any time — it is safe to repeat.`,
+        sc.scannedReviews(result.scanned, result.mentions),
       );
       await loadAll();
     } catch (e) {
-      setError(e instanceof Error ? e.message.slice(0, 200) : "Backfill failed.");
+      setError(e instanceof Error ? e.message.slice(0, 200) : sc.backfillFailed);
     } finally {
       setBackfilling(false);
     }
@@ -144,10 +144,10 @@ export default function StaffPanel() {
         method: "POST",
         body: JSON.stringify({ name_normalized: nameNormalized, staff_member_id: staffMemberId }),
       });
-      setNotice(`Linked ${result.linked} mention(s) to your employee.`);
+      setNotice(sc.linkedMentions(result.linked));
       await loadAll();
     } catch (e) {
-      setError(e instanceof Error ? e.message.slice(0, 200) : "Assign failed.");
+      setError(e instanceof Error ? e.message.slice(0, 200) : sc.assignFailed);
     }
   };
 
@@ -161,12 +161,12 @@ export default function StaffPanel() {
   return (
     <div className="h-full space-y-5 overflow-y-auto px-4 pb-4 sm:px-6 sm:pb-6">
       {notice && (
-        <p role="status" className="rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] px-3 py-2 text-[12px] font-medium text-[var(--ui-ink)]">
+        <p role="status" className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] px-3 py-2 text-[12px] font-medium text-[var(--ui-ink)]">
           {notice}
         </p>
       )}
       {error && (
-        <p role="alert" className="rounded-[10px] border border-red-500/40 bg-red-500/10 px-3 py-2 text-[12px] font-medium text-red-700 dark:text-red-400">
+        <p role="alert" className="rounded-[8px] border border-red-500/40 bg-red-500/10 px-3 py-2 text-[12px] font-medium text-red-700 dark:text-red-400">
           {error}
         </p>
       )}
@@ -183,7 +183,7 @@ export default function StaffPanel() {
               new: sc.newHire,
             };
             return (
-              <section aria-labelledby="staff-chart-h" className="rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4">
+              <section aria-labelledby="staff-chart-h" className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4">
                 <h3 id="staff-chart-h" className="text-[14px] font-bold text-[var(--ui-ink)]">{sc.title}</h3>
                 <p className="mt-0.5 text-[12px] text-[var(--ui-ink-2)]">{sc.subtitle}</p>
                 <ul className="mt-4 space-y-3">
@@ -236,7 +236,7 @@ export default function StaffPanel() {
 
           {/* Employee cards */}
           {summary.length === 0 ? (
-            <p className="rounded-[10px] border border-dashed border-[var(--ui-line)] px-4 py-8 text-center text-[13px] text-[var(--ui-ink-2)]">
+            <p className="rounded-[8px] border border-dashed border-[var(--ui-line)] px-4 py-8 text-center text-[13px] text-[var(--ui-ink-2)]">
               No employees yet — add them on the Team page, then run the backfill below to link past reviews.
             </p>
           ) : (
@@ -245,7 +245,7 @@ export default function StaffPanel() {
                 <Link
                   key={row.staff_member_id}
                   href={`/dashboard/analytics/staff/${row.staff_member_id}`}
-                  className="block rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 text-left transition hover:border-[var(--ui-ink)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+                  className="block rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 text-left transition hover:border-[var(--ui-ink)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate text-[14px] font-bold text-[var(--ui-ink)]">{row.name}</span>
@@ -289,7 +289,7 @@ export default function StaffPanel() {
           )}
 
           {/* Backfill */}
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-[10px] border border-[var(--ui-line)] px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-[8px] border border-[var(--ui-line)] px-4 py-3">
             <p className="text-[12px] text-[var(--ui-ink-2)]">
               Link your last 90 days of reviews to employees. Safe to run again.
             </p>
@@ -297,9 +297,9 @@ export default function StaffPanel() {
               type="button"
               onClick={runBackfill}
               disabled={backfilling}
-              className="rounded-[10px] bg-[var(--ui-ink)] px-4 py-1.5 text-[12px] font-bold text-[var(--ui-on-ink)] transition hover:opacity-90 disabled:opacity-50"
+              className="rounded-[8px] bg-[var(--ui-ink)] px-4 py-1.5 text-[12px] font-bold text-[var(--ui-on-ink)] transition hover:opacity-90 disabled:opacity-50"
             >
-              {backfilling ? "Working…" : "Link past reviews"}
+              {backfilling ? sc.working : sc.linkPastReviews}
             </button>
           </div>
 
@@ -310,24 +310,24 @@ export default function StaffPanel() {
               Customers mentioned these names. Assign one to an employee, or add them as a new employee — their history links automatically.
             </p>
             {unmatched.length === 0 ? (
-              <p className="mt-2 rounded-[10px] border border-dashed border-[var(--ui-line)] px-4 py-6 text-center text-[12px] text-[var(--ui-ink-2)]">
+              <p className="mt-2 rounded-[8px] border border-dashed border-[var(--ui-line)] px-4 py-6 text-center text-[12px] text-[var(--ui-ink-2)]">
                 Nothing to resolve — every mentioned name is on your list.
               </p>
             ) : (
               <ul className="mt-2 space-y-2">
                 {unmatched.map((u) => (
-                  <li key={u.name_normalized} className="flex flex-wrap items-center gap-2 rounded-[10px] border border-[var(--ui-line)] px-3 py-2.5">
+                  <li key={u.name_normalized} className="flex flex-wrap items-center gap-2 rounded-[8px] border border-[var(--ui-line)] px-3 py-2.5">
                     <span className="text-[13px] font-bold text-[var(--ui-ink)]">{u.name_display}</span>
                     <span className="text-[11px] text-[var(--ui-ink-2)]">
                       {u.mentions} mention{u.mentions === 1 ? "" : "s"}
-                      {u.latest ? ` · last ${new Date(u.latest).toLocaleDateString()}` : ""}
+                      {u.latest ? ` · ${sc.lastDate} ${new Date(u.latest).toLocaleDateString()}` : ""}
                     </span>
                     <div className="ml-auto flex items-center gap-2">
                       <select
-                        aria-label={`Assign ${u.name_display} to`}
+                        aria-label={sc.assignTo(u.name_display)}
                         defaultValue=""
                         onChange={(e) => { if (e.target.value) void assignName(u.name_normalized, e.target.value); }}
-                        className="rounded-[10px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2 py-1.5 text-[12px] text-[var(--ui-ink)]"
+                        className="rounded-[8px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2 py-1.5 text-[12px] text-[var(--ui-ink)]"
                       >
                         <option value="">Assign to…</option>
                         {employees.map((emp) => (
@@ -336,7 +336,7 @@ export default function StaffPanel() {
                       </select>
                       <Link
                         href={`/dashboard/team?addName=${encodeURIComponent(u.name_display)}`}
-                        className="rounded-[10px] border border-[var(--ui-line-strong)] px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)]"
+                        className="rounded-[8px] border border-[var(--ui-line-strong)] px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)]"
                       >
                         Add as employee
                       </Link>

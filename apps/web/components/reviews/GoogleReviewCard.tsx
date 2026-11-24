@@ -256,7 +256,7 @@ export default function GoogleReviewCard({
               <span className="inline-flex shrink-0" title={c.businessProfile}>
                 <PlatformMark platform="google_reviews" size={18} />
               </span>
-              <h2 className="min-w-0 truncate rounded-md bg-[#F1F3F4] px-2 py-0.5 text-[14px] font-semibold leading-5 text-[#202124]">
+              <h2 className="min-w-0 truncate rounded-[8px] bg-[#F1F3F4] px-2 py-0.5 text-[14px] font-semibold leading-5 text-[#202124]">
                 {review.locationName}
               </h2>
               {review.reviewUrl && (
@@ -422,7 +422,7 @@ export default function GoogleReviewCard({
                 e.stopPropagation();
                 open();
               }}
-              className="mt-2 rounded-md border border-[#DADCE0] px-3 py-1.5 text-[12px] font-medium text-[#1A73E8] transition hover:bg-[#F8F9FA] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#1A73E8]"
+              className="mt-2 rounded-[8px] border border-[#DADCE0] px-3 py-1.5 text-[12px] font-medium text-[#1A73E8] transition hover:bg-[#F8F9FA] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#1A73E8]"
             >
               {c.editBtn}
             </button>

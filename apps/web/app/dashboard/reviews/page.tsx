@@ -970,7 +970,7 @@ function ReviewsInner() {
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
             <div className="relative w-full sm:w-auto">
               <select value={selectedId ?? ""} onChange={(e) => { setSelectedId(e.target.value); setPage(1); setView({ kind: "list" }); }}
-                className="w-full appearance-none rounded-xl border border-ink/[0.08] bg-white py-2 pl-3 pr-9 text-[13px] font-medium text-ink outline-none dark:border-fog/[0.1] dark:bg-ink dark:text-fog sm:w-52">
+                className="w-full appearance-none rounded-[8px] border border-ink/[0.08] bg-white py-2 pl-3 pr-9 text-[13px] font-medium text-ink outline-none dark:border-fog/[0.1] dark:bg-ink dark:text-fog sm:w-52">
                 <option value={ALL_BRANCHES}>{locations.length > 0 ? fill(rv.header.allBranchesCount, { n: fmt(locations.length) }) : rv.header.allBranches}</option>
                 {groups
                   .map((g) => ({
@@ -1039,7 +1039,7 @@ function ReviewsInner() {
                             role="tab"
                             aria-selected={tab === tabKey}
                             onClick={() => pickTab(tabKey)}
-                            className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-xl border px-3 py-2 text-[12px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
+                            className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-[8px] border px-3 py-2 text-[12px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
                               tab === tabKey
                                 ? tabKey === "need_approval" && counts.need_approval > 0
                                   ? "border-coral/40 bg-coral/[0.06] text-coral"
@@ -1071,7 +1071,7 @@ function ReviewsInner() {
                               }
                               setMoreOpen((o) => !o);
                             }}
-                            className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-[12px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
+                            className={`inline-flex items-center gap-1.5 rounded-[8px] border px-3 py-2 text-[12px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
                               MORE_TABS.includes(tab)
                                 ? "border-deep-violet/30 bg-deep-violet/[0.06] text-deep-violet"
                                 : "border-ink/[0.08] bg-white text-ink/60 hover:border-ink/[0.16] hover:text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog/60 dark:hover:text-fog"
@@ -1087,7 +1087,7 @@ function ReviewsInner() {
                               <div className="fixed inset-0 z-40" onClick={() => setMoreOpen(false)} />
                               <div
                                 role="menu"
-                                className="fixed z-50 w-44 rounded-xl border border-ink/[0.08] bg-white py-1 shadow-lg dark:border-fog/[0.1] dark:bg-ink"
+                                className="fixed z-50 w-44 rounded-[8px] border border-ink/[0.08] bg-white py-1 shadow-lg dark:border-fog/[0.1] dark:bg-ink"
                                 style={{ top: morePos.top, left: morePos.left }}
                               >
                                 {MORE_TABS.map((tabKey) => (
@@ -1112,8 +1112,8 @@ function ReviewsInner() {
 
                     {tab === "need_approval" ? (
                       pendingReplies.length === 0 ? (
-                        <div className="flex flex-col items-center rounded-2xl border-2 border-dashed border-deep-violet/15 bg-white/70 px-6 py-14 text-center backdrop-blur-sm dark:border-fog/[0.12] dark:bg-ink/60">
-                          <span aria-hidden className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald/10 text-2xl">✓</span>
+                        <div className="flex flex-col items-center rounded-[8px] border-2 border-dashed border-deep-violet/15 bg-white/70 px-6 py-14 text-center backdrop-blur-sm dark:border-fog/[0.12] dark:bg-ink/60">
+                          <span aria-hidden className="flex h-12 w-12 items-center justify-center rounded-[8px] bg-emerald/10 text-2xl">✓</span>
                           <p className="mt-3 text-[14px] font-bold text-ink dark:text-fog">{ap.clearTitle}</p>
                           <p className="mt-1 max-w-xs text-[12px] leading-relaxed text-ink/45">
                             {ap.clearBody}
@@ -1122,10 +1122,10 @@ function ReviewsInner() {
                       ) : (
                         <>
                           {/* Queue header */}
-                          <div className="overflow-hidden rounded-2xl border-2 border-white bg-gradient-to-r from-deep-violet/[0.08] via-magenta/[0.04] to-transparent p-4 backdrop-blur-sm">
+                          <div className="overflow-hidden rounded-[8px] border-2 border-white bg-gradient-to-r from-deep-violet/[0.08] via-magenta/[0.04] to-transparent p-4 backdrop-blur-sm">
                             <div className="flex flex-wrap items-center justify-between gap-3">
                               <div className="flex items-center gap-3">
-                                <span aria-hidden className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-deep-violet text-white shadow-sm shadow-deep-violet/30">
+                                <span aria-hidden className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-deep-violet text-white shadow-sm shadow-deep-violet/30">
                                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
                                     <path d="M3 13h4l2 3h6l2-3h4" strokeLinecap="round" strokeLinejoin="round" />
                                     <path d="M5 6h14l2 7v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5l2-7Z" strokeLinecap="round" strokeLinejoin="round" />
@@ -1144,7 +1144,7 @@ function ReviewsInner() {
                               <button
                                 onClick={() => void approveAllDrafts()}
                                 disabled={approvingAllPending || approvingId !== null}
-                                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald px-4 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-emerald/25 outline-none transition hover:bg-emerald/90 focus-visible:ring-2 focus-visible:ring-emerald/40 active:scale-[0.98] disabled:opacity-50"
+                                className="inline-flex items-center gap-1.5 rounded-[8px] bg-emerald px-4 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-emerald/25 outline-none transition hover:bg-emerald/90 focus-visible:ring-2 focus-visible:ring-emerald/40 active:scale-[0.98] disabled:opacity-50"
                               >
                                 {approvingAllPending ? (
                                   <><span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" /> {ap.approvingAll}</>
@@ -1175,7 +1175,7 @@ function ReviewsInner() {
                               return (
                                 <article
                                   key={d.id}
-                                  className="rounded-2xl border-2 border-white bg-white/90 p-4 shadow-sm backdrop-blur-sm transition duration-200 hover:border-deep-violet/20 hover:shadow-md hover:shadow-deep-violet/[0.07]"
+                                  className="rounded-[8px] border-2 border-white bg-white/90 p-4 shadow-sm backdrop-blur-sm transition duration-200 hover:border-deep-violet/20 hover:shadow-md hover:shadow-deep-violet/[0.07]"
                                 >
                                   {/* Reviewer */}
                                   <div className="flex items-start gap-3">
@@ -1218,7 +1218,7 @@ function ReviewsInner() {
                                   )}
 
                                   {/* AI draft */}
-                                  <div className="mt-3 rounded-xl border border-deep-violet/[0.14] bg-deep-violet/[0.03] p-3">
+                                  <div className="mt-3 rounded-[8px] border border-deep-violet/[0.14] bg-deep-violet/[0.03] p-3">
                                     <div className="mb-2 flex items-center justify-between gap-2">
                                       <span className="inline-flex items-center gap-1.5">
                                         <span className="inline-flex items-center gap-1 rounded-full bg-deep-violet px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white">
@@ -1290,7 +1290,7 @@ function ReviewsInner() {
                                     <button
                                       onClick={() => void approveDraft(d)}
                                       disabled={busy || approvingAllPending}
-                                      className="inline-flex items-center gap-1.5 rounded-xl bg-emerald px-4 py-2 text-[12px] font-bold text-white shadow-sm shadow-emerald/25 outline-none transition hover:bg-emerald/90 focus-visible:ring-2 focus-visible:ring-emerald/40 active:scale-[0.98] disabled:opacity-50"
+                                      className="inline-flex items-center gap-1.5 rounded-[8px] bg-emerald px-4 py-2 text-[12px] font-bold text-white shadow-sm shadow-emerald/25 outline-none transition hover:bg-emerald/90 focus-visible:ring-2 focus-visible:ring-emerald/40 active:scale-[0.98] disabled:opacity-50"
                                     >
                                       {busy ? (
                                         <><span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" /> {ap.publishing}</>
@@ -1307,7 +1307,7 @@ function ReviewsInner() {
                                       <button
                                         onClick={() => void saveDraft(d)}
                                         disabled={busy}
-                                        className="rounded-xl bg-deep-violet/[0.07] px-3.5 py-2 text-[12px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.12] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50"
+                                        className="rounded-[8px] bg-deep-violet/[0.07] px-3.5 py-2 text-[12px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.12] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50"
                                       >
                                         {ap.saveEdits}
                                       </button>
@@ -1315,7 +1315,7 @@ function ReviewsInner() {
                                     <button
                                       onClick={() => void discardDraft(d)}
                                       disabled={busy || discardingId === d.id || approvingAllPending}
-                                      className="rounded-xl px-3.5 py-2 text-[12px] font-semibold text-rose-600 outline-none transition hover:bg-rose-500/[0.08] focus-visible:ring-2 focus-visible:ring-rose-500/40 disabled:opacity-50"
+                                      className="rounded-[8px] px-3.5 py-2 text-[12px] font-semibold text-rose-600 outline-none transition hover:bg-rose-500/[0.08] focus-visible:ring-2 focus-visible:ring-rose-500/40 disabled:opacity-50"
                                     >
                                       {discardingId === d.id ? ap.discarding : ap.discard}
                                     </button>
@@ -1329,7 +1329,7 @@ function ReviewsInner() {
                           {visiblePending.length < pendingReplies.length && (
                             <button
                               onClick={() => setNeedApprovalPage((p) => p + 1)}
-                              className="w-full rounded-xl bg-deep-violet/[0.06] py-2.5 text-[12px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+                              className="w-full rounded-[8px] bg-deep-violet/[0.06] py-2.5 text-[12px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
                             >
                               {fill(ap.seeMore, { left: fmt(pendingReplies.length - visiblePending.length) })}
                             </button>
@@ -1337,7 +1337,7 @@ function ReviewsInner() {
                         </>
                       )
                     ) : filtered.length === 0 ? (
-                      <div className="flex flex-col items-center rounded-2xl border border-dashed border-ink/[0.12] bg-white py-16 dark:border-fog/[0.12] dark:bg-ink">
+                      <div className="flex flex-col items-center rounded-[8px] border border-dashed border-ink/[0.12] bg-white py-16 dark:border-fog/[0.12] dark:bg-ink">
                           <p className="text-[14px] font-medium text-ink/40">
                             {live.length === 0 && tab === "all"
                               ? rv.list.emptyAll
@@ -1400,7 +1400,7 @@ function ReviewsInner() {
                     {/* Rating breakdown leads the column: the star mix is the
                         fastest read on business health, and it is the way in
                         to the full intelligence view. */}
-                    <div className="rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
+                    <div className="rounded-[8px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
                       <button onClick={() => setView({ kind: "intelligence" })} className="block w-full text-left">
                         <h3 className="text-[13px] font-semibold text-ink dark:text-fog">{rv.stats.breakdown}</h3>
                         <p className="text-[11px] text-ink/35">{rv.stats.breakdownSub}</p>
@@ -1419,7 +1419,7 @@ function ReviewsInner() {
                         ))}
                       </div>
                       <button onClick={() => setView({ kind: "intelligence" })}
-                        className="mt-3 w-full rounded-xl bg-deep-violet/[0.06] py-2 text-[12px] font-bold text-deep-violet transition hover:bg-deep-violet hover:text-white">
+                        className="mt-3 w-full rounded-[8px] bg-deep-violet/[0.06] py-2 text-[12px] font-bold text-deep-violet transition hover:bg-deep-violet hover:text-white">
                         {rv.stats.seeMore}
                       </button>
                     </div>
@@ -1436,10 +1436,10 @@ function ReviewsInner() {
                         belongs beside the counts that motivate it. */}
                     <button
                       onClick={() => setView({ kind: "ask" })}
-                      className="block w-full rounded-2xl border border-ink/[0.06] bg-white p-4 text-left transition hover:border-deep-violet/25 hover:bg-deep-violet/[0.02] dark:border-fog/[0.06] dark:bg-ink"
+                      className="block w-full rounded-[8px] border border-ink/[0.06] bg-white p-4 text-left transition hover:border-deep-violet/25 hover:bg-deep-violet/[0.02] dark:border-fog/[0.06] dark:bg-ink"
                     >
                       <div className="flex items-center gap-2.5">
-                        <span aria-hidden className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-deep-violet to-magenta text-white shadow-sm">
+                        <span aria-hidden className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-gradient-to-br from-deep-violet to-magenta text-white shadow-sm">
                           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
                             <rect x="3" y="3" width="7" height="7" rx="1" />
                             <rect x="14" y="3" width="7" height="7" rx="1" />
@@ -1454,14 +1454,14 @@ function ReviewsInner() {
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="ml-auto h-3.5 w-3.5 shrink-0 text-ink/30"><path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
                       </div>
                     </button>
-                    <div className="rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
+                    <div className="rounded-[8px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
                       <h3 className="text-[13px] font-semibold text-ink dark:text-fog">{rv.stats.trend}</h3>
                       <p className="text-[11px] text-ink/35">{fill(rv.stats.trendSub, { this: fmt(analytics.thisMonth), last: fmt(analytics.lastMonth) })}</p>
                       <div className="mt-3 flex h-24 items-end gap-2">
                         {analytics.months.map((m) => (
                           <div key={m.label} className="flex flex-1 flex-col items-center gap-1">
-                            <div className="flex w-full flex-1 items-end rounded-md bg-ink/[0.04] dark:bg-fog/[0.05]">
-                              <div className="w-full rounded-md bg-deep-violet/70" style={{ height: `${Math.max(6, (m.count / analytics.maxMonth) * 100)}%` }} />
+                            <div className="flex w-full flex-1 items-end rounded-[8px] bg-ink/[0.04] dark:bg-fog/[0.05]">
+                              <div className="w-full rounded-[8px] bg-deep-violet/70" style={{ height: `${Math.max(6, (m.count / analytics.maxMonth) * 100)}%` }} />
                             </div>
                             <span className="text-[9px] text-ink/40">{m.label}</span>
                           </div>
@@ -1630,7 +1630,7 @@ function ReviewsInner() {
                     </div>
 
                     {/* AI triage — advisory only, never acts on its own */}
-                    <div className="mt-2.5 rounded-md border border-[#F4B400]/30 bg-white/70 px-3 py-2.5">
+                    <div className="mt-2.5 rounded-[8px] border border-[#F4B400]/30 bg-white/70 px-3 py-2.5">
                       {active.abuseScore == null ? (
                         <p className="text-[12px] text-[#7A4F01]">
                           {ab.triageUnavailable}
@@ -1670,7 +1670,7 @@ function ReviewsInner() {
                             ok: ra.confirmedReport,
                           })}
                           disabled={abuseBusy !== null}
-                          className="rounded-md bg-[#7A4F01] px-3 py-1.5 text-[12px] font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+                          className="rounded-[8px] bg-[#7A4F01] px-3 py-1.5 text-[12px] font-medium text-white transition hover:opacity-90 disabled:opacity-50"
                         >
                           {ab.yesReport}
                         </button>
@@ -1680,7 +1680,7 @@ function ReviewsInner() {
                             ok: ra.dismissedNormal,
                           })}
                           disabled={abuseBusy !== null}
-                          className="rounded-md border border-[#7A4F01]/40 px-3 py-1.5 text-[12px] font-medium text-[#7A4F01] transition hover:bg-[#FEF7E0] disabled:opacity-50"
+                          className="rounded-[8px] border border-[#7A4F01]/40 px-3 py-1.5 text-[12px] font-medium text-[#7A4F01] transition hover:bg-[#FEF7E0] disabled:opacity-50"
                         >
                           {ab.noLeave}
                         </button>
@@ -1699,7 +1699,7 @@ function ReviewsInner() {
                               href={active.reviewUrl}
                               target="_blank"
                               rel="noreferrer"
-                              className="rounded-md border border-[#7A4F01]/40 px-3 py-1.5 text-[12px] font-medium text-[#7A4F01] transition hover:bg-[#FEF7E0]"
+                              className="rounded-[8px] border border-[#7A4F01]/40 px-3 py-1.5 text-[12px] font-medium text-[#7A4F01] transition hover:bg-[#FEF7E0]"
                             >
                               {ab.openGoogle}
                             </a>
@@ -1709,7 +1709,7 @@ function ReviewsInner() {
                               ok: ra.markedReported,
                             })}
                             disabled={abuseBusy !== null}
-                            className="rounded-md border border-[#7A4F01]/40 px-3 py-1.5 text-[12px] font-medium text-[#7A4F01] transition hover:bg-[#FEF7E0] disabled:opacity-50"
+                            className="rounded-[8px] border border-[#7A4F01]/40 px-3 py-1.5 text-[12px] font-medium text-[#7A4F01] transition hover:bg-[#FEF7E0] disabled:opacity-50"
                           >
                             {abuseBusy === "abuse-reported" ? ab.saving : ab.reportDone}
                           </button>
@@ -1725,7 +1725,7 @@ function ReviewsInner() {
                           ok: ra.flaggedTriage,
                         })}
                         disabled={abuseBusy !== null}
-                        className="rounded-md border border-[#E8EAED] px-3 py-1.5 text-[12px] font-medium text-[#5F6368] transition hover:bg-ink/[0.04] disabled:opacity-40"
+                        className="rounded-[8px] border border-[#E8EAED] px-3 py-1.5 text-[12px] font-medium text-[#5F6368] transition hover:bg-ink/[0.04] disabled:opacity-40"
                       >
                         {abuseBusy === "flag-abuse" ? ab.flagBusy : ab.flagBtn}
                       </button>
@@ -1767,7 +1767,7 @@ function ReviewsInner() {
                   <h3 className="text-[13px] font-medium text-[#202124]">{dt.yourReply}</h3>
                   {active.publishedReplyText &&
                     active.publishedReplyText !== active.reply_text && (
-                      <div className="mt-3 rounded-md border border-[#CEEAD6] bg-[#E6F4EA] px-3 py-3">
+                      <div className="mt-3 rounded-[8px] border border-[#CEEAD6] bg-[#E6F4EA] px-3 py-3">
                         <div className="flex flex-wrap items-center gap-2">
                           <p className="text-[12px] font-medium text-[#137333]">
                             {dt.publishedReply}
@@ -1791,7 +1791,7 @@ function ReviewsInner() {
                       </div>
                     )}
                   {active.reply_text && (
-                    <div className="mt-3 rounded-md border border-[#DADCE0] bg-white px-3 py-3">
+                    <div className="mt-3 rounded-[8px] border border-[#DADCE0] bg-white px-3 py-3">
                       <div className="flex items-center gap-2">
                         <p className="text-[12px] font-medium text-[#202124]">
                           {active.publishedReplyText &&
@@ -1818,7 +1818,7 @@ function ReviewsInner() {
                             rows={4}
                             maxLength={1000}
                             autoFocus
-                            className="mt-2 min-h-[96px] w-full resize-y rounded-md border border-[#DADCE0] bg-white px-3 py-2.5 text-[13px] leading-5 text-[#202124] outline-none focus:border-[#1A73E8] focus:ring-1 focus:ring-[#1A73E8]"
+                            className="mt-2 min-h-[96px] w-full resize-y rounded-[8px] border border-[#DADCE0] bg-white px-3 py-2.5 text-[13px] leading-5 text-[#202124] outline-none focus:border-[#1A73E8] focus:ring-1 focus:ring-[#1A73E8]"
                           />
                           {active.status === "posted" && (
                             <p className="mt-1.5 text-[11px] leading-4 text-[#5F6368]">
@@ -1829,14 +1829,14 @@ function ReviewsInner() {
                             <button
                               onClick={() => setEditingResponse(null)}
                               disabled={savingResponse}
-                              className="rounded-md px-3 py-1.5 text-[12px] font-medium text-[#5F6368] hover:bg-ink/[0.04] disabled:opacity-40"
+                              className="rounded-[8px] px-3 py-1.5 text-[12px] font-medium text-[#5F6368] hover:bg-ink/[0.04] disabled:opacity-40"
                             >
                               {dt.cancel}
                             </button>
                             <button
                               onClick={() => void saveResponse(active)}
                               disabled={!responseText.trim() || savingResponse}
-                              className={`rounded-md px-4 py-1.5 text-[12px] font-medium disabled:opacity-50 ${
+                              className={`rounded-[8px] px-4 py-1.5 text-[12px] font-medium disabled:opacity-50 ${
                                 active.replyId &&
                                 (active.status === "posted" || active.status === "pending_approval")
                                   ? "border border-[#DADCE0] text-[#5F6368] hover:bg-ink/[0.04]"
@@ -1850,7 +1850,7 @@ function ReviewsInner() {
                                 <button
                                   onClick={() => void publishUpdatedReply(active)}
                                   disabled={!responseText.trim() || savingResponse}
-                                  className="rounded-md bg-[#1A73E8] px-4 py-1.5 text-[12px] font-medium text-white hover:bg-[#1765CC] disabled:opacity-50"
+                                  className="rounded-[8px] bg-[#1A73E8] px-4 py-1.5 text-[12px] font-medium text-white hover:bg-[#1765CC] disabled:opacity-50"
                                 >
                                   {savingResponse ? dt.publishing : dt.republish}
                                 </button>
@@ -1868,7 +1868,7 @@ function ReviewsInner() {
                     </div>
                   )}
                   {active.removed ? (
-                    <div className="mt-2 flex items-start gap-2 rounded-md border border-[#E8EAED] bg-[#F8F9FA] px-3 py-2.5">
+                    <div className="mt-2 flex items-start gap-2 rounded-[8px] border border-[#E8EAED] bg-[#F8F9FA] px-3 py-2.5">
                       <span aria-hidden className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-[#AAAAAA]" />
                       <div>
                         <p className="text-[12px] font-medium text-[#5F6368]">{dt.removedTitle}</p>
@@ -1879,7 +1879,7 @@ function ReviewsInner() {
                     </div>
                   ) : active.replied ? (
                      <>
-                       <div className="mt-2 flex items-start gap-2 rounded-md border border-[#CEEAD6] bg-[#E6F4EA] px-3 py-2.5">
+                       <div className="mt-2 flex items-start gap-2 rounded-[8px] border border-[#CEEAD6] bg-[#E6F4EA] px-3 py-2.5">
                          <span aria-hidden className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-[#34A853]" />
                          <div>
                            <p className="text-[12px] font-medium text-[#137333]">{dt.repliedTitle}</p>
@@ -1896,7 +1896,7 @@ function ReviewsInner() {
                              setEditingResponse(active.id);
                              setResponseText(active.reply_text ?? "");
                            }}
-                           className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-[#1A73E8] px-3 py-1.5 text-[12px] font-medium text-[#1A73E8] transition hover:bg-[#E8F0FE]"
+                           className="mt-2 inline-flex items-center gap-1.5 rounded-[8px] border border-[#1A73E8] px-3 py-1.5 text-[12px] font-medium text-[#1A73E8] transition hover:bg-[#E8F0FE]"
                          >
                            {dt.editRepublish}
                          </button>
@@ -1913,20 +1913,20 @@ function ReviewsInner() {
                              rows={4}
                              maxLength={1000}
                              placeholder={dt.liveReplyPh}
-                             className="mt-2 min-h-[96px] w-full resize-y rounded-md border border-[#DADCE0] bg-white px-3 py-2.5 text-[13px] leading-5 text-[#202124] placeholder:text-[#5F6368]/60 outline-none focus:border-[#1A73E8] focus:ring-1 focus:border-[#1A73E8]"
+                             className="mt-2 min-h-[96px] w-full resize-y rounded-[8px] border border-[#DADCE0] bg-white px-3 py-2.5 text-[13px] leading-5 text-[#202124] placeholder:text-[#5F6368]/60 outline-none focus:border-[#1A73E8] focus:ring-1 focus:border-[#1A73E8]"
                            />
                            <div className="mt-2 flex items-center justify-end gap-2">
                              <button
                                onClick={() => { setEditingResponse(null); setResponseText(""); }}
                                disabled={savingResponse}
-                               className="rounded-md px-3 py-1.5 text-[12px] font-medium text-[#5F6368] hover:bg-ink/[0.04] disabled:opacity-40"
+                               className="rounded-[8px] px-3 py-1.5 text-[12px] font-medium text-[#5F6368] hover:bg-ink/[0.04] disabled:opacity-40"
                              >
                                Cancel
                              </button>
                              <button
                                onClick={() => void publishUpdatedReply(active)}
                                disabled={!responseText.trim() || savingResponse}
-                               className="rounded-md bg-[#1A73E8] px-4 py-1.5 text-[12px] font-medium text-white hover:bg-[#1765CC] disabled:opacity-50"
+                               className="rounded-[8px] bg-[#1A73E8] px-4 py-1.5 text-[12px] font-medium text-white hover:bg-[#1765CC] disabled:opacity-50"
                              >
                                {savingResponse ? dt.publishing : dt.republish}
                              </button>
@@ -1938,7 +1938,7 @@ function ReviewsInner() {
                        )}
                      </>
                    ) : active.skipped ? (
-                     <div className="mt-2 flex items-start gap-2 rounded-md border border-[#E8EAED] bg-[#F8F9FA] px-3 py-2.5">
+                     <div className="mt-2 flex items-start gap-2 rounded-[8px] border border-[#E8EAED] bg-[#F8F9FA] px-3 py-2.5">
                        <span aria-hidden className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-[#AAAAAA]" />
                        <div>
                          <p className="text-[12px] font-medium text-[#5F6368]">{dt.skippedTitle}</p>
@@ -1969,7 +1969,7 @@ function ReviewsInner() {
                          {skippingId === active?.id ? dt.marking : dt.markUnavailable}
                        </button>
                       {aiLoading ? (
-                        <div className="mt-3 space-y-2 rounded-md border border-[#DADCE0] bg-white px-3 py-3">
+                        <div className="mt-3 space-y-2 rounded-[8px] border border-[#DADCE0] bg-white px-3 py-3">
                           <div className="flex items-center gap-2">
                             <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#DADCE0] border-t-[#1A73E8]" />
                             <p className="text-[12px] font-medium text-[#202124]">{dt.engineBusy}</p>
@@ -2016,13 +2016,13 @@ function ReviewsInner() {
                             rows={4}
                             maxLength={1000}
                             placeholder={replyMode === "ai" ? dt.aiPh : dt.manualPh}
-                            className="mt-3 min-h-[96px] w-full resize-y rounded-md border border-[#DADCE0] bg-white px-3 py-2.5 text-[13px] leading-5 text-[#202124] placeholder:text-[#5F6368]/60 outline-none focus:border-[#1A73E8] focus:ring-1 focus:ring-[#1A73E8]"
+                            className="mt-3 min-h-[96px] w-full resize-y rounded-[8px] border border-[#DADCE0] bg-white px-3 py-2.5 text-[13px] leading-5 text-[#202124] placeholder:text-[#5F6368]/60 outline-none focus:border-[#1A73E8] focus:ring-1 focus:ring-[#1A73E8]"
                           />
                           {aiError && (
-                            <p className="mt-2 rounded-md border border-[#FAD2CF] bg-[#FCE8E6] px-2.5 py-2 text-[12px] leading-4 text-[#C5221F]">{aiError}</p>
+                            <p className="mt-2 rounded-[8px] border border-[#FAD2CF] bg-[#FCE8E6] px-2.5 py-2 text-[12px] leading-4 text-[#C5221F]">{aiError}</p>
                           )}
                           {aiTrace && aiTrace.length > 0 && !aiError && (
-                            <details className="mt-2 rounded-md border border-[#E8EAED] bg-white" open>
+                            <details className="mt-2 rounded-[8px] border border-[#E8EAED] bg-white" open>
                               <summary className="cursor-pointer list-none px-3 py-2 text-[11px] font-medium text-[#1A73E8] hover:underline">
                                 {fill(dt.traceSummary, { n: fmt(aiTrace.length) })}
                               </summary>
@@ -2114,7 +2114,7 @@ function ReviewsInner() {
                         <span className="text-[11px] text-[#5F6368]">{fmt(replyDraft.length)}/1000</span>
                       </div>
                       <div className="mt-3 flex flex-wrap gap-2">
-                        <button onClick={() => copyDraft()} disabled={!replyDraft.trim() || replying || aiLoading} className="inline-flex items-center justify-center rounded-md bg-[#1A73E8] px-4 py-2 text-[13px] font-medium text-white hover:bg-[#1765CC] disabled:opacity-50">
+                        <button onClick={() => copyDraft()} disabled={!replyDraft.trim() || replying || aiLoading} className="inline-flex items-center justify-center rounded-[8px] bg-[#1A73E8] px-4 py-2 text-[13px] font-medium text-white hover:bg-[#1765CC] disabled:opacity-50">
                           {replying ? <span className="inline-flex items-center gap-1.5"><span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" /> {dt.copying}</span> : dt.copyDraft}
                         </button>
                         <span className="inline-flex items-center text-[11px] leading-4 text-[#5F6368]">{dt.copyHint}</span>
@@ -2310,12 +2310,12 @@ function StarInsightPage({ stars, group, total, onBack, onOpen }: { stars: numbe
         </span>
       </div>
       <div className="grid gap-3 lg:grid-cols-3">
-        <section className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+        <section className="rounded-[8px] border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
           <h3 className="mb-2 text-[14px] font-bold text-ink">{st.overview}</h3>
           <p className="text-[12px] leading-relaxed text-ink/60">{verdict}</p>
           <p className="mt-3 text-[12px] text-ink/60">{fill(st.shareResponse, { share: fmt(share), resp: fmt(group.length ? Math.round((replied / group.length) * 100) : 0) })}</p>
         </section>
-        <section className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+        <section className="rounded-[8px] border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
           <h3 className="mb-2 text-[14px] font-bold text-ink">{st.topSignals}</h3>
           {signals.length ? (
             <ul className="space-y-2">
@@ -2325,13 +2325,13 @@ function StarInsightPage({ stars, group, total, onBack, onOpen }: { stars: numbe
             </ul>
           ) : <p className="text-[12px] text-ink/40">{group.length ? st.noSignals : st.noReviews}</p>}
         </section>
-        <section className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+        <section className="rounded-[8px] border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
           <h3 className="mb-2 text-[14px] font-bold text-ink">{st.recommended}</h3>
           <p className="text-[12px] leading-relaxed text-ink/60">{action}</p>
           <p className="mt-3 text-[11px] text-ink/40">{st.derived}</p>
         </section>
       </div>
-      <div className="rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
+      <div className="rounded-[8px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
         <h3 className="mb-2 text-[13px] font-semibold text-ink dark:text-fog">{st.matching}</h3>
         {group.length === 0 ? (
           <p className="py-4 text-center text-[12px] text-ink/40">{st.noReviews}</p>
@@ -2755,12 +2755,12 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
             </p>
             {analyzedLabel && <p className="mt-1 text-[12px] text-[#5F6368]">{fill(ih.updated, { when: analyzedLabel })}</p>}
             {aiMeta?.stale && (
-              <p className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-[#FEF7E0] px-2.5 py-1 text-[12px] font-medium text-[#EA8600]">
+              <p className="mt-2 inline-flex items-center gap-1.5 rounded-[8px] bg-[#FEF7E0] px-2.5 py-1 text-[12px] font-medium text-[#EA8600]">
                 <span className="h-1.5 w-1.5 rounded-full bg-[#EA8600]" /> {fill(ih.staleLine, { n: fmt(aiMeta.newCount) })}
               </p>
             )}
             {(aiMeta?.heldOut?.total ?? 0) > 0 && (
-              <p className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-[#FEF7E0] px-2.5 py-1 text-[12px] text-[#7A4F01]">
+              <p className="mt-2 inline-flex items-center gap-1.5 rounded-[8px] bg-[#FEF7E0] px-2.5 py-1 text-[12px] text-[#7A4F01]">
                 <span className="h-1.5 w-1.5 rounded-full bg-[#F4B400]" />
                 {fill(ih.heldOut, { n: fmt(aiMeta?.heldOut?.total ?? 0) })}
                 {aiMeta?.heldOut?.needs_human
@@ -2774,14 +2774,14 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
           <div className="flex items-center gap-2">
             <button
               onClick={onBack}
-              className="hidden sm:inline-flex rounded-md border border-[#DADCE0] bg-white px-3 py-2 text-[13px] font-medium text-[#1A73E8] hover:bg-[#F8F9FA]"
+              className="hidden sm:inline-flex rounded-[8px] border border-[#DADCE0] bg-white px-3 py-2 text-[13px] font-medium text-[#1A73E8] hover:bg-[#F8F9FA]"
             >
               {ih.back}
             </button>
             <button
               onClick={onAnalyze}
               disabled={analyzing || aiLoading}
-              className="inline-flex items-center gap-1.5 rounded-md bg-[#1A73E8] px-4 py-2 text-[13px] font-medium text-white hover:bg-[#1765CC] disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#1A73E8] px-4 py-2 text-[13px] font-medium text-white hover:bg-[#1765CC] disabled:opacity-50"
             >
               {analyzing ? (
                 <>
@@ -2820,7 +2820,7 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
                 value={intelMonth}
                 disabled={isLoading}
                 onChange={(e) => setIntelMonth(e.target.value)}
-                className="rounded-md border border-[#DADCE0] px-2 py-1 text-[12px] text-[#202124] disabled:opacity-50"
+                className="rounded-[8px] border border-[#DADCE0] px-2 py-1 text-[12px] text-[#202124] disabled:opacity-50"
               />
             </label>
             {intelMonth && (
@@ -3097,7 +3097,7 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
             <span className="h-2 w-2 rounded-full bg-[#EA4335]" /> {ih.hurtTitle}
             <span className="ml-auto text-[11px] font-normal text-[#5F6368]">{i.dislike.length ? fill(ih.loveCount, { n: fmt(i.dislike.length) }) : ih.hurtNone}</span>
           </h3>
-          {i.dislike.length === 0 ? <p className="mt-3 rounded-md bg-[#E6F4EA] px-3 py-2 text-[13px] text-[#137333]">{ih.hurtEmpty}</p> : (
+          {i.dislike.length === 0 ? <p className="mt-3 rounded-[8px] bg-[#E6F4EA] px-3 py-2 text-[13px] text-[#137333]">{ih.hurtEmpty}</p> : (
             <div className="mt-3 space-y-3">
               {i.dislike.map((t) => (
                 <div key={t.name}>
@@ -3411,7 +3411,7 @@ function Stars({ rating }: { rating: number }) {
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-ink/[0.06] bg-white p-3 dark:border-fog/[0.06] dark:bg-ink">
+    <div className="rounded-[8px] border border-ink/[0.06] bg-white p-3 dark:border-fog/[0.06] dark:bg-ink">
       <p className="text-[11px] font-medium text-ink/40 dark:text-fog/40">{label}</p>
       <p className="text-[18px] font-bold text-ink dark:text-fog">{value}</p>
     </div>

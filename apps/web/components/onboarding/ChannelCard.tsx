@@ -10,8 +10,8 @@ interface ChannelCardProps {
 
 export default function ChannelCard({ name, icon, color, soon = false, connected, onConnect }: ChannelCardProps) {
   return (
-    <div className="flex items-center gap-4 rounded-xl border border-ink/[0.06] bg-white p-5 transition hover:border-deep-violet/20 hover:shadow-sm dark:border-fog/[0.06] dark:bg-ink dark:hover:border-deep-violet/20">
-      <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${color} text-[22px] text-white shadow-sm`}>
+    <div className="flex items-center gap-4 rounded-[8px] border border-ink/[0.06] bg-white p-5 transition hover:border-deep-violet/20 hover:shadow-sm dark:border-fog/[0.06] dark:bg-ink dark:hover:border-deep-violet/20">
+      <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-[8px] bg-gradient-to-br ${color} text-[22px] text-white shadow-sm`}>
         {icon}
       </div>
       <div className="flex-1">

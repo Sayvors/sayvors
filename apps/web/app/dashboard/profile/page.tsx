@@ -177,7 +177,7 @@ export default function ProfilePage() {
         <div className="mx-auto max-w-2xl p-6">
           <div
             role="alert"
-            className="rounded-[32px] bg-white p-8 text-center shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)] ring-1 ring-coral/25 dark:bg-[#1b1530]"
+            className="rounded-[8px] bg-white p-8 text-center shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)] ring-1 ring-coral/25 dark:bg-[#1b1530]"
           >
             <h1 className="text-[17px] font-black text-ink dark:text-fog">{pf.loadFailTitle}</h1>
             <p className="mt-1 break-words text-[12px] text-ink/55 dark:text-fog/55">
@@ -186,7 +186,7 @@ export default function ProfilePage() {
             <button
               type="button"
               onClick={() => void loadAll()}
-              className="mt-5 rounded-[20px] bg-deep-violet px-5 py-2.5 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 active:translate-y-0.5 active:scale-[0.98]"
+              className="mt-5 rounded-[8px] bg-deep-violet px-5 py-2.5 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 active:translate-y-0.5 active:scale-[0.98]"
             >
               {pf.tryAgain}
             </button>
@@ -212,7 +212,7 @@ export default function ProfilePage() {
           <button
             type="button"
             onClick={() => void loadAll()}
-            className="inline-flex items-center gap-2 rounded-[20px] bg-white px-4 py-2.5 text-[12px] font-bold text-ink/65 shadow-[0_8px_20px_-14px_rgba(61,29,110,0.55)] ring-1 ring-ink/[0.08] transition hover:text-deep-violet focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 active:translate-y-0.5 active:scale-[0.98] dark:bg-[#1b1530] dark:text-fog/65 dark:ring-white/[0.1]"
+            className="inline-flex items-center gap-2 rounded-[8px] bg-white px-4 py-2.5 text-[12px] font-bold text-ink/65 shadow-[0_8px_20px_-14px_rgba(61,29,110,0.55)] ring-1 ring-ink/[0.08] transition hover:text-deep-violet focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 active:translate-y-0.5 active:scale-[0.98] dark:bg-[#1b1530] dark:text-fog/65 dark:ring-white/[0.1]"
           >
             <svg
               viewBox="0 0 16 16"

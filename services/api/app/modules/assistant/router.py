@@ -50,6 +50,85 @@ MAX_TURNS_MEMORY = 20
 CHART_PLAN_TIMEOUT_SECONDS = 25
 RAG_TIMEOUT_SECONDS = 20
 
+_PAGE_LABELS = {
+    "/dashboard/benchmark": "Benchmark",
+    "/dashboard/benchmark/compare": "Benchmark · Compare",
+    "/dashboard/analytics": "Analytics",
+    "/dashboard/reviews": "Reviews",
+    "/dashboard/locations": "Locations",
+    "/dashboard/channels": "Channels",
+    "/dashboard/customers": "Customers",
+    "/dashboard/posts": "Posts & Media",
+    "/dashboard/team": "Team",
+}
+
+
+async def _page_context(
+    db: AsyncSession, tenant_id: str, page: str | None
+) -> str:
+    """A short, honest description of what is on the owner's screen.
+
+    Only known dashboard routes produce context. The benchmark compare page is
+    special-cased: its URL carries the selected subjects, and those are
+    resolved to real business names (from the bench row / connected channel)
+    so the assistant can talk about exactly the branches being compared. No
+    claims about data we did not actually load.
+    """
+    if not page:
+        return ""
+    from urllib.parse import parse_qs, urlparse
+
+    parsed = urlparse(page)
+    path = parsed.path
+    label = _PAGE_LABELS.get(path)
+    if not label:
+        return ""
+    if path != "/dashboard/benchmark/compare":
+        return f"The owner is on the {label} page."
+
+    params = parse_qs(parsed.query)
+    keys = [
+        *params.get("main", []),
+        *params.get("vs", []),
+    ][:6]
+    names: list[str] = []
+    for key in keys:
+        kind, _, ident = key.partition(":")
+        if not ident:
+            continue
+        if kind == "saved":
+            try:
+                from ..benchmark.service import get_saved
+
+                saved = await get_saved(db, tenant_id, ident)
+                if saved is not None:
+                    names.append(str(saved.name or saved.label or "Saved business"))
+                    continue
+            except Exception:
+                pass
+        elif kind == "own":
+            from ..channels.models import Channel
+
+            channel = (
+                await db.execute(
+                    select(Channel).where(
+                        Channel.id == ident, Channel.user_id == tenant_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if channel is not None:
+                names.append(str(channel.display_name or "Your location"))
+                continue
+        names.append("a business")
+
+    selected = ", ".join(names) if names else "none listed"
+    return (
+        f"The owner is on the Benchmark · Compare page. The businesses being "
+        f"compared right now are: {selected}. 'Mine'/'ours' refers to the "
+        f"selected own location. Compare takes only this list as the on-screen "
+        f"selection; numbers still come from LIVE BUSINESS DATA below."
+    )
+
 
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
@@ -62,6 +141,10 @@ class AssistantChatRequest(BaseModel):
     # Browser chat id. Enables server-side follow-up memory (last datasets,
     # prior charts, recent turns). Optional for older clients.
     session_id: str | None = Field(default=None, max_length=80)
+    # The dashboard page the owner is on (pathname + query). Lets the
+    # assistant know which screen and which selected entities are in front of
+    # them, so "why are these two better than mine" has real referents.
+    page: str | None = Field(default=None, max_length=500)
 
 
 class AssistantChatResponse(BaseModel):
@@ -577,6 +660,21 @@ async def _rag_answer(
         return "", [], False, "unavailable"
 
 
+def _preferred_language_label(code: str | None) -> str:
+    names = {
+        "en": "English",
+        "ar": "Arabic",
+        "es": "Spanish",
+        "fr": "French",
+        "de": "German",
+        "ur": "Urdu",
+        "ch": "Chinese",
+        "zh": "Chinese",
+    }
+    c = (code or "en").strip().lower()
+    return f"{names.get(c, c)} ({c})"
+
+
 def _system_prompt(
     snapshot: dict,
     rag_answer: str,
@@ -585,6 +683,9 @@ def _system_prompt(
     rag_status: str = "answered",
     charts: list[dict] | None = None,
     profile_block: str = "",
+    page_block: str = "",
+    knowledge_block: str = "",
+    preferred_language: str | None = None,
 ) -> str:
     import json
 
@@ -650,15 +751,19 @@ def _system_prompt(
 
     from .navigation import navigation_prompt_block
 
+    screen_block = f"\n\nCURRENT SCREEN:\n{page_block}\n" if page_block else ""
+
     return (
         "You are Sayvors' business assistant, chatting with the business owner "
         "inside their dashboard.\n\n"
         f"LIVE BUSINESS DATA:\n{context}"
         f"{rag_block}\n\n"
         f"{chart_block}\n"
+        f"{screen_block}"
         f"{navigation_prompt_block()}"
         f"{profile_block}\n\n"
-        "Rules:\n"
+        + (f"OWNER-CONFIGURED BUSINESS FACTS AND CATALOG:\n{knowledge_block}\n\n" if knowledge_block else "")
+        + "Rules:\n"
         + (
             "- This question is about totals, so individual review, reply and "
             "lead rows were left out of the context on purpose. Answer from "
@@ -696,7 +801,13 @@ def _system_prompt(
         "numbers show.\n"
         "- Be concise (max ~120 words) and concrete; quote real numbers when relevant.\n"
         "- Never use em dashes or en dashes. Use commas or full stops instead.\n"
-        "- Reply in the same language the owner writes in (Arabic stays Arabic).\n"
+        f"- Default to the owner's preferred language: {_preferred_language_label(preferred_language)}. "
+        "If the owner clearly writes in a different language, reply in that language.\n"
+        "- The CURRENT SCREEN block says which page and which businesses are "
+        "selected. Use it when the owner says 'here', 'these', 'mine', or "
+        "points at branches. Never claim to see anything beyond that block; "
+        "all numbers still come from LIVE BUSINESS DATA and DATABANK "
+        "GROUNDING.\n"
         "- If the data does not contain the answer, say so plainly and suggest "
         "what to connect or sync to get it.\n"
         "- Never invent a REASON for not knowing. Only two things exist here: "
@@ -877,12 +988,21 @@ async def chat(
     )
     rag_answer, citations, grounded, rag_status = await _rag_answer(db, user, body.message, model)
     prompt_snapshot, detail_omitted = _prune_snapshot(snapshot, body.message)
+    from .reply_context import CATALOG, FACTS, build_reply_context
+
+    knowledge = await build_reply_context(
+        db, tenant_id=tid, surface="dashboard", query=body.message,
+        include=(FACTS, CATALOG),
+    )
     system_prompt = _system_prompt(
         prompt_snapshot, rag_answer, citations, detail_omitted, rag_status,
         charts=chart_plan.charts,
         profile_block=chat_memory.profile_prompt_block(
             profile, exclude_session=body.session_id
         ),
+        page_block=await _page_context(db, tid, body.page),
+        knowledge_block=knowledge.render(),
+        preferred_language=getattr(user, "language", None),
     )
     model = await _resolve_model(db, tid)
 
@@ -957,13 +1077,16 @@ def _is_greeting(message: str) -> bool:
     return bool(text) and len(text) <= _GREETING_MAX_CHARS and bool(_GREETING_RE.fullmatch(text))
 
 
-_GREETING_PROMPT = (
-    "You are Sayvors' business assistant inside the owner's dashboard. "
-    "The owner just greeted you. Reply in one short, warm sentence and ask "
-    "what they want to check (reviews, replies, Google visibility, customers, "
-    "or a chart). Do not claim to have looked at data, do not invent numbers, "
-    "and do not mention tools, databases or models. Reply in the owner's language."
-)
+def _greeting_prompt(preferred_language: str | None) -> str:
+    return (
+        "You are Sayvors' business assistant inside the owner's dashboard. "
+        "The owner just greeted you. Reply in one short, warm sentence and ask "
+        "what they want to check (reviews, replies, Google visibility, customers, "
+        "or a chart). Do not claim to have looked at data, do not invent numbers, "
+        "and do not mention tools, databases or models. "
+        f"Default to the owner's preferred language: {_preferred_language_label(preferred_language)}. "
+        "If the owner clearly wrote in a different language, reply in that language."
+    )
 
 
 def _assistant_error_message(error: Exception) -> str:
@@ -1039,7 +1162,7 @@ async def chat_stream(
                 yield sse({"type": "step", "id": "think", "label": "Writing your answer"})
                 empty = True
                 model = ""
-                greeting_prompt = _GREETING_PROMPT + chat_memory.profile_prompt_block(
+                greeting_prompt = _greeting_prompt(getattr(user, "language", None)) + chat_memory.profile_prompt_block(
                     profile, exclude_session=body.session_id
                 )
                 try:
@@ -1063,7 +1186,11 @@ async def chat_stream(
                     # error — the owner just said hello.
                     logger.warning("Greeting generation failed: %s", e)
                 if empty:
-                    fallback = "Hi! What would you like to check — reviews, replies, visibility or a chart?"
+                    pref = (getattr(user, "language", None) or "en").lower()
+                    if pref == "ar":
+                        fallback = "مرحباً! ما الذي تريد الاطلاع عليه — المراجعات، الردود، الظهور في Google، العملاء، أو رسم بياني؟"
+                    else:
+                        fallback = "Hi! What would you like to check — reviews, replies, visibility or a chart?"
                     answer_parts.append(fallback)
                     yield sse({"type": "delta", "text": fallback})
                 await _save_chat_turn(
@@ -1080,6 +1207,11 @@ async def chat_stream(
                 return
 
             model = await _resolve_model(db, tid)
+
+            # 0. Current screen: what page and which businesses are selected.
+            page_block = await _page_context(db, tid, body.page)
+            if page_block:
+                yield sse({"type": "step", "id": "screen", "label": "Reading your screen"})
 
             # 1. Live business data, stage by stage.
             yield sse({"type": "step", "id": "data-locations", "label": "Checking your locations"})
@@ -1338,12 +1470,21 @@ async def chat_stream(
 
             prompt_snapshot, detail_omitted = _prune_snapshot(snapshot, body.message)
             yield sse({"type": "step", "id": "think", "label": "Writing your answer"})
+            from .reply_context import CATALOG, FACTS, build_reply_context
+
+            knowledge = await build_reply_context(
+                db, tenant_id=tid, surface="dashboard", query=body.message,
+                include=(FACTS, CATALOG),
+            )
             system_prompt = _system_prompt(
                 prompt_snapshot, rag_answer, citations, detail_omitted, rag_status,
                 charts=chart_plan.charts,
                 profile_block=chat_memory.profile_prompt_block(
                     profile, exclude_session=body.session_id
                 ),
+                page_block=await _page_context(db, tid, body.page),
+                knowledge_block=knowledge.render(),
+                preferred_language=getattr(user, "language", None),
             )
 
             from ..llm.gateway import LLMMessage, stream as llm_stream

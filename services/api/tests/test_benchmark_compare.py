@@ -1,4 +1,5 @@
 """Two-sided comparison facts: scoping, normalization and honest empty states."""
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -9,6 +10,22 @@ from app.modules.benchmark import compare
 from app.modules.benchmark.models import BenchmarkPlace, BenchmarkSnapshot
 
 pytestmark = pytest.mark.asyncio
+
+
+@pytest.fixture(autouse=True)
+async def _paid_source_for_places_tests(db, monkeypatch):
+    """These tests exercise the paid-provider branches explicitly.
+
+    The product default is now the free provider; tests that want Places must
+    say so, while boq/outscraper tests override this in their own body.
+    """
+    from app.modules.benchmark import places as places_module
+    from app.modules.benchmark import service as bench_service
+
+    config = await bench_service.get_config(db)
+    config.source = "google_places"
+    await db.commit()
+    monkeypatch.setattr(places_module, "configured", lambda: True)
 
 TENANT = "tenant-compare"
 
@@ -48,7 +65,7 @@ async def test_saved_subject_uses_places_and_flags_hidden_facts(db, monkeypatch)
 
     await bench_service.save_place(db, TENANT, place_id="cmp-1", label="Rival Cafe")
 
-    async def _fake_get_place(place_id):
+    async def _fake_get_place(place_id, **kwargs):
         assert place_id == "cmp-1"
         now = datetime.now(timezone.utc)
         return {
@@ -90,7 +107,7 @@ async def test_saved_subject_falls_back_to_stored_values_when_live_fails(db, mon
         rating=4.1, review_count=250,
     )
 
-    async def _boom(place_id):
+    async def _boom(place_id, **kwargs):
         raise places_module.PlacesError("quota exceeded", status_code=503)
 
     monkeypatch.setattr(places_module, "get_place", _boom)
@@ -144,7 +161,7 @@ async def test_up_to_six_subjects_allowed(db, monkeypatch):
     for i in range(6):
         await bench_service.save_place(db, TENANT, place_id=f"multi-{i}")
 
-    async def _fake_get_place(place_id):
+    async def _fake_get_place(place_id, **kwargs):
         return {"place_id": place_id, "name": place_id, "address": None,
                 "rating": 4.0, "review_count": 10, "types": [], "reviews": []}
 
@@ -165,7 +182,7 @@ async def test_compare_endpoint(client, monkeypatch):
     )
     assert created.status_code == 201, created.text
 
-    async def _fake_get_place(place_id):
+    async def _fake_get_place(place_id, **kwargs):
         return {
             "place_id": "http-1", "name": "HTTP Rival", "address": None,
             "rating": 4.2, "review_count": 42, "types": [], "reviews": [],
@@ -213,7 +230,7 @@ async def test_period_view_serves_fresh_cache_without_calling_places(db, monkeyp
         )
     ).scalar()
 
-    async def _must_not_call(place_id):
+    async def _must_not_call(place_id, **kwargs):
         raise AssertionError("Places was called although the cache was fresh")
 
     monkeypatch.setattr(places_module, "get_place", _must_not_call)
@@ -253,7 +270,7 @@ async def test_stale_cache_calls_places_and_stores_a_snapshot(db, monkeypatch):
     )
     await db.commit()
 
-    async def _fake(place_id):
+    async def _fake(place_id, **kwargs):
         return await _fake_details(place_id, rating=4.5, review_count=450, types=["restaurant"])
 
     monkeypatch.setattr(places_module, "get_place", _fake)
@@ -280,7 +297,7 @@ async def test_live_range_always_calls_places_even_when_fresh(db, monkeypatch):
     )
 
     calls = []
-    async def _fake(place_id):
+    async def _fake(place_id, **kwargs):
         calls.append(place_id)
         return await _fake_details(place_id, rating=4.3, review_count=120)
 
@@ -301,7 +318,7 @@ async def test_cache_disabled_always_calls_places(db, monkeypatch):
     )
     await bench_service.update_config(db, place_cache_enabled=False)
 
-    async def _fake(place_id):
+    async def _fake(place_id, **kwargs):
         return await _fake_details(place_id, rating=4.6, review_count=150)
 
     monkeypatch.setattr(places_module, "get_place", _fake)
@@ -331,7 +348,7 @@ async def test_saved_subject_period_from_snapshot_delta(db, monkeypatch):
     ))
     await db.commit()
 
-    async def _fake(place_id):
+    async def _fake(place_id, **kwargs):
         return await _fake_details(
             place_id, rating=4.4, review_count=900,
             reviews=[{
@@ -359,7 +376,7 @@ async def test_saved_subject_period_without_history_is_null(db, monkeypatch):
 
     await bench_service.save_place(db, TENANT, place_id="period-2", label="No History")
 
-    async def _fake(place_id):
+    async def _fake(place_id, **kwargs):
         return await _fake_details(place_id)
 
     monkeypatch.setattr(places_module, "get_place", _fake)
@@ -582,13 +599,14 @@ async def test_scraper_scrapes_due_places_records_failures_and_prunes(db, monkey
 
     seen: list[str] = []
 
-    async def _fake(place_id):
+    async def _fake(place_id, **kwargs):
         seen.append(place_id)
         if place_id == "scrape-bad":
             raise places_module.PlacesError("quota exceeded", status_code=500)
         return await _fake_details(place_id, rating=4.6, review_count=12)
 
     monkeypatch.setattr(places_module, "get_place", _fake)
+    monkeypatch.setattr(places_module, "configured", lambda: True)
     result = await scraper.refresh_due_places(now=now)
 
     assert result["scraped"] == 2       # ok + old
@@ -641,6 +659,7 @@ async def test_reviews_endpoint_own_rows(client, db, channel_id, user_id):
             id="ri-rev-1", user_id=user_id, channel_id=channel_id,
             review_id="rv-review-1", rating=5, review_text="staff were great",
             sentiment="positive", review_updated_at=now - timedelta(days=2),
+            replied=True,
         ),
         ReviewInsight(
             id="ri-rev-2", user_id=user_id, channel_id=channel_id,
@@ -660,6 +679,11 @@ async def test_reviews_endpoint_own_rows(client, db, channel_id, user_id):
     assert newest["sentiment"] == "positive"
     assert newest["time"]
     assert newest["text"] == "staff were great"
+    assert newest["answered"] is True
+    assert subj["summary"] == {
+        "total": 2, "sampled": 2, "answered": 1,
+        "unanswered": 1, "response_rate": 50.0,
+    }
     oldest = subj["reviews"][1]
     assert oldest["rating"] == 1
     assert oldest["sentiment"] == "negative"
@@ -677,6 +701,10 @@ async def test_reviews_endpoint_saved_place_cached_sample(client, db, user_id):
     assert res.status_code == 200, res.text
     assert res.json()["subjects"][0]["name"] == "Rev Rival"
     assert res.json()["subjects"][0]["reviews"] == []
+    assert res.json()["subjects"][0]["summary"] == {
+        "total": 5, "sampled": 0, "answered": 0,
+        "unanswered": 0, "response_rate": None,
+    }
 
 
 async def test_reviews_endpoint_bounds_and_unknown_subject(client):
@@ -705,7 +733,7 @@ async def test_compare_endpoint_accepts_range(client, monkeypatch):
     )
     assert created.status_code == 201, created.text
 
-    async def _fake_get_place(place_id):
+    async def _fake_get_place(place_id, **kwargs):
         return await _fake_details(place_id, rating=4.2, review_count=42)
 
     monkeypatch.setattr(places_module, "get_place", _fake_get_place)
@@ -737,3 +765,214 @@ async def test_history_endpoint_is_bounded_and_tenant_scoped(client):
         "/api/v1/benchmark/history?subjects=saved%3Amissing&days=30&points=99"
     )
     assert too_many.status_code == 422
+
+
+# ── Cohort tags on own subjects ────────────────────────────────────────────
+
+async def _tagged_channel(db, user_id, channel_pk, metadata_json):
+    """A google_reviews channel whose metadata carries the given raw JSON."""
+    from app.modules.channels.models import Channel
+
+    channel = Channel(
+        id=channel_pk, user_id=user_id, platform="google_reviews",
+        platform_user_id="acct-tags", display_name="Tagged Branch",
+        status="active", metadata_json=metadata_json,
+    )
+    db.add(channel)
+    await db.commit()
+    return channel_pk
+
+
+async def test_own_subject_tags_are_normalized(db, user_id):
+    """Tags come from channel metadata, normalized: trimmed and lowercased,
+    deduplicated, capped at 5 tags of at most 30 characters each, with junk
+    entries dropped rather than crashing the comparison."""
+    metadata = json.dumps({
+        "location_id": "loc-tags",
+        "tags": [
+            "  Cafes ", "FAMILY", "family", "Riyadh", "x" * 40,
+            "sixth", "   ", 123, {"not": "a tag"},
+        ],
+    })
+    channel_pk = await _tagged_channel(db, user_id, "ch-tags-norm", metadata)
+
+    result = (await compare.compare_subjects(db, user_id, [f"own:{channel_pk}"]))[0]
+
+    assert result["available"] is True
+    assert result["tags"] == ["cafes", "family", "riyadh", "x" * 30, "sixth"]
+
+
+async def test_own_subject_without_tags_is_empty_list(db, user_id):
+    """No tags key, an empty list, a non-list value, malformed JSON and no
+    metadata at all all mean "no cohort": an empty list, never None."""
+    no_key = await _tagged_channel(
+        db, user_id, "ch-tags-nokey", '{"location_id": "loc-none"}'
+    )
+    empty = await _tagged_channel(db, user_id, "ch-tags-empty", '{"tags": []}')
+    not_a_list = await _tagged_channel(db, user_id, "ch-tags-str", '{"tags": "cafe"}')
+    malformed = await _tagged_channel(db, user_id, "ch-tags-bad", "not-json")
+    no_metadata = await _tagged_channel(db, user_id, "ch-tags-nometa", None)
+
+    for channel_pk in (no_key, empty, not_a_list, malformed, no_metadata):
+        result = (await compare.compare_subjects(db, user_id, [f"own:{channel_pk}"]))[0]
+        assert result["available"] is True, channel_pk
+        assert result["tags"] == [], channel_pk
+
+
+async def test_saved_and_unavailable_subjects_carry_empty_tags(db, monkeypatch):
+    """Saved competitors have no cohort tags, and the blank record factory
+    gives every record the key — even unavailable ones — so the frontend can
+    read subject.tags unconditionally."""
+    from app.modules.benchmark import places as places_module
+    from app.modules.benchmark import service as bench_service
+
+    await bench_service.save_place(
+        db, TENANT, place_id="tags-saved", label="Tagless Rival"
+    )
+
+    async def _fake_get_place(place_id, **kwargs):
+        return {"place_id": place_id, "name": "Tagless Rival", "address": None,
+                "rating": 4.0, "review_count": 10, "types": [], "reviews": []}
+
+    monkeypatch.setattr(places_module, "get_place", _fake_get_place)
+    results = await compare.compare_subjects(
+        db, TENANT, ["saved:tags-saved", "own:missing-channel"]
+    )
+
+    assert results[0]["available"] is True
+    assert results[0]["tags"] == []
+    assert results[1]["available"] is False
+    assert results[1]["tags"] == []
+
+
+# ── Provider routing (google_places / boq / outscraper) ──────────────────
+
+
+async def _select_source(db, source):
+    """Point the benchmark config at a provider (no public setter exists)."""
+    from app.modules.benchmark import service as bench_service
+
+    config = await bench_service.get_config(db)
+    config.source = source
+    await db.commit()
+
+
+async def test_saved_subject_boq_uses_cached_no_live_scrape(db, monkeypatch):
+    """boq read paths must use the cached row, never a 600s live scrape."""
+    from app.modules.benchmark import boq as boq_module
+    from app.modules.benchmark import places as places_module
+    from app.modules.benchmark import service as bench_service
+
+    await _select_source(db, "boq")
+    row = await bench_service.save_place(
+        db, TENANT, place_id="boq-1", label="Gosom Rival",
+        maps_url="https://maps.google.com/?cid=1",
+    )
+    now = datetime.now(timezone.utc)
+    await bench_service.store_place_details(db, row, {
+        "name": "Gosom Rival", "address": "Riyadh", "rating": 4.6,
+        "review_count": 700, "types": ["cafe"],
+        "reviews": [{"rating": 5, "text": "great",
+                     "publish_time": (now - timedelta(days=1)).isoformat()}],
+    })
+
+    async def _must_not_call(*args, **kwargs):
+        raise AssertionError("read path must not call a live provider")
+
+    monkeypatch.setattr(boq_module, "get_place", _must_not_call)
+    monkeypatch.setattr(places_module, "get_place", _must_not_call)
+
+    result = (await compare.compare_subjects(db, TENANT, ["saved:boq-1"]))[0]
+    assert result["available"] is True
+    assert result["name"] == "Gosom Rival"
+    assert result["metrics"]["avg_rating"] == 4.6
+    assert result["metrics"]["total_reviews"] == 700
+
+
+async def test_saved_subject_boq_no_cache_returns_last_known(db, monkeypatch):
+    """With no cached details yet, boq source still returns the saved identity
+    + numbers (no provider call), instead of hanging on a live scrape."""
+    from app.modules.benchmark import boq as boq_module
+    from app.modules.benchmark import places as places_module
+    from app.modules.benchmark import service as bench_service
+
+    await _select_source(db, "boq")
+    await bench_service.save_place(
+        db, TENANT, place_id="boq-both", label="Offline Rival",
+        rating=4.2, review_count=300,
+    )
+
+    async def _must_not_call(*args, **kwargs):
+        raise AssertionError("read path must not call a live provider")
+
+    monkeypatch.setattr(boq_module, "get_place", _must_not_call)
+    monkeypatch.setattr(places_module, "get_place", _must_not_call)
+
+    result = (await compare.compare_subjects(db, TENANT, ["saved:boq-both"]))[0]
+    assert result["available"] is True
+    assert result["name"] == "Offline Rival"
+    assert result["metrics"]["avg_rating"] == 4.2
+    assert result["metrics"]["total_reviews"] == 300
+
+
+async def test_saved_reviews_boq_serve_cached_no_live_scrape(db, monkeypatch):
+    from app.modules.benchmark import boq as boq_module
+    from app.modules.benchmark import service as bench_service
+
+    await _select_source(db, "boq")
+    row = await bench_service.save_place(db, TENANT, place_id="boq-rev", label="Rev Rival")
+    now = datetime.now(timezone.utc)
+    await bench_service.store_place_details(db, row, {
+        "reviews": [
+            {"rating": 5, "text": "love it",
+             "owner_answer": "Thanks for the feedback",
+             "owner_answer_time": (now - timedelta(days=1)).isoformat(),
+             "publish_time": (now - timedelta(days=2)).isoformat()},
+            {"rating": 2, "text": "bad",
+             "publish_time": (now - timedelta(days=3)).isoformat()},
+        ],
+    })
+
+    async def _must_not_call(*args, **kwargs):
+        raise AssertionError("read path must not call a live provider")
+
+    monkeypatch.setattr(boq_module, "get_place", _must_not_call)
+
+    body = await compare.reviews_for(db, TENANT, ["saved:boq-rev"], limit=10)
+    subj = body["subjects"][0]
+    assert subj["name"] == "Rev Rival"
+    assert len(subj["reviews"]) == 2
+    assert subj["reviews"][0]["rating"] == 5
+    assert subj["reviews"][0]["answered"] is True
+    assert subj["reviews"][0]["owner_answer"] == "Thanks for the feedback"
+    assert subj["summary"]["sampled"] == 2
+    assert subj["summary"]["answered"] == 1
+    assert subj["summary"]["unanswered"] == 1
+    assert subj["summary"]["response_rate"] == 50.0
+
+
+async def test_saved_subject_uses_outscraper_when_selected(db, monkeypatch):
+    from app.modules.benchmark import outscraper as outscraper_module
+    from app.modules.benchmark import service as bench_service
+
+    await _select_source(db, "outscraper")
+    await bench_service.save_place(db, TENANT, place_id="out-1", label="Out Rival")
+
+    seen: dict = {}
+
+    async def _fake_outscraper(place_id, **kwargs):
+        seen.update(kwargs)
+        return {
+            "place_id": place_id, "name": "Out Rival", "address": None,
+            "rating": 4.1, "review_count": 55, "types": [], "reviews": [],
+        }
+
+    monkeypatch.setattr(outscraper_module, "get_place", _fake_outscraper)
+    monkeypatch.setattr(outscraper_module, "configured", lambda: True)
+
+    result = (await compare.compare_subjects(db, TENANT, ["saved:out-1"]))[0]
+
+    assert result["available"] is True
+    assert result["name"] == "Out Rival"
+    assert seen["reviews_limit"] == 10
+    assert "cutoff" in seen

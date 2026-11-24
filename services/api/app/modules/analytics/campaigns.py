@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 MAX_NAME = 120
 MAX_TEMPLATE = 8000
 MAX_LIST = 100
+REUSABLE_REQUEST_STATUSES = ("sent", "delivered", "clicked", "reviewed", "queued", "draft", "failed")
 
 
 class CampaignError(ValueError):
@@ -67,6 +68,48 @@ async def _check_limits(db: AsyncSession, tenant_id: str, days: int) -> None:
         raise CampaignError(
             f"This plan allows {ent.max_campaigns_per_month} campaigns per month."
         )
+
+
+async def get_active_campaign(
+    db: AsyncSession, tenant_id: str, *, campaign_id: str | None = None
+) -> ReviewCampaign:
+    """Resolve the campaign that may send review requests now.
+
+    Send-path gating (FACT-9): new sends/queues must belong to an active
+    campaign. An explicit campaign_id is honored only when it belongs to the
+    tenant and is currently active.
+    """
+    today = datetime.now(timezone.utc).date()
+    if campaign_id:
+        row = (
+            await db.execute(
+                select(ReviewCampaign).where(
+                    ReviewCampaign.id == campaign_id,
+                    ReviewCampaign.tenant_id == tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            raise CampaignError("Campaign not found.")
+        if campaign_status(row, today=today) != "active":
+            raise CampaignError("Review requests can only be sent from an active campaign.")
+        return row
+
+    rows = (
+        await db.execute(
+            select(ReviewCampaign)
+            .where(
+                ReviewCampaign.tenant_id == tenant_id,
+                ReviewCampaign.status != "cancelled",
+            )
+            .order_by(ReviewCampaign.created_at.desc())
+            .limit(20)
+        )
+    ).scalars().all()
+    active = next((r for r in rows if campaign_status(r, today=today) == "active"), None)
+    if active is None:
+        raise CampaignError("Create and activate a campaign before sending review requests.")
+    return active
 
 
 def _validate(
@@ -160,7 +203,16 @@ async def list_campaigns(db: AsyncSession, tenant_id: str, *, limit: int = MAX_L
 async def duplicate_campaign(
     db: AsyncSession, tenant_id: str, campaign_id: str
 ) -> ReviewCampaign:
-    """Reuse the copy and window length for a fresh, empty upcoming campaign."""
+    """Reuse copy, window length, and recipient list for a fresh campaign.
+
+    Recipient-list reuse (FACT-9): contacts from the source campaign are copied
+    as draft requests on the new campaign. No jobs are enqueued and nothing is
+    sent; the merchant decides when to send.
+    """
+    import secrets
+
+    from .review_requests import resolve_review_url
+
     source = (
         await db.execute(
             select(ReviewCampaign).where(
@@ -173,7 +225,7 @@ async def duplicate_campaign(
         raise CampaignError("Campaign not found.")
     length = (source.to_date - source.from_date).days + 1
     start = datetime.now(timezone.utc).date() + timedelta(days=1)
-    return await create_campaign(
+    new_campaign = await create_campaign(
         db, tenant_id=tenant_id,
         name=f"{source.name} (copy)",
         from_date=start, to_date=start + timedelta(days=length - 1),
@@ -181,6 +233,53 @@ async def duplicate_campaign(
         channel_id=source.channel_id,
         duplicated_from=source.id,
     )
+
+    # Copy distinct recipients (contact+channel) as draft rows. Keep the latest
+    # name/body/subject we have for that contact.
+    source_rows = (
+        await db.execute(
+            select(ReviewRequest)
+            .where(
+                ReviewRequest.campaign_id == source.id,
+                ReviewRequest.status.in_(REUSABLE_REQUEST_STATUSES),
+            )
+            .order_by(ReviewRequest.created_at.desc())
+        )
+    ).scalars().all()
+    seen: set[tuple[str, str]] = set()
+    to_create: list[ReviewRequest] = []
+    for row in source_rows:
+        contact = (row.contact or "").strip()
+        if not contact:
+            continue
+        key = (row.channel or "whatsapp", contact.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        review_url = await resolve_review_url(db, tenant_id, row.channel_id or new_campaign.channel_id)
+        to_create.append(
+            ReviewRequest(
+                user_id=tenant_id,
+                channel_id=row.channel_id or new_campaign.channel_id,
+                campaign_id=new_campaign.id,
+                contact=contact[:255],
+                contact_name=(row.contact_name or "")[:120] or None,
+                channel=row.channel,
+                trigger="campaign",
+                status="draft",
+                token=secrets.token_urlsafe(24),
+                review_url=review_url,
+                subject=(row.subject or "")[:200] or None,
+                body=(row.body or source.message_template or "")[:8000] or None,
+            )
+        )
+
+    if to_create:
+        db.add_all(to_create)
+        new_campaign.recipient_count = len(to_create)
+        await db.commit()
+        await db.refresh(new_campaign)
+    return new_campaign
 
 
 async def cancel_campaign(db: AsyncSession, tenant_id: str, campaign_id: str) -> ReviewCampaign:
@@ -220,15 +319,21 @@ async def refresh_results(db: AsyncSession, tenant_id: str, campaign_id: str) ->
         await db.execute(
             select(
                 func.count(ReviewRequest.id),
+                func.sum(
+                    func.cast(
+                        ReviewRequest.status.not_in(["draft", "cancelled"]),
+                        Integer,
+                    )
+                ),
                 func.sum(func.cast(ReviewRequest.clicked_at.is_not(None), Integer)),
                 func.sum(func.cast(ReviewRequest.reviewed_at.is_not(None), Integer)),
             ).where(ReviewRequest.campaign_id == campaign_id)
         )
     ).one()
     row.recipient_count = int(counts[0] or 0)
-    row.sent_count = int(counts[0] or 0)
-    row.clicked_count = int(counts[1] or 0)
-    row.reviewed_count = int(counts[2] or 0)
+    row.sent_count = int(counts[1] or 0)
+    row.clicked_count = int(counts[2] or 0)
+    row.reviewed_count = int(counts[3] or 0)
     await db.commit()
     await db.refresh(row)
     return row

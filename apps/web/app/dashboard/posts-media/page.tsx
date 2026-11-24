@@ -47,8 +47,8 @@ function PostsMediaInner() {
     <div className="team-ui flex h-full flex-col bg-[var(--ui-page)]">
       {notice && (
         <div className="shrink-0 px-6 pt-4">
-          <div className="mx-auto max-w-[1280px]">
-            <p role="status" className="flex items-start gap-2.5 rounded-[20px] border border-amber-500/30 bg-amber-50 px-4 py-3 text-[13px] font-medium text-amber-800 shadow-[0_12px_28px_-22px_rgba(61,29,110,0.45)] dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-300">
+          <div className="mx-auto max-w-[1280px] xl:max-w-[1600px] 2xl:max-w-[1800px]">
+            <p role="status" className="flex items-start gap-2.5 rounded-[8px] border border-amber-500/30 bg-amber-50 px-4 py-3 text-[13px] font-medium text-amber-800 shadow-[0_12px_28px_-22px_rgba(61,29,110,0.45)] dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-300">
               <svg className="mt-0.5 h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
                 <circle cx="12" cy="12" r="9" />
                 <path d="M12 11v5" strokeLinecap="round" />
@@ -62,8 +62,8 @@ function PostsMediaInner() {
 
       {/* Section switch — a compact segmented control, shared by both views. */}
       <div className="shrink-0 border-b border-ink/[0.06] bg-white px-6 py-3 dark:border-fog/[0.06] dark:bg-ink">
-        <div className="mx-auto flex max-w-[1280px] justify-center">
-          <nav aria-label="Posts and media views" className="flex items-center gap-1 rounded-[20px] bg-ink/[0.05] p-1 dark:bg-fog/[0.06]">
+        <div className="mx-auto flex max-w-[1280px] justify-center xl:max-w-[1600px] 2xl:max-w-[1800px]">
+          <nav aria-label="Posts and media views" className="flex items-center gap-1 rounded-[8px] bg-ink/[0.05] p-1 dark:bg-fog/[0.06]">
             {([
               {
                 key: "posts",
@@ -92,7 +92,7 @@ function PostsMediaInner() {
                 type="button"
                 onClick={() => changeTab(t.key)}
                 aria-current={tab === t.key ? "page" : undefined}
-                className={`flex items-center gap-2 rounded-[16px] px-5 py-2 text-[13px] font-bold transition duration-200 active:translate-y-0.5 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 ${
+                className={`flex items-center gap-2 rounded-[8px] px-5 py-2 text-[13px] font-bold transition duration-200 active:translate-y-0.5 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 ${
                   tab === t.key
                     ? "bg-white text-deep-violet shadow-[0_8px_18px_-12px_rgba(61,29,110,0.55)] dark:bg-fog/10 dark:text-fog"
                     : "text-ink/45 hover:bg-ink/[0.03] hover:text-ink dark:text-fog/45"
@@ -106,12 +106,22 @@ function PostsMediaInner() {
         </div>
       </div>
 
-      {/* One scroll container for the whole page — no nested scrollbars. */}
+      {/* One scroll container for the whole page — no nested scrollbars.
+          The posts tab is full-bleed on purpose: PublishedPosts paints its
+          own header band (bg-white) edge-to-edge, matching the tabs band
+          above; capping the wrapper made that band read as a floating card
+          with page-grey margins on wide screens. The Google tab has no band
+          and keeps the centered container. */}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-[1280px] px-6 pb-24 pt-6">
-          {tab === "posts" && <PublishedPosts onPublish={(date) => { setScheduleDate(date ?? null); setView("compose"); }} />}
-          {tab === "google" && <GoogleLiveGallery />}
-        </div>
+        {tab === "posts" ? (
+          <div className="pb-6">
+            <PublishedPosts onPublish={(date) => { setScheduleDate(date ?? null); setView("compose"); }} />
+          </div>
+        ) : (
+          <div className="mx-auto max-w-[1280px] px-6 pb-24 pt-6 xl:max-w-[1600px] 2xl:max-w-[1800px]">
+            <GoogleLiveGallery />
+          </div>
+        )}
       </div>
     </div>
   );

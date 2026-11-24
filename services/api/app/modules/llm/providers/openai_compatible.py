@@ -1,4 +1,5 @@
 import json
+from base64 import b64encode
 from typing import AsyncIterator
 
 from openai import AsyncOpenAI
@@ -50,7 +51,24 @@ class OpenAICompatibleProvider(LLMProvider):
         if req.system_prompt:
             messages.append({"role": "system", "content": req.system_prompt})
         for m in req.messages:
-            messages.append({"role": m.role, "content": m.content})
+            if req.images:
+                # Multimodal content: text + inline image data URLs. Only used
+                # by vision calls; the chat path never sets images.
+                content: list[dict] = [
+                    {"type": "text", "text": m.content},
+                    *[
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{mime};base64,{b64encode(data).decode()}"
+                            },
+                        }
+                        for mime, data in req.images
+                    ],
+                ]
+                messages.append({"role": m.role, "content": content})
+            else:
+                messages.append({"role": m.role, "content": m.content})
         return messages
 
     @staticmethod

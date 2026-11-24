@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 import Link from "next/link";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api-rag";
+import { queryKeys } from "@/lib/query-keys";
 import LogoLoader from "@/components/LogoLoader";
 import Modal from "@/components/dashboard/media/Modal";
 import { ALL_BRANCHES, groupValue, parseGroupValue, useLocationGroups } from "@/lib/location-groups";
@@ -42,79 +45,82 @@ const CATEGORY_FILTERS: { value: string; label: string }[] = [
 ];
 
 export default function GoogleLiveGallery() {
+  const { t } = useI18n();
+  const gl = t.googleLive ?? {
+    removeTitleOne: "Remove this photo from Google?",
+    removeTitleMany: (n: number) => `Remove ${n} photos from Google?`,
+    removeSubtitle: "This removes them from your Google Business Profile. This cannot be undone.",
+    removeBodyOne: "The photo will be removed from Google.",
+    removeBodyMany: (n: number) => `${n} photos will be removed from Google.`,
+    keepThem: "Keep them",
+    remove: "Remove",
+    removing: "Removing…",
+    removedOne: "Removed 1 photo from Google.",
+    removedMany: (n: number) => `Removed ${n} photos from Google.`,
+    removedPartial: (ok: number, fail: number) => `${ok} removed, ${fail} failed.`,
+    removingProgress: (done: number, total: number) => `Removing ${done} of ${total}…`,
+    selectAll: "Select all",
+    clearSelection: "Clear selection",
+    select: "Select",
+    cancel: "Cancel",
+  };
+  const queryClient = useQueryClient();
   const { groups } = useLocationGroups();
-  const [loading, setLoading] = useState(true);
-  const [locations, setLocations] = useState<LocationOption[]>([]);
-  // ALL_BRANCHES, a group value, or a single channel id.
   const [selectedId, setSelectedId] = useState<string>(ALL_BRANCHES);
   const [category, setCategory] = useState<string>("");
-  const [items, setItems] = useState<GoogleGalleryItem[]>([]);
-  const [galleryLoading, setGalleryLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
-  // key: `${channelId}::${name}` so multi-location selections stay unambiguous.
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirmRemove, setConfirmRemove] = useState<{ items: { name: string; channelId: string }[] } | null>(null);
   const [removing, setRemoving] = useState(false);
-  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [removeProgress, setRemoveProgress] = useState<{ done: number; total: number } | null>(null);
   const [importing, setImporting] = useState(false);
 
+  const channelsQuery = useQuery({
+    queryKey: queryKeys.google.channels(),
+    queryFn: async () => {
+      const data = await apiFetch("/api/v1/channels?limit=100");
+      return ((data.channels ?? []) as Array<{ id: string; display_name: string | null; listing_id?: string | null; platform: string; status?: string }>)
+        .filter((channel) => channel.platform === "google_reviews" && channel.status === "active")
+        .map((channel) => ({
+          id: channel.listing_id ?? channel.id,
+          name: channel.display_name ?? "Google location",
+          channelId: channel.id,
+        })) as LocationOption[];
+    },
+    staleTime: 60_000,
+  });
+
+  const locations = useMemo(() => channelsQuery.data ?? [], [channelsQuery.data]);
+  const loading = channelsQuery.isLoading;
+
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const data = await apiFetch("/api/v1/channels?limit=100");
-        const googleChannels = (data.channels ?? [])
-          .filter((channel: { platform: string; status?: string }) =>
-            channel.platform === "google_reviews" && channel.status === "active")
-          .map((channel: { id: string; display_name: string | null; listing_id?: string | null }) => ({
-            id: channel.listing_id ?? channel.id,
-            name: channel.display_name ?? "Google location",
-            channelId: channel.id,
-          }));
-        if (cancelled) return;
-        setLocations(googleChannels);
-        setSelectedId(googleChannels.length ? ALL_BRANCHES : "");
-      } catch {
-        if (!cancelled) setLocations([]);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
+    if (!loading && locations.length > 0 && !selectedId) setSelectedId(ALL_BRANCHES);
+  }, [loading, locations.length, selectedId]);
 
   const selectedGroupId = parseGroupValue(selectedId);
-  const selectedGroup = selectedGroupId
-    ? groups.find((g) => g.id === selectedGroupId) ?? null
-    : null;
+  const selectedGroup = selectedGroupId ? groups.find((g) => g.id === selectedGroupId) ?? null : null;
+
   const targetChannelIds = useMemo(() => {
     if (selectedId === ALL_BRANCHES) return locations.map((l) => l.channelId);
     if (selectedGroup) {
-      return locations
-        .filter((l) => selectedGroup.listing_ids.includes(l.id))
-        .map((l) => l.channelId);
+      return locations.filter((l) => selectedGroup.listing_ids.includes(l.id)).map((l) => l.channelId);
     }
     return selectedId ? [selectedId] : [];
   }, [selectedId, selectedGroup, locations]);
 
-  const selectedSingleChannelId =
-    selectedId !== ALL_BRANCHES && !selectedGroup ? selectedId : null;
+  const selectedSingleChannelId = selectedId !== ALL_BRANCHES && !selectedGroup ? selectedId : null;
 
-  const loadGallery = async (channelIds: string[], cat: string) => {
-    setGalleryLoading(true);
-    setError(null);
-    try {
-      if (channelIds.length === 0) {
-        setItems([]);
-        setLastRefresh(new Date());
-        return;
-      }
+  const mediaQuery = useQuery({
+    queryKey: queryKeys.google.media(targetChannelIds, category),
+    enabled: !loading,
+    staleTime: 30_000,
+    queryFn: async () => {
+      if (targetChannelIds.length === 0) return [] as GoogleGalleryItem[];
       const q = new URLSearchParams({ page_size: "2500" });
-      if (cat) q.set("category", cat);
+      if (category) q.set("category", category);
       const pages = await Promise.all(
-        channelIds.map(async (cid) => {
+        targetChannelIds.map(async (cid) => {
           const data = await apiFetch(`/api/v1/channels/${encodeURIComponent(cid)}/google-media?${q.toString()}`);
           const list = Array.isArray(data?.media) ? data.media : [];
           const locName = locations.find((l) => l.channelId === cid)?.name;
@@ -125,40 +131,14 @@ export default function GoogleLiveGallery() {
           })) as GoogleGalleryItem[];
         }),
       );
-      setItems(pages.flat());
-      setLastRefresh(new Date());
-    } catch (e) {
-      setError(e instanceof Error ? e.message.slice(0, 220) : "Could not load Google gallery.");
-      setItems([]);
-    } finally {
-      setGalleryLoading(false);
-    }
-  };
+      return pages.flat();
+    },
+  });
 
-  useEffect(() => {
-    if (loading) return;
-    void loadGallery(targetChannelIds, category);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, category, loading, locations.length, groups.length]);
-
-  // Pull this location's posts + gallery media into Sayvors from Google (single location only).
-  const importFromGoogle = async () => {
-    if (!selectedSingleChannelId) return;
-    setImporting(true);
-    setError(null);
-    try {
-      await apiFetch(
-        `/api/v1/channels/${encodeURIComponent(selectedSingleChannelId)}/google-content/import`,
-        { method: "POST" },
-      );
-      setNotice("Import started — posts and photos will appear shortly.");
-      await loadGallery(targetChannelIds, category);
-    } catch (e) {
-      setError(e instanceof Error ? e.message.slice(0, 220) : "Could not start the import.");
-    } finally {
-      setImporting(false);
-    }
-  };
+  const items = useMemo(() => mediaQuery.data ?? [], [mediaQuery.data]);
+  const galleryLoading = mediaQuery.isFetching;
+  const error = mediaQuery.error instanceof Error ? mediaQuery.error.message.slice(0, 220) : mediaQuery.error ? "Could not load Google gallery." : null;
+  const lastRefresh = mediaQuery.dataUpdatedAt ? new Date(mediaQuery.dataUpdatedAt) : null;
 
   const categoryCounts = useMemo(() => {
     const m = new Map<string, number>();
@@ -171,27 +151,60 @@ export default function GoogleLiveGallery() {
 
   const itemKey = (m: GoogleGalleryItem) => `${m.channelId}::${m.name}`;
 
+  const invalidateMedia = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["google", "media"] });
+  };
+
+  const importFromGoogle = async () => {
+    if (!selectedSingleChannelId) return;
+    setImporting(true);
+    try {
+      await apiFetch(
+        `/api/v1/channels/${encodeURIComponent(selectedSingleChannelId)}/google-content/import`,
+        { method: "POST" },
+      );
+      setNotice({ kind: "ok", text: "Import started — posts and photos will appear shortly." });
+      await invalidateMedia();
+    } catch (e) {
+      setNotice({ kind: "err", text: e instanceof Error ? e.message.slice(0, 220) : "Could not start the import." });
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const removeMany = async (toRemove: { name: string; channelId: string }[]) => {
     setRemoving(true);
+    setRemoveProgress({ done: 0, total: toRemove.length });
     let ok = 0, fail = 0;
-    for (const it of toRemove) {
-      try {
-        await apiFetch(
-          `/api/v1/channels/${encodeURIComponent(it.channelId)}/google-media?name=${encodeURIComponent(it.name)}`,
-          { method: "DELETE" },
-        );
-        ok++;
-      } catch {
-        fail++;
+    let done = 0;
+    const concurrency = 4;
+    let index = 0;
+    const runNext = async (): Promise<void> => {
+      while (index < toRemove.length) {
+        const it = toRemove[index++];
+        try {
+          await apiFetch(
+            `/api/v1/channels/${encodeURIComponent(it.channelId)}/google-media?name=${encodeURIComponent(it.name)}`,
+            { method: "DELETE" },
+          );
+          ok++;
+        } catch {
+          fail++;
+        } finally {
+          done++;
+          setRemoveProgress({ done, total: toRemove.length });
+        }
       }
-    }
-    await loadGallery(targetChannelIds, category);
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, toRemove.length) }, () => runNext()));
+    await invalidateMedia();
     setRemoving(false);
+    setRemoveProgress(null);
     setConfirmRemove(null);
     setSelected(new Set());
     setSelectionMode(false);
-    if (fail === 0) setNotice(`Removed ${ok} photo${ok === 1 ? "" : "s"} from Google.`);
-    else setError(`${ok} removed, ${fail} failed.`);
+    if (fail === 0) setNotice({ kind: "ok", text: ok === 1 ? gl.removedOne : gl.removedMany(ok) });
+    else setNotice({ kind: "err", text: gl.removedPartial(ok, fail) });
   };
 
   useEffect(() => {
@@ -206,11 +219,11 @@ export default function GoogleLiveGallery() {
 
   if (locations.length === 0) {
     return (
-      <div className="rounded-[32px] border border-dashed border-ink/15 bg-white p-10 text-center shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)]">
+      <div className="rounded-[8px] border border-dashed border-ink/15 bg-white p-10 text-center shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)]">
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-deep-violet/10 text-[24px]">📍</div>
         <h3 className="mt-4 text-[17px] font-bold text-ink">No Google locations connected</h3>
         <p className="mt-1 text-[13px] text-ink/55">Connect a Google Business Profile location to see live photos.</p>
-        <Link href="/dashboard/channels" className="mt-5 inline-flex rounded-[20px] bg-deep-violet px-5 py-2.5 text-[13px] font-bold text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)] transition hover:bg-deep-violet/90">Connect Google</Link>
+        <Link href="/dashboard/channels" className="mt-5 inline-flex rounded-[8px] bg-deep-violet px-5 py-2.5 text-[13px] font-bold text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)] transition hover:bg-deep-violet/90">Connect Google</Link>
       </div>
     );
   }
@@ -233,33 +246,46 @@ export default function GoogleLiveGallery() {
               type="button"
               onClick={() => setSelectionMode(true)}
               disabled={items.length === 0}
-              className="rounded-[20px] border border-ink/10 bg-white px-4 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] disabled:opacity-40 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:bg-white/[0.04] dark:text-fog"
+              className="rounded-[8px] border border-ink/10 bg-white px-4 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] disabled:opacity-40 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:bg-white/[0.04] dark:text-fog"
             >
-              Select
+              {gl.select}
             </button>
           ) : (
-            <button
-              type="button"
-              onClick={() => { setSelectionMode(false); setSelected(new Set()); }}
-              className="rounded-[20px] border border-ink/10 bg-white px-4 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:bg-white/[0.04] dark:text-fog"
-            >
-              Cancel
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  const allKeys = items.map(itemKey);
+                  const allSelected = allKeys.length > 0 && allKeys.every((k) => selected.has(k));
+                  setSelected(allSelected ? new Set() : new Set(allKeys));
+                }}
+                className="rounded-[8px] border border-ink/10 bg-white px-4 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:bg-white/[0.04] dark:text-fog"
+              >
+                {items.length > 0 && items.every((m) => selected.has(itemKey(m))) ? gl.clearSelection : gl.selectAll}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setSelectionMode(false); setSelected(new Set()); }}
+                className="rounded-[8px] border border-ink/10 bg-white px-4 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:bg-white/[0.04] dark:text-fog"
+              >
+                {gl.cancel}
+              </button>
+            </>
           )}
           <button
             type="button"
             onClick={() => void importFromGoogle()}
             disabled={importing || !selectedSingleChannelId}
             title={selectedSingleChannelId ? "Pull this location's posts and gallery photos from Google into Sayvors" : "Select a single location to import"}
-            className="rounded-[20px] border border-ink/10 bg-white px-4 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:bg-white/[0.04] dark:text-fog"
+            className="rounded-[8px] border border-ink/10 bg-white px-4 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:bg-white/[0.04] dark:text-fog"
           >
             {importing ? "Importing…" : "Import from Google"}
           </button>
           <button
             type="button"
-            onClick={() => loadGallery(targetChannelIds, category)}
+            onClick={() => void mediaQuery.refetch()}
             disabled={galleryLoading || targetChannelIds.length === 0}
-            className="rounded-[20px] border border-ink/10 bg-white px-4 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:bg-white/[0.04] dark:text-fog"
+            className="rounded-[8px] border border-ink/10 bg-white px-4 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:bg-white/[0.04] dark:text-fog"
           >
             {galleryLoading ? "Refreshing…" : "Refresh"}
           </button>
@@ -271,7 +297,7 @@ export default function GoogleLiveGallery() {
           <select
             value={selectedId}
             onChange={(e) => { setSelectedId(e.target.value || ALL_BRANCHES); setSelectionMode(false); setSelected(new Set()); }}
-            className="w-72 max-w-full appearance-none rounded-[20px] border border-ink/10 bg-white py-2.5 pl-4 pr-9 text-[13px] font-semibold text-ink outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/25 dark:bg-white/[0.04] dark:text-fog"
+            className="w-72 max-w-full appearance-none rounded-[8px] border border-ink/10 bg-white py-2.5 pl-4 pr-9 text-[13px] font-semibold text-ink outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/25 dark:bg-white/[0.04] dark:text-fog"
           >
             <option value={ALL_BRANCHES}>
               {locations.length > 0 ? `All locations (${locations.length})` : "All locations"}
@@ -303,7 +329,7 @@ export default function GoogleLiveGallery() {
                 key={c.value || "all"}
                 type="button"
                 onClick={() => setCategory(c.value)}
-                className={`shrink-0 whitespace-nowrap rounded-[20px] px-3.5 py-2 text-[12px] font-bold transition duration-200 active:scale-[0.97] ${active ? "bg-deep-violet text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)]" : "bg-ink/[0.04] text-ink/65 hover:bg-ink/[0.08] dark:bg-white/[0.06] dark:text-fog/70"}`}
+                className={`shrink-0 whitespace-nowrap rounded-[8px] px-3.5 py-2 text-[12px] font-bold transition duration-200 active:scale-[0.97] ${active ? "bg-deep-violet text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)]" : "bg-ink/[0.04] text-ink/65 hover:bg-ink/[0.08] dark:bg-white/[0.06] dark:text-fog/70"}`}
               >
                 {c.label} <span className={active ? "opacity-80" : "opacity-60"}>({count})</span>
               </button>
@@ -313,24 +339,24 @@ export default function GoogleLiveGallery() {
       </div>
 
       {notice && (
-        <div className="flex items-start justify-between gap-3 rounded-[20px] bg-emerald-50 px-4 py-3 text-[13px] font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
-          <p>{notice}</p>
+        <div className={`flex items-start justify-between gap-3 rounded-[8px] px-4 py-3 text-[13px] font-medium ${notice.kind === "ok" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300" : "border border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300"}`}>
+          <p>{notice.text}</p>
           <button type="button" onClick={() => setNotice(null)} className="shrink-0 text-[16px] leading-none opacity-60 hover:opacity-100" aria-label="Dismiss">×</button>
         </div>
       )}
       {error && (
-        <div className="flex items-center justify-between rounded-[20px] border border-red-500/40 bg-red-500/10 px-4 py-3 text-[13px] text-red-700 dark:text-red-300">
+        <div className="flex items-center justify-between rounded-[8px] border border-red-500/40 bg-red-500/10 px-4 py-3 text-[13px] text-red-700 dark:text-red-300">
           <span>{error}</span>
-          <button type="button" onClick={() => loadGallery(targetChannelIds, category)} className="rounded-[16px] border border-red-500/40 px-3 py-1 text-[12px] font-bold">Retry</button>
+          <button type="button" onClick={() => void mediaQuery.refetch()} className="rounded-[8px] border border-red-500/40 px-3 py-1 text-[12px] font-bold">Retry</button>
         </div>
       )}
 
       {galleryLoading && items.length === 0 ? (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-          {Array.from({ length: 8 }).map((_, i) => <div key={i} className="aspect-[4/3] animate-pulse rounded-[24px] bg-ink/[0.06]" />)}
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4">
+          {Array.from({ length: 8 }).map((_, i) => <div key={i} className="aspect-[4/3] animate-pulse rounded-[8px] bg-ink/[0.06]" />)}
         </div>
       ) : items.length === 0 ? (
-        <div className="flex flex-col items-center rounded-[32px] border border-dashed border-ink/15 bg-white p-12 text-center shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)]">
+        <div className="flex flex-col items-center rounded-[8px] border border-dashed border-ink/15 bg-white p-12 text-center shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)]">
           <div className="flex h-14 w-14 items-center justify-center rounded-full bg-deep-violet/10 text-[24px]">📷</div>
           <h3 className="mt-4 text-[17px] font-bold text-ink">No live media found</h3>
           <p className="mt-1 max-w-sm text-[13px] text-ink/55">
@@ -338,7 +364,7 @@ export default function GoogleLiveGallery() {
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4">
           {items.map((m) => {
             const key = itemKey(m);
             const isSelected = selected.has(key);
@@ -347,7 +373,11 @@ export default function GoogleLiveGallery() {
             return (
               <div
                 key={key}
-                className={`group relative overflow-hidden rounded-[24px] border bg-white shadow-[0_12px_28px_-20px_rgba(20,16,31,0.35)] transition hover:-translate-y-0.5 hover:shadow-[0_20px_40px_-22px_rgba(20,16,31,0.5)] ${isSelected ? "ring-2 ring-deep-violet" : "ring-1 ring-ink/[0.06]"}`}
+                className={`group relative overflow-hidden rounded-[8px] border bg-white shadow-[0_12px_28px_-20px_rgba(20,16,31,0.35)] transition hover:-translate-y-0.5 hover:shadow-[0_20px_40px_-22px_rgba(20,16,31,0.5)] ${isSelected ? "ring-2 ring-deep-violet" : "ring-1 ring-ink/[0.06]"} ${selectionMode ? "cursor-pointer" : ""}`}
+                onClick={selectionMode ? () => setSelected((prev) => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; }) : undefined}
+                role={selectionMode ? "button" : undefined}
+                tabIndex={selectionMode ? 0 : undefined}
+                onKeyDown={selectionMode ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelected((prev) => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; }); } } : undefined}
               >
                 <div className="relative aspect-[4/3] overflow-hidden bg-ink/[0.04]">
                   {m.thumbnailUrl || m.googleUrl ? (
@@ -396,7 +426,7 @@ export default function GoogleLiveGallery() {
                     <button
                       type="button"
                       onClick={() => setConfirmRemove({ items: [{ name: m.name, channelId: m.channelId }] })}
-                      className="w-full rounded-[16px] border border-red-200 bg-white px-3 py-1.5 text-[11.5px] font-bold text-red-600 transition hover:bg-red-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-red-400/40"
+                      className="w-full rounded-[8px] border border-red-200 bg-white px-3 py-1.5 text-[11.5px] font-bold text-red-600 transition hover:bg-red-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-red-400/40"
                     >
                       Remove from Google
                     </button>
@@ -409,14 +439,14 @@ export default function GoogleLiveGallery() {
       )}
 
       {selectionMode && selected.size > 0 && (
-        <div className="sticky bottom-3 z-10 mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3 rounded-[24px] border border-ink/10 bg-white px-4 py-3 shadow-[0_24px_48px_-24px_rgba(20,16,31,0.6)]">
+        <div className="sticky bottom-3 z-10 mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3 rounded-[8px] border border-ink/10 bg-white px-4 py-3 shadow-[0_24px_48px_-24px_rgba(20,16,31,0.6)]">
           <span className="text-[13px] font-bold text-ink">{selected.size} selected</span>
           <div className="flex gap-2">
             <button
               type="button"
               onClick={() => setConfirmRemove({ items: selectedItems.map((m) => ({ name: m.name, channelId: m.channelId })) })}
               disabled={removing}
-              className="rounded-[16px] border border-red-300 bg-white px-4 py-2 text-[12px] font-bold text-red-600 transition hover:bg-red-50 disabled:opacity-50"
+              className="rounded-[8px] border border-red-300 bg-white px-4 py-2 text-[12px] font-bold text-red-600 transition hover:bg-red-50 disabled:opacity-50"
             >
               Remove ({selected.size})
             </button>
@@ -425,15 +455,27 @@ export default function GoogleLiveGallery() {
       )}
 
       {confirmRemove && (
-        <Modal open onClose={() => setConfirmRemove(null)} title={`Remove ${confirmRemove.items.length === 1 ? "this photo" : `${confirmRemove.items.length} photos`} from Google?`} subtitle="This removes them from your Google Business Profile. This cannot be undone." busy={removing} width="max-w-[440px]">
+        <Modal
+          open
+          onClose={() => { if (!removing) setConfirmRemove(null); }}
+          title={confirmRemove.items.length === 1 ? gl.removeTitleOne : gl.removeTitleMany(confirmRemove.items.length)}
+          subtitle={gl.removeSubtitle}
+          busy={removing}
+          width="max-w-[440px]"
+        >
           <div className="space-y-4">
             <p className="text-[13px] text-ink/65">
-              {confirmRemove.items.length === 1 ? "The photo will be removed from Google." : `${confirmRemove.items.length} photos will be removed from Google.`}
+              {confirmRemove.items.length === 1 ? gl.removeBodyOne : gl.removeBodyMany(confirmRemove.items.length)}
             </p>
+            {removing && removeProgress ? (
+              <p className="text-[12px] font-semibold text-ink/70" role="status">
+                {gl.removingProgress(removeProgress.done, removeProgress.total)}
+              </p>
+            ) : null}
             <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <button type="button" onClick={() => setConfirmRemove(null)} disabled={removing} className="rounded-[20px] border border-ink/10 bg-white px-5 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] disabled:opacity-50">Keep them</button>
-              <button type="button" onClick={() => removeMany(confirmRemove.items)} disabled={removing} className="rounded-[20px] bg-red-600 px-5 py-2.5 text-[13px] font-bold text-white transition hover:bg-red-700 disabled:opacity-60">
-                {removing ? "Removing…" : "Remove"}
+              <button type="button" onClick={() => setConfirmRemove(null)} disabled={removing} className="rounded-[8px] border border-ink/10 bg-white px-5 py-2.5 text-[13px] font-bold text-ink transition hover:bg-ink/[0.05] disabled:opacity-50">{gl.keepThem}</button>
+              <button type="button" onClick={() => void removeMany(confirmRemove.items)} disabled={removing} className="rounded-[8px] bg-red-600 px-5 py-2.5 text-[13px] font-bold text-white transition hover:bg-red-700 disabled:opacity-60">
+                {removing && removeProgress ? gl.removingProgress(removeProgress.done, removeProgress.total) : gl.remove}
               </button>
             </div>
           </div>

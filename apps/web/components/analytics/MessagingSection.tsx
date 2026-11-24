@@ -34,7 +34,7 @@ function Delta({ value }: { value: number | null }) {
   // No hue: "worse" inverts to ink, "better" sits on sunken, "flat" dims.
   return (
     <span
-      className={`inline-flex shrink-0 items-center rounded-[2px] px-2 py-0.5 text-[11px] font-bold tabular-nums ${
+      className={`inline-flex shrink-0 items-center rounded-[8px] px-2 py-0.5 text-[11px] font-bold tabular-nums ${
         down
           ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
           : up
@@ -104,7 +104,7 @@ export default function MessagingSection({
   return (
     /* .team-ui scopes the --ui-* variables and paints the #F5F5F5 page, so
        this reads as the Team page's world embedded in the Overview tab. */
-    <section aria-label="Messages and response speed" className="team-ui rounded-[2px] p-4 sm:p-6">
+    <section aria-label="Messages and response speed" className="team-ui rounded-[8px] p-4 sm:p-6">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className={`text-[15px] font-bold ${INK}`}>Messages &amp; response speed</h2>
         {t.as_of && (
@@ -149,7 +149,7 @@ export default function MessagingSection({
                     </div>
                   </div>
                   {c.unanswered_now !== null && c.unanswered_now > 0 && (
-                    <span className="shrink-0 rounded-[2px] bg-[var(--ui-ink)] px-2.5 py-1 text-[11px] font-bold text-[var(--ui-on-ink)]">
+                    <span className="shrink-0 rounded-[8px] bg-[var(--ui-ink)] px-2.5 py-1 text-[11px] font-bold text-[var(--ui-on-ink)]">
                       {c.unanswered_now} waiting
                     </span>
                   )}
@@ -177,7 +177,7 @@ export default function MessagingSection({
                     title={`${hour}:00 — ${count} messages`}
                   >
                     <div
-                      className="w-full rounded-t-[2px] bg-[var(--ui-ink)] transition-all"
+                      className="w-full rounded-t-[8px] bg-[var(--ui-ink)] transition-all"
                       style={{ height: `${Math.max(2, pct)}%`, opacity: count > 0 ? 1 : 0.15 }}
                     />
                   </div>

@@ -20,7 +20,6 @@ import { FactSource } from "@/components/analytics/FactSource";
 import { GBP_DASHBOARD_URL } from "@/lib/google-links";
 import GrowthCardsSection from "@/components/analytics/GrowthCards";
 import CampaignsSection from "@/components/analytics/CampaignsSection";
-import FeatureLock from "@/components/billing/FeatureLock";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import type { Dict } from "@/lib/i18n/en";
 
@@ -268,7 +267,7 @@ function GrowthPageContent() {
             onClick={() => {
               void queryClient.invalidateQueries({ queryKey: ["growth"] });
             }}
-            className="ui-btn rounded-[2px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)]"
+            className="ui-btn rounded-[8px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)]"
           >
             {pg.retry}
           </button>
@@ -379,7 +378,7 @@ function GrowthPageContent() {
                 <p className="text-[11px] text-[var(--ui-ink-2)]">{pg.trendsSub}</p>
               </div>
               <div className="flex gap-2">
-                <div className="flex rounded-[2px] bg-[var(--ui-sunken)] p-0.5" role="group" aria-label={pg.metricAria}>
+                <div className="flex rounded-[8px] bg-[var(--ui-sunken)] p-0.5" role="group" aria-label={pg.metricAria}>
                   {([
                     { key: "impressions", label: pg.mViews },
                     { key: "website", label: pg.mClicks },
@@ -390,7 +389,7 @@ function GrowthPageContent() {
                       key={m.key}
                       onClick={() => setTrendMetric(m.key)}
                       aria-pressed={trendMetric === m.key}
-                      className={`rounded-[2px] px-2.5 py-1 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+                      className={`rounded-[8px] px-2.5 py-1 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
                         trendMetric === m.key ? "border border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink)]" : "text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
                       }`}
                     >
@@ -398,13 +397,13 @@ function GrowthPageContent() {
                     </button>
                   ))}
                 </div>
-                <div className="flex rounded-[2px] bg-[var(--ui-sunken)] p-0.5" role="group" aria-label={pg.granAria}>
+                <div className="flex rounded-[8px] bg-[var(--ui-sunken)] p-0.5" role="group" aria-label={pg.granAria}>
                   {(["day", "month"] as const).map((g) => (
                     <button
                       key={g}
                       onClick={() => setGranularity(g)}
                       aria-pressed={granularity === g}
-                      className={`rounded-[2px] px-2.5 py-1 text-[11px] font-semibold capitalize transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+                      className={`rounded-[8px] px-2.5 py-1 text-[11px] font-semibold capitalize transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
                         granularity === g ? "border border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink)]" : "text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
                       }`}
                     >
@@ -415,7 +414,7 @@ function GrowthPageContent() {
               </div>
             </div>
             {loading ? (
-              <div className="h-40 animate-pulse rounded-[2px] bg-[var(--ui-sunken)]" aria-hidden />
+              <div className="h-40 animate-pulse rounded-[8px] bg-[var(--ui-sunken)]" aria-hidden />
             ) : (
               <TrendChart points={points} metric={trendMetric} granularity={granularity} />
             )}
@@ -435,15 +434,15 @@ function GrowthPageContent() {
             {loading || !keywords ? (
               <div className="mt-3 space-y-2" aria-hidden>
                 {[0, 1, 2].map((i) => (
-                  <div key={i} className="h-9 animate-pulse rounded-[2px] bg-[var(--ui-sunken)]" />
+                  <div key={i} className="h-9 animate-pulse rounded-[8px] bg-[var(--ui-sunken)]" />
                 ))}
               </div>
             ) : !keywords.available ? (
-              <p className="mt-3 rounded-[2px] bg-[var(--ui-sunken)] px-3 py-3 text-[12px] text-[var(--ui-ink-2)]">
+              <p className="mt-3 rounded-[8px] bg-[var(--ui-sunken)] px-3 py-3 text-[12px] text-[var(--ui-ink-2)]">
                 {pg.kwNeedNative}
               </p>
             ) : keywords.keywords.length === 0 ? (
-              <p className="mt-3 rounded-[2px] bg-[var(--ui-sunken)] px-3 py-3 text-[12px] text-[var(--ui-ink-2)]">
+              <p className="mt-3 rounded-[8px] bg-[var(--ui-sunken)] px-3 py-3 text-[12px] text-[var(--ui-ink-2)]">
                 {pg.kwEmpty}
               </p>
             ) : (
@@ -474,7 +473,7 @@ function GrowthPageContent() {
             {loading || !opportunities ? (
               <div className="space-y-2" aria-hidden>
                 {[0, 1, 2].map((i) => (
-                  <div key={i} className="h-10 animate-pulse rounded-[2px] bg-[var(--ui-sunken)]" />
+                  <div key={i} className="h-10 animate-pulse rounded-[8px] bg-[var(--ui-sunken)]" />
                 ))}
               </div>
             ) : opportunities.opportunities.length === 0 ? (
@@ -484,7 +483,7 @@ function GrowthPageContent() {
                 {opportunities.opportunities.map((o) => {
                   const style = TYPE_STYLES[o.type] ?? TYPE_STYLES.reputation;
                   return (
-                    <li key={o.priority} className="flex items-start gap-3 rounded-xl p-3 transition hover:bg-[var(--ui-sunken)]">
+                    <li key={o.priority} className="flex items-start gap-3 rounded-[8px] p-3 transition hover:bg-[var(--ui-sunken)]">
                       <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--ui-ink)] text-[11px] font-bold text-[var(--ui-on-ink)]">
                         {fmt(o.priority)}
                       </span>
@@ -538,7 +537,7 @@ function GrowthPageContent() {
                       const pct = (w.new_contacts / max) * 100;
                       return (
                         <div key={w.week} className="flex flex-1 flex-col items-center justify-end gap-1" title={fill(pg.weekTitle, { week: w.week, n: fmt(w.new_contacts) })}>
-                          <div className="w-full rounded-t-[2px] bg-[var(--ui-ink)] transition-all" style={{ height: `${Math.max(2, pct)}%` }} />
+                          <div className="w-full rounded-t-[8px] bg-[var(--ui-ink)] transition-all" style={{ height: `${Math.max(2, pct)}%` }} />
                           <span className="text-[9px] tabular-nums text-[var(--ui-ink-2)]">{w.week.split("-W")[1]}</span>
                         </div>
                       );
@@ -576,9 +575,6 @@ function GrowthPageContent() {
 }
 
 export default function GrowthPage() {
-  return (
-    <FeatureLock feature="growth">
-      <GrowthPageContent />
-    </FeatureLock>
-  );
+  // Plan-gated by this route's layout.tsx — the page never mounts without it.
+  return <GrowthPageContent />;
 }

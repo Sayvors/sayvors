@@ -46,7 +46,7 @@ function ResetPasswordContent() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-fog dark:bg-ink">
-      <div className="w-full max-w-sm rounded-2xl border border-ink/[0.06] bg-white p-8 dark:border-fog/[0.06] dark:bg-ink">
+      <div className="w-full max-w-sm rounded-[8px] border border-ink/[0.06] bg-white p-8 dark:border-fog/[0.06] dark:bg-ink">
         <div className="mb-6 text-center">
           <h1 className="text-[20px] font-bold text-ink dark:text-fog">Reset Password</h1>
           <p className="mt-1 text-[13px] text-ink/45 dark:text-fog/45">Enter your new password below.</p>

@@ -65,12 +65,14 @@ async def test_template_must_carry_the_link(db):
         await _create(db, message_template="Please review us")
 
 
-async def test_duplicate_reuses_copy_but_starts_empty(db):
+async def test_duplicate_reuses_copy_and_recipient_list(db):
     await _plan(db, monthly=2, days=30)
     original = await _create(db)
     db.add(ReviewRequest(
         user_id="tenant-campaigns-1", campaign_id=original.id,
+        contact="a@example.com", contact_name="A",
         channel="email", status="clicked", clicked_at=datetime.now(timezone.utc),
+        token="tok-1", body="Hi {name} - {link}",
     ))
     await db.commit()
     await campaigns.refresh_results(db, "tenant-campaigns-1", original.id)
@@ -80,7 +82,15 @@ async def test_duplicate_reuses_copy_but_starts_empty(db):
     assert copy.duplicated_from == original.id
     assert copy.message_template == original.message_template
     assert copy.clicked_count == 0
+    assert copy.recipient_count == 1
     assert (copy.to_date - copy.from_date) == (original.to_date - original.from_date)
+
+    copied_rows = (
+        await db.execute(select(ReviewRequest).where(ReviewRequest.campaign_id == copy.id))
+    ).scalars().all()
+    assert len(copied_rows) == 1
+    assert copied_rows[0].status == "draft"
+    assert copied_rows[0].contact == "a@example.com"
 
 
 async def test_cancel_and_results(db):

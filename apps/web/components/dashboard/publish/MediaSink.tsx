@@ -1,11 +1,11 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CROP_ASPECT } from "./CropFrame";
 import { MAX_MEDIA_MB, type CropState } from "./types";
-import { inspectImageFile, probeImageUrl, ALLOWED_IMAGE_EXT, ALLOWED_VIDEO_EXT } from "@/lib/media-validation";
+import { inspectImageFile, probeImageUrl, normalizePickedFile, canDecodeInBrowser, ALLOWED_IMAGE_EXT, ALLOWED_VIDEO_EXT } from "@/lib/media-validation";
 import { useI18n } from "@/lib/i18n/I18nProvider";
-import { apiFetch } from "@/lib/api-rag";
+import { apiFetch, apiFetchBlob } from "@/lib/api-rag";
 
 function fill(s: string, vars: Record<string, string | number>): string {
   return Object.entries(vars).reduce(
@@ -41,6 +41,7 @@ export default function MediaSink({
   thumb = null,
   thumbLabel = "",
   platforms = [],
+  replaceSignal = 0,
 }: {
   media: { type: "image" | "video" | null; url: string; fileName?: string; sizeBytes?: number } | null;
   onPick: (type: "image" | "video", url: string, fileName?: string, sizeBytes?: number, file?: File, width?: number, height?: number) => void;
@@ -49,10 +50,16 @@ export default function MediaSink({
   thumbLabel?: string;
   /** Destinations this media will be published to — drives Google's stricter limits. */
   platforms?: string[];
+  /** Bumped by the parent to open the file picker from anywhere (an AI
+      verdict or a publish error) — the one-click route back to fixing the
+      photo, instead of stepping back through the wizard. */
+  replaceSignal?: number;
 }) {
   const [dropping, setDropping] = useState(false);
   const [urlDraft, setUrlDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+  const [scanning, setScanning] = useState<string | null>(null);
   const [source, setSource] = useState<"upload" | "link" | "library">("upload");
   const [libraryItems, setLibraryItems] = useState<{ id: string; url: string; type: "image" | "video"; label: string; sizeBytes?: number }[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
@@ -67,6 +74,11 @@ export default function MediaSink({
   const hasGoogle = platforms.includes("google_reviews");
   const maxMb = hasGoogle ? 5 : MAX_MEDIA_MB;
 
+  // Parent-driven "replace this photo": open the OS picker directly.
+  useEffect(() => {
+    if (replaceSignal > 0) fileInput.current?.click();
+  }, [replaceSignal]);
+
   const aspect = thumb && thumb.cropKey !== "orig" ? CROP_ASPECT[thumb.cropKey as Exclude<CropState["key"], "orig">] : null;
   const box = thumbBox(thumb?.cropKey ?? "orig");
   const cropStyle = aspect
@@ -75,6 +87,8 @@ export default function MediaSink({
 
   const acceptFiles = async (files: FileList | null) => {
     setError(null);
+    setInfo(null);
+    setScanning(null);
     const file = files?.[0];
     if (!file) return;
     if (file.size > maxMb * 1024 * 1024) {
@@ -104,11 +118,58 @@ export default function MediaSink({
       setError(pc.googleVideo);
       return;
     }
+    // Downloads from WhatsApp/phones often carry a lying extension or a
+    // format Google refuses (HEIC/AVIF). Fix or convert NOW, at pick time,
+    // so it can never surface as a publish failure after everything is set.
+    // Every stage announces itself: a silent pipeline reads as broken.
+    const norm = await (async () => {
+      setScanning("Checking the file…");
+      try {
+        return await normalizePickedFile(file);
+      } finally {
+        setScanning(null);
+      }
+    })();
+    if (!norm.ok) {
+      setError(norm.error);
+      return;
+    }
+    if (norm.note) setInfo(norm.note);
+    let picked = norm.file;
+    // A valid file the browser still cannot rasterise (CMYK JPEG, oversized
+    // scan) would show an empty crop frame and publish uncropped. Pillow
+    // decodes what browsers cannot, so ask the server for a usable copy.
+    if (kind === "image" && !(await canDecodeInBrowser(picked))) {
+      setScanning("Preparing the photo…");
+      try {
+        const form = new FormData();
+        form.append("file", picked);
+        const blob = await apiFetchBlob("/api/v1/media/convert", { method: "POST", body: form });
+        const ext = blob.type === "image/png" ? "png" : "jpg";
+        picked = new File(
+          [blob],
+          `${(picked.name.replace(/\.[^.]+$/, "") || "photo")}-ready.${ext}`,
+          { type: blob.type },
+        );
+        setInfo(
+          "Prepared on Sayvors servers — your browser can't display the original file, but this copy previews, crops and publishes normally.",
+        );
+      } catch (e) {
+        setError(
+          e instanceof Error
+            ? e.message
+            : "That photo can't be prepared for publishing. Export it as JPG or PNG and try again.",
+        );
+        return;
+      } finally {
+        setScanning(null);
+      }
+    }
     let width: number | undefined;
     let height: number | undefined;
     if (kind === "image") {
       try {
-        const d = await inspectImageFile(file);
+        const d = await inspectImageFile(picked);
         width = d.width; height = d.height;
         if (width < 250 || height < 250) {
           setError(pc.googleSmall);
@@ -118,7 +179,7 @@ export default function MediaSink({
         // keep going; server will validate
       }
     }
-    onPick(kind, URL.createObjectURL(file), file.name, file.size, file, width, height);
+    onPick(kind, URL.createObjectURL(picked), picked.name, picked.size, picked, width, height);
   };
 
   const openLibrary = async () => {
@@ -209,7 +270,7 @@ export default function MediaSink({
   };
 
   const tabClass = (active: boolean) =>
-    `flex-1 rounded-[20px] px-3 py-2 text-[12px] font-bold transition duration-200 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+    `flex-1 rounded-[8px] px-3 py-2 text-[12px] font-bold transition duration-200 active:scale-[0.98] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
       active
         ? "bg-[var(--ui-surface)] text-[var(--ui-ink)] shadow-[0_8px_18px_-12px_rgba(61,29,110,0.55)]"
         : "text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
@@ -219,9 +280,9 @@ export default function MediaSink({
     <div className="space-y-3">
       {media ? (
         /* Chosen media: one clear card with the preview, details and actions. */
-        <div className="flex flex-wrap items-center gap-4 rounded-[24px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3.5 shadow-[0_12px_28px_-22px_rgba(61,29,110,0.45)]">
+        <div className="flex flex-wrap items-center gap-4 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3.5 shadow-[0_12px_28px_-22px_rgba(61,29,110,0.45)]">
           <div
-            className="relative shrink-0 overflow-hidden rounded-[20px] border border-[var(--ui-line)] bg-[var(--ui-surface)] shadow-[0_12px_28px_-20px_rgba(61,29,110,0.5)] transition-[width,height] duration-200"
+            className="relative shrink-0 overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] shadow-[0_12px_28px_-20px_rgba(61,29,110,0.5)] transition-[width,height] duration-200"
             style={{ width: box.w, height: box.h }}
           >
             {media.type === "video" ? (
@@ -261,7 +322,7 @@ export default function MediaSink({
               <button
                 type="button"
                 onClick={onClear}
-                className="rounded-[20px] px-3 py-1.5 text-[11px] font-semibold text-red-600 outline-none transition hover:bg-red-500/10 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] dark:text-red-400"
+                className="rounded-[8px] px-3 py-1.5 text-[11px] font-semibold text-red-600 outline-none transition hover:bg-red-500/10 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] dark:text-red-400"
               >
                 {md.removeMedia}
               </button>
@@ -271,7 +332,7 @@ export default function MediaSink({
       ) : (
         /* Three standard sources, one tab at a time. */
         <div>
-          <div className="flex gap-1 rounded-[24px] bg-[var(--ui-sunken)] p-1" role="tablist" aria-label={md.pasteAria}>
+          <div className="flex gap-1 rounded-[8px] bg-[var(--ui-sunken)] p-1" role="tablist" aria-label={md.pasteAria}>
             <button type="button" role="tab" aria-selected={source === "upload"} onClick={() => setSource("upload")} className={tabClass(source === "upload")}>
               {md.tabUpload}
             </button>
@@ -303,13 +364,13 @@ export default function MediaSink({
                 setDropping(false);
                 acceptFiles(e.dataTransfer.files);
               }}
-              className={`mt-3 flex flex-col items-center rounded-[28px] border-2 border-dashed bg-[var(--ui-sunken)] px-4 py-8 text-center transition duration-200 ${
+              className={`mt-3 flex flex-col items-center rounded-[8px] border-2 border-dashed bg-[var(--ui-sunken)] px-4 py-8 text-center transition duration-200 ${
                 dropping
                   ? "border-[var(--ui-ink)] bg-[var(--ui-ink)]/[0.04]"
                   : "border-[var(--ui-line-strong)] hover:border-[var(--ui-ink)]/40"
               }`}
             >
-              <span className="flex h-14 w-14 items-center justify-center rounded-[20px] bg-[var(--ui-surface)] text-[var(--ui-ink)] shadow-[0_10px_20px_-14px_rgba(61,29,110,0.6)]">
+              <span className="flex h-14 w-14 items-center justify-center rounded-[8px] bg-[var(--ui-surface)] text-[var(--ui-ink)] shadow-[0_10px_20px_-14px_rgba(61,29,110,0.6)]">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6" aria-hidden>
                   <rect x="3" y="3" width="18" height="18" rx="2" />
                   <circle cx="8.5" cy="8.5" r="1.5" />
@@ -329,7 +390,7 @@ export default function MediaSink({
           )}
 
           {source === "link" && (
-            <div role="tabpanel" className="mt-3 rounded-[24px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3.5">
+            <div role="tabpanel" className="mt-3 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3.5">
               <p className="mb-2 text-[11.5px] text-[var(--ui-ink-2)]">{md.urlHint}</p>
               <div className="flex flex-wrap items-center gap-2">
                 <input
@@ -359,7 +420,7 @@ export default function MediaSink({
           )}
 
           {source === "library" && (
-            <div role="tabpanel" className="mt-3 rounded-[24px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3.5">
+            <div role="tabpanel" className="mt-3 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3.5">
               {libraryLoading ? (
                 <p className="py-6 text-center text-[12px] text-[var(--ui-ink-2)]">{md.libraryLoading}</p>
               ) : libraryError ? (
@@ -379,7 +440,7 @@ export default function MediaSink({
                       type="button"
                       onClick={() => pickFromLibrary(it)}
                       title={`${it.label} — ${md.libraryChoose}`}
-                      className="group relative aspect-square overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-surface)] transition duration-200 hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+                      className="group relative aspect-square overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] transition duration-200 hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
                     >
                       {it.type === "video" ? (
                         <video src={it.url} muted playsInline className="h-full w-full object-cover" />
@@ -399,9 +460,22 @@ export default function MediaSink({
         </div>
       )}
 
+      {scanning && (
+        <p role="status" className="flex items-center gap-2 text-[12px] font-semibold text-deep-violet dark:text-fog">
+          <svg className="h-3.5 w-3.5 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+            <path d="M12 3a9 9 0 1 0 9 9" strokeLinecap="round" />
+          </svg>
+          {scanning}
+        </p>
+      )}
       {error && (
         <p role="alert" className="text-[12px] font-semibold text-red-600 dark:text-red-400">
           {error}
+        </p>
+      )}
+      {info && !error && !scanning && (
+        <p role="status" className="text-[12px] font-semibold text-deep-violet dark:text-fog">
+          {info}
         </p>
       )}
 

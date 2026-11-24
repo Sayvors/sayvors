@@ -68,7 +68,7 @@ export default function SearchPalette({ onClose }: { onClose: () => void }) {
         role="dialog"
         aria-modal="true"
         aria-label={t.header.searchLabel}
-        className="w-full max-w-lg overflow-hidden rounded-2xl border border-deep-violet/[0.1] bg-white shadow-2xl dark:border-deep-violet/[0.15] dark:bg-ink"
+        className="w-full max-w-lg overflow-hidden rounded-[8px] border border-deep-violet/[0.1] bg-white shadow-2xl dark:border-deep-violet/[0.15] dark:bg-ink"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2.5 border-b border-deep-violet/[0.08] px-4">

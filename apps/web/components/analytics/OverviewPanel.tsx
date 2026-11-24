@@ -94,7 +94,7 @@ function ResponseTimeCard({ responseTime }: {
 }
 
 export default function OverviewPanel() {
-  const { t, locale } = useI18n();
+  const { t, locale, dir } = useI18n();
   const queryClient = useQueryClient();
   const [days, setDays] = useState<number>(30);
   const [channelId, setChannelId] = useState<string | null>(null);
@@ -174,7 +174,7 @@ export default function OverviewPanel() {
       listingName:
         selected?.label ??
         (channels.length > 1
-          ? `All businesses (${channels.length} branches)`
+          ? t.analytics.allBusinesses(channels.length)
           : channels[0]?.label ?? "Google Business"),
       windowLabel: `last ${days} days`,
       searchViews: sum(points.map((p) => p.impressions_search)),
@@ -193,7 +193,7 @@ export default function OverviewPanel() {
   const hasData = !!overview && overview.total_reviews > 0;
   const hasPresence = !!presence;
   const rangeBtn = (active: boolean) =>
-    `rounded-[2px] px-2.5 py-1 text-[11px] font-semibold outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+    `rounded-[8px] px-2.5 py-1 text-[11px] font-semibold outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
       active
         ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
         : "text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
@@ -202,23 +202,23 @@ export default function OverviewPanel() {
   return (
     <div className="h-full overflow-y-auto px-4 pb-4 sm:px-6 sm:pb-6">
       {/* Controls */}
-      <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+      <div className={`mb-5 flex flex-col gap-2 sm:flex-row sm:items-center ${dir === "rtl" ? "sm:justify-start" : "sm:justify-end"}`}>
         {channels.length > 1 && (
             <select
               value={channelId ?? ""}
               onChange={(e) => {
                 setChannelId(e.target.value || null);
               }}
-              aria-label="Filter by location"
-              className="h-8 w-full rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2 text-[12px] text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:w-auto"
+              aria-label={t.dashboard.glance.filterByLocation}
+              className="h-8 w-full rounded-[8px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2 text-[12px] text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:w-auto"
             >
-              <option value="">All locations</option>
+              <option value="">{t.nav.allLocations}</option>
               {channels.map((c) => (
                 <option key={c.id} value={c.id}>{c.label}</option>
               ))}
             </select>
           )}
-          <div className="flex rounded-[2px] bg-[var(--ui-sunken)] p-0.5" role="group" aria-label="Time range">
+          <div className="flex rounded-[8px] bg-[var(--ui-sunken)] p-0.5" role="group" aria-label={t.dashboard.glance.timeRange}>
             {RANGES.map((r) => (
               <button
                 key={r}
@@ -257,7 +257,7 @@ export default function OverviewPanel() {
       ) : !hasData && !hasPresence && messagingHasData === false && !loading ? (
         /* Empty state — no reviews and no connected listing */
         <div className="ui-card flex flex-col items-center gap-3 py-16 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-[2px] bg-[var(--ui-ink)] text-[var(--ui-on-ink)]">
+          <div className="flex h-12 w-12 items-center justify-center rounded-[8px] bg-[var(--ui-ink)] text-[var(--ui-on-ink)]">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-6 w-6" aria-hidden>
               <path d="M21 21H5a2 2 0 01-2-2V5a2 2 0 012-2h14a2 2 0 012 2v16z" strokeLinecap="round" strokeLinejoin="round" />
               <path d="M7 14l3-3 2 2 4-5" strokeLinecap="round" strokeLinejoin="round" />
@@ -308,7 +308,7 @@ export default function OverviewPanel() {
                     <li key={edit.id} className="py-2.5 first:pt-0 last:pb-0">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <span className="text-[12px] font-semibold text-[var(--ui-ink)]">
-                          {edit.reviewer_name ?? "Google reviewer"}
+                          {edit.reviewer_name ?? t.dashboard.glance.googleReviewer}
                         </span>
                         <span
                           className={`text-[12px] font-bold tabular-nums ${
@@ -327,7 +327,7 @@ export default function OverviewPanel() {
                         </span>
                       </div>
                       <p className="mt-0.5 line-clamp-1 text-[11.5px] text-[var(--ui-ink-2)]">
-                        {edit.review_text || "No written comment"}
+                        {edit.review_text || t.dashboard.glance.noWrittenComment}
                       </p>
                     </li>
                   );
@@ -353,43 +353,54 @@ export default function OverviewPanel() {
           <div className="grid grid-cols-1 gap-5 sm:gap-6 lg:grid-cols-3">
             <div className="lg:col-span-2">
               {loading ? (
-                <div className="h-48 animate-pulse rounded-[2px] bg-[var(--ui-sunken)] sm:h-72" aria-hidden />
+                <div className="h-48 animate-pulse rounded-[8px] bg-[var(--ui-sunken)] sm:h-72" aria-hidden />
               ) : (
                 <MetricChart
                   points={points}
                   source="Connected review channels"
                   sourceDetail={`last ${days} days`}
                   sourceHref={channels.length > 0 ? GBP_DASHBOARD_URL : undefined}
-                  sourceLinkLabel="Open GBP dashboard"
+                  sourceLinkLabel={t.analytics.pulse.openGbpDashboard}
                 />
               )}
             </div>
             <div className="space-y-5 sm:space-y-6">
               <div className="ui-card p-4 sm:p-5">
-                <h3 className="mb-3 text-[13px] font-bold text-[var(--ui-ink)]">Rating distribution</h3>
+                <h3 className="mb-3 text-[13px] font-bold text-[var(--ui-ink)]">{t.analytics.charts.ratingDistribution}</h3>
                 {loading ? (
-                  <div className="space-y-2" aria-hidden>
-                    {[0, 1, 2, 3, 4].map((i) => (
-                      <div key={i} className="h-2.5 animate-pulse rounded-full bg-[var(--ui-sunken)]" style={{ width: `${90 - i * 12}%` }} />
-                    ))}
+                  <div className="flex items-center gap-4" aria-hidden>
+                    <div className="h-36 w-36 shrink-0 animate-pulse rounded-full bg-[var(--ui-sunken)]" />
+                    <div className="w-full space-y-2">
+                      {[0, 1, 2, 3, 4].map((i) => (
+                        <div key={i} className="h-2.5 animate-pulse rounded-full bg-[var(--ui-sunken)]" style={{ width: `${90 - i * 12}%` }} />
+                      ))}
+                    </div>
                   </div>
                 ) : (
                   overview && (
                     <RatingDistribution
                       distribution={overview.rating_distribution}
                       total={overview.total_reviews}
+                      averageRating={overview.avg_rating}
                       source="Connected review channels"
                       sourceDetail={`last ${days} days`}
                       sourceHref={channels.length > 0 ? GBP_DASHBOARD_URL : undefined}
-                      sourceLinkLabel="Open GBP dashboard"
+                      sourceLinkLabel={t.analytics.pulse.openGbpDashboard}
                     />
                   )
                 )}
               </div>
               <div className="ui-card p-4 sm:p-5">
-                <h3 className="mb-3 text-[13px] font-bold text-[var(--ui-ink)]">Sentiment</h3>
+                <h3 className="mb-3 text-[13px] font-bold text-[var(--ui-ink)]">{t.analytics.charts.sentiment}</h3>
                 {loading ? (
-                  <div className="h-3 animate-pulse rounded-full bg-[var(--ui-sunken)]" aria-hidden />
+                  <div className="flex items-center gap-4" aria-hidden>
+                    <div className="h-36 w-36 shrink-0 animate-pulse rounded-full bg-[var(--ui-sunken)]" />
+                    <div className="w-full space-y-2">
+                      {[0, 1, 2].map((i) => (
+                        <div key={i} className="h-2.5 animate-pulse rounded-full bg-[var(--ui-sunken)]" style={{ width: `${90 - i * 18}%` }} />
+                      ))}
+                    </div>
+                  </div>
                 ) : (
                   overview && (
                     <SentimentSplitBar
@@ -399,7 +410,7 @@ export default function OverviewPanel() {
                       source="Sayvors sentiment model"
                       sourceDetail={`connected review text · last ${days} days`}
                       sourceHref={channels.length > 0 ? GBP_DASHBOARD_URL : undefined}
-                      sourceLinkLabel="Open GBP dashboard"
+                      sourceLinkLabel={t.analytics.pulse.openGbpDashboard}
                     />
                   )
                 )}

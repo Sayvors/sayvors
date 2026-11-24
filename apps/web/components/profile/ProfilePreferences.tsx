@@ -11,13 +11,13 @@ const THEME_IDS = ["light", "dark", "system"] as const;
 type ThemeId = (typeof THEME_IDS)[number];
 
 const CARD =
-  "rounded-[32px] bg-white p-5 shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)] ring-1 ring-ink/[0.06] dark:bg-[#1b1530] dark:ring-white/[0.08] sm:p-7";
+  "rounded-[8px] bg-white p-5 shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)] ring-1 ring-ink/[0.06] dark:bg-[#1b1530] dark:ring-white/[0.08] sm:p-7";
 
 function ThemePreview({ theme }: { theme: ThemeId }) {
   if (theme === "system") {
     // Two solid halves read as "follows the device" without a gradient.
     return (
-      <span className="flex h-9 w-14 overflow-hidden rounded-[10px] ring-1 ring-ink/10 dark:ring-white/15">
+      <span className="flex h-9 w-14 overflow-hidden rounded-[8px] ring-1 ring-ink/10 dark:ring-white/15">
         <span className="h-full w-1/2 bg-white" />
         <span className="h-full w-1/2 bg-ink" />
       </span>
@@ -25,7 +25,7 @@ function ThemePreview({ theme }: { theme: ThemeId }) {
   }
   return (
     <span
-      className={`relative flex h-9 w-14 items-end overflow-hidden rounded-[10px] p-1.5 ring-1 ${
+      className={`relative flex h-9 w-14 items-end overflow-hidden rounded-[8px] p-1.5 ring-1 ${
         theme === "light"
           ? "bg-white ring-ink/10"
           : "bg-ink ring-white/15"
@@ -105,7 +105,7 @@ export default function ProfilePreferences({
                 aria-pressed={active}
                 disabled={saving}
                 onClick={() => void pick(option.id, language)}
-                className={`flex flex-col items-center gap-2 rounded-[24px] border-2 px-2 py-3 transition focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 active:translate-y-0.5 active:scale-[0.98] disabled:opacity-60 ${
+                className={`flex flex-col items-center gap-2 rounded-[8px] border-2 px-2 py-3 transition focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 active:translate-y-0.5 active:scale-[0.98] disabled:opacity-60 ${
                   active
                     ? "border-deep-violet bg-deep-violet/[0.04]"
                     : "border-ink/[0.08] hover:border-ink/20 dark:border-white/[0.09] dark:hover:border-white/25"
@@ -132,7 +132,7 @@ export default function ProfilePreferences({
           value={language}
           disabled={saving}
           onChange={(e) => void pick(theme, e.target.value)}
-          className="mt-2 w-full rounded-[20px] border border-ink/[0.12] bg-white px-4 py-3 text-[13.5px] text-ink outline-none transition focus:border-deep-violet/50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/25 disabled:opacity-60 dark:border-white/[0.12] dark:bg-white/[0.04] dark:text-fog"
+          className="mt-2 w-full rounded-[8px] border border-ink/[0.12] bg-white px-4 py-3 text-[13.5px] text-ink outline-none transition focus:border-deep-violet/50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/25 disabled:opacity-60 dark:border-white/[0.12] dark:bg-white/[0.04] dark:text-fog"
         >
           {LOCALES.map((locale) => (
             <option key={locale.code} value={locale.code}>

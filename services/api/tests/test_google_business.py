@@ -324,3 +324,35 @@ async def test_opening_date_round_trip(db, user_id):
             hours=None, service_area=None, attributes=None,
             opening_date="17-05-2020",
         )
+
+
+@pytest.mark.asyncio
+async def test_push_profile_skips_incomplete_regular_hours(monkeypatch):
+    """Open days without open/close times must not be pushed as empty periods."""
+    from app.modules.channels.google_business import GoogleBusinessClient
+
+    calls = []
+
+    async def _patch(self, location_id, body, mask):
+        calls.append((mask, body))
+        return {}
+
+    monkeypatch.setattr(GoogleBusinessClient, "patch_location", _patch)
+    client = GoogleBusinessClient("tok", None)
+    try:
+        report = await client.push_profile(
+            "loc-1",
+            hours={
+                "regular": {
+                    "Monday": {"open": "", "close": "", "closed": False},
+                    "Tuesday": {"open": "09:00", "close": "17:00", "closed": False},
+                }
+            },
+        )
+    finally:
+        await client.close()
+
+    assert calls == []
+    assert "hours.regular" not in report["pushed"]
+    assert "Open days are missing open/close times" in report["skipped"]["hours.regular"]
+    assert "Monday" in report["skipped"]["hours.regular"]

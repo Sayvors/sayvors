@@ -117,19 +117,33 @@ async def test_fallback_reuploads_bytes_when_the_first_ref_is_consumed():
 
 
 @pytest.mark.asyncio
-async def test_profile_tag_is_never_filed_under_additional():
-    """PROFILE names a specific slot: falling back would put it in the gallery."""
-    script = [(400, {}, _TAG_NOT_APPLICABLE)]
+async def test_profile_tag_falls_back_to_additional_instead_of_losing_photo():
+    """A profile/cover slot Google refuses should still save to gallery.
+
+    Losing the upload is worse than filing it as ADDITIONAL: the merchant can
+    see it in the gallery and try again with a different photo.
+    """
+    script = [
+        (400, {}, _TAG_NOT_APPLICABLE),
+        (200, {}, b'{"name":"accounts/a/locations/l/media/m1",'
+                   b'"mediaFormat":"PHOTO",'
+                   b'"locationAssociation":{"category":"ADDITIONAL"},'
+                   b'"googleUrl":"https://lh3.googleusercontent.com/x"}'),
+    ]
     client = _make_client(script)
 
-    with pytest.raises(GoogleReviewsError) as exc:
-        await client.create_location_media(
-            "a", "l", category="PROFILE", data_ref="ref-1"
-        )
+    created = await client.create_location_media(
+        "a", "l", category="PROFILE", data_ref="ref-1"
+    )
 
-    assert exc.value.status_code == 400
-    # Exactly one request: no fallback attempt was made.
-    assert len(client._http._transport.requests) == 1
+    assert created["locationAssociation"]["category"] == "ADDITIONAL"
+    assert created["categoryFallback"]["requested"] == "PROFILE"
+    assert created["categoryFallback"]["used"] == "ADDITIONAL"
+    bodies = [
+        __import__("json").loads(r.content.decode())["locationAssociation"]["category"]
+        for r in client._http._transport.requests
+    ]
+    assert bodies == ["PROFILE", "ADDITIONAL"]
 
 
 @pytest.mark.asyncio

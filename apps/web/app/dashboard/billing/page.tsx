@@ -22,7 +22,7 @@ import {
 } from "@/lib/api-billing";
 
 const inputCls =
-  "w-full rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[13px] text-ink outline-none transition placeholder:text-ink/25 focus:border-deep-violet/30 disabled:opacity-50 dark:border-fog/[0.1] dark:bg-ink dark:text-fog";
+  "w-full rounded-[8px] border border-ink/[0.08] bg-white px-3 py-2 text-[13px] text-ink outline-none transition placeholder:text-ink/25 focus:border-deep-violet/30 disabled:opacity-50 dark:border-fog/[0.1] dark:bg-ink dark:text-fog";
 
 function fieldInput(hasError: boolean): string {
   return hasError
@@ -83,7 +83,7 @@ function Field({ label, hint, required, error, children }: { label: string; hint
 
 function Section({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-2xl border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.06] dark:bg-ink">
+    <section className="rounded-[8px] border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.06] dark:bg-ink">
       <h2 className="text-[15px] font-bold text-ink dark:text-fog">{title}</h2>
       <p className="mt-0.5 text-[12px] text-ink/45 dark:text-fog/45">{subtitle}</p>
       <div className="mt-4 space-y-4">{children}</div>
@@ -197,12 +197,12 @@ function parseExpiry(v: string): { month: number; year: number } {
 
 function CardPreview({ brand, digits, holder, expiry, cardFallback, yourName, expiryPh }: { brand: string; digits: string; holder: string; expiry: string; cardFallback: string; yourName: string; expiryPh: string }) {
   return (
-    <div className={`relative overflow-hidden rounded-2xl bg-gradient-to-br p-4 text-white shadow-lg ${brandGradient(brand)}`}>
+    <div className={`relative overflow-hidden rounded-[8px] bg-gradient-to-br p-4 text-white shadow-lg ${brandGradient(brand)}`}>
       <div className="pointer-events-none absolute -right-10 -top-10 h-36 w-36 rounded-full bg-white/10" aria-hidden />
       <div className="pointer-events-none absolute -bottom-14 -left-6 h-40 w-40 rounded-full bg-black/10" aria-hidden />
       <div className="relative flex items-start justify-between">
-        <div className="flex h-8 w-11 items-center justify-center rounded-md bg-white/25" aria-hidden>
-          <div className="h-4 w-6 rounded-[3px] border border-white/50" />
+        <div className="flex h-8 w-11 items-center justify-center rounded-[8px] bg-white/25" aria-hidden>
+          <div className="h-4 w-6 rounded-[8px] border border-white/50" />
         </div>
         <span className="text-[15px] font-black tracking-wide">{brandLabel(brand, cardFallback)}</span>
       </div>
@@ -309,6 +309,8 @@ const COUNTRIES: { code: string; name: string }[] = [
 export default function BillingPage() {
   const { t, locale } = useI18n();
   const b = t.dashboard.billing;
+  // Payments/top-ups are hidden until the payment flow is ready. Keep the code; flip this on when supported.
+  const PAYMENTS_ENABLED = false;
   const countryNames = useMemo(() => {
     if (locale !== "ar") return null;
     try {
@@ -541,10 +543,10 @@ export default function BillingPage() {
 
       <Link
         href="/dashboard/billing/credit"
-        className="group flex items-center justify-between gap-3 rounded-2xl border border-deep-violet/15 bg-deep-violet/[0.04] p-4 transition hover:border-deep-violet/30 hover:bg-deep-violet/[0.07] dark:border-violet-soft/20 dark:bg-violet-soft/5"
+        className="group flex items-center justify-between gap-3 rounded-[8px] border border-deep-violet/15 bg-deep-violet/[0.04] p-4 transition hover:border-deep-violet/30 hover:bg-deep-violet/[0.07] dark:border-violet-soft/20 dark:bg-violet-soft/5"
       >
         <div className="flex items-center gap-3">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-deep-violet text-white shadow-sm">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-deep-violet text-white shadow-sm">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="h-5 w-5" aria-hidden>
               <rect x="3" y="6" width="18" height="12" rx="2" />
               <path d="M3 10h18" />
@@ -561,30 +563,32 @@ export default function BillingPage() {
         </svg>
       </Link>
 
-      <Link
-        href="/dashboard/billing/topup"
-        className="group flex items-center justify-between gap-3 rounded-2xl border border-ink/[0.08] bg-white p-4 transition hover:border-deep-violet/30 dark:border-fog/[0.08] dark:bg-ink/60"
-      >
-        <div className="flex items-center gap-3">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500 text-white shadow-sm">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="h-5 w-5" aria-hidden>
-              <path d="M12 5v14M5 12h14" strokeLinecap="round" />
-            </svg>
-          </span>
-          <div>
-            <p className="text-[13px] font-bold text-ink dark:text-fog">{b.topupTitle}</p>
-            <p className="text-[11px] text-ink/45 dark:text-fog/45">{b.topupDesc}</p>
+      {PAYMENTS_ENABLED && (
+        <Link
+          href="/dashboard/billing/topup"
+          className="group flex items-center justify-between gap-3 rounded-[8px] border border-ink/[0.08] bg-white p-4 transition hover:border-deep-violet/30 dark:border-fog/[0.08] dark:bg-ink/60"
+        >
+          <div className="flex items-center gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-amber-500 text-white shadow-sm">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="h-5 w-5" aria-hidden>
+                <path d="M12 5v14M5 12h14" strokeLinecap="round" />
+              </svg>
+            </span>
+            <div>
+              <p className="text-[13px] font-bold text-ink dark:text-fog">{b.topupTitle}</p>
+              <p className="text-[11px] text-ink/45 dark:text-fog/45">{b.topupDesc}</p>
+            </div>
           </div>
-        </div>
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-4 w-4 shrink-0 text-ink/30 transition group-hover:translate-x-0.5 dark:text-fog/30" aria-hidden>
-          <path d="M6 3l5 5-5 5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </Link>
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-4 w-4 shrink-0 text-ink/30 transition group-hover:translate-x-0.5 dark:text-fog/30" aria-hidden>
+            <path d="M6 3l5 5-5 5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </Link>
+      )}
 
       {banner && (
         <div
           role="status"
-          className={`rounded-xl border p-3 text-[13px] ${
+          className={`rounded-[8px] border p-3 text-[13px] ${
             banner.kind === "ok"
               ? "border-emerald-200 bg-emerald-50 text-emerald-700"
               : "border-red-200 bg-red-50 text-red-600"
@@ -605,7 +609,7 @@ export default function BillingPage() {
         </div>
       ) : (
         <>
-          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-deep-violet via-[#4C1D95] to-ink p-5 text-white shadow-lg sm:p-6">
+          <div className="relative overflow-hidden rounded-[8px] bg-gradient-to-br from-deep-violet via-[#4C1D95] to-ink p-5 text-white shadow-lg sm:p-6">
             <div className="pointer-events-none absolute -right-12 -top-12 h-44 w-44 rounded-full bg-white/10" aria-hidden />
             <div className="pointer-events-none absolute -bottom-16 -left-8 h-48 w-48 rounded-full bg-black/20" aria-hidden />
             <div className="relative flex flex-wrap items-end justify-between gap-4">
@@ -670,12 +674,13 @@ export default function BillingPage() {
             <button
               onClick={() => void saveDetails()}
               disabled={busy !== null}
-              className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
+              className="rounded-[8px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
             >
               {busy === "profile" ? b.saving : b.saveDetails}
             </button>
           </Section>
 
+          {PAYMENTS_ENABLED && (
           <Section title={b.methodsTitle} subtitle={b.methodsSubtitle}>
             {methods.length === 0 ? (
               <p className="rounded-lg bg-ink/[0.03] px-3 py-3 text-[12px] text-ink/50 dark:bg-fog/[0.04] dark:text-fog/50">
@@ -684,7 +689,7 @@ export default function BillingPage() {
             ) : (
               <ul className="space-y-2">
                 {methods.map((m) => (
-                  <li key={m.id} className="flex items-stretch gap-0 overflow-hidden rounded-xl border border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink">
+                  <li key={m.id} className="flex items-stretch gap-0 overflow-hidden rounded-[8px] border border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink">
                     <div className={`flex w-24 shrink-0 flex-col justify-between bg-gradient-to-br p-2.5 text-white ${brandGradient(m.brand)}`}>
                       <span className="text-[11px] font-black tracking-wide">{brandLabel(m.brand, b.cardFallback)}</span>
                       <span className="text-[10px] font-semibold tabular-nums text-white/85">
@@ -746,7 +751,7 @@ export default function BillingPage() {
               </ul>
             )}
 
-            <div className="rounded-xl border border-dashed border-ink/[0.1] p-4 dark:border-fog/[0.1]">
+            <div className="rounded-[8px] border border-dashed border-ink/[0.1] p-4 dark:border-fog/[0.1]">
               <button
                 type="button"
                 onClick={() => setShowAddCard((v) => !v)}
@@ -828,7 +833,7 @@ export default function BillingPage() {
                     <button
                       onClick={() => void handleAddCard()}
                       disabled={busy !== null}
-                      className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
+                      className="rounded-[8px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
                     >
                       {busy === "add" ? b.saving : b.saveCard}
                     </button>
@@ -843,7 +848,7 @@ export default function BillingPage() {
                         setMakeDefault(false);
                       }}
                       disabled={busy !== null}
-                      className="rounded-xl px-4 py-2 text-[12px] font-semibold text-ink/50 transition hover:bg-ink/[0.04] disabled:opacity-40 dark:text-fog/50 dark:hover:bg-fog/[0.06]"
+                      className="rounded-[8px] px-4 py-2 text-[12px] font-semibold text-ink/50 transition hover:bg-ink/[0.04] disabled:opacity-40 dark:text-fog/50 dark:hover:bg-fog/[0.06]"
                     >
                       {t.common.cancel}
                     </button>
@@ -852,6 +857,7 @@ export default function BillingPage() {
               )}
             </div>
           </Section>
+          )}
         </>
       )}
     </div>

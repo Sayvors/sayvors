@@ -175,12 +175,12 @@ export default function NumbersHealth({
                 <p className="text-[14px] font-bold text-[var(--wa-text)]">{n.phone || n.name || n.external_asset_id}</p>
                 <p className="truncate text-[11px] text-[var(--wa-text-2)]">{n.name || "WhatsApp number"} · {n.status}</p>
               </div>
-              <button onClick={revalidate} disabled={busy !== null} className="min-h-11 rounded-xl border border-[var(--wa-border)] px-3 text-[12px] font-semibold text-[var(--wa-text)] disabled:opacity-50">
+              <button onClick={revalidate} disabled={busy !== null} className="min-h-11 rounded-[8px] border border-[var(--wa-border)] px-3 text-[12px] font-semibold text-[var(--wa-text)] disabled:opacity-50">
                 {busy === "all" ? ns.checking : ns.refresh}
               </button>
             </div>
 
-            <details className="mt-3 rounded-xl border border-[var(--wa-border)] p-3">
+            <details className="mt-3 rounded-[8px] border border-[var(--wa-border)] p-3">
               <summary className="cursor-pointer text-[12px] font-bold text-[var(--wa-text)]">
                 {ns.lifecycle}
               </summary>
@@ -195,7 +195,7 @@ export default function NumbersHealth({
                       value={method[n.external_asset_id] ?? "SMS"}
                       onChange={(e) => setMethod((m) => ({ ...m, [n.external_asset_id]: e.target.value as "SMS" | "VOICE" }))}
                       aria-label={fill(ns.delivery, { phone: n.phone ?? n.external_asset_id })}
-                      className="min-h-11 rounded-xl border border-[var(--wa-input-border)] bg-[var(--wa-input-bg)] px-3 text-[13px] text-[var(--wa-text)]"
+                      className="min-h-11 rounded-[8px] border border-[var(--wa-input-border)] bg-[var(--wa-input-bg)] px-3 text-[13px] text-[var(--wa-text)]"
                     >
                       <option value="SMS">{ns.sms}</option>
                       <option value="VOICE">{ns.voice}</option>
@@ -216,7 +216,7 @@ export default function NumbersHealth({
                           maxLength={6}
                           placeholder={ns.codePh}
                           aria-label={fill(ns.codeAria, { phone: n.phone ?? n.external_asset_id })}
-                          className="min-h-11 w-36 rounded-xl border border-[var(--wa-input-border)] bg-[var(--wa-input-bg)] px-3 text-[13px] tracking-widest text-[var(--wa-text)]"
+                          className="min-h-11 w-36 rounded-[8px] border border-[var(--wa-input-border)] bg-[var(--wa-input-bg)] px-3 text-[13px] tracking-widest text-[var(--wa-text)]"
                         />
                         <button
                           onClick={() => verify(n.external_asset_id)}
@@ -245,7 +245,7 @@ export default function NumbersHealth({
                       maxLength={6}
                       placeholder={ns.pinPh}
                       aria-label={fill(ns.pinAria, { phone: n.phone ?? n.external_asset_id })}
-                      className="min-h-11 w-36 rounded-xl border border-[var(--wa-input-border)] bg-[var(--wa-input-bg)] px-3 text-[13px] tracking-widest text-[var(--wa-text)]"
+                      className="min-h-11 w-36 rounded-[8px] border border-[var(--wa-input-border)] bg-[var(--wa-input-bg)] px-3 text-[13px] tracking-widest text-[var(--wa-text)]"
                     />
                     <button
                       onClick={() => register(n.external_asset_id)}
@@ -280,7 +280,7 @@ export default function NumbersHealth({
                       maxLength={6}
                       placeholder={ns.newPinPh}
                       aria-label={fill(ns.twoStepAria, { phone: n.phone ?? n.external_asset_id })}
-                      className="min-h-11 w-40 rounded-xl border border-[var(--wa-input-border)] bg-[var(--wa-input-bg)] px-3 text-[13px] tracking-widest text-[var(--wa-text)]"
+                      className="min-h-11 w-40 rounded-[8px] border border-[var(--wa-input-border)] bg-[var(--wa-input-bg)] px-3 text-[13px] tracking-widest text-[var(--wa-text)]"
                     />
                     <button
                       onClick={() => saveTwoStep(n.external_asset_id)}

@@ -155,8 +155,18 @@ export default function JobsPage() {
                   const canReplay = j.status === "dead" || j.status === "failed";
                   const canCancel = j.status === "queued" || j.status === "retrying" || j.status === "blocked";
                   return (
-                    <tr key={j.id} className="transition hover:bg-ink/[0.02]">
-                      <td className="px-4 py-3 font-mono text-[10px] text-ink/50">{j.id.slice(0, 8)}…</td>
+                    <>
+                    <tr key={j.id} className="align-top transition hover:bg-ink/[0.02]">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-mono text-[10px] text-ink/50">{j.id.slice(0, 8)}…</span>
+                          {j.subject_type && (
+                            <span className="rounded-full bg-ink/[0.06] px-2 py-0.5 text-[10px] text-ink/45">
+                              {j.subject_type}:{j.subject_id ? j.subject_id.slice(0, 6) : "?"}
+                            </span>
+                          )}
+                        </div>
+                      </td>
                       <td className="px-4 py-3 text-ink/70">{j.job_type}</td>
                       <td className="px-4 py-3">
                         <span className="rounded-full bg-ink/[0.06] px-2 py-0.5 text-[10px] font-bold uppercase text-ink/60">{j.lane}</span>
@@ -168,7 +178,12 @@ export default function JobsPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums text-ink/55">{j.attempts}/{j.max_attempts}</td>
-                      <td className="px-4 py-3 font-mono text-[10px] text-ink/40">{j.tenant_id.slice(0, 8)}…</td>
+                      <td className="px-4 py-3">
+                        <span className="block max-w-[180px] truncate text-[11px] font-semibold text-ink/70" title={j.tenant_email || j.tenant_id}>
+                          {j.tenant_email || j.tenant_id.slice(0, 8) + "…"}
+                        </span>
+                        <span className="block font-mono text-[10px] text-ink/35">{j.tenant_id.slice(0, 8)}…</span>
+                      </td>
                       <td className="px-4 py-3 tabular-nums text-ink/45">{j.created_at ? new Date(j.created_at).toLocaleString() : "—"}</td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-1.5">
@@ -190,12 +205,33 @@ export default function JobsPage() {
                               Cancel
                             </button>
                           )}
-                          {j.last_error && (
-                            <span className="ml-1 max-w-[120px] truncate text-[10px] text-ink/35" title={j.last_error}>{j.last_error.slice(0, 40)}</span>
-                          )}
                         </div>
                       </td>
                     </tr>
+                    {j.last_error ? (
+                      <tr className="border-b border-[var(--ui-line)] bg-red-50/40">
+                        <td colSpan={8} className="px-4 pb-3 pt-0">
+                          <details className="group">
+                            <summary className="flex cursor-pointer list-none items-center gap-2 text-[10.5px] font-bold text-red-700">
+                              <span className="inline-flex items-center gap-1.5">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3" aria-hidden>
+                                  <circle cx="12" cy="12" r="9" />
+                                  <path d="M12 8v5M12 16h.01" strokeLinecap="round" />
+                                </svg>
+                                Error · {j.error_code || "see below"}
+                              </span>
+                              <svg viewBox="0 0 12 12" className="h-2.5 w-2.5 shrink-0 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                                <path d="M2 4l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            </summary>
+                            <pre className="mt-2 max-h-64 overflow-auto rounded-[2px] bg-ink/[0.04] p-3 font-mono text-[10.5px] leading-relaxed whitespace-pre-wrap text-ink/75">
+                              {j.last_error}
+                            </pre>
+                          </details>
+                        </td>
+                      </tr>
+                    ) : null}
+                    </>
                   );
                 })}
               </tbody>

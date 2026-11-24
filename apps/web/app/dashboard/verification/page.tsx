@@ -9,7 +9,6 @@ import { apiFetch } from "@/lib/api-rag";
 import { GBP_DASHBOARD_URL } from "@/lib/google-links";
 import LogoLoader from "@/components/LogoLoader";
 import GoogleBusinessLogo from "@/components/channels/GoogleBusinessLogo";
-import FeatureLock from "@/components/billing/FeatureLock";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import type { Dict } from "@/lib/i18n/en";
 
@@ -260,7 +259,7 @@ function VerificationPageContent() {
               type="button"
               onClick={() => void refresh()}
               disabled={!selectedId || verificationQuery.isFetching}
-              className="rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-2 text-[12px] font-bold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] active:translate-y-px disabled:opacity-40"
+              className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-2 text-[12px] font-bold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] active:translate-y-px disabled:opacity-40"
             >
               {verificationQuery.isFetching ? vf.refreshing : vf.refresh}
             </button>
@@ -268,15 +267,15 @@ function VerificationPageContent() {
         </div>
 
         {message && (
-          <div className="rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-3 text-[12px] text-[var(--ui-ink-2)]">
+          <div className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-3 text-[12px] text-[var(--ui-ink-2)]">
             {message}
           </div>
         )}
 
         {loading ? (
-          <div className="flex justify-center rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)] py-24"><LogoLoader size={34} /></div>
+          <div className="flex justify-center rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] py-24"><LogoLoader size={34} /></div>
         ) : channels.length === 0 ? (
-          <section className="rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)] p-5 sm:p-6">
+          <section className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-5 sm:p-6">
             <div className="flex items-center gap-3">
               <GoogleBusinessLogo size={32} />
               <div>
@@ -297,14 +296,14 @@ function VerificationPageContent() {
                 { label: "Status", value: (verification?.status ?? "unstarted").replaceAll("_", " ") },
                 { label: vf.statMethods, value: fmt(options.length) },
               ].map((item) => (
-                <div key={item.label} className="rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2.5">
+                <div key={item.label} className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2.5">
                   <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-[var(--ui-ink-2)]">{item.label}</p>
                   <p className="mt-1 truncate text-[13px] font-bold capitalize text-[var(--ui-ink)]">{item.value}</p>
                 </div>
               ))}
             </div>
 
-            <section className="rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 sm:p-5">
+            <section className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 sm:p-5">
               <div className="flex items-center gap-2">
                 <GoogleBusinessLogo size={16} />
                 <label className="block text-[11px] font-bold uppercase tracking-[0.1em] text-[var(--ui-ink-2)]" htmlFor="verification-location">
@@ -315,7 +314,7 @@ function VerificationPageContent() {
                 id="verification-location"
                 value={selectedId}
                 onChange={(event) => setSelectedId(event.target.value)}
-                className="mt-2 h-10 w-full rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 text-[12px] font-semibold text-[var(--ui-ink)] outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]"
+                className="mt-2 h-10 w-full rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 text-[12px] font-semibold text-[var(--ui-ink)] outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]"
               >
                 <option value="">{vf.noSelection}</option>
                 {channels.map((channel) => (
@@ -326,7 +325,7 @@ function VerificationPageContent() {
               </select>
             </section>
 
-            <section className="rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 sm:p-5">
+            <section className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 sm:p-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="text-[16px] font-bold text-ink">{vf.statusTitle}</h2>
@@ -362,19 +361,19 @@ function VerificationPageContent() {
               </div>
 
               {verificationQuery.isError && (
-                <p className="mt-4 rounded-xl bg-rose-50 px-3 py-2 text-[12px] text-rose-700">
+                <p className="mt-4 rounded-[8px] bg-rose-50 px-3 py-2 text-[12px] text-rose-700">
                   {verificationQuery.error instanceof Error
                     ? verificationQuery.error.message
                     : vf.loadStatusFail}
                 </p>
               )}
               {verification?.provider_error && (
-                <p className="mt-4 rounded-xl bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+                <p className="mt-4 rounded-[8px] bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
                   {verification.provider_error}
                 </p>
               )}
 
-              <div className="mt-4 rounded-xl border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3">
+              <div className="mt-4 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3">
                 <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[var(--ui-ink-2)]">
                   {vf.dataTitle}
                 </p>
@@ -420,12 +419,12 @@ function VerificationPageContent() {
               </div>
 
               {verified && (
-                <div className="mt-4 rounded-xl bg-emerald-50 px-4 py-3 text-[12.5px] text-emerald-800">
+                <div className="mt-4 rounded-[8px] bg-emerald-50 px-4 py-3 text-[12.5px] text-emerald-800">
                   <p>{vf.verifiedNote}</p>
                   {nextHref && (
                     <Link
                       href={nextHref}
-                      className="mt-3 flex w-full items-center justify-center rounded-xl bg-deep-violet px-3 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 active:translate-y-px"
+                      className="mt-3 flex w-full items-center justify-center rounded-[8px] bg-deep-violet px-3 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 active:translate-y-px"
                     >
                       {vf.continueSetup}
                     </Link>
@@ -469,7 +468,7 @@ function VerificationPageContent() {
             )}
 
             {!verified && options.length === 0 && (
-              <section className="rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)] p-5 sm:p-6">
+              <section className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-5 sm:p-6">
                 <h2 className="text-[16px] font-bold text-ink">{vf.needGbpTitle}</h2>
                 <p className="mt-2 max-w-2xl text-[12.5px] leading-relaxed text-ink/55">
                   {vf.needGbpBody}
@@ -478,7 +477,7 @@ function VerificationPageContent() {
                   href={GBP_DASHBOARD_URL}
                   target="_blank"
                   rel="noreferrer"
-                  className="mt-4 inline-flex rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-2 text-[12px] font-bold text-deep-violet shadow-sm transition active:translate-y-[2px] active:scale-[0.98]"
+                  className="mt-4 inline-flex rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-2 text-[12px] font-bold text-deep-violet shadow-sm transition active:translate-y-[2px] active:scale-[0.98]"
                 >
                   {vf.openGbp}
                 </a>
@@ -486,7 +485,7 @@ function VerificationPageContent() {
             )}
 
             {!verified && options.length > 0 && (
-              <section className="rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 sm:p-5">
+              <section className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 sm:p-5">
                 <h2 className="text-[16px] font-bold text-ink">{vf.reqTitle}</h2>
                 <p className="mt-1 text-[12px] text-ink/45">
                   {activeMethod ? labelFor(activeMethod, vf.methods).description : vf.selectMethod}
@@ -527,7 +526,7 @@ function VerificationPageContent() {
                   type="button"
                   onClick={() => requestVerification.mutate()}
                   disabled={!selectedId || !activeMethod || !contactReady || busy}
-                  className="mt-5 rounded-xl bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white shadow-sm transition active:translate-y-[2px] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+                  className="mt-5 rounded-[8px] bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white shadow-sm transition active:translate-y-[2px] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {requestVerification.isPending ? vf.starting : vf.startBtn}
                 </button>
@@ -535,7 +534,7 @@ function VerificationPageContent() {
             )}
 
             {pending && (
-              <section className="rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 sm:p-5">
+              <section className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 sm:p-5">
                 <h2 className="text-[16px] font-bold text-ink">{vf.pinTitle}</h2>
                 <p className="mt-1 text-[12px] text-ink/45">
                   {fill(vf.pinSub, { method: labelFor(verification?.method ?? undefined, vf.methods).title.toLowerCase() })}
@@ -546,7 +545,7 @@ function VerificationPageContent() {
                     type="button"
                     onClick={() => completeVerification.mutate()}
                     disabled={!pin.trim() || busy}
-                    className="rounded-xl bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white shadow-sm transition active:translate-y-[2px] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+                    className="rounded-[8px] bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white shadow-sm transition active:translate-y-[2px] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     {completeVerification.isPending ? vf.submitting : vf.completeBtn}
                   </button>
@@ -555,7 +554,7 @@ function VerificationPageContent() {
             )}
 
             {verification?.verifications && verification.verifications.length > 0 && (
-              <section className="rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 sm:p-5">
+              <section className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 sm:p-5">
                 <h2 className="text-[16px] font-bold text-ink">{vf.histTitle}</h2>
                 <ul className="mt-3 divide-y divide-ink/[0.06]">
                   {verification.verifications.map((item) => (
@@ -594,14 +593,14 @@ function MethodCard({
   disabled: boolean;
   onClick: () => void;
 }) {
-  const { t } = useI18n();
+  const { t, dir } = useI18n();
   const label = labelFor(method, t.verification.methods);
   return (
     <button
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className={`rounded-xl border p-4 text-left transition ${
+      className={`rounded-[8px] border p-4 ${dir === "rtl" ? "text-start" : "text-left"} transition ${
         selected
           ? "border-deep-violet bg-deep-violet/[0.05]"
           : "border-[var(--ui-line)] bg-white hover:border-deep-violet/25"
@@ -650,7 +649,7 @@ function Field({
 
 function Info({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3">
+    <div className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3">
       <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">{label}</div>
       <div className="mt-2 min-h-4 text-[12px] font-medium text-[var(--ui-ink)]">{value || " "}</div>
     </div>
@@ -658,9 +657,6 @@ function Info({ label, value }: { label: string; value: string }) {
 }
 
 export default function VerificationPage() {
-  return (
-    <FeatureLock feature="verifications">
-      <VerificationPageContent />
-    </FeatureLock>
-  );
+  // Plan-gated by this route's layout.tsx — the page never mounts without it.
+  return <VerificationPageContent />;
 }

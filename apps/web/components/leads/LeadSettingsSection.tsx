@@ -91,7 +91,7 @@ const FOCUS =
   "focus-visible:outline focus-visible:outline-[2px] focus-visible:outline-offset-[-1px] focus-visible:outline-ink dark:focus-visible:outline-fog";
 
 const inputCls =
-  `h-8 w-full rounded-[2px] border ${HAIRLINE} bg-white px-2 text-[13px] tabular-nums ${INK} outline-none transition focus:border-deep-violet/40 disabled:opacity-50 dark:bg-ink ${FOCUS}`;
+  `h-8 w-full rounded-[8px] border ${HAIRLINE} bg-white px-2 text-[13px] tabular-nums ${INK} outline-none transition focus:border-deep-violet/40 disabled:opacity-50 dark:bg-ink ${FOCUS}`;
 
 /** One titled group inside the section, split by a hairline rather than a gap. */
 function Group({
@@ -320,12 +320,12 @@ export default function LeadSettingsSection() {
 
   if (!settings || !draft) {
     return (
-      <div className={`rounded-[3px] border ${HAIRLINE} bg-white p-5 dark:bg-ink`}>
+      <div className={`rounded-[8px] border ${HAIRLINE} bg-white p-5 dark:bg-ink`}>
         <p className="text-[13px] font-semibold text-coral">{error ?? ls.loadFailed}</p>
         <button
           type="button"
           onClick={retry}
-          className={`mt-3 rounded-[2px] border ${HAIRLINE} bg-white px-3 py-1.5 text-[12px] font-semibold ${INK} transition hover:bg-ink/[0.03] dark:bg-ink dark:hover:bg-fog/[0.06] ${FOCUS}`}
+          className={`mt-3 rounded-[8px] border ${HAIRLINE} bg-white px-3 py-1.5 text-[12px] font-semibold ${INK} transition hover:bg-ink/[0.03] dark:bg-ink dark:hover:bg-fog/[0.06] ${FOCUS}`}
         >
           {ls.retry}
         </button>
@@ -359,7 +359,7 @@ export default function LeadSettingsSection() {
   const digestPeriod = (hour24: number): "AM" | "PM" => (hour24 < 12 ? "AM" : "PM");
 
   return (
-    <section className={`rounded-[3px] border ${HAIRLINE} bg-white dark:bg-ink`}>
+    <section className={`rounded-[8px] border ${HAIRLINE} bg-white dark:bg-ink`}>
       <header className={`flex flex-wrap items-start justify-between gap-3 border-b ${RULE} px-5 py-4`}>
         <div>
           <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-ink/35 dark:text-fog/35">
@@ -455,7 +455,7 @@ export default function LeadSettingsSection() {
                 return (
                   <label
                     key={category}
-                    className={`flex cursor-pointer items-center gap-2 rounded-[2px] border ${HAIRLINE} bg-white px-3 py-2 text-[13px] font-medium ${INK} ${FOCUS}`}
+                    className={`flex cursor-pointer items-center gap-2 rounded-[8px] border ${HAIRLINE} bg-white px-3 py-2 text-[13px] font-medium ${INK} ${FOCUS}`}
                     title={
                       isLastChecked
                         ? ls.lastCheckedTitle
@@ -542,7 +542,7 @@ export default function LeadSettingsSection() {
                     setDraft((d) => (d ? { ...d, timezone: browserTz } : d));
                     if (status === "saved") setStatus("idle");
                   }}
-                  className={`mt-1.5 inline-flex items-center rounded-[2px] border ${HAIRLINE} bg-white px-2 py-1 text-[11px] font-semibold ${INK2} transition hover:bg-ink/[0.03] disabled:opacity-40 dark:bg-ink dark:hover:bg-fog/[0.06] ${FOCUS}`}
+                  className={`mt-1.5 inline-flex items-center rounded-[8px] border ${HAIRLINE} bg-white px-2 py-1 text-[11px] font-semibold ${INK2} transition hover:bg-ink/[0.03] disabled:opacity-40 dark:bg-ink dark:hover:bg-fog/[0.06] ${FOCUS}`}
                 >
                   {fill(ls.useDetected, { tz: browserTz })}
                 </button>
@@ -609,7 +609,7 @@ export default function LeadSettingsSection() {
                 value={selectedRecipient}
                 disabled={busy || teamMembers.length === 0}
                 onChange={(e) => setSelectedRecipient(e.target.value)}
-                className={`h-8 min-w-0 flex-1 rounded-[2px] border ${HAIRLINE} bg-white px-2 text-[13px] ${INK} outline-none focus:border-deep-violet/40 disabled:opacity-50 dark:bg-ink`}
+                className={`h-8 min-w-0 flex-1 rounded-[8px] border ${HAIRLINE} bg-white px-2 text-[13px] ${INK} outline-none focus:border-deep-violet/40 disabled:opacity-50 dark:bg-ink`}
               >
                 <option value="">
                   {teamMembers.length === 0 ? ls.noMembers : ls.addPerson}
@@ -629,7 +629,7 @@ export default function LeadSettingsSection() {
                   addRecipient(selectedRecipient);
                   setSelectedRecipient("");
                 }}
-                className={`rounded-[2px] bg-deep-violet px-4 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40 ${FOCUS}`}
+                className={`rounded-[8px] bg-deep-violet px-4 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40 ${FOCUS}`}
               >
                 {ls.add}
               </button>
@@ -651,13 +651,13 @@ export default function LeadSettingsSection() {
                     addRecipient(manualRecipient);
                   }
                 }}
-                className={`h-8 min-w-0 flex-1 rounded-[2px] border ${HAIRLINE} bg-white px-2 text-[13px] ${INK} outline-none focus:border-deep-violet/40 disabled:opacity-50 dark:bg-ink`}
+                className={`h-8 min-w-0 flex-1 rounded-[8px] border ${HAIRLINE} bg-white px-2 text-[13px] ${INK} outline-none focus:border-deep-violet/40 disabled:opacity-50 dark:bg-ink`}
               />
               <button
                 type="button"
                 disabled={busy || manualRecipient.trim() === ""}
                 onClick={() => addRecipient(manualRecipient)}
-                className={`rounded-[2px] border ${HAIRLINE} bg-white px-4 text-[12px] font-bold ${INK} transition hover:bg-ink/[0.03] disabled:opacity-40 dark:bg-ink dark:hover:bg-fog/[0.06] ${FOCUS}`}
+                className={`rounded-[8px] border ${HAIRLINE} bg-white px-4 text-[12px] font-bold ${INK} transition hover:bg-ink/[0.03] disabled:opacity-40 dark:bg-ink dark:hover:bg-fog/[0.06] ${FOCUS}`}
               >
                 {ls.addAddress}
               </button>
@@ -668,7 +668,7 @@ export default function LeadSettingsSection() {
                 {recipients.map((email) => (
                   <li
                     key={email}
-                    className={`flex items-center gap-1 rounded-[2px] border ${HAIRLINE} bg-ink/[0.02] py-1 pl-2 pr-1 text-[12px] dark:bg-fog/[0.03]`}
+                    className={`flex items-center gap-1 rounded-[8px] border ${HAIRLINE} bg-ink/[0.02] py-1 ps-2 pe-1 text-[12px] dark:bg-fog/[0.03]`}
                   >
                     <span className="max-w-[18rem] truncate text-ink/80 dark:text-fog/80">
                       {email}
@@ -681,7 +681,7 @@ export default function LeadSettingsSection() {
                         if (status === "saved") setStatus("idle");
                       }}
                       aria-label={fill(ls.removeRecipient, { email })}
-                      className={`rounded-[1px] px-1 text-[13px] leading-none ${INK2} transition hover:text-coral disabled:opacity-40 ${FOCUS}`}
+                      className={`rounded-[8px] px-1 text-[13px] leading-none ${INK2} transition hover:text-coral disabled:opacity-40 ${FOCUS}`}
                     >
                       ×
                     </button>
@@ -745,7 +745,7 @@ export default function LeadSettingsSection() {
                         : d,
                     )
                   }
-                  className={`h-8 w-full rounded-l-[2px] border ${HAIRLINE} bg-white px-2 text-[13px] tabular-nums ${INK} outline-none focus:border-deep-violet/40 disabled:opacity-50 dark:bg-ink`}
+                  className={`h-8 w-full rounded-l-[8px] border ${HAIRLINE} bg-white px-2 text-[13px] tabular-nums ${INK} outline-none focus:border-deep-violet/40 disabled:opacity-50 dark:bg-ink`}
                 >
                   {Array.from({ length: 12 }, (_, i) => i + 1).map((h) => (
                     <option key={h} value={h}>
@@ -825,7 +825,7 @@ export default function LeadSettingsSection() {
             type="button"
             onClick={discard}
             disabled={!dirty || busy}
-            className={`rounded-[2px] border ${HAIRLINE} bg-white px-3.5 py-2 text-[12px] font-bold ${INK} transition hover:bg-ink/[0.03] disabled:opacity-40 dark:bg-ink dark:hover:bg-fog/[0.06] ${FOCUS}`}
+            className={`rounded-[8px] border ${HAIRLINE} bg-white px-3.5 py-2 text-[12px] font-bold ${INK} transition hover:bg-ink/[0.03] disabled:opacity-40 dark:bg-ink dark:hover:bg-fog/[0.06] ${FOCUS}`}
           >
             {ls.discard}
           </button>
@@ -833,7 +833,7 @@ export default function LeadSettingsSection() {
             type="button"
             onClick={() => void save()}
             disabled={!dirty || busy}
-            className={`rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40 ${FOCUS}`}
+            className={`rounded-[8px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40 ${FOCUS}`}
           >
             {status === "saving" ? ls.saving : ls.saveLead}
           </button>

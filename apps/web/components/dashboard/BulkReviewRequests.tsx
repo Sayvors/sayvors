@@ -141,7 +141,7 @@ export default function BulkReviewRequests({
   };
 
   return (
-    <section className="rounded-2xl border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.08] dark:bg-ink">
+    <section className="rounded-[8px] border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.08] dark:bg-ink">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <h3 className="text-[14px] font-bold text-ink dark:text-fog">{b.title}</h3>
@@ -162,13 +162,13 @@ export default function BulkReviewRequests({
           type="file"
           accept=".csv,text/csv"
           onChange={(e) => void onFile(e.target.files?.[0] ?? null)}
-          className="block w-full max-w-xs rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12px] text-ink file:mr-3 file:rounded-lg file:border-0 file:bg-deep-violet/10 file:px-2.5 file:py-1 file:text-[11px] file:font-bold file:text-deep-violet dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+          className="block w-full max-w-xs rounded-[8px] border border-ink/[0.08] bg-white px-3 py-2 text-[12px] text-ink file:mr-3 file:rounded-lg file:border-0 file:bg-deep-violet/10 file:px-2.5 file:py-1 file:text-[11px] file:font-bold file:text-deep-violet dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
         />
         {fileName && <span className="text-[11px] text-ink/50 dark:text-fog/50">{fileName}</span>}
       </div>
 
       {parsed && (
-        <div className="mt-3 rounded-xl border border-ink/[0.06] p-3 dark:border-fog/[0.08]">
+        <div className="mt-3 rounded-[8px] border border-ink/[0.06] p-3 dark:border-fog/[0.08]">
           <p className="text-[10px] font-bold uppercase tracking-wide text-ink/45 dark:text-fog/45">
             {fill(b.mappingTitle, { n: fmt(parsed.headers.length) })}
           </p>
@@ -238,7 +238,7 @@ export default function BulkReviewRequests({
       )}
 
       {valid.length > 0 && (
-        <div className="mt-3 max-h-28 overflow-y-auto rounded-xl border border-ink/[0.06] dark:border-fog/[0.08]">
+        <div className="mt-3 max-h-28 overflow-y-auto rounded-[8px] border border-ink/[0.06] dark:border-fog/[0.08]">
           <table className="w-full text-left text-[11px]">
             <thead className="bg-ink/[0.03] text-[10px] uppercase tracking-wide text-ink/50 dark:bg-fog/[0.04] dark:text-fog/50">
               <tr>
@@ -265,7 +265,7 @@ export default function BulkReviewRequests({
           <select
             value={channel}
             onChange={(e) => setChannel(e.target.value as "email" | "whatsapp")}
-            className="w-full rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12px] text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+            className="w-full rounded-[8px] border border-ink/[0.08] bg-white px-3 py-2 text-[12px] text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
           >
             <option value="email">{b.channelEmail}</option>
             <option value="whatsapp">{b.channelWa}</option>
@@ -276,7 +276,7 @@ export default function BulkReviewRequests({
           <select
             value={mode}
             onChange={(e) => setMode(e.target.value as "now" | "batched")}
-            className="w-full rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12px] text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+            className="w-full rounded-[8px] border border-ink/[0.08] bg-white px-3 py-2 text-[12px] text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
           >
             <option value="batched">{b.deliveryBatched}</option>
             <option value="now">{b.deliveryNow}</option>
@@ -294,7 +294,7 @@ export default function BulkReviewRequests({
               max={500}
               value={batchSize}
               onChange={(e) => setBatchSize(Math.max(1, Number(e.target.value) || 1))}
-              className="w-full rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12px] text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+              className="w-full rounded-[8px] border border-ink/[0.08] bg-white px-3 py-2 text-[12px] text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
             />
           </label>
           <label className="block">
@@ -305,14 +305,14 @@ export default function BulkReviewRequests({
               max={10080}
               value={intervalMinutes}
               onChange={(e) => setIntervalMinutes(Math.max(1, Number(e.target.value) || 1))}
-              className="w-full rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12px] text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+              className="w-full rounded-[8px] border border-ink/[0.08] bg-white px-3 py-2 text-[12px] text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
             />
           </label>
         </div>
       )}
 
       {channel === "whatsapp" && (
-        <div className="mt-3 rounded-xl border border-amber-300/60 bg-amber-50 p-3 dark:border-amber-500/30 dark:bg-amber-500/10">
+        <div className="mt-3 rounded-[8px] border border-amber-300/60 bg-amber-50 p-3 dark:border-amber-500/30 dark:bg-amber-500/10">
           <p className="text-[11px] font-bold text-amber-800 dark:text-amber-300">
             {b.waWarnTitle}
           </p>
@@ -323,7 +323,7 @@ export default function BulkReviewRequests({
       )}
 
       {channel === "whatsapp" && entitlements && (
-        <div className="mt-3 rounded-xl border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.08] dark:bg-fog/[0.03]">
+        <div className="mt-3 rounded-[8px] border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.08] dark:bg-fog/[0.03]">
           <p className="text-[11px] font-semibold text-ink dark:text-fog">
             {valid.length === 1 ? fill(b.quotaOne, { n: fmt(valid.length) }) : fill(b.quotaN, { n: fmt(valid.length) })}
           </p>
@@ -357,7 +357,7 @@ export default function BulkReviewRequests({
           <input
             value={subject}
             onChange={(e) => setSubject(e.target.value)}
-            className="mb-2 w-full rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12px] text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+            className="mb-2 w-full rounded-[8px] border border-ink/[0.08] bg-white px-3 py-2 text-[12px] text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
             placeholder={b.subjectPh}
           />
         )}
@@ -365,7 +365,7 @@ export default function BulkReviewRequests({
           value={body}
           onChange={(e) => setBody(e.target.value)}
           rows={3}
-          className="w-full rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12px] text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+          className="w-full rounded-[8px] border border-ink/[0.08] bg-white px-3 py-2 text-[12px] text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
         />
       </div>
 
@@ -373,7 +373,7 @@ export default function BulkReviewRequests({
         <button
           onClick={() => void send()}
           disabled={busy || valid.length === 0}
-          className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
+          className="rounded-[8px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
         >
           {busy ? b.queueing : valid.length === 0 ? b.queueEmpty : valid.length === 1 ? b.queueOne : fill(b.queueN, { n: fmt(valid.length) })}
         </button>

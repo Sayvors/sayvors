@@ -177,7 +177,7 @@ export default function WhatsAppHub() {
             <div className="space-y-1 p-2">
               {[0, 1, 2].map((i) => (
                 <div key={i} className="flex animate-pulse items-center gap-3 px-2 py-2.5">
-                  <div className="h-[49px] w-[49px] rounded-xl bg-[var(--wa-track)]" />
+                  <div className="h-[49px] w-[49px] rounded-[8px] bg-[var(--wa-track)]" />
                   <div className="flex-1"><div className="h-3.5 w-2/3 rounded bg-[var(--wa-track)]" /><div className="mt-1.5 h-3 w-1/2 rounded bg-[var(--wa-track)]" /></div>
                 </div>
               ))}
@@ -192,7 +192,7 @@ export default function WhatsAppHub() {
                 aria-current={isActive}
                 className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition ${isActive ? "bg-[var(--wa-panel-2)]" : "hover:bg-[var(--wa-hover)]"}`}
               >
-                <span className="flex h-[49px] w-[49px] shrink-0 items-center justify-center rounded-xl bg-[var(--wa-accent)]/15 text-[var(--wa-accent-deep)]">
+                <span className="flex h-[49px] w-[49px] shrink-0 items-center justify-center rounded-[8px] bg-[var(--wa-accent)]/15 text-[var(--wa-accent-deep)]">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-6 w-6"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6" strokeLinecap="round" strokeLinejoin="round"/></svg>
                 </span>
                 <span className="min-w-0 flex-1 border-b border-[var(--wa-border-soft)] pb-2.5">

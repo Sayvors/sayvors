@@ -76,7 +76,7 @@ function TemplateEditor({
   onSaved: (message: string) => void;
 }) {
   const editing = Boolean(template);
-  const { t } = useI18n();
+  const { t, dir } = useI18n();
   const tp = t.templates;
   const e = tp.editor;
   const [name, setName] = useState(template?.name ?? "");
@@ -278,7 +278,7 @@ function TemplateEditor({
           </fieldset>
         )}
 
-        <div className="flex items-center justify-end gap-2 border-t border-[var(--wa-border)] pt-3">
+        <div className={`flex items-center ${dir === "rtl" ? "justify-start" : "justify-end"} gap-2 border-t border-[var(--wa-border)] pt-3`}>
           <button
             type="button"
             onClick={onClose}
@@ -305,7 +305,7 @@ function TemplateEditor({
 }
 
 export default function TemplatesPanel() {
-  const { t, locale } = useI18n();
+  const { t, locale, dir } = useI18n();
   const tp = t.templates;
   const fmt = (n: number) =>
     new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
@@ -521,7 +521,7 @@ export default function TemplatesPanel() {
               {tp.filters[key]}
             </button>
           ))}
-          <span className="ml-auto text-[11px] text-[var(--wa-text-3)]">
+          <span className="me-auto text-[11px] text-[var(--wa-text-3)]">
             {fill(tp.shown, { count: fmt(visible.length) })}
           </span>
           <button

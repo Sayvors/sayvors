@@ -219,13 +219,21 @@ async def create_and_deliver(
     deliver: bool,
     subject: str | None = None,
     body: str | None = None,
+    campaign_id: str | None = None,
 ) -> ReviewRequest:
-    """Create the request, optionally deliver it, and commit once."""
+    """Create the request, optionally deliver it, and commit once.
+
+    Send-path gating (FACT-9): new sends must belong to an active campaign.
+    """
+    from .campaigns import get_active_campaign
+
+    campaign = await get_active_campaign(db, user_id, campaign_id=campaign_id)
     token = secrets.token_urlsafe(24)
     review_url = await resolve_review_url(db, user_id, channel_id)
     row = ReviewRequest(
         user_id=user_id,
         channel_id=channel_id or None,
+        campaign_id=campaign.id,
         contact=(contact or "")[:255] or None,
         contact_name=(contact_name or "")[:120] or None,
         channel=channel,
@@ -282,13 +290,21 @@ async def create_queued(
     trigger: str,
     subject: str | None,
     body: str | None,
+    campaign_id: str | None = None,
 ) -> ReviewRequest:
-    """Create a queued row for the scheduled job, without sending."""
+    """Create a queued row for the scheduled job, without sending.
+
+    Send-path gating (FACT-9): new queued sends must belong to an active campaign.
+    """
+    from .campaigns import get_active_campaign
+
+    campaign = await get_active_campaign(db, user_id, campaign_id=campaign_id)
     token = secrets.token_urlsafe(24)
     review_url = await resolve_review_url(db, user_id, channel_id)
     row = ReviewRequest(
         user_id=user_id,
         channel_id=channel_id or None,
+        campaign_id=campaign.id,
         contact=(contact or "")[:255] or None,
         contact_name=(contact_name or "")[:120] or None,
         channel=channel,
@@ -302,6 +318,118 @@ async def create_queued(
     )
     db.add(row)
     await db.flush()
+    return row
+
+
+ASSISTANT_ASK_DEDUPE_DAYS = 7
+
+
+async def prepare_assistant_ask(db: AsyncSession, user_id: str) -> tuple[str, str]:
+    """The review-ask prompt block for a chat assistant, plus its token.
+
+    Returns ("", "") when the tenant has no connected Google listing (nothing
+    to link to — the assistant must not invent one). The token is generated
+    here but NO row is written yet: the row exists only once the assistant's
+    reply actually carried the link and was sent (see record_assistant_ask),
+    so an ask that never reached a customer never pollutes the funnel.
+    """
+    review_url = await resolve_review_url(db, user_id, None)
+    if not review_url:
+        return "", ""
+    token = secrets.token_urlsafe(24)
+    tracked = tracked_link(token)
+    block = (
+        "REVIEW LINK POLICY:\n"
+        f"- This business's only real review link: {tracked}\n"
+        "- Share it EXACTLY as written when the customer asks how to leave a "
+        "review or give feedback, or right after you resolved something and "
+        "they sound satisfied (a thank-you is the natural moment). One short "
+        "warm line, in the customer's language.\n"
+        "- Never invent, shorten, or alter the link. Ask at most once per "
+        "conversation."
+    )
+    return block, token
+
+
+async def record_assistant_ask(
+    db: AsyncSession,
+    user_id: str,
+    *,
+    token: str,
+    contact: str | None,
+    contact_name: str | None,
+) -> ReviewRequest | None:
+    """Record the review ask whose tracked link the assistant just sent.
+
+    The row uses the SAME token the customer received, so their click and
+    any resulting review attribute honestly — to the active campaign when
+    one is running. Deduplicated per contact for
+    ``ASSISTANT_ASK_DEDUPE_DAYS`` so one chatty customer cannot inflate the
+    funnel (they may still receive the link again; repeat clicks just do
+    not create rows). Returns the row, or None when a recent ask exists.
+    """
+    now = datetime.now(timezone.utc)
+    contact_value = (contact or "")[:255] or None
+    dedupe_since = now - timedelta(days=ASSISTANT_ASK_DEDUPE_DAYS)
+    contact_condition = (
+        ReviewRequest.contact == contact_value
+        if contact_value
+        else ReviewRequest.contact.is_(None)
+    )
+    recent = (
+        await db.execute(
+            select(ReviewRequest.id)
+            .where(
+                ReviewRequest.user_id == user_id,
+                ReviewRequest.trigger == "assistant",
+                contact_condition,
+                ReviewRequest.created_at >= dedupe_since,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if recent:
+        return None
+
+    from .campaigns import campaign_status
+    from .models import ReviewCampaign
+
+    candidates = (
+        await db.execute(
+            select(ReviewCampaign)
+            .where(
+                ReviewCampaign.tenant_id == user_id,
+                ReviewCampaign.status != "cancelled",
+            )
+            .order_by(ReviewCampaign.created_at.desc())
+            .limit(10)
+        )
+    ).scalars().all()
+    # campaign_status coerces datetime/date mixes, so the comparison lives in
+    # Python instead of SQL where a mixed column type would raise.
+    active = next(
+        (
+            c for c in candidates
+            if campaign_status(c, today=now.date()) == "active"
+        ),
+        None,
+    )
+    row = ReviewRequest(
+        user_id=user_id,
+        contact=contact_value,
+        contact_name=(contact_name or "")[:120] or None,
+        channel="whatsapp",
+        trigger="assistant",
+        status="sent",
+        sent_via="whatsapp",
+        token=token,
+        review_url=await resolve_review_url(db, user_id, None),
+        sent_at=now,
+        campaign_id=active.id if active else None,
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
     return row
 
 

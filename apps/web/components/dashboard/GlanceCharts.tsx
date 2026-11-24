@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { fetchTimeseries, type TimeseriesPoint } from "@/lib/api-analytics";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 
 function fmtDay(iso: string): string {
   return new Date(`${iso}T00:00:00`).toLocaleDateString("en", { month: "short", day: "numeric" });
@@ -28,6 +29,7 @@ function MiniArea({ values, color, max }: { values: number[]; color: string; max
 }
 
 export default function GlanceCharts() {
+  const { t } = useI18n();
   const [points, setPoints] = useState<TimeseriesPoint[]>([]);
 
   useEffect(() => {
@@ -54,15 +56,15 @@ export default function GlanceCharts() {
   const labels = [fmtDay(points[0]?.date ?? ""), fmtDay(points[points.length - 1]?.date ?? "")];
 
   const series: { title: string; value: string; sub: string; color: string; values: number[] }[] = [
-    { title: "Messages", value: String(totalMsgs), sub: "last 30 days", color: "#7c3aed", values: points.map((p) => p.messages ?? p.replies_count ?? 0) },
-    { title: "Reviews", value: String(totalReviews), sub: "last 30 days", color: "#059669", values: points.map((p) => p.reviews_count) },
-    { title: "Avg rating", value: avgRating != null ? avgRating.toFixed(1) : "—", sub: "last 30 days", color: "#d97706", values: points.map((p) => p.avg_rating) },
+    { title: t.dashboard.glance.messages, value: String(totalMsgs), sub: t.dashboard.glance.last30days, color: "#7c3aed", values: points.map((p) => p.messages ?? p.replies_count ?? 0) },
+    { title: t.dashboard.glance.reviews, value: String(totalReviews), sub: t.dashboard.glance.last30days, color: "#059669", values: points.map((p) => p.reviews_count) },
+    { title: t.dashboard.glance.avgRating, value: avgRating != null ? avgRating.toFixed(1) : "—", sub: t.dashboard.glance.last30days, color: "#d97706", values: points.map((p) => p.avg_rating) },
   ];
 
   return (
     <section aria-label="Messages, reviews and ratings charts" className="grid grid-cols-1 gap-3 sm:grid-cols-3">
       {series.map((s) => (
-        <div key={s.title} className="rounded-[2px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-[#1d1636]">
+        <div key={s.title} className="rounded-[8px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-[#1d1636]">
           <div className="flex items-baseline justify-between">
             <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">{s.title}</p>
             <p className="text-[11px] text-ink/40 dark:text-fog/40">{s.sub}</p>

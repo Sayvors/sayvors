@@ -32,7 +32,7 @@ export default function BusinessIntakeView({
           <span aria-hidden>←</span>
           {c.backToDatabank}
         </Link>
-        <div className="rounded-[32px] border border-[var(--ui-line)] bg-white p-4 shadow-[0_18px_40px_-30px_rgba(20,16,31,0.5)] sm:p-6">
+        <div className="rounded-[8px] border border-[var(--ui-line)] bg-white p-4 shadow-[0_18px_40px_-30px_rgba(20,16,31,0.5)] sm:p-6">
           <BusinessIntakeStep
             skipLabel={c.cancel}
             initialSection={initialSection}

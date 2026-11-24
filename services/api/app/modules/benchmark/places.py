@@ -6,18 +6,44 @@ generic error — raw response bodies never reach a client.
 """
 from __future__ import annotations
 
+import json
 import logging
 
 import httpx
 
 from ...config import settings
+from ..redis.service import cache_get, cache_set
 
 logger = logging.getLogger(__name__)
+
+SEARCH_CACHE_TTL_SECONDS = 600
+DETAILS_CACHE_TTL_SECONDS = 1800
+
+
+async def _cache_get_json(key: str) -> dict | list | None:
+    try:
+        raw = await cache_get(key)
+    except Exception:
+        return None
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except Exception:
+        return None
+
+
+async def _cache_set_json(key: str, value: dict | list, ttl: int) -> None:
+    try:
+        await cache_set(key, json.dumps(value, separators=(",", ":"), default=str), ttl=ttl)
+    except Exception:
+        logger.debug("Benchmark cache write failed for %s", key, exc_info=True)
 
 PLACES_TEXT_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
 PLACES_DETAILS_URL = "https://places.googleapis.com/v1/places/{place_id}"
 MAX_SEARCH_RESULTS = 20
-MAX_REVIEWS = 500
+# Hard cost cap: never pull/return more than 10 reviews per place.
+MAX_REVIEWS = 10
 MAX_PHOTOS = 30
 REQUEST_TIMEOUT_SECONDS = 15.0
 
@@ -35,6 +61,11 @@ class PlacesError(Exception):
     def __init__(self, message: str, status_code: int = 502):
         self.status_code = status_code
         super().__init__(message)
+
+
+def configured() -> bool:
+    """True when the Places API key is set."""
+    return bool((settings.GOOGLE_PLACES_API_KEY or "").strip())
 
 
 def _key() -> str:
@@ -81,10 +112,11 @@ def _map_search(place: dict) -> dict:
     }
 
 
-def _map_details(place: dict) -> dict:
+def _map_details(place: dict, *, reviews_limit: int = MAX_REVIEWS) -> dict:
     base = _map_search(place)
     reviews = []
-    for review in (place.get("reviews") or [])[:MAX_REVIEWS]:
+    limit = max(1, min(int(reviews_limit), MAX_REVIEWS))
+    for review in (place.get("reviews") or [])[:limit]:
         if not isinstance(review, dict):
             continue
         text_value = review.get("text")
@@ -118,10 +150,15 @@ def _map_details(place: dict) -> dict:
 async def search_places(
     query: str, *, language: str = "en", region: str = "SA"
 ) -> list[dict]:
-    """Free-text business search with location bias, bounded to 20 results."""
+    """Free-text business search, bounded to 20 results."""
     text = str(query or "").strip()[:255]
     if not text:
         return []
+    cache_key = f"bm:search:google:{language or 'en'}:{region or 'SA'}:{text.lower()}"
+    cached = await _cache_get_json(cache_key)
+    if isinstance(cached, list):
+        return cached
+
     key = _key()
     headers = {"X-Goog-Api-Key": key, "X-Goog-FieldMask": SEARCH_FIELD_MASK}
     try:
@@ -147,14 +184,24 @@ async def search_places(
     except ValueError:
         logger.error("Places search returned invalid JSON")
         raise PlacesError("Place search returned an invalid response")
-    return [_map_search(p) for p in places[:MAX_SEARCH_RESULTS] if isinstance(p, dict)]
+    result = [_map_search(p) for p in places[:MAX_SEARCH_RESULTS] if isinstance(p, dict)]
+    await _cache_set_json(cache_key, result, SEARCH_CACHE_TTL_SECONDS)
+    return result
 
 
-async def get_place(place_id: str, *, language: str = "en") -> dict:
-    """Details for one place, field-masked to what the UI renders."""
+async def get_place(
+    place_id: str, *, language: str = "en", reviews_limit: int = 10, start: int | None = None, cutoff: int | None = None
+) -> dict:
+    """Details for one place."""
     pid = _place_id(place_id)
     if not pid:
         raise PlacesError("Unknown place")
+    reviews_limit = max(1, min(int(reviews_limit), 10))
+    cache_key = f"bm:place:google:{language or 'en'}:{pid}:{reviews_limit}:{start or 0}:{cutoff or 0}"
+    cached = await _cache_get_json(cache_key)
+    if isinstance(cached, dict) and cached.get("place_id"):
+        return cached
+
     key = _key()
     headers = {"X-Goog-Api-Key": key, "X-Goog-FieldMask": DETAILS_FIELD_MASK}
     try:
@@ -171,6 +218,8 @@ async def get_place(place_id: str, *, language: str = "en") -> dict:
         logger.error("Places details failed status=%s", resp.status_code)
         raise PlacesError("Place details are temporarily unavailable", resp.status_code)
     try:
-        return _map_details(resp.json() or {})
+        result = _map_details(resp.json() or {}, reviews_limit=reviews_limit)
     except ValueError:
         raise PlacesError("Place details returned an invalid response")
+    await _cache_set_json(cache_key, result, DETAILS_CACHE_TTL_SECONDS)
+    return result

@@ -32,10 +32,10 @@ const BUSINESS_NAME_MAX = 255;
 const PHONE_PATTERN = /^[+()\-\s\d]{7,25}$/;
 
 const CARD =
-  "rounded-[32px] bg-white p-5 shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)] ring-1 ring-ink/[0.06] dark:bg-[#1b1530] dark:ring-white/[0.08] sm:p-7";
+  "rounded-[8px] bg-white p-5 shadow-[0_18px_44px_-30px_rgba(61,29,110,0.45)] ring-1 ring-ink/[0.06] dark:bg-[#1b1530] dark:ring-white/[0.08] sm:p-7";
 
 const INPUT =
-  "w-full rounded-[20px] border bg-white px-4 py-3 text-[13.5px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/25 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white/[0.04] dark:text-fog dark:placeholder:text-fog/30";
+  "w-full rounded-[8px] border bg-white px-4 py-3 text-[13.5px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/25 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white/[0.04] dark:text-fog dark:placeholder:text-fog/30";
 
 function valuesFrom(profile: Profile): AccountFormPatch {
   return {
@@ -422,14 +422,14 @@ export default function AccountForm({
             type="button"
             onClick={discard}
             disabled={!dirty || submitting}
-            className="rounded-[20px] px-4 py-2.5 text-[12px] font-bold text-ink/55 transition hover:bg-ink/[0.05] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet active:translate-y-0.5 active:scale-[0.98] disabled:opacity-40 dark:text-fog/55 dark:hover:bg-white/[0.06]"
+            className="rounded-[8px] px-4 py-2.5 text-[12px] font-bold text-ink/55 transition hover:bg-ink/[0.05] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet active:translate-y-0.5 active:scale-[0.98] disabled:opacity-40 dark:text-fog/55 dark:hover:bg-white/[0.06]"
           >
             {pf.discard}
           </button>
           <button
             type="submit"
             disabled={!dirty || submitting}
-            className="inline-flex items-center gap-2 rounded-[20px] bg-deep-violet px-5 py-2.5 text-[12px] font-bold text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)] transition hover:bg-deep-violet/90 focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 active:translate-y-0.5 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex items-center gap-2 rounded-[8px] bg-deep-violet px-5 py-2.5 text-[12px] font-bold text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)] transition hover:bg-deep-violet/90 focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 active:translate-y-0.5 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
           >
             {submitting && (
               <span

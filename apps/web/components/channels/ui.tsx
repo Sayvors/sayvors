@@ -43,7 +43,7 @@ export function Switch({
           }`}
         />
       </span>
-      <span className={`text-left text-[13px] font-semibold ${INK}`}>{label}</span>
+      <span className={`text-start text-[13px] font-semibold ${INK}`}>{label}</span>
     </button>
   );
 }

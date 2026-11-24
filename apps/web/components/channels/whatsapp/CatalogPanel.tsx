@@ -373,7 +373,7 @@ export default function CatalogPanel() {
                   <p className="truncate text-[13px] font-semibold text-[var(--wa-text)]">
                     {item.name}
                     {!item.active && (
-                      <span className="ml-2 rounded-full bg-[var(--wa-panel-2)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[var(--wa-text-3)]">
+                      <span className="ms-2 rounded-full bg-[var(--wa-panel-2)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[var(--wa-text-3)]">
                         {k.hidden}
                       </span>
                     )}

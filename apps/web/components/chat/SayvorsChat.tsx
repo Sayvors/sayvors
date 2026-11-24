@@ -9,6 +9,7 @@ import { streamAssistantChat } from "@/lib/api-assistant";
 import { isChatChart, type ChatChart } from "@/lib/chat-charts";
 import ChatChartView from "@/components/chat/ChatChart";
 import FeedbackPanel from "@/components/FeedbackPanel";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 
 interface ChatMsg {
   role: "user" | "assistant";
@@ -214,7 +215,7 @@ function renderMarkdown(text: string): React.ReactNode {
     ));
     blocks.push(
       list.ordered ? (
-        <ol key={`b-${bi++}`} className="ml-4 list-decimal space-y-0.5">{items}</ol>
+        <ol key={`b-${bi++}`} className="ms-4 list-decimal space-y-0.5">{items}</ol>
       ) : (
         <ul key={`b-${bi++}`} className="ml-4 list-disc space-y-0.5">{items}</ul>
       )
@@ -244,7 +245,7 @@ function renderMarkdown(text: string): React.ReactNode {
             <thead>
               <tr>
                 {header.map((h, ci) => (
-                  <th key={ci} className="border-b border-ink/15 px-2 py-1 text-left font-bold dark:border-fog/20">
+                  <th key={ci} className="border-b border-ink/15 px-2 py-1 text-start font-bold dark:border-fog/20">
                     {renderInline(h, `th-${tkey}-${ci}`)}
                   </th>
                 ))}
@@ -313,6 +314,7 @@ function StepTrail({
   done: boolean;
   elapsedMs?: number | null;
 }) {
+  const { dir } = useI18n();
   const [open, setOpen] = useState(!done);
   const running = !done;
   const active = steps[steps.length - 1];
@@ -324,12 +326,12 @@ function StepTrail({
       : "Completed";
 
   return (
-    <div className="overflow-hidden rounded-[14px] border border-ink/[0.07] bg-white shadow-[0_1px_0_rgba(255,255,255,0.9)_inset,0_1px_2px_rgba(20,16,31,0.04)] dark:border-fog/[0.08] dark:bg-[#241a45]">
+    <div className="overflow-hidden rounded-[8px] border border-ink/[0.07] bg-white shadow-[0_1px_0_rgba(255,255,255,0.9)_inset,0_1px_2px_rgba(20,16,31,0.04)] dark:border-fog/[0.08] dark:bg-[#241a45]">
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
-        className="flex w-full items-center gap-2 px-2.5 py-2 text-left outline-none transition hover:bg-ink/[0.02] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:hover:bg-fog/[0.04]"
+        className={`flex w-full items-center gap-2 px-2.5 py-2 ${dir === "rtl" ? "text-start" : "text-left"} outline-none transition hover:bg-ink/[0.02] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:hover:bg-fog/[0.04]`}
       >
         <span
           aria-hidden
@@ -402,7 +404,7 @@ function StepTrail({
                   {s.label}
                 </span>
                 {s.detail && (
-                  <span className="max-w-[45%] shrink-0 truncate text-right text-[10px] text-ink/35 dark:text-fog/35">
+                  <span className={`max-w-[45%] shrink-0 truncate ${dir === "rtl" ? "text-start" : "text-right"} text-[10px] text-ink/35 dark:text-fog/35`}>
                     {s.detail}
                   </span>
                 )}
@@ -422,6 +424,7 @@ function StepTrail({
  */
 export default function SayvorsChat() {
   const open = useChatOpen();
+  const { dir } = useI18n();
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeId, setActiveId] = useState<string>("");
   const [loaded, setLoaded] = useState(false);
@@ -577,7 +580,11 @@ export default function SayvorsChat() {
     };
 
     try {
-      for await (const ev of streamAssistantChat(text, history, active.id, controller.signal)) {
+      // Tell the assistant which dashboard screen the owner is on and which
+      // businesses are selected (e.g. the benchmark compare page), so
+      // "why are these two better than mine" has real referents.
+      const screenPath = window.location.pathname + window.location.search;
+      for await (const ev of streamAssistantChat(text, history, active.id, controller.signal, screenPath)) {
         if (ev.type === "step" && ev.label) {
           addStep(ev.label, ev.detail, ev.id);
         } else if (ev.type === "delta" && ev.text) {
@@ -699,7 +706,7 @@ export default function SayvorsChat() {
         <div className="flex h-full w-full min-w-0 flex-col md:w-[400px]">
           {/* Header */}
           <div className="flex items-center gap-2.5 border-b border-ink/[0.06] bg-deep-violet px-4 py-3 dark:border-fog/[0.06]">
-            <Image src="/Sayvors_Icon.png" alt="" width={28} height={28} className="h-7 w-7 rounded-[2px]" />
+            <Image src="/Sayvors_Icon.png" alt="" width={28} height={28} className="h-7 w-7 rounded-[8px]" />
             <div className="min-w-0 flex-1">
               <p className="text-[13px] font-bold text-white">Ask Sayvors</p>
               <p className="truncate text-[10px] text-white/60">{active?.title ?? "Answers from your live business data"}</p>
@@ -712,7 +719,7 @@ export default function SayvorsChat() {
               aria-expanded={feedbackOpen}
               aria-label="Give feedback"
               title="Feedback"
-              className="rounded-[2px] p-1.5 text-white/70 outline-none transition hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-white/40"
+              className="rounded-[8px] p-1.5 text-white/70 outline-none transition hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-white/40"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
                 <path d="M12 3.5l2.2 5.8L20 11l-5.8 1.7L12 18.5l-2.2-5.8L4 11l5.8-1.7L12 3.5Z" />
@@ -727,7 +734,7 @@ export default function SayvorsChat() {
               aria-expanded={historyOpen}
               aria-label="Chat history"
               title="Chat history"
-              className="rounded-[2px] p-1.5 text-white/70 outline-none transition hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-white/40"
+              className="rounded-[8px] p-1.5 text-white/70 outline-none transition hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-white/40"
             >
               <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4" aria-hidden>
                 <path d="M10 4a6 6 0 106 6 6 6 0 00-6-6z" />
@@ -737,7 +744,7 @@ export default function SayvorsChat() {
             <button
               onClick={() => setChatOpen(false)}
               aria-label="Close chat"
-              className="rounded-[2px] p-1.5 text-white/70 outline-none transition hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-white/40"
+              className="rounded-[8px] p-1.5 text-white/70 outline-none transition hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-white/40"
             >
               <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden>
                 <path d="M5 5l10 10M15 5L5 15" strokeLinecap="round" />
@@ -750,7 +757,7 @@ export default function SayvorsChat() {
             {messages.map((m, i) => (
               <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
                 {m.role === "user" ? (
-                  <p className="max-w-[85%] whitespace-pre-wrap rounded-[2px] bg-deep-violet px-3.5 py-2 text-[12.5px] leading-relaxed text-white">
+                  <p className="max-w-[85%] whitespace-pre-wrap rounded-[8px] bg-deep-violet px-3.5 py-2 text-[12.5px] leading-relaxed text-white">
                     {m.content}
                   </p>
                 ) : (
@@ -758,7 +765,7 @@ export default function SayvorsChat() {
                     {m.steps && m.steps.length > 0 && (
                       <StepTrail steps={m.steps} done elapsedMs={m.elapsedMs} />
                     )}
-                    <div className="max-w-[88%] space-y-1 rounded-[2px] bg-ink/[0.05] px-3.5 py-2 text-[12.5px] text-ink dark:bg-fog/[0.08] dark:text-fog">
+                    <div className="max-w-[88%] space-y-1 rounded-[8px] bg-ink/[0.05] px-3.5 py-2 text-[12.5px] text-ink dark:bg-fog/[0.08] dark:text-fog">
                       {renderMarkdown(m.content)}
                     </div>
                     {m.charts && m.charts.length > 0 && (
@@ -781,12 +788,12 @@ export default function SayvorsChat() {
                     <StepTrail steps={live.steps} done={false} elapsedMs={liveElapsedMs} />
                   )}
                   {live.text ? (
-                    <div className="max-w-[88%] space-y-1 rounded-[2px] bg-ink/[0.05] px-3.5 py-2 text-[12.5px] text-ink dark:bg-fog/[0.08] dark:text-fog">
+                    <div className="max-w-[88%] space-y-1 rounded-[8px] bg-ink/[0.05] px-3.5 py-2 text-[12.5px] text-ink dark:bg-fog/[0.08] dark:text-fog">
                       {renderMarkdown(live.text)}
-                      <span className="ml-0.5 inline-block h-3 w-[2px] translate-y-[2px] animate-pulse rounded-full bg-deep-violet align-middle" aria-hidden />
+                      <span className="ms-0.5 inline-block h-3 w-[2px] translate-y-[2px] animate-pulse rounded-full bg-deep-violet align-middle" aria-hidden />
                     </div>
                   ) : live.steps.length === 0 ? (
-                    <p className="flex items-center gap-1.5 rounded-[2px] bg-ink/[0.05] px-3.5 py-2.5 dark:bg-fog/[0.08]">
+                    <p className="flex items-center gap-1.5 rounded-[8px] bg-ink/[0.05] px-3.5 py-2.5 dark:bg-fog/[0.08]">
                       <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink/40 [animation-delay:0ms] dark:bg-fog/40" />
                       <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink/40 [animation-delay:120ms] dark:bg-fog/40" />
                       <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink/40 [animation-delay:240ms] dark:bg-fog/40" />
@@ -804,7 +811,7 @@ export default function SayvorsChat() {
             )}
 
             {error && (
-              <p className="rounded-[2px] bg-coral/10 px-3 py-2 text-[11px] font-medium text-coral">{error}</p>
+              <p className="rounded-[8px] bg-coral/10 px-3 py-2 text-[11px] font-medium text-coral">{error}</p>
             )}
           </div>
 
@@ -824,13 +831,13 @@ export default function SayvorsChat() {
               maxLength={2000}
               disabled={busy}
               aria-label="Message"
-              className="min-w-0 flex-1 rounded-[2px] border border-ink/[0.08] bg-white px-3 py-2 text-[12.5px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/40 focus:ring-2 focus:ring-deep-violet/[0.1] disabled:opacity-50 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+              className="min-w-0 flex-1 rounded-[8px] border border-ink/[0.08] bg-white px-3 py-2 text-[12.5px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/40 focus:ring-2 focus:ring-deep-violet/[0.1] disabled:opacity-50 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
             />
             <button
               onClick={() => void send()}
               disabled={busy || !input.trim()}
               aria-label="Send message"
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[2px] bg-deep-violet text-white shadow-sm shadow-deep-violet/25 transition hover:bg-deep-violet/90 active:scale-95 disabled:opacity-40"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-deep-violet text-white shadow-sm shadow-deep-violet/25 transition hover:bg-deep-violet/90 active:scale-95 disabled:opacity-40"
             >
               <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4" aria-hidden>
                 <path d="M10 16V4m0 0L4.5 9.5M10 4l5.5 5.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -861,7 +868,7 @@ export default function SayvorsChat() {
             <button
               onClick={() => setHistoryOpen(false)}
               aria-label="Close history"
-              className="rounded-[2px] p-1.5 text-white/70 outline-none transition hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-white/40"
+              className="rounded-[8px] p-1.5 text-white/70 outline-none transition hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-white/40"
             >
               <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden>
                 <path d="M5 5l10 10M15 5L5 15" strokeLinecap="round" />
@@ -872,7 +879,7 @@ export default function SayvorsChat() {
           <div className="space-y-2 border-b border-ink/[0.06] p-3 dark:border-fog/[0.06]">
             <button
               onClick={startNewChat}
-                              className="flex w-full items-center justify-center gap-1.5 rounded-[2px] bg-deep-violet px-3 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.99]"
+                              className="flex w-full items-center justify-center gap-1.5 rounded-[8px] bg-deep-violet px-3 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.99]"
             >
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3.5 w-3.5" aria-hidden>
                 <path d="M8 3v10M3 8h10" strokeLinecap="round" />
@@ -880,7 +887,7 @@ export default function SayvorsChat() {
               New chat
             </button>
             <div className="relative">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink/25 dark:text-fog/25" aria-hidden>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className={`absolute ${dir === "rtl" ? "end-2.5" : "start-2.5"} top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink/25 dark:text-fog/25`} aria-hidden>
                 <circle cx="11" cy="11" r="8" />
                 <line x1="21" y1="21" x2="16.65" y2="16.65" strokeLinecap="round" />
               </svg>
@@ -890,7 +897,7 @@ export default function SayvorsChat() {
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search chats…"
                 aria-label="Search chats"
-                className="w-full rounded-[2px] border border-ink/[0.08] bg-ink/[0.02] py-1.5 pl-8 pr-3 text-[12px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/30 focus:bg-white focus:ring-2 focus:ring-deep-violet/[0.08] dark:border-fog/[0.1] dark:bg-fog/[0.04] dark:text-fog"
+                className="w-full rounded-[8px] border border-ink/[0.08] bg-ink/[0.02] py-1.5 ps-8 pe-3 text-[12px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/30 focus:bg-white focus:ring-2 focus:ring-deep-violet/[0.08] dark:border-fog/[0.1] dark:bg-fog/[0.04] dark:text-fog"
               />
             </div>
           </div>
@@ -904,7 +911,7 @@ export default function SayvorsChat() {
             {filteredSessions.map((s) => (
               <div
                 key={s.id}
-                className={`group flex items-center gap-2 rounded-[2px] px-2.5 py-2 transition ${
+                className={`group flex items-center gap-2 rounded-[8px] px-2.5 py-2 transition ${
                   s.id === activeId
                     ? "bg-deep-violet/[0.08] ring-1 ring-deep-violet/20"
                     : "hover:bg-ink/[0.03] dark:hover:bg-fog/[0.05]"
@@ -926,7 +933,7 @@ export default function SayvorsChat() {
                   onClick={() => deleteSession(s.id)}
                   aria-label={`Delete chat: ${s.title}`}
                   title="Delete chat"
-                  className="shrink-0 rounded-[2px] p-1.5 text-ink/25 outline-none transition hover:bg-coral/10 hover:text-coral focus-visible:ring-2 focus-visible:ring-coral/40 dark:text-fog/25"
+                  className="shrink-0 rounded-[8px] p-1.5 text-ink/25 outline-none transition hover:bg-coral/10 hover:text-coral focus-visible:ring-2 focus-visible:ring-coral/40 dark:text-fog/25"
                 >
                   <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-3.5 w-3.5" aria-hidden>
                     <path d="M4 6h12M8 6V4.5A.5.5 0 018.5 4h3a.5.5 0 01.5.5V6m2 0v9a1 1 0 01-1 1H7a1 1 0 01-1-1V6" strokeLinecap="round" strokeLinejoin="round" />

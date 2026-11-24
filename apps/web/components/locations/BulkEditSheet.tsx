@@ -208,7 +208,7 @@ export default function BulkEditSheet({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="relative flex w-full max-w-6xl flex-col rounded-[2px] bg-white shadow-xl dark:bg-ink" style={{ maxHeight: "90vh" }}>
+      <div className="relative flex w-full max-w-6xl flex-col rounded-[8px] bg-white shadow-xl dark:bg-ink" style={{ maxHeight: "90vh" }}>
         {/* Header */}
         <div className="flex items-center justify-between border-b border-ink/[0.08] px-4 py-3 dark:border-fog/[0.08]">
           <h2 className="text-[16px] font-bold text-ink dark:text-fog">Bulk edit locations</h2>
@@ -216,7 +216,7 @@ export default function BulkEditSheet({ onClose }: { onClose: () => void }) {
         </div>
 
         {error && (
-          <p role="alert" className="mx-4 mt-3 rounded-[2px] bg-red-50 px-3 py-2 text-[12px] font-medium text-red-700">{error}</p>
+          <p role="alert" className="mx-4 mt-3 rounded-[8px] bg-red-50 px-3 py-2 text-[12px] font-medium text-red-700">{error}</p>
         )}
 
         {mode === "choose" && (
@@ -227,7 +227,7 @@ export default function BulkEditSheet({ onClose }: { onClose: () => void }) {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <button
                 onClick={openSheet}
-                className="rounded-[2px] border-2 border-deep-violet/20 bg-deep-violet/5 p-6 text-left transition hover:border-deep-violet/40 hover:bg-deep-violet/10"
+                className="rounded-[8px] border-2 border-deep-violet/20 bg-deep-violet/5 p-6 text-left transition hover:border-deep-violet/40 hover:bg-deep-violet/10"
               >
                 <div className="mb-2 text-[24px]">📊</div>
                 <p className="text-[14px] font-bold text-ink dark:text-fog">Open spreadsheet here</p>
@@ -251,7 +251,7 @@ export default function BulkEditSheet({ onClose }: { onClose: () => void }) {
                     setError(e instanceof Error ? e.message : "Download failed");
                   }
                 }}
-                className="rounded-[2px] border-2 border-ink/[0.08] bg-ink/[0.02] p-6 text-left transition hover:border-ink/[0.16] hover:bg-ink/[0.04] dark:border-fog/[0.08] dark:bg-fog/[0.02] dark:hover:border-fog/[0.16]"
+                className="rounded-[8px] border-2 border-ink/[0.08] bg-ink/[0.02] p-6 text-left transition hover:border-ink/[0.16] hover:bg-ink/[0.04] dark:border-fog/[0.08] dark:bg-fog/[0.02] dark:hover:border-fog/[0.16]"
               >
                 <div className="mb-2 text-[24px]">📥</div>
                 <p className="text-[14px] font-bold text-ink dark:text-fog">Download CSV template</p>
@@ -349,7 +349,7 @@ export default function BulkEditSheet({ onClose }: { onClose: () => void }) {
                     ✓ {report.success} saved
                   </span>
                 )}
-                <button onClick={() => setMode("choose")} className="rounded-[2px] border border-ink/[0.08] px-3 py-1.5 text-[12px] font-medium text-ink/70 hover:bg-ink/[0.04] dark:border-fog/[0.08] dark:text-fog/70">
+                <button onClick={() => setMode("choose")} className="rounded-[8px] border border-ink/[0.08] px-3 py-1.5 text-[12px] font-medium text-ink/70 hover:bg-ink/[0.04] dark:border-fog/[0.08] dark:text-fog/70">
                   Back
                 </button>
                 <button
@@ -378,7 +378,7 @@ export default function BulkEditSheet({ onClose }: { onClose: () => void }) {
 
         {showConfirm && (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/30">
-            <div className="w-full max-w-sm rounded-[2px] bg-white p-5 shadow-xl dark:bg-ink">
+            <div className="w-full max-w-sm rounded-[8px] bg-white p-5 shadow-xl dark:bg-ink">
               <h3 className="text-[14px] font-bold text-ink dark:text-fog">Confirm bulk update</h3>
               <p className="mt-2 text-[12px] text-ink/60 dark:text-fog/60">
                 This will update {rows.length} listing(s). Changes to name, phone, website, description,
@@ -389,7 +389,7 @@ export default function BulkEditSheet({ onClose }: { onClose: () => void }) {
               <div className="mt-4 flex justify-end gap-2">
                 <button
                   onClick={() => setShowConfirm(false)}
-                  className="rounded-[2px] border border-ink/[0.08] px-3 py-1.5 text-[12px] font-medium text-ink/70 hover:bg-ink/[0.04] dark:border-fog/[0.08] dark:text-fog/70"
+                  className="rounded-[8px] border border-ink/[0.08] px-3 py-1.5 text-[12px] font-medium text-ink/70 hover:bg-ink/[0.04] dark:border-fog/[0.08] dark:text-fog/70"
                 >
                   Cancel
                 </button>

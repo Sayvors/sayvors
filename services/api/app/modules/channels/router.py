@@ -4399,6 +4399,24 @@ async def test_review_pipeline(
         review_text=getattr(issue, "review_text", body.review_text),
     )
 
+async def _invalidate_google_media_cache(tenant_id: str, channel_id: str) -> None:
+    """Best-effort invalidation for cached Google gallery responses."""
+    try:
+        from ..redis.client import get_redis
+
+        redis = await get_redis()
+        prefix = f"google_media:{tenant_id}:{channel_id}:"
+        keys: list[str] = []
+        async for key in redis.scan_iter(match=f"{prefix}*", count=100):
+            keys.append(key)
+            if len(keys) >= 200:
+                break
+        if keys:
+            await redis.delete(*keys)
+    except Exception:
+        pass
+
+
 # -- Google Business Profile location media (gallery) -------------
 
 @router.get("/{channel_id}/google-media")
@@ -4422,6 +4440,18 @@ async def list_google_media(
         if cat not in allowed:
             raise HTTPException(status_code=400, detail=f"Invalid category: {category}")
         category = cat
+    from ..redis.service import cache_get, cache_set
+    import json as _json
+
+    tenant_id = tenant_id_of(ctx.user)
+    cache_key = f"google_media:{tenant_id}:{channel_id}:{category or 'all'}:{page_size}:{page_token or ''}"
+    try:
+        cached = await cache_get(cache_key)
+        if cached:
+            return _json.loads(cached)
+    except Exception:
+        pass
+
     channel = await _google_channel(channel_id, ctx.user, db)
     client, location_id = await _verification_client(channel, db)
     try:
@@ -4451,11 +4481,16 @@ async def list_google_media(
                     "insights": m.get("insights"),
                 }
             )
-        return {
+        payload = {
             "media": items,
             "nextPageToken": data.get("nextPageToken"),
             "totalMediaItemCount": data.get("totalMediaItemCount"),
         }
+        try:
+            await cache_set(cache_key, _json.dumps(payload, default=str), ttl=30)
+        except Exception:
+            pass
+        return payload
     except Exception as e:  # noqa: BLE001
         from .google_reviews import GoogleReviewsError
         import logging
@@ -4583,22 +4618,25 @@ async def upload_google_media(
         )
         assoc = created.get("locationAssociation") or {}
         fallback = created.get("categoryFallback")
-        # A banner is only a banner if Google actually filed it as COVER.
-        # Other categories may legitimately fall back to ADDITIONAL, but a
-        # silently downgraded cover must never be reported as success.
         actual_cat = str(assoc.get("category") or "").upper()
         wanted_cat = "PROFILE" if cat == "LOGO" else cat
         if cat in ("COVER", "PROFILE", "LOGO") and (
             fallback or actual_cat != wanted_cat
         ):
-            raise HTTPException(
-                status_code=502,
-                detail=(
-                    f"Google filed the image as "
-                    f"{actual_cat or 'an unspecified category'} instead of "
-                    f"{wanted_cat}; it is not the requested banner/profile."
-                ),
-            )
+            # A cover/profile that Google refuses is still worth keeping: save
+            # it as a gallery photo rather than discarding the upload. The
+            # response tells the client it landed in the gallery, not the slot.
+            if not fallback:
+                fallback = {
+                    "requested": wanted_cat,
+                    "used": actual_cat or "ADDITIONAL",
+                    "reason": (
+                        "Google did not apply this photo as the requested "
+                        "cover/profile; it was saved to the gallery instead."
+                    ),
+                }
+            created["categoryFallback"] = fallback
+        await _invalidate_google_media_cache(tenant_id_of(ctx.user), channel_id)
         return {
             "created": True,
             "media": {
@@ -4680,6 +4718,7 @@ async def delete_google_media(
         if not name.startswith(parent + "/media/"):
             raise HTTPException(status_code=403, detail="Media does not belong to this location.")
         await client.delete_media(name)
+        await _invalidate_google_media_cache(tenant_id_of(ctx.user), channel_id)
         return {"deleted": True, "name": name}
     except HTTPException:
         raise

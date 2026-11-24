@@ -1,15 +1,20 @@
 """Review-request delivery, click tracking, and per-request attribution."""
 import json
+import secrets
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from sqlalchemy import select
 
-from app.modules.analytics.models import ReviewRequest
+from app.modules.analytics.campaigns import CampaignError, duplicate_campaign
+from app.modules.analytics.models import ReviewCampaign, ReviewRequest
 from app.modules.analytics.review_requests import (
     attribute_reviews,
     create_and_deliver,
     create_queued,
     deliver_request,
+    prepare_assistant_ask,
+    record_assistant_ask,
     render_template,
     resolve_review_url,
     track_click,
@@ -36,8 +41,18 @@ def test_attribute_reviews_no_clicks():
     assert attribute_reviews([None], [None], 7) == 0
 
 
+def _active_campaign(user_id: str) -> ReviewCampaign:
+    today = datetime.now(timezone.utc).date()
+    return ReviewCampaign(
+        tenant_id=user_id, name="Test campaign",
+        from_date=today, to_date=today, status="active",
+    )
+
+
 @pytest.mark.asyncio
 async def test_whatsapp_failure_is_visible_when_no_number_connected(db, user_id):
+    db.add(_active_campaign(user_id))
+    await db.commit()
     row = await create_and_deliver(
         db, user_id, channel_id=None, contact="+966500000000",
         contact_name="Sara", channel="whatsapp", trigger="manual", deliver=True,
@@ -69,13 +84,76 @@ def test_render_template_placeholders():
 
 
 @pytest.mark.asyncio
+async def test_prepare_assistant_ask_empty_without_listing(db, user_id):
+    """No Google listing → no link, and the assistant must invent nothing."""
+    block, token = await prepare_assistant_ask(db, user_id)
+    assert block == ""
+    assert token == ""
+
+
+@pytest.mark.asyncio
+async def test_assistant_ask_attaches_active_campaign_and_dedupes(db, user_id, channel_id):
+    channel = await db.get(Channel, channel_id)
+    channel.metadata_json = json.dumps({"place_id": "ChIJnative"})
+    await db.commit()
+
+    today = datetime.now(timezone.utc).date()
+    campaign = ReviewCampaign(
+        tenant_id=user_id, name="Ask", from_date=today, to_date=today, status="active",
+    )
+    db.add(campaign)
+    await db.commit()
+
+    block, token = await prepare_assistant_ask(db, user_id)
+    assert "review-requests/" in block
+    assert token
+
+    # Preparing makes no promise yet: no row until the reply was actually sent.
+    rows = (await db.execute(select(ReviewRequest))).scalars().all()
+    assert rows == []
+
+    row = await record_assistant_ask(
+        db, user_id, token=token, contact="+966500000001", contact_name="Syed",
+    )
+    assert row is not None
+    assert row.trigger == "assistant"
+    assert row.channel == "whatsapp"
+    assert row.status == "sent"
+    assert row.campaign_id == campaign.id
+    assert row.review_url == "https://search.google.com/local/writereview?placeid=ChIJnative"
+
+    # One contact cannot inflate the funnel: a second ask inside the window
+    # is skipped even though the customer received a fresh link.
+    again = await record_assistant_ask(
+        db, user_id, token=secrets.token_urlsafe(24),
+        contact="+966500000001", contact_name="Syed",
+    )
+    assert again is None
+
+
+@pytest.mark.asyncio
+async def test_record_assistant_ask_without_listing_is_honest(db, user_id):
+    """No listing → the row records the ask with a null review_url."""
+    row = await record_assistant_ask(
+        db, user_id, token=secrets.token_urlsafe(24),
+        contact="+966500000002", contact_name=None,
+    )
+    assert row is not None
+    assert row.review_url is None
+    assert row.trigger == "assistant"
+
+
+@pytest.mark.asyncio
 async def test_queued_request_uses_template_and_fails_visibly(db, user_id):
+    db.add(_active_campaign(user_id))
+    await db.commit()
     row = await create_queued(
         db, user_id, channel_id=None, contact="+966500000000",
         contact_name="Sara", channel="whatsapp", trigger="campaign",
         subject="Leave a review", body="Hi {name}, please review: {link}",
     )
     assert row.status == "queued"
+    assert row.campaign_id is not None
     await db.commit()
 
     await deliver_request(db, row)
@@ -102,3 +180,68 @@ async def test_click_marks_row_and_returns_target(db, user_id):
     assert row.status == "clicked"
 
     assert await track_click(db, "unknown-token") is None
+
+
+@pytest.mark.asyncio
+async def test_send_path_gated_by_active_campaign(db, user_id):
+    with pytest.raises(CampaignError):
+        await create_and_deliver(
+            db, user_id, channel_id=None, contact="+966500000000",
+            contact_name="Sara", channel="whatsapp", trigger="manual", deliver=False,
+        )
+    with pytest.raises(CampaignError):
+        await create_queued(
+            db, user_id, channel_id=None, contact="+966500000000",
+            contact_name="Sara", channel="whatsapp", trigger="campaign",
+            subject=None, body=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_duplicate_campaign_reuses_recipient_list(db, user_id):
+    today = datetime.now(timezone.utc).date()
+    source = ReviewCampaign(
+        tenant_id=user_id, name="Source", from_date=today, to_date=today, status="active",
+        message_template="Hi {name} - {link}",
+    )
+    db.add(source)
+    await db.commit()
+    await db.refresh(source)
+
+    db.add_all([
+        ReviewRequest(
+            user_id=user_id, campaign_id=source.id, contact="+966500000001",
+            contact_name="A", channel="whatsapp", trigger="campaign", status="sent",
+            token=secrets.token_urlsafe(24), body="Hi {name} - {link}",
+            sent_at=datetime.now(timezone.utc),
+        ),
+        ReviewRequest(
+            user_id=user_id, campaign_id=source.id, contact="+966500000001",
+            contact_name="A duplicate", channel="whatsapp", trigger="campaign", status="failed",
+            token=secrets.token_urlsafe(24), body="old",
+            sent_at=datetime.now(timezone.utc),
+        ),
+        ReviewRequest(
+            user_id=user_id, campaign_id=source.id, contact="b@example.com",
+            contact_name="B", channel="email", trigger="campaign", status="clicked",
+            token=secrets.token_urlsafe(24), subject="Review", body="Body {link}",
+            sent_at=datetime.now(timezone.utc),
+        ),
+    ])
+    await db.commit()
+
+    new_campaign = await duplicate_campaign(db, user_id, source.id)
+    assert new_campaign.duplicated_from == source.id
+    assert new_campaign.id != source.id
+
+    rows = (
+        await db.execute(
+            select(ReviewRequest).where(ReviewRequest.campaign_id == new_campaign.id)
+        )
+    ).scalars().all()
+    # Deduped by contact+channel: +966500000001 whatsapp + b@example.com email
+    assert len(rows) == 2
+    assert {r.status for r in rows} == {"draft"}
+    assert {r.contact for r in rows} == {"+966500000001", "b@example.com"}
+    assert all(r.token for r in rows)
+    assert all(r.campaign_id == new_campaign.id for r in rows)

@@ -61,7 +61,7 @@ function CommentRow({ comment }: { comment: InstagramComment }) {
           )}
         </p>
         {comment.replies?.length > 0 && (
-          <ul className="mt-2 space-y-2 border-l-2 border-[var(--ui-line)] pl-3">
+          <ul className="mt-2 space-y-2 border-s-2 border-[var(--ui-line)] ps-3">
             {comment.replies.map((r, ri) => (
               <li key={`${r.id ?? "r"}-${ri}`}>
                 <p className="text-[12px] leading-snug">
@@ -226,7 +226,7 @@ export default function PostModal({
       `}</style>
 
       <div
-        className="flex h-[min(88vh,720px)] w-full max-w-[960px] flex-col overflow-hidden rounded-[16px] bg-[var(--ui-surface)] shadow-2xl md:flex-row"
+        className="flex h-[min(88vh,720px)] w-full max-w-[960px] flex-col overflow-hidden rounded-[8px] bg-[var(--ui-surface)] shadow-2xl md:flex-row"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Media side — black like Instagram's viewer, media fit inside. */}

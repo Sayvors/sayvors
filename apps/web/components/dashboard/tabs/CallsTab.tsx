@@ -36,7 +36,7 @@ export default function CallsTab({ channelSlug, channelName }: CallsTabProps) {
             {recentCalls.map((call) => (
               <div
                 key={call.id}
-                className="flex items-center gap-3 rounded-xl border-2 border-white bg-white/80 p-3 sm:p-4 transition hover:bg-white"
+                className="flex items-center gap-3 rounded-[8px] border-2 border-white bg-white/80 p-3 sm:p-4 transition hover:bg-white"
               >
                 <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${
                   call.type === "outbound" ? "bg-deep-violet/10 text-deep-violet" : "bg-emerald-100 text-emerald-600"
@@ -85,7 +85,7 @@ export default function CallsTab({ channelSlug, channelName }: CallsTabProps) {
         <section>
           <h2 className="mb-1 text-[15px] font-bold text-ink">{tb.callSettings}</h2>
           <p className="mb-4 text-[13px] text-ink/60">{tb.callSettingsSub}</p>
-          <div className="rounded-xl border-2 border-white bg-white/80 p-4 sm:p-5 space-y-3">
+          <div className="rounded-[8px] border-2 border-white bg-white/80 p-4 sm:p-5 space-y-3">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-[13px] font-semibold text-ink">{tb.autoAnswer}</p>

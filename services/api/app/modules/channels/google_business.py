@@ -1006,14 +1006,27 @@ class GoogleBusinessClient(GoogleReviewsClient):
 
         hours = hours or {}
         if hours.get("regular") is not None:
-            try:
-                await self.patch_location(
-                    location_id,
-                    {"regularHours": {"periods": build_regular_periods(hours["regular"])}},
-                    "regularHours")
-                pushed.append("hours.regular")
-            except GoogleReviewsError as e:
-                skipped["hours.regular"] = str(e)[:200]
+            regular = hours["regular"] or {}
+            periods = build_regular_periods(regular)
+            incomplete_days = []
+            for day, cfg in (regular.items() if isinstance(regular, dict) else []):
+                if isinstance(cfg, dict) and not cfg.get("closed") and not cfg.get("all_day"):
+                    if not _parse_hhmm(str(cfg.get("open") or "")) or not _parse_hhmm(str(cfg.get("close") or "")):
+                        incomplete_days.append(str(day))
+            if incomplete_days:
+                skipped["hours.regular"] = (
+                    "Open days are missing open/close times: "
+                    + ", ".join(incomplete_days[:7])
+                )
+            else:
+                try:
+                    await self.patch_location(
+                        location_id,
+                        {"regularHours": {"periods": periods}},
+                        "regularHours")
+                    pushed.append("hours.regular")
+                except GoogleReviewsError as e:
+                    skipped["hours.regular"] = str(e)[:200]
         if hours.get("special") is not None:
             specials, unparsed = [], 0
             for entry in hours["special"] or []:

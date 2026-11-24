@@ -18,6 +18,10 @@ class MediaCreate(BaseModel):
     publish_method: str = Field("post", pattern="^(post|gallery|profile)$")
 
 
+class CoverAutoReplaceIn(BaseModel):
+    enabled: bool
+
+
 class MediaUpdate(BaseModel):
     category: str | None = Field(None, max_length=32)
     caption: str | None = Field(None, max_length=500)

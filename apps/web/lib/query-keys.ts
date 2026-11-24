@@ -68,4 +68,16 @@ export const queryKeys = {
     entitlements: () => ["billing", "entitlements"] as const,
     budget: () => ["billing", "budget"] as const,
   },
+  posts: {
+    publishJobs: (limit = 50) => ["posts", "publish-jobs", limit] as const,
+    publishTargets: () => ["posts", "publish-targets"] as const,
+  },
+  google: {
+    channels: () => ["google", "channels"] as const,
+    media: (channelIds: string[], category: string) =>
+      ["google", "media", [...channelIds].sort().join(","), category || "all"] as const,
+  },
+  benchmark: {
+    reviewThemes: (keys: string[]) => ["benchmark", "review-themes", keys.join("|")] as const,
+  },
 };

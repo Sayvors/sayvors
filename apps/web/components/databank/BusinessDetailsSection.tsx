@@ -72,7 +72,7 @@ function fmtTime(iso: string | null | undefined): string {
 function CompareLine({ label, googleValue, userValue }: { label: string; googleValue: string; userValue: string }) {
   if (googleValue === userValue) return null;
   return (
-    <div className="rounded-[2px] border-l-2 border-amber-400 bg-amber-500/[0.06] px-3 py-2">
+    <div className="rounded-[8px] border-l-2 border-amber-400 bg-amber-500/[0.06] px-3 py-2">
       <p className="text-[10px] font-bold uppercase tracking-wide text-amber-600">{label}</p>
       <p className="mt-0.5 text-[11px] text-ink/50">
         Google&apos;s record: <span className="font-semibold text-ink/70">{googleValue || "—"}</span>
@@ -202,7 +202,7 @@ export default function BusinessDetailsSection() {
       </div>
 
       {items.length === 0 ? (
-        <div className="mt-4 rounded-[2px] border border-dashed border-[var(--ui-line-strong)] p-6 text-center text-[12px] text-[var(--ui-ink-2)]">
+        <div className="mt-4 rounded-[8px] border border-dashed border-[var(--ui-line-strong)] p-6 text-center text-[12px] text-[var(--ui-ink-2)]">
           Connect a Google Business location in Channels first — its details will appear here automatically.
         </div>
       ) : (
@@ -292,16 +292,16 @@ export default function BusinessDetailsSection() {
                           <input type="time" value={s.close} onChange={(e) => setSpecial((arr) => arr.map((x, i) => (i === idx ? { ...x, close: e.target.value } : x)))} className="input-field !w-auto px-2 py-1 text-[11px]" />
                         </>
                       )}
-                      <button type="button" onClick={() => setSpecial((arr) => arr.filter((_, i) => i !== idx))} className="rounded-[2px] px-1.5 py-1 text-[11px] font-semibold text-[var(--ui-ink-2)] transition hover:text-coral" aria-label={`Remove special hour ${idx + 1}`}>✕</button>
+                      <button type="button" onClick={() => setSpecial((arr) => arr.filter((_, i) => i !== idx))} className="rounded-[8px] px-1.5 py-1 text-[11px] font-semibold text-[var(--ui-ink-2)] transition hover:text-coral" aria-label={`Remove special hour ${idx + 1}`}>✕</button>
                     </div>
                   ))}
                 </div>
-                <button type="button" onClick={() => setSpecial((arr) => [...arr, { date: "", open: "09:00", close: "17:00", closed: false }])} className="mt-2 rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-3 py-1.5 text-[11px] font-semibold text-[var(--ui-ink)] transition hover:border-deep-violet hover:text-deep-violet">
+                <button type="button" onClick={() => setSpecial((arr) => [...arr, { date: "", open: "09:00", close: "17:00", closed: false }])} className="mt-2 rounded-[8px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-3 py-1.5 text-[11px] font-semibold text-[var(--ui-ink)] transition hover:border-deep-violet hover:text-deep-violet">
                   + Add special hours
                 </button>
               </div>
 
-              {error && <p role="alert" className="rounded-[2px] border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-medium text-red-700">{error}</p>}
+              {error && <p role="alert" className="rounded-[8px] border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-medium text-red-700">{error}</p>}
 
               <button type="button" onClick={() => void handleSave()} disabled={saving} className={`btn-primary !px-4 !py-2 disabled:opacity-50 ${FOCUS_RING}`}>
                 {saving ? "Saving…" : "Save details"}
@@ -321,13 +321,13 @@ export default function BusinessDetailsSection() {
                   <CompareLine label="Regular hours" googleValue={compare.hours.g} userValue={compare.hours.u} />
                   <CompareLine label="Special hours" googleValue={compare.special_hours.g} userValue={compare.special_hours.u} />
                   {!Object.values(compare).some((c) => c.g !== c.u) && (
-                    <p className="rounded-[2px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11.5px] font-medium text-emerald-700">
+                    <p className="rounded-[8px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11.5px] font-medium text-emerald-700">
                       Your details match Google — nothing differs.
                     </p>
                   )}
                 </>
               ) : (
-                <p className="rounded-[2px] border border-dashed border-[var(--ui-line-strong)] px-3 py-3 text-[11.5px] text-[var(--ui-ink-2)]">
+                <p className="rounded-[8px] border border-dashed border-[var(--ui-line-strong)] px-3 py-3 text-[11.5px] text-[var(--ui-ink-2)]">
                   You haven&apos;t edited anything here yet. Save once to see Google&apos;s official value next to yours for every change.
                 </p>
               )}

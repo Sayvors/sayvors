@@ -46,7 +46,7 @@ function Confetti() {
       {pieces.map((p, i) => (
         <div
           key={i}
-          className="absolute animate-bounce rounded-sm"
+          className="absolute animate-bounce rounded-[8px]"
           style={{
             left: p.left,
             top: `-5%`,
@@ -163,7 +163,7 @@ export default function OnboardingPage() {
 
       {/* Logo */}
       <div className="mb-6 flex items-center gap-2">
-        <Image src="/Sayvors_Icon.png" alt="Sayvors" width={28} height={28} className="rounded-md" />
+        <Image src="/Sayvors_Icon.png" alt="Sayvors" width={28} height={28} className="rounded-[8px]" />
         <span className="text-[16px] font-bold text-ink dark:text-fog">Sayvors</span>
       </div>
 
@@ -175,7 +175,7 @@ export default function OnboardingPage() {
       {banner && (
         <div className="mb-5 w-full max-w-lg">
           <div
-            className={`rounded-xl border p-3 text-[13px] ${
+            className={`rounded-[8px] border p-3 text-[13px] ${
               banner.kind === "ok"
                 ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                 : "border-red-200 bg-red-50 text-red-700"
@@ -196,7 +196,7 @@ export default function OnboardingPage() {
         {/* Step 0: Welcome */}
         {step === 0 && (
           <div className="text-center space-y-6">
-            <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-2xl bg-gradient-to-br from-deep-violet to-magenta text-[36px] text-white shadow-lg">
+            <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-[8px] bg-gradient-to-br from-deep-violet to-magenta text-[36px] text-white shadow-lg">
               {"\u2728"}
             </div>
             <div>
@@ -266,7 +266,7 @@ export default function OnboardingPage() {
           {step > 0 && (
             <button
               onClick={goBack}
-              className="rounded-xl border border-ink/[0.12] px-5 py-2.5 text-[13px] font-medium text-ink/70 transition hover:border-ink/25 hover:bg-ink/[0.03]"
+              className="rounded-[8px] border border-ink/[0.12] px-5 py-2.5 text-[13px] font-medium text-ink/70 transition hover:border-ink/25 hover:bg-ink/[0.03]"
             >
               Back
             </button>
@@ -277,7 +277,7 @@ export default function OnboardingPage() {
           {step !== 4 && (
             <button
               onClick={goNext}
-              className="ml-auto rounded-xl bg-deep-violet px-6 py-2.5 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90"
+              className="me-auto rounded-[8px] bg-deep-violet px-6 py-2.5 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90"
             >
               {step === 0 ? "Let's go" : "Continue"}
             </button>
@@ -288,7 +288,7 @@ export default function OnboardingPage() {
         <div className="mt-8 flex flex-wrap items-center gap-4">
           <button
             onClick={goBack}
-            className="rounded-xl border border-ink/[0.12] px-5 py-2.5 text-[13px] font-medium text-ink/70 transition hover:border-ink/25 hover:bg-ink/[0.03]"
+            className="rounded-[8px] border border-ink/[0.12] px-5 py-2.5 text-[13px] font-medium text-ink/70 transition hover:border-ink/25 hover:bg-ink/[0.03]"
           >
             Back
           </button>

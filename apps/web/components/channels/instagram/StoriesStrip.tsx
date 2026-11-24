@@ -72,7 +72,7 @@ function StoryViewer({
             controls
             autoPlay
             playsInline
-            className="max-h-[80vh] w-full rounded-[16px] object-contain"
+            className="max-h-[80vh] w-full rounded-[8px] object-contain"
           />
         ) : story.media_url ? (
           <Image
@@ -81,7 +81,7 @@ function StoryViewer({
             width={640}
             height={1000}
             unoptimized
-            className="max-h-[80vh] w-full rounded-[16px] object-contain"
+            className="max-h-[80vh] w-full rounded-[8px] object-contain"
           />
         ) : (
           <p className="p-6 text-center text-[13px] text-white/70">

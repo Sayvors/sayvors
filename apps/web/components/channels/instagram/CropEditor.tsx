@@ -223,7 +223,7 @@ export default function CropEditor({
 
   return (
     <div
-      className="rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-4"
+      className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-4"
       onDragOver={(e) => e.preventDefault()}
     >
       <div className="flex items-baseline justify-between">
@@ -340,7 +340,7 @@ export default function CropEditor({
         <button
           type="button"
           onClick={onCancel}
-          className="rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-ink)]"
+          className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-ink)]"
         >
           {c.cancel}
         </button>
@@ -356,7 +356,7 @@ export default function CropEditor({
                 );
               });
           }}
-          className="rounded-[12px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)] disabled:opacity-50"
+          className="rounded-[8px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)] disabled:opacity-50"
         >
           {working ? c.uploading : c.done}
         </button>

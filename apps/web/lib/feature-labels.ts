@@ -74,3 +74,11 @@ export const FEATURE_LABELS_AR: Record<string, string> = {
   ticket_assignment: "إسناد التذاكر",
   voice_replies: "الردود الصوتية (تجريبي)",
 };
+
+/** Catalog label in the tenant's language. Unknown keys fall back to the key
+ *  itself rather than to English, so an added feature is visible in review
+ *  instead of silently showing a stale translation. */
+export function featureLabelFor(key: string, locale: string): string {
+  if (locale === "ar") return FEATURE_LABELS_AR[key] ?? FEATURE_LABELS[key] ?? key;
+  return FEATURE_LABELS[key] ?? key;
+}

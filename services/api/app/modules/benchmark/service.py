@@ -6,21 +6,53 @@ construction rather than by convention.
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import BenchmarkConfig, BenchmarkPlace, BenchmarkSnapshot
+from .models import BenchmarkConfig, BenchmarkPlace, BenchmarkSnapshot, BenchmarkThemeAnalysis
 
 MAX_LABEL = 120
 MAX_NOTES = 2000
 MAX_LIST = 100
+# Canonical Google Maps URL, bounded to the column width.
+MAX_MAPS_URL = 1024
+MAX_THUMBNAIL_URL = 1024
+
+
+def _safe_thumbnail(value: str | None) -> str | None:
+    """Only Google-hosted HTTPS images may become a card image.
+
+    The URL is rendered directly by the browser, so scheme/host are validated
+    here instead of trusting a caller to supply a harmless image URL.
+    """
+    text = str(value or "").strip()[:MAX_THUMBNAIL_URL]
+    if not text:
+        return None
+    parsed = urlparse(text)
+    host = (parsed.hostname or "").lower()
+    if (
+        parsed.scheme != "https"
+        or not (
+            host == "googleusercontent.com"
+            or host.endswith(".googleusercontent.com")
+            or host.endswith(".ggpht.com")
+        )
+    ):
+        return None
+    return text
 
 
 class BenchError(ValueError):
     """A validation or quota failure safe to show to the tenant."""
+
+
+class BenchNotFound(BenchError):
+    """The place is not on this tenant's bench."""
 
 
 async def get_config(db: AsyncSession) -> BenchmarkConfig:
@@ -43,6 +75,7 @@ def serialize(place: BenchmarkPlace) -> dict:
         "label": place.label,
         "notes": place.notes,
         "in_heatmap": place.in_heatmap,
+        "in_bench_set": place.in_bench_set,
         "name": place.name,
         "address": getattr(place, "address", None),
         "types": getattr(place, "types", None),
@@ -52,7 +85,16 @@ def serialize(place: BenchmarkPlace) -> dict:
         "longitude": place.longitude,
         "reviews": place.reviews,
         "photos": place.photos,
+        "reviews_per_score": place.reviews_per_score,
+        "maps_url": getattr(place, "maps_url", None),
+        "thumbnail": getattr(place, "thumbnail", None),
         "fetched_at": place.fetched_at.isoformat() if place.fetched_at else None,
+        # A card can be usable before reviews arrive when search already gave us
+        # identity + rating + count. This does not change cache freshness.
+        "details_ready": bool(
+            place.fetched_at
+            or (place.rating is not None and place.review_count is not None)
+        ),
         "last_scrape_error": place.last_scrape_error,
         "created_at": place.created_at.isoformat() if place.created_at else None,
         "updated_at": place.updated_at.isoformat() if place.updated_at else None,
@@ -80,13 +122,18 @@ async def save_place(
     longitude: float | None = None,
     rating: float | None = None,
     review_count: int | None = None,
+    maps_url: str | None = None,
+    thumbnail: str | None = None,
 ) -> BenchmarkPlace:
     """Save one place to this tenant's bench, idempotent on (tenant, place)."""
     pid = str(place_id or "").strip()[:255]
     if not pid:
         raise BenchError("Choose a place to save.")
+    moment = datetime.now(timezone.utc)
     clean_label = (label or "").strip()[:MAX_LABEL] or None
     clean_notes = (notes or "").strip()[:MAX_NOTES] or None
+    clean_maps_url = str(maps_url or "").strip()[:MAX_MAPS_URL] or None
+    clean_thumbnail = _safe_thumbnail(thumbnail)
 
     dup = (
         await db.execute(
@@ -107,6 +154,10 @@ async def save_place(
             dup.rating = rating
         if review_count is not None:
             dup.review_count = review_count
+        if clean_maps_url is not None:
+            dup.maps_url = clean_maps_url
+        if clean_thumbnail is not None:
+            dup.thumbnail = clean_thumbnail
         await db.commit()
         await db.refresh(dup)
         return dup
@@ -129,6 +180,7 @@ async def save_place(
         label=clean_label, notes=clean_notes,
         latitude=latitude, longitude=longitude,
         rating=rating, review_count=review_count,
+        maps_url=clean_maps_url, thumbnail=clean_thumbnail,
     )
     db.add(row)
     try:
@@ -152,7 +204,7 @@ async def save_place(
     db.add(BenchmarkSnapshot(
         place_id=row.id, tenant_id=tenant_id,
         rating=rating, review_count=review_count,
-        fetched_at=datetime.now(timezone.utc),
+        fetched_at=moment,
     ))
     await db.commit()
     return row
@@ -251,6 +303,48 @@ async def toggle_heatmap(
     return row
 
 
+BENCH_SET_MAX = 5
+
+
+async def set_bench_set(
+    db: AsyncSession, tenant_id: str, place_id: str, *, enabled: bool | None = None
+) -> BenchmarkPlace:
+    """Toggle a saved place's membership in the tenant's benchmark set.
+
+    The cap is enforced under a row lock on ALL of the tenant's saved rows,
+    not just current members: a members-only lock anchors zero rows on an
+    empty set, so N concurrent first-enables would all pass the count check
+    (AGENTS.md: real concurrency). Enabling an already-enabled member is a
+    no-op that must not trip the cap. SQLite ignores FOR UPDATE, so the
+    tests exercise the count logic, not the locking itself.
+    """
+    row = await get_saved(db, tenant_id, place_id)
+    if row is None:
+        raise BenchNotFound("Saved place not found")
+    new_value = (not row.in_bench_set) if enabled is None else bool(enabled)
+    if new_value is False or row.in_bench_set is True:
+        row.in_bench_set = new_value
+        await db.commit()
+        await db.refresh(row)
+        return row
+    members = (
+        await db.execute(
+            select(BenchmarkPlace)
+            .where(BenchmarkPlace.tenant_id == tenant_id)
+            .with_for_update()
+        )
+    ).scalars().all()
+    if len([m for m in members if m.in_bench_set]) >= BENCH_SET_MAX:
+        raise BenchError(
+            f"Benchmark set is full ({BENCH_SET_MAX} places). "
+            "Remove one before adding another."
+        )
+    row.in_bench_set = True
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
 async def delete_saved(db: AsyncSession, tenant_id: str, place_id: str) -> bool:
     row = (
         await db.execute(
@@ -262,6 +356,17 @@ async def delete_saved(db: AsyncSession, tenant_id: str, place_id: str) -> bool:
     ).scalar_one_or_none()
     if row is None:
         return False
+    analyses = (
+        await db.execute(
+            select(BenchmarkThemeAnalysis).where(
+                BenchmarkThemeAnalysis.tenant_id == tenant_id,
+                BenchmarkThemeAnalysis.subject_type == "saved",
+                BenchmarkThemeAnalysis.subject_id == row.id,
+            )
+        )
+    ).scalars().all()
+    for analysis in analyses:
+        await db.delete(analysis)
     await db.delete(row)
     await db.commit()
     return True
@@ -348,6 +453,9 @@ async def store_place_details(
     place.rating = rating if rating is not None else place.rating
     place.review_count = review_count if review_count is not None else place.review_count
     place.reviews = details.get("reviews") or place.reviews
+    place.reviews_per_score = details.get("reviews_per_score") or place.reviews_per_score
+    place.maps_url = details.get("maps_url") or place.maps_url
+    place.thumbnail = details.get("thumbnail") or place.thumbnail
     place.fetched_at = moment
     place.last_scrape_error = None
     if append_snapshot:
@@ -413,3 +521,66 @@ async def history_points(
         }
         for row in reversed(selected)
     ]
+
+async def tenant_location_context(db: AsyncSession, tenant_id: str) -> dict:
+    """Best-effort location context for nearby-first benchmark search.
+
+    Uses the tenant's active Google location metadata. No guessing: if fields
+    are missing, we return only what we know.
+    """
+    from ..channels.models import Channel
+
+    rows = (
+        await db.execute(
+            select(Channel)
+            .where(Channel.user_id == tenant_id, Channel.platform == "google_reviews", Channel.status == "active")
+            .order_by(Channel.created_at.desc())
+        )
+    ).scalars().all()
+    for ch in rows:
+        try:
+            meta = json.loads(ch.metadata_json or "{}")
+        except Exception:
+            meta = {}
+        if not isinstance(meta, dict):
+            meta = {}
+        addr = str(meta.get("address") or meta.get("formatted_address") or "").strip()
+        raw_country = str(meta.get("country") or meta.get("region_code") or "").strip()
+        country_code = raw_country.upper() if len(raw_country) == 2 and raw_country.isalpha() else None
+        country = raw_country
+        if country_code:
+            try:
+                from babel import Locale
+
+                country_name = Locale("en").territories.get(country_code)
+                if country_name:
+                    country = country_name
+            except Exception:  # pragma: no cover - babel is a declared dependency
+                pass
+        city = str(meta.get("city") or meta.get("locality") or "").strip()
+        lat = meta.get("latitude") or meta.get("lat")
+        lng = meta.get("longitude") or meta.get("lng")
+        try:
+            lat = float(lat) if lat is not None else None
+            lng = float(lng) if lng is not None else None
+        except Exception:
+            lat = lng = None
+        if not country and addr:
+            parts = [p.strip() for p in addr.split(",") if p.strip()]
+            if parts:
+                country = parts[-1][:80]
+                if len(parts) >= 2 and not city:
+                    city = parts[-2][:80]
+        if not (addr or city or country or (lat is not None and lng is not None)):
+            continue
+        return {
+            "name": ch.display_name,
+            "address": addr or None,
+            "city": city or None,
+            "country": country or None,
+            "country_code": country_code,
+            "latitude": lat,
+            "longitude": lng,
+        }
+    return {}
+

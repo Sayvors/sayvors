@@ -3,7 +3,7 @@
 Client-facing endpoints use /api/v1/jobs. Admin endpoints use
 /api/v1/admin/jobs.
 """
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_current_user, get_db, require_admin
@@ -34,6 +34,13 @@ def _job_to_dict(job: Job) -> dict:
         "result": job.result,
         "subject_type": job.subject_type,
         "subject_id": job.subject_id,
+        "progress": getattr(job, "progress", 0) or 0,
+        "progress_label": getattr(job, "progress_label", None),
+        "ui_title": getattr(job, "ui_title", None),
+        "ui_kind": getattr(job, "ui_kind", None),
+        "ui_visible": bool(getattr(job, "ui_visible", False)),
+        "ui_subject_type": getattr(job, "ui_subject_type", None),
+        "ui_subject_id": getattr(job, "ui_subject_id", None),
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "updated_at": job.updated_at.isoformat() if job.updated_at else None,
     }
@@ -85,6 +92,34 @@ async def submit_job_endpoint(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"job_id": job.id, "status": job.status, "lane": job.lane}
+
+
+@router.get("/jobs/active-ui")
+async def list_active_ui_jobs_endpoint(
+    response: Response,
+    limit: int = Query(20, ge=1, le=20),
+    if_none_match: str | None = Header(default=None, alias="If-None-Match"),
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Tenant-scoped in-flight UI jobs for the background progress panel."""
+    import hashlib, json as _json
+
+    tenant_id = tenant_id_of(user)
+    jobs = await service.list_active_ui_jobs(db, tenant_id=tenant_id, limit=limit)
+    payload = [_job_to_dict(j) for j in jobs]
+    etag_src = _json.dumps(
+        [(j["id"], j["status"], j["progress"], j["updated_at"]) for j in payload],
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    etag = '"' + hashlib.sha256(etag_src.encode("utf-8")).hexdigest()[:32] + '"'
+    response.headers["ETag"] = etag
+    response.headers["Cache-Control"] = "private, no-cache"
+    if if_none_match == etag:
+        response.status_code = 304
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "private, no-cache"})
+    return payload
 
 
 @router.get("/jobs/{job_id}")
@@ -145,8 +180,14 @@ async def admin_list_jobs(
     _admin: dict = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all jobs (admin). Filter by status, lane, tenant."""
+    """List all jobs (admin). Filter by status, lane, tenant.
+
+    Tenant email/business name is joined in so the queue is readable without
+    decoding raw ids.
+    """
     from sqlalchemy import select
+
+    from ..users.models import User
 
     stmt = select(Job).order_by(Job.created_at.desc()).limit(limit)
     if status:
@@ -155,8 +196,22 @@ async def admin_list_jobs(
         stmt = stmt.where(Job.lane == lane)
     if tenant_id:
         stmt = stmt.where(Job.tenant_id == tenant_id)
-    result = await db.execute(stmt)
-    return [_job_to_dict(j) for j in result.scalars().all()]
+    jobs = (await db.execute(stmt)).scalars().all()
+
+    tenant_ids = {j.tenant_id for j in jobs}
+    emails: dict[str, str] = {}
+    if tenant_ids:
+        user_rows = (
+            await db.execute(select(User.id, User.email).where(User.id.in_(tenant_ids)))
+        ).all()
+        emails = {str(uid): str(email) for uid, email in user_rows}
+
+    out = []
+    for job in jobs:
+        d = _job_to_dict(job)
+        d["tenant_email"] = emails.get(job.tenant_id)
+        out.append(d)
+    return out
 
 
 @admin_router.get("/jobs/{job_id}")

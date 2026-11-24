@@ -15,10 +15,48 @@ from ..posts.models import LocationPost
 from ..rag.models import Databank, Document
 from ..rag.models import IngestJob
 from ..users.models import User
+from .models import PlatformConfig
 
 logger = logging.getLogger(__name__)
 
 _booted_at = datetime.now(timezone.utc)
+
+
+async def get_platform_config(db: AsyncSession) -> "PlatformConfig":
+    """Single platform-config row, created with defaults on first use."""
+    row = (
+        await db.execute(
+            select(PlatformConfig).where(PlatformConfig.id == "default")
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        row = PlatformConfig(id="default")
+        db.add(row)
+        await db.commit()
+        await db.refresh(row)
+    return row
+
+
+async def update_platform_config(
+    db: AsyncSession,
+    *,
+    banner_vision_model: str | None = None,
+    banner_decision_model: str | None = None,
+) -> "PlatformConfig":
+    """Save admin changes to platform-wide AI settings.
+
+    ``None`` means "leave untouched"; an empty string clears the setting.
+    """
+    row = await get_platform_config(db)
+    if banner_vision_model is not None:
+        model = (banner_vision_model or "").strip()
+        row.banner_vision_model = model or None
+    if banner_decision_model is not None:
+        model = (banner_decision_model or "").strip()
+        row.banner_decision_model = model or None
+    await db.commit()
+    await db.refresh(row)
+    return row
 
 
 async def _counts_by_user(db: AsyncSession, model, user_col="user_id") -> dict[str, int]:
@@ -453,10 +491,19 @@ async def get_health(db: AsyncSession, probe: bool = False) -> dict:
             .limit(10)
         )
     ).scalars().all()
+    # Jobs superseded by a newer crawl are marked failed, but they are not
+    # real failures — a re-crawl replaced their work. Hide them so the admin
+    # panel doesn't cry "server down" over a cancelled reindex.
     failed_ingest = (
         await db.execute(
             select(IngestJob)
-            .where(IngestJob.status == "failed")
+            .where(
+                IngestJob.status == "failed",
+                or_(
+                    IngestJob.error.is_(None),
+                    ~IngestJob.error.ilike("%superseded%"),
+                ),
+            )
             .order_by(IngestJob.updated_at.desc())
             .limit(10)
         )

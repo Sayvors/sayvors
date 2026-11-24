@@ -149,7 +149,7 @@ export default function CategoryPicker({
 
   if (!region || region.trim().length !== 2) {
     return (
-      <p className="rounded-xl border border-dashed border-ink/15 bg-ink/[0.02] p-3 text-[12px] leading-relaxed text-ink/55 dark:border-fog/15 dark:bg-fog/[0.02] dark:text-fog/55">
+      <p className="rounded-[8px] border border-dashed border-ink/15 bg-ink/[0.02] p-3 text-[12px] leading-relaxed text-ink/55 dark:border-fog/15 dark:bg-fog/[0.02] dark:text-fog/55">
         Choose the business country first. Google&apos;s category list is
         region-specific.
       </p>
@@ -159,7 +159,7 @@ export default function CategoryPicker({
   return (
     <div className="space-y-3">
       {showSelected && value && (
-        <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 dark:border-emerald-500/25 dark:bg-emerald-500/10">
+        <div className="flex items-center justify-between gap-3 rounded-[8px] border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 dark:border-emerald-500/25 dark:bg-emerald-500/10">
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-emerald-700 dark:text-emerald-300">
               Primary category
@@ -192,13 +192,13 @@ export default function CategoryPicker({
       </div>
 
       {error && (
-        <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[12px] text-amber-800 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200">
+        <p role="alert" className="rounded-[8px] border border-amber-200 bg-amber-50 p-3 text-[12px] text-amber-800 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200">
           {error}
         </p>
       )}
 
       {query.trim() && (
-        <div className="overflow-hidden rounded-xl border border-ink/[0.08] dark:border-fog/[0.08]">
+        <div className="overflow-hidden rounded-[8px] border border-ink/[0.08] dark:border-fog/[0.08]">
           {loading && (
             <p className="p-3 text-[12px] text-ink/45 dark:text-fog/45">Searching Google...</p>
           )}
@@ -225,7 +225,7 @@ export default function CategoryPicker({
       )}
 
       {showPopular && !query.trim() && (
-        <div className="overflow-hidden rounded-xl border border-ink/[0.08] dark:border-fog/[0.08]">
+        <div className="overflow-hidden rounded-[8px] border border-ink/[0.08] dark:border-fog/[0.08]">
           <p className="border-b border-ink/[0.06] bg-ink/[0.02] px-3.5 py-2 text-[10px] font-bold uppercase tracking-[0.1em] text-ink/45 dark:border-fog/[0.06] dark:bg-fog/[0.03] dark:text-fog/45">
             Browse popular categories
           </p>

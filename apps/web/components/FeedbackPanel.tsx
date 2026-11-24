@@ -84,7 +84,7 @@ export default function FeedbackPanel({ onClose }: { onClose: () => void }) {
         {phase === "loading" ? (
           <div className="space-y-2" aria-hidden>
             <div className="h-4 w-40 animate-pulse rounded bg-ink/[0.06]" />
-            <div className="h-16 w-full animate-pulse rounded-xl bg-ink/[0.04]" />
+            <div className="h-16 w-full animate-pulse rounded-[8px] bg-ink/[0.04]" />
           </div>
         ) : phase === "done" ? (
           <div className="flex flex-col items-center gap-2 py-8 text-center">
@@ -157,7 +157,7 @@ export default function FeedbackPanel({ onClose }: { onClose: () => void }) {
                     setPhase("message");
                   }}
                   aria-label={e.label}
-                  className="flex flex-col items-center gap-1 rounded-xl p-2 transition hover:bg-deep-violet/[0.06] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+                  className="flex flex-col items-center gap-1 rounded-[8px] p-2 transition hover:bg-deep-violet/[0.06] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
                 >
                   <span className="text-[26px] transition hover:scale-110">{e.emoji}</span>
                   <span className="text-center text-[8px] font-medium leading-tight text-ink/40 dark:text-fog/40">

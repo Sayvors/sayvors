@@ -7,9 +7,16 @@ import { useEffect, useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { NAV_DRAWER_EVENTS } from "@/lib/tour/nav-drawer";
 import { visibleChannelNav, type ChannelNavRow } from "@/lib/channel-nav";
-import { getBudget, getEntitlements, type Budget } from "@/lib/api-billing";
+import { getBudget, getEntitlements, getPlans, type Budget } from "@/lib/api-billing";
 import { useQuery } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
+import {
+  cheapestPlanFor,
+  featureForPath,
+  isPathLocked,
+  planLabel,
+} from "@/lib/plan-gating";
+import CrownIcon from "@/components/billing/CrownIcon";
 
 interface NavItem {
   key: string;
@@ -39,13 +46,6 @@ const ADVANCED_ITEMS: NavItem[] = [
   { key: "billing", icon: <CardIcon />, href: "/dashboard/billing" },
   { key: "plans", icon: <CardIcon />, href: "/dashboard/plans" },
 ];
-
-// Nav entries whose surface is a plan feature: hide them when the tenant's
-// plan does not include the feature. Keys must match billing/features.py.
-const NAV_FEATURE: Record<string, string> = {
-  databank: "databank",
-  verification: "verifications",
-};
 
 function isActive(pathname: string, item: NavItem) {
   const { href } = item;
@@ -122,18 +122,36 @@ export default function Sidebar() {
   const pathname = usePathname();
   const { t, dir } = useI18n();
 
-  // Feature-gated nav: fetch entitlements once; items whose feature is off
-  // are hidden. While loading, show everything (no jarring pop-in).
+  // Plan-gated nav: every surface stays listed. A route the current plan does
+  // not include keeps its link and gets a crown, so the page can sell itself
+  // on click instead of vanishing. Unknown entitlements crown nothing (no
+  // paywall flash for a tenant who is entitled); the API still enforces.
   const { data: entitlements } = useQuery({
     queryKey: queryKeys.billing.entitlements(),
     queryFn: getEntitlements,
   });
-  const featureEnabled = (item: NavItem) => {
-    const feature = NAV_FEATURE[item.key];
-    return !feature || !!entitlements?.features?.[feature];
+  const features = entitlements?.features;
+  const anyLocked = [...MAIN_ITEMS, ...ADVANCED_ITEMS].some((item) =>
+    isPathLocked(item.href, features),
+  );
+
+  // Shared cache with PlanGate, and only fetched when a crown is on screen.
+  const { data: plans } = useQuery({
+    queryKey: queryKeys.billing.plans(),
+    queryFn: getPlans,
+    enabled: anyLocked,
+    retry: false,
+    staleTime: 5 * 60_000,
+  });
+
+  const lockHint = (item: NavItem): string | null => {
+    if (!isPathLocked(item.href, features)) return null;
+    const feature = featureForPath(item.href);
+    const plan = feature ? cheapestPlanFor(plans, feature) : null;
+    if (!plan) return t.nav.requiresUpgrade;
+    const name = planLabel(plan.slug, t.dashboard.plans.planNames, plan.name);
+    return t.nav.requiresPlan.replace("{plan}", name);
   };
-  const mainItems = MAIN_ITEMS.filter(featureEnabled);
-  const advancedItems = ADVANCED_ITEMS.filter(featureEnabled);
 
   // Channel workspaces (WhatsApp / Instagram / Facebook, and the inbox) are
   // reading-heavy: the nav column is noise there. Fold it on entry, but leave
@@ -186,10 +204,10 @@ export default function Sidebar() {
         aria-hidden={isMobile && !drawerOpen ? true : undefined}
         className={`flex shrink-0 flex-col bg-white text-ink ring-1 ring-ink/[0.06] transition-all duration-200 dark:bg-[#1d1636] dark:text-fog dark:ring-white/[0.08] ${
           isMobile
-            ? `fixed inset-y-2 start-2 z-50 w-[264px] rounded-[20px] shadow-2xl ${
+            ? `fixed inset-y-2 start-2 z-50 w-[264px] rounded-[8px] shadow-2xl ${
                 drawerOpen ? "translate-x-0" : dir === "rtl" ? "translate-x-[calc(100%+8px)]" : "-translate-x-[calc(100%+8px)]"
               }`
-            : `relative my-2 ms-2 h-[calc(100vh-1rem)] rounded-[20px] shadow-[0_18px_44px_-34px_rgba(26,18,48,0.45)] dark:shadow-none ${collapsed ? "w-[64px]" : "w-[236px]"}`
+            : `relative my-2 ms-2 h-[calc(100vh-1rem)] rounded-[8px] shadow-[0_18px_44px_-34px_rgba(26,18,48,0.45)] dark:shadow-none ${collapsed ? "w-[64px]" : "w-[236px]"}`
         }`}
       >
         {/* Brand. The rail is always dark, so the light-on-dark wordmark is
@@ -199,7 +217,7 @@ export default function Sidebar() {
             <Link
               href="/dashboard"
               aria-label="Sayvors"
-              className="rounded-[6px] outline-none focus-visible:ring-2 focus-visible:ring-violet-soft/70"
+              className="rounded-[8px] outline-none focus-visible:ring-2 focus-visible:ring-violet-soft/70"
             >
               <Image src="/Sayvors_Icon.png" alt="" width={28} height={20} className="h-6 w-auto" />
             </Link>
@@ -211,7 +229,7 @@ export default function Sidebar() {
                 href="/dashboard"
                 aria-label="Sayvors"
                 dir="ltr"
-                className="flex items-center gap-2.5 rounded-[6px] outline-none focus-visible:ring-2 focus-visible:ring-violet-soft/70"
+                className="flex items-center gap-2.5 rounded-[8px] outline-none focus-visible:ring-2 focus-visible:ring-violet-soft/70"
               >
                 <Image src="/Sayvors_Icon.png" alt="" width={28} height={20} className="h-6 w-auto" />
                 <Image
@@ -253,8 +271,8 @@ export default function Sidebar() {
           }}
         >
           <div className="space-y-0.5">
-            {mainItems.slice(0, 3).map((item) => (
-              <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} label={labelFor(item)} />
+            {MAIN_ITEMS.slice(0, 3).map((item) => (
+              <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} label={labelFor(item)} hint={lockHint(item)} />
             ))}
           </div>
           <ChannelsNav
@@ -264,8 +282,8 @@ export default function Sidebar() {
             loadingLabel={t.common.loading}
           />
           <div className="mt-0.5 space-y-0.5">
-            {mainItems.slice(3).map((item) => (
-              <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} label={labelFor(item)} />
+            {MAIN_ITEMS.slice(3).map((item) => (
+              <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} label={labelFor(item)} hint={lockHint(item)} />
             ))}
           </div>
 
@@ -289,8 +307,8 @@ export default function Sidebar() {
             </button>
             {advancedOpen && (
               <div className="mt-0.5 space-y-0.5">
-                {advancedItems.map((item) => (
-                  <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} label={labelFor(item)} />
+                {ADVANCED_ITEMS.map((item) => (
+                  <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} label={labelFor(item)} hint={lockHint(item)} />
                 ))}
               </div>
             )}
@@ -331,18 +349,24 @@ function NavRow({
   active,
   rail,
   label,
+  hint,
 }: {
   item: NavItem;
   active: boolean;
   rail: boolean;
   label: string;
+  /** Plan hint for a crowned surface; null when the plan includes it. */
+  hint: string | null;
 }) {
+  const locked = hint !== null;
   return (
     <Link
       href={item.href}
       data-tour={`nav-${item.key}`}
       aria-current={active ? "page" : undefined}
-      title={rail ? label : undefined}
+      // The rail has no visible label, so the crown hint rides on the title;
+      // the full sentence is always in the accessible name below.
+      title={rail ? (locked ? `${label} — ${hint}` : label) : undefined}
       className={`group relative flex h-9 items-center rounded-full text-[13px] font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-violet-soft/70 dark:focus-visible:ring-offset-[#1d1636] ${
         rail ? "justify-center px-0" : "gap-2.5 px-3"
       } ${
@@ -359,7 +383,18 @@ function NavRow({
       >
         {item.icon}
       </span>
-      {!rail && <span className="flex-1 truncate">{label}</span>}
+      {/* Always rendered: in the rail it is the link's only accessible name.
+          (A title attribute is not a substitute for one.) */}
+      <span className={rail ? "sr-only" : "flex-1 truncate"}>{label}</span>
+      {locked && (
+        <span
+          className={rail ? "absolute end-0.5 top-0.5" : "shrink-0"}
+          title={rail ? undefined : hint}
+        >
+          <CrownIcon className="h-3.5 w-3.5 text-[#B7791F] dark:text-[#F2C14E]" />
+          <span className="sr-only"> — {hint}</span>
+        </span>
+      )}
     </Link>
   );
 }
@@ -567,7 +602,7 @@ function UsageCard({ rail }: { rail: boolean }) {
         href="/dashboard/billing"
         title={planLabel}
         aria-label={planLabel}
-        className="flex h-10 w-full items-center justify-center rounded-[14px] bg-violet-soft text-ink outline-none transition hover:bg-violet-soft/90 focus-visible:ring-2 focus-visible:ring-violet-soft/70 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-[#1d1636]"
+        className="flex h-10 w-full items-center justify-center rounded-[8px] bg-violet-soft text-ink outline-none transition hover:bg-violet-soft/90 focus-visible:ring-2 focus-visible:ring-violet-soft/70 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-[#1d1636]"
       >
         <ArrowUpRightIcon />
       </Link>
@@ -578,7 +613,7 @@ function UsageCard({ rail }: { rail: boolean }) {
     return (
       <Link
         href="/dashboard/usage"
-        className="flex items-center justify-between rounded-[16px] bg-violet-soft px-3 py-3 text-ink outline-none transition hover:bg-violet-soft/90 focus-visible:ring-2 focus-visible:ring-violet-soft/70"
+        className="flex items-center justify-between rounded-[8px] bg-violet-soft px-3 py-3 text-ink outline-none transition hover:bg-violet-soft/90 focus-visible:ring-2 focus-visible:ring-violet-soft/70"
       >
         <span className="text-[12px] font-semibold">{t.sidebar.viewUsage}</span>
         <ArrowUpRightIcon className="h-3.5 w-3.5" />
@@ -587,7 +622,7 @@ function UsageCard({ rail }: { rail: boolean }) {
   }
 
   return (
-    <div className="relative overflow-hidden rounded-[16px] bg-violet-soft p-3 text-ink">
+    <div className="relative overflow-hidden rounded-[8px] bg-violet-soft p-3 text-ink">
       <div className="flex items-start justify-between gap-2">
         <p className="pt-0.5 text-[10px] font-semibold text-ink/50">{t.sidebar.plan}</p>
         <Link
@@ -606,13 +641,13 @@ function UsageCard({ rail }: { rail: boolean }) {
           <Link
             href="/dashboard/usage"
             aria-label={t.sidebar.viewUsage}
-            className="block truncate rounded-[6px] text-[15px] font-bold leading-tight outline-none focus-visible:ring-2 focus-visible:ring-ink/30"
+            className="block truncate rounded-[8px] text-[15px] font-bold leading-tight outline-none focus-visible:ring-2 focus-visible:ring-ink/30"
           >
             {planName}
           </Link>
           <Link
             href={hasPlan ? "/dashboard/usage" : "/dashboard/billing"}
-            className="mt-0.5 block truncate rounded-[4px] text-[10.5px] font-medium tabular-nums text-ink/55 outline-none transition hover:text-ink/80 focus-visible:ring-2 focus-visible:ring-ink/30"
+            className="mt-0.5 block truncate rounded-[8px] text-[10.5px] font-medium tabular-nums text-ink/55 outline-none transition hover:text-ink/80 focus-visible:ring-2 focus-visible:ring-ink/30"
           >
             {hasCredit ? `$${budget.balance_dollars.toFixed(2)} ${t.sidebar.creditLeft}` : t.sidebar.freeHint}
           </Link>

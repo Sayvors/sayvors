@@ -236,14 +236,14 @@ export default function CreateDatabankPage() {
 
           <Link
             href="/dashboard/databank"
-            className="inline-flex items-center justify-center rounded-[20px] border border-ink/10 bg-white px-4 py-2.5 text-[13px] font-semibold text-ink/70 shadow-[0_1px_0_rgba(20,16,31,0.04)] transition hover:border-deep-violet/20 hover:text-deep-violet"
+            className="inline-flex items-center justify-center rounded-[8px] border border-ink/10 bg-white px-4 py-2.5 text-[13px] font-semibold text-ink/70 shadow-[0_1px_0_rgba(20,16,31,0.04)] transition hover:border-deep-violet/20 hover:text-deep-violet"
           >
             {u.backList}
           </Link>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1.35fr)_340px]">
-          <div className="rounded-[32px] border border-ink/[0.06] bg-white p-5 shadow-[0_18px_44px_-30px_rgba(61,29,110,0.35)] sm:p-7">
+          <div className="rounded-[8px] border border-ink/[0.06] bg-white p-5 shadow-[0_18px_44px_-30px_rgba(61,29,110,0.35)] sm:p-7">
             {/* Stepper */}
             <div className="mb-8">
               <div className="relative">
@@ -321,7 +321,7 @@ export default function CreateDatabankPage() {
                         value={name}
                         onChange={(e) => setName(e.target.value)}
                         placeholder={u.namePh}
-                        className="w-full rounded-[20px] border border-ink/10 bg-[#fbfaff] px-4 py-3 text-[14px] text-ink placeholder:text-ink/30 outline-none transition focus:border-deep-violet/40 focus:bg-white focus:ring-4 focus:ring-deep-violet/[0.08]"
+                        className="w-full rounded-[8px] border border-ink/10 bg-[#fbfaff] px-4 py-3 text-[14px] text-ink placeholder:text-ink/30 outline-none transition focus:border-deep-violet/40 focus:bg-white focus:ring-4 focus:ring-deep-violet/[0.08]"
                       />
                     </div>
                     <div>
@@ -333,7 +333,7 @@ export default function CreateDatabankPage() {
                         onChange={(e) => setDescription(e.target.value)}
                         rows={5}
                         placeholder={u.descriptionPh}
-                        className="w-full resize-y rounded-[20px] border border-ink/10 bg-[#fbfaff] px-4 py-3 text-[14px] text-ink placeholder:text-ink/30 outline-none transition focus:border-deep-violet/40 focus:bg-white focus:ring-4 focus:ring-deep-violet/[0.08]"
+                        className="w-full resize-y rounded-[8px] border border-ink/10 bg-[#fbfaff] px-4 py-3 text-[14px] text-ink placeholder:text-ink/30 outline-none transition focus:border-deep-violet/40 focus:bg-white focus:ring-4 focus:ring-deep-violet/[0.08]"
                       />
                     </div>
                   </div>
@@ -401,7 +401,7 @@ export default function CreateDatabankPage() {
                             setPreviewError(null);
                           }}
                           className={[
-                            "group flex w-full items-start gap-4 rounded-[24px] border-2 p-4 text-left transition sm:p-5",
+                            "group flex w-full items-start gap-4 rounded-[8px] border-2 p-4 text-left transition sm:p-5",
                             selected
                               ? "border-deep-violet bg-deep-violet/[0.04] shadow-[0_10px_24px_-18px_rgba(61,29,110,0.45)]"
                               : "border-ink/[0.08] bg-white hover:border-deep-violet/25 hover:bg-[#fbfaff]",
@@ -409,7 +409,7 @@ export default function CreateDatabankPage() {
                         >
                           <span
                             className={[
-                              "mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-[16px] border transition",
+                              "mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-[8px] border transition",
                               selected
                                 ? "border-deep-violet/20 bg-deep-violet text-white"
                                 : "border-ink/[0.08] bg-ink/[0.03] text-ink/50 group-hover:text-deep-violet",
@@ -455,8 +455,8 @@ export default function CreateDatabankPage() {
                   {sourceType === "files" && (
                     <div className="space-y-3">
                       <label className="block text-[12px] font-semibold text-ink/70">{u.uploadFiles}</label>
-                      <label className="group block cursor-pointer rounded-[24px] border-2 border-dashed border-ink/15 bg-[#fbfaff] p-8 text-center transition hover:border-deep-violet/35 hover:bg-white">
-                        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-[16px] bg-deep-violet/[0.08] text-deep-violet">
+                      <label className="group block cursor-pointer rounded-[8px] border-2 border-dashed border-ink/15 bg-[#fbfaff] p-8 text-center transition hover:border-deep-violet/35 hover:bg-white">
+                        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-[8px] bg-deep-violet/[0.08] text-deep-violet">
                           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="h-6 w-6">
                             <path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" />
                           </svg>
@@ -475,11 +475,11 @@ export default function CreateDatabankPage() {
                       </label>
 
                       {files.length > 0 && (
-                        <ul className="space-y-1.5 rounded-[20px] border border-ink/[0.06] bg-white p-3">
+                        <ul className="space-y-1.5 rounded-[8px] border border-ink/[0.06] bg-white p-3">
                           {files.map((file) => (
                             <li
                               key={`${file.name}-${file.size}`}
-                              className="flex items-center gap-2 truncate rounded-xl px-2 py-1.5 text-[13px] text-ink/70"
+                              className="flex items-center gap-2 truncate rounded-[8px] px-2 py-1.5 text-[13px] text-ink/70"
                             >
                               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-deep-violet/50" />
                               <span className="truncate">{file.name}</span>
@@ -520,7 +520,7 @@ export default function CreateDatabankPage() {
                               autoCorrect="off"
                               spellCheck={false}
                               className={[
-                                "w-full rounded-[20px] border bg-[#fbfaff] px-4 py-3 text-[14px] text-ink placeholder:text-ink/30 outline-none transition focus:bg-white focus:ring-4",
+                                "w-full rounded-[8px] border bg-[#fbfaff] px-4 py-3 text-[14px] text-ink placeholder:text-ink/30 outline-none transition focus:bg-white focus:ring-4",
                                 urlErrorMessage
                                   ? "border-coral/50 focus:border-coral/60 focus:ring-coral/[0.12]"
                                   : "border-ink/10 focus:border-deep-violet/40 focus:ring-deep-violet/[0.08]",
@@ -533,7 +533,7 @@ export default function CreateDatabankPage() {
                             type="button"
                             onClick={() => void handlePreview()}
                             disabled={!canPreview || !crawlerUrl.trim()}
-                            className="shrink-0 rounded-[20px] bg-deep-violet px-5 py-3 text-[13px] font-bold text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)] transition hover:opacity-95 active:translate-y-[1px] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+                            className="shrink-0 rounded-[8px] bg-deep-violet px-5 py-3 text-[13px] font-bold text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)] transition hover:opacity-95 active:translate-y-[1px] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
                           >
                             {previewLoading ? u.previewing : u.previewBtn}
                           </button>
@@ -549,19 +549,19 @@ export default function CreateDatabankPage() {
                       </div>
 
                       {previewError && (
-                        <div className="rounded-[20px] border border-coral/20 bg-[#fff5f6] px-4 py-3 text-[13px] text-[#b42318]">
+                        <div className="rounded-[8px] border border-coral/20 bg-[#fff5f6] px-4 py-3 text-[13px] text-[#b42318]">
                           {previewError}
                         </div>
                       )}
 
                       {!previewLoading && candidates.length === 0 && !previewError && crawlerUrl.trim() && !urlErrorMessage && (
-                        <p className="rounded-[20px] border border-ink/[0.06] bg-white px-4 py-3 text-[13px] text-ink/55">
+                        <p className="rounded-[8px] border border-ink/[0.06] bg-white px-4 py-3 text-[13px] text-ink/55">
                           {u.noPages}
                         </p>
                       )}
 
                       {candidates.length > 0 && (
-                        <div className="overflow-hidden rounded-[24px] border border-ink/[0.08] bg-white">
+                        <div className="overflow-hidden rounded-[8px] border border-ink/[0.08] bg-white">
                           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink/[0.06] bg-ink/[0.02] px-4 py-3">
                             <div>
                               <p className="text-[13px] font-bold text-ink">
@@ -595,7 +595,7 @@ export default function CreateDatabankPage() {
                                 <label
                                   key={c.url}
                                   className={[
-                                    "flex cursor-pointer items-start gap-3 rounded-[16px] px-3 py-2.5 transition",
+                                    "flex cursor-pointer items-start gap-3 rounded-[8px] px-3 py-2.5 transition",
                                     checked ? "bg-deep-violet/[0.04]" : "hover:bg-ink/[0.02]",
                                   ].join(" ")}
                                 >
@@ -625,7 +625,7 @@ export default function CreateDatabankPage() {
                   )}
 
                   {sourceType === "empty" && (
-                    <div className="rounded-[24px] border border-dashed border-ink/15 bg-[#fbfaff] p-6 text-center">
+                    <div className="rounded-[8px] border border-dashed border-ink/15 bg-[#fbfaff] p-6 text-center">
                       <p className="text-[14px] font-medium text-ink/70">{u.emptyNote}</p>
                     </div>
                   )}
@@ -642,7 +642,7 @@ export default function CreateDatabankPage() {
                   </div>
 
                   <div className="space-y-3">
-                    <div className="rounded-[24px] border border-ink/[0.08] bg-white p-5">
+                    <div className="rounded-[8px] border border-ink/[0.08] bg-white p-5">
                       <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink/40">{u.name}</p>
                       <p className="mt-1.5 text-[16px] font-semibold text-ink">{name || u.untitled}</p>
                       {description ? (
@@ -650,7 +650,7 @@ export default function CreateDatabankPage() {
                       ) : null}
                     </div>
 
-                    <div className="rounded-[24px] border border-ink/[0.08] bg-white p-5">
+                    <div className="rounded-[8px] border border-ink/[0.08] bg-white p-5">
                       <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink/40">{u.steps.source}</p>
                       <p className="mt-1.5 text-[15px] font-semibold text-ink">{currentSourceLabel}</p>
                       {sourceType === "files" && (
@@ -677,7 +677,7 @@ export default function CreateDatabankPage() {
               <button
                 type="button"
                 onClick={step === 1 ? () => router.push("/dashboard/databank") : handleBack}
-                className="rounded-[20px] border border-ink/10 bg-white px-5 py-2.5 text-[13px] font-semibold text-ink/70 transition hover:border-deep-violet/20 hover:text-deep-violet"
+                className="rounded-[8px] border border-ink/10 bg-white px-5 py-2.5 text-[13px] font-semibold text-ink/70 transition hover:border-deep-violet/20 hover:text-deep-violet"
               >
                 {step === 1 ? t.common.cancel : t.common.back}
               </button>
@@ -687,7 +687,7 @@ export default function CreateDatabankPage() {
                   type="button"
                   disabled={!canProceed}
                   onClick={handleNext}
-                  className="rounded-[20px] bg-deep-violet px-6 py-2.5 text-[13px] font-bold text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)] transition hover:opacity-95 active:translate-y-[1px] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+                  className="rounded-[8px] bg-deep-violet px-6 py-2.5 text-[13px] font-bold text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)] transition hover:opacity-95 active:translate-y-[1px] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
                 >
                   {u.continue}
                 </button>
@@ -696,7 +696,7 @@ export default function CreateDatabankPage() {
                   type="button"
                   onClick={() => void handleCreate()}
                   disabled={isSubmitting || !sourceType}
-                  className="rounded-[20px] bg-deep-violet px-6 py-2.5 text-[13px] font-bold text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)] transition hover:opacity-95 active:translate-y-[1px] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+                  className="rounded-[8px] bg-deep-violet px-6 py-2.5 text-[13px] font-bold text-white shadow-[0_10px_20px_-12px_rgba(61,29,110,0.9)] transition hover:opacity-95 active:translate-y-[1px] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
                 >
                   {isSubmitting ? u.creating : u.create}
                 </button>
@@ -705,21 +705,21 @@ export default function CreateDatabankPage() {
           </div>
 
           <aside className="space-y-4 lg:sticky lg:top-6 lg:self-start">
-            <div className="rounded-[32px] border border-ink/[0.06] bg-white p-5 shadow-[0_18px_44px_-30px_rgba(61,29,110,0.2)]">
+            <div className="rounded-[8px] border border-ink/[0.06] bg-white p-5 shadow-[0_18px_44px_-30px_rgba(61,29,110,0.2)]">
               <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.14em] text-ink/45">{u.whyTitle}</p>
               <div className="space-y-3">
-                <div className="rounded-[20px] bg-[#f8f6ff] p-4">
+                <div className="rounded-[8px] bg-[#f8f6ff] p-4">
                   <div className="mb-1 text-[13px] font-bold text-ink">{u.why.files}</div>
                   <p className="text-[13px] leading-relaxed text-ink/60">{u.why.filesDesc}</p>
                 </div>
-                <div className="rounded-[20px] bg-[#f8f6ff] p-4">
+                <div className="rounded-[8px] bg-[#f8f6ff] p-4">
                   <div className="mb-1 text-[13px] font-bold text-ink">{u.why.crawler}</div>
                   <p className="text-[13px] leading-relaxed text-ink/60">{u.why.crawlerDesc}</p>
                 </div>
               </div>
             </div>
 
-            <div className="rounded-[32px] border border-ink/[0.06] bg-white p-5 shadow-[0_18px_44px_-30px_rgba(61,29,110,0.2)]">
+            <div className="rounded-[8px] border border-ink/[0.06] bg-white p-5 shadow-[0_18px_44px_-30px_rgba(61,29,110,0.2)]">
               <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.14em] text-ink/45">{u.bestTitle}</p>
               <ul className="space-y-2.5 text-[13px] leading-relaxed text-ink/60">
                 <li className="flex gap-2"><span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-deep-violet/40" /><span>{u.best.one}</span></li>

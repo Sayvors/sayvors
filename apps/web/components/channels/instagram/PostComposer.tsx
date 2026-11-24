@@ -48,7 +48,7 @@ const MAX_IMAGES = 10; // Instagram's carousel cap — also the API's limit.
 const CAPTION_MAX = 2200;
 
 const FIELD =
-  "rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]";
+  "rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]";
 
 type Entry = { key: string; url: string; file?: File };
 
@@ -87,7 +87,7 @@ function Switch({
           }`}
         />
       </span>
-      <span className={`text-left text-[13px] font-semibold ${INK}`}>{label}</span>
+      <span className={`text-start text-[13px] font-semibold ${INK}`}>{label}</span>
     </button>
   );
 }
@@ -110,7 +110,7 @@ function PostPreview({
   const k = t.channelHub.instagram.composer;
   const aspect = ratio.aspect ?? 1;
   return (
-    <div className="w-full max-w-[232px] overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-surface)]">
+    <div className="w-full max-w-[232px] overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)]">
       <div className="flex items-center gap-2 px-3 py-2">
         <span
           aria-hidden
@@ -136,7 +136,7 @@ function PostPreview({
       </div>
       <div className="px-3 py-2">
         <p className={`text-[13px] leading-snug ${INK}`}>
-          <span className="mr-1.5 font-bold">{username || k.previewUser}</span>
+          <span className="me-1.5 font-bold">{username || k.previewUser}</span>
           {caption || k.previewCaption}
         </p>
         {locationName && (
@@ -407,7 +407,7 @@ export default function PostComposer({
   const storyAvailable = Boolean(entries[0]?.file);
 
   return (
-    <section className="rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4">
+    <section className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h4 className={`text-[13px] font-semibold ${INK}`}>{k.newPost}</h4>
         {quota && (
@@ -451,7 +451,7 @@ export default function PostComposer({
             />
 
             <div className="min-w-0 space-y-3">
-              <label className="flex cursor-pointer items-center justify-center rounded-[12px] border border-dashed border-[var(--ui-line)] bg-[var(--ui-sunken)] px-4 py-5 text-[12px] font-semibold text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]">
+              <label className="flex cursor-pointer items-center justify-center rounded-[8px] border border-dashed border-[var(--ui-line)] bg-[var(--ui-sunken)] px-4 py-5 text-[12px] font-semibold text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]">
                 {busy ? k.working : k.addImages}
                 <input
                   type="file"
@@ -515,7 +515,7 @@ export default function PostComposer({
                   type="button"
                   onClick={addHostedUrl}
                   disabled={busy || !urlDraft.trim()}
-                  className="rounded-[12px] border border-[var(--ui-line)] px-3 py-2 text-[12px] font-semibold text-[var(--ui-ink)] disabled:opacity-50"
+                  className="rounded-[8px] border border-[var(--ui-line)] px-3 py-2 text-[12px] font-semibold text-[var(--ui-ink)] disabled:opacity-50"
                 >
                   {k.add}
                 </button>
@@ -567,7 +567,7 @@ export default function PostComposer({
                       alt=""
                       width={16}
                       height={16}
-                      className="rounded-[4px]"
+                      className="rounded-[8px]"
                     />
                     {aiBusy ? k.writing : k.generate}
                   </button>
@@ -627,7 +627,7 @@ export default function PostComposer({
                       className={`${FIELD} w-full`}
                     />
                     {showResults !== null && (
-                      <ul className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)] shadow-[0_4px_12px_rgba(0,0,0,0.12)]">
+                      <ul className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] shadow-[0_4px_12px_rgba(0,0,0,0.12)]">
                         {showResults.length === 0 ? (
                           <li className={`px-3 py-2 text-[12px] ${INK2}`}>
                             {locQuery.trim().length >= 2 && k.noPlaces}
@@ -678,7 +678,7 @@ export default function PostComposer({
                   type="button"
                   onClick={toggle}
                   disabled={busy}
-                  className="rounded-[12px] border border-[var(--ui-line)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-ink)] disabled:opacity-50"
+                  className="rounded-[8px] border border-[var(--ui-line)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-ink)] disabled:opacity-50"
                 >
                   {k.close}
                 </button>
@@ -686,7 +686,7 @@ export default function PostComposer({
                   type="button"
                   onClick={() => void publish()}
                   disabled={busy || entries.length === 0}
-                  className="rounded-[12px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)] disabled:opacity-50"
+                  className="rounded-[8px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)] disabled:opacity-50"
                 >
                   {busy ? k.publishing : k.publish}
                 </button>

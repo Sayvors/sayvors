@@ -320,6 +320,7 @@ def _model_tables() -> dict[str, set[str]]:
         import app.modules.analytics.models  # noqa: F401
         import app.modules.auth.models  # noqa: F401
         import app.modules.billing.models  # noqa: F401
+        import app.modules.benchmark.models  # noqa: F401
         import app.modules.channels.models  # noqa: F401
         import app.modules.channels.meta.models  # noqa: F401
         import app.modules.jobs.models  # noqa: F401

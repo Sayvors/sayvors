@@ -32,7 +32,7 @@ from ....modules.kafka.client import get_kafka_producer
 from ...users.models import User
 from ...jobs.handlers.post_publish import _provider_for
 from ...jobs.models import Job, JobStatus
-from ...jobs.service import submit_job
+from ...jobs.service import create_ui_job, submit_job
 from ...jobs.types import JobType
 from ...team.context import tenant_id_of
 from ..google_reviews import GoogleReviewsError
@@ -396,6 +396,18 @@ async def publish_post(
                     subject_id=str(uuid.uuid4()),
                     lane_key=f"{tenant_id}:{platform}:{asset_id}:{method}",
                 )
+                platform_label = {
+                    "google_reviews": "Google Business Profile",
+                    "facebook": "Facebook",
+                    "instagram": "Instagram",
+                }.get(str(platform), "channel")
+                job.ui_visible = True
+                job.ui_kind = "publish"
+                job.ui_title = f"Publishing to {platform_label}"
+                job.progress_label = "Queued"
+                job.ui_subject_type = "post"
+                job.ui_subject_id = job.subject_id
+                db.add(job)
                 jobs_out.append(_to_out(job))
         await db.commit()
     except ValueError as e:
@@ -720,6 +732,36 @@ async def batch_delete_published_posts(
     if not out:
         raise HTTPException(status_code=409, detail="no jobs could be deleted or cancelled")
     return out
+
+
+@router.post("/publish/delete/background")
+async def batch_delete_published_posts_background(
+    body: BatchDeleteBody,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Queue background removal/cancellation of publish jobs and return a UI job id."""
+    tenant_id = tenant_id_of(user)
+    if not body.job_ids:
+        raise HTTPException(status_code=400, detail="job_ids must not be empty")
+    job = await create_ui_job(
+        db,
+        tenant_id=tenant_id,
+        job_type=JobType.post_remove.value,
+        ui_title="Removing posts",
+        ui_kind="publish_remove",
+        payload={"job_ids": body.job_ids, "platforms": body.platforms},
+        lane="publishing",
+        priority=50,
+        max_attempts=5,
+        idempotency_key=f"post-remove:{tenant_id}:{','.join(sorted(body.job_ids))}:{','.join(sorted(body.platforms or []))}",
+        subject_type="publish_batch",
+        subject_id=None,
+        lane_key=f"{tenant_id}:publish-remove:{body.job_ids[0]}",
+        progress_label="Queued",
+    )
+    await db.commit()
+    return {"job_id": job.id, "status": job.status}
 
 
 @router.get("/publish/status", response_model=list[JobOut])
@@ -1355,6 +1397,17 @@ async def refresh_publish_job(
         raise HTTPException(
             status_code=409,
             detail="only a published Google post can be checked on Google",
+        )
+    if payload.get("method") not in {"update", "event", "offer"}:
+        # Promotion/profile/gallery uploads create media resources, not
+        # localPosts. They have no post status to refresh — the gallery is
+        # their source of truth. Do not make the UI retry a doomed check.
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Promotion, profile and gallery uploads are media, not Google "
+                "posts — check them in the location gallery."
+            ),
         )
     publisher, post_name = await _google_publisher_for(db, tenant_id, job_row)
     try:

@@ -741,39 +741,23 @@ async def _generate_reply(
 
     user = (await db.execute(select(User).where(User.id == tenant_id))).scalar_one()
 
-    # Business card (distilled from the tenant's databank) — lets the
-    # assistant answer "what can you do for me?" without searching the
-    # databank. Never raises; "" when no card exists yet.
-    from ...profile.business_profile import prompt_block
+    # Knowledge blocks come from the shared layer: identity, facts (with the
+    # tool-result framing this surface has always used), databank grounding,
+    # catalog and approved memory — one place, so no surface can forget a
+    # source again. Policy (persona, tickets, leads, history, voice) stays
+    # here, where it belongs.
+    from ...assistant.reply_context import build_reply_context
 
-    business_card = (await prompt_block(tenant_id, db)) or ""
-
-    # Business facts come from the central `tenant_facts` store via the same
-    # `get_business_facts` tool the model can call. Detected topics are read
-    # eagerly (a deterministic tool call, so "what are your hours?" cannot be
-    # missed); the tool is also offered to the model for anything the router
-    # did not spot. Hours are physical visiting hours — the assistant is 24/7.
-    facts_block = ""
-    fact_topics: list[str] = []
-    try:
-        from ...profile.facts_store import get_facts, render_core
-        from ...profile.facts_tool import detect_topics, render_topic
-
-        facts = await get_facts(db, tenant_id)
-        facts_block = render_core(facts)
-        fact_topics = detect_topics(text)
-        slices: list[str] = []
-        for topic in fact_topics:
-            slice_text = render_topic(facts, topic)
-            if slice_text:
-                slices.append(f"[get_business_facts(topic=\"{topic}\")]\n{slice_text}")
-        if slices:
-            facts_block += (
-                "\n\nBUSINESS FACTS TOOL RESULTS (answer these directly):\n"
-                + "\n\n".join(slices)
-            )
-    except Exception as e:  # noqa: BLE001 - never cost the reply
-        logger.warning("business facts skipped channel=%s: %s", channel.id, e)
+    knowledge = await build_reply_context(
+        db,
+        tenant_id=tenant_id,
+        surface="whatsapp",
+        query=text,
+        channel_id=channel.id,
+        facts_tool_framing=True,
+        allow_catalog_image=(platform == "WhatsApp"),
+        memory_enabled=bool(getattr(user, "ai_memory_enabled", True)),
+    )
 
     # Lead capture rides this same call: the model may append one silent
     # LEAD line, which the handlers split off after the fact — extraction
@@ -843,50 +827,6 @@ async def _generate_reply(
 
         ticket_block = ticket_prompt_block(ticket)
 
-    # Databank grounding: retrieve the passages that match THIS message, so a
-    # price, a spec or a policy comes from the business's own documents instead
-    # of being guessed. Bounded (2.5s, 4 passages) and best-effort — the reply
-    # goes out regardless.
-    grounding = ""
-    if text:
-        try:
-            from ...rag.grounding import reply_block
-
-            grounding = await reply_block(
-                db, tenant_id=tenant_id, channel_id=channel.id, query=text
-            )
-        except Exception as e:  # noqa: BLE001 - never cost the reply
-            logger.warning(
-                "databank grounding skipped channel=%s: %s", channel.id, e
-            )
-
-    # Catalog: the only source for prices and stock. Empty when the tenant has
-    # no active items, so a business that never filled it pays nothing.
-    from ...catalog.service import catalog_block
-
-    catalog = await catalog_block(
-        db,
-        tenant_id=tenant_id,
-        query=text,
-        allow_image=(platform == "WhatsApp"),
-    )
-
-    # Approved cumulative memory: lessons from earlier resolved conversations.
-    # Only approved rows are returned; the tenant toggle is read from the
-    # owner row already loaded above, so this adds no settings query.
-    memory = ""
-    try:
-        from ...memory.service import reply_block as memory_reply_block
-
-        memory = await memory_reply_block(
-            db,
-            tenant_id=tenant_id,
-            query=text,
-            enabled=bool(getattr(user, "ai_memory_enabled", True)),
-        )
-    except Exception as e:  # noqa: BLE001 - never cost the reply
-        logger.warning("memory skipped channel=%s: %s", channel.id, e)
-
     # The customer's explicit language choice, when they made one on the
     # first-contact buttons. It outranks the detected language in the prompt.
     lang_block = ""
@@ -905,11 +845,11 @@ async def _generate_reply(
             )
 
     # One line per reply makes "why didn't it know X?" answerable: the sizes
-    # prove whether the facts/databank were actually in the prompt.
+    # prove whether each knowledge source was actually in the prompt.
     logger.info(
-        "Reply context channel=%s facts=%d card=%d grounding=%d catalog=%d memory=%d stored=%d",
-        channel.id, len(facts_block or ""), len(business_card or ""),
-        len(grounding or ""), len(catalog or ""), len(memory or ""),
+        "Reply context channel=%s %s stored=%d",
+        channel.id,
+        " ".join(f"{k}={v}" for k, v in sorted(knowledge.sizes.items())),
         len(stored_block or ""),
     )
 
@@ -926,11 +866,7 @@ async def _generate_reply(
             persona=persona,
         )
         + (f"\n\n{lang_block}" if lang_block else "")
-        + (f"\n\n{business_card}" if business_card else "")
-        + (f"\n\n{facts_block}" if facts_block else "")
-        + (f"\n\n{grounding}" if grounding else "")
-        + (f"\n\n{catalog}" if catalog else "")
-        + (f"\n\n{memory}" if memory else "")
+        + (f"\n\n{knowledge.render()}" if knowledge.blocks else "")
         + stored_block
         + (f"\n\n{ticket_block}" if ticket_block else "")
         + (f"\n\n{context}" if context else "")
@@ -2909,6 +2845,26 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                 })
                 if index < len(messages) - 1:
                     await asyncio.sleep(_MESSAGE_GAP_SECONDS)
+
+        # Review attribution: when the reply carried the tracked review link,
+        # record the ask (contact + active campaign) so clicks and reviews
+        # attribute honestly — including to a running campaign. Best-effort:
+        # a bookkeeping failure must never break the reply flow.
+        if messages and any("review-requests/" in part for part in messages):
+            try:
+                from ...analytics.review_requests import record_assistant_ask
+
+                await record_assistant_ask(
+                    db, tenant_id,
+                    contact=from_wa,
+                    contact_name=data.get("profile_name"),
+                    sent_text="\n".join(messages),
+                )
+            except Exception as e:  # noqa: BLE001 - never cost the reply
+                logger.warning(
+                    "review ask attribution failed tenant=%s contact=%s: %s",
+                    tenant_id, (from_wa or "")[-6:], e,
+                )
 
         # Item photo the model asked for, after the text so the answer never
         # waits on an image host.

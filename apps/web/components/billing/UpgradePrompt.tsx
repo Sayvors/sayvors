@@ -47,10 +47,10 @@ export default function UpgradePrompt() {
       onClick={() => setDenial(null)}
     >
       <div
-        className="w-full max-w-sm rounded-[24px] bg-white p-6 text-ink shadow-[0_1px_0_rgba(255,255,255,0.9)_inset,0_24px_48px_-16px_rgba(20,16,31,0.45)] dark:bg-ink dark:text-fog dark:shadow-[0_1px_0_rgba(255,255,255,0.08)_inset,0_24px_48px_-16px_rgba(0,0,0,0.8)]"
+        className="w-full max-w-sm rounded-[8px] bg-white p-6 text-ink shadow-[0_1px_0_rgba(255,255,255,0.9)_inset,0_24px_48px_-16px_rgba(20,16,31,0.45)] dark:bg-ink dark:text-fog dark:shadow-[0_1px_0_rgba(255,255,255,0.08)_inset,0_24px_48px_-16px_rgba(0,0,0,0.8)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-deep-violet/10 text-[20px] dark:bg-deep-violet/25">
+        <div className="flex h-11 w-11 items-center justify-center rounded-[8px] bg-deep-violet/10 text-[20px] dark:bg-deep-violet/25">
           <span aria-hidden="true">⭐</span>
         </div>
         <h2 className="mt-4 text-[18px] font-bold tracking-tight">{title}</h2>
@@ -66,14 +66,14 @@ export default function UpgradePrompt() {
               setDenial(null);
               router.push("/dashboard/plans");
             }}
-            className="h-11 flex-1 rounded-[20px] bg-deep-violet text-[13px] font-bold text-white shadow-[0_1px_0_rgba(255,255,255,0.25)_inset,0_8px_16px_-8px_rgba(61,29,110,0.8)] transition active:translate-y-[2px] active:scale-[0.98] focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-deep-violet"
+            className="h-11 flex-1 rounded-[8px] bg-deep-violet text-[13px] font-bold text-white shadow-[0_1px_0_rgba(255,255,255,0.25)_inset,0_8px_16px_-8px_rgba(61,29,110,0.8)] transition active:translate-y-[2px] active:scale-[0.98] focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-deep-violet"
           >
             View plans
           </button>
           <button
             type="button"
             onClick={() => setDenial(null)}
-            className="h-11 rounded-[20px] border border-ink/10 px-5 text-[13px] font-bold text-ink/70 transition hover:bg-ink/[0.04] active:translate-y-[2px] active:scale-[0.98] focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/15 dark:text-fog/70 dark:hover:bg-fog/[0.06]"
+            className="h-11 rounded-[8px] border border-ink/10 px-5 text-[13px] font-bold text-ink/70 transition hover:bg-ink/[0.04] active:translate-y-[2px] active:scale-[0.98] focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-deep-violet dark:border-fog/15 dark:text-fog/70 dark:hover:bg-fog/[0.06]"
           >
             Later
           </button>

@@ -210,6 +210,64 @@ export async function apiFetch(path: string, options: RequestInit = {}, timeoutM
   }
 }
 
+/* ── Raw-bytes variant ───────────────────────────────── */
+
+/**
+ * Same auth/CSRF dance as apiFetch, but returns the response body as bytes.
+ * Used by the media converter, which answers with image/jpeg|png rather than
+ * JSON — base64-wrapping a multi-megabyte photo would be pointless weight.
+ */
+export async function apiFetchBlob(
+  path: string,
+  options: RequestInit = {},
+  timeoutMs = 60000,
+): Promise<Blob> {
+  const method = (options.method || "POST").toUpperCase();
+  const isForm = options.body instanceof FormData;
+  const isWrite = !["GET", "HEAD", "OPTIONS"].includes(method);
+  if (isWrite) await prefetchCsrfToken();
+
+  const headers = {
+    ...buildHeaders(isForm),
+    ...(options.headers as Record<string, string>),
+  };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const doFetch = (hdrs: Record<string, string>) =>
+    fetch(`${API}${path}`, {
+      ...options,
+      method,
+      headers: hdrs,
+      credentials: "include",
+      signal: options.signal ?? controller.signal,
+    });
+  try {
+    let res = await doFetch(headers);
+    if (isWrite && isCsrfFailure(res)) {
+      const fresh = await ensureCsrfToken();
+      if (fresh) res = await doFetch({ ...headers, "X-CSRF-Token": fresh });
+    }
+    if ((res.headers.get("content-type") || "").includes("text/html")) {
+      throw new Error(
+        `The server is unreachable right now (gateway error ${res.status}) — try again in a minute.`,
+      );
+    }
+    if (!res.ok) {
+      const message = await readError(res);
+      checkEntitlement(res, message);
+      throw new Error(message);
+    }
+    return await res.blob();
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") {
+      throw new Error("Request timed out — the server took too long. Try again.");
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /* ── Types ──────────────────────────────────────────── */
 
 export interface DatabankDoc {

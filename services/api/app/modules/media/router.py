@@ -12,18 +12,80 @@ DELETE /api/v1/media/{media_id}     delete permanently
 POST   /api/v1/media/{media_id}/publish   publish a draft/scheduled/failed photo now
 POST   /api/v1/media/sync           publish due + delete expired (admin/ops only)
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File
+import logging
+
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile, File
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...config import settings
+
+logger = logging.getLogger(__name__)
 from ...core.deps import get_current_user, get_db, require_admin
 from ...core.storage import public_media_base
 from ...core.upstream_errors import upstream_http_error
 from ..users.models import User
-from . import service
-from .schemas import MediaCreate, MediaOut, MediaPublishResult, MediaSyncResult, MediaUpdate
+from . import cover_monitor, image_check, service
+from .models import CoverMonitor
+from .schemas import (
+    CoverAutoReplaceIn,
+    MediaCreate,
+    MediaOut,
+    MediaPublishResult,
+    MediaSyncResult,
+    MediaUpdate,
+)
 from ..team.context import tenant_id_of, require_perm, TenantContext
 
 router = APIRouter(prefix="/api/v1/media", tags=["media"])
+
+
+@router.get("/cover-monitors", response_model=list[dict])
+async def list_cover_monitors(
+    ctx: TenantContext = Depends(require_perm("media.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """The Google cover image we set, and whether Google replaced it."""
+    from sqlalchemy import select
+
+    rows = (
+        await db.execute(
+            select(CoverMonitor)
+            .where(CoverMonitor.tenant_id == tenant_id_of(ctx.user))
+            .order_by(CoverMonitor.created_at.desc())
+            .limit(50)
+        )
+    ).scalars().all()
+    return [cover_monitor.serialize(row) for row in rows]
+
+
+@router.post("/cover-monitors/{monitor_id}/acknowledge", response_model=dict)
+async def acknowledge_cover_monitor(
+    monitor_id: str,
+    ctx: TenantContext = Depends(require_perm("media.manage")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Accept Google's current cover as the new baseline after a replace."""
+    result = await cover_monitor.acknowledge(db, tenant_id_of(ctx.user), monitor_id)
+    if result["status"] == "not_found":
+        raise HTTPException(status_code=404, detail="Cover monitor not found.")
+    return result
+
+
+@router.post("/cover-monitors/{monitor_id}/auto-replace", response_model=dict)
+async def set_cover_auto_replace(
+    monitor_id: str,
+    body: CoverAutoReplaceIn,
+    ctx: TenantContext = Depends(require_perm("media.manage")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Toggle silent auto-repair when Google replaces the cover."""
+    result = await cover_monitor.set_auto_replace(
+        db, tenant_id_of(ctx.user), monitor_id, body.enabled
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Cover monitor not found.")
+    return result
 
 
 @router.post("/upload")
@@ -52,6 +114,224 @@ async def upload_media_file(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/convert")
+async def convert_media_for_browser(
+    file: UploadFile = File(...),
+    ctx: TenantContext = Depends(require_perm("media.manage")),
+    user: User = Depends(get_current_user),
+):
+    """Re-encode a photo the browser cannot decode (CMYK JPEG, huge scans).
+
+    Returns the raw converted bytes (image/jpeg or image/png). The composer
+    swaps them in for preview, crop and publish, so an undecodable original
+    never becomes an empty crop frame or an uncropped publish. The model id
+    and storage details stay server-side; only pixels travel back.
+    """
+    _ = ctx, user
+    data = await file.read()
+    try:
+        out, mime, width, height = service.reencode_for_browser(data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return Response(
+        content=out,
+        media_type=mime,
+        headers={"X-Image-Size": f"{width}x{height}"},
+    )
+
+
+@router.post("/crop")
+async def crop_media_server_side(
+    file: UploadFile | None = File(default=None),
+    url: str | None = Form(default=None),
+    x: int = Form(...),
+    y: int = Form(...),
+    w: int = Form(...),
+    h: int = Form(...),
+    ctx: TenantContext = Depends(require_perm("media.manage")),
+    user: User = Depends(get_current_user),
+):
+    """Crop with Pillow when the browser cannot (canvas taint, CORS, exotic codecs).
+
+    Accepts an uploaded file or an http(s) media URL (SSRF-guarded, pinned-DNS
+    fetch). The rect is in DISPLAYED pixel coordinates — the browser applies
+    EXIF orientation before drawing, so the server transposes first. Returns
+    raw cropped bytes; the composer uploads them like any other file, so the
+    merchant's framing survives even when their browser could not bake it.
+    """
+    _ = ctx, user
+    if file is not None and (file.filename or file.content_type):
+        data = await file.read()
+    elif url:
+        if not (url.startswith("https://") or url.startswith("http://")):
+            raise HTTPException(status_code=400, detail="Only http(s) URLs.")
+        from ...core.pinned_http import fetch_pinned_bytes
+
+        try:
+            data = await fetch_pinned_bytes(url)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Could not fetch that image: {e}")
+    else:
+        raise HTTPException(status_code=400, detail="Provide a file or a url.")
+    try:
+        out, mime = service.crop_for_browser(data, x=x, y=y, w=w, h=h)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return Response(content=out, media_type=mime)
+
+
+@router.post("/analyze-banner")
+async def analyze_banner(
+    file: UploadFile = File(...),
+    ctx: TenantContext = Depends(require_perm("media.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Score an uploaded image as a Google banner/promotion photo.
+
+    Deterministic rules (format, size, aspect, sharpness, exposure) always
+    run. If the admin has configured a vision model, a multimodal AI verdict
+    is appended — the model id itself is never returned to the tenant, only
+    the verdict. The result is advice; it never blocks publishing.
+    """
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file.")
+    max_bytes = max(1, settings.MEDIA_MAX_MB) * 1024 * 1024
+    if len(data) > max_bytes:
+        raise HTTPException(status_code=400, detail="File is too big.")
+    # Same pipeline the queued job runs; the verdict functions are module
+    # aliases so tests (and callers) can substitute them in one place.
+    return await service.full_banner_analysis(
+        db, data, vision_verdict_fn=_vision_verdict, decision_verdict_fn=_decision_verdict,
+    )
+
+
+async def _vision_verdict(data: bytes, model: str) -> dict | None:
+    """Alias kept for the publish composer's test seams; body lives in service."""
+    return await service.vision_verdict(data, model)
+
+
+async def _decision_verdict(
+    result: dict, model: str, images: list | None = None
+) -> dict | None:
+    return await service.decision_verdict(result, model, images)
+
+
+@router.post("/banner-checks")
+async def enqueue_banner_check(
+    request: Request,
+    file: UploadFile | None = File(default=None),
+    url: str | None = Form(default=None),
+    ctx: TenantContext = Depends(require_perm("media.manage")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Queue the AI photo check on the realtime lane (publication waits on it).
+
+    Accepts an uploaded file, or a media URL when the photo lives in the
+    library (no local File in the browser) — the server resolves the bytes
+    through its own storage / the SSRF-guarded fetcher. Returns the check id
+    for polling. The photo is stored through the same validation as
+    /upload, so a lying-extension file is rejected here with the same
+    message the picker already showed.
+    """
+    _ = ctx
+    if file is not None and (file.filename or file.content_type):
+        data = await file.read()
+        filename = file.filename or "banner.png"
+        content_type = file.content_type
+    elif url:
+        from ...core.storage import media_bytes_from_url
+
+        try:
+            data, content_type = media_bytes_from_url(tenant_id_of(user), url)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Could not read that image: {e}")
+        # The stored content type is authoritative (it was derived from a
+        # validated upload); derive the name so the magic check passes.
+        ext = {
+            "image/jpeg": "banner.jpg",
+            "image/png": "banner.png",
+            "image/webp": "banner.webp",
+            "image/gif": "banner.gif",
+        }.get((content_type or "").split(";")[0].strip().lower(), "banner.png")
+        filename = ext
+    else:
+        # A form with neither field means a stale client build (an older
+        # composer appended an empty/null file part). Log exactly what
+        # arrived so the next occurrence names itself instead of guessing.
+        form = await request.form()
+        fields = {
+            k: (len(v) if isinstance(v, str) else getattr(v, "size", -1))
+            for k, v in form.items()
+        }
+        logger.warning(
+            "banner-checks rejected: no file and no url; form fields=%s "
+            "user_agent=%s",
+            fields,
+            request.headers.get("user-agent", "-")[:80],
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "The photo did not reach the server (no file and no link in the "
+                "request). Reload the page — this tab is running an older build."
+            ),
+        )
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file.")
+    max_bytes = max(1, settings.MEDIA_MAX_MB) * 1024 * 1024
+    if len(data) > max_bytes:
+        raise HTTPException(status_code=400, detail="File is too big.")
+    try:
+        row = await service.enqueue_banner_check(
+            db,
+            user_id=tenant_id_of(user),
+            filename=filename,
+            content_type=content_type,
+            data=data,
+            base_url=public_media_base(str(request.base_url)),
+        )
+    except ValueError as e:
+        detail = str(e)
+        if "file type it claims" in detail:
+            # The picker normally fixes a lying extension at pick time; a
+            # stale tab can still send one. Tell the merchant what to do
+            # instead of quoting the storage layer's internals.
+            detail = (
+                "That photo's content doesn't match its file name (for example a "
+                "WebP or HEIC saved as .jpg). Reload this page and pick the photo "
+                "again — the picker repairs the name automatically."
+            )
+        raise HTTPException(status_code=400, detail=detail)
+    return {"id": row.id, "status": row.status}
+
+
+@router.get("/banner-checks/{check_id}")
+async def get_banner_check(
+    check_id: str,
+    ctx: TenantContext = Depends(require_perm("media.view")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Poll one queued check. Payload shape matches /analyze-banner."""
+    from sqlalchemy import select as _select
+
+    from .models import BannerCheck
+
+    row = (
+        await db.execute(
+            _select(BannerCheck).where(
+                BannerCheck.id == check_id,
+                BannerCheck.tenant_id == tenant_id_of(user),
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Check not found.")
+    return service.serialize_banner_check(row)
 
 
 def _out(result: dict) -> MediaOut:

@@ -34,6 +34,7 @@ dependencies = [
     "edge-tts>=6.1",
     "boto3>=1.35",
     "phonenumbers>=9.0",
+    "Babel>=2.15",
     # zoneinfo has no system database on Windows; IANA zones for Google
     # EVENT/OFFER wall-clock times need this data package there.
     "tzdata>=2024.1",

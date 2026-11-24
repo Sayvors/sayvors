@@ -152,13 +152,13 @@ export default function Header() {
   const atRoot = currentCrumb === navLabels.dashboard;
 
   return (
-    <header className="mx-2 mt-2 flex h-14 shrink-0 items-center gap-2 rounded-[20px] border border-ink/[0.06] bg-white px-3 shadow-[0_18px_44px_-34px_rgba(26,18,48,0.45)] sm:px-5 dark:border-white/[0.08] dark:bg-[#1d1636] dark:shadow-none">
+    <header className="mx-2 mt-2 flex h-14 shrink-0 items-center gap-2 rounded-[8px] border border-ink/[0.06] bg-white px-3 shadow-[0_18px_44px_-34px_rgba(26,18,48,0.45)] sm:px-5 dark:border-white/[0.08] dark:bg-[#1d1636] dark:shadow-none">
       {/* Mobile hamburger — fixed to the header so it stays visible on scroll. */}
       <button
         type="button"
         onClick={() => window.dispatchEvent(new CustomEvent("open-nav-drawer"))}
         aria-label="Open menu"
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border border-ink/[0.08] bg-white text-ink shadow-sm transition hover:bg-fog focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:border-fog/[0.08] dark:bg-ink dark:text-fog md:hidden"
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] border border-ink/[0.08] bg-white text-ink shadow-sm transition hover:bg-fog focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:border-fog/[0.08] dark:bg-ink dark:text-fog md:hidden"
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-5 w-5">
           <path d="M4 7h16M4 12h16M4 17h16" />
@@ -170,7 +170,7 @@ export default function Header() {
           <>
             <Link
               href="/dashboard"
-              className="hidden shrink-0 rounded-[2px] text-[12px] text-ink/45 outline-none transition hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/40 sm:inline dark:text-fog/45 dark:hover:text-deep-violet"
+              className="hidden shrink-0 rounded-[8px] text-[12px] text-ink/45 outline-none transition hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/40 sm:inline dark:text-fog/45 dark:hover:text-deep-violet"
             >
               {navLabels.dashboard}
             </Link>
@@ -202,7 +202,7 @@ export default function Header() {
         onClick={() => setSearchOpen(true)}
         aria-label={t.header.searchLabel}
         title={`${t.header.searchLabel} (⌘K)`}
-        className="ms-2 hidden h-9 w-52 shrink-0 items-center gap-2 rounded-[2px] bg-deep-violet/[0.04] px-3 text-[13px] text-ink/40 outline-none transition hover:bg-deep-violet/[0.07] hover:text-ink/60 focus-visible:ring-2 focus-visible:ring-deep-violet/40 md:flex lg:ms-4 lg:w-64 dark:bg-fog/[0.05] dark:text-fog/40 dark:hover:bg-fog/[0.08] dark:hover:text-fog/60"
+        className="ms-2 hidden h-9 w-52 shrink-0 items-center gap-2 rounded-[8px] bg-deep-violet/[0.04] px-3 text-[13px] text-ink/40 outline-none transition hover:bg-deep-violet/[0.07] hover:text-ink/60 focus-visible:ring-2 focus-visible:ring-deep-violet/40 md:flex lg:ms-4 lg:w-64 dark:bg-fog/[0.05] dark:text-fog/40 dark:hover:bg-fog/[0.08] dark:hover:text-fog/60"
       >
         <svg
           viewBox="0 0 24 24"
@@ -217,7 +217,7 @@ export default function Header() {
           <path d="M20 20l-4-4" />
         </svg>
         <span className="flex-1 truncate text-start">{t.header.search}</span>
-        <kbd className="shrink-0 rounded-[2px] border border-deep-violet/[0.08] bg-white px-1.5 py-0.5 text-[9.5px] font-medium tabular-nums text-deep-violet/40 dark:border-fog/[0.1] dark:bg-ink dark:text-fog/40">
+        <kbd className="shrink-0 rounded-[8px] border border-deep-violet/[0.08] bg-white px-1.5 py-0.5 text-[9.5px] font-medium tabular-nums text-deep-violet/40 dark:border-fog/[0.1] dark:bg-ink dark:text-fog/40">
           ⌘K
         </kbd>
       </button>
@@ -232,7 +232,7 @@ export default function Header() {
           aria-expanded={chatOpen}
           aria-label={t.header.ask}
           title={t.header.ask}
-          className={`flex h-10 items-center gap-1.5 rounded-[2px] px-2.5 text-[13px] outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:translate-y-px md:h-9 ${
+          className={`flex h-10 items-center gap-1.5 rounded-[8px] px-2.5 text-[13px] outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:translate-y-px md:h-9 ${
             chatOpen
               ? "bg-deep-violet/[0.09] font-semibold text-deep-violet dark:bg-fog/[0.08] dark:text-violet-soft"
               : "font-medium text-ink/60 hover:bg-deep-violet/[0.05] hover:text-ink dark:text-fog/60 dark:hover:bg-fog/[0.06] dark:hover:text-fog"
@@ -258,7 +258,7 @@ export default function Header() {
           href="/dashboard/channels"
           aria-label={t.header.connect}
           title={t.header.connect}
-          className="hidden h-9 shrink-0 items-center gap-1.5 rounded-[2px] bg-deep-violet px-3.5 text-[13px] font-semibold text-white shadow-sm shadow-deep-violet/20 transition hover:bg-deep-violet/90 active:translate-y-px md:flex"
+          className="hidden h-9 shrink-0 items-center gap-1.5 rounded-[8px] bg-deep-violet px-3.5 text-[13px] font-semibold text-white shadow-sm shadow-deep-violet/20 transition hover:bg-deep-violet/90 active:translate-y-px md:flex"
         >
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-3.5 w-3.5" aria-hidden>
             <path d="M8 3v10M3 8h10" strokeLinecap="round" />
@@ -274,7 +274,7 @@ export default function Header() {
             aria-label={t.account.menu}
             aria-expanded={profileOpen}
             title={t.account.menu}
-            className="flex h-10 items-center gap-2 rounded-[2px] ps-1 pe-1.5 outline-none transition hover:bg-deep-violet/[0.05] focus-visible:ring-2 focus-visible:ring-deep-violet/40 md:h-9 dark:hover:bg-fog/[0.06]"
+            className="flex h-10 items-center gap-2 rounded-[8px] ps-1 pe-1.5 outline-none transition hover:bg-deep-violet/[0.05] focus-visible:ring-2 focus-visible:ring-deep-violet/40 md:h-9 dark:hover:bg-fog/[0.06]"
           >
             <UserAvatar
               url={user?.avatar_url}
@@ -300,7 +300,7 @@ export default function Header() {
           </button>
 
           {profileOpen && (
-            <div className="absolute end-0 top-full z-50 mt-2 max-h-[80vh] w-[282px] overflow-y-auto rounded-[2px] border border-deep-violet/[0.1] bg-white shadow-xl dark:border-fog/[0.12] dark:bg-[#1d1636]">
+            <div className="absolute end-0 top-full z-50 mt-2 max-h-[80vh] w-[282px] overflow-y-auto rounded-[8px] border border-deep-violet/[0.1] bg-white shadow-xl dark:border-fog/[0.12] dark:bg-[#1d1636]">
               {/* Identity opens the profile page; a separate "My profile" row
                   would repeat the same destination. */}
               <Link
@@ -351,7 +351,7 @@ export default function Header() {
                   />
                   <span className="flex-1 text-ink/65 dark:text-fog/65">{t.pilot.label}</span>
                   <span
-                    className={`rounded-[2px] px-1.5 py-0.5 text-[9.5px] font-semibold ${
+                    className={`rounded-[8px] px-1.5 py-0.5 text-[9.5px] font-semibold ${
                       pilot === "on"
                         ? "bg-emerald/10 text-emerald-600"
                         : pilot === "none"
@@ -407,7 +407,7 @@ export default function Header() {
                   <p className="mb-1 text-[10.5px] font-medium text-ink/35 dark:text-fog/35">
                     {t.account.language}
                   </p>
-                  <div className="grid grid-cols-2 gap-0.5 rounded-[2px] bg-deep-violet/[0.05] p-0.5 dark:bg-fog/[0.06]">
+                  <div className="grid grid-cols-2 gap-0.5 rounded-[8px] bg-deep-violet/[0.05] p-0.5 dark:bg-fog/[0.06]">
                     {LOCALES.filter((l) => l.code === "en" || l.code === "ar").map((l) => {
                       const active = locale === l.code;
                       return (
@@ -415,7 +415,7 @@ export default function Header() {
                           key={l.code}
                           onClick={() => setLocale(l.code)}
                           aria-pressed={active}
-                          className={`rounded-[2px] px-2 py-1 text-[11.5px] font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
+                          className={`rounded-[8px] px-2 py-1 text-[11.5px] font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
                             active
                               ? "bg-white text-deep-violet shadow-sm dark:bg-ink dark:text-violet-soft"
                               : "text-ink/50 hover:text-ink dark:text-fog/50 dark:hover:text-fog"

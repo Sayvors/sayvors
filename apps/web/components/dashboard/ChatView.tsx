@@ -68,8 +68,8 @@ export default function ChatView({ conversation, messages, onToggleAgent }: Chat
       <div className="flex-1 overflow-y-auto bg-fog/30 p-4 dark:bg-ink/30">
         <div className="space-y-3">
           {messages.map((msg) => (
-            <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-start" : "justify-end"}`}>
-              <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 ${
+            <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+              <div className={`max-w-[75%] rounded-[8px] px-4 py-2.5 ${
                 msg.role === "user"
                   ? "bg-white text-ink shadow-sm dark:bg-ink dark:text-fog dark:border dark:border-fog/[0.06]"
                   : "bg-gradient-to-r from-deep-violet to-magenta text-white"
@@ -95,12 +95,12 @@ export default function ChatView({ conversation, messages, onToggleAgent }: Chat
             onKeyDown={(e) => e.key === "Enter" && handleSend()}
             placeholder={conversation.agentMode ? ws.agentHandling : ws.typeMsg}
             disabled={conversation.agentMode}
-            className="flex-1 rounded-xl border border-ink/[0.08] bg-white px-4 py-2.5 text-[13px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.06] disabled:cursor-not-allowed disabled:opacity-50 dark:border-fog/[0.08] dark:bg-ink dark:text-fog dark:placeholder:text-fog/30"
+            className="flex-1 rounded-[8px] border border-ink/[0.08] bg-white px-4 py-2.5 text-[13px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.06] disabled:cursor-not-allowed disabled:opacity-50 dark:border-fog/[0.08] dark:bg-ink dark:text-fog dark:placeholder:text-fog/30"
           />
           <button
             onClick={handleSend}
             disabled={conversation.agentMode || !input.trim()}
-            className="flex h-10 items-center justify-center rounded-xl bg-gradient-to-r from-deep-violet to-magenta px-5 text-[13px] font-semibold text-white transition hover:shadow-md active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex h-10 items-center justify-center rounded-[8px] bg-gradient-to-r from-deep-violet to-magenta px-5 text-[13px] font-semibold text-white transition hover:shadow-md active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {ws.send}
           </button>

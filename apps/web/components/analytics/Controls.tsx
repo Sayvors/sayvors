@@ -62,7 +62,7 @@ export function RangeChannelControls({
   const cc = t.bench.controls;
   const fmt = (n: number) => new Intl.NumberFormat(locale === "ar" ? "ar-SA" : "en-US").format(n);
   const rangeBtn = (active: boolean) =>
-    `rounded-[2px] px-2.5 py-1 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+    `rounded-[8px] px-2.5 py-1 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
       active ? "border border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink)]" : "text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
     }`;
   return (
@@ -80,7 +80,7 @@ export function RangeChannelControls({
           ))}
         </select>
       )}
-      <div className="flex rounded-[2px] bg-[var(--ui-sunken)] p-0.5" role="group" aria-label={cc.rangeAria}>
+      <div className="flex rounded-[8px] bg-[var(--ui-sunken)] p-0.5" role="group" aria-label={cc.rangeAria}>
         {RANGES.map((r) => (
           <button key={r} onClick={() => setDays(r)} aria-pressed={days === r} className={rangeBtn(days === r)}>
             {fill(cc.daysN, { n: fmt(r) })}

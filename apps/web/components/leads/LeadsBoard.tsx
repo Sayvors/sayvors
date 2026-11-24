@@ -168,7 +168,7 @@ function LeadCard({
   const categoryLabel = leadCategoryLabelKnown(lead.category, locale) ?? lead.category;
   return (
     <li
-      className={`flex flex-col rounded-[12px] border p-4 ${
+      className={`flex flex-col rounded-[8px] border p-4 ${
         lead.priority === "important"
           ? "border-red-500 bg-red-50"
           : "border-[var(--ui-line)] bg-[var(--ui-surface)]"
@@ -261,7 +261,7 @@ function LeadCard({
           {lead.phone_number && (
             <span className="flex items-center gap-1.5">
               <span className={`font-semibold tabular-nums ${INK}`}>{lead.phone_number}</span>
-              <span className="rounded-[6px] border border-[var(--ui-line)] px-1.5 py-px text-[10px] font-semibold">
+              <span className="rounded-[8px] border border-[var(--ui-line)] px-1.5 py-px text-[10px] font-semibold">
                 {lead.phone_status === "verified" ? c.verifiedWa : c.stated}
               </span>
             </span>
@@ -511,7 +511,7 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
               type="button"
               onClick={() => setPriorityFilter(key)}
               aria-pressed={priorityFilter === key}
-              className={`rounded-[6px] border px-3 py-1 text-[12px] font-semibold ${FOCUS} ${
+              className={`rounded-[8px] border px-3 py-1 text-[12px] font-semibold ${FOCUS} ${
                 priorityFilter === key
                   ? `border-[var(--ui-line)] bg-[var(--ui-surface)] ${INK}`
                   : `border-transparent ${INK2} hover:text-[var(--ui-ink)]`
@@ -519,7 +519,7 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
             >
               {key === "all" ? c.allPriority : c.important}
               {key === "important" && importantCount > 0 && (
-                <span className="ml-1 tabular-nums">{fmt(importantCount)}</span>
+                <span className="ms-1 tabular-nums">{fmt(importantCount)}</span>
               )}
             </button>
           ))}
@@ -529,7 +529,7 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
           type="button"
           onClick={() => setAssigneeFilter((v) => (v === "mine" ? "all" : "mine"))}
           aria-pressed={assigneeFilter === "mine"}
-          className={`rounded-[6px] border px-3 py-1 text-[12px] font-semibold ${FOCUS} ${
+          className={`rounded-[8px] border px-3 py-1 text-[12px] font-semibold ${FOCUS} ${
             assigneeFilter === "mine"
               ? "border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink)]"
               : "border-transparent text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
@@ -559,7 +559,7 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
               type="button"
               onClick={() => setStageFilter(key)}
               aria-pressed={stageFilter === key}
-              className={`rounded-[6px] border px-3 py-1 text-[12px] font-semibold ${FOCUS} ${
+              className={`rounded-[8px] border px-3 py-1 text-[12px] font-semibold ${FOCUS} ${
                 stageFilter === key
                   ? `border-[var(--ui-line)] bg-[var(--ui-surface)] ${INK}`
                   : `border-transparent ${INK2} hover:text-[var(--ui-ink)]`
@@ -567,7 +567,7 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
             >
               {key === "all" ? c.all : c.stages[key]}
               {key !== "all" && counts[key] > 0 && (
-                <span className="ml-1 tabular-nums">{fmt(counts[key])}</span>
+                <span className="ms-1 tabular-nums">{fmt(counts[key])}</span>
               )}
             </button>
           ))}
@@ -597,7 +597,7 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
               type="button"
               onClick={() => setChannelFilter("all")}
               aria-pressed={channelFilter === "all"}
-              className={`rounded-[6px] border px-3 py-1 text-[12px] font-semibold ${FOCUS} ${
+              className={`rounded-[8px] border px-3 py-1 text-[12px] font-semibold ${FOCUS} ${
                 channelFilter === "all"
                   ? `border-[var(--ui-line)] bg-[var(--ui-surface)] ${INK}`
                   : `border-transparent ${INK2} hover:text-[var(--ui-ink)]`
@@ -611,7 +611,7 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
                 type="button"
                 onClick={() => setChannelFilter(ch)}
                 aria-pressed={channelFilter === ch}
-                className={`flex items-center gap-1.5 rounded-[6px] border px-3 py-1 text-[12px] font-semibold ${FOCUS} ${
+                className={`flex items-center gap-1.5 rounded-[8px] border px-3 py-1 text-[12px] font-semibold ${FOCUS} ${
                   channelFilter === ch
                     ? `border-[var(--ui-line)] bg-[var(--ui-surface)] ${INK}`
                     : `border-transparent ${INK2} hover:text-[var(--ui-ink)]`
@@ -631,7 +631,7 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
           value={age}
           onChange={(e) => setAge(e.target.value as AgeKey)}
           aria-label={c.ageAria}
-          className={`ml-auto h-8 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 text-[12px] font-semibold ${INK} ${FOCUS}`}
+          className={`me-auto h-8 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 text-[12px] font-semibold ${INK} ${FOCUS}`}
         >
           {AGES.map((a) => (
             <option key={a.key} value={a.key}>

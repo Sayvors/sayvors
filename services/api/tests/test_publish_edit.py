@@ -338,6 +338,29 @@ async def test_refresh_records_a_post_google_no_longer_has_as_gone(db, client, u
     assert res.json()["result"]["state"] == "GONE"
 
 
+@pytest.mark.asyncio
+async def test_refresh_rejects_a_banner_media_upload_without_a_google_post_id(
+    db, client, user_id
+):
+    """A successful Promotion is media, not a localPost to refresh.
+
+    The old flow treated every successful Google job as a post, so the feed
+    offered "Check on Google" and the endpoint replied "no Google post id".
+    """
+    media_name = f"accounts/1/locations/{LOCATION}/media/99"
+    job = _job(
+        user_id,
+        method="banner",
+        result={"id": media_name, "name": media_name, "category": "COVER"},
+    )
+    db.add(job)
+    await db.commit()
+
+    res = client.post(f"/api/v1/channels/publish/{job.id}/refresh")
+    assert res.status_code == 409
+    assert "media, not Google posts" in res.json()["detail"]
+
+
 # ── create: a Google post needs text or an image ────────────────────────
 
 

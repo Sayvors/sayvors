@@ -17,7 +17,7 @@
     "@tanstack/react-query": "^5.104.5",
     "@tanstack/react-virtual": "^3.14.23",
     "driver.js": "^1.8.0",
-    "next": "16.4.3",
+    "next": "^16.4.6",
     "qrcode.react": "^4.2.0",
     "react": "19.2.4",
     "react-dom": "19.2.4"
@@ -33,7 +33,7 @@
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6.1.2",
     "eslint": "^9",
-    "eslint-config-next": "16.4.3",
+    "eslint-config-next": "^16.4.6",
     "jsdom": "^30.1.3",
     "tailwindcss": "^4.3.3",
     "typescript": "^5",

@@ -125,7 +125,7 @@ export default function MeaningInspector({
         {!open && (
           <button
             onClick={startEditing}
-            className="rounded-md border border-[#DADCE0] bg-white px-2.5 py-1 text-[11px] font-medium text-[#1A73E8] transition hover:bg-[#E8F0FE]"
+            className="rounded-[8px] border border-[#DADCE0] bg-white px-2.5 py-1 text-[11px] font-medium text-[#1A73E8] transition hover:bg-[#E8F0FE]"
           >
             {corrected ? mi.edit : mi.correct}
           </button>
@@ -161,7 +161,7 @@ export default function MeaningInspector({
           )}
 
           {evidence.length > 0 && (
-            <div className="rounded-md border border-[#E8EAED] bg-white px-2.5 py-2">
+            <div className="rounded-[8px] border border-[#E8EAED] bg-white px-2.5 py-2">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-[#5F6368]">
                 {mi.evidence}
               </p>
@@ -206,7 +206,7 @@ export default function MeaningInspector({
             <select
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
-              className="mt-1 w-full rounded-md border border-[#DADCE0] bg-white px-2.5 py-2 text-[13px] text-[#202124] outline-none focus:border-[#1A73E8]"
+              className="mt-1 w-full rounded-[8px] border border-[#DADCE0] bg-white px-2.5 py-2 text-[13px] text-[#202124] outline-none focus:border-[#1A73E8]"
             >
               {MEANING_SUBJECTS.map((s) => (
                 <option key={s.value} value={s.value}>
@@ -227,7 +227,7 @@ export default function MeaningInspector({
               maxLength={1000}
               dir="auto"
               placeholder={mi.complaintPh}
-              className="mt-1 w-full resize-y rounded-md border border-[#DADCE0] bg-white px-2.5 py-2 text-[13px] leading-5 text-[#202124] outline-none focus:border-[#1A73E8]"
+              className="mt-1 w-full resize-y rounded-[8px] border border-[#DADCE0] bg-white px-2.5 py-2 text-[13px] leading-5 text-[#202124] outline-none focus:border-[#1A73E8]"
             />
           </label>
 
@@ -235,14 +235,14 @@ export default function MeaningInspector({
             <button
               onClick={() => setOpen(false)}
               disabled={saving}
-              className="rounded-md px-3 py-1.5 text-[12px] font-medium text-[#5F6368] hover:bg-ink/[0.04] disabled:opacity-40"
+              className="rounded-[8px] px-3 py-1.5 text-[12px] font-medium text-[#5F6368] hover:bg-ink/[0.04] disabled:opacity-40"
             >
               {mi.cancel}
             </button>
             <button
               onClick={save}
               disabled={saving}
-              className="rounded-md bg-[#1A73E8] px-4 py-1.5 text-[12px] font-medium text-white transition hover:bg-[#1765CC] disabled:opacity-50"
+              className="rounded-[8px] bg-[#1A73E8] px-4 py-1.5 text-[12px] font-medium text-white transition hover:bg-[#1765CC] disabled:opacity-50"
             >
               {saving ? mi.saving : mi.save}
             </button>

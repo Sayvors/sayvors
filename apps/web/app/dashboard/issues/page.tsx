@@ -122,7 +122,7 @@ function IssueRow({
 
   return (
     <article
-      className={`overflow-hidden rounded-2xl border bg-[var(--ui-surface)] transition ${
+      className={`overflow-hidden rounded-[8px] border bg-[var(--ui-surface)] transition ${
         closed
           ? "border-[var(--ui-line)] opacity-80"
           : "border-[var(--ui-line)] hover:border-deep-violet/25"
@@ -134,7 +134,7 @@ function IssueRow({
             type="button"
             onClick={() => setOpen((value) => !value)}
             aria-expanded={open}
-            className="min-w-0 flex-1 rounded-xl text-left outline-none focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+            className="min-w-0 flex-1 rounded-[8px] text-left outline-none focus-visible:ring-2 focus-visible:ring-deep-violet/40"
           >
             <div className="flex flex-wrap items-center gap-2">
               {showLocation && issue.channel_name && (
@@ -234,7 +234,7 @@ function IssueRow({
       {open && (
         <div className="border-t border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-3.5 sm:px-4">
           {issue.detail && (
-            <div className="rounded-xl border-l-2 border-deep-violet/50 bg-[var(--ui-sunken)] px-3 py-2.5">
+            <div className="rounded-[8px] border-l-2 border-deep-violet/50 bg-[var(--ui-sunken)] px-3 py-2.5">
               <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">
                 {iu.whatToDo}
               </p>
@@ -257,7 +257,7 @@ function IssueRow({
           </div>
 
           {issue.evidence.length === 0 ? (
-            <p className="mt-1.5 rounded-xl bg-[var(--ui-sunken)] px-3 py-2 text-[12px] text-[var(--ui-ink-2)]">
+            <p className="mt-1.5 rounded-[8px] bg-[var(--ui-sunken)] px-3 py-2 text-[12px] text-[var(--ui-ink-2)]">
               {iu.noQuotes}
             </p>
           ) : (
@@ -267,7 +267,7 @@ function IssueRow({
                 return (
                   <li
                     key={`${e.review_id}-${index}`}
-                    className="rounded-xl border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-2.5"
+                    className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-2.5"
                   >
                     <div className="flex items-start gap-2.5">
                       <CustomerAvatar
@@ -322,7 +322,7 @@ function IssueRow({
               rows={2}
               maxLength={2000}
               placeholder={iu.notePh}
-              className="mt-1 w-full resize-y rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[12.5px] leading-5 text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]"
+              className="mt-1 w-full resize-y rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[12.5px] leading-5 text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]"
             />
           </label>
           <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -377,7 +377,7 @@ function ProblemRow({
 
   return (
     <article
-      className={`overflow-hidden rounded-2xl border bg-[var(--ui-surface)] transition ${
+      className={`overflow-hidden rounded-[8px] border bg-[var(--ui-surface)] transition ${
         closed
           ? "border-[var(--ui-line)] opacity-80"
           : "border-[var(--ui-line)] hover:border-deep-violet/25"
@@ -389,7 +389,7 @@ function ProblemRow({
             type="button"
             onClick={() => setOpen((value) => !value)}
             aria-expanded={open}
-            className="min-w-0 flex-1 rounded-xl text-left outline-none focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+            className="min-w-0 flex-1 rounded-[8px] text-left outline-none focus-visible:ring-2 focus-visible:ring-deep-violet/40"
           >
             <div className="flex flex-wrap items-center gap-2">
               <span className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-[var(--ui-sunken)] px-2 py-0.5 text-[9.5px] font-semibold text-[var(--ui-ink)]">
@@ -461,7 +461,7 @@ function ProblemRow({
       {open && (
         <div className="border-t border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-3.5 sm:px-4">
           {issue.detail && (
-            <div className="rounded-xl border-l-2 border-deep-violet/50 bg-[var(--ui-sunken)] px-3 py-2.5">
+            <div className="rounded-[8px] border-l-2 border-deep-violet/50 bg-[var(--ui-sunken)] px-3 py-2.5">
               <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">{iu.whatToDo}</p>
               <p className="mt-1 text-[12px] leading-5 text-[var(--ui-ink)]">{issue.detail}</p>
             </div>
@@ -475,11 +475,11 @@ function ProblemRow({
           </div>
 
           {issue.evidence.length === 0 ? (
-            <p className="mt-1.5 rounded-xl bg-[var(--ui-sunken)] px-3 py-2 text-[12px] text-[var(--ui-ink-2)]">{iu.noQuotes}</p>
+            <p className="mt-1.5 rounded-[8px] bg-[var(--ui-sunken)] px-3 py-2 text-[12px] text-[var(--ui-ink-2)]">{iu.noQuotes}</p>
           ) : (
             <ul className="mt-2 space-y-2">
               {issue.evidence.map((e, index) => (
-                <li key={`${e.review_id}-${index}`} className="rounded-xl border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-2.5">
+                <li key={`${e.review_id}-${index}`} className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-2.5">
                   <div className="flex items-start gap-2.5">
                     <CustomerAvatar name={e.reviewer ?? null} url={e.reviewer_photo_url ?? null} size="sm" />
                     <div className="min-w-0 flex-1">
@@ -503,7 +503,7 @@ function ProblemRow({
               rows={2}
               maxLength={2000}
               placeholder={iu.notePh}
-              className="mt-1 w-full resize-y rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[12.5px] leading-5 text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]"
+              className="mt-1 w-full resize-y rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[12.5px] leading-5 text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]"
             />
           </label>
           <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -678,7 +678,7 @@ function IssuesContent() {
               value={channel}
               onChange={(event) => setChannel(event.target.value)}
               aria-label={iu.locationAria}
-              className="h-9 min-w-0 flex-1 rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2.5 text-[11px] font-semibold text-[var(--ui-ink)] outline-none sm:flex-none"
+              className="h-9 min-w-0 flex-1 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2.5 text-[11px] font-semibold text-[var(--ui-ink)] outline-none sm:flex-none"
             >
               <option value="">{iu.allLocations}</option>
               {channels.map((c) => (
@@ -691,7 +691,7 @@ function IssuesContent() {
               type="button"
               onClick={doRefresh}
               disabled={refreshing}
-              className="h-9 rounded-xl bg-deep-violet px-3.5 text-[11.5px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90 active:translate-y-px disabled:opacity-50"
+              className="h-9 rounded-[8px] bg-deep-violet px-3.5 text-[11.5px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90 active:translate-y-px disabled:opacity-50"
             >
               {refreshing ? iu.checking : iu.recheck}
             </button>
@@ -705,7 +705,7 @@ function IssuesContent() {
             { label: iu.status.done, value: fmt(summary.fixed), tone: "text-emerald-700" },
             { label: iu.issueAvg, value: summary.avgRating ? `${fmt(Math.round(summary.avgRating * 10) / 10)}★` : "—", tone: "text-[var(--ui-ink)]" },
           ].map((stat) => (
-            <div key={stat.label} className="rounded-xl border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2.5">
+            <div key={stat.label} className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2.5">
               <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-[var(--ui-ink-2)]">
                 {stat.label}
               </p>
@@ -717,18 +717,18 @@ function IssuesContent() {
         </div>
 
         {note && (
-          <p className="rounded-xl bg-emerald-50 px-3 py-2 text-[12px] text-emerald-800 ring-1 ring-emerald-200">
+          <p className="rounded-[8px] bg-emerald-50 px-3 py-2 text-[12px] text-emerald-800 ring-1 ring-emerald-200">
             {note}
           </p>
         )}
         {error && (
-          <p className="rounded-xl bg-coral/10 px-3 py-2 text-[12px] text-coral ring-1 ring-coral/20">
+          <p className="rounded-[8px] bg-coral/10 px-3 py-2 text-[12px] text-coral ring-1 ring-coral/20">
             {error}
           </p>
         )}
 
         {heldOut.total > 0 && (
-          <p className="rounded-xl bg-amber-50 px-3 py-2 text-[12px] text-amber-800 ring-1 ring-amber-200">
+          <p className="rounded-[8px] bg-amber-50 px-3 py-2 text-[12px] text-amber-800 ring-1 ring-amber-200">
             {heldOut.reviews === 1 ? iu.heldOutOne : fill(iu.heldOutN, { total: fmt(heldOut.total), reviews: fmt(heldOut.reviews) })}{" "}
             <Link
               href="/dashboard/reviews?tab=needs_human"
@@ -744,13 +744,13 @@ function IssuesContent() {
             {[0, 1, 2].map((i) => (
               <div
                 key={i}
-                className="h-24 animate-pulse rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)]"
+                className="h-24 animate-pulse rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)]"
                 aria-hidden
               />
             ))}
           </div>
         ) : issues.length === 0 && problems.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-[var(--ui-line-strong)] bg-[var(--ui-surface)] p-8 text-center">
+          <div className="rounded-[8px] border border-dashed border-[var(--ui-line-strong)] bg-[var(--ui-surface)] p-8 text-center">
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[var(--ui-sunken)]">
               <GoogleBusinessLogo size={28} />
             </div>
@@ -764,7 +764,7 @@ function IssuesContent() {
               type="button"
               onClick={doRefresh}
               disabled={refreshing}
-              className="mt-4 rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-semibold text-white transition hover:bg-deep-violet/90 disabled:opacity-50"
+              className="mt-4 rounded-[8px] bg-deep-violet px-4 py-2 text-[12px] font-semibold text-white transition hover:bg-deep-violet/90 disabled:opacity-50"
             >
               {refreshing ? iu.checking : iu.recheck}
             </button>
@@ -821,7 +821,7 @@ function IssuesContent() {
             })}
 
             {(grouped.dismissed ?? []).length > 0 && (
-              <details className="rounded-2xl border border-[var(--ui-line)] bg-[var(--ui-surface)] p-3">
+              <details className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-3">
                 <summary className="cursor-pointer text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">
                   {iu.status.dismissed}
                   <span className="ml-1.5 font-semibold">

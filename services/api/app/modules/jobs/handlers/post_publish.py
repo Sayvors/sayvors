@@ -55,6 +55,11 @@ async def handle_post_publish(job: Job, db: AsyncSession) -> dict | None:
     Returns a result dict persisted on Job.result.
     """
     payload = job.payload or {}
+    if getattr(job, "ui_visible", False):
+        job.progress = 10
+        job.progress_label = "Preparing"
+        db.add(job)
+        await db.flush()
     media_url = payload.get("media_url")
     media_type = payload.get("media_type")
     media_key = payload.get("media_key")
@@ -173,6 +178,9 @@ async def handle_post_publish(job: Job, db: AsyncSession) -> dict | None:
             scheduled_at=scheduled_at,
         )
 
+    if getattr(job, "ui_visible", False):
+        job.progress = 100
+        job.progress_label = "Completed"
     await complete_job(db, job=job, result=result)
 
     # A promotional post has an end date. Now that the post is live and
@@ -271,6 +279,29 @@ async def _publish_account_surface(
             media_data=media_data,
             content_type=content_type or "image/jpeg",
         )
+        if method == "banner":
+            category_fallback = (result or {}).get("categoryFallback")
+            category_confirmed = (result or {}).get("categoryConfirmed")
+            if not category_fallback and category_confirmed is not False:
+                # Start watching this cover. Google can replace it without asking;
+                # the monitor is what turns that silent drift into a visible
+                # "changed — replace again" warning in the publish composer.
+                try:
+                    from ...media import cover_monitor
+
+                    await cover_monitor.record_publish(
+                        db,
+                        tenant_id=job.tenant_id,
+                        channel_id=external_asset_id,
+                        user_id=channel.user_id,
+                        account_id=account_id,
+                        location_id=location_id,
+                        expected_name=str((result or {}).get("name") or ""),
+                        image_url=media_url,
+                        google_url=str((result or {}).get("googleUrl") or ""),
+                    )
+                except Exception:
+                    logger.exception("Could not start cover monitor after banner publish")
         return {
             "provider": "google_reviews",
             "method": method,
