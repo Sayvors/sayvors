@@ -483,6 +483,12 @@ async def theme_response(
         analysis = await ensure_theme_analysis(
             db, tenant_id, key, retry=retry, sample=sample
         )
+        # Re-read under the same row lock the worker uses before adding instant
+        # local evidence. A worker that finished while ensure_theme_analysis
+        # returned must not have its LLM themes overwritten by the fallback.
+        analysis = await _analysis_for_update(
+            db, tenant_id, analysis.subject_type, analysis.subject_id
+        ) or analysis
         status = {"pending": "pending", "running": "pending", "ready": "ready", "failed": "error"}.get(
             analysis.status, "error"
         )
