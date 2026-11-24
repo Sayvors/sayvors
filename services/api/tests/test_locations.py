@@ -61,12 +61,28 @@ async def test_locations_endpoint_lists_google_channels(client, db, user_id):
     assert rows[0]["name"] == "Test Place"
     assert rows[0]["phone"] == "+966 55 000 0000"
     assert rows[0]["source"] == "google"
+    assert rows[0]["is_verified"] is True
 
     profile = client.get("/api/v1/locations/loc-1")
     assert profile.status_code == 200, profile.text
     body = profile.json()
     assert body["phone"] == "+966 55 000 0000"
     assert body["website"] == "http://x.test"
+    assert body["is_verified"] is True
+
+
+@pytest.mark.asyncio
+async def test_unpublished_google_location_is_unverified(client, db, user_id):
+    """A drafted listing has a location id but no Place ID / Maps URL yet."""
+    await _google_account_connection(db, user_id)
+
+    listed = client.get("/api/v1/locations")
+    assert listed.status_code == 200, listed.text
+    assert listed.json()[0]["is_verified"] is False
+
+    profile = client.get("/api/v1/locations/loc-existing")
+    assert profile.status_code == 200, profile.text
+    assert profile.json()["is_verified"] is False
 
 
 @pytest.mark.asyncio
@@ -77,6 +93,7 @@ async def test_get_profile_merges_google_and_local(db, user_id):
     assert profile["address"] == "RIYADH"
     assert profile["phone"] == "+966 55 000 0000"
     assert profile["status"] == "active"
+    assert profile["is_verified"] is True
     assert profile["description"] == "Google description"
     assert "description" in profile["google_synced"]
     assert profile["categories"] == {}

@@ -92,6 +92,18 @@ def listing_id_of(channel: Channel) -> str:
     )
 
 
+def channel_is_verified(channel: Channel) -> bool:
+    """Whether this is a published Google listing rather than a draft.
+
+    Google assigns a Place ID / Maps URL once a listing is live. A newly
+    created location awaiting verification has a location id but neither.
+    Both are already stored on the channel at connect/sync time, so this
+    check adds no Google API call to the locations page.
+    """
+    meta = channel_meta(channel)
+    return bool(meta.get("place_id") or meta.get("maps_url"))
+
+
 def is_native_google(
     channel: Channel, statuses: tuple[str, ...] = ("active",)
 ) -> bool:
@@ -330,7 +342,7 @@ async def get_profile(
             "website": meta.get("website"),
             "maps_url": meta.get("maps_url"),
             "status": _status_of(channel),
-            "is_verified": None,
+            "is_verified": channel_is_verified(channel),
             # Google's own description fills the gap until the merchant
             # saves a local override, which always wins.
             "description": profile.description

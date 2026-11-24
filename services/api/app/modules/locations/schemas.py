@@ -11,6 +11,10 @@ class LocationSummary(BaseModel):
     website: str | None = None
     maps_url: str | None = None
     status: str
+    # Published Google listings have a stable Place ID / Maps URL; a drafted
+    # location awaiting verification has neither. Derived from synced metadata
+    # so the list endpoint makes no extra upstream calls.
+    is_verified: bool = False
     rating: float | None = None
     reviews: int = 0
     source: str  # "google"

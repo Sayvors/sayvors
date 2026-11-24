@@ -85,6 +85,7 @@ async def list_locations(
             website=meta.get("website"),
             maps_url=meta.get("maps_url"),
             status=channel.status,
+            is_verified=service.channel_is_verified(channel),
             rating=rating,
             reviews=reviews,
             source="google",

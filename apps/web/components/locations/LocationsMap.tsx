@@ -15,6 +15,7 @@ export interface MapLocation {
   address: string;
   rating?: number | null;
   reviews?: number | null;
+  is_verified?: boolean | null;
 }
 
 interface Geocoded extends MapLocation {
@@ -67,9 +68,11 @@ function fallbackPosition(index: number) {
 export default function LocationsMap({
   locations,
   apiKey,
+  labels,
 }: {
   locations: MapLocation[];
   apiKey: string;
+  labels: { verified: string; unverified: string };
 }) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
@@ -177,12 +180,16 @@ export default function LocationsMap({
           marker.addListener("gmp-click", () => {
             const rating = loc.rating !== null && loc.rating !== undefined ? `${loc.rating.toFixed(1)}★` : "No rating";
             const reviews = loc.reviews !== null && loc.reviews !== undefined ? `${loc.reviews} reviews` : "";
+            const verification = loc.is_verified ? labels.verified : labels.unverified;
+            const verificationColor = loc.is_verified ? "#116631" : "#8A5A00";
+            const verificationBg = loc.is_verified ? "#ECFDF3" : "#FFF7E6";
             const info = new g.maps.InfoWindow({
               content: `<div style='font:12px/1.45 system-ui;color:#14101F;max-width:240px'>
                 <strong>${escapeHtml(loc.name)}</strong><br/>
                 <span style='color:#6b6478'>${escapeHtml(loc.address || "")}</span><br/>
                 <span style='display:inline-block;margin-top:6px;padding:2px 6px;border-radius:4px;background:#F4F2F7;font-weight:700'>${rating}</span>
                 ${reviews ? `<span style='margin-left:6px;color:#6b6478'>${reviews}</span>` : ""}
+                <span style='display:inline-block;margin-top:6px;padding:2px 6px;border-radius:4px;background:${verificationBg};color:${verificationColor};font-weight:700'>${escapeHtml(verification)}</span>
                 ${loc.approximate ? `<div style='margin-top:6px;color:#9a8fae;font-size:10px'>Approximate location</div>` : ""}
               </div>`,
             });
@@ -217,7 +224,7 @@ export default function LocationsMap({
     return () => {
       cancelled = true;
     };
-  }, [apiKey, locations]);
+  }, [apiKey, locations, labels.unverified, labels.verified]);
 
   const resetView = () => {
     const map = mapRef.current;

@@ -410,6 +410,8 @@ const ar: Dict = {
       statusActive: "نشط",
       statusInactive: "غير نشط",
       statusUnknown: "غير معروف",
+      verified: "موثّق",
+      unverified: "غير موثّق",
       saveChanges: "حفظ التغييرات",
       saving: "جارٍ الحفظ...",
       applyToBranches: "تطبيق على {count} فروع",

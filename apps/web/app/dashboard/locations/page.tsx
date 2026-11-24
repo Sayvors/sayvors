@@ -18,6 +18,7 @@ import BulkEditSheet from "@/components/locations/BulkEditSheet";
 import CategoryPicker from "@/components/locations/CategoryPicker";
 import LocationsMap from "@/components/locations/LocationsMap";
 import ServicesPanel from "@/app/dashboard/services/page";
+import { preferredLocationId } from "@/lib/location-selection";
 
 /* ---------------------------------------------------------------------------------------*/
 
@@ -43,6 +44,7 @@ interface LocationOption {
   name: string;
   address: string;
   status: string;
+  is_verified?: boolean | null;
 }
 
 interface LocationGroup {
@@ -60,6 +62,7 @@ interface LocationSnapshot {
   website?: string | null;
   maps_url?: string | null;
   status: string;
+  is_verified?: boolean | null;
   rating?: number | null;
   reviews?: number | null;
 }
@@ -763,6 +766,31 @@ function statusLabel(status: string | null | undefined, copy: LocationsCopy): st
   return copy.statusUnknown;
 }
 
+/** Verification is colour + text, never colour alone. */
+function VerificationBadge({
+  verified,
+  copy,
+}: {
+  verified: boolean;
+  copy: LocationsCopy;
+}) {
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold ${
+        verified
+          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+          : "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
+      }`}
+    >
+      <span
+        aria-hidden
+        className={`h-1.5 w-1.5 rounded-full ${verified ? "bg-emerald-500" : "bg-amber-500"}`}
+      />
+      {verified ? copy.verified : copy.unverified}
+    </span>
+  );
+}
+
 /* -- Page ----------------------------------------- */
 
 export default function LocationsPage() {
@@ -1077,13 +1105,15 @@ export default function LocationsPage() {
             name: l.name,
             address: l.address ?? "",
             status: l.status,
+            is_verified: l.is_verified ?? false,
           };
         });
+        const selectedId = preferredLocationId(opts);
         return {
           snapshots: byId,
-          snapshot: opts.length ? byId[opts[0].id] ?? null : null,
+          snapshot: selectedId ? byId[selectedId] ?? null : null,
           locations: opts,
-          selectedId: opts.length ? opts[0].id : null,
+          selectedId,
         };
       } catch {
         return { snapshots: {}, snapshot: null, locations: [], selectedId: null };
@@ -1396,6 +1426,7 @@ const bulk: BulkScope | null = isBulk
           address: l.address,
           rating: snap?.rating ?? null,
           reviews: snap?.reviews ?? null,
+          is_verified: snap?.is_verified ?? false,
         };
       }),
     [locations, snapshots]
@@ -1441,10 +1472,18 @@ const bulk: BulkScope | null = isBulk
                 </option>
               ))}
               {locations.map((loc) => (
-                <option key={loc.id} value={loc.id}>{loc.name}</option>
+                <option key={loc.id} value={loc.id}>
+                  {loc.name} — {loc.is_verified ? copy.verified : copy.unverified}
+                </option>
               ))}
               {locations.length === 0 && <option value="">{copy.noLocations}</option>}
             </select>
+            {!isBulk && selectedLocation && (
+              <VerificationBadge
+                verified={selectedLocation.is_verified === true}
+                copy={copy}
+              />
+            )}
             <button
               onClick={() => setGroupsOpen(true)}
               className="rounded-[8px] border border-ink/[0.08] bg-white px-3.5 py-2 text-[12px] font-semibold text-ink/70 transition hover:bg-ink/[0.04] dark:border-fog/[0.08] dark:bg-ink dark:text-fog/70"
@@ -1895,6 +1934,7 @@ const bulk: BulkScope | null = isBulk
             <LocationsMap
               apiKey={process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? ""}
               locations={mapLocations}
+              labels={{ verified: copy.verified, unverified: copy.unverified }}
             />
           </div>
 
@@ -3157,6 +3197,7 @@ function GroupsModal({
                         className="h-4 w-4 accent-deep-violet"
                       />
                       <span className="min-w-0 flex-1 truncate text-[13px] text-ink dark:text-fog">{l.name}</span>
+                      <VerificationBadge verified={l.is_verified === true} copy={copy} />
                     </label>
                   </li>
                 ))}

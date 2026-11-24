@@ -408,6 +408,8 @@ const en = {
       statusActive: "active",
       statusInactive: "inactive",
       statusUnknown: "unknown",
+      verified: "Verified",
+      unverified: "Unverified",
       saveChanges: "Save Changes",
       saving: "Saving...",
       applyToBranches: "Apply to {count} branches",
