@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import BenchmarkConfig, BenchmarkPlace, BenchmarkSnapshot
+from .models import BenchmarkConfig, BenchmarkPlace, BenchmarkSnapshot, BenchmarkThemeAnalysis
 
 MAX_LABEL = 120
 MAX_NOTES = 2000
@@ -356,6 +356,17 @@ async def delete_saved(db: AsyncSession, tenant_id: str, place_id: str) -> bool:
     ).scalar_one_or_none()
     if row is None:
         return False
+    analyses = (
+        await db.execute(
+            select(BenchmarkThemeAnalysis).where(
+                BenchmarkThemeAnalysis.tenant_id == tenant_id,
+                BenchmarkThemeAnalysis.subject_type == "saved",
+                BenchmarkThemeAnalysis.subject_id == row.id,
+            )
+        )
+    ).scalars().all()
+    for analysis in analyses:
+        await db.delete(analysis)
     await db.delete(row)
     await db.commit()
     return True

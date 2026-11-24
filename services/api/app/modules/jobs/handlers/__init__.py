@@ -16,6 +16,7 @@ from .post_remove import handle_post_remove
 from .rag_ingest import handle_rag_ingest
 from .review_request_send import handle_review_request_send
 from .banner_check_run import handle_banner_check_run
+from .benchmark_theme_extract import handle as handle_benchmark_theme_extract
 
 # Closed registry: job_type -> handler coroutine(job, db) -> dict | None
 HANDLERS: dict[str, Callable[[Any, Any], Any]] = {
@@ -27,4 +28,5 @@ HANDLERS: dict[str, Callable[[Any, Any], Any]] = {
     "rag.ingest": handle_rag_ingest,
     "review_request.send": handle_review_request_send,
     "media.banner_check": handle_banner_check_run,
+    "benchmark.theme_extract": handle_benchmark_theme_extract,
 }

@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.deps import get_db
 from ..redis.service import cache_get, cache_set
 from ..team.context import TenantContext, require_perm, tenant_id_of
-from . import ai, boq, compare, mapsearch, outscraper, places, service
+from . import ai, boq, compare, mapsearch, outscraper, places, service, theme_service
 from .summary import distribution as metric_distribution, north_star
 
 router = APIRouter(prefix="/api/v1/benchmark", tags=["benchmark"])
@@ -327,6 +327,10 @@ class AiSummaryIn(BaseModel):
     subjects: list[SubjectKey] = Field(min_length=1, max_length=MAX_COMPARE_SUBJECTS)
 
 
+class ThemeSubjectsIn(BaseModel):
+    subjects: list[SubjectKey] = Field(min_length=1, max_length=MAX_COMPARE_SUBJECTS)
+
+
 @router.post("/ai-summary", response_model=dict)
 async def post_ai_summary(
     body: AiSummaryIn,
@@ -398,6 +402,40 @@ async def benchmark_reviews(
     return await compare.reviews_for(
         db, tenant_id_of(ctx.user), subjects, limit=limit
     )
+
+
+@router.get("/themes", response_model=dict)
+async def benchmark_themes(
+    subjects: list[SubjectKey] = Query(..., min_length=1, max_length=MAX_COMPARE_SUBJECTS),
+    ctx: TenantContext = Depends(require_perm("benchmark.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Read cached theme results and durably enqueue missing/stale samples.
+
+    This endpoint never calls an LLM. Workers do the paid work, so a page load
+    can only create one bounded job per subject and remains safe without workers.
+    """
+    try:
+        return await theme_service.theme_response(
+            db, tenant_id_of(ctx.user), subjects
+        )
+    except compare.CompareError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+@router.post("/themes/retry", response_model=dict)
+async def retry_benchmark_themes(
+    body: ThemeSubjectsIn,
+    ctx: TenantContext = Depends(require_perm("benchmark.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retry failed/stale analyses, bounded by the service cooldown."""
+    try:
+        return await theme_service.theme_response(
+            db, tenant_id_of(ctx.user), body.subjects, retry=True
+        )
+    except compare.CompareError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
 
 @router.get("/places", response_model=list[dict])

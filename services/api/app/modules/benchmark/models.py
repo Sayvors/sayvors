@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, Index, Integer, String, Text, UniqueConstraint, JSON
+from sqlalchemy import CHAR, DateTime, Float, Index, Integer, String, Text, UniqueConstraint, JSON, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...database import Base
@@ -102,4 +102,46 @@ class BenchmarkSnapshot(Base):
     reviews: Mapped[list | None] = mapped_column(JSON, nullable=True)
     fetched_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class BenchmarkThemeAnalysis(Base):
+    """One durable, versioned theme analysis per tenant-owned subject.
+
+    ``sample_json`` freezes the exact bounded evidence used for ``themes``.
+    A changed sample hash starts a new job; an older worker can no longer
+    overwrite the newer analysis because handlers re-check job id and hash.
+    """
+
+    __tablename__ = "benchmark_theme_analyses"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "subject_type", "subject_id",
+            name="uq_benchmark_theme_analysis_subject",
+        ),
+        Index(
+            "ix_benchmark_theme_analysis_status_updated",
+            "status", "updated_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(36), index=True)
+    subject_type: Mapped[str] = mapped_column(String(8))
+    subject_id: Mapped[str] = mapped_column(String(36))
+    sample_hash: Mapped[str] = mapped_column(CHAR(64))
+    sample_json: Mapped[list] = mapped_column(JSON, default=list, server_default=text("'[]'"))
+    themes: Mapped[list] = mapped_column(JSON, default=list, server_default=text("'[]'"))
+    status: Mapped[str] = mapped_column(String(16), default="pending", server_default="pending")
+    source: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    job_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )

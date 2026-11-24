@@ -36,6 +36,7 @@ class JobType(str, Enum):
     scrape_url = "scrape.url"                # URL scraping
     stt_job = "stt.job"                      # speech-to-text
     tts_job = "tts.job"                      # text-to-speech
+    benchmark_theme_extract = "benchmark.theme_extract"  # bounded review-theme analysis
 
     @classmethod
     def lane_for(cls, job_type: "JobType") -> JobLane:
@@ -60,6 +61,7 @@ _LANE_MAP: dict[JobType, JobLane] = {
     JobType.scrape_url: JobLane.bulk,
     JobType.stt_job: JobLane.bulk,
     JobType.tts_job: JobLane.bulk,
+    JobType.benchmark_theme_extract: JobLane.bulk,
 }
 
 
