@@ -190,7 +190,8 @@ async def refresh_due_places(
             try:
                 if provider is boq:
                     details = await boq.get_place(
-                        google_place_id, reviews_limit=reviews_limit, maps_url=maps_url
+                        google_place_id, reviews_limit=reviews_limit,
+                        maps_url=maps_url, days=None,
                     )
                 elif provider is outscraper:
                     details = await outscraper.get_place(

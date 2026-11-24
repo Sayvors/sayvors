@@ -52,6 +52,7 @@ async def test_unconfigured_provider_falls_back_to_the_free_provider(db, monkeyp
     assert result["scraped"] == 1
     assert called["maps_url"] == MAPS_URL
     assert called["reviews_limit"] == 500
+    assert called["days"] is None
     await db.refresh(row)
     assert row.rating == 4.5
     assert row.review_count == 120

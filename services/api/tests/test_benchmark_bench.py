@@ -208,6 +208,7 @@ async def test_refresh_uses_boq_when_selected(client, db, monkeypatch):
     assert res.status_code == 201, res.text
 
     async def _fake_boq(place_id, **kwargs):
+        assert kwargs.get("days") is None
         return {
             "place_id": place_id, "name": "G Cafe", "address": "Riyadh",
             "rating": 4.7, "review_count": 33, "types": [], "reviews": [],
@@ -394,6 +395,7 @@ async def test_search_nearby_is_strict_and_location_aware(client, db, user_id, m
         captured["kwargs"] = kwargs
         return [
             {"place_id": "p-local", "name": "Local Cafe", "address": "Al Malqa, Riyadh, Saudi Arabia", "rating": 4.5, "review_count": 10, "types": []},
+            {"place_id": "p-no-country", "name": "Local Cafe 2", "address": "Northern Ring Rd, Exit 7, Riyadh 12487", "rating": 4.6, "review_count": 11, "types": []},
             {"place_id": "p-foreign", "name": "Foreign Cafe", "address": "Fairview, Gqeberha, South Africa", "rating": 4.9, "review_count": 20, "types": []},
             {"place_id": "p-code", "name": "Code Match", "address": "Sandton, Johannesburg, South Africa", "rating": 4.2, "review_count": 5, "types": []},
         ]
@@ -406,7 +408,7 @@ async def test_search_nearby_is_strict_and_location_aware(client, db, user_id, m
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["location"]["country"] == "Saudi Arabia"
-    assert [p["place_id"] for p in body["nearby"]] == ["p-local"]
+    assert [p["place_id"] for p in body["nearby"]] == ["p-no-country", "p-local"]
     assert [p["place_id"] for p in body["other"]] == ["p-foreign", "p-code"]
     assert "Saudi Arabia" in captured["query"]
     assert captured["kwargs"]["country_code"] == "SA"

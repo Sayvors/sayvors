@@ -342,6 +342,7 @@ async def _provider_details(
     reviews_limit: int,
     maps_url: str | None = None,
     cutoff: int | None = None,
+    review_days: int | None = None,
 ) -> dict[str, Any]:
     """Provider-routed place details with an optional Places fallback.
 
@@ -355,7 +356,8 @@ async def _provider_details(
     if source in {"boq", "gosom"}:
         try:
             return await boq.get_place(
-                place_id, reviews_limit=reviews_limit, maps_url=maps_url
+                place_id, reviews_limit=reviews_limit, maps_url=maps_url,
+                days=review_days,
             )
         except boq.BoqError as exc:
             logger.warning("Free Google details failed for %s: %s", place_id, exc)

@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from functools import lru_cache
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -86,6 +87,32 @@ def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     return radius * 2 * math.asin(math.sqrt(a))
 
 
+@lru_cache(maxsize=1)
+def _country_names() -> set[str]:
+    """Normalized English country names used to read an address' last token."""
+    try:
+        from babel import Locale
+
+        return {
+            _norm(name)
+            for name in Locale("en").territories.values()
+            if isinstance(name, str) and name
+        }
+    except Exception:  # pragma: no cover - babel is a declared dependency
+        return set()
+
+
+def _address_country(address: str | None) -> str | None:
+    names = _country_names()
+    if not names:
+        return None
+    for part in reversed(str(address or "").split(",")):
+        candidate = _norm(part)
+        if candidate in names:
+            return candidate
+    return None
+
+
 # A business is "nearby" only when it is genuinely in the tenant's market. A
 # two-letter country code is never compared by substring: "SA" must not match
 # "Sandton" or "South Africa".
@@ -109,7 +136,13 @@ def _is_nearby(place: dict, loc: dict) -> bool:
         pass
 
     country_aliases = _country_aliases(loc)
-    if country_aliases and any(alias in addr for alias in country_aliases):
+    place_country = _address_country(addr)
+    if place_country:
+        return place_country in country_aliases
+    # Google often omits the country from local addresses. The provider request
+    # is already localized with gl=<country> and the country in the query, so a
+    # result without an explicit foreign country belongs to that market.
+    if country_aliases:
         return True
     # With no market context at all, every result is effectively "other".
     return False
