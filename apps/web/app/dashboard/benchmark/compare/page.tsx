@@ -1429,7 +1429,16 @@ export default function ComparePage() {
           <p className="text-[11px] text-[#7C7392]">{c.pullingLatest}</p>
         </div>
       ) : compareQuery.isError ? (
-        <p className="mt-5 text-[12px] text-red-700">{c.couldNotLoadComparison}</p>
+        <div className="mt-5 rounded-[8px] border border-[#FF4F6E]/25 bg-white px-5 py-6">
+          <p role="alert" className="text-[12px] font-semibold text-[#B32442]">{c.couldNotLoadComparison}</p>
+          <button
+            type="button"
+            onClick={() => void compareQuery.refetch()}
+            className={`mt-3 rounded-[8px] border border-[#3D1D6E]/25 bg-white px-3 py-1.5 text-[11px] font-bold text-[#3D1D6E] ${FOCUS}`}
+          >
+            {t.common.retry}
+          </button>
+        </div>
       ) : (
         <>
           {/* Now-tier summary: baseline drift, rank, AI read, distribution,

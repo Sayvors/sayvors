@@ -11,6 +11,22 @@ from app.modules.benchmark.models import BenchmarkPlace, BenchmarkSnapshot
 
 pytestmark = pytest.mark.asyncio
 
+
+@pytest.fixture(autouse=True)
+async def _paid_source_for_places_tests(db, monkeypatch):
+    """These tests exercise the paid-provider branches explicitly.
+
+    The product default is now the free provider; tests that want Places must
+    say so, while boq/outscraper tests override this in their own body.
+    """
+    from app.modules.benchmark import places as places_module
+    from app.modules.benchmark import service as bench_service
+
+    config = await bench_service.get_config(db)
+    config.source = "google_places"
+    await db.commit()
+    monkeypatch.setattr(places_module, "configured", lambda: True)
+
 TENANT = "tenant-compare"
 
 
@@ -590,6 +606,7 @@ async def test_scraper_scrapes_due_places_records_failures_and_prunes(db, monkey
         return await _fake_details(place_id, rating=4.6, review_count=12)
 
     monkeypatch.setattr(places_module, "get_place", _fake)
+    monkeypatch.setattr(places_module, "configured", lambda: True)
     result = await scraper.refresh_due_places(now=now)
 
     assert result["scraped"] == 2       # ok + old
@@ -818,7 +835,7 @@ async def test_saved_and_unavailable_subjects_carry_empty_tags(db, monkeypatch):
     assert results[1]["tags"] == []
 
 
-# ── Provider routing (google_places / gosom / outscraper) ──────────────────
+# ── Provider routing (google_places / boq / outscraper) ──────────────────
 
 
 async def _select_source(db, source):
@@ -830,15 +847,15 @@ async def _select_source(db, source):
     await db.commit()
 
 
-async def test_saved_subject_gosom_uses_cached_no_live_scrape(db, monkeypatch):
-    """gosom read paths must use the cached row, never a 600s live scrape."""
-    from app.modules.benchmark import gosom as gosom_module
+async def test_saved_subject_boq_uses_cached_no_live_scrape(db, monkeypatch):
+    """boq read paths must use the cached row, never a 600s live scrape."""
+    from app.modules.benchmark import boq as boq_module
     from app.modules.benchmark import places as places_module
     from app.modules.benchmark import service as bench_service
 
-    await _select_source(db, "gosom")
+    await _select_source(db, "boq")
     row = await bench_service.save_place(
-        db, TENANT, place_id="gosom-1", label="Gosom Rival",
+        db, TENANT, place_id="boq-1", label="Gosom Rival",
         maps_url="https://maps.google.com/?cid=1",
     )
     now = datetime.now(timezone.utc)
@@ -852,48 +869,48 @@ async def test_saved_subject_gosom_uses_cached_no_live_scrape(db, monkeypatch):
     async def _must_not_call(*args, **kwargs):
         raise AssertionError("read path must not call a live provider")
 
-    monkeypatch.setattr(gosom_module, "get_place", _must_not_call)
+    monkeypatch.setattr(boq_module, "get_place", _must_not_call)
     monkeypatch.setattr(places_module, "get_place", _must_not_call)
 
-    result = (await compare.compare_subjects(db, TENANT, ["saved:gosom-1"]))[0]
+    result = (await compare.compare_subjects(db, TENANT, ["saved:boq-1"]))[0]
     assert result["available"] is True
     assert result["name"] == "Gosom Rival"
     assert result["metrics"]["avg_rating"] == 4.6
     assert result["metrics"]["total_reviews"] == 700
 
 
-async def test_saved_subject_gosom_no_cache_returns_last_known(db, monkeypatch):
-    """With no cached details yet, gosom source still returns the saved identity
+async def test_saved_subject_boq_no_cache_returns_last_known(db, monkeypatch):
+    """With no cached details yet, boq source still returns the saved identity
     + numbers (no provider call), instead of hanging on a live scrape."""
-    from app.modules.benchmark import gosom as gosom_module
+    from app.modules.benchmark import boq as boq_module
     from app.modules.benchmark import places as places_module
     from app.modules.benchmark import service as bench_service
 
-    await _select_source(db, "gosom")
+    await _select_source(db, "boq")
     await bench_service.save_place(
-        db, TENANT, place_id="gosom-both", label="Offline Rival",
+        db, TENANT, place_id="boq-both", label="Offline Rival",
         rating=4.2, review_count=300,
     )
 
     async def _must_not_call(*args, **kwargs):
         raise AssertionError("read path must not call a live provider")
 
-    monkeypatch.setattr(gosom_module, "get_place", _must_not_call)
+    monkeypatch.setattr(boq_module, "get_place", _must_not_call)
     monkeypatch.setattr(places_module, "get_place", _must_not_call)
 
-    result = (await compare.compare_subjects(db, TENANT, ["saved:gosom-both"]))[0]
+    result = (await compare.compare_subjects(db, TENANT, ["saved:boq-both"]))[0]
     assert result["available"] is True
     assert result["name"] == "Offline Rival"
     assert result["metrics"]["avg_rating"] == 4.2
     assert result["metrics"]["total_reviews"] == 300
 
 
-async def test_saved_reviews_gosom_serve_cached_no_live_scrape(db, monkeypatch):
-    from app.modules.benchmark import gosom as gosom_module
+async def test_saved_reviews_boq_serve_cached_no_live_scrape(db, monkeypatch):
+    from app.modules.benchmark import boq as boq_module
     from app.modules.benchmark import service as bench_service
 
-    await _select_source(db, "gosom")
-    row = await bench_service.save_place(db, TENANT, place_id="gosom-rev", label="Rev Rival")
+    await _select_source(db, "boq")
+    row = await bench_service.save_place(db, TENANT, place_id="boq-rev", label="Rev Rival")
     now = datetime.now(timezone.utc)
     await bench_service.store_place_details(db, row, {
         "reviews": [
@@ -907,9 +924,9 @@ async def test_saved_reviews_gosom_serve_cached_no_live_scrape(db, monkeypatch):
     async def _must_not_call(*args, **kwargs):
         raise AssertionError("read path must not call a live provider")
 
-    monkeypatch.setattr(gosom_module, "get_place", _must_not_call)
+    monkeypatch.setattr(boq_module, "get_place", _must_not_call)
 
-    body = await compare.reviews_for(db, TENANT, ["saved:gosom-rev"], limit=10)
+    body = await compare.reviews_for(db, TENANT, ["saved:boq-rev"], limit=10)
     subj = body["subjects"][0]
     assert subj["name"] == "Rev Rival"
     assert len(subj["reviews"]) == 2
@@ -933,6 +950,7 @@ async def test_saved_subject_uses_outscraper_when_selected(db, monkeypatch):
         }
 
     monkeypatch.setattr(outscraper_module, "get_place", _fake_outscraper)
+    monkeypatch.setattr(outscraper_module, "configured", lambda: True)
 
     result = (await compare.compare_subjects(db, TENANT, ["saved:out-1"]))[0]
 

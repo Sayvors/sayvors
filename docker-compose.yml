@@ -89,33 +89,6 @@ services:
       retries: 3
       start_period: 30s
 
-  # gosom Google Maps scraper sidecar. Bound to loopback only; the app
-  # reaches it at http://gosom:8080 on the compose network.
-  gosom:
-    image: gosom/google-maps-scraper:latest
-    command: ["-web", "-addr", ":8080", "-data-folder", "/gmapsdata", "-c", "1", "-pages-per-browser", "1", "-browser-pool-size", "1"]
-    ports:
-      - "127.0.0.1:8081:8080"
-    volumes:
-      - gmapsdata:/gmapsdata
-      - gosom-playwright-cache:/opt
-    environment:
-      - DISABLE_TELEMETRY=1
-    mem_limit: 1200m
-    cpus: 0.5
-    restart: unless-stopped
-    healthcheck:
-      # The gosom image has no wget/curl; bash's /dev/tcp is the only probe
-      # available. The old wget check failed 825 times and marked a working
-      # container unhealthy, so never restore an external binary here.
-      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080'"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
-
 volumes:
   redisdata:
   kafkadata:
-  gmapsdata:
-  gosom-playwright-cache:

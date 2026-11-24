@@ -71,9 +71,12 @@ async def test_heatmatrix_empty_when_nothing_saved(db):
 pytestmark = pytest.mark.asyncio
 
 
-async def test_search_requires_permission(client, monkeypatch):
+async def test_search_requires_permission(client, db, monkeypatch):
     import app.modules.benchmark.places as places_module
 
+    config = await service.get_config(db)
+    config.source = "google_places"
+    await db.commit()
     monkeypatch.setattr(places_module, "configured", lambda: True)
 
     async def _fake(query, **kwargs):
@@ -103,8 +106,13 @@ async def test_delete_other_tenant_place_returns_404(client, db):
     assert client.delete("/api/v1/benchmark/places/not-mine").status_code == 404
 
 
-async def test_save_returns_not_ready_then_refresh_makes_ready(client, monkeypatch):
+async def test_save_returns_not_ready_then_refresh_makes_ready(client, db, monkeypatch):
     import app.modules.benchmark.places as places_module
+
+    config = await service.get_config(db)
+    config.source = "google_places"
+    await db.commit()
+    monkeypatch.setattr(places_module, "configured", lambda: True)
 
     async def _fake_get_place(place_id, **kwargs):
         assert kwargs.get("reviews_limit") == 10
@@ -189,23 +197,29 @@ async def _select_source(db, source):
     await db.commit()
 
 
-async def test_refresh_uses_gosom_when_selected(client, db, monkeypatch):
-    import app.modules.benchmark.gosom as gosom_module
+async def test_refresh_uses_boq_when_selected(client, db, monkeypatch):
+    import app.modules.benchmark.boq as boq_module
+    import app.modules.benchmark.places as places_module
 
-    await _select_source(db, "gosom")
+    await _select_source(db, "boq")
     res = client.post(
         "/api/v1/benchmark/places", json={"place_id": "g-ready", "label": "G"}
     )
     assert res.status_code == 201, res.text
 
-    async def _fake_gosom(place_id, **kwargs):
+    async def _fake_boq(place_id, **kwargs):
         return {
             "place_id": place_id, "name": "G Cafe", "address": "Riyadh",
             "rating": 4.7, "review_count": 33, "types": [], "reviews": [],
             "reviews_per_score": {"5": 20},
         }
 
-    monkeypatch.setattr(gosom_module, "get_place", _fake_gosom)
+    monkeypatch.setattr(boq_module, "get_place", _fake_boq)
+
+    async def _places_unavailable(*args, **kwargs):
+        raise places_module.PlacesError("no key", 503)
+
+    monkeypatch.setattr(places_module, "get_place", _places_unavailable)
 
     ref = client.post("/api/v1/benchmark/places/g-ready/refresh")
     assert ref.status_code == 200, ref.text
@@ -214,15 +228,15 @@ async def test_refresh_uses_gosom_when_selected(client, db, monkeypatch):
     assert body["reviews_per_score"] == {"5": 20}
 
 
-async def test_refresh_falls_back_to_places_when_gosom_fails(client, db, monkeypatch):
-    import app.modules.benchmark.gosom as gosom_module
+async def test_refresh_falls_back_to_places_when_boq_fails(client, db, monkeypatch):
+    import app.modules.benchmark.boq as boq_module
     import app.modules.benchmark.places as places_module
 
-    await _select_source(db, "gosom")
+    await _select_source(db, "boq")
     client.post("/api/v1/benchmark/places", json={"place_id": "g-fb", "label": "FB"})
 
-    async def _gosom_boom(place_id, **kwargs):
-        raise gosom_module.GosomError("gosom down", status_code=502)
+    async def _boq_boom(place_id, **kwargs):
+        raise boq_module.BoqError("boq down", status_code=502)
 
     async def _places_ok(place_id, **kwargs):
         return {
@@ -230,8 +244,9 @@ async def test_refresh_falls_back_to_places_when_gosom_fails(client, db, monkeyp
             "rating": 4.0, "review_count": 5, "types": [], "reviews": [],
         }
 
-    monkeypatch.setattr(gosom_module, "get_place", _gosom_boom)
+    monkeypatch.setattr(boq_module, "get_place", _boq_boom)
     monkeypatch.setattr(places_module, "get_place", _places_ok)
+    monkeypatch.setattr(places_module, "configured", lambda: True)
 
     ref = client.post("/api/v1/benchmark/places/g-fb/refresh")
     assert ref.status_code == 200, ref.text
@@ -239,19 +254,19 @@ async def test_refresh_falls_back_to_places_when_gosom_fails(client, db, monkeyp
 
 
 async def test_refresh_records_error_when_all_providers_fail(client, db, user_id, monkeypatch):
-    import app.modules.benchmark.gosom as gosom_module
+    import app.modules.benchmark.boq as boq_module
     import app.modules.benchmark.places as places_module
 
-    await _select_source(db, "gosom")
+    await _select_source(db, "boq")
     client.post("/api/v1/benchmark/places", json={"place_id": "g-err", "label": "Err"})
 
-    async def _gosom_boom(place_id, **kwargs):
-        raise gosom_module.GosomError("gosom down", status_code=502)
+    async def _boq_boom(place_id, **kwargs):
+        raise boq_module.BoqError("boq down", status_code=502)
 
     async def _places_boom(place_id, **kwargs):
         raise places_module.PlacesError("places down", status_code=503)
 
-    monkeypatch.setattr(gosom_module, "get_place", _gosom_boom)
+    monkeypatch.setattr(boq_module, "get_place", _boq_boom)
     monkeypatch.setattr(places_module, "get_place", _places_boom)
 
     ref = client.post("/api/v1/benchmark/places/g-err/refresh")
@@ -262,13 +277,14 @@ async def test_refresh_records_error_when_all_providers_fail(client, db, user_id
     assert saved.last_scrape_error
 
 
-async def test_place_details_gosom_serves_cached_no_live_scrape(client, db, user_id, monkeypatch):
-    """place_details must not live-scrape gosom (120s+ hold killed the DB
+async def test_place_details_boq_serves_cached_no_live_scrape(client, db, user_id, monkeypatch):
+    """place_details must not live-scrape boq (120s+ hold killed the DB
     session); it serves the cached row the worker / refresh filled."""
-    import app.modules.benchmark.gosom as gosom_module
+    import app.modules.benchmark.boq as boq_module
+    import app.modules.benchmark.places as places_module
     from app.modules.benchmark import service as bench_service
 
-    await _select_source(db, "gosom")
+    await _select_source(db, "boq")
     row = await bench_service.save_place(db, user_id, place_id="g-det", label="Det")
     await bench_service.store_place_details(db, row, {
         "name": "Det Cafe", "rating": 4.9, "review_count": 8,
@@ -277,9 +293,14 @@ async def test_place_details_gosom_serves_cached_no_live_scrape(client, db, user
     })
 
     async def _must_not_call(*args, **kwargs):
-        raise AssertionError("place_details must not live-scrape gosom")
+        raise AssertionError("place_details must not live-scrape boq")
 
-    monkeypatch.setattr(gosom_module, "get_place", _must_not_call)
+    monkeypatch.setattr(boq_module, "get_place", _must_not_call)
+
+    async def _places_unavailable(*args, **kwargs):
+        raise places_module.PlacesError("no key", 503)
+
+    monkeypatch.setattr(places_module, "get_place", _places_unavailable)
 
     res = client.get("/api/v1/benchmark/places/g-det/details")
     assert res.status_code == 200, res.text
@@ -290,7 +311,46 @@ async def test_place_details_gosom_serves_cached_no_live_scrape(client, db, user
     assert body["saved_id"]
 
 
+async def test_place_details_serves_cache_when_paid_provider_has_no_key(client, db, user_id, monkeypatch):
+    """Staging has no Places key by default: details must be 200, not 503."""
+    from app.modules.benchmark import places as places_module
+    from app.modules.benchmark import service as bench_service
+
+    row = await bench_service.save_place(db, user_id, place_id="cached-no-key", label="Cached")
+    await bench_service.store_place_details(db, row, {
+        "name": "Cached Cafe", "rating": 4.3, "review_count": 55,
+        "reviews": [{"rating": 5, "text": "great"}],
+    })
+    monkeypatch.setattr(places_module, "configured", lambda: False)
+
+    async def must_not_call(*args, **kwargs):
+        raise AssertionError("read handler called an unconfigured paid provider")
+
+    monkeypatch.setattr(places_module, "get_place", must_not_call)
+
+    res = client.get("/api/v1/benchmark/places/cached-no-key/details")
+
+    assert res.status_code == 200, res.text
+    assert res.json()["name"] == "Cached Cafe"
+
+
+async def test_saving_with_search_metadata_keeps_the_photo_and_is_ready(client, db, user_id):
+    res = client.post("/api/v1/benchmark/places", json={
+        "place_id": "with-photo", "label": "Photo Cafe", "rating": 4.4,
+        "review_count": 123, "thumbnail": "https://lh3.googleusercontent.com/cover=s256",
+        "maps_url": "https://www.google.com/maps/place/X/data=!4m6!3m5!1s0x1:0x2",
+    })
+    assert res.status_code == 201, res.text
+    body = res.json()
+    assert body["thumbnail"] == "https://lh3.googleusercontent.com/cover=s256"
+    # Identity + rating + count are already known at save time; the card must
+    # not say "not ready" while the synchronous review refresh runs, without
+    # pretending a detail fetch already happened.
+    assert body["details_ready"] is True
+    assert body["fetched_at"] is None
+
+
 async def test_get_config_includes_source(client, db):
     res = client.get("/api/v1/benchmark/config")
     assert res.status_code == 200, res.text
-    assert res.json()["source"] == "google_places"
+    assert res.json()["source"] == "boq"

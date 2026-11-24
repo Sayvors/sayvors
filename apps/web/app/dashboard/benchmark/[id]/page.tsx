@@ -218,7 +218,16 @@ export default function BenchmarkDetailPage() {
       {detailsQuery.isPending ? (
         <DetailSkeleton />
       ) : detailsQuery.isError || !details ? (
-        <p className="mt-6 text-[12px] text-red-700">Could not load this business.</p>
+        <div className="mt-6 rounded-[8px] border border-[#FF4F6E]/25 bg-white px-5 py-6">
+          <p role="alert" className="text-[12px] font-semibold text-[#B32442]">Could not load this business.</p>
+          <button
+            type="button"
+            onClick={() => void detailsQuery.refetch()}
+            className={`mt-3 rounded-[8px] border border-[#3D1D6E]/25 bg-white px-3 py-1.5 text-[11px] font-bold text-[#3D1D6E] ${FOCUS}`}
+          >
+            {t.common.retry}
+          </button>
+        </div>
       ) : (
         <>
           <header className="mt-5">

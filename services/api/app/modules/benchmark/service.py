@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -18,8 +19,32 @@ from .models import BenchmarkConfig, BenchmarkPlace, BenchmarkSnapshot
 MAX_LABEL = 120
 MAX_NOTES = 2000
 MAX_LIST = 100
-# Canonical Google Maps URL for gosom, bounded to the column width.
+# Canonical Google Maps URL, bounded to the column width.
 MAX_MAPS_URL = 1024
+MAX_THUMBNAIL_URL = 1024
+
+
+def _safe_thumbnail(value: str | None) -> str | None:
+    """Only Google-hosted HTTPS images may become a card image.
+
+    The URL is rendered directly by the browser, so scheme/host are validated
+    here instead of trusting a caller to supply a harmless image URL.
+    """
+    text = str(value or "").strip()[:MAX_THUMBNAIL_URL]
+    if not text:
+        return None
+    parsed = urlparse(text)
+    host = (parsed.hostname or "").lower()
+    if (
+        parsed.scheme != "https"
+        or not (
+            host == "googleusercontent.com"
+            or host.endswith(".googleusercontent.com")
+            or host.endswith(".ggpht.com")
+        )
+    ):
+        return None
+    return text
 
 
 class BenchError(ValueError):
@@ -60,11 +85,16 @@ def serialize(place: BenchmarkPlace) -> dict:
         "longitude": place.longitude,
         "reviews": place.reviews,
         "photos": place.photos,
-        "maps_url": place.maps_url,
         "reviews_per_score": place.reviews_per_score,
         "maps_url": getattr(place, "maps_url", None),
         "thumbnail": getattr(place, "thumbnail", None),
         "fetched_at": place.fetched_at.isoformat() if place.fetched_at else None,
+        # A card can be usable before reviews arrive when search already gave us
+        # identity + rating + count. This does not change cache freshness.
+        "details_ready": bool(
+            place.fetched_at
+            or (place.rating is not None and place.review_count is not None)
+        ),
         "last_scrape_error": place.last_scrape_error,
         "created_at": place.created_at.isoformat() if place.created_at else None,
         "updated_at": place.updated_at.isoformat() if place.updated_at else None,
@@ -93,14 +123,17 @@ async def save_place(
     rating: float | None = None,
     review_count: int | None = None,
     maps_url: str | None = None,
+    thumbnail: str | None = None,
 ) -> BenchmarkPlace:
     """Save one place to this tenant's bench, idempotent on (tenant, place)."""
     pid = str(place_id or "").strip()[:255]
     if not pid:
         raise BenchError("Choose a place to save.")
+    moment = datetime.now(timezone.utc)
     clean_label = (label or "").strip()[:MAX_LABEL] or None
     clean_notes = (notes or "").strip()[:MAX_NOTES] or None
     clean_maps_url = str(maps_url or "").strip()[:MAX_MAPS_URL] or None
+    clean_thumbnail = _safe_thumbnail(thumbnail)
 
     dup = (
         await db.execute(
@@ -123,6 +156,8 @@ async def save_place(
             dup.review_count = review_count
         if clean_maps_url is not None:
             dup.maps_url = clean_maps_url
+        if clean_thumbnail is not None:
+            dup.thumbnail = clean_thumbnail
         await db.commit()
         await db.refresh(dup)
         return dup
@@ -145,7 +180,7 @@ async def save_place(
         label=clean_label, notes=clean_notes,
         latitude=latitude, longitude=longitude,
         rating=rating, review_count=review_count,
-        maps_url=clean_maps_url,
+        maps_url=clean_maps_url, thumbnail=clean_thumbnail,
     )
     db.add(row)
     try:
@@ -169,7 +204,7 @@ async def save_place(
     db.add(BenchmarkSnapshot(
         place_id=row.id, tenant_id=tenant_id,
         rating=rating, review_count=review_count,
-        fetched_at=datetime.now(timezone.utc),
+        fetched_at=moment,
     ))
     await db.commit()
     return row

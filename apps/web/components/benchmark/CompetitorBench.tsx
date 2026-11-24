@@ -50,7 +50,16 @@ export default function CompetitorBench() {
   async function save(place: PlaceResult) {
     setBusyId(place.place_id);
     try {
-      await saveBenchmarkPlace({ place_id: place.place_id, label: place.name });
+      await saveBenchmarkPlace({
+        place_id: place.place_id,
+        label: place.name,
+        maps_url: place.maps_url,
+        thumbnail: place.thumbnail,
+        rating: place.rating,
+        review_count: place.review_count,
+        latitude: place.latitude,
+        longitude: place.longitude,
+      });
       await queryClient.invalidateQueries({ queryKey: ["benchmark", "saved"] });
       setSearchRes((prev) => prev ? { ...prev, nearby: prev.nearby.filter((p) => p.place_id !== place.place_id), other: prev.other.filter((p) => p.place_id !== place.place_id) } : prev);
       await refreshBenchmarkPlace(place.place_id);

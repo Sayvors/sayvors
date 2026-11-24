@@ -25,8 +25,9 @@ class BenchmarkConfig(Base):
     retention_days: Mapped[int] = mapped_column(Integer, default=730)
     refresh_hours: Mapped[int] = mapped_column(Integer, default=24)
     max_saved_places: Mapped[int] = mapped_column(Integer, default=50)
-    # Admin-selected provider: google_places | gosom | outscraper.
-    source: Mapped[str] = mapped_column(String(20), default="google_places")
+    # Public Google endpoints (map search + place detail + BOQ reviews) are the
+    # default; configured paid providers remain selectable explicitly.
+    source: Mapped[str] = mapped_column(String(20), default="boq")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -63,10 +64,10 @@ class BenchmarkPlace(Base):
     longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     reviews: Mapped[list | None] = mapped_column(JSON, nullable=True)
     photos: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    # Canonical Google Maps URL resolved at save time, used as the gosom
-    # scrape target.
+    # Canonical Maps URL captured at save time; carries the feature id used by
+    # the free place-detail and review endpoints.
     maps_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
-    # Google place photo URL for the card avatar (from the gosom place payload).
+    # Google place photo URL for the card avatar.
     thumbnail: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     # Star distribution (e.g. {"1": n, ... "5": n}) from the provider.
     reviews_per_score: Mapped[dict | None] = mapped_column(JSON, nullable=True)

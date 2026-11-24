@@ -11,9 +11,10 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.config import settings
-from app.modules.benchmark import boq, gosom
+from app.modules.benchmark import boq, placedetail
 
 FTID = "0x3e2efb00092dac35:0xfdf71e5a3e9b48fa"
+PLACE_ID = "ChIJbX3jKQD_Lj4RCQzYIquZgfE"
 MAPS_URL = (
     "https://www.google.com/maps/place/Test/@24.8,46.6,17z/data=!3m1!4b1"
     f"!4m6!3m5!1s{FTID}!8m2!3d24.8!4d46.6!16s%2Fg%2F11xkz44ltd"
@@ -245,86 +246,101 @@ async def test_reviews_for_place_without_feature_id_makes_no_request():
     assert await boq.reviews_for_place("saved-1", maps_url=None) == []
 
 
-# â”€â”€ gosom integration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# â”€â”€ Full place fetch: place facts + deep reviews â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
-async def test_deepen_reviews_replaces_shallow_gosom_list(monkeypatch):
-    deep = [{"review_id": f"deep{i}", "rating": 5, "text": "x",
-             "publish_time": None, "author": None, "author_photo": None,
-             "owner_answer": None, "owner_answer_time": None} for i in range(40)]
+async def test_get_place_composes_metadata_and_deep_reviews(monkeypatch):
     called = {}
+    deep = [{
+        "review_id": "rev-deep", "rating": 5, "text": "Great",
+        "publish_time": "2026-11-23T00:00:00+00:00", "author": "A",
+        "author_photo": None, "owner_answer": None, "owner_answer_time": None,
+    }]
 
-    async def fake(place_id, **kwargs):
-        called.update(kwargs)
+    async def fake_details(feature, **kwargs):
+        called["detail"] = feature
+        return {
+            "place_id": PLACE_ID, "name": "Wahmy Burger", "address": "Riyadh",
+            "rating": 4.4, "review_count": 6633, "latitude": 24.8152,
+            "longitude": 46.7774, "types": ["Hamburger restaurant"],
+            "thumbnail": "https://lh3.googleusercontent.com/cover", "reviews": [],
+            "photos": [], "reviews_per_score": None, "source": "placedetail",
+        }
+
+    async def fake_reviews(feature, *, max_reviews, days, client=None):
+        called["reviews"] = {"feature": feature, "max_reviews": max_reviews, "days": days}
         return deep
 
-    monkeypatch.setattr(boq, "reviews_for_place", fake)
-    shallow = [{"review_id": "shallow"}]
+    monkeypatch.setattr(placedetail, "get_place", fake_details)
+    monkeypatch.setattr(boq, "fetch_reviews", fake_reviews)
 
-    result = await gosom._deepen_reviews(
-        {"place_id": "p1", "maps_url": MAPS_URL}, shallow,
-        limit=500, days=30, maps_url=None,
-    )
+    place = await boq.get_place(PLACE_ID, maps_url=MAPS_URL, reviews_limit=500)
 
-    assert len(result) == 40
-    assert called["max_reviews"] == 500
-    assert called["days"] == 30
-
-
-async def test_deepen_reviews_keeps_shallow_list_on_failure(monkeypatch):
-    """A BOQ outage must not blank a competitor's reviews."""
-
-    async def boom(place_id, **kwargs):
-        raise boq.BoqError("blocked", 503)
-
-    monkeypatch.setattr(boq, "reviews_for_place", boom)
-    shallow = [{"review_id": "shallow"}]
-
-    result = await gosom._deepen_reviews(
-        {"place_id": "p1", "maps_url": MAPS_URL}, shallow,
-        limit=500, days=30, maps_url=None,
-    )
-
-    assert result == shallow
+    assert called["detail"] == FTID
+    assert called["reviews"] == {
+        "feature": FTID, "max_reviews": 500,
+        "days": boq.DEFAULT_REVIEW_WINDOW_DAYS,
+    }
+    assert place["name"] == "Wahmy Burger"
+    assert place["rating"] == 4.4
+    assert place["review_count"] == 6633
+    assert place["thumbnail"] == "https://lh3.googleusercontent.com/cover"
+    assert place["types"] == ["Hamburger restaurant"]
+    assert place["reviews"] == deep
+    assert place["maps_url"] == MAPS_URL
+    assert place["source"] == "boq"
 
 
-async def test_deepen_reviews_is_skipped_without_a_feature_id(monkeypatch):
-    async def fail(place_id, **kwargs):
-        raise AssertionError("BOQ called without a feature id")
-
-    monkeypatch.setattr(boq, "reviews_for_place", fail)
-    shallow = [{"review_id": "shallow"}]
-
-    result = await gosom._deepen_reviews(
-        {"place_id": "p1", "maps_url": None}, shallow,
-        limit=500, days=30, maps_url="https://www.google.com/maps/place/?q=place_id:ChIJx",
-    )
-
-    assert result == shallow
-
-
-async def test_deepen_reviews_can_be_disabled(monkeypatch):
+async def test_get_place_can_disable_reviews_without_losing_metadata(monkeypatch):
     monkeypatch.setattr(settings, "BOQ_REVIEWS_ENABLED", False)
 
-    async def fail(place_id, **kwargs):
-        raise AssertionError("BOQ called while disabled")
+    async def fake_details(feature, **kwargs):
+        return {"name": "Wahmy Burger", "rating": 4.4}
 
-    monkeypatch.setattr(boq, "reviews_for_place", fail)
-    shallow = [{"review_id": "shallow"}]
+    async def fail(*args, **kwargs):
+        raise AssertionError("reviews fetched while disabled")
 
-    result = await gosom._deepen_reviews(
-        {"place_id": "p1", "maps_url": MAPS_URL}, shallow,
-        limit=500, days=30, maps_url=None,
-    )
+    monkeypatch.setattr(placedetail, "get_place", fake_details)
+    monkeypatch.setattr(boq, "fetch_reviews", fail)
 
-    assert result == shallow
+    place = await boq.get_place(PLACE_ID, maps_url=MAPS_URL)
+    assert place["name"] == "Wahmy Burger"
+    assert place["reviews"] == []
 
 
-async def test_deepen_reviews_zero_limit_means_no_reviews():
-    """limit=0 is an explicit "no reviews" request, not "use the default"."""
-    result = await gosom._deepen_reviews(
-        {"place_id": "p1", "maps_url": MAPS_URL}, [{"review_id": "shallow"}],
-        limit=0, days=30, maps_url=None,
-    )
+async def test_get_place_requires_a_feature_id(monkeypatch):
+    async def fail(*args, **kwargs):
+        raise AssertionError("detail fetched without a feature id")
 
-    assert result == []
+    monkeypatch.setattr(placedetail, "get_place", fail)
+
+    with pytest.raises(boq.BoqError) as exc:
+        await boq.get_place(
+            PLACE_ID, maps_url="https://www.google.com/maps/place/?q=place_id:ChIJx"
+        )
+    assert exc.value.status_code == 422
+
+
+async def test_get_place_propagates_detail_errors(monkeypatch):
+    async def boom(feature, **kwargs):
+        raise placedetail.PlaceDetailError("blocked", 503)
+
+    monkeypatch.setattr(placedetail, "get_place", boom)
+
+    with pytest.raises(boq.BoqError) as exc:
+        await boq.get_place(PLACE_ID, maps_url=MAPS_URL)
+    assert exc.value.status_code == 503
+
+
+async def test_get_place_zero_limit_means_no_reviews(monkeypatch):
+    async def fake_details(feature, **kwargs):
+        return {"name": "Wahmy Burger", "rating": 4.4}
+
+    async def fail(*args, **kwargs):
+        raise AssertionError("reviews fetched for limit=0")
+
+    monkeypatch.setattr(placedetail, "get_place", fake_details)
+    monkeypatch.setattr(boq, "fetch_reviews", fail)
+
+    place = await boq.get_place(PLACE_ID, maps_url=MAPS_URL, reviews_limit=0)
+    assert place["reviews"] == []

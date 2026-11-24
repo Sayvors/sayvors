@@ -350,21 +350,23 @@ class Settings(BaseSettings):
     # or return this value.
     OUTSCRAPER_API_KEY: str = ""
 
-    # ── gosom Google Maps scraper sidecar ───────────────────────────────────
-    # Self-hosted gosom/google-maps-scraper (MIT, free) running as a sidecar.
-    # Empty URL means "not deployed": the worker degrades to the Places provider
-    # instead of crashing. Never log or return this value.
+    # ── Free Google benchmark endpoints ────────────────────────────────────
+    # Deprecated compatibility fields: existing staging .env files may still
+    # contain these. They are accepted so Settings' extra-forbid guard does not
+    # crash boot, but nothing reads them — the gosom sidecar is retired.
     GOSOM_SCRAPER_URL: str = ""
-    # Optional proxy list for the sidecar, comma-separated
-    # (protocol://user:pass@host:port). Empty = no proxy (safe for the
-    # named-competitor scale). Set when Google starts returning empty/limited
-    # results — see modules/benchmark/gosom.py docstring.
     GOSOM_PROXIES: str = ""
-    # Deepen gosom's reviews with Google's own BOQ panel endpoint (free, no
-    # login). gosom alone only sees ~5 reviews per place, which is too few to
-    # measure recent momentum. Disable to fall back to gosom-only reviews
-    # without changing the selected provider.
+    # Search + place facts + BOQ review history need no key or sidecar.
+    # Disable review paging to refresh metadata only, without changing the
+    # selected provider.
     BOQ_REVIEWS_ENABLED: bool = True
+    # Optional proxy pool for the free Google endpoints (benchmark search,
+    # place detail, reviews), comma-separated: http://user:pass@host:port.
+    # Empty = direct from the server IP. Routes are sticky per place and a
+    # blocked proxy is rested automatically — see modules/benchmark/net.py.
+    # Set this the moment Google starts answering the server with empty
+    # responses or 429s. Never log or return this value.
+    GOOGLE_SCRAPER_PROXIES: str = ""
     # ── Analytics / business intelligence ────────────────────────────────
     # How often the Google Business Profile performance sync runs (impressions,
     # website clicks, calls, direction requests -> location_daily_metrics).

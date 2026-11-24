@@ -9,6 +9,7 @@ import OwnLocations from "@/components/benchmark/OwnLocations";
 import {
   deleteBenchmarkPlace,
   fetchSavedPlaces,
+  isSavedPlaceReady,
   refreshBenchmarkPlace,
   saveBenchmarkPlace,
   searchPlaces,
@@ -38,9 +39,8 @@ export default function BenchmarkPage() {
   const saved = savedQuery.data ?? [];
   const benchSetCount = saved.filter((p) => p.in_bench_set).length;
 
-  // gosom scrapes Google Maps in a real browser (~60s per search), so search is
-  // explicit (button/Enter), never search-as-you-type. The ref guards against a
-  // second submit starting while one is in flight — the disabled button covers
+  // Search is explicit (button/Enter), never search-as-you-type. The ref guards
+  // against a second submit while one is in flight — the disabled button covers
   // the UI, this covers programmatic/rapid Enter presses and stale closures.
   const searchingRef = useRef(false);
 
@@ -73,9 +73,10 @@ export default function BenchmarkPage() {
         longitude: place.longitude,
         rating: place.rating,
         review_count: place.review_count,
-        // The Maps URL lets the gosom scraper target this exact listing for the
-        // review pull instead of relying on the id string alone.
+        // The Maps URL carries the feature id the free detail/review endpoints
+        // use; the photo makes the saved card recognizable immediately.
         maps_url: place.maps_url,
+        thumbnail: place.thumbnail,
       });
       await queryClient.invalidateQueries({ queryKey: ["benchmark", "saved"] });
       setSearchRes((prev) => prev ? {
@@ -167,8 +168,7 @@ export default function BenchmarkPage() {
               aria-label={b.searchAria}
               className={`min-w-0 flex-1 bg-transparent text-[13px] text-[#14101F] outline-none placeholder:text-[#3B2D5E]/70 ${FOCUS}`}
             />
-            {/* Explicit submit: gosom search takes ~60s, so search-as-you-type
-                would flood the single-worker scraper queue. The button stays
+            {/* Explicit submit: never search-as-you-type. The button stays
                 disabled for the whole request. */}
             <button
               type="button"
@@ -272,6 +272,17 @@ export default function BenchmarkPage() {
         </p>
         {savedQuery.isPending ? (
           <p className="text-[12px] text-[var(--ui-ink-2)]">{b.loading}</p>
+        ) : savedQuery.isError ? (
+          <div className="rounded-[8px] border border-[#FF4F6E]/25 bg-white px-5 py-6">
+            <p role="alert" className="text-[12px] font-semibold text-[#B32442]">{b.loadFailed}</p>
+            <button
+              type="button"
+              onClick={() => void savedQuery.refetch()}
+              className={`mt-3 rounded-[8px] border border-[#3D1D6E]/25 bg-white px-3 py-1.5 text-[11px] font-bold text-[#3D1D6E] ${FOCUS}`}
+            >
+              {t.common.retry}
+            </button>
+          </div>
         ) : saved.length === 0 ? (
           <p className="rounded-[8px] border border-dashed border-[var(--ui-line)] bg-white px-5 py-8 text-center text-[12px] text-[var(--ui-ink-2)]">
             {b.nothingSaved}
@@ -279,7 +290,7 @@ export default function BenchmarkPage() {
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {saved.map((place) => {
-              const ready = Boolean(place.fetched_at) && !place.last_scrape_error;
+              const ready = isSavedPlaceReady(place);
               const fetching = busyId === place.place_id;
               const name = place.label || place.name || b.savedBusiness;
               // Two-letter monogram keeps the avatar legible even for long business names.

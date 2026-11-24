@@ -1,4 +1,4 @@
-/** Benchmark API client — live Places search and the tenant's saved bench. */
+/** Benchmark API client — free Google Maps search and the tenant's saved bench. */
 import { apiFetch } from "@/lib/api-rag";
 
 export interface PlaceResult {
@@ -10,8 +10,8 @@ export interface PlaceResult {
   latitude: number | null;
   longitude: number | null;
   types: string[];
-  // Canonical Google Maps URL from the search result. Passed through on save so
-  // the gosom scraper can target the exact listing for the review pull.
+  // Canonical Maps URL from search. Carries the feature id used by the free
+  // place-detail and review endpoints.
   maps_url?: string | null;
   /** Google place photo URL, used as the saved card's logo/avatar. */
   thumbnail?: string | null;
@@ -53,6 +53,8 @@ export interface SavedPlace {
   in_heatmap: boolean;
   in_bench_set: boolean;
   fetched_at: string | null;
+  /** Search metadata is enough to open a card before reviews finish loading. */
+  details_ready?: boolean;
   last_scrape_error: string | null;
   created_at: string | null;
   maps_url?: string | null;
@@ -62,13 +64,24 @@ export interface SavedPlace {
   address?: string | null;
 }
 
+/** A card is usable when search metadata or a completed refresh exists, unless
+ *  the last refresh failed. Older API responses fall back to `fetched_at`.
+ */
+export function isSavedPlaceReady(
+  place: Pick<SavedPlace, "details_ready" | "fetched_at" | "last_scrape_error">,
+): boolean {
+  if (place.last_scrape_error) return false;
+  if (typeof place.details_ready === "boolean") return place.details_ready;
+  return Boolean(place.fetched_at);
+}
+
 export async function searchPlaces(query: string): Promise<BenchmarkSearchResponse> {
-  // gosom scrapes Google Maps in a real browser, so a search can take ~60s.
-  // The default 60s apiFetch timeout is a race against that; give it headroom.
+  // The free map RPC answers in ~2s. 30s is headroom for a slow route/proxy,
+  // not the old browser-scraper's two-minute wait.
   const res = await apiFetch(
     `/api/v1/benchmark/search?q=${encodeURIComponent(query)}`,
     {},
-    150000,
+    30000,
   ) as any;
   if (Array.isArray(res)) {
     return { query, location: {}, nearby: res, other: [] };
@@ -94,6 +107,7 @@ export function saveBenchmarkPlace(input: {
   rating?: number | null;
   review_count?: number | null;
   maps_url?: string | null;
+  thumbnail?: string | null;
 }): Promise<SavedPlace> {
   return apiFetch("/api/v1/benchmark/places", {
     method: "POST",

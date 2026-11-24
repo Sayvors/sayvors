@@ -1,13 +1,8 @@
 """Free Google Maps place search via the public ``tbm=map`` endpoint.
 
-gosom's browser-driven search is currently unusable (Google's Maps page throws
-a Playwright ``scrollHeight`` error, and the sidecar reports success even when
-the inner job failed). This module replaces only the *search* path: it calls the
-same lite map-search endpoint the Maps UI uses, gets structured JSON in one
-HTTP GET, and needs no browser, API key, login or payment.
-
-Review depth still comes from ``boq`` and metadata writes still go through the
-existing provider, so this is a drop-in for ``search_places`` only.
+Calls the same map-search RPC the Maps UI uses, gets structured JSON in one
+HTTP GET, and needs no browser, API key, login or payment. Place facts are
+refreshed by ``placedetail`` and review history by ``boq``.
 
 The response is XSSI-guarded JSON. Results live at ``data[0][1]``; each entry's
 place array is at ``entry[14]`` and carries the fields we need at fixed slots:
@@ -22,6 +17,8 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
+
+from . import net
 
 logger = logging.getLogger(__name__)
 
@@ -153,12 +150,48 @@ def _parse(body: str) -> list[dict[str, Any]]:
     return places
 
 
+async def _search_on_client(
+    q: str, cap: int, session: Any
+) -> list[dict[str, Any]]:
+    pb = _SEARCH_PB.format(
+        diameter=_EARTH_DIAMETER_METERS,
+        lat=0.0,
+        lng=0.0,
+        per_page=MAX_RESULTS,
+        offset=0,
+    )
+    try:
+        response = await session.get(
+            SEARCH_URL,
+            params={
+                "tbm": "map", "authuser": "0", "hl": "en", "gl": "us",
+                "q": q, "pb": pb,
+            },
+            headers=_HEADERS,
+        )
+    except httpx.HTTPError as exc:
+        raise net.Blocked("Map search is unreachable") from exc
+    if response.status_code in (403, 429):
+        raise net.Blocked(f"Map search rate-limited the route (HTTP {response.status_code})")
+    if response.status_code != 200:
+        raise MapSearchError(f"Map search returned HTTP {response.status_code}", 502)
+    if not response.text.strip():
+        raise net.Blocked("Map search returned an empty body")
+    if any(marker in response.text[:4000].lower() for marker in (
+        "consent.google.com", "accounts.google.com", "before you continue",
+        "unusual traffic",
+    )):
+        raise net.Blocked("Map search served a consent page")
+    return _parse(response.text)[:cap]
+
+
 async def search_places(
-    query: str, *, limit: int = MAX_RESULTS, client: httpx.AsyncClient | None = None
+    query: str, *, limit: int = MAX_RESULTS, client: Any | None = None
 ) -> list[dict[str, Any]]:
     """Find places for ``query``; listings only, no reviews and no browser.
 
-    ``client`` is injectable for tests; production gets one bounded client.
+    ``client`` is injectable for tests; production tries one route per place,
+    keeping each search on one IP and moving off a refused route automatically.
     """
     q = str(query or "").strip()[:255]
     if not q:
@@ -167,36 +200,22 @@ async def search_places(
         cap = max(1, min(int(limit), MAX_RESULTS))
     except (TypeError, ValueError):
         cap = MAX_RESULTS
-
-    own_client = client is None
-    session = client or httpx.AsyncClient(
-        timeout=REQUEST_TIMEOUT_SECONDS, follow_redirects=True
-    )
-    try:
+    if client is not None:
         try:
-            pb = _SEARCH_PB.format(
-                diameter=_EARTH_DIAMETER_METERS,
-                lat=0.0,
-                lng=0.0,
-                per_page=MAX_RESULTS,
-                offset=0,
-            )
-            response = await session.get(
-                SEARCH_URL,
-                params={
-                    "tbm": "map", "authuser": "0", "hl": "en", "gl": "us",
-                    "q": q, "pb": pb,
-                },
-                headers=_HEADERS,
-            )
-        except httpx.HTTPError as exc:
-            raise MapSearchError("Map search is unreachable") from exc
-        if response.status_code != 200:
-            raise MapSearchError(
-                f"Map search returned HTTP {response.status_code}",
-                503 if response.status_code in (403, 429) else 502,
-            )
-        return _parse(response.text)[:cap]
-    finally:
-        if own_client:
-            await session.aclose()
+            return await _search_on_client(q, cap, client)
+        except net.Blocked as exc:
+            raise MapSearchError(str(exc), exc.status_code) from exc
+
+    last_error: net.Blocked | None = None
+    for route in net.routes_for(f"search:{q.lower()}"):
+        async with net.client_for(route, timeout=REQUEST_TIMEOUT_SECONDS) as session:
+            try:
+                places = await _search_on_client(q, cap, session)
+            except net.Blocked as exc:
+                net.note_result(route, ok=False)
+                last_error = exc
+                logger.warning("Map search blocked on a route for %r: %s", q, exc)
+                continue
+            net.note_result(route, ok=True)
+            return places
+    raise MapSearchError(str(last_error or "Map search is unavailable"), 503)

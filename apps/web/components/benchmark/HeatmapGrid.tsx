@@ -95,6 +95,24 @@ export default function HeatmapGrid() {
     );
   }
 
+  if (query.isError) {
+    return (
+      <section aria-label={b.marketHeatmap} className="mb-6">
+        <h2 className="mb-3 text-[14px] font-bold text-[var(--ui-ink)]">{b.marketHeatmap}</h2>
+        <div className="rounded-[8px] border border-[#FF4F6E]/25 bg-white px-5 py-6">
+          <p role="alert" className="text-[12px] font-semibold text-[#B32442]">{b.loadFailed}</p>
+          <button
+            type="button"
+            onClick={() => void query.refetch()}
+            className={`mt-3 rounded-[8px] border border-[#3D1D6E]/25 bg-white px-3 py-1.5 text-[11px] font-bold text-[#3D1D6E] ${FOCUS}`}
+          >
+            {t.common.retry}
+          </button>
+        </div>
+      </section>
+    );
+  }
+
   const showing = Math.min(pinned.length, SLOT_COUNT);
 
   return (

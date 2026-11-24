@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.deps import get_db
 from ..redis.service import cache_get, cache_set
 from ..team.context import TenantContext, require_perm, tenant_id_of
-from . import ai, compare, gosom, mapsearch, outscraper, places, service
+from . import ai, boq, compare, mapsearch, outscraper, places, service
 from .summary import distribution as metric_distribution, north_star
 
 router = APIRouter(prefix="/api/v1/benchmark", tags=["benchmark"])
@@ -21,6 +21,9 @@ MAX_COMPARE_SUBJECTS = 6
 # AI summaries are stable over slowly-moving numbers; 10 min also rate-limits
 # the one paid LLM call per comparison set without an extra throttle layer.
 AI_SUMMARY_CACHE_TTL = 600
+# A synchronous refresh after Save stays short: ~100 reviews is enough to make
+# the card ready immediately; the worker deepens the 30-day set later.
+REFRESH_REVIEWS_LIMIT = 100
 
 
 class SavePlaceIn(BaseModel):
@@ -31,9 +34,11 @@ class SavePlaceIn(BaseModel):
     longitude: float | None = Field(default=None, ge=-180, le=180)
     rating: float | None = Field(default=None, ge=0, le=5)
     review_count: int | None = Field(default=None, ge=0)
-    # Canonical Google Maps URL from the search result (gosom) or Places
-    # details. Used as the scrape target so gosom hits the exact listing.
+    # Canonical Google Maps URL from mapsearch or Places. It carries the
+    # feature id the free place-detail and review endpoints key on.
     maps_url: str | None = Field(default=None, max_length=1024)
+    # Google-hosted photo for the saved card. Validated in service.save_place.
+    thumbnail: str | None = Field(default=None, max_length=1024)
 
 
 def _norm(s: str | None) -> str:
@@ -78,10 +83,9 @@ async def search_places(
         search_q = f"{raw_q}, {loc_hint}"
 
     config = await service.get_config(db)
-    # gosom's browser search is unreliable (Google's Maps page throws a
-    # Playwright scrollHeight error and gosom still reports success on an empty
-    # result). The free tbm=map JSON endpoint does the same listings-only job
-    # in one request, so it is the default whenever Places is not configured.
+    # The free map-search RPC does the listings-only job in one request. Places
+    # is used only when explicitly configured; otherwise search never depends
+    # on a browser, a sidecar, or a paid key.
     use_places = bool(places.configured()) and config.source == "google_places"
     provider_name = "places" if use_places else "mapsearch"
 
@@ -315,7 +319,7 @@ async def save_place(
             place_id=body.place_id, label=body.label, notes=body.notes,
             latitude=body.latitude, longitude=body.longitude,
             rating=body.rating, review_count=body.review_count,
-            maps_url=body.maps_url,
+            maps_url=body.maps_url, thumbnail=body.thumbnail,
         )
     except service.BenchError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -362,21 +366,31 @@ async def refresh_place(
     ctx: TenantContext = Depends(require_perm("benchmark.manage")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Fetch last-week details for one saved place (cost-capped, 10 reviews max)."""
+    """Fetch one place now so its card is ready without waiting for the worker.
+
+    The free provider gets a bounded 100-review sample here; the scheduled
+    collector later fills the full 30-day set (up to 500 reviews).
+    """
     import time as _time
 
     saved = await service.get_saved(db, tenant_id_of(ctx.user), place_id)
     if saved is None:
         raise HTTPException(status_code=404, detail="Saved place not found")
     config = await service.get_config(db)
+    # Release the read transaction before the network call. A paged scrape must
+    # never leave an idle Postgres connection open.
+    await db.commit()
+    source = str(config.source or "").strip()
+    if source not in compare.CACHE_ONLY_SOURCES and not compare.can_fetch_live(source):
+        source = "boq"
     now_ts = int(_time.time())
     cutoff_ts = now_ts - 7 * 24 * 3600
     try:
         details = await compare._provider_details(
-            config.source, saved.place_id,
-            reviews_limit=10, maps_url=saved.maps_url, cutoff=cutoff_ts,
+            source, saved.place_id,
+            reviews_limit=REFRESH_REVIEWS_LIMIT, maps_url=saved.maps_url, cutoff=cutoff_ts,
         )
-    except (places.PlacesError, gosom.GosomError, outscraper.OutscraperError) as exc:
+    except (places.PlacesError, boq.BoqError, outscraper.OutscraperError) as exc:
         saved.last_scrape_error = str(exc)[:500]
         await db.commit()
         await db.refresh(saved)
@@ -405,11 +419,10 @@ async def place_details(
     if saved is None:
         raise HTTPException(status_code=404, detail="Saved place not found")
     config = await service.get_config(db)
-    # gosom scraping drives a real browser (~60s+) and must NEVER run inside an
-    # HTTP read handler: it held the request 120s+ and killed the DB session on
-    # close. For gosom, serve the cached row the worker / explicit refresh
-    # filled. Places/outscraper keep their live path (fast).
-    if config.source == "gosom":
+    # Cache-only for the free provider (paging is not a page-load operation),
+    # and for any paid provider whose credentials are absent. This keeps saved
+    # details at 200 on staging instead of returning a dead 503.
+    if not compare.can_fetch_live(config.source):
         details = {
             "place_id": saved.place_id,
             "name": saved.name,
@@ -420,9 +433,10 @@ async def place_details(
             "reviews": saved.reviews or [],
             "photos": saved.photos or [],
             "thumbnail": saved.thumbnail,
-            "source": "gosom",
+            "source": config.source,
         }
         return {**details, "saved_id": saved.id, "label": saved.label}
+    await db.commit()
     now_ts = int(_time.time())
     cutoff_ts = now_ts - 7 * 24 * 3600
     try:
@@ -430,7 +444,7 @@ async def place_details(
             config.source, saved.place_id,
             reviews_limit=10, maps_url=saved.maps_url, cutoff=cutoff_ts,
         )
-    except (places.PlacesError, gosom.GosomError, outscraper.OutscraperError) as exc:
+    except (places.PlacesError, boq.BoqError, outscraper.OutscraperError) as exc:
         raise HTTPException(
             status_code=getattr(exc, "status_code", 502), detail=str(exc)
         )

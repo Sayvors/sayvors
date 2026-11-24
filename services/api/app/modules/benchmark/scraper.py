@@ -1,8 +1,9 @@
-"""Scheduled benchmark scrape that feeds the benchmark history.
+"""Scheduled benchmark collector: public Google endpoints, no browser sidecar.
 
-The provider is admin-selected via `BenchmarkConfig.source`
-(`google_places` | `gosom` | `outscraper`); the chosen module decides the
-per-call cost and review depth.
+Search uses ``mapsearch``. Place facts use ``placedetail``. Deep reviews use
+``boq``. The worker is provider-shaped so a configured Google Places or
+Outscraper account can still be used explicitly, but the free Google provider
+is always available when no such account exists.
 
 Admin owns the cadence. `BenchmarkConfig` carries it:
 
@@ -10,12 +11,10 @@ Admin owns the cadence. `BenchmarkConfig` carries it:
 - `retention_days` — how long snapshots are kept before the pruner removes them.
 - `place_cache_enabled` — false pauses scraping entirely without deleting history.
 
-The worker loop wakes on a short fixed tick and scrapes whatever is due, so an
-admin changing the interval takes effect on the next tick instead of needing a
-restart. One pass is bounded: a fixed number of places, one provider call per
-distinct Google place id (a competitor saved by many tenants is fetched once),
-and a failure on one place never stops the pass. Every failure is stored on the
-row it belongs to, so a silent outage is impossible.
+One pass is bounded: a fixed number of places, one provider call per distinct
+Google place id (a competitor saved by many tenants is fetched once), and a
+failure on one place never stops the pass. Every failure is stored on the row
+it belongs to, so a silent outage is impossible.
 """
 from __future__ import annotations
 
@@ -28,7 +27,7 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import async_session
-from . import gosom, outscraper, places, service
+from . import boq, outscraper, places, service
 from .models import BenchmarkPlace, BenchmarkSnapshot
 
 logger = logging.getLogger(__name__)
@@ -42,21 +41,20 @@ BATCH_LIMIT = 10
 CALL_PACING_SECONDS = 0.25
 MAX_ERROR_LEN = 300
 
-# Per-provider review depth. gosom returns full history; Places and Outscraper
-# are capped low because Outscraper bills per review and Places' free tier is
-# shallow.
+# Per-provider review depth. The free provider returns real history; Places
+# and Outscraper remain bounded because they can bill per review.
 PROVIDER_REVIEWS_LIMIT = {
     "google_places": 10,
-    "gosom": 500,
+    "boq": 500,
     "outscraper": 10,
 }
 
 
 def _resolve_provider(config: Any) -> Any:
-    """Pick the scraper module for `config.source`; unknown falls back to Places."""
+    """Pick the provider; legacy ``gosom`` rows now use the free endpoints."""
     source = str(getattr(config, "source", "") or "").strip()
-    if source == "gosom":
-        return gosom
+    if source in {"boq", "gosom"}:
+        return boq
     if source == "outscraper":
         return outscraper
     return places
@@ -100,7 +98,8 @@ async def _due_rows(
     """Rows whose newest snapshot is missing or older than `cutoff`.
 
     Returns `(place_pk, place_id, tenant_id, last_at, maps_url)`; `maps_url` is
-    the gosom scrape target (canonical Maps URL resolved at save time).
+    the canonical Maps URL captured at save time and carries the feature id the
+    free endpoints key on.
     """
     newest = (
         select(
@@ -142,8 +141,8 @@ async def refresh_due_places(
 ) -> dict[str, Any]:
     """Run one bounded scrape pass.
 
-    Returns a counter dict — the worker logs it and tests assert on it. Raises
-    `ScrapeAborted` only when the selected provider is not configured; every
+    Returns a counter dict — the worker logs it and tests assert on it. A 503
+    from a configured provider aborts the pass (quota/block); every other
     per-place failure is isolated and recorded on that row.
     """
     moment = now or datetime.now(timezone.utc)
@@ -154,14 +153,26 @@ async def refresh_due_places(
 
         source = str(getattr(config, "source", "") or "").strip()
         provider = _resolve_provider(config)
-        reviews_limit = PROVIDER_REVIEWS_LIMIT.get(source, 10)
-        if source == "gosom" and not gosom.configured():
-            raise ScrapeAborted("gosom scraper is not configured")
-        if source == "outscraper" and not outscraper.configured():
-            raise ScrapeAborted("outscraper scraper is not configured")
+        # A missing paid-provider key must not idle the worker: the free Google
+        # endpoints work for every row that has a canonical Maps URL.
+        if provider is not boq and not provider.configured():
+            logger.info(
+                "Benchmark provider %r is not configured; using free Google endpoints",
+                source,
+            )
+            provider = boq
+            source = "boq"
+        reviews_limit = PROVIDER_REVIEWS_LIMIT.get(source, 500)
 
         cutoff = moment - timedelta(hours=max(1, config.refresh_hours))
         due = await _due_rows(db, cutoff, limit)
+        skipped = 0
+        if provider is boq:
+            refreshable = [row for row in due if boq.feature_id(row[4])]
+            skipped = len(due) - len(refreshable)
+            due = refreshable
+            if skipped:
+                logger.debug("Skipped %d benchmark rows without a Maps feature id", skipped)
         scraped = failed = 0
 
         # One provider call per distinct Google place id: the same competitor is
@@ -177,8 +188,8 @@ async def refresh_due_places(
         for google_place_id, targets in grouped.items():
             maps_url = group_maps_url.get(google_place_id)
             try:
-                if provider is gosom:
-                    details = await gosom.get_place(
+                if provider is boq:
+                    details = await boq.get_place(
                         google_place_id, reviews_limit=reviews_limit, maps_url=maps_url
                     )
                 elif provider is outscraper:
@@ -189,7 +200,7 @@ async def refresh_due_places(
                     details = await places.get_place(
                         google_place_id, reviews_limit=reviews_limit, cutoff=cutoff_ts
                     )
-            except (places.PlacesError, gosom.GosomError, outscraper.OutscraperError) as exc:
+            except (places.PlacesError, boq.BoqError, outscraper.OutscraperError) as exc:
                 if getattr(exc, "status_code", None) == 503:
                     # No API key / not configured: every remaining call fails the same way.
                     logger.error("Benchmark scrape aborted: %s", exc)
@@ -223,7 +234,8 @@ async def refresh_due_places(
             "scraped": scraped,
             "failed": failed,
             "pruned": pruned,
-            "due": len(due),
+            "due": len(due) + skipped,
+            "skipped": skipped,
             "refresh_hours": config.refresh_hours,
             "retention_days": config.retention_days,
         }
@@ -237,7 +249,7 @@ async def run_benchmark_scraper() -> None:
             if result.get("scraped") or result.get("failed") or result.get("reason"):
                 logger.info("Benchmark scrape pass: %s", result)
         except ScrapeAborted:
-            # Logged where it happened; idle until Places is configured.
+            # Logged where it happened; idle until the provider recovers.
             pass
         except Exception:
             logger.exception("Benchmark scrape pass crashed; retrying next tick")

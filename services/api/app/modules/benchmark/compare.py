@@ -25,10 +25,7 @@ from ..analytics.models import LocationDailyMetric, ReviewInsight
 from ..analytics.service import get_overview
 from ..analytics.staff_mentions import listing_id_for_channel, staff_summary
 from ..channels.models import BusinessService, Channel, VerificationRecord
-from . import gosom
-from . import outscraper
-from . import places
-from . import service
+from . import boq, outscraper, places, service
 from .models import BenchmarkSnapshot
 
 logger = logging.getLogger(__name__)
@@ -315,6 +312,29 @@ async def _baseline_snapshot(
     ).scalar_one_or_none()
 
 
+# Read handlers never call the free provider live: it is a paged scrape, not a
+# page-load API. The worker / explicit refresh fills the cache.
+CACHE_ONLY_SOURCES = {"boq", "gosom"}
+
+
+def can_fetch_live(source: str) -> bool:
+    """Whether a read handler can call the selected provider safely.
+
+    On staging the default row may still say ``google_places`` without a key.
+    Treating that as a live provider is what made saved-place details return
+    503 and cards stick on "not ready". A source with no credentials serves the
+    cache instead.
+    """
+    source = str(source or "").strip()
+    if source in CACHE_ONLY_SOURCES:
+        return False
+    if source == "outscraper":
+        return bool(outscraper.configured())
+    if source == "google_places":
+        return bool(places.configured())
+    return False
+
+
 async def _provider_details(
     source: str,
     place_id: str,
@@ -323,25 +343,22 @@ async def _provider_details(
     maps_url: str | None = None,
     cutoff: int | None = None,
 ) -> dict[str, Any]:
-    """Provider-routed place details with a Places fallback.
+    """Provider-routed place details with an optional Places fallback.
 
-    ``source`` is the admin-selected provider (``BenchmarkConfig.source``).
-    gosom pulls up to ``reviews_limit`` reviews and needs the canonical
-    ``maps_url``; outscraper and the Places fallback are capped at 10 by cost.
-    A gosom/outscraper failure falls back to Places (metadata + 10 reviews) so a
-    single-provider outage never blanks the comparison column. When every
-    provider fails the last error is re-raised, so the caller records one
-    outage and can read its ``status_code``.
+    ``boq`` composes Google's public place-detail and review endpoints. Paid
+    providers stay available when explicitly configured. A primary-provider
+    failure falls back to Places only when a key exists; otherwise the original
+    error is re-raised instead of making a doomed HTTP request.
     """
     source = str(source or "").strip()
     last_error: Exception | None = None
-    if source == "gosom":
+    if source in {"boq", "gosom"}:
         try:
-            return await gosom.get_place(
+            return await boq.get_place(
                 place_id, reviews_limit=reviews_limit, maps_url=maps_url
             )
-        except gosom.GosomError as exc:
-            logger.warning("gosom details failed for %s: %s", place_id, exc)
+        except boq.BoqError as exc:
+            logger.warning("Free Google details failed for %s: %s", place_id, exc)
             last_error = exc
     elif source == "outscraper":
         try:
@@ -351,6 +368,10 @@ async def _provider_details(
         except outscraper.OutscraperError as exc:
             logger.warning("outscraper details failed for %s: %s", place_id, exc)
             last_error = exc
+    if not places.configured():
+        if last_error is not None:
+            raise last_error
+        raise places.PlacesError("Google Places is not configured", 503)
     try:
         return await places.get_place(place_id, reviews_limit=10, cutoff=cutoff)
     except places.PlacesError:
@@ -380,17 +401,11 @@ async def _saved_subject(db: AsyncSession, tenant_id: str, raw: str,
     if cached_at and cached_at.tzinfo is None:
         cached_at = cached_at.replace(tzinfo=timezone.utc)
 
-    # The period views serve from the cache when it is fresh: a comparison
-    # page that hits Places six times a load just because it can is charging
-    # the merchant for page views. Live (days=None) always calls Google, so
-    # the "Live" button keeps its meaning; the cadence defaults to the admin
-    # configured scrape interval.
-    # gosom scraping drives a real browser (~60s+) and must NEVER run inside an
-    # HTTP read handler: doing so made /compare and /reviews hang for 600s and
-    # killed DB connections. For gosom, always serve the cache that the worker
-    # (or an explicit refresh) filled. Places/outscraper keep their live path.
+    # Period views serve from the cache when it is fresh; Live uses a live paid
+    # provider when one exists. The free provider is always cache-only because
+    # paging reviews inside a read handler would hold the DB session for seconds.
     use_cache = bool(
-        source == "gosom" or (
+        not can_fetch_live(source) or (
             cache_enabled and days is not None and max_age_hours
             and cached_at and now - cached_at <= timedelta(hours=max_age_hours)
         )
@@ -412,7 +427,7 @@ async def _saved_subject(db: AsyncSession, tenant_id: str, raw: str,
                 source, saved.place_id,
                 reviews_limit=500, maps_url=saved.maps_url, cutoff=cutoff_ts,
             )
-        except (places.PlacesError, gosom.GosomError, outscraper.OutscraperError) as exc:
+        except (places.PlacesError, boq.BoqError, outscraper.OutscraperError) as exc:
             logger.warning(
                 "Comparison details failed for place %s: %s", saved.place_id, exc
             )
@@ -892,16 +907,16 @@ async def _saved_reviews(
         return None, []
     name = saved.name or saved.label
     reviews = list(saved.reviews or [])
-    # gosom never scrapes inside a read handler (would hang 600s). The worker /
-    # explicit refresh fills the cache; serve only that here.
-    if not reviews and source != "gosom":
+    # The free provider never scrapes inside a read handler. The worker /
+    # explicit refresh fills the cache; paid providers may fill an empty sample.
+    if not reviews and can_fetch_live(source):
         cutoff_ts = int(datetime.now(timezone.utc).timestamp()) - 7 * 24 * 3600
         try:
             details = await _provider_details(
                 source, saved.place_id,
                 reviews_limit=50, maps_url=saved.maps_url, cutoff=cutoff_ts,
             )
-        except (places.PlacesError, gosom.GosomError, outscraper.OutscraperError):
+        except (places.PlacesError, boq.BoqError, outscraper.OutscraperError):
             details = {}
         reviews = list(details.get("reviews") or [])
     out = []

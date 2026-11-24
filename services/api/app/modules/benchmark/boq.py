@@ -1,31 +1,32 @@
-"""Free deep review history from Google's own BOQ panel endpoint.
+"""Free place facts + deep reviews from Google's own Maps endpoints.
 
-gosom can only read the handful of reviews Google renders for a signed-out
-browser (~5 per place since the 2026 sign-in wall). That is enough to prove a
-business exists and to read its rating, but not to say anything about *recent*
-review momentum. Google's Local Search panel itself pages the full list through
+Google's Local Search panel pages the full public review list through
 ``GetLocalBoqProxy``; this module reads that same endpoint directly, so review
-depth no longer requires a paid provider, a login, or a proxy.
+depth needs no paid provider, login, API key or browser. Place facts (rating,
+count, address, category, photo) come from ``placedetail``.
 
 Measured against a 22k-review Riyadh business: 790 unique reviews across 40
-pages, ~1.3s per page, no login, no API key. gosom returns 5 for the same place.
+pages, ~1.3s per page, no login, no API key. A signed-out browser only renders
+five.
 
 Scope rules that keep this cheap and honest:
 
-- **Metadata comes from gosom, reviews come from here.** The BOQ payload has no
-  place rating, count, address or photos; inventing them would fill benchmark
-  snapshots with nulls. Callers merge these reviews into a gosom result.
+- **Metadata and reviews are separate calls.** ``placedetail`` owns the public
+  facts; BOQ owns review text. ``get_place`` composes both into the same shape
+  the benchmark worker has always consumed.
 - **Newest-first with an early stop.** Reviews are requested sorted newest and
   paging stops as soon as a page crosses the window cutoff, so a normal business
   costs one page and even a very busy one costs a few.
 - **The 30-day window is enforced twice**: paging stops at the cutoff *and* the
   result is filtered again, so a provider that ignored the sort cannot leak old
   reviews into "this month".
-- **Failures are soft.** A blocked or changed endpoint raises ``BoqError`` and
-  the caller keeps whatever gosom returned; review depth is an enhancement, not
-  a hard dependency.
+- **Failures propagate.** A blocked or changed endpoint raises ``BoqError`` and
+  the caller records it on the row; it never silently stores "no reviews".
+- **Proxy routing is shared.** One route stays bound to the whole paging
+  sequence (tokens are session-bound); a refused route is rested and another is
+  tried. With no proxies configured, behaviour is direct exactly as before.
 
-The endpoint is undocumented and can change without notice; ``_parse_page``
+The endpoints are undocumented and can change without notice; ``_parse_page``
 validates the shape it depends on and raises rather than storing garbage.
 """
 from __future__ import annotations
@@ -40,6 +41,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
+
+from ...config import settings
+from . import net, placedetail
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +64,8 @@ PAGE_SIZE = 20
 # for. Without a bound a busy listing pages forever.
 MAX_PAGES = 30
 
-# How much review history we keep per place. Mirrors gosom so switching the
-# review source never changes what "reviews this month" means.
+# How much review history we keep per place: recent momentum, bounded so one
+# very busy listing cannot monopolize the worker.
 DEFAULT_REVIEW_WINDOW_DAYS = 30
 DEFAULT_MAX_REVIEWS = 500
 
@@ -279,23 +283,72 @@ def _pages_for(max_reviews: int) -> int:
     return max(1, min(MAX_PAGES, 1 + math.ceil(remaining / PAGE_SIZE)))
 
 
+async def _fetch_reviews_on_client(
+    key: str, *, limit: int, cutoff: datetime | None, session: Any
+) -> list[dict[str, Any]]:
+    reviews: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    token = ""
+    for page in range(_pages_for(limit)):
+        try:
+            response = await session.get(
+                BOQ_URL,
+                params={
+                    "msc": "gwsrpc",
+                    "reqpld": json.dumps(_payload(key, token), separators=(",", ":")),
+                },
+                headers=_HEADERS,
+            )
+        except httpx.HTTPError as exc:
+            raise net.Blocked("Review depth endpoint is unreachable") from exc
+
+        if response.status_code in (403, 429):
+            raise net.Blocked(
+                f"Review depth endpoint rate-limited the route "
+                f"(HTTP {response.status_code})"
+            )
+        if response.status_code != 200:
+            raise BoqError(
+                f"Review depth endpoint returned HTTP {response.status_code}", 502
+            )
+        if not response.text.strip():
+            # HTTP 200 + zero bytes is Google's refusal for a refused route.
+            raise net.Blocked("Review depth endpoint returned an empty body")
+        if any(marker in response.text[:4000].lower() for marker in (
+            "consent.google.com", "accounts.google.com", "before you continue",
+            "unusual traffic",
+        )):
+            raise net.Blocked("Review depth endpoint served a consent page")
+        raw_reviews, token = _parse_page(response.text)
+        oldest = _map_reviews(raw_reviews, cutoff=cutoff, seen=seen, out=reviews)
+        if oldest is not None and cutoff is not None and oldest < cutoff:
+            break  # sorted newest: every later page is older still
+        if not token or len(reviews) >= limit:
+            break
+        if page + 1 < _pages_for(limit):
+            await asyncio.sleep(PAGE_DELAY_SECONDS)
+    reviews.sort(key=lambda row: row.get("publish_time") or "", reverse=True)
+    return reviews[:limit]
+
+
 async def fetch_reviews(
     feature: str,
     *,
     max_reviews: int = DEFAULT_MAX_REVIEWS,
     days: int | None = DEFAULT_REVIEW_WINDOW_DAYS,
-    client: httpx.AsyncClient | None = None,
+    client: Any | None = None,
 ) -> list[dict[str, Any]]:
     """Read up to ``max_reviews`` reviews, newest first, stopping at the window.
 
     Paging stops when the requested depth is reached, when the provider runs out
     of pages, or when a page's oldest review crosses ``days`` — the last one is
     what keeps a 22k-review business from costing 20 requests for a 30-day view.
+    One proxy route stays bound to the whole sequence, because a pagination
+    token belongs to the session that started it.
     """
     key = str(feature or "").strip()
     if not key:
         raise BoqError("Place has no Google feature id", 422)
-
     try:
         limit = max(1, int(max_reviews))
     except (TypeError, ValueError):
@@ -304,49 +357,29 @@ async def fetch_reviews(
         datetime.now(timezone.utc) - timedelta(days=days)
         if days and days > 0 else None
     )
-
-    reviews: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    token = ""
-    own_client = client is None
-    session = client or httpx.AsyncClient(
-        timeout=REQUEST_TIMEOUT_SECONDS, follow_redirects=True
-    )
-    try:
-        for page in range(_pages_for(limit)):
-            try:
-                response = await session.get(
-                    BOQ_URL,
-                    params={
-                        "msc": "gwsrpc",
-                        "reqpld": json.dumps(_payload(key, token), separators=(",", ":")),
-                    },
-                    headers=_HEADERS,
-                )
-            except httpx.HTTPError as exc:
-                raise BoqError("Review depth endpoint is unreachable") from exc
-
-            if response.status_code != 200:
-                raise BoqError(
-                    f"Review depth endpoint returned HTTP {response.status_code}",
-                    503 if response.status_code in (403, 429) else 502,
-                )
-            raw_reviews, token = _parse_page(response.text)
-            oldest = _map_reviews(
-                raw_reviews, cutoff=cutoff, seen=seen, out=reviews
+    if client is not None:
+        try:
+            return await _fetch_reviews_on_client(
+                key, limit=limit, cutoff=cutoff, session=client
             )
-            if oldest is not None and cutoff is not None and oldest < cutoff:
-                break  # sorted newest: every later page is older still
-            if not token or len(reviews) >= limit:
-                break
-            if page + 1 < _pages_for(limit):
-                await asyncio.sleep(PAGE_DELAY_SECONDS)
-    finally:
-        if own_client:
-            await session.aclose()
+        except net.Blocked as exc:
+            raise BoqError(str(exc), exc.status_code) from exc
 
-    reviews.sort(key=lambda row: row.get("publish_time") or "", reverse=True)
-    return reviews[:limit]
+    last_error: net.Blocked | None = None
+    for route in net.routes_for(f"reviews:{key}"):
+        async with net.client_for(route, timeout=REQUEST_TIMEOUT_SECONDS) as session:
+            try:
+                reviews = await _fetch_reviews_on_client(
+                    key, limit=limit, cutoff=cutoff, session=session
+                )
+            except net.Blocked as exc:
+                net.note_result(route, ok=False)
+                last_error = exc
+                logger.warning("BOQ blocked on a route for %s: %s", key, exc)
+                continue
+            net.note_result(route, ok=True)
+            return reviews
+    raise BoqError(str(last_error or "Review depth is unavailable"), 503)
 
 
 async def reviews_for_place(
@@ -366,3 +399,43 @@ async def reviews_for_place(
         logger.debug("No BOQ feature id for place %s", place_id)
         return []
     return await fetch_reviews(feature, max_reviews=max_reviews, days=days)
+
+
+async def get_place(
+    place_id: str,
+    *,
+    reviews_limit: int = DEFAULT_MAX_REVIEWS,
+    cutoff: Any = None,
+    maps_url: str | None = None,
+    days: int | None = DEFAULT_REVIEW_WINDOW_DAYS,
+) -> dict[str, Any]:
+    """Fetch one place's public facts and recent reviews.
+
+    Has the same contract as the former browser scraper, so the worker, compare
+    and refresh routes can swap providers without knowing how either endpoint
+    works. ``cutoff`` exists for signature parity and is ignored: the review
+    window is expressed in ``days``.
+    """
+    pid = str(place_id or "").strip()[:255]
+    if not pid:
+        raise BoqError("Unknown place", 400)
+    feature = placedetail.feature_id(maps_url)
+    if not feature:
+        raise BoqError(
+            "Place has no Google Maps URL with a feature id; search and save it again.",
+            422,
+        )
+    try:
+        details = await placedetail.get_place(feature)
+    except placedetail.PlaceDetailError as exc:
+        raise BoqError(str(exc), exc.status_code) from exc
+
+    details["place_id"] = pid
+    details["maps_url"] = str(maps_url or "")[:1024] or None
+    details["reviews"] = []
+    if reviews_limit != 0 and bool(getattr(settings, "BOQ_REVIEWS_ENABLED", True)):
+        details["reviews"] = await fetch_reviews(
+            feature, max_reviews=reviews_limit, days=days
+        )
+    details["source"] = "boq"
+    return details
