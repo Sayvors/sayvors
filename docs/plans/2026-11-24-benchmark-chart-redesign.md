@@ -1,6 +1,6 @@
 # Benchmark Chart Redesign Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use subagent-driven-development (recommended) or executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use subagent-driven-development (recommended) or executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Replace the four Benchmark graph sections with owner-focused, accessible comparisons that distinguish real gaps from missing/low-sample data.
 
@@ -41,13 +41,13 @@
 - Modify: `apps/web/lib/i18n/en.ts`, `apps/web/lib/i18n/ar.ts`
 - Create: `apps/web/components/benchmark/DistributionStrip.test.tsx`
 
-- [ ] Write failing tests for: own-subject highlight, missing-rating exclusion, sample count, tied values, accessible summary.
-- [ ] Run `npx vitest run components/benchmark/DistributionStrip.test.tsx` and confirm failure.
-- [ ] Implement the range/dot plot with direct subject dots, median tick, own highlight, gap-to-median/leader, and low-sample note.
-- [ ] Update compare page call site to pass `subjects` and `mainKey`.
-- [ ] Add English/Arabic copy.
-- [ ] Run focused tests, `npx tsc --noEmit`, touched-file ESLint, and screenshot desktop/mobile.
-- [ ] Commit `feat(benchmark): redesign peer distribution chart`.
+- [x] Write failing tests for: own-subject highlight, missing-rating exclusion, sample count, tied values, accessible summary.
+- [x] Run `npx vitest run components/benchmark/DistributionStrip.test.tsx` and confirm failure.
+- [x] Implement the range/dot plot with direct subject dots, median tick, own highlight, gap-to-median/leader, and low-sample note.
+- [x] Update compare page call site to pass `subjects` and `mainKey`.
+- [x] Add English/Arabic copy.
+- [x] Run focused tests, `npx tsc --noEmit`, touched-file ESLint, and screenshot desktop/mobile.
+- [x] Commit `feat(benchmark): redesign peer distribution chart`.
 
 ### Task 2: Sentiment + velocity → two honest visuals
 
@@ -56,12 +56,12 @@
 - Modify: `apps/web/lib/i18n/en.ts`, `apps/web/lib/i18n/ar.ts`
 - Create: `apps/web/components/benchmark/SentimentVelocityBars.test.tsx`
 
-- [ ] Write failing tests for: sentiment/velocity separation, missing sentiment, low-sample badge, accessible labels.
-- [ ] Run focused tests and confirm failure.
-- [ ] Implement a 100% sentiment-mix panel and a separate review-velocity bar panel with shared subject order.
-- [ ] Add sample-size/context copy and English/Arabic labels.
-- [ ] Run focused tests, typecheck, ESLint, and desktop/mobile screenshots.
-- [ ] Commit `feat(benchmark): separate sentiment from review velocity`.
+- [x] Write failing tests for: sentiment/velocity separation, missing sentiment, low-sample badge, accessible labels.
+- [x] Run focused tests and confirm failure.
+- [x] Implement a 100% sentiment-mix panel and a separate review-velocity bar panel with shared subject order.
+- [x] Add sample-size/context copy and English/Arabic labels.
+- [x] Run focused tests, typecheck, ESLint, and desktop/mobile screenshots.
+- [x] Commit `feat(benchmark): separate sentiment from review velocity`.
 
 ### Task 3: Trend chart → rating + review growth small multiples
 
@@ -70,12 +70,12 @@
 - Modify: `apps/web/lib/i18n/en.ts`, `apps/web/lib/i18n/ar.ts`
 - Create: `apps/web/components/benchmark/TrendChart.test.tsx`
 
-- [ ] Write failing tests for: shared date domain, own-series emphasis, missing-series exclusion, cumulative review growth, accessible summary, insufficient-history state.
-- [ ] Run focused tests and confirm failure.
-- [ ] Implement two larger SVG charts: average rating (1–5) and cumulative review growth, with gridlines, start/end dates, direct end labels, and period delta badges.
-- [ ] Add English/Arabic labels and empty/partial states.
-- [ ] Run focused tests, typecheck, ESLint, and desktop/mobile screenshots.
-- [ ] Commit `feat(benchmark): rebuild rating and review growth trends`.
+- [x] Write failing tests for: shared date domain, own-series emphasis, missing-series exclusion, cumulative review growth, accessible summary, insufficient-history state.
+- [x] Run focused tests and confirm failure.
+- [x] Implement two larger SVG charts: average rating (1–5) and cumulative review growth, with gridlines, start/end dates, direct end labels, and period delta badges.
+- [x] Add English/Arabic labels and empty/partial states.
+- [x] Run focused tests, typecheck, ESLint, and desktop/mobile screenshots.
+- [x] Commit `feat(benchmark): rebuild rating and review growth trends`.
 
 ### Task 4: Own scorecards → branch action scorecards
 
@@ -84,19 +84,19 @@
 - Modify: `apps/web/lib/i18n/en.ts`, `apps/web/lib/i18n/ar.ts`
 - Create: `apps/web/components/benchmark/OwnScorecards.test.tsx`
 
-- [ ] Write failing tests for: no-rating branch not flagged, low-sample badge, median delta, top problem/action, sparkline accessibility.
-- [ ] Run focused tests and confirm failure.
-- [ ] Implement structured branch scorecards with rating vs own median, velocity, five-star share, sample-size badge, sparkline, and one action.
-- [ ] Add English/Arabic labels and empty/partial states.
-- [ ] Run focused tests, typecheck, ESLint, and desktop/mobile screenshots.
-- [ ] Commit `feat(benchmark): redesign own-branch scorecards`.
+- [x] Write failing tests for: no-rating branch not flagged, low-sample badge, median delta, top problem/action, sparkline accessibility.
+- [x] Run focused tests and confirm failure.
+- [x] Implement structured branch scorecards with rating vs own median, velocity, five-star share, sample-size badge, sparkline, and one action.
+- [x] Add English/Arabic labels and empty/partial states.
+- [x] Run focused tests, typecheck, ESLint, and desktop/mobile screenshots.
+- [x] Commit `feat(benchmark): redesign own-branch scorecards`.
 
 ### Final verification
 
-- [ ] Run all four focused test files together.
-- [ ] Run `npx tsc --noEmit`.
-- [ ] Run touched-file ESLint with zero errors.
-- [ ] Run `npm run build`.
-- [ ] Render Compare at 1440px and 390px; inspect screenshots and console.
-- [ ] Run axe on the Compare page; fix chart-specific violations.
-- [ ] Review `git diff` and ensure only intended files changed.
+- [x] Run all four focused test files together.
+- [x] Run `npx tsc --noEmit`.
+- [x] Run touched-file ESLint with zero errors.
+- [x] Run `npm run build`.
+- [x] Render Compare at 1440px and 390px; inspect screenshots and console.
+- [x] Run axe on the Compare page; fix chart-specific violations.
+- [x] Review `git diff` and ensure only intended files changed.
