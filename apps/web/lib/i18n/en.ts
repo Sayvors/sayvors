@@ -3852,6 +3852,8 @@ const en = {
       loadingHistory: "Loading history…",
       couldNotLoadHistory: "Could not load history.",
       noDataPeriod: "No data for this period yet.",
+      reviewsEmptyNote:
+        "Saved competitors show review snippets only when a recent review sample is cached. A total review count can exist even when no recent snippets are available.",
       googleReviews: "Google reviews",
       all: "All",
       newest: "Newest",

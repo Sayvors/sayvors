@@ -1150,6 +1150,11 @@ function SentimentReviewsTable({
           </tbody>
         </table>
       </div>
+      {subjects.some((subject) => subject.reviews.length === 0) && (
+        <p className="border-t border-[var(--ui-line)] px-3 py-2 text-[11px] leading-relaxed text-[#3B2D5E]">
+          {c.reviewsEmptyNote}
+        </p>
+      )}
     </section>
   );
 }
