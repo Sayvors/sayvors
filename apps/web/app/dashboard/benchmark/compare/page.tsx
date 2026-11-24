@@ -807,7 +807,16 @@ function FadedCell({
   const { t } = useI18n();
   const c = t.benchmark.compare;
   const items = categoryReviews(subject, category);
-  if (!items.length) return <span className="text-[#8A8496]">—</span>;
+  if (!items.length) {
+    if (subject.reviews.length === 0) {
+      return (
+        <span className="text-[10px] font-semibold text-[#8A8496]">
+          {subject.key.startsWith("own:") ? c.noReviewsYet : c.noRecentReviews}
+        </span>
+      );
+    }
+    return <span className="text-[#8A8496]">—</span>;
+  }
   const shown = items.slice(0, 3);
   return (
     <div

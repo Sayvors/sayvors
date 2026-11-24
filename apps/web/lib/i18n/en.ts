@@ -3854,6 +3854,8 @@ const en = {
       noDataPeriod: "No data for this period yet.",
       reviewsEmptyNote:
         "Saved competitors show review snippets only when a recent review sample is cached. A total review count can exist even when no recent snippets are available.",
+      noRecentReviews: "No recent reviews",
+      noReviewsYet: "No reviews yet",
       googleReviews: "Google reviews",
       all: "All",
       newest: "Newest",
