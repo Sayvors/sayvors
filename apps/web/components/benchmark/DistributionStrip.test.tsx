@@ -98,9 +98,9 @@ describe("DistributionStrip", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Where you stand" })).toBeInTheDocument();
-    expect(screen.getByText("Your Branch")).toBeInTheDocument();
-    expect(screen.getByText("4.8")).toBeInTheDocument();
-    expect(screen.getByText("80%")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Your Branch: 4.8" })).toBeInTheDocument();
+    expect(screen.getAllByText("4.8").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("80%").length).toBeGreaterThan(0);
   });
 
   it("excludes a no-rating branch from rating and sentiment sample counts", () => {

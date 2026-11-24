@@ -24,7 +24,7 @@ describe("ReviewResponseTable", () => {
 
     expect(screen.getByRole("table", { name: "Review responses" })).toBeInTheDocument();
     expect(screen.getByText("70")).toBeInTheDocument();
-    expect(screen.getByText("33.3%")).toBeInTheDocument();
+    expect(screen.getByText("33.3%").closest("td")).toHaveAttribute("data-tone", "weak");
     expect(screen.getByText("Answered")).toBeInTheDocument();
     expect(screen.getByText("Not answered")).toBeInTheDocument();
   });

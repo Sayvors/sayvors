@@ -3650,7 +3650,7 @@ const en = {
     gapLine: "Gap {gap}",
     tiedLine: "Everyone tied at {value}",
     distributionSubtitle:
-      "One dot per business. Your branch is pinned; the tick marks the peer median.",
+      "One bar per business. Your branch is highlighted; the tick marks the peer median.",
     distributionEmpty: "Add at least two businesses to see a meaningful spread.",
     distributionSmallSample: "Small comparison set — treat gaps as directional.",
     distributionSmallSet: "Small set",

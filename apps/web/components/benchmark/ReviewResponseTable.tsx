@@ -3,6 +3,25 @@
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import type { SubjectReviews } from "@/lib/api-benchmark";
 
+const RESPONSE_RATE_GOOD = 80;
+const RESPONSE_RATE_WATCH = 50;
+
+type ResponseTone = "good" | "watch" | "weak" | "unknown";
+
+function responseTone(rate: number | null): ResponseTone {
+  if (rate == null) return "unknown";
+  if (rate >= RESPONSE_RATE_GOOD) return "good";
+  if (rate >= RESPONSE_RATE_WATCH) return "watch";
+  return "weak";
+}
+
+const RESPONSE_TONE_CLASS: Record<ResponseTone, string> = {
+  good: "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400",
+  watch: "bg-amber-50 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
+  weak: "bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400",
+  unknown: "text-[#6F6685]",
+};
+
 /** Response coverage per business. Counts are explicit about their evidence:
  *  total is public/stored lifetime volume; answered/unanswered use the cached
  *  review sample for competitors and stored rows for own locations. */
@@ -25,20 +44,24 @@ export default function ReviewResponseTable({
 
   const rows: Array<{
     label: string;
+    kind?: "answered" | "unanswered" | "rate";
     value: (subject: SubjectReviews) => string;
   }> = [
     { label: c.totalReviews, value: (s) => (s.summary.total ?? "—").toString() },
     { label: c.sampledReviews, value: (s) => s.summary.sampled.toString() },
     {
       label: c.answeredReviews,
+      kind: "answered",
       value: (s) => (s.summary.sampled > 0 ? s.summary.answered.toString() : c.noResponseSample),
     },
     {
       label: c.unansweredReviews,
+      kind: "unanswered",
       value: (s) => (s.summary.sampled > 0 ? s.summary.unanswered.toString() : c.noResponseSample),
     },
     {
       label: c.responseRate,
+      kind: "rate",
       value: (s) => (s.summary.response_rate != null ? `${s.summary.response_rate}%` : "—"),
     },
   ];
@@ -97,14 +120,33 @@ export default function ReviewResponseTable({
                 >
                   {row.label}
                 </th>
-                {subjects.map((subject) => (
-                  <td
-                    key={subject.key}
-                    className="border-b border-r border-[var(--ui-line)] px-3 py-2 font-mono text-[11px] text-[#3B2D5E] last:border-r-0"
-                  >
-                    {row.value(subject)}
-                  </td>
-                ))}
+                {subjects.map((subject) => {
+                  const tone = row.kind === "rate" ? responseTone(subject.summary.response_rate) : null;
+                  const value = row.value(subject);
+                  const countTone =
+                    row.kind === "answered" && subject.summary.answered > 0
+                      ? "text-emerald-700 dark:text-emerald-400"
+                      : row.kind === "unanswered" && subject.summary.unanswered === 0
+                        ? "text-emerald-700 dark:text-emerald-400"
+                        : row.kind === "unanswered" && subject.summary.unanswered > 0
+                          ? "text-amber-700 dark:text-amber-400"
+                          : "text-[#3B2D5E]";
+                  return (
+                    <td
+                      key={subject.key}
+                      data-tone={tone ?? undefined}
+                      className={`border-b border-r border-[var(--ui-line)] px-3 py-2 font-mono text-[11px] last:border-r-0 ${
+                        tone ? RESPONSE_TONE_CLASS[tone] : countTone
+                      }`}
+                    >
+                      {row.kind === "rate" && tone !== "unknown" ? (
+                        <span className="inline-flex rounded-full px-2 py-0.5 font-bold">{value}</span>
+                      ) : (
+                        value
+                      )}
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>

@@ -3656,7 +3656,7 @@ const ar: Dict = {
     gapLine: "الفارق {gap}",
     tiedLine: "الجميع متعادل عند {value}",
     distributionSubtitle:
-      "نقطة لكل نشاط. فرعك مميز، والعلامة تعني وسيط المجموعة.",
+      "شريط لكل نشاط. فرعك مميز، والعلامة تعني وسيط المجموعة.",
     distributionEmpty: "أضف نشاطين على الأقل لرؤية مقارنة ذات معنى.",
     distributionSmallSample: "مجموعة مقارنة صغيرة — اعتبر الفجوات استرشادية.",
     distributionSmallSet: "مجموعة صغيرة",
