@@ -898,7 +898,7 @@ def _sentiment_label(rating: Any) -> str:
 async def _saved_reviews(
     db: AsyncSession, tenant_id: str, place_id: str, *, limit: int,
     source: str = "google_places",
-) -> tuple[str | None, list[dict[str, Any]]]:
+) -> tuple[str | None, list[dict[str, Any]], dict[str, Any]]:
     """Newest cached review sample for a saved place.
 
     The cached sample wins so the reviews table costs nothing per page load;
@@ -906,7 +906,7 @@ async def _saved_reviews(
     """
     saved = await service.get_saved(db, tenant_id, place_id)
     if saved is None:
-        return None, []
+        return None, [], {"total": None, "sampled": 0, "answered": 0, "unanswered": 0, "response_rate": None}
     name = saved.name or saved.label
     reviews = list(saved.reviews or [])
     # The free provider never scrapes inside a read handler. The worker /
@@ -921,29 +921,41 @@ async def _saved_reviews(
         except (places.PlacesError, boq.BoqError, outscraper.OutscraperError):
             details = {}
         reviews = list(details.get("reviews") or [])
+    sample = reviews[:limit]
     out = []
-    for review in reviews[:limit]:
+    for review in sample:
         rating = review.get("rating")
         published = _publish_time(review.get("publish_time") or review.get("created_at"))
+        answer = str(review.get("owner_answer") or "").strip()
+        answer_time = _publish_time(review.get("owner_answer_time"))
         out.append({
             "rating": rating,
             "time": published.isoformat() if published else None,
             "sentiment": _sentiment_label(rating),
             "text": str(review.get("text") or "")[:REVIEW_TEXT_MAX],
-            # Reviewer attribution is part of the Places reviews payload — no
-            # extra API call. Cached rows written before this field existed
-            # simply have no author, and the UI falls back to initials.
             "author": review.get("author"),
             "author_photo": review.get("author_photo"),
+            "answered": bool(answer),
+            "owner_answer": answer[:REVIEW_TEXT_MAX] or None,
+            "owner_answer_time": answer_time.isoformat() if answer_time else None,
             # Places-sourced reviews carry no complaint themes.
             "problems": [],
         })
-    return name, out
+    answered = sum(1 for review in out if review["answered"])
+    sampled = len(out)
+    summary = {
+        "total": saved.review_count if saved.review_count is not None else len(reviews),
+        "sampled": sampled,
+        "answered": answered,
+        "unanswered": sampled - answered,
+        "response_rate": round(answered / sampled * 100, 1) if sampled else None,
+    }
+    return name, out, summary
 
 
 async def _own_reviews(
     db: AsyncSession, tenant_id: str, channel_id: str, *, limit: int
-) -> tuple[str | None, list[dict[str, Any]]]:
+) -> tuple[str | None, list[dict[str, Any]], dict[str, Any]]:
     """Newest stored reviews of one of the tenant's own locations, from analytics."""
     channel = (
         await db.execute(
@@ -951,7 +963,7 @@ async def _own_reviews(
         )
     ).scalar_one_or_none()
     if channel is None:
-        return None, []
+        return None, [], {"total": None, "sampled": 0, "answered": 0, "unanswered": 0, "response_rate": None}
     bucket = func.coalesce(ReviewInsight.review_updated_at, ReviewInsight.created_at)
     rows = (
         await db.execute(
@@ -962,6 +974,7 @@ async def _own_reviews(
                 ReviewInsight.problems,
                 ReviewInsight.reviewer_name,
                 ReviewInsight.reviewer_photo_url,
+                ReviewInsight.replied,
                 bucket,
             ).where(
                 ReviewInsight.user_id == tenant_id,
@@ -971,7 +984,7 @@ async def _own_reviews(
         )
     ).all()
     out = []
-    for rating, text, sentiment, problems, reviewer, photo, published in rows:
+    for rating, text, sentiment, problems, reviewer, photo, replied, published in rows:
         stored = (
             sentiment if sentiment in ("positive", "neutral", "negative")
             else None
@@ -982,14 +995,35 @@ async def _own_reviews(
             # Prefer the team-classified sentiment for our own locations.
             "sentiment": stored or _sentiment_label(rating),
             "text": str(text or "")[:REVIEW_TEXT_MAX],
-            # Reviewer name/photo are already stored on the review — free to show.
             "author": str(reviewer)[:255] if reviewer else None,
             "author_photo": str(photo)[:1024] if photo else None,
-            # Genuine complaint themes from the review-engine enrichment — the
-            # "Complaining" row groups reviews that carry problems.
+            "answered": bool(replied),
+            "owner_answer": None,
+            "owner_answer_time": None,
             "problems": [str(item)[:120] for item in (problems or [])][:10],
         })
-    return channel.display_name, out
+    totals = (
+        await db.execute(
+            select(
+                func.count(),
+                func.sum(case((ReviewInsight.replied.is_(True), 1), else_=0)),
+            ).where(
+                ReviewInsight.user_id == tenant_id,
+                ReviewInsight.channel_id == channel_id,
+                ReviewInsight.removed_at.is_(None),
+            )
+        )
+    ).one()
+    total = int(totals[0] or 0)
+    answered = int(totals[1] or 0)
+    summary = {
+        "total": total,
+        "sampled": len(out),
+        "answered": answered,
+        "unanswered": total - answered,
+        "response_rate": round(answered / total * 100, 1) if total else None,
+    }
+    return channel.display_name, out, summary
 
 
 async def reviews_for(
@@ -1010,18 +1044,19 @@ async def reviews_for(
     config = await service.get_config(db)
     out = []
     for raw in raw_subjects:
+        summary = {"total": None, "sampled": 0, "answered": 0, "unanswered": 0, "response_rate": None}
         try:
             kind, ident = parse_subject(raw)
             if kind == "saved":
-                name, reviews = await _saved_reviews(
+                name, reviews, summary = await _saved_reviews(
                     db, tenant_id, ident, limit=limit, source=config.source
                 )
             else:
-                name, reviews = await _own_reviews(db, tenant_id, ident, limit=limit)
+                name, reviews, summary = await _own_reviews(db, tenant_id, ident, limit=limit)
         except CompareError:
             name, reviews = None, []
         except Exception:
             logger.exception("Reviews failed for subject: %s", raw)
             name, reviews = None, []
-        out.append({"key": str(raw), "name": name, "reviews": reviews})
+        out.append({"key": str(raw), "name": name, "reviews": reviews, "summary": summary})
     return {"subjects": out}

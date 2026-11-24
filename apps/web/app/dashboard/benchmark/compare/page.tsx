@@ -28,6 +28,7 @@ import TrendChart from "@/components/benchmark/TrendChart";
 import NorthStarCard from "@/components/benchmark/NorthStarCard";
 import DistributionStrip from "@/components/benchmark/DistributionStrip";
 import OwnScorecards from "@/components/benchmark/OwnScorecards";
+import ReviewResponseTable from "@/components/benchmark/ReviewResponseTable";
 import SentimentVelocityBars from "@/components/benchmark/SentimentVelocityBars";
 import AiSummaryCard from "@/components/benchmark/AiSummaryCard";
 import BaselineAlert from "@/components/benchmark/BaselineAlert";
@@ -791,6 +792,26 @@ function ReviewAvatar({
  * the reviews sit as an open list with breathing room, and the whole cell is
  * the trigger for the popup.
  */
+function ResponseBadge({ answered }: { answered: boolean }) {
+  const { t } = useI18n();
+  const c = t.benchmark.compare;
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[8px] font-bold ${
+        answered
+          ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+          : "bg-[#F4F2F7] text-[#6F6685] dark:bg-white/10 dark:text-fog/60"
+      }`}
+    >
+      <span
+        aria-hidden
+        className={`h-1.5 w-1.5 rounded-full ${answered ? "bg-emerald-500" : "bg-[#9C94AE]"}`}
+      />
+      {answered ? c.answered : c.notAnswered}
+    </span>
+  );
+}
+
 function FadedCell({
   subject,
   category,
@@ -851,6 +872,7 @@ function FadedCell({
                 <span className="font-mono text-[9px] text-[#8A8496]">
                   {formatWhen(review.time)}
                 </span>
+                <ResponseBadge answered={review.answered} />
                 <span className="min-w-0 truncate text-[9px] font-semibold text-[#14101F]">
                   {subject.name}
                 </span>
@@ -964,10 +986,26 @@ function ReviewsPopup({
                     <span className="font-mono text-[10px] text-[#8A8496]">
                       {formatWhen(review.time)}
                     </span>
+                    <ResponseBadge answered={review.answered} />
                     <span className="text-[10px] font-semibold text-[#3B2D5E]">
                       {subject.name}
                     </span>
                   </div>
+                  {review.owner_answer ? (
+                    <div className="mt-3 rounded-[8px] bg-[#F4F2F7] px-3 py-2">
+                      <p className="text-[9px] font-bold uppercase tracking-wide text-[#6F6685]">
+                        {t.benchmark.compare.ownerReply}
+                      </p>
+                      <p className="mt-1 text-[11px] leading-relaxed text-[#3B2D5E]">
+                        {review.owner_answer}
+                      </p>
+                      {review.owner_answer_time ? (
+                        <p className="mt-1 font-mono text-[9px] text-[#8A8496]">
+                          {formatWhen(review.owner_answer_time)}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {review.problems && review.problems.length > 0 ? (
                     <div className="mt-2 flex flex-wrap gap-1">
                       {review.problems.map((problem, position) => (
@@ -1514,6 +1552,10 @@ export default function ComparePage() {
             mainKey={selection.main}
             onDrillDown={openWorstReviews}
             drillLoading={reviewsQuery.isPending}
+          />
+          <ReviewResponseTable
+            subjects={reviewSubjects}
+            loading={reviewsQuery.isPending}
           />
           <SentimentReviewsTable
             subjects={reviewSubjects}

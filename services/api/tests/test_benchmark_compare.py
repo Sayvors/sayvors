@@ -659,6 +659,7 @@ async def test_reviews_endpoint_own_rows(client, db, channel_id, user_id):
             id="ri-rev-1", user_id=user_id, channel_id=channel_id,
             review_id="rv-review-1", rating=5, review_text="staff were great",
             sentiment="positive", review_updated_at=now - timedelta(days=2),
+            replied=True,
         ),
         ReviewInsight(
             id="ri-rev-2", user_id=user_id, channel_id=channel_id,
@@ -678,6 +679,11 @@ async def test_reviews_endpoint_own_rows(client, db, channel_id, user_id):
     assert newest["sentiment"] == "positive"
     assert newest["time"]
     assert newest["text"] == "staff were great"
+    assert newest["answered"] is True
+    assert subj["summary"] == {
+        "total": 2, "sampled": 2, "answered": 1,
+        "unanswered": 1, "response_rate": 50.0,
+    }
     oldest = subj["reviews"][1]
     assert oldest["rating"] == 1
     assert oldest["sentiment"] == "negative"
@@ -695,6 +701,10 @@ async def test_reviews_endpoint_saved_place_cached_sample(client, db, user_id):
     assert res.status_code == 200, res.text
     assert res.json()["subjects"][0]["name"] == "Rev Rival"
     assert res.json()["subjects"][0]["reviews"] == []
+    assert res.json()["subjects"][0]["summary"] == {
+        "total": 5, "sampled": 0, "answered": 0,
+        "unanswered": 0, "response_rate": None,
+    }
 
 
 async def test_reviews_endpoint_bounds_and_unknown_subject(client):
@@ -915,6 +925,8 @@ async def test_saved_reviews_boq_serve_cached_no_live_scrape(db, monkeypatch):
     await bench_service.store_place_details(db, row, {
         "reviews": [
             {"rating": 5, "text": "love it",
+             "owner_answer": "Thanks for the feedback",
+             "owner_answer_time": (now - timedelta(days=1)).isoformat(),
              "publish_time": (now - timedelta(days=2)).isoformat()},
             {"rating": 2, "text": "bad",
              "publish_time": (now - timedelta(days=3)).isoformat()},
@@ -931,6 +943,12 @@ async def test_saved_reviews_boq_serve_cached_no_live_scrape(db, monkeypatch):
     assert subj["name"] == "Rev Rival"
     assert len(subj["reviews"]) == 2
     assert subj["reviews"][0]["rating"] == 5
+    assert subj["reviews"][0]["answered"] is True
+    assert subj["reviews"][0]["owner_answer"] == "Thanks for the feedback"
+    assert subj["summary"]["sampled"] == 2
+    assert subj["summary"]["answered"] == 1
+    assert subj["summary"]["unanswered"] == 1
+    assert subj["summary"]["response_rate"] == 50.0
 
 
 async def test_saved_subject_uses_outscraper_when_selected(db, monkeypatch):

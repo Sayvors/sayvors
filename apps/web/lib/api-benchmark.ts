@@ -272,6 +272,13 @@ export function fetchHistory(
 export interface SubjectReviews {
   key: string;
   name: string | null;
+  summary: {
+    total: number | null;
+    sampled: number;
+    answered: number;
+    unanswered: number;
+    response_rate: number | null;
+  };
   reviews: {
     rating: number | null;
     time: string | null;
@@ -279,6 +286,9 @@ export interface SubjectReviews {
     text: string;
     author?: string | null;
     author_photo?: string | null;
+    answered: boolean;
+    owner_answer?: string | null;
+    owner_answer_time?: string | null;
     problems?: string[];
   }[];
 }
