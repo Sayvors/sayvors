@@ -1472,6 +1472,7 @@ export default function ComparePage() {
           <OwnScorecards
             subjects={compareQuery.data?.subjects ?? []}
             historyBySubject={historyBySubject}
+            mainKey={selection.main}
           />
           {days != null ? (
             <MatrixTable
