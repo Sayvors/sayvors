@@ -10,6 +10,7 @@ check of the *designated* cover — the closest honest signal the API exposes.
 """
 from __future__ import annotations
 
+import inspect
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
@@ -260,6 +261,8 @@ async def check_due(
     for row in rows:
         try:
             client = client_for(row.channel_id)
+            if inspect.isawaitable(client):
+                client = await client
             if client is None:
                 continue
             result = await check_one(db, row, client)

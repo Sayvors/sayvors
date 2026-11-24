@@ -281,7 +281,7 @@ async def ensure_theme_analysis(
         await db.commit()
         return analysis
 
-    if not is_new and analysis.status != "ready":
+    if not is_new and same_hash and analysis.status != "ready":
         updated_at = _aware(analysis.updated_at)
         age = (datetime.now(timezone.utc) - updated_at).total_seconds()
         if age < RETRY_COOLDOWN_SECONDS:

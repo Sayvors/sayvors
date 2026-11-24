@@ -280,6 +280,9 @@ export default function TrendChart({
               style={{ background: colorFor(legend, row.key, mainKey) }}
             />
             <span className="font-semibold">{row.name}</span>
+            {row.points.length === 1 && (
+              <span className="text-[#6F6685]">({b.trendCurrentOnly})</span>
+            )}
             {row.key === mainKey && <span className="text-[#3D1D6E]">({b.distributionYourBranch})</span>}
           </li>
         ))}

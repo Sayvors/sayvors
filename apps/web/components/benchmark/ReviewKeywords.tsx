@@ -215,7 +215,7 @@ function ThemeCell({
   const k = t.benchmark.compare.reviewKeywords;
   const business = subject.name ?? subject.key;
   const percentage = formatPercent(cell.percentage);
-  const sentiment = cellSentiment(cell, row.sentiment);
+  const sentiment = cell.mentions > 0 ? cellSentiment(cell, row.sentiment) : null;
   const barWidth = `${Math.min(100, Math.max(0, cell.percentage))}%`;
   return (
     <div className="min-w-0">
@@ -226,12 +226,16 @@ function ThemeCell({
         <div
           role="img"
           aria-label={k.barLabel(row.label, business)}
-          className={`h-full rounded-full ${SENTIMENT_BAR_CLASS[sentiment]}`}
+          className={`h-full rounded-full ${sentiment ? SENTIMENT_BAR_CLASS[sentiment] : "bg-[#D8D8DC]"}`}
           style={{ width: barWidth }}
         />
       </div>
       <div className="mt-2 flex items-center justify-between gap-2">
-        <SentimentLabel sentiment={sentiment} />
+        {sentiment ? (
+          <SentimentLabel sentiment={sentiment} />
+        ) : (
+          <span className="text-[9px] font-semibold text-[#6F6685]">{k.notMentioned}</span>
+        )}
         {cell.quotes.length > 0 ? (
           <button
             type="button"

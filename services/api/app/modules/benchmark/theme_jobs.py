@@ -115,9 +115,11 @@ async def handle_benchmark_theme_extract(job: Any, db: AsyncSession) -> dict[str
     raw_reviews = analysis.sample_json if isinstance(analysis.sample_json, list) else []
     reviews = normalize_reviews(raw_reviews)
     if hash_sample(reviews) != analysis.sample_hash:
-        error = ValueError("Stored theme sample failed bounded validation")
-        await _persist_failure(db, job, payload, error)
-        raise error
+        # A previous extractor version or a newer sample can leave an older
+        # queued job with a hash that no longer matches. Skip it cleanly; the
+        # next GET detects the stale hash and enqueues the current version.
+        await db.commit()
+        return {"status": "skipped", "reason": "stale sample"}
 
     analysis.status = "running"
     analysis.error = None
