@@ -1464,7 +1464,11 @@ export default function ComparePage() {
             subjects={compareQuery.data?.subjects ?? []}
             mainKey={selection.main}
           />
-          <TrendChart history={historyQuery.data?.subjects ?? []} title={b.trendTitle} />
+          <TrendChart
+            history={historyQuery.data?.subjects ?? []}
+            title={b.trendTitle}
+            mainKey={selection.main}
+          />
           <OwnScorecards
             subjects={compareQuery.data?.subjects ?? []}
             historyBySubject={historyBySubject}
