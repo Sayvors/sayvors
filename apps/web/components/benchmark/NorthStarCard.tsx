@@ -14,10 +14,8 @@ const PILL: Record<CompareSummary["health"], string> = {
 /** Rank "X of Y", gap-to-leader per metric, health pill, fix-first CTA. */
 export default function NorthStarCard({
   summary,
-  problemTopic,
 }: {
   summary: CompareSummary;
-  problemTopic: string | null;
 }) {
   const { t } = useI18n();
   const b = t.benchmark;
@@ -33,11 +31,13 @@ export default function NorthStarCard({
     .map(([key, label]) => ({ key, label, gap: summary.gaps[key] }))
     .filter((g): g is { key: keyof CompareSummary["gaps"]; label: string; gap: number } => typeof g.gap === "number" && g.gap > 0)
     .sort((a, c) => c.gap - a.gap)[0];
+  const leading = summary.rank === 1;
+  const health = leading ? "good" : summary.health;
   return (
     <section className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-[8px] border border-[var(--ui-line)] bg-white p-3 sm:p-4">
       <div className="flex items-center gap-3">
-        <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold uppercase ${PILL[summary.health]}`}>
-          {b[`health_${summary.health}` as const]}
+        <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold uppercase ${PILL[health]}`}>
+          {leading ? b.healthLeader : b[`health_${summary.health}` as const]}
         </span>
         <p className="text-[14px] font-bold text-[#14101F]" title={summary.own.name ?? undefined}>
           {b.rankLine

@@ -3639,6 +3639,7 @@ const en = {
     health_good: "Healthy",
     health_warn: "Watch",
     health_bad: "At risk",
+    healthLeader: "Leading",
     rankLine: "You rank #{rank} of {of}",
     leaderLine: "{leader} leads this set",
     fixFirst: "Fix {metric} first",
@@ -3648,6 +3649,28 @@ const en = {
     distWorst: "Worst",
     gapLine: "Gap {gap}",
     tiedLine: "Everyone tied at {value}",
+    distributionSubtitle:
+      "One dot per business. Your branch is pinned; the tick marks the peer median.",
+    distributionEmpty: "Add at least two businesses to see a meaningful spread.",
+    distributionSmallSample: "Small comparison set — treat gaps as directional.",
+    distributionSmallSet: "Small set",
+    distributionEvidenceNote:
+      "Read rating with review volume: a 5.0 from 3 reviews is weaker evidence than a 5.0 from 300.",
+    distributionYourBranch: "Your branch",
+    distributionPeer: "Peer",
+    distributionMedian: "Median",
+    distributionAtMedian: "At median",
+    distributionAboveMedian: "{gap} above median",
+    distributionBelowMedian: "{gap} below median",
+    distributionNoValue: "No value yet",
+    distributionNoData: "Not enough data",
+    distributionRatingSummary: "Rating: {n} of {total} businesses have ratings.",
+    distributionVelocitySummary:
+      "Reviews per month: {n} of {total} businesses report recent review counts.",
+    distributionReviewsSummary:
+      "Total reviews: {n} of {total} businesses report review counts.",
+    distributionSentimentSummary:
+      "Positive share: {n} of {total} businesses have review text.",
     sentimentVolumeTitle: "Sentiment & review volume",
     sentimentPositive: "Positive",
     sentimentNeutral: "Neutral",

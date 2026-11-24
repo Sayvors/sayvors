@@ -51,6 +51,19 @@ def test_distribution_skips_unavailable_and_null_metrics():
     assert "positive_pct" not in rows  # no subject carried it
 
 
+def test_distribution_ignores_empty_own_location_zeros():
+    """No reviews is missing evidence, not a 0-star / 0%-positive business."""
+    rows = distribution([
+        _subject("own:live", "Live", avg=4.8, month=2, total=3, pos=33.3, kind="own"),
+        _subject("own:new", "New", avg=0.0, month=0, total=0, pos=0.0, kind="own"),
+    ])
+    assert rows["avg_rating"]["values"] == [4.8]
+    assert rows["avg_rating"]["worst"]["value"] == 4.8
+    assert rows["positive_pct"]["values"] == [33.3]
+    # Zero reviews is still a real volume observation.
+    assert rows["total_reviews"]["values"] == [0, 3]
+
+
 def test_velocity_uses_month_then_year_fallback():
     rows = distribution([
         _subject("saved:a", "Alpha", month=None, year=120, avg=4.0),
@@ -88,7 +101,8 @@ def test_north_star_skips_unavailable_own_subject():
     assert north_star(rows, own_keys=["own:c1"]) is None
 
 
-def test_north_star_unrated_own_sorts_last_with_null_gap():
+def test_north_star_unrated_own_has_no_rating_rank():
+    """An unrated branch gets an empty state, not a fabricated last-place rank."""
     out = north_star(
         [
             _subject("saved:a", "Alpha", avg=4.0),
@@ -96,8 +110,19 @@ def test_north_star_unrated_own_sorts_last_with_null_gap():
         ],
         own_keys=["own:c1"],
     )
-    assert out["rank"] == 2 and out["of"] == 2
-    assert out["gaps"]["avg_rating"] is None
+    assert out is None
+
+
+def test_north_star_excludes_unrated_peers_from_rating_denominator():
+    out = north_star(
+        [
+            _subject("own:mine", "Mine", avg=5.0, month=2, total=3, kind="own"),
+            _subject("own:new", "New", avg=0.0, month=0, total=0, kind="own"),
+            _subject("own:peer", "Peer", avg=4.67, month=1, total=3, kind="own"),
+        ],
+        own_keys=["own:mine"],
+    )
+    assert out["rank"] == 1 and out["of"] == 2
 
 
 def test_health_buckets():
@@ -107,3 +132,4 @@ def test_health_buckets():
     assert health_of(_subject("s", "A", avg=2.9, pos=30)) == "bad"
     assert health_of(_subject("s", "A", avg=None, pos=85)) == "good"  # sentiment-only
     assert health_of(_subject("s", "A", avg=None, pos=None)) == "warn"  # unknown → not good
+    assert health_of(_subject("own:new", "New", avg=0.0, total=0, pos=0.0, kind="own")) == "warn"

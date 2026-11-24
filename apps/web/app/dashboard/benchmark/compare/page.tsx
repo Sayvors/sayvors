@@ -1447,12 +1447,14 @@ export default function ComparePage() {
           {compareQuery.data?.summary ? (
             <NorthStarCard
               summary={compareQuery.data.summary}
-              problemTopic={null}
             />
           ) : null}
           <AiSummaryCard subjects={keys} />
           {compareQuery.data?.distribution ? (
-            <DistributionStrip distribution={compareQuery.data.distribution} />
+            <DistributionStrip
+              subjects={compareQuery.data.subjects}
+              mainKey={selection.main}
+            />
           ) : null}
           {compareQuery.data?.summary ? (
             <FixFirstTickets summary={compareQuery.data.summary} subjects={subjects} />

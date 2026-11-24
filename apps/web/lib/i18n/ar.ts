@@ -3645,6 +3645,7 @@ const ar: Dict = {
     health_good: "بخير",
     health_warn: "للمتابعة",
     health_bad: "معرض للخطر",
+    healthLeader: "في الصدارة",
     rankLine: "ترتيبك #{rank} من {of}",
     leaderLine: "{leader} يتصدّر هذه المجموعة",
     fixFirst: "ابدأ بإصلاح {metric}",
@@ -3654,6 +3655,28 @@ const ar: Dict = {
     distWorst: "الأدنى",
     gapLine: "الفارق {gap}",
     tiedLine: "الجميع متعادل عند {value}",
+    distributionSubtitle:
+      "نقطة لكل نشاط. فرعك مميز، والعلامة تعني وسيط المجموعة.",
+    distributionEmpty: "أضف نشاطين على الأقل لرؤية مقارنة ذات معنى.",
+    distributionSmallSample: "مجموعة مقارنة صغيرة — اعتبر الفجوات استرشادية.",
+    distributionSmallSet: "مجموعة صغيرة",
+    distributionEvidenceNote:
+      "اقرأ التقييم مع عدد التقييمات: 5.0 من 3 تقييمات دليل أضعف من 5.0 من 300 تقييم.",
+    distributionYourBranch: "فرعك",
+    distributionPeer: "منافس",
+    distributionMedian: "الوسيط",
+    distributionAtMedian: "عند الوسيط",
+    distributionAboveMedian: "{gap} أعلى من الوسيط",
+    distributionBelowMedian: "{gap} أقل من الوسيط",
+    distributionNoValue: "لا توجد قيمة بعد",
+    distributionNoData: "لا توجد بيانات كافية",
+    distributionRatingSummary: "التقييم: {n} من {total} نشاطاً لديها تقييمات.",
+    distributionVelocitySummary:
+      "التقييمات شهرياً: {n} من {total} نشاطاً لديها أعداد تقييمات حديثة.",
+    distributionReviewsSummary:
+      "إجمالي التقييمات: {n} من {total} نشاطاً لديها أعداد تقييمات.",
+    distributionSentimentSummary:
+      "الحصة الإيجابية: {n} من {total} نشاطاً لديها نصوص تقييمات.",
     sentimentVolumeTitle: "الانطباع وحجم المراجعات",
     sentimentPositive: "إيجابي",
     sentimentNeutral: "محايد",

@@ -44,10 +44,24 @@ def velocity_per_month(subject: dict[str, Any]) -> float | None:
 def _value(subject: dict[str, Any], metric: str) -> float | None:
     if metric == "reviews_per_month":
         return velocity_per_month(subject)
+    metrics = subject.get("metrics") or {}
+    if metric == "avg_rating":
+        # Own analytics uses 0.0 for an empty location. That is missing
+        # evidence, not a zero-star business, and must not poison rank/health.
+        value = metrics.get("avg_rating")
+        if value is None or float(value) <= 0:
+            return None
+        return float(value)
+    if metric == "positive_pct":
+        # Saved subjects derive this from stars; own subjects use classified
+        # sentiment. An explicit zero review base means 0% is missing evidence.
+        reviews = metrics.get("total_reviews")
+        if reviews is not None and float(reviews) <= 0:
+            return None
     container = "facts" if metric in _FACT_METRICS else "metrics"
     value = (subject.get(container) or {}).get(metric)
     if value is None and metric == "total_reviews":
-        value = (subject.get("metrics") or {}).get("total_ratings")
+        value = metrics.get("total_ratings")
     return float(value) if value is not None else None
 
 
@@ -128,16 +142,21 @@ def north_star(
     own = [s for s in available if (s.get("key") or "").strip() in own_set]
     if not own:
         return None
+    # Rating rank only makes sense among businesses that have a rating. An
+    # unrated branch gets the scorecard empty state, not a fabricated last place.
+    rated_own = [s for s in own if _value(s, "avg_rating") is not None]
+    if not rated_own:
+        return None
+    rated = [s for s in available if _value(s, "avg_rating") is not None]
 
     def _sort_key(subject: dict[str, Any]) -> tuple[float, float]:
         rating = _value(subject, "avg_rating")
         velocity = _value(subject, "reviews_per_month") or 0.0
-        # Unrated subjects sort last rather than crashing the comparison.
         return (rating if rating is not None else -1.0, velocity)
 
-    ranked = sorted(available, key=_sort_key, reverse=True)
+    ranked = sorted(rated, key=_sort_key, reverse=True)
     leader = ranked[0]
-    best_own = max(own, key=_sort_key)
+    best_own = max(rated_own, key=_sort_key)
     rank = ranked.index(best_own) + 1
 
     gaps: dict[str, float | None] = {}
