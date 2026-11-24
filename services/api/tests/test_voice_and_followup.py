@@ -905,13 +905,16 @@ async def test_lead_followup_quiet_hours_defer_without_burn(db, monkeypatch):
     from app.modules.users.models import User
 
     await _seed_lead(db)
-    # A 2-hour quiet window that definitely covers "now" in UTC.
+    # A 12-hour quiet window around "now". The action is timestamped a few
+    # seconds before this setup, so a two-hour window starting at the current
+    # hour can race the 22:59 -> 23:00 UTC boundary and leave the due_at just
+    # outside the window. +/-6 hours covers both timestamps at every boundary.
     async with _test_session_factory()() as s:
         user = (await s.execute(select(User))).scalar_one()
         hour = datetime.now(timezone.utc).hour
         user.lead_settings = {
-            "quiet_start_hour": hour,
-            "quiet_end_hour": (hour + 2) % 24,
+            "quiet_start_hour": (hour - 6) % 24,
+            "quiet_end_hour": (hour + 6) % 24,
             "timezone": "UTC",
         }
         await s.commit()
