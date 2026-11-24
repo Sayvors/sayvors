@@ -42,7 +42,10 @@ interface ChannelOption {
   platform: string;
 }
 
-type MetricKey = keyof ComparisonSubject["metrics"];
+type MetricKey =
+  | keyof ComparisonSubject["metrics"]
+  | "five_star_pct"
+  | "one_star_pct";
 type FactKey = keyof ComparisonSubject["facts"];
 
 interface Row<T extends string> {
@@ -61,28 +64,25 @@ interface Row<T extends string> {
 }
 
 function getMetricRows(c: Record<string, any>): Row<MetricKey>[] {
+  const starShare = (s: ComparisonSubject, star: number) => {
+    const total = s.metrics.total_ratings ?? s.metrics.total_reviews ?? 0;
+    const count = star === 5 ? s.metrics.five_star : s.metrics.one_star;
+    return total > 0 && count != null ? (count / total) * 100 : null;
+  };
   return [
     { key: "total_reviews", label: c.reviewsTotal, value: (s) => s.metrics.total_reviews, higherIsBetter: true, render: (s) => num(s.metrics.total_reviews) },
-    { key: "reviews_last_day", label: c.reviewsLastDay, value: (s) => s.metrics.reviews_last_day, render: (s) => num(s.metrics.reviews_last_day) },
-    { key: "reviews_last_week", label: c.reviewsLastWeek, value: (s) => s.metrics.reviews_last_week, render: (s) => num(s.metrics.reviews_last_week) },
+    { key: "avg_rating", label: c.averageRating, value: (s) => s.metrics.avg_rating, tierValue: (s) => (s.metrics.total_ratings !== 0 ? s.metrics.avg_rating : null), higherIsBetter: true, render: (s) => rating(s) },
     { key: "reviews_last_month", label: c.reviewsLastMonth, value: (s) => s.metrics.reviews_last_month, higherIsBetter: true, render: (s) => num(s.metrics.reviews_last_month) },
     { key: "reviews_last_year", label: c.reviewsLastYear, value: (s) => s.metrics.reviews_last_year, render: (s) => num(s.metrics.reviews_last_year) },
-    { key: "avg_rating", label: c.averageRating, value: (s) => s.metrics.avg_rating, tierValue: (s) => (s.metrics.total_ratings !== 0 ? s.metrics.avg_rating : null), higherIsBetter: true, render: (s) => rating(s) },
-    { key: "total_ratings", label: c.ratingsTotal, value: (s) => s.metrics.total_ratings, render: (s) => num(s.metrics.total_ratings) },
-    { key: "five_star", label: c.fiveStarRatings, value: (s) => s.metrics.five_star, render: (s) => num(s.metrics.five_star) },
-    { key: "four_star", label: c.fourStarRatings, value: (s) => s.metrics.four_star, render: (s) => num(s.metrics.four_star) },
-    { key: "one_star", label: c.oneStarRatings, value: (s) => s.metrics.one_star, higherIsBetter: false, render: (s) => num(s.metrics.one_star) },
-    { key: "impressions", label: c.impressions12mo, value: (s) => s.metrics.impressions, render: (s) => ownerOnly(s, s.metrics.impressions) },
-    { key: "calls", label: c.calls12mo, value: (s) => s.metrics.calls, render: (s) => ownerOnly(s, s.metrics.calls) },
+    { key: "five_star_pct", label: c.fiveStarRatings, value: (s) => starShare(s, 5), higherIsBetter: true, render: (s) => pct(starShare(s, 5)) },
+    { key: "one_star_pct", label: c.oneStarRatings, value: (s) => starShare(s, 1), higherIsBetter: false, render: (s) => pct(starShare(s, 1)) },
   ];
 }
 
 type PeriodKey =
   | "period_reviews"
   | "period_avg_rating"
-  | "rating_change"
-  | "period_impressions"
-  | "period_calls";
+  | "rating_change";
 
 /**
  * The period table answers "what changed in this window", never re-labels a
@@ -94,8 +94,6 @@ function getPeriodRows(c: Record<string, any>): Row<PeriodKey>[] {
     { key: "period_reviews", label: c.reviewsAdded, value: (s) => s.metrics.period_reviews, render: (s) => num(s.metrics.period_reviews) },
     { key: "period_avg_rating", label: c.averageRatingInPeriod, value: (s) => s.metrics.period_avg_rating, render: (s) => (s.metrics.period_avg_rating == null ? "—" : `${s.metrics.period_avg_rating} ★`) },
     { key: "rating_change", label: c.ratingChange, value: (s) => s.metrics.rating_change, render: (s) => signed(s.metrics.rating_change) },
-    { key: "period_impressions", label: c.impressions, render: (s) => ownerOnly(s, s.metrics.period_impressions) },
-    { key: "period_calls", label: c.calls, render: (s) => ownerOnly(s, s.metrics.period_calls) },
   ];
 }
 
