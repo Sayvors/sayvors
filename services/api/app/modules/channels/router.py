@@ -4618,22 +4618,24 @@ async def upload_google_media(
         )
         assoc = created.get("locationAssociation") or {}
         fallback = created.get("categoryFallback")
-        # A banner is only a banner if Google actually filed it as COVER.
-        # Other categories may legitimately fall back to ADDITIONAL, but a
-        # silently downgraded cover must never be reported as success.
         actual_cat = str(assoc.get("category") or "").upper()
         wanted_cat = "PROFILE" if cat == "LOGO" else cat
         if cat in ("COVER", "PROFILE", "LOGO") and (
             fallback or actual_cat != wanted_cat
         ):
-            raise HTTPException(
-                status_code=502,
-                detail=(
-                    f"Google filed the image as "
-                    f"{actual_cat or 'an unspecified category'} instead of "
-                    f"{wanted_cat}; it is not the requested banner/profile."
-                ),
-            )
+            # A cover/profile that Google refuses is still worth keeping: save
+            # it as a gallery photo rather than discarding the upload. The
+            # response tells the client it landed in the gallery, not the slot.
+            if not fallback:
+                fallback = {
+                    "requested": wanted_cat,
+                    "used": actual_cat or "ADDITIONAL",
+                    "reason": (
+                        "Google did not apply this photo as the requested "
+                        "cover/profile; it was saved to the gallery instead."
+                    ),
+                }
+            created["categoryFallback"] = fallback
         await _invalidate_google_media_cache(tenant_id_of(ctx.user), channel_id)
         return {
             "created": True,

@@ -1309,6 +1309,7 @@ export default function PublishComposer({
 
       const galleryErrors: string[] = [];
       const fallbacks: string[] = [];
+      let bannerCoverSet = false;
       for (const g of gallerySelections) {
         if (!media && !mediaUrl) throw new Error(pc.needMedia);
         const channelId = g.target.id.startsWith("google:") ? g.target.id.slice(7) : g.target.id;
@@ -1336,6 +1337,10 @@ export default function PublishComposer({
             body: form,
           });
           attempt.galleryDone.add(channelId);
+          const actualCategory = String(res?.media?.category || "").toUpperCase();
+          if (actualCategory === "COVER") {
+            bannerCoverSet = true;
+          }
           const fb = res?.categoryFallback;
           if (fb?.requested && fb.requested !== fb.used) {
             fallbacks.push(
@@ -1353,17 +1358,11 @@ export default function PublishComposer({
         }
       }
 
-      // A Promotion on Google is a cover photo. Confirm what actually happened
-      // so the merchant is never left guessing whether it went to the gallery.
-      const bannerPublished = confirmItems.some(
-        ({ target, methods }) =>
-          target.platform === "google_reviews" && methods.includes("banner"),
-      );
-
-      // Crop fallbacks and category fallbacks are both things the merchant
-      // must hear about, so they share one banner.
+      // A Promotion on Google becomes the cover photo only when Google
+      // actually files it as COVER. A fallback-to-gallery upload is already
+      // explained by the category fallback notice.
       const allNotices = [...notices, ...fallbacks];
-      if (bannerPublished) allNotices.push(pc.bannerSetNotice);
+      if (bannerCoverSet) allNotices.push(pc.bannerSetNotice);
       if (galleryErrors.length) {
         // The draft stays open so the merchant can pick another category and
         // retry; the posts are not re-queued (same idempotency key).

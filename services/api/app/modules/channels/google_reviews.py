@@ -1391,7 +1391,10 @@ class GoogleReviewsClient:
         )
         if resp.status_code not in (200, 201):
             requested = str(body["locationAssociation"]["category"])
-            fallback_ok = requested not in _GALLERY_ONLY_CATEGORIES
+            # A cover/profile/logo the location refuses is better saved as a
+            # gallery photo than lost entirely. The caller surfaces the fallback
+            # so the merchant knows it was not applied as the requested slot.
+            fallback_ok = True
             if is_category_not_applicable(resp.text) and fallback_ok:
                 body["locationAssociation"] = {"category": "ADDITIONAL"}
                 resp = await self._authed_request(

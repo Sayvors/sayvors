@@ -593,20 +593,24 @@ class GoogleBusinessPublisher:
         ).upper()
         # LOGO is a deprecated alias: Google returns PROFILE for it.
         expected = "PROFILE" if category == "LOGO" else category
-        if data.get("categoryFallback") or actual != expected:
-            raise GoogleReviewsError(
-                "Google accepted the image but filed it as "
-                f"{actual or 'an unspecified category'} instead of {expected}; "
-                "it is not the requested banner/profile",
-                502,
-            )
+        fallback = data.get("categoryFallback")
+        if not fallback and actual != expected:
+            fallback = {
+                "requested": expected,
+                "used": actual or "ADDITIONAL",
+                "reason": (
+                    "Google did not apply this photo as the requested "
+                    "cover/profile; it was saved to the gallery instead."
+                ),
+            }
+            data["categoryFallback"] = fallback
         return {
             "id": data.get("name", ""),
             "name": data.get("name", ""),
             "category": actual,
-            "categoryConfirmed": True,
+            "categoryConfirmed": fallback is None,
             "googleUrl": data.get("googleUrl", ""),
-            "categoryFallback": data.get("categoryFallback"),
+            "categoryFallback": fallback,
         }
 
     async def get_post(self, post_name: str) -> dict:
