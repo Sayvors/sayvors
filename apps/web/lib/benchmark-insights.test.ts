@@ -23,6 +23,7 @@ const BASE_METRICS: ComparisonSubject["metrics"] = {
   five_star: null,
   four_star: null,
   one_star: null,
+  star_share_base: null,
   impressions: null,
   calls: null,
   period_reviews: null,

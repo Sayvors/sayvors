@@ -174,6 +174,8 @@ export interface ComparisonSubject {
     five_star: number | null;
     four_star: number | null;
     one_star: number | null;
+    /** Population used for star-share percentages: sample size or lifetime total. */
+    star_share_base: number | null;
     impressions: number | null;
     calls: number | null;
     /* Period-only facts; null when the range is "live". */

@@ -59,6 +59,71 @@ async def test_scan_reviews_counts_windows_stars_and_text():
     assert scan["text_counts"]["menu_price_mentions"] == 1
 
 
+async def test_saved_star_share_uses_sample_when_full_distribution_missing(db, monkeypatch):
+    from app.modules.benchmark import places as places_module
+    from app.modules.benchmark import service as bench_service
+
+    saved = await bench_service.save_place(
+        db, TENANT, place_id="star-sample", label="Sample Cafe",
+        rating=4.4, review_count=900,
+    )
+
+    async def _fake(place_id, **kwargs):
+        return {
+            "place_id": place_id, "name": "Sample Cafe", "address": None,
+            "rating": 4.4, "review_count": 900, "types": [],
+            "reviews": [
+                {"rating": 5, "text": "great", "publish_time": "2026-11-24T00:00:00Z"},
+                {"rating": 1, "text": "bad", "publish_time": "2026-11-23T00:00:00Z"},
+            ],
+        }
+
+    monkeypatch.setattr(places_module, "get_place", _fake)
+    result = (await compare.compare_subjects(db, TENANT, ["saved:star-sample"]))[0]
+    assert result["metrics"]["five_star"] == 1
+    assert result["metrics"]["one_star"] == 1
+    assert result["metrics"]["star_share_base"] == 2
+
+
+async def test_saved_star_share_uses_full_distribution_when_available(db):
+    from app.modules.benchmark import service as bench_service
+
+    saved = await bench_service.save_place(
+        db, TENANT, place_id="star-full", label="Full Cafe",
+        rating=4.4, review_count=900,
+    )
+    saved.reviews_per_score = {"5": 800, "1": 100}
+    await db.commit()
+
+    result = (await compare.compare_subjects(db, TENANT, ["saved:star-full"]))[0]
+    assert result["metrics"]["five_star"] == 800
+    assert result["metrics"]["one_star"] == 100
+    assert result["metrics"]["star_share_base"] == 900
+    assert any("full rating distribution" in note for note in result["notes"])
+    assert not any("star counts and review-text facts come from" in note for note in result["notes"])
+
+
+async def test_saved_star_share_ignores_malformed_full_distribution(db):
+    from app.modules.benchmark import service as bench_service
+
+    saved = await bench_service.save_place(
+        db, TENANT, place_id="star-malformed", label="Malformed Cafe",
+        rating=4.4, review_count=900,
+    )
+    saved.reviews_per_score = {"5": "not-a-number", "1": 100}
+    saved.reviews = [
+        {"rating": 5, "text": "great", "publish_time": "2026-11-24T00:00:00Z"},
+        {"rating": 1, "text": "bad", "publish_time": "2026-11-23T00:00:00Z"},
+    ]
+    await db.commit()
+
+    result = (await compare.compare_subjects(db, TENANT, ["saved:star-malformed"]))[0]
+    assert result["available"] is True
+    assert result["metrics"]["five_star"] == 1
+    assert result["metrics"]["one_star"] == 1
+    assert result["metrics"]["star_share_base"] == 2
+
+
 async def test_saved_subject_uses_places_and_flags_hidden_facts(db, monkeypatch):
     from app.modules.benchmark import places as places_module
     from app.modules.benchmark import service as bench_service

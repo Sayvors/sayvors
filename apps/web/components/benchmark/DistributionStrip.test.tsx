@@ -29,6 +29,7 @@ function subject(
       five_star: 7,
       four_star: 2,
       one_star: 1,
+      star_share_base: 10,
       impressions: null,
       calls: null,
       period_reviews: 2,

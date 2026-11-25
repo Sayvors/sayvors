@@ -117,6 +117,7 @@ def _blank_metrics() -> dict[str, Any]:
         "five_star": None,
         "four_star": None,
         "one_star": None,
+        "star_share_base": None,
         "impressions": None,
         "calls": None,
         # Period-only facts; null when the filter is "live".
@@ -271,6 +272,15 @@ def _place_types(types: list[str] | None) -> list[str]:
         name = str(raw)
         out.append(PLACE_TYPE_LABELS.get(name, name.replace("_", " ").title()))
     return list(dict.fromkeys(out))[:10]
+
+
+def _nonnegative_int(value: Any) -> int | None:
+    """Parse a provider count without letting malformed cache data break a column."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number >= 0 else None
 
 
 def _sample_period_rating(reviews: list[dict], days: int) -> float | None:
@@ -459,14 +469,35 @@ async def _saved_subject(db: AsyncSession, tenant_id: str, raw: str,
     # An empty review sample means the windows are unknown, not zero: a zero
     # here would claim "no reviews in the last week", which Google never said.
     windows = scan["windows"] if scan["sample_size"] else {key: None for key in WINDOW_DAYS}
+    scores = details.get("reviews_per_score") or saved.reviews_per_score or {}
+    total_count = _nonnegative_int(total)
+    five_count = _nonnegative_int(scores.get("5")) if isinstance(scores, dict) else None
+    one_count = _nonnegative_int(scores.get("1")) if isinstance(scores, dict) else None
+    full_distribution = (
+        total_count is not None
+        and total_count > 0
+        and five_count is not None
+        and one_count is not None
+        and five_count <= total_count
+        and one_count <= total_count
+    )
+    if full_distribution:
+        five_star = five_count
+        one_star = one_count
+        star_share_base = total_count
+    else:
+        five_star = scan["stars"].get(5, 0) if scan["sample_size"] else None
+        one_star = scan["stars"].get(1, 0) if scan["sample_size"] else None
+        star_share_base = scan["sample_size"] or None
     metrics.update({
         "total_reviews": total,
         **windows,
         "avg_rating": rating,
         "total_ratings": total,
-        "five_star": scan["stars"].get(5, 0) if scan["sample_size"] else None,
+        "five_star": five_star,
         "four_star": scan["stars"].get(4, 0) if scan["sample_size"] else None,
-        "one_star": scan["stars"].get(1, 0) if scan["sample_size"] else None,
+        "one_star": one_star,
+        "star_share_base": star_share_base,
     })
     facts = _blank_facts()
     facts.update({
@@ -505,13 +536,19 @@ async def _saved_subject(db: AsyncSession, tenant_id: str, raw: str,
                 "Reviews added and the rating change compare the latest values "
                 "with the start of this period."
             ))
-    if scan["sample_size"]:
+    if full_distribution:
         notes.append(
-            f"Review-window counts, star counts and review-text facts come from the "
-            f"{scan['sample_size']} most recent reviews Google returns "
-            f"(max {REVIEW_SAMPLE_LIMIT}), not the lifetime total."
+            "5-star and 1-star counts come from the provider's full rating distribution."
         )
-    else:
+    if scan["sample_size"]:
+        evidence = "Review-window counts and review-text facts"
+        if not full_distribution:
+            evidence += ", star counts"
+        notes.append(
+            f"{evidence} come from the {scan['sample_size']} most recent reviews "
+            f"Google returns (max {REVIEW_SAMPLE_LIMIT}), not the lifetime total."
+        )
+    elif not full_distribution:
         notes.append(
             "No reviews were available in this refresh, so review-window, star and "
             "review-text facts are blank."
@@ -625,6 +662,7 @@ async def _own_subject(db: AsyncSession, tenant_id: str, raw: str,
         "five_star": distribution.get("5"),
         "four_star": distribution.get("4"),
         "one_star": distribution.get("1"),
+        "star_share_base": overview.get("total_reviews"),
         "impressions": google_perf.get("impressions_maps"),
         "calls": google_perf.get("call_clicks"),
     })

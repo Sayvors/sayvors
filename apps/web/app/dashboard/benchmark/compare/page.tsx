@@ -79,9 +79,9 @@ interface Row<T extends string> {
 
 function getMetricRows(c: Record<string, any>): Row<MetricKey>[] {
   const starShare = (s: ComparisonSubject, star: number) => {
-    const total = s.metrics.total_ratings ?? s.metrics.total_reviews ?? 0;
+    const total = s.metrics.star_share_base;
     const count = star === 5 ? s.metrics.five_star : s.metrics.one_star;
-    return total > 0 && count != null ? (count / total) * 100 : null;
+    return total != null && total > 0 && count != null ? (count / total) * 100 : null;
   };
   return [
     { key: "total_reviews", label: c.reviewsTotal, value: (s) => s.metrics.total_reviews, higherIsBetter: true, gapUnit: "count", render: (s) => num(s.metrics.total_reviews) },
