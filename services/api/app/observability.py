@@ -26,7 +26,6 @@ from pathlib import Path
 from typing import Any
 
 import sentry_sdk
-from sentry_sdk import Hub, Scope
 
 from .config import settings
 
