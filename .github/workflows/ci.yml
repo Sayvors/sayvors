@@ -8,7 +8,7 @@ on:
   # branch nothing checks is a branch where the checks only run after the
   # code has already been merged.
   push:
-    branches: [staging]
+    branches: [staging, development]
   pull_request:
     branches: [development, staging]
 
