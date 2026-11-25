@@ -154,6 +154,19 @@ def _scope_clause(
         return None
     if table.name == "users":
         return table.c.id.in_(user_ids)
+    # RAG children do not carry tenant/user columns. Scope them through their
+    # tenant-owned parent so export includes them and reverse dependency order
+    # can delete them before documents/crawl sources.
+    if table.name == "document_chunks":
+        documents = Base.metadata.tables["documents"]
+        return table.c.document_id.in_(
+            select(documents.c.id).where(documents.c.user_id.in_(user_ids))
+        )
+    if table.name == "crawl_pages":
+        sources = Base.metadata.tables["crawl_sources"]
+        return table.c.source_id.in_(
+            select(sources.c.id).where(sources.c.user_id.in_(user_ids))
+        )
     if "tenant_id" in table.c:
         return table.c.tenant_id == tenant_id
     if "user_id" in table.c:

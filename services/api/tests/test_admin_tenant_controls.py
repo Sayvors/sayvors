@@ -52,6 +52,56 @@ async def _seed(db, user_id: str) -> None:
     await db.commit()
 
 
+async def _seed_rag(db, user_id: str) -> None:
+    from app.modules.rag.models import (
+        CrawlPage,
+        CrawlSource,
+        Databank,
+        Document,
+        DocumentChunk,
+        IngestJob,
+    )
+
+    db.add_all([
+        Databank(id="rag-bank", user_id=user_id, name="Knowledge"),
+        Document(
+            id="rag-doc",
+            databank_id="rag-bank",
+            user_id=user_id,
+            filename="faq.txt",
+            source_type="upload",
+            file_type="txt",
+        ),
+        DocumentChunk(
+            id="rag-chunk",
+            document_id="rag-doc",
+            databank_id="rag-bank",
+            content="Customer evidence",
+        ),
+        IngestJob(
+            id="rag-ingest",
+            user_id=user_id,
+            databank_id="rag-bank",
+            document_id="rag-doc",
+            job_type="upload",
+            status="queued",
+        ),
+        CrawlSource(
+            id="rag-source",
+            user_id=user_id,
+            databank_id="rag-bank",
+            start_url="https://example.com",
+        ),
+        CrawlPage(
+            id="rag-page",
+            source_id="rag-source",
+            url="https://example.com/faq",
+            document_id="rag-doc",
+        ),
+    ])
+    await db.commit()
+
+
 async def _call(fn, user_id, db, **kwargs):
     return await fn(
         user_id=user_id,
@@ -134,6 +184,47 @@ async def test_purge_requires_the_exact_email(db, user_id):
 
     # Nothing was deleted by the refused attempt.
     assert await db.get(User, user_id) is not None
+
+
+async def test_export_contains_rag_children_without_secrets(db, user_id):
+    await _seed(db, user_id)
+    await _seed_rag(db, user_id)
+
+    response = await _call(admin_export_tenant, user_id, db)
+    bundle = __import__("json").loads(response.body)
+
+    assert bundle["counts"]["documents"] == 1
+    assert bundle["counts"]["document_chunks"] == 1
+    assert bundle["counts"]["ingest_jobs"] == 1
+    assert bundle["counts"]["crawl_sources"] == 1
+    assert bundle["counts"]["crawl_pages"] == 1
+    assert "Customer evidence" in str(bundle["tables"]["document_chunks"])
+    assert "hashed-secret" not in str(bundle)
+
+
+async def test_purge_removes_rag_children_before_documents(db, user_id):
+    from sqlalchemy import select
+
+    from app.modules.rag.models import (
+        CrawlPage,
+        CrawlSource,
+        Databank,
+        Document,
+        DocumentChunk,
+        IngestJob,
+    )
+
+    await _seed(db, user_id)
+    await _seed_rag(db, user_id)
+
+    result = await _call(
+        admin_purge_tenant, user_id, db, body=PurgeTenantRequest(confirm="TENANT@example.com")
+    )
+
+    assert result["deleted"]["document_chunks"] == 1
+    assert result["deleted"]["documents"] == 1
+    for model in (DocumentChunk, IngestJob, CrawlPage, CrawlSource, Document, Databank):
+        assert (await db.execute(select(model))).scalars().all() == []
 
 
 async def test_purge_removes_the_whole_tenant(db, user_id):
