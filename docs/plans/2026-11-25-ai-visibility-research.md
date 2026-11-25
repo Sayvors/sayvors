@@ -73,7 +73,7 @@
 - [x] Task 1: Add models, migration, and job enum.
 - [ ] Task 2: Add prompt CRUD API and tenant isolation.
 - [ ] Task 3: Add durable run creation and idempotency.
-- [ ] Task 4: Add bounded public-search collector.
+- [x] Task 4: Add bounded public-search collector.
 - [ ] Task 5: Add SSRF-safe source fetch and extraction.
 - [ ] Task 6: Add grounded LLM research and schema validation.
 - [ ] Task 7: Add claim validation and deterministic outcomes.
@@ -994,7 +994,7 @@ git commit -m "feat(ai-visibility): enqueue idempotent research runs"
 - Create: `services/api/app/modules/ai_visibility/search.py`
 - Create: `services/api/tests/test_ai_visibility_search.py`
 
-- [ ] **Step 1: Write failing search tests**
+- [x] **Step 1: Write failing search tests**
 
 ```python
 import pytest
@@ -1056,13 +1056,13 @@ async def _true():
     return True
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run: `cd services/api && python -m pytest tests/test_ai_visibility_search.py -q -n 0 -p no:cacheprovider`
 
 Expected: import failure.
 
-- [ ] **Step 3: Create the collector skeleton and RSS parser**
+- [x] **Step 3: Create the collector skeleton and RSS parser**
 
 ```python
 """Bounded public web search with cache, rate limits, and no API key."""
@@ -1137,7 +1137,7 @@ def safe_results(rows: list[SearchResult]) -> list[SearchResult]:
     return out
 ```
 
-- [ ] **Step 4: Add HTML fallback and cached search entry point**
+- [x] **Step 4: Add HTML fallback and cached search entry point**
 
 ```python
 class _BingHtmlParser(HTMLParser):
@@ -1264,7 +1264,7 @@ class SearchUnavailable(RuntimeError):
     pass
 ```
 
-- [ ] **Step 5: Add parser fixture coverage**
+- [x] **Step 5: Add parser fixture coverage**
 
 Add to `tests/test_ai_visibility_search.py`:
 
@@ -1279,7 +1279,7 @@ def test_parse_bing_html_fallback():
     assert rows[0].snippet == "Useful evidence."
 ```
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 Run: `cd services/api && python -m pytest tests/test_ai_visibility_search.py -q -n 0 -p no:cacheprovider`
 
