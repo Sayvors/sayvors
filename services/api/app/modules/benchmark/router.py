@@ -308,7 +308,7 @@ async def compare_places(
     tenant_id = tenant_id_of(ctx.user)
     await _require_external_subjects(ctx, subjects)
     key = "bm:compare:" + hashlib.sha1(
-        json.dumps({"t": tenant_id, "s": sorted(subjects), "r": period}, sort_keys=True).encode()
+        json.dumps({"t": tenant_id, "s": subjects, "r": period}, sort_keys=True).encode()
     ).hexdigest()
     try:
         cached = await cache_get(key)

@@ -790,6 +790,34 @@ async def test_reviews_endpoint_scoped_to_other_tenant(client, other_user_id):
     assert res.json()["subjects"][0]["reviews"] == []
 
 
+async def test_compare_cache_preserves_request_order(client, monkeypatch):
+    from app.modules.benchmark import router as benchmark_router
+
+    cache = {}
+
+    async def _get(key):
+        return cache.get(key)
+
+    async def _set(key, value, ttl):
+        cache[key] = value
+
+    monkeypatch.setattr(benchmark_router, "cache_get", _get)
+    monkeypatch.setattr(benchmark_router, "cache_set", _set)
+
+    first = client.get(
+        "/api/v1/benchmark/compare?subjects=own%3Aa&subjects=own%3Ab"
+    )
+    second = client.get(
+        "/api/v1/benchmark/compare?subjects=own%3Ab&subjects=own%3Aa"
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert [subject["key"] for subject in first.json()["subjects"]] == ["own:a", "own:b"]
+    assert [subject["key"] for subject in second.json()["subjects"]] == ["own:b", "own:a"]
+    assert len(cache) == 2
+
+
 async def test_compare_endpoint_accepts_range(client, monkeypatch):
     from app.modules.benchmark import places as places_module
 
