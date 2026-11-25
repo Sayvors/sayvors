@@ -150,6 +150,19 @@ async def create_prompt(
     return row
 
 
+async def get_prompt(
+    db: AsyncSession, tenant_id: str, prompt_id: str
+) -> AiVisibilityPrompt | None:
+    return (
+        await db.execute(
+            select(AiVisibilityPrompt).where(
+                AiVisibilityPrompt.id == prompt_id,
+                AiVisibilityPrompt.tenant_id == tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+
+
 async def list_prompts(
     db: AsyncSession,
     tenant_id: str,

@@ -5,7 +5,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...config import settings
 from ...core.deps import get_db
 from ..auth.rate_limit import rate_limit
-from ..team.context import TenantContext, require_perm
+from ..team.context import (
+    CHANNEL_LEVEL_EDIT,
+    CHANNEL_LEVEL_NONE,
+    TenantContext,
+    require_perm,
+)
 from . import service
 from .models import AiVisibilityPrompt
 from .schemas import (
@@ -31,6 +36,35 @@ RUN_CREATE_RATE_LIMIT = 30
 RUN_CREATE_RATE_WINDOW_SECONDS = 60
 
 
+def _authorize_channel(ctx: TenantContext, channel_id: str, *, write: bool) -> None:
+    level = ctx.channel_level(channel_id)
+    if (write and level != CHANNEL_LEVEL_EDIT) or (
+        not write and level == CHANNEL_LEVEL_NONE
+    ):
+        # Do not reveal whether an inaccessible branch exists.
+        raise HTTPException(404, "channel_not_found")
+
+
+async def _authorize_prompt(
+    db: AsyncSession, ctx: TenantContext, prompt_id: str, *, write: bool
+):
+    prompt = await service.get_prompt(db, ctx.tenant_id, prompt_id)
+    if prompt is None:
+        raise HTTPException(404, "prompt_not_found")
+    _authorize_channel(ctx, prompt.channel_id, write=write)
+    return prompt
+
+
+async def _authorize_run(
+    db: AsyncSession, ctx: TenantContext, run_id: str, *, write: bool
+):
+    run, _sources = await service.get_run(db, ctx.tenant_id, run_id)
+    if run is None:
+        raise HTTPException(404, "run_not_found")
+    _authorize_channel(ctx, run.channel_id, write=write)
+    return run
+
+
 def _out(row: AiVisibilityPrompt) -> PromptOut:
     return PromptOut(
         id=row.id,
@@ -51,6 +85,7 @@ async def list_prompts(
     ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ) -> PromptListOut:
+    _authorize_channel(ctx, channel_id, write=False)
     try:
         rows = await service.list_prompts(
             db, ctx.tenant_id, channel_id, include_archived
@@ -66,6 +101,7 @@ async def create_prompt(
     ctx: TenantContext = Depends(require_perm("ai.edit")),
     db: AsyncSession = Depends(get_db),
 ) -> PromptOut:
+    _authorize_channel(ctx, body.channel_id, write=True)
     if not settings.TESTING and not await rate_limit(
         f"ai-vis:prompt:{ctx.tenant_id}",
         PROMPT_CREATE_RATE_LIMIT,
@@ -99,6 +135,7 @@ async def patch_prompt(
     ctx: TenantContext = Depends(require_perm("ai.edit")),
     db: AsyncSession = Depends(get_db),
 ) -> PromptOut:
+    await _authorize_prompt(db, ctx, prompt_id, write=True)
     try:
         row = await service.update_prompt(db, ctx.tenant_id, prompt_id, body)
     except service.PromptLimitReached as exc:
@@ -116,6 +153,7 @@ async def remove_prompt(
     ctx: TenantContext = Depends(require_perm("ai.edit")),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
+    await _authorize_prompt(db, ctx, prompt_id, write=True)
     if not await service.delete_prompt(db, ctx.tenant_id, prompt_id):
         raise HTTPException(404, "prompt_not_found")
     return Response(status_code=204)
@@ -143,6 +181,7 @@ async def create_run(
     ctx: TenantContext = Depends(require_perm("ai.edit")),
     db: AsyncSession = Depends(get_db),
 ) -> RunOut:
+    _authorize_channel(ctx, body.channel_id, write=True)
     if not settings.TESTING and not await rate_limit(
         f"ai-vis:run:{ctx.tenant_id}",
         RUN_CREATE_RATE_LIMIT,
@@ -174,6 +213,7 @@ async def overview(
     ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ) -> OverviewOut:
+    _authorize_channel(ctx, channel_id, write=False)
     try:
         return OverviewOut(
             **await service.overview(db, ctx.tenant_id, channel_id, days)
@@ -192,6 +232,7 @@ async def list_runs(
     ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ) -> RunListOut:
+    _authorize_channel(ctx, channel_id, write=False)
     try:
         rows, total = await service.list_runs(
             db,
@@ -235,6 +276,7 @@ async def run_detail(
     ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ) -> RunDetailOut:
+    await _authorize_run(db, ctx, run_id, write=False)
     run, source_rows = await service.get_run(db, ctx.tenant_id, run_id)
     if run is None:
         raise HTTPException(404, "run_not_found")
@@ -271,6 +313,7 @@ async def retry_run(
     ctx: TenantContext = Depends(require_perm("ai.edit")),
     db: AsyncSession = Depends(get_db),
 ) -> RunOut:
+    await _authorize_run(db, ctx, run_id, write=True)
     try:
         row = await service.retry_run(
             db,
@@ -291,6 +334,7 @@ async def delete_run(
     ctx: TenantContext = Depends(require_perm("ai.edit")),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
+    await _authorize_run(db, ctx, run_id, write=True)
     if not await service.delete_run(db, ctx.tenant_id, run_id):
         raise HTTPException(404, "run_not_found")
     return Response(status_code=204)
