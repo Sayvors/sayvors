@@ -38,6 +38,12 @@ import CompletenessCard from "@/components/benchmark/CompletenessCard";
 import FixFirstTickets from "@/components/benchmark/FixFirstTickets";
 import ReviewKeywords from "@/components/benchmark/ReviewKeywords";
 import { queryKeys } from "@/lib/query-keys";
+import {
+  formatGap,
+  formatPercent,
+  formatRating,
+  type GapUnit,
+} from "@/lib/benchmark-format";
 
 const FOCUS = "focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[#3D1D6E]";
 const REVIEW_THEME_POLL_MS = 3000;
@@ -67,6 +73,8 @@ interface Row<T extends string> {
    */
   tierValue?: (subject: ComparisonSubject) => number | null;
   higherIsBetter?: boolean;
+  /** Unit used by the signed gap chip beneath this row's value. */
+  gapUnit?: GapUnit;
 }
 
 function getMetricRows(c: Record<string, any>): Row<MetricKey>[] {
@@ -76,12 +84,12 @@ function getMetricRows(c: Record<string, any>): Row<MetricKey>[] {
     return total > 0 && count != null ? (count / total) * 100 : null;
   };
   return [
-    { key: "total_reviews", label: c.reviewsTotal, value: (s) => s.metrics.total_reviews, higherIsBetter: true, render: (s) => num(s.metrics.total_reviews) },
-    { key: "avg_rating", label: c.averageRating, value: (s) => s.metrics.avg_rating, tierValue: (s) => (s.metrics.total_ratings !== 0 ? s.metrics.avg_rating : null), higherIsBetter: true, render: (s) => rating(s) },
-    { key: "reviews_last_month", label: c.reviewsLastMonth, value: (s) => s.metrics.reviews_last_month, higherIsBetter: true, render: (s) => num(s.metrics.reviews_last_month) },
-    { key: "reviews_last_year", label: c.reviewsLastYear, value: (s) => s.metrics.reviews_last_year, render: (s) => num(s.metrics.reviews_last_year) },
-    { key: "five_star_pct", label: c.fiveStarRatings, value: (s) => starShare(s, 5), higherIsBetter: true, render: (s) => pct(starShare(s, 5)) },
-    { key: "one_star_pct", label: c.oneStarRatings, value: (s) => starShare(s, 1), higherIsBetter: false, render: (s) => pct(starShare(s, 1)) },
+    { key: "total_reviews", label: c.reviewsTotal, value: (s) => s.metrics.total_reviews, higherIsBetter: true, gapUnit: "count", render: (s) => num(s.metrics.total_reviews) },
+    { key: "avg_rating", label: c.averageRating, value: (s) => s.metrics.avg_rating, tierValue: (s) => (s.metrics.total_ratings !== 0 ? s.metrics.avg_rating : null), higherIsBetter: true, gapUnit: "rating", render: (s) => rating(s) },
+    { key: "reviews_last_month", label: c.reviewsLastMonth, value: (s) => s.metrics.reviews_last_month, higherIsBetter: true, gapUnit: "count", render: (s) => num(s.metrics.reviews_last_month) },
+    { key: "reviews_last_year", label: c.reviewsLastYear, value: (s) => s.metrics.reviews_last_year, gapUnit: "count", render: (s) => num(s.metrics.reviews_last_year) },
+    { key: "five_star_pct", label: c.fiveStarRatings, value: (s) => starShare(s, 5), higherIsBetter: true, gapUnit: "percent", render: (s) => pct(starShare(s, 5)) },
+    { key: "one_star_pct", label: c.oneStarRatings, value: (s) => starShare(s, 1), higherIsBetter: false, gapUnit: "percent", render: (s) => pct(starShare(s, 1)) },
   ];
 }
 
@@ -97,9 +105,9 @@ type PeriodKey =
  */
 function getPeriodRows(c: Record<string, any>): Row<PeriodKey>[] {
   return [
-    { key: "period_reviews", label: c.reviewsAdded, value: (s) => s.metrics.period_reviews, render: (s) => num(s.metrics.period_reviews) },
-    { key: "period_avg_rating", label: c.averageRatingInPeriod, value: (s) => s.metrics.period_avg_rating, render: (s) => (s.metrics.period_avg_rating == null ? "—" : `${s.metrics.period_avg_rating} ★`) },
-    { key: "rating_change", label: c.ratingChange, value: (s) => s.metrics.rating_change, render: (s) => signed(s.metrics.rating_change) },
+    { key: "period_reviews", label: c.reviewsAdded, value: (s) => s.metrics.period_reviews, gapUnit: "count", render: (s) => num(s.metrics.period_reviews) },
+    { key: "period_avg_rating", label: c.averageRatingInPeriod, value: (s) => s.metrics.period_avg_rating, gapUnit: "rating", render: (s) => s.metrics.period_avg_rating == null ? "—" : formatRating(s.metrics.period_avg_rating) },
+    { key: "rating_change", label: c.ratingChange, value: (s) => s.metrics.rating_change, gapUnit: "rating", render: (s) => signed(s.metrics.rating_change) },
   ];
 }
 
@@ -121,14 +129,14 @@ function normalizeRange(value: string | null): CompareRange {
 
 function getFactRows(c: Record<string, any>): Row<FactKey>[] {
   return [
-    { key: "positive_pct", label: c.positiveSentiment, value: (s) => s.facts.positive_pct, higherIsBetter: true, render: (s) => pct(s.facts.positive_pct) },
-    { key: "negative_pct", label: c.negativeSentiment, value: (s) => s.facts.negative_pct, higherIsBetter: false, render: (s) => pct(s.facts.negative_pct) },
+    { key: "positive_pct", label: c.positiveSentiment, value: (s) => s.facts.positive_pct, higherIsBetter: true, gapUnit: "percent", render: (s) => pct(s.facts.positive_pct) },
+    { key: "negative_pct", label: c.negativeSentiment, value: (s) => s.facts.negative_pct, higherIsBetter: false, gapUnit: "percent", render: (s) => pct(s.facts.negative_pct) },
     { key: "branch", label: c.branchLocation, render: (s) => s.facts.branch ?? "—" },
-    { key: "employee_mentions", label: c.teamMentioned, value: (s) => s.facts.employee_mentions, render: (s) => num(s.facts.employee_mentions) },
-    { key: "working_hard_mentions", label: c.praisedForHardWork, value: (s) => s.facts.working_hard_mentions, render: (s) => num(s.facts.working_hard_mentions) },
-    { key: "menu_price_mentions", label: c.menuPriceMentions, value: (s) => s.facts.menu_price_mentions, render: (s) => num(s.facts.menu_price_mentions) },
-    { key: "parking_praised", label: c.parkingPositive, value: (s) => s.facts.parking_praised, render: (s) => num(s.facts.parking_praised) },
-    { key: "parking_criticised", label: c.parkingNegative, value: (s) => s.facts.parking_criticised, higherIsBetter: false, render: (s) => num(s.facts.parking_criticised) },
+    { key: "employee_mentions", label: c.teamMentioned, value: (s) => s.facts.employee_mentions, gapUnit: "count", render: (s) => num(s.facts.employee_mentions) },
+    { key: "working_hard_mentions", label: c.praisedForHardWork, value: (s) => s.facts.working_hard_mentions, gapUnit: "count", render: (s) => num(s.facts.working_hard_mentions) },
+    { key: "menu_price_mentions", label: c.menuPriceMentions, value: (s) => s.facts.menu_price_mentions, gapUnit: "count", render: (s) => num(s.facts.menu_price_mentions) },
+    { key: "parking_praised", label: c.parkingPositive, value: (s) => s.facts.parking_praised, gapUnit: "count", render: (s) => num(s.facts.parking_praised) },
+    { key: "parking_criticised", label: c.parkingNegative, value: (s) => s.facts.parking_criticised, higherIsBetter: false, gapUnit: "count", render: (s) => num(s.facts.parking_criticised) },
     { key: "services", label: c.services, render: (s, all) => serviceChips(s.facts.services, all) },
     { key: "top_problems", label: c.topProblems, render: (s) => chips(s.facts.top_problems) },
     { key: "named_team", label: c.namedTeam, render: (s) => namedTeam(s.facts.named_team) },
@@ -200,7 +208,7 @@ function num(value: number | null | undefined, suffix = ""): string {
 }
 
 function pct(value: number | null | undefined): string {
-  return value == null ? "—" : `${value}%`;
+  return formatPercent(value);
 }
 
 /** A rating movement: sign is the message, so keep it visible. */
@@ -214,7 +222,7 @@ function signed(value: number | null | undefined): string {
 function rating(subject: ComparisonSubject): string {
   const { avg_rating, total_ratings } = subject.metrics;
   if (avg_rating == null || total_ratings === 0) return "—";
-  return `${avg_rating} ★`;
+  return formatRating(avg_rating);
 }
 
 type CellTier = "best" | "good" | "worst" | "empty";
@@ -307,18 +315,17 @@ function namedTeam(members: ComparisonSubject["facts"]["named_team"]): ReactNode
 function gapChip(
   value: number | null,
   mainValue: number | null,
-  higherIsBetter: boolean
+  higherIsBetter: boolean,
+  unit: GapUnit
 ): { text: string; className: string } | null {
   if (value == null || mainValue == null || value === mainValue) return null;
   if (!Number.isFinite(value) || !Number.isFinite(mainValue)) return null;
   const diff = value - mainValue;
-  const rounded = Math.round(diff * 10) / 10;
-  // A ±0 chip asserts a difference that doesn't exist (e.g. 4.96 vs 5.0).
-  if (rounded === 0) return null;
+  const text = formatGap(diff, unit);
+  if (!text) return null;
   const helps = higherIsBetter ? diff > 0 : diff < 0;
-  const sign = diff > 0 ? "+" : "\u2212";
   return {
-    text: `${sign}${Math.abs(rounded)}`,
+    text,
     className: helps
       ? "bg-[#E7F6EC] text-[#116631]"
       : "bg-[#FDE8EC] text-[#B3123A]",
@@ -518,7 +525,7 @@ function MatrixTable<T extends string>({
                     const tier = cellTier(row, subjects, subject, value);
                     const chip =
                       row.higherIsBetter === true && subject.key !== mainKey
-                        ? gapChip(value, mainValue, row.higherIsBetter)
+                        ? gapChip(value, mainValue, row.higherIsBetter, row.gapUnit ?? "count")
                         : null;
                     const drillable = tier === "worst" && subject.available && onDrillDown != null;
                     const content = (
