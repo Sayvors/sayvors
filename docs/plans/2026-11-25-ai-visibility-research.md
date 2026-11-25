@@ -82,7 +82,7 @@
 - [ ] Task 10: Add overview/history APIs and metrics.
 - [ ] Task 11: Add retention, limits, and observability.
 - [ ] Task 12: Add frontend contracts, query keys, i18n, and navigation.
-- [ ] Task 13: Build prompt library and run controls.
+- [x] Task 13: Build prompt library and run controls.
 - [ ] Task 14: Build progress, decision brief, claim ledger, and actions.
 - [ ] Task 15: Build history, comparison, and error states.
 - [ ] Task 16: Final security review, docs, and verification.
@@ -3338,7 +3338,7 @@ git commit -m "feat(ai-visibility): add frontend contracts and navigation"
 - Create: `apps/web/components/ai-visibility/PromptLibrary.test.tsx`
 - Create: `apps/web/components/ai-visibility/AiVisibilityPage.test.tsx`
 
-- [ ] **Step 1: Write failing PromptLibrary tests**
+- [x] **Step 1: Write failing PromptLibrary tests**
 
 ```tsx
 import { fireEvent, render, screen } from "@testing-library/react";
@@ -3380,13 +3380,13 @@ describe("PromptLibrary", () => {
 });
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run: `cd apps/web && npx vitest run components/ai-visibility/PromptLibrary.test.tsx --no-cache`
 
 Expected: module not found.
 
-- [ ] **Step 3: Add the route and page shell**
+- [x] **Step 3: Add the route and page shell**
 
 `apps/web/app/dashboard/ai-visibility/page.tsx`:
 
@@ -3570,7 +3570,7 @@ export default function AiVisibilityPage() {
 }
 ```
 
-- [ ] **Step 4: Implement PromptLibrary**
+- [x] **Step 4: Implement PromptLibrary**
 
 ```tsx
 "use client";
@@ -3715,7 +3715,7 @@ export default function PromptLibrary({ channelId, copy, prompts, suggestions, s
 
 The page passes `channelId={channelId}` so prompt creation remains branch-scoped.
 
-- [ ] **Step 5: Add page integration test**
+- [x] **Step 5: Add page integration test**
 
 Mock `useGoogleChannels`, API functions, and child components. Assert:
 
@@ -3724,7 +3724,7 @@ Mock `useGoogleChannels`, API functions, and child components. Assert:
 - Selecting a prompt and clicking Run calls `createRun` with the branch and prompt ids.
 - Run all processes prompts in batches no larger than three.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 Run:
 
