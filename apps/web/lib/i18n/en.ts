@@ -3837,7 +3837,7 @@ const en = {
       noVerifiedBranch: "No connected branch is verified yet, so Compare has not selected one automatically.",
       verifyBranch: "Verify a branch",
       period: "Period",
-      rangeNote: "Live and 30 days are active. 90 days and 1 year unlock as the scraper fills history.",
+      rangeNote: "Live reads current values. Period views use stored history; blank means there is not enough data yet.",
       pickBusinessToBuild: "Pick a business in either dropdown to build the table.",
       pullingLatest: "Pulling the latest numbers and reviews.",
       couldNotLoadComparison: "Could not load the comparison.",

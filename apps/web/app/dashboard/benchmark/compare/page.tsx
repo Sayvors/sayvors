@@ -13,6 +13,7 @@ import {
   fetchReviewThemes,
   fetchReviews,
   fetchSavedPlaces,
+  normalizeCompareRange,
   retryReviewThemes,
   RANGE_DAYS,
   subjectKey,
@@ -117,15 +118,12 @@ function getRangeOptions(c: Record<string, any>): { value: CompareRange; label: 
   return [
     { value: "live", label: c.live, title: c.liveTitle, status: "ready" },
     { value: "30d", label: c.days30, title: c.days30Title, status: "ready" },
-    { value: "90d", label: c.days90, title: c.days90Title, status: "coming_soon" },
-    { value: "365d", label: c.year1, title: c.year1Title, status: "coming_soon" },
+    { value: "90d", label: c.days90, title: c.days90Title, status: "ready" },
+    { value: "365d", label: c.year1, title: c.year1Title, status: "ready" },
   ];
 }
 
-/** Disabled ranges fall back to Live so an old link still renders. */
-function normalizeRange(value: string | null): CompareRange {
-  return value === "30d" ? "30d" : "live";
-}
+/** Unsupported or missing ranges fall back to Live. */
 
 function getFactRows(c: Record<string, any>): Row<FactKey>[] {
   return [
@@ -1259,7 +1257,7 @@ export default function ComparePage() {
   const own = channelsQuery.data ?? [];
 
   const selection = readSelection(params);
-  const range = normalizeRange(params.get("range"));
+  const range = normalizeCompareRange(params.get("range"));
   const days = RANGE_DAYS[range];
   const keys = [selection.main, ...selection.competitors].filter(
     (key): key is string => Boolean(key)

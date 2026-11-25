@@ -208,6 +208,11 @@ export const RANGE_DAYS: Record<CompareRange, number | null> = {
   "365d": 365,
 };
 
+/** Keep shared URLs valid while falling back safely for unsupported values. */
+export function normalizeCompareRange(value: string | null): CompareRange {
+  return value === "30d" || value === "90d" || value === "365d" ? value : "live";
+}
+
 export function fetchComparison(
   subjects: string[],
   range: CompareRange = "live"
