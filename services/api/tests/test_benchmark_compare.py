@@ -38,25 +38,23 @@ async def test_parse_subject():
             compare.parse_subject(bad)
 
 
-async def test_scan_reviews_counts_windows_stars_and_text():
+async def test_scan_reviews_counts_windows_stars_and_sentiment():
     now = datetime.now(timezone.utc)
-    recent = (now - timedelta(days=2)).isoformat()
+    recent = now.isoformat()
     old = (now - timedelta(days=40)).isoformat()
     reviews = [
-        {"rating": 5, "text": "The staff are hard working, great parking", "publish_time": recent},
-        {"rating": 1, "text": "No parking and expensive menu prices", "publish_time": old},
-        {"rating": 4, "text": "Lovely food", "publish_time": recent},
+        {"rating": 5, "text": "Great beans", "publish_time": recent},
+        {"rating": 1, "text": "Cold coffee", "publish_time": old},
+        {"rating": 4, "text": "Lovely roast", "publish_time": recent},
     ]
     scan = compare._scan_reviews(reviews)
     assert scan["windows"]["reviews_last_week"] == 2
     assert scan["windows"]["reviews_last_month"] == 2
     assert scan["windows"]["reviews_last_year"] == 3
     assert scan["stars"][5] == 1 and scan["stars"][1] == 1
-    assert scan["text_counts"]["employee_mentions"] == 1
-    assert scan["text_counts"]["working_hard_mentions"] == 1
-    assert scan["text_counts"]["parking_praised"] == 1
-    assert scan["text_counts"]["parking_criticised"] == 1
-    assert scan["text_counts"]["menu_price_mentions"] == 1
+    assert scan["positive_pct"] == 66.7
+    assert scan["negative_pct"] == 33.3
+    assert "text_counts" not in scan
 
 
 async def test_saved_star_share_uses_sample_when_full_distribution_missing(db, monkeypatch):
@@ -100,7 +98,7 @@ async def test_saved_star_share_uses_full_distribution_when_available(db):
     assert result["metrics"]["one_star"] == 100
     assert result["metrics"]["star_share_base"] == 900
     assert any("full rating distribution" in note for note in result["notes"])
-    assert not any("star counts and review-text facts come from" in note for note in result["notes"])
+    assert not any("review-text facts" in note for note in result["notes"])
 
 
 async def test_saved_star_share_ignores_malformed_full_distribution(db):

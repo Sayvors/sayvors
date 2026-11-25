@@ -7,8 +7,8 @@ tenant's own Google locations (Sayvors analytics tables).
 
 Honesty rule: facts Google does not expose for a competitor listing (views,
 calls, menu prices, registered staff) come back as null with a note, never as
-an invented zero. Text-derived facts are scanned from a bounded sample of the
-most recent reviews and labelled as such in the UI.
+an invented zero. Repeated review themes are extracted separately by the
+versioned theme-analysis pipeline, not by hardcoded domain keyword lists.
 """
 from __future__ import annotations
 
@@ -52,30 +52,6 @@ WINDOW_DAYS = {
 # bounded before they reach the comparison page's filter chips.
 MAX_TAGS = 5
 MAX_TAG_LENGTH = 30
-TEXT_FACT_KEYS = (
-    "employee_mentions", "working_hard_mentions", "menu_price_mentions",
-    "parking_praised", "parking_criticised", "parking_mentions",
-)
-
-# Lowercased substrings, English + Arabic. A mention is a review that contains
-# any of them; "working hard" requires both a staff word and an effort word so
-# a five-star review that only says "great food" is never counted as praise for
-# the team.
-STAFF_WORDS = (
-    "staff", "employee", "waiter", "waitress", "cashier", "manager", "team",
-    "موظف", "موظفين", "الموظفين", "فريق", "عامل", "عمال", "مدير", "المدير",
-)
-EFFORT_WORDS = (
-    "hard working", "hard-working", "works hard", "working hard", "dedicated",
-    "goes above", "مجتهد", "مجتهدين", "اجتهاد", "يعمل بجد", "مثابرة", "متميز",
-)
-PARKING_WORDS = (
-    "parking", "car park", "valet", "مواقف", "موقف", "الجراج", "باركينغ",
-)
-MENU_PRICE_WORDS = (
-    "menu", "price", "prices", "pricing", "قائمة الطعام", "القائمة", "اسعار",
-    "أسعار", "السعر", "سعر",
-)
 
 PLACE_TYPE_LABELS = {
     "restaurant": "Restaurant", "cafe": "Cafe", "coffee_shop": "Coffee shop",
@@ -134,11 +110,6 @@ def _blank_facts() -> dict[str, Any]:
         "positive_pct": None,
         "negative_pct": None,
         "branch": None,
-        "employee_mentions": None,
-        "working_hard_mentions": None,
-        "menu_price_mentions": None,
-        "parking_praised": None,
-        "parking_criticised": None,
         "services": [],
         "top_problems": [],
         "named_team": [],
@@ -205,16 +176,14 @@ def _publish_time(value: Any) -> datetime | None:
 
 
 def _scan_reviews(reviews: list[dict]) -> dict[str, Any]:
-    """Bounded text scan shared by both sides.
+    """Bounded rating/window/sentiment scan shared by both sides.
 
-    Returns window/star/sentiment counts from the sample plus the text-fact
-    counts. Callers replace the authoritative counts with their own sources
-    where those exist (Sayvors analytics stores full-history aggregates).
+    Repeated text themes are extracted separately by ``theme_service``; this
+    scan deliberately contains no domain keyword lists.
     """
     now = datetime.now(timezone.utc)
     windows = {key: 0 for key in WINDOW_DAYS}
     stars: Counter[int] = Counter()
-    text_counts = {key: 0 for key in TEXT_FACT_KEYS}
     pos = neu = neg = 0
 
     for review in reviews:
@@ -238,29 +207,12 @@ def _scan_reviews(reviews: list[dict]) -> dict[str, Any]:
                 if published >= now - timedelta(days=days):
                     windows[key] += 1
 
-        low = str(review.get("text") or "").lower()
-        has_staff = any(word in low for word in STAFF_WORDS)
-        if has_staff:
-            text_counts["employee_mentions"] += 1
-            if any(word in low for word in EFFORT_WORDS):
-                text_counts["working_hard_mentions"] += 1
-        if any(word in low for word in MENU_PRICE_WORDS):
-            text_counts["menu_price_mentions"] += 1
-        if any(word in low for word in PARKING_WORDS):
-            if rating is not None and rating >= 4:
-                text_counts["parking_praised"] += 1
-            elif rating is not None and rating <= 2:
-                text_counts["parking_criticised"] += 1
-            else:
-                text_counts["parking_mentions"] += 1
-
     total = pos + neu + neg
     return {
         "windows": windows,
         "stars": stars,
         "positive_pct": round(pos / total * 100, 1) if total else None,
         "negative_pct": round(neg / total * 100, 1) if total else None,
-        "text_counts": text_counts,
         "sample_size": len(reviews),
     }
 
@@ -504,11 +456,6 @@ async def _saved_subject(db: AsyncSession, tenant_id: str, raw: str,
         "positive_pct": scan["positive_pct"],
         "negative_pct": scan["negative_pct"],
         "branch": name or saved.label,
-        "employee_mentions": scan["text_counts"]["employee_mentions"] if scan["sample_size"] else None,
-        "working_hard_mentions": scan["text_counts"]["working_hard_mentions"] if scan["sample_size"] else None,
-        "menu_price_mentions": scan["text_counts"]["menu_price_mentions"] if scan["sample_size"] else None,
-        "parking_praised": scan["text_counts"]["parking_praised"] if scan["sample_size"] else None,
-        "parking_criticised": scan["text_counts"]["parking_criticised"] if scan["sample_size"] else None,
         "services": _place_types(details.get("types")),
     })
 
@@ -541,17 +488,17 @@ async def _saved_subject(db: AsyncSession, tenant_id: str, raw: str,
             "5-star and 1-star counts come from the provider's full rating distribution."
         )
     if scan["sample_size"]:
-        evidence = "Review-window counts and review-text facts"
+        evidence = "Review-window counts"
         if not full_distribution:
-            evidence += ", star counts"
+            evidence += " and star counts"
         notes.append(
             f"{evidence} come from the {scan['sample_size']} most recent reviews "
             f"Google returns (max {REVIEW_SAMPLE_LIMIT}), not the lifetime total."
         )
     elif not full_distribution:
         notes.append(
-            "No reviews were available in this refresh, so review-window, star and "
-            "review-text facts are blank."
+            "No reviews were available in this refresh, so review-window and "
+            "star facts are blank."
         )
     notes.append("Views, calls, menu prices and registered staff are only available to the listing owner.")
 
@@ -671,19 +618,14 @@ async def _own_subject(db: AsyncSession, tenant_id: str, raw: str,
         "positive_pct": sentiment.get("positive_pct"),
         "negative_pct": sentiment.get("negative_pct"),
         "branch": channel.display_name,
-        "employee_mentions": scan["text_counts"]["employee_mentions"] if scan["sample_size"] else None,
-        "working_hard_mentions": scan["text_counts"]["working_hard_mentions"] if scan["sample_size"] else None,
-        "menu_price_mentions": scan["text_counts"]["menu_price_mentions"] if scan["sample_size"] else None,
-        "parking_praised": scan["text_counts"]["parking_praised"] if scan["sample_size"] else None,
-        "parking_criticised": scan["text_counts"]["parking_criticised"] if scan["sample_size"] else None,
         "services": services,
         "top_problems": [name for name, _ in problems.most_common(5)],
         "named_team": named_team,
     })
 
     notes = [
-        f"Counts come from your connected Google location. Review-text facts are "
-        f"scanned from the {scan['sample_size']} most recent reviews "
+        f"Counts come from your connected Google location. Top problems are counted "
+        f"from the {scan['sample_size']} most recent stored reviews "
         f"(max {REVIEW_SAMPLE_LIMIT}).",
         "Views and calls are from the last 12 months of Google Business Profile data.",
     ]

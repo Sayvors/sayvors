@@ -189,11 +189,6 @@ export interface ComparisonSubject {
     positive_pct: number | null;
     negative_pct: number | null;
     branch: string | null;
-    employee_mentions: number | null;
-    working_hard_mentions: number | null;
-    menu_price_mentions: number | null;
-    parking_praised: number | null;
-    parking_criticised: number | null;
     services: string[];
     top_problems: string[];
     named_team: { name: string; mentions: number; positive: number }[];
