@@ -84,7 +84,7 @@
 - [ ] Task 12: Add frontend contracts, query keys, i18n, and navigation.
 - [x] Task 13: Build prompt library and run controls.
 - [x] Task 14: Build progress, decision brief, claim ledger, and actions.
-- [ ] Task 15: Build history, comparison, and error states.
+- [x] Task 15: Build history, comparison, and error states.
 - [ ] Task 16: Final security review, docs, and verification.
 
 ### Task 1: Add models, migration, and job enum
@@ -4063,7 +4063,7 @@ git commit -m "feat(ai-visibility): render grounded decision briefs"
 - Create: `apps/web/components/ai-visibility/RunHistory.test.tsx`
 - Modify: `apps/web/components/ai-visibility/AiVisibilityPage.tsx`
 
-- [ ] **Step 1: Write failing history tests**
+- [x] **Step 1: Write failing history tests**
 
 ```tsx
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -4121,13 +4121,13 @@ describe("RunHistory", () => {
 });
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run: `cd apps/web && npx vitest run components/ai-visibility/RunHistory.test.tsx --no-cache`
 
 Expected: module not found.
 
-- [ ] **Step 3: Implement RunHistory**
+- [x] **Step 3: Implement RunHistory**
 
 ```tsx
 "use client";
@@ -4258,7 +4258,7 @@ export default function RunHistory({ channelId, selectedId, copy, onSelect, onCh
 }
 ```
 
-- [ ] **Step 4: Wire history into the page**
+- [x] **Step 4: Wire history into the page**
 
 ```tsx
 <RunHistory channelId={channelId} selectedId={selectedRunId} copy={copy}
@@ -4266,7 +4266,7 @@ export default function RunHistory({ channelId, selectedId, copy, onSelect, onCh
   onChanged={() => void queryClient.invalidateQueries({ queryKey: queryKeys.aiVisibility.all() })} />
 ```
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run:
 

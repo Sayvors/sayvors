@@ -18,6 +18,7 @@ import {
 import { formatRate, isActiveStatus } from "@/lib/ai-visibility-metrics";
 import PromptLibrary from "./PromptLibrary";
 import ResearchRunPanel from "./ResearchRunPanel";
+import RunHistory from "./RunHistory";
 
 export default function AiVisibilityPage() {
   const { t } = useI18n();
@@ -244,6 +245,13 @@ export default function AiVisibilityPage() {
           />
         </section>
       </div>
+      <RunHistory
+        channelId={channelId}
+        selectedId={selectedRunId}
+        copy={copy}
+        onSelect={setSelectedRunId}
+        onChanged={invalidate}
+      />
     </div>
   );
 }
