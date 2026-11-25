@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import datetime, timezone
+
+import sentry_sdk
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -81,6 +84,32 @@ async def _status(db: AsyncSession, run: AiVisibilityRun, status: str) -> None:
     await db.commit()
 
 
+def _finish(run: AiVisibilityRun, started: float, status: str) -> dict:
+    logger.info(
+        "ai_visibility_research_finished",
+        extra={
+            "run_id": run.id,
+            "tenant_id": run.tenant_id,
+            "status": status,
+            "duration_seconds": round(time.monotonic() - started, 3),
+            "source_count": run.source_count,
+            "model": run.model,
+            "failure_code": run.failure_code,
+        },
+    )
+    if status in {"ambiguous", "insufficient_evidence"}:
+        sentry_sdk.capture_message(
+            f"AI visibility research {status}",
+            level="warning",
+            extras={
+                "run_id": run.id,
+                "tenant_id": run.tenant_id,
+                "failure_code": run.failure_code,
+            },
+        )
+    return {"status": status, "run_id": run.id}
+
+
 async def handle_research(job, db: AsyncSession) -> dict:
     from ..billing.budget import BudgetExhausted
 
@@ -95,8 +124,9 @@ async def handle_research(job, db: AsyncSession) -> dict:
     ).scalar_one_or_none()
     if run is None:
         raise ValueError("run_not_found")
+    started = time.monotonic()
     if run.status == "completed":
-        return {"status": "completed", "run_id": run.id}
+        return _finish(run, started, "completed")
 
     try:
         await _status(db, run, "searching")
@@ -109,7 +139,7 @@ async def handle_research(job, db: AsyncSession) -> dict:
             run.failure_code = "insufficient_sources"
             run.completed_at = _now()
             await db.commit()
-            return {"status": run.status, "run_id": run.id}
+            return _finish(run, started, run.status)
 
         await _status(db, run, "reading")
         branch = await load_branch_facts(db, run.tenant_id, run.channel_id)
@@ -170,7 +200,7 @@ async def handle_research(job, db: AsyncSession) -> dict:
             run.status = "ambiguous"
             run.failure_code = "post_llm_persistence_failed"
             await db.commit()
-            return {"status": "ambiguous", "run_id": run.id}
+            return _finish(run, started, "ambiguous")
         return {"status": run.status, "run_id": run.id}
     except BudgetExhausted:
         await db.rollback()
@@ -198,4 +228,4 @@ async def handle_research(job, db: AsyncSession) -> dict:
         run.error = str(exc)[:2000]
         run.completed_at = _now()
         await db.commit()
-    return {"status": "failed", "run_id": run.id}
+    return _finish(run, started, "failed")

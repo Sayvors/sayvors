@@ -75,12 +75,12 @@
 - [x] Task 3: Add durable run creation and idempotency.
 - [x] Task 4: Add bounded public-search collector.
 - [x] Task 5: Add SSRF-safe source fetch and extraction.
-- [ ] Task 6: Add grounded LLM research and schema validation.
-- [ ] Task 7: Add claim validation and deterministic outcomes.
-- [ ] Task 8: Add fix-next decision ranking.
+- [x] Task 6: Add grounded LLM research and schema validation.
+- [x] Task 7: Add claim validation and deterministic outcomes.
+- [x] Task 8: Add fix-next decision ranking.
 - [x] Task 9: Add durable research job handler.
 - [x] Task 10: Add overview/history APIs and metrics.
-- [ ] Task 11: Add retention, limits, and observability.
+- [x] Task 11: Add retention, limits, and observability.
 - [ ] Task 12: Add frontend contracts, query keys, i18n, and navigation.
 - [x] Task 13: Build prompt library and run controls.
 - [x] Task 14: Build progress, decision brief, claim ledger, and actions.
@@ -1484,7 +1484,7 @@ git commit -m "feat(ai-visibility): snapshot sources with SSRF-safe fetches"
 - Create: `services/api/app/modules/ai_visibility/research.py`
 - Create: `services/api/tests/test_ai_visibility_research.py`
 
-- [ ] **Step 1: Write failing research tests**
+- [x] **Step 1: Write failing research tests**
 
 ```python
 import json
@@ -1546,13 +1546,13 @@ async def test_select_research_model_prefers_largest_context(monkeypatch):
     assert await research.select_research_model(object()) == "large"
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run: `cd services/api && python -m pytest tests/test_ai_visibility_research.py -q -n 0 -p no:cacheprovider`
 
 Expected: import failure.
 
-- [ ] **Step 3: Add structured schemas and prompt construction**
+- [x] **Step 3: Add structured schemas and prompt construction**
 
 ```python
 """Grounded LLM research over fetched source snapshots."""
@@ -1629,7 +1629,7 @@ def build_messages(*, branch: dict, prompt: str, locale: str, sources: list[dict
     return [LLMMessage(role="system", content=system), LLMMessage(role="user", content=user)]
 ```
 
-- [ ] **Step 4: Add response parsing and model selection**
+- [x] **Step 4: Add response parsing and model selection**
 
 ```python
 def parse_response(content: str, sources: list[dict]) -> ResearchPayload:
@@ -1662,7 +1662,7 @@ async def complete_research(db, *, tenant_id, channel_id, branch, prompt, locale
     return model, parse_response(response.content, sources)
 ```
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run: `cd services/api && python -m pytest tests/test_ai_visibility_research.py -q -n 0 -p no:cacheprovider`
 
@@ -1679,7 +1679,7 @@ git commit -m "feat(ai-visibility): add grounded LLM research contract"
 - Create: `services/api/app/modules/ai_visibility/validation.py`
 - Create: `services/api/tests/test_ai_visibility_validation.py`
 
-- [ ] **Step 1: Write failing validation tests**
+- [x] **Step 1: Write failing validation tests**
 
 ```python
 import pytest
@@ -1744,13 +1744,13 @@ def test_owned_domain_counts_as_citation():
     assert validated.cited is True
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run: `cd services/api && python -m pytest tests/test_ai_visibility_validation.py -q -n 0 -p no:cacheprovider`
 
 Expected: import failure.
 
-- [ ] **Step 3: Implement citation and quote validation**
+- [x] **Step 3: Implement citation and quote validation**
 
 ```python
 """Validate LLM claims against immutable fetched source snapshots."""
@@ -1833,7 +1833,7 @@ def validate(payload: ResearchPayload, sources: list[dict], branch: dict) -> Res
     return payload
 ```
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run: `cd services/api && python -m pytest tests/test_ai_visibility_validation.py tests/test_ai_visibility_research.py -q -n 0 -p no:cacheprovider`
 
@@ -1850,7 +1850,7 @@ git commit -m "feat(ai-visibility): validate claims and branch outcomes"
 - Create: `services/api/app/modules/ai_visibility/decisions.py`
 - Create: `services/api/tests/test_ai_visibility_decisions.py`
 
-- [ ] **Step 1: Write failing decision tests**
+- [x] **Step 1: Write failing decision tests**
 
 ```python
 from app.modules.ai_visibility import decisions, research
@@ -1892,13 +1892,13 @@ def test_competitor_advantage_produces_action():
     assert any(row["category"] == "competitor_gap" for row in actions)
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run: `cd services/api && python -m pytest tests/test_ai_visibility_decisions.py -q -n 0 -p no:cacheprovider`
 
 Expected: import failure.
 
-- [ ] **Step 3: Implement deterministic action ranking**
+- [x] **Step 3: Implement deterministic action ranking**
 
 ```python
 """Evidence-linked, deterministic owner actions. No invented uplift."""
@@ -1982,7 +1982,7 @@ def build_actions(payload, *, branch: dict) -> list[dict]:
     ))
 ```
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run: `cd services/api && python -m pytest tests/test_ai_visibility_decisions.py tests/test_ai_visibility_validation.py -q -n 0 -p no:cacheprovider`
 
@@ -2733,7 +2733,7 @@ git commit -m "feat(ai-visibility): add metrics and run history APIs"
 - Modify: `services/api/app/modules/ai_visibility/jobs.py`
 - Modify: `services/api/app/workers/main.py`
 
-- [ ] **Step 1: Write failing retention tests**
+- [x] **Step 1: Write failing retention tests**
 
 ```python
 from datetime import datetime, timedelta, timezone
@@ -2792,13 +2792,13 @@ async def test_cleanup_is_bounded(db, user_id, channel_id, monkeypatch):
     assert await retention.cleanup_once(db) == 2
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run: `cd services/api && python -m pytest tests/test_ai_visibility_retention.py -q -n 0 -p no:cacheprovider`
 
 Expected: import failure.
 
-- [ ] **Step 3: Implement bounded retention**
+- [x] **Step 3: Implement bounded retention**
 
 ```python
 """Bounded retention for grounded research evidence."""
@@ -2850,7 +2850,7 @@ async def run_cleanup_worker() -> None:
         await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
 ```
 
-- [ ] **Step 4: Register the cleanup loop**
+- [x] **Step 4: Register the cleanup loop**
 
 In `services/api/app/workers/main.py`:
 
@@ -2859,7 +2859,7 @@ from ..modules.ai_visibility.retention import run_cleanup_worker
 loops["ai-visibility-cleanup"] = run_cleanup_worker
 ```
 
-- [ ] **Step 5: Add structured job telemetry**
+- [x] **Step 5: Add structured job telemetry**
 
 At the start of `handle_research`, record `started = time.monotonic()`. Before every return, log one structured event with:
 
@@ -2880,7 +2880,7 @@ logger.info(
 
 Send `Sentry.capture_message` at warning level for `ambiguous` and `insufficient_evidence`, with `run_id`, `tenant_id`, and `failure_code`; never include answer text or source excerpts.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 Run: `cd services/api && python -m pytest tests/test_ai_visibility_retention.py tests/test_ai_visibility_jobs.py -q -n 0 -p no:cacheprovider`
 
