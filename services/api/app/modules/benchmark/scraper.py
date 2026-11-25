@@ -35,11 +35,12 @@ logger = logging.getLogger(__name__)
 # How often the loop checks for work. The real cadence is `refresh_hours`;
 # this only decides how quickly an admin change is picked up.
 TICK_SECONDS = 300
-# Hard cost cap: small batch, last-week window only.
+# Hard cost cap: small batch, bounded provider work.
 BATCH_LIMIT = 10
 # Politeness gap between provider calls; keeps a pass from bursting.
 CALL_PACING_SECONDS = 0.25
 MAX_ERROR_LEN = 300
+TICKS_PER_HOUR = 3600 // TICK_SECONDS
 
 # Per-provider review depth. The free provider returns real history; Places
 # and Outscraper remain bounded because they can bill per review.
@@ -58,6 +59,18 @@ def _resolve_provider(config: Any) -> Any:
     if source == "outscraper":
         return outscraper
     return places
+
+
+def capacity_warning(config: Any) -> str | None:
+    """Warn when the saved-place cap exceeds one cadence's scrape capacity."""
+    capacity = BATCH_LIMIT * TICKS_PER_HOUR * max(1, int(config.refresh_hours))
+    if int(config.max_saved_places) <= capacity:
+        return None
+    return (
+        f"At the current cadence the collector can refresh about {capacity} places "
+        f"per cycle, but the saved-place cap is {config.max_saved_places}. "
+        "Lower the cap or shorten refresh_hours."
+    )
 
 
 class ScrapeAborted(RuntimeError):

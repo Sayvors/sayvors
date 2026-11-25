@@ -19,6 +19,7 @@ from ...core.upstream_errors import upstream_http_error
 from ...security import create_admin_token, hash_password, verify_password
 from ..auth.rate_limit import rate_limit
 from ..auth.router import get_client_ip
+from ..benchmark import scraper as benchmark_scraper
 from ..benchmark import service as benchmark_service
 # SubscriptionOut is needed at import time by the `/tenants/special` decorator,
 # which must be declared before `/tenants/{user_id}` or FastAPI shadows it.
@@ -364,7 +365,10 @@ async def admin_benchmark_config(
 ):
     """Current scrape cadence, history retention and scraper switch."""
     row = await benchmark_service.get_config(db)
-    return benchmark_service.serialize_config(row)
+    return {
+        **benchmark_service.serialize_config(row),
+        "capacity_warning": benchmark_scraper.capacity_warning(row),
+    }
 
 
 @router.put("/benchmark/config")
@@ -380,7 +384,10 @@ async def admin_update_benchmark_config(
         )
     except benchmark_service.BenchError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
-    return benchmark_service.serialize_config(row)
+    return {
+        **benchmark_service.serialize_config(row),
+        "capacity_warning": benchmark_scraper.capacity_warning(row),
+    }
 
 
 @router.get("/overview", response_model=AdminOverview)

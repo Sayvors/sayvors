@@ -119,3 +119,41 @@ async def test_due_rows_with_a_recent_snapshot_are_not_refreshed(db, monkeypatch
 
     assert result["due"] == 0
     assert result["scraped"] == 0
+
+
+async def test_one_pass_is_capped_at_the_bounded_batch(db, monkeypatch):
+    monkeypatch.setattr(places, "configured", lambda: False)
+    for index in range(scraper.BATCH_LIMIT + 1):
+        await _row(db, f"batch-{index}")
+    calls = []
+
+    async def fake(place_id, **kwargs):
+        calls.append(place_id)
+        return {"place_id": place_id, "name": place_id, "rating": 4.2, "reviews": []}
+
+    monkeypatch.setattr(boq, "get_place", fake)
+
+    result = await scraper.refresh_due_places()
+
+    assert scraper.BATCH_LIMIT == 10
+    assert len(calls) == scraper.BATCH_LIMIT
+    assert result["scraped"] == scraper.BATCH_LIMIT
+    assert result["due"] == scraper.BATCH_LIMIT
+
+    second = await scraper.refresh_due_places()
+    assert second["scraped"] == 1
+
+
+async def test_capacity_warning_when_saved_cap_exceeds_refresh_throughput(db):
+    config = await service.get_config(db)
+    config.refresh_hours = 1
+    config.max_saved_places = 500
+    await db.commit()
+
+    warning = scraper.capacity_warning(config)
+    assert warning
+    assert "120" in warning
+
+    config.max_saved_places = 100
+    await db.commit()
+    assert scraper.capacity_warning(config) is None
