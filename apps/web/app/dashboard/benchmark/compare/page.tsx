@@ -51,14 +51,15 @@ import {
   formatRating,
   type GapUnit,
 } from "@/lib/benchmark-format";
+import {
+  getMetricRows,
+  type BenchmarkMetricRow,
+} from "@/lib/benchmark-rows";
 
 const FOCUS = "focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[#3D1D6E]";
 const REVIEW_THEME_POLL_MS = 3000;
 
-type MetricKey =
-  | keyof ComparisonSubject["metrics"]
-  | "five_star_pct"
-  | "one_star_pct";
+type MetricKey = BenchmarkMetricRow["key"];
 type FactKey = keyof ComparisonSubject["facts"];
 
 interface Row<T extends string> {
@@ -76,22 +77,6 @@ interface Row<T extends string> {
   higherIsBetter?: boolean;
   /** Unit used by the signed gap chip beneath this row's value. */
   gapUnit?: GapUnit;
-}
-
-function getMetricRows(c: Record<string, any>): Row<MetricKey>[] {
-  const starShare = (s: ComparisonSubject, star: number) => {
-    const total = s.metrics.star_share_base;
-    const count = star === 5 ? s.metrics.five_star : s.metrics.one_star;
-    return total != null && total > 0 && count != null ? (count / total) * 100 : null;
-  };
-  return [
-    { key: "total_reviews", label: c.reviewsTotal, value: (s) => s.metrics.total_reviews, higherIsBetter: true, gapUnit: "count", render: (s) => num(s.metrics.total_reviews) },
-    { key: "avg_rating", label: c.averageRating, value: (s) => s.metrics.avg_rating, tierValue: (s) => (s.metrics.total_ratings !== 0 ? s.metrics.avg_rating : null), higherIsBetter: true, gapUnit: "rating", render: (s) => rating(s) },
-    { key: "reviews_last_month", label: c.reviewsLastMonth, value: (s) => s.metrics.reviews_last_month, higherIsBetter: true, gapUnit: "count", render: (s) => num(s.metrics.reviews_last_month) },
-    { key: "reviews_last_year", label: c.reviewsLastYear, value: (s) => s.metrics.reviews_last_year, gapUnit: "count", render: (s) => num(s.metrics.reviews_last_year) },
-    { key: "five_star_pct", label: c.fiveStarRatings, value: (s) => starShare(s, 5), higherIsBetter: true, gapUnit: "percent", render: (s) => pct(starShare(s, 5)) },
-    { key: "one_star_pct", label: c.oneStarRatings, value: (s) => starShare(s, 1), higherIsBetter: false, gapUnit: "percent", render: (s) => pct(starShare(s, 1)) },
-  ];
 }
 
 type PeriodKey =
@@ -209,13 +194,6 @@ function signed(value: number | null | undefined): string {
   if (value == null) return "—";
   if (value === 0) return "0.00";
   return `${value > 0 ? "+" : ""}${value.toFixed(2)}`;
-}
-
-/** A listing with no ratings has no average; 0.0 would read as a real score. */
-function rating(subject: ComparisonSubject): string {
-  const { avg_rating, total_ratings } = subject.metrics;
-  if (avg_rating == null || total_ratings === 0) return "—";
-  return formatRating(avg_rating);
 }
 
 type CellTier = "best" | "good" | "worst" | "empty";
