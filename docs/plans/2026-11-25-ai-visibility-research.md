@@ -74,7 +74,7 @@
 - [ ] Task 2: Add prompt CRUD API and tenant isolation.
 - [ ] Task 3: Add durable run creation and idempotency.
 - [x] Task 4: Add bounded public-search collector.
-- [ ] Task 5: Add SSRF-safe source fetch and extraction.
+- [x] Task 5: Add SSRF-safe source fetch and extraction.
 - [ ] Task 6: Add grounded LLM research and schema validation.
 - [ ] Task 7: Add claim validation and deterministic outcomes.
 - [ ] Task 8: Add fix-next decision ranking.
@@ -1296,7 +1296,7 @@ git commit -m "feat(ai-visibility): add bounded public search collector"
 - Create: `services/api/app/modules/ai_visibility/sources.py`
 - Create: `services/api/tests/test_ai_visibility_sources.py`
 
-- [ ] **Step 1: Write failing source tests**
+- [x] **Step 1: Write failing source tests**
 
 ```python
 import hashlib
@@ -1354,13 +1354,13 @@ async def test_fetch_source_extracts_bounded_text(monkeypatch):
     assert row.canonical_url == "https://example.com/page"
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run: `cd services/api && python -m pytest tests/test_ai_visibility_sources.py -q -n 0 -p no:cacheprovider`
 
 Expected: import failure.
 
-- [ ] **Step 3: Implement source selection and canonicalization**
+- [x] **Step 3: Implement source selection and canonicalization**
 
 ```python
 """SSRF-safe, bounded source snapshots for grounded research."""
@@ -1415,7 +1415,7 @@ def select_sources(rows: list[SearchResult]) -> list[SearchResult]:
     return selected
 ```
 
-- [ ] **Step 4: Implement bounded fetching**
+- [x] **Step 4: Implement bounded fetching**
 
 ```python
 async def fetch_source(run_id: str, position: int, result: SearchResult) -> AiVisibilitySource:
@@ -1467,7 +1467,7 @@ async def fetch_sources(db, run_id: str, rows: list[SearchResult]) -> list[AiVis
     return snapshots
 ```
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run: `cd services/api && python -m pytest tests/test_ai_visibility_sources.py tests/test_ai_visibility_search.py -q -n 0 -p no:cacheprovider`
 
