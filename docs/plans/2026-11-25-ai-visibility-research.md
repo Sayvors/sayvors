@@ -71,8 +71,8 @@
 ## Task outline
 
 - [x] Task 1: Add models, migration, and job enum.
-- [ ] Task 2: Add prompt CRUD API and tenant isolation.
-- [ ] Task 3: Add durable run creation and idempotency.
+- [x] Task 2: Add prompt CRUD API and tenant isolation.
+- [x] Task 3: Add durable run creation and idempotency.
 - [x] Task 4: Add bounded public-search collector.
 - [x] Task 5: Add SSRF-safe source fetch and extraction.
 - [ ] Task 6: Add grounded LLM research and schema validation.
@@ -424,7 +424,7 @@ git commit -m "feat(ai-visibility): add durable research models"
 - Create: `services/api/tests/test_ai_visibility_api.py`
 - Modify: `services/api/app/main.py`
 
-- [ ] **Step 1: Write failing prompt API tests**
+- [x] **Step 1: Write failing prompt API tests**
 
 ```python
 import pytest
@@ -480,13 +480,13 @@ async def test_prompt_service_rejects_other_tenant_channel(db, user_id, other_us
     assert (await db.execute(select(AiVisibilityPrompt))).scalars().all() == []
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run: `cd services/api && python -m pytest tests/test_ai_visibility_api.py -q -n 0 -p no:cacheprovider`
 
 Expected: 404 because the router is not registered.
 
-- [ ] **Step 3: Add schemas**
+- [x] **Step 3: Add schemas**
 
 ```python
 from pydantic import BaseModel, Field
@@ -521,7 +521,7 @@ class PromptListOut(BaseModel):
     items: list[PromptOut]
 ```
 
-- [ ] **Step 4: Add prompt service functions**
+- [x] **Step 4: Add prompt service functions**
 
 ```python
 from __future__ import annotations
@@ -656,7 +656,7 @@ The service imports `AiVisibilityRun` in the delete function:
 from .models import AiVisibilityPrompt, AiVisibilityRun
 ```
 
-- [ ] **Step 5: Add the router**
+- [x] **Step 5: Add the router**
 
 ```python
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -744,7 +744,7 @@ async def remove_prompt(
         raise HTTPException(404, "prompt_not_found")
 ```
 
-- [ ] **Step 6: Register the router**
+- [x] **Step 6: Register the router**
 
 In `services/api/app/main.py`:
 
@@ -753,7 +753,7 @@ from .modules.ai_visibility.router import router as ai_visibility_router
 app.include_router(ai_visibility_router)
 ```
 
-- [ ] **Step 7: Verify and commit**
+- [x] **Step 7: Verify and commit**
 
 Run: `cd services/api && python -m pytest tests/test_ai_visibility_api.py tests/test_ai_visibility_models.py -q -n 0 -p no:cacheprovider`
 
@@ -772,7 +772,7 @@ git commit -m "feat(ai-visibility): add tenant-scoped prompt library"
 - Modify: `services/api/app/modules/ai_visibility/router.py`
 - Create: `services/api/tests/test_ai_visibility_runs.py`
 
-- [ ] **Step 1: Write failing run creation tests**
+- [x] **Step 1: Write failing run creation tests**
 
 ```python
 import pytest
@@ -835,13 +835,13 @@ async def test_other_tenant_prompt_cannot_run(db, user_id, channel_id):
         await service.create_run(db, user_id, channel_id, prompt.id, locale="en")
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run: `cd services/api && python -m pytest tests/test_ai_visibility_runs.py -q -n 0 -p no:cacheprovider`
 
 Expected: 404 for the route and missing service symbols.
 
-- [ ] **Step 3: Add run schemas**
+- [x] **Step 3: Add run schemas**
 
 ```python
 class RunIn(BaseModel):
@@ -863,7 +863,7 @@ class RunOut(BaseModel):
     updated_at: str
 ```
 
-- [ ] **Step 4: Add transactional run creation**
+- [x] **Step 4: Add transactional run creation**
 
 ```python
 from sqlalchemy.exc import IntegrityError
@@ -938,7 +938,7 @@ async def create_run(db, tenant_id, channel_id, prompt_id, *, locale):
     return run
 ```
 
-- [ ] **Step 5: Add the run endpoint**
+- [x] **Step 5: Add the run endpoint**
 
 ```python
 from .schemas import RunIn, RunOut
@@ -977,7 +977,7 @@ async def create_run(
     return _run_out(row)
 ```
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 Run: `cd services/api && python -m pytest tests/test_ai_visibility_runs.py tests/test_ai_visibility_api.py -q -n 0 -p no:cacheprovider`
 

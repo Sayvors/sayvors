@@ -50,3 +50,22 @@ class PromptOut(BaseModel):
 
 class PromptListOut(BaseModel):
     items: list[PromptOut]
+
+
+class RunIn(BaseModel):
+    channel_id: str = Field(min_length=1, max_length=36)
+    prompt_id: str = Field(min_length=1, max_length=36)
+
+
+class RunOut(BaseModel):
+    id: str
+    channel_id: str
+    prompt_id: str
+    prompt_snapshot: str
+    locale: str
+    status: str
+    job_id: str | None
+    validation_status: str
+    error: str | None
+    created_at: str
+    updated_at: str

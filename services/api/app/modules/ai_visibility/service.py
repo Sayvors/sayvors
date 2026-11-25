@@ -13,11 +13,20 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..channels.models import Channel
+from ..jobs.service import submit_job
 from .models import AiVisibilityPrompt, AiVisibilityRun
 from .schemas import PromptPatch
 
 MAX_ACTIVE_PROMPTS_PER_BRANCH = 100
 MAX_PROMPT_LIST = 200
+ACTIVE_RUN_STATUSES = (
+    "queued",
+    "searching",
+    "fetching",
+    "reading",
+    "validating",
+    "writing",
+)
 
 
 class OwnedChannelRequired(ValueError):
@@ -29,6 +38,14 @@ class PromptLimitReached(ValueError):
 
 
 class DuplicatePrompt(ValueError):
+    pass
+
+
+class PromptNotOwned(ValueError):
+    pass
+
+
+class PromptInactive(ValueError):
     pass
 
 
@@ -255,3 +272,82 @@ async def delete_prompt(
         await db.delete(row)
     await db.commit()
     return True
+
+
+async def create_run(
+    db: AsyncSession,
+    tenant_id: str,
+    channel_id: str,
+    prompt_id: str,
+    *,
+    locale: str,
+) -> AiVisibilityRun:
+    """Create one durable run, or return the active run for this prompt."""
+    await _owned_channel(db, tenant_id, channel_id)
+    prompt = (
+        await db.execute(
+            select(AiVisibilityPrompt).where(
+                AiVisibilityPrompt.id == prompt_id,
+                AiVisibilityPrompt.tenant_id == tenant_id,
+                AiVisibilityPrompt.channel_id == channel_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if prompt is None:
+        raise PromptNotOwned("prompt_not_found")
+    if not prompt.is_active:
+        raise PromptInactive("prompt_inactive")
+
+    existing = (
+        await db.execute(
+            select(AiVisibilityRun)
+            .where(
+                AiVisibilityRun.tenant_id == tenant_id,
+                AiVisibilityRun.prompt_id == prompt_id,
+                AiVisibilityRun.status.in_(ACTIVE_RUN_STATUSES),
+            )
+            .order_by(AiVisibilityRun.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+
+    run = AiVisibilityRun(
+        tenant_id=tenant_id,
+        channel_id=channel_id,
+        prompt_id=prompt_id,
+        prompt_snapshot=prompt.prompt_text,
+        locale=locale,
+        status="queued",
+    )
+    db.add(run)
+    try:
+        await db.flush()
+        job = await submit_job(
+            db,
+            tenant_id=tenant_id,
+            job_type="ai_visibility.research",
+            payload={"run_id": run.id},
+            idempotency_key=f"ai-visibility:{run.id}",
+            subject_type="ai_visibility_run",
+            subject_id=run.id,
+            lane_key=f"ai-visibility:{prompt_id}",
+        )
+        run.job_id = job.id
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        return (
+            await db.execute(
+                select(AiVisibilityRun)
+                .where(
+                    AiVisibilityRun.tenant_id == tenant_id,
+                    AiVisibilityRun.prompt_id == prompt_id,
+                    AiVisibilityRun.status.in_(ACTIVE_RUN_STATUSES),
+                )
+                .limit(1)
+            )
+        ).scalar_one()
+    await db.refresh(run)
+    return run

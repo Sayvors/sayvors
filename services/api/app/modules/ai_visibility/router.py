@@ -8,13 +8,15 @@ from ..auth.rate_limit import rate_limit
 from ..team.context import TenantContext, require_perm
 from . import service
 from .models import AiVisibilityPrompt
-from .schemas import PromptIn, PromptListOut, PromptOut, PromptPatch
+from .schemas import PromptIn, PromptListOut, PromptOut, PromptPatch, RunIn, RunOut
 
 router = APIRouter(prefix="/api/v1/ai-visibility", tags=["ai-visibility"])
 
 # Prompt creation is cheap but writes durable rows; bound bursts per workspace.
 PROMPT_CREATE_RATE_LIMIT = 60
 PROMPT_CREATE_RATE_WINDOW_SECONDS = 60
+RUN_CREATE_RATE_LIMIT = 30
+RUN_CREATE_RATE_WINDOW_SECONDS = 60
 
 
 def _out(row: AiVisibilityPrompt) -> PromptOut:
@@ -105,3 +107,49 @@ async def remove_prompt(
     if not await service.delete_prompt(db, ctx.tenant_id, prompt_id):
         raise HTTPException(404, "prompt_not_found")
     return Response(status_code=204)
+
+
+def _run_out(row) -> RunOut:
+    return RunOut(
+        id=row.id,
+        channel_id=row.channel_id,
+        prompt_id=row.prompt_id,
+        prompt_snapshot=row.prompt_snapshot,
+        locale=row.locale,
+        status=row.status,
+        job_id=row.job_id,
+        validation_status=row.validation_status,
+        error=row.error,
+        created_at=row.created_at.isoformat(),
+        updated_at=row.updated_at.isoformat(),
+    )
+
+
+@router.post("/runs", response_model=RunOut, status_code=201)
+async def create_run(
+    body: RunIn,
+    ctx: TenantContext = Depends(require_perm("ai.edit")),
+    db: AsyncSession = Depends(get_db),
+) -> RunOut:
+    if not settings.TESTING and not await rate_limit(
+        f"ai-vis:run:{ctx.tenant_id}",
+        RUN_CREATE_RATE_LIMIT,
+        RUN_CREATE_RATE_WINDOW_SECONDS,
+        fail_closed=True,
+    ):
+        raise HTTPException(429, "too_many_requests")
+    try:
+        row = await service.create_run(
+            db,
+            ctx.tenant_id,
+            body.channel_id,
+            body.prompt_id,
+            locale="ar" if getattr(ctx.user, "language", None) == "ar" else "en",
+        )
+    except service.OwnedChannelRequired as exc:
+        raise HTTPException(404, "channel_not_found") from exc
+    except service.PromptNotOwned as exc:
+        raise HTTPException(404, "prompt_not_found") from exc
+    except service.PromptInactive as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return _run_out(row)
