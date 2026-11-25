@@ -3603,6 +3603,7 @@ const ar: Dict = {
     savedBusinesses: "الأنشطة المحفوظة ({n})",
     loading: "جارٍ التحميل…",
     loadFailed: "تعذّر تحميل بيانات المقارنة.",
+    actionFailed: "لم يكتمل إجراء المقارنة. حاول مرة أخرى.",
     nothingSaved: "لم يتم حفظ شيء بعد. ابحث أعلاه وأضف الأنشطة ذات الصلة بسوقك.",
     savedBusiness: "نشاط تجاري محفوظ",
     actionsFor: "إجراءات لـ {name}",

@@ -34,6 +34,7 @@ export default function BenchmarkPage() {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [menuId, setMenuId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const savedQuery = useQuery({ queryKey: ["benchmark", "saved"], queryFn: fetchSavedPlaces });
   const saved = savedQuery.data ?? [];
@@ -43,6 +44,24 @@ export default function BenchmarkPage() {
   // against a second submit while one is in flight — the disabled button covers
   // the UI, this covers programmatic/rapid Enter presses and stale closures.
   const searchingRef = useRef(false);
+
+  function reportActionError(error: unknown) {
+    setActionError(error instanceof Error ? error.message : b.actionFailed);
+  }
+
+  async function resyncSavedPlaces() {
+    try {
+      await queryClient.invalidateQueries({ queryKey: ["benchmark", "saved"] });
+    } catch (error) {
+      console.error("Could not refresh saved benchmark places", error);
+      reportActionError(error);
+    }
+  }
+
+  async function retrySavedPlaces() {
+    setActionError(null);
+    await resyncSavedPlaces();
+  }
 
   const search = useCallback(async () => {
     const q = query.trim();
@@ -65,6 +84,7 @@ export default function BenchmarkPage() {
 
   async function save(place: PlaceResult) {
     setBusyId(place.place_id);
+    setActionError(null);
     try {
       await saveBenchmarkPlace({
         place_id: place.place_id,
@@ -87,9 +107,10 @@ export default function BenchmarkPage() {
       // Fetch last-week details (cost-capped) so the card becomes ready to compare.
       await refreshBenchmarkPlace(place.place_id);
       await queryClient.invalidateQueries({ queryKey: ["benchmark", "saved"] });
-    } catch {
+    } catch (error) {
       // Keep the result visible so the tenant can retry; saved card may be not ready.
-      await queryClient.invalidateQueries({ queryKey: ["benchmark", "saved"] });
+      reportActionError(error);
+      await resyncSavedPlaces();
     } finally {
       setBusyId(null);
     }
@@ -97,9 +118,13 @@ export default function BenchmarkPage() {
 
   async function toggleHeatmap(place: SavedPlace) {
     setBusyId(place.place_id);
+    setActionError(null);
     try {
       await setBenchmarkHeatmap(place.place_id, !place.in_heatmap);
       await queryClient.invalidateQueries({ queryKey: ["benchmark", "saved"] });
+    } catch (error) {
+      reportActionError(error);
+      await resyncSavedPlaces();
     } finally {
       setBusyId(null);
     }
@@ -107,13 +132,15 @@ export default function BenchmarkPage() {
 
   async function toggleBenchSet(place: SavedPlace) {
     setBusyId(place.place_id);
+    setActionError(null);
     try {
       await setBenchmarkSet(place.place_id, !place.in_bench_set);
       await queryClient.invalidateQueries({ queryKey: ["benchmark", "saved"] });
-    } catch {
+    } catch (error) {
       // A rejected toggle (e.g. losing a cap race) re-syncs the counter from
       // the server instead of failing silently.
-      await queryClient.invalidateQueries({ queryKey: ["benchmark", "saved"] });
+      reportActionError(error);
+      await resyncSavedPlaces();
     } finally {
       setBusyId(null);
     }
@@ -121,10 +148,27 @@ export default function BenchmarkPage() {
 
   async function remove(placeId: string) {
     setBusyId(placeId);
+    setActionError(null);
     try {
       await deleteBenchmarkPlace(placeId);
       await queryClient.invalidateQueries({ queryKey: ["benchmark", "saved"] });
+    } catch (error) {
+      reportActionError(error);
+      await resyncSavedPlaces();
     } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function refresh(place: SavedPlace) {
+    setBusyId(place.place_id);
+    setActionError(null);
+    try {
+      await refreshBenchmarkPlace(place.place_id);
+    } catch (error) {
+      reportActionError(error);
+    } finally {
+      await resyncSavedPlaces();
       setBusyId(null);
     }
   }
@@ -270,6 +314,18 @@ export default function BenchmarkPage() {
         <p className="mb-3 text-[11px] text-[#3B2D5E]">
           {b.benchSetCount.replace("{n}", String(benchSetCount)).replace("{max}", "5")}
         </p>
+        {actionError ? (
+          <div role="alert" className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-[8px] border border-[#FF4F6E]/35 bg-white px-3 py-2">
+            <p className="text-[12px] font-semibold text-[#B32442]">{actionError}</p>
+            <button
+              type="button"
+              onClick={() => void retrySavedPlaces()}
+              className={`inline-flex min-h-11 items-center rounded-[8px] border border-[#3D1D6E]/25 bg-white px-3 text-[11px] font-bold text-[#3D1D6E] ${FOCUS}`}
+            >
+              {t.common.retry}
+            </button>
+          </div>
+        ) : null}
         {savedQuery.isPending ? (
           <p className="text-[12px] text-[var(--ui-ink-2)]">{b.loading}</p>
         ) : savedQuery.isError ? (
@@ -391,7 +447,7 @@ export default function BenchmarkPage() {
                         {!ready && !fetching ? (
                           <button
                             type="button"
-                            onClick={() => { setMenuId(null); setBusyId(place.place_id); void refreshBenchmarkPlace(place.place_id).finally(() => { void queryClient.invalidateQueries({ queryKey: ["benchmark", "saved"] }); setBusyId(null); }); }}
+                            onClick={() => { setMenuId(null); void refresh(place); }}
                             className={`w-full rounded-[8px] px-2.5 py-2 text-left text-[11px] font-semibold text-[#14101F] transition hover:bg-[#F4F2F7] active:translate-y-[2px] active:scale-[0.98] ${FOCUS}`}
                           >
                             {b.fetchDetails}

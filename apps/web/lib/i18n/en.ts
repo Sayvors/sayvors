@@ -3597,6 +3597,7 @@ const en = {
     savedBusinesses: "Saved businesses ({n})",
     loading: "Loading…",
     loadFailed: "Could not load your benchmark.",
+    actionFailed: "That benchmark action didn't complete. Please try again.",
     nothingSaved: "Nothing saved yet. Search above and add the businesses relevant to your market.",
     savedBusiness: "Saved business",
     actionsFor: "Actions for {name}",
