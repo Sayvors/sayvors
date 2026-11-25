@@ -10,9 +10,9 @@ import type { Dict } from "@/lib/i18n/en";
 import {
   HeatMode,
   layoutPlaces,
-  mapBounds,
   toneForRating,
 } from "@/lib/heatmap-tone";
+import BenchmarkMap from "@/components/benchmark/BenchmarkMap";
 
 const FOCUS = "focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[#3D1D6E]";
 const MODES: HeatMode[] = ["rating-desc", "rating-asc", "reviews-desc", "random", "map"];
@@ -72,7 +72,6 @@ export default function HeatmapGrid() {
   const places = query.data ?? [];
   const pinned = places.filter((p) => p.in_heatmap);
   const slots = useMemo(() => layoutPlaces(places, mode, seed), [places, mode, seed]);
-  const bounds = useMemo(() => mapBounds(pinned), [pinned]);
 
   const setMode = (m: HeatMode) => {
     const sp = new URLSearchParams(searchParams.toString());
@@ -158,30 +157,12 @@ export default function HeatmapGrid() {
         </p>
       )}
 
-      <div className="relative">
-        {mode === "map" && bounds && (
-          <>
-            <svg
-              aria-hidden
-              className="pointer-events-none absolute inset-0 h-full w-full"
-              viewBox="0 0 5 4"
-              preserveAspectRatio="none"
-            >
-              {[1, 2, 3, 4].map((x) => (
-                <line key={`v${x}`} x1={x} y1={0} x2={x} y2={4} stroke="#3D1D6E" strokeOpacity="0.12" strokeWidth="0.04" strokeDasharray="0.12 0.12" />
-              ))}
-              {[1, 2, 3].map((y) => (
-                <line key={`h${y}`} x1={0} y1={y} x2={5} y2={y} stroke="#3D1D6E" strokeOpacity="0.12" strokeWidth="0.04" strokeDasharray="0.12 0.12" />
-              ))}
-            </svg>
-            <span className="pointer-events-none absolute -top-4 left-0 text-[9px] font-mono text-[#3B2D5E]">{bounds.maxLat.toFixed(2)}°N</span>
-            <span className="pointer-events-none absolute -bottom-4 left-0 text-[9px] font-mono text-[#3B2D5E]">{bounds.minLat.toFixed(2)}°N</span>
-            <span className="pointer-events-none absolute -top-4 right-0 text-[9px] font-mono text-[#3B2D5E]">{bounds.maxLng.toFixed(2)}°E</span>
-            <span className="pointer-events-none absolute -bottom-4 right-0 text-[9px] font-mono text-[#3B2D5E]">{bounds.minLng.toFixed(2)}°E</span>
-            <span className="pointer-events-none absolute -left-5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-[#3D1D6E]">N</span>
-          </>
-        )}
-
+      {mode === "map" ? (
+        <BenchmarkMap
+          places={pinned}
+          apiKey={process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? ""}
+        />
+      ) : (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-5">
           {slots.map((slot, i) => {
             if (slot.kind === "dummy") {
@@ -216,29 +197,25 @@ export default function HeatmapGrid() {
             );
           })}
         </div>
+      )}
 
-        {mode === "map" && bounds && (
-          <p className="mt-3 text-[10px] text-[#3B2D5E]">
-            {b.heatmapMapCaption ?? "Approximate location grid · full map available when Maps is connected"}
-          </p>
-        )}
-      </div>
-
-      <div className="mt-4 flex flex-wrap items-center gap-2" aria-label={b.marketHeatmap}>
-        {[
-          { color: "#C0392B", label: "< 3.0" },
-          { color: "#F2B95E", label: "3.0–3.9" },
-          { color: "#F7DFA5", label: "4.0–4.4" },
-          { color: "#10A96B", label: "4.5–4.9" },
-          { color: "#176A45", label: "5.0" },
-          { color: "#F1F2F5", label: b.heatmapNoRating ?? "No rating" },
-        ].map(({ color, label }) => (
-          <span key={label} className="flex items-center gap-1.5">
-            <span aria-hidden className="h-4 w-6 rounded-[4px] border border-[#3D1D6E]/10" style={{ backgroundColor: color }} />
-            <span className="text-[10px] text-[#3B2D5E]">{label}</span>
-          </span>
-        ))}
-      </div>
+      {mode !== "map" ? (
+        <div className="mt-4 flex flex-wrap items-center gap-2" aria-label={b.marketHeatmap}>
+          {[
+            { color: "#C0392B", label: "< 3.0" },
+            { color: "#F2B95E", label: "3.0–3.9" },
+            { color: "#F7DFA5", label: "4.0–4.4" },
+            { color: "#10A96B", label: "4.5–4.9" },
+            { color: "#176A45", label: "5.0" },
+            { color: "#F1F2F5", label: b.heatmapNoRating ?? "No rating" },
+          ].map(({ color, label }) => (
+            <span key={label} className="flex items-center gap-1.5">
+              <span aria-hidden className="h-4 w-6 rounded-[4px] border border-[#3D1D6E]/10" style={{ backgroundColor: color }} />
+              <span className="text-[10px] text-[#3B2D5E]">{label}</span>
+            </span>
+          ))}
+        </div>
+      ) : null}
     </section>
   );
 }
