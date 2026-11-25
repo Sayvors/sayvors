@@ -58,6 +58,9 @@ _MEDIA_METHOD = {
     "LOGO": "profile",
 }
 _MEDIA_TYPE = {"PHOTO": "PHOTO", "VIDEO": "VIDEO"}
+# Google's list response can omit post media URLs. Hydrate only posts that
+# actually declare media, and cap the extra reads so connect stays bounded.
+MAX_POST_MEDIA_HYDRATIONS = 50
 
 
 def _parse_dt(value: str | None) -> datetime | None:
@@ -98,6 +101,26 @@ def _media_category(m: dict) -> str:
 
 def _media_url(m: dict) -> str:
     return str(m.get("googleUrl") or m.get("sourceUrl") or m.get("thumbnailUrl") or "")
+
+
+def _post_image_urls(media: list) -> list[str]:
+    """Public image URLs carried by a Google LocalPost media item.
+
+    Google documents sourceUrl for posts, but list responses have also been
+    observed carrying only thumbnailUrl/googleUrl. Accept all three and keep
+    the original order; never store a relative or non-http URL.
+    """
+    urls: list[str] = []
+    for item in media:
+        if not isinstance(item, dict):
+            continue
+        for key in ("sourceUrl", "googleUrl", "thumbnailUrl"):
+            value = str(item.get(key) or "").strip()
+            if value.startswith(("http://", "https://")) and value not in urls:
+                urls.append(value)
+            if len(urls) >= 5:
+                return urls
+    return urls
 
 
 async def import_channel_content(channel_id: str) -> dict:
@@ -149,6 +172,7 @@ async def _import_channel_content(db: AsyncSession, channel) -> dict:
 
     posts_created = posts_updated = 0
     media_created = media_updated = 0
+    hydrated_posts = 0
     try:
         # ── Local posts ──────────────────────────────────────────────
         google_posts = await client.list_local_posts(account_id, location_id)
@@ -172,11 +196,18 @@ async def _import_channel_content(db: AsyncSession, channel) -> dict:
             offer = gp.get("offer") or {}
             cta = gp.get("callToAction") or {}
             media = gp.get("media") or []
-            image_urls = [
-                str(m.get("sourceUrl") or "")
-                for m in media
-                if isinstance(m, dict) and m.get("sourceUrl")
-            ][:5]
+            image_urls = _post_image_urls(media)
+            if media and not image_urls and hydrated_posts < MAX_POST_MEDIA_HYDRATIONS:
+                hydrated_posts += 1
+                try:
+                    detail = await client.get_local_post(
+                        account_id, location_id, name.rsplit("/", 1)[-1]
+                    )
+                    image_urls = _post_image_urls(detail.get("media") or [])
+                except GoogleReviewsError as exc:
+                    logger.warning(
+                        "Could not hydrate media for Google post %s: %s", name, exc
+                    )
             published_at = _parse_dt(gp.get("createTime"))
             values = {
                 "title": (str(gp.get("summary") or "")[:120] or "Google post"),
