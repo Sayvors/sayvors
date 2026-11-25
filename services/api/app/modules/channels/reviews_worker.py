@@ -607,10 +607,16 @@ async def _adopt_existing_reply(db: AsyncSession, channel: Channel, review) -> b
         and external_id is not None
         and latest.reply_external_id == external_id
     )
-    if same_provider_reply and latest.status in ("pending_approval", "posted"):
+    if (
+        same_provider_reply
+        and latest.status in ("pending_approval", "posted")
+        and (latest.reply_text.strip() or not text)
+    ):
         # A pending row is a follow-up draft for an edited review: leave it.
         # A posted row keeps its stored content so the edit-refresh path can
-        # still detect the mismatch and draft a follow-up.
+        # still detect the mismatch and draft a follow-up. The one exception
+        # is a blank posted row: when Google finally returns the comment for
+        # the same provider timestamp, adopt it to heal the old text-loss bug.
         return False
 
     if latest is None:
