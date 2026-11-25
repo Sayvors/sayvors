@@ -179,3 +179,65 @@ async def test_import_failure_never_raises(db, user_id, channel_id, monkeypatch,
     summary = await gci.import_channel_content(channel_id)
     assert summary["posts"] == 0
     assert "note" in summary
+
+@pytest.mark.asyncio
+async def test_import_accepts_thumbnail_url_for_post_media(
+    db, user_id, channel_id, monkeypatch, _use_test_session
+):
+    from app.modules.channels.service import encrypt_token
+
+    channel = await db.get(Channel, channel_id)
+    channel.access_token = encrypt_token("token")
+    await db.commit()
+
+    async def _posts(self, account_id, location_id):
+        return [_google_post(media=[{"mediaFormat": "PHOTO", "thumbnailUrl": "https://example.com/thumb.jpg"}])]
+
+    async def _media(self, account_id, location_id, **kw):
+        return {"mediaItems": []}
+
+    monkeypatch.setattr(
+        "app.modules.channels.google_reviews.GoogleReviewsClient.list_local_posts", _posts
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.google_reviews.GoogleReviewsClient.list_media", _media
+    )
+
+    await gci.import_channel_content(channel_id)
+    post = (await db.execute(select(LocationPost))).scalar_one()
+    assert post.image_urls == ["https://example.com/thumb.jpg"]
+
+
+@pytest.mark.asyncio
+async def test_import_hydrates_post_media_when_list_omits_url(
+    db, user_id, channel_id, monkeypatch, _use_test_session
+):
+    from app.modules.channels.service import encrypt_token
+
+    channel = await db.get(Channel, channel_id)
+    channel.access_token = encrypt_token("token")
+    await db.commit()
+
+    async def _posts(self, account_id, location_id):
+        return [_google_post(media=[{"mediaFormat": "PHOTO"}])]
+
+    async def _get_post(self, account_id, location_id, post_id):
+        assert post_id == "p1"
+        return _google_post(media=[{"sourceUrl": "https://example.com/hydrated.jpg"}])
+
+    async def _media(self, account_id, location_id, **kw):
+        return {"mediaItems": []}
+
+    monkeypatch.setattr(
+        "app.modules.channels.google_reviews.GoogleReviewsClient.list_local_posts", _posts
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.google_reviews.GoogleReviewsClient.get_local_post", _get_post
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.google_reviews.GoogleReviewsClient.list_media", _media
+    )
+
+    await gci.import_channel_content(channel_id)
+    post = (await db.execute(select(LocationPost))).scalar_one()
+    assert post.image_urls == ["https://example.com/hydrated.jpg"]

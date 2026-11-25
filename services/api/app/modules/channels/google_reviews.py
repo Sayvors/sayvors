@@ -733,6 +733,25 @@ class GoogleReviewsClient:
                 break
         return out
 
+    async def get_local_post(
+        self, account_id: str, location_id: str, post_id: str
+    ) -> dict:
+        """Read one LocalPost, including media omitted from the list response."""
+        post_id = str(post_id or "").rsplit("/", 1)[-1]
+        if not post_id:
+            raise GoogleReviewsError("A Google post id is required", 400)
+        url = (
+            f"{GBP_REVIEWS_API}/accounts/{account_id}"
+            f"/locations/{location_id}/localPosts/{post_id}"
+        )
+        resp = await self._authed_request("GET", url)
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"localPosts.get failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        return resp.json() or {}
+
     async def report_local_post_insights(
         self,
         account_id: str,
