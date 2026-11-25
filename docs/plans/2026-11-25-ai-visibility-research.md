@@ -83,7 +83,7 @@
 - [ ] Task 11: Add retention, limits, and observability.
 - [ ] Task 12: Add frontend contracts, query keys, i18n, and navigation.
 - [x] Task 13: Build prompt library and run controls.
-- [ ] Task 14: Build progress, decision brief, claim ledger, and actions.
+- [x] Task 14: Build progress, decision brief, claim ledger, and actions.
 - [ ] Task 15: Build history, comparison, and error states.
 - [ ] Task 16: Final security review, docs, and verification.
 
@@ -3752,7 +3752,7 @@ git commit -m "feat(ai-visibility): build prompt library and run controls"
 - Create: `apps/web/components/ai-visibility/ClaimLedger.test.tsx`
 - Modify: `apps/web/components/ai-visibility/AiVisibilityPage.tsx`
 
-- [ ] **Step 1: Write failing brief tests**
+- [x] **Step 1: Write failing brief tests**
 
 ```tsx
 import { render, screen } from "@testing-library/react";
@@ -3803,13 +3803,13 @@ describe("ClaimLedger", () => {
 });
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run: `cd apps/web && npx vitest run components/ai-visibility/DecisionBrief.test.tsx components/ai-visibility/ClaimLedger.test.tsx --no-cache`
 
 Expected: modules not found.
 
-- [ ] **Step 3: Implement ClaimLedger**
+- [x] **Step 3: Implement ClaimLedger**
 
 ```tsx
 import type { AiVisibilityClaim, AiVisibilitySource } from "@/lib/api-ai-visibility";
@@ -3854,7 +3854,7 @@ export default function ClaimLedger({ claims, sources, copy }: {
 }
 ```
 
-- [ ] **Step 4: Implement FixNextActions**
+- [x] **Step 4: Implement FixNextActions**
 
 ```tsx
 import Link from "next/link";
@@ -3884,7 +3884,7 @@ export default function FixNextActions({ actions }: { actions: AiVisibilityActio
 }
 ```
 
-- [ ] **Step 5: Implement DecisionBrief**
+- [x] **Step 5: Implement DecisionBrief**
 
 ```tsx
 import type { ReactNode } from "react";
@@ -3967,7 +3967,7 @@ export default function DecisionBrief({ detail, copy }: {
 }
 ```
 
-- [ ] **Step 6: Implement ResearchRunPanel**
+- [x] **Step 6: Implement ResearchRunPanel**
 
 ```tsx
 "use client";
@@ -4018,7 +4018,7 @@ export default function ResearchRunPanel({ runId, copy, onRetry }: {
 }
 ```
 
-- [ ] **Step 7: Wire the panel into the page**
+- [x] **Step 7: Wire the panel into the page**
 
 Add `selectedRunId` state. In `runPrompt`, set it from the created run. Add an effect that selects the latest active or completed run when the page opens:
 
@@ -4039,7 +4039,7 @@ Replace the static answer section with:
 
 Keep the selected prompt and Run button above the panel.
 
-- [ ] **Step 8: Verify and commit**
+- [x] **Step 8: Verify and commit**
 
 Run:
 

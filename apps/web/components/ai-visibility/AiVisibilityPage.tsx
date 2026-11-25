@@ -17,6 +17,7 @@ import {
 } from "@/lib/api-ai-visibility";
 import { formatRate, isActiveStatus } from "@/lib/ai-visibility-metrics";
 import PromptLibrary from "./PromptLibrary";
+import ResearchRunPanel from "./ResearchRunPanel";
 
 export default function AiVisibilityPage() {
   const { t } = useI18n();
@@ -236,11 +237,11 @@ export default function AiVisibilityPage() {
               {copy.noRuns}
             </p>
           )}
-          {selectedRunId && (
-            <p className="mt-4 text-[11px] text-[var(--ui-ink-2)]">
-              {copy.running}
-            </p>
-          )}
+          <ResearchRunPanel
+            runId={selectedRunId}
+            copy={copy}
+            onRetry={invalidate}
+          />
         </section>
       </div>
     </div>
