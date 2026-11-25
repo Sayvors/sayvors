@@ -70,7 +70,7 @@
 
 ## Task outline
 
-- [ ] Task 1: Add models, migration, and job enum.
+- [x] Task 1: Add models, migration, and job enum.
 - [ ] Task 2: Add prompt CRUD API and tenant isolation.
 - [ ] Task 3: Add durable run creation and idempotency.
 - [ ] Task 4: Add bounded public-search collector.
@@ -97,7 +97,7 @@
 - Modify: `services/api/alembic/env.py`
 - Modify: `services/api/app/modules/jobs/types.py`
 
-- [ ] **Step 1: Write the failing model test**
+- [x] **Step 1: Write the failing model test**
 
 ```python
 import pytest
@@ -157,13 +157,13 @@ async def test_only_one_active_run_per_prompt(db, user_id, channel_id):
         await db.commit()
 ```
 
-- [ ] **Step 2: Run the test and verify it fails**
+- [x] **Step 2: Run the test and verify it fails**
 
 Run: `cd services/api && python -m pytest tests/test_ai_visibility_models.py -q -n 0 -p no:cacheprovider`
 
 Expected: import failure because the module does not exist.
 
-- [ ] **Step 3: Create the model skeleton and fields**
+- [x] **Step 3: Create the model skeleton and fields**
 
 ```python
 """Tenant-scoped prompts, durable research runs, and source snapshots."""
@@ -272,7 +272,7 @@ class AiVisibilitySource(Base):
     fetch_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 ```
 
-- [ ] **Step 4: Add the idempotent migration and enum value**
+- [x] **Step 4: Add the idempotent migration and enum value**
 
 Create `services/api/alembic/versions/20261125120000_ai_visibility_research.py`:
 
@@ -393,7 +393,7 @@ Add to `_LANE_MAP`:
 JobType.ai_visibility_research: JobLane.bulk,
 ```
 
-- [ ] **Step 5: Verify models and migration**
+- [x] **Step 5: Verify models and migration**
 
 Run:
 
@@ -408,7 +408,7 @@ alembic upgrade head
 
 Expected: model tests pass, one head `20261125120000`, and upgrade/downgrade/upgrade succeeds.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add services/api/app/modules/ai_visibility services/api/tests/test_ai_visibility_models.py services/api/alembic services/api/app/modules/jobs/types.py

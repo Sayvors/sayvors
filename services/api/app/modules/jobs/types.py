@@ -37,6 +37,7 @@ class JobType(str, Enum):
     stt_job = "stt.job"                      # speech-to-text
     tts_job = "tts.job"                      # text-to-speech
     benchmark_theme_extract = "benchmark.theme_extract"  # bounded review-theme analysis
+    ai_visibility_research = "ai_visibility.research"  # grounded web research brief
 
     @classmethod
     def lane_for(cls, job_type: "JobType") -> JobLane:
@@ -62,6 +63,7 @@ _LANE_MAP: dict[JobType, JobLane] = {
     JobType.stt_job: JobLane.bulk,
     JobType.tts_job: JobLane.bulk,
     JobType.benchmark_theme_extract: JobLane.bulk,
+    JobType.ai_visibility_research: JobLane.bulk,
 }
 
 

@@ -43,6 +43,7 @@ from app.modules.billing import models as billing_models  # noqa: F401
 from app.modules.user_feedback import models as user_feedback_models  # noqa: F401
 from app.modules.admin import models as admin_models  # noqa: F401
 from app.modules.benchmark import models as benchmark_models  # noqa: F401
+from app.modules.ai_visibility import models as ai_visibility_models  # noqa: F401
 
 target_metadata = Base.metadata
 
