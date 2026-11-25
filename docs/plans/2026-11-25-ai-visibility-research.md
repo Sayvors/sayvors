@@ -78,7 +78,7 @@
 - [ ] Task 6: Add grounded LLM research and schema validation.
 - [ ] Task 7: Add claim validation and deterministic outcomes.
 - [ ] Task 8: Add fix-next decision ranking.
-- [ ] Task 9: Add durable research job handler.
+- [x] Task 9: Add durable research job handler.
 - [ ] Task 10: Add overview/history APIs and metrics.
 - [ ] Task 11: Add retention, limits, and observability.
 - [ ] Task 12: Add frontend contracts, query keys, i18n, and navigation.
@@ -2001,7 +2001,7 @@ git commit -m "feat(ai-visibility): rank evidence-backed fix-next actions"
 - Create: `services/api/tests/test_ai_visibility_jobs.py`
 - Modify: `services/api/app/modules/jobs/handlers/__init__.py`
 
-- [ ] **Step 1: Write failing job tests**
+- [x] **Step 1: Write failing job tests**
 
 ```python
 import pytest
@@ -2107,13 +2107,13 @@ async def test_job_marks_insufficient_evidence(db, user_id, channel_id, monkeypa
     assert run.status == "insufficient_evidence"
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run: `cd services/api && python -m pytest tests/test_ai_visibility_jobs.py -q -n 0 -p no:cacheprovider`
 
 Expected: import failure.
 
-- [ ] **Step 3: Add the job module skeleton**
+- [x] **Step 3: Add the job module skeleton**
 
 ```python
 """Durable grounded-research pipeline."""
@@ -2138,7 +2138,7 @@ def _now():
     return datetime.now(timezone.utc)
 ```
 
-- [ ] **Step 4: Implement branch facts and the pipeline**
+- [x] **Step 4: Implement branch facts and the pipeline**
 
 ```python
 async def load_branch_facts(db: AsyncSession, tenant_id: str, channel_id: str) -> dict:
@@ -2295,7 +2295,7 @@ async def handle_research(job, db: AsyncSession) -> dict:
     return {"status": "failed", "run_id": run.id}
 ```
 
-- [ ] **Step 5: Register the handler**
+- [x] **Step 5: Register the handler**
 
 Create `services/api/app/modules/jobs/handlers/ai_visibility_research.py`:
 
@@ -2316,7 +2316,7 @@ from .ai_visibility_research import handle as handle_ai_visibility_research
 HANDLERS["ai_visibility.research"] = handle_ai_visibility_research
 ```
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 Run: `cd services/api && python -m pytest tests/test_ai_visibility_jobs.py tests/test_ai_visibility_runs.py -q -n 0 -p no:cacheprovider`
 
