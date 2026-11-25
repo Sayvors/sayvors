@@ -418,7 +418,7 @@ export default function BenchmarkPage() {
                   <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-[var(--ui-line)] pt-3">
                     {ready ? (
                       <Link
-                        href={`/dashboard/benchmark/${encodeURIComponent(place.place_id)}`}
+                        href={`/dashboard/benchmark/compare?main=${encodeURIComponent(`saved:${place.place_id}`)}`}
                         className={`rounded-[8px] bg-[#3D1D6E] px-3 py-1.5 text-[11px] font-bold text-white shadow-[0_1px_2px_rgba(61,29,110,0.25)] transition hover:bg-[#4A2A80] active:translate-y-[2px] active:scale-[0.98] ${FOCUS}`}
                       >
                         {b.open}
