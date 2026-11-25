@@ -168,6 +168,29 @@ async def test_reply_envelope_without_comment_preserves_published_text(db, chann
 
 
 @pytest.mark.asyncio
+async def test_same_provider_reply_restores_text_after_comment_lag(db, channel_id):
+    """Heal rows the old comment-less adoption path already blanked."""
+    channel = await db.get(Channel, channel_id)
+    reviewed_at = datetime(2026, 9, 30, 10, 28, 52, tzinfo=timezone.utc)
+    db.add(ReviewReply(
+        id="blanked-posted-reply",
+        channel_id=channel_id,
+        review_id="accounts/a/locations/l/reviews/r1",
+        rating=4,
+        reply_text="",
+        status="posted",
+        reply_external_id=f"google:{reviewed_at.isoformat()}",
+    ))
+    await db.commit()
+
+    assert await _adopt_existing_reply(db, channel, _review()) is True
+
+    rows = await _rows(db, channel_id, "accounts/a/locations/l/reviews/r1")
+    assert len(rows) == 1
+    assert rows[0].reply_text == "Thanks for visiting!"
+
+
+@pytest.mark.asyncio
 async def test_no_live_reply_writes_nothing(db, channel_id):
     channel = await db.get(Channel, channel_id)
     assert await _adopt_existing_reply(
