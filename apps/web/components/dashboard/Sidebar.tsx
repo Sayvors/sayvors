@@ -30,6 +30,7 @@ const MAIN_ITEMS: NavItem[] = [
   { key: "dashboard", icon: <DashboardIcon />, href: "/dashboard" },
   { key: "analytics", icon: <AnalyticsIcon />, href: "/dashboard/analytics" },
   { key: "benchmark", icon: <AnalyticsIcon />, href: "/dashboard/benchmark" },
+  { key: "aiVisibility", icon: <AnalyticsIcon />, href: "/dashboard/ai-visibility" },
   { key: "locations", icon: <PinIcon />, href: "/dashboard/locations" },
   { key: "postsMedia", icon: <PhotoIcon />, href: "/dashboard/posts-media" },
   { key: "customers", icon: <UsersIcon />, href: "/dashboard/customers" },
@@ -271,7 +272,7 @@ export default function Sidebar() {
           }}
         >
           <div className="space-y-0.5">
-            {MAIN_ITEMS.slice(0, 3).map((item) => (
+            {MAIN_ITEMS.slice(0, 4).map((item) => (
               <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} label={labelFor(item)} hint={lockHint(item)} />
             ))}
           </div>
