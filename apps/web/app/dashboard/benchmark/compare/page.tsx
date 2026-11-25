@@ -39,6 +39,12 @@ import FixFirstTickets from "@/components/benchmark/FixFirstTickets";
 import ReviewKeywords from "@/components/benchmark/ReviewKeywords";
 import { queryKeys } from "@/lib/query-keys";
 import {
+  defaultCompareMain,
+  sortCompareChannels,
+  type CompareChannelOption,
+} from "@/lib/benchmark-selection";
+import VerificationBadge from "@/components/shared/VerificationBadge";
+import {
   formatGap,
   formatPercent,
   formatRating,
@@ -47,12 +53,6 @@ import {
 
 const FOCUS = "focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[#3D1D6E]";
 const REVIEW_THEME_POLL_MS = 3000;
-
-interface ChannelOption {
-  id: string;
-  display_name: string | null;
-  platform: string;
-}
 
 type MetricKey =
   | keyof ComparisonSubject["metrics"]
@@ -489,12 +489,20 @@ function MatrixTable<T extends string>({
                     >
                       {subject.name || (subject.kind === "own" ? c.yourLocation : c.savedBusiness)}
                     </span>
-                    <span className="mt-0.5 block truncate text-[10px] font-normal text-[#3B2D5E]">
-                      {subject.available
-                        ? subject.kind === "saved"
-                          ? c.googleListing
-                          : c.yourLocation
-                        : subject.reason}
+                    <span className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] font-normal text-[#3B2D5E]">
+                      <span className="truncate">
+                        {subject.available
+                          ? subject.kind === "saved"
+                            ? c.googleListing
+                            : c.yourLocation
+                          : subject.reason}
+                      </span>
+                      {subject.kind === "own" ? (
+                        <VerificationBadge
+                          status={subject.verified ? "verified" : "unstarted"}
+                          compact
+                        />
+                      ) : null}
                     </span>
                   </th>
                 );
@@ -1241,8 +1249,10 @@ export default function ComparePage() {
     queryKey: ["benchmark", "own-locations-list"],
     queryFn: async () => {
       const data = await apiFetch("/api/v1/channels?limit=100");
-      return ((data.channels ?? []) as ChannelOption[]).filter(
-        (channel) => channel.platform === "google_reviews"
+      return sortCompareChannels(
+        ((data.channels ?? []) as CompareChannelOption[]).filter(
+          (channel) => channel.platform === "google_reviews" && channel.status === "active"
+        )
       );
     },
   });
@@ -1380,7 +1390,7 @@ export default function ComparePage() {
   useEffect(() => {
     if (!bareUrl || !defaultsReady || appliedDefaults.current) return;
     appliedDefaults.current = true;
-    const main = own[0] ? subjectKey("own", own[0].id) : null;
+    const main = defaultCompareMain(own);
     const competitors = benchSet
       .map((p) => subjectKey("saved", p.place_id))
       .filter((key) => key !== main)
@@ -1448,6 +1458,17 @@ export default function ComparePage() {
               </button>
             );
           })}
+        </div>
+      ) : null}
+
+      {channelsQuery.isSuccess && own.length > 0 && !own.some((channel) => channel.verified) ? (
+        <div className="mt-4 rounded-[8px] border border-[#B0338A]/25 bg-white px-3 py-2">
+          <p className="text-[11px] font-semibold text-[#3B2D5E]">
+            {c.noVerifiedBranch}{" "}
+            <Link href="/dashboard/verification" className={`underline ${FOCUS}`}>
+              {c.verifyBranch}
+            </Link>
+          </p>
         </div>
       ) : null}
 

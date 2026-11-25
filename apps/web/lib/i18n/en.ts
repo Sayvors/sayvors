@@ -3834,6 +3834,8 @@ const en = {
       fiveBusinessesTitle: "Five businesses against yours.",
       fiveBusinessesDesc: "Pick one business on the left and up to five on the right. Every row is one fact, every column one business — the leader in each row is marked, and anything Google does not publish stays blank instead of becoming a zero.",
       desktopBest: "Benchmarking works best on a desktop browser. On mobile, each table shows one business at a time — pick it from the Business dropdown.",
+      noVerifiedBranch: "No connected branch is verified yet, so Compare has not selected one automatically.",
+      verifyBranch: "Verify a branch",
       period: "Period",
       rangeNote: "Live and 30 days are active. 90 days and 1 year unlock as the scraper fills history.",
       pickBusinessToBuild: "Pick a business in either dropdown to build the table.",
