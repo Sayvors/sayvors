@@ -7,14 +7,15 @@ concurrent requests.
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import case, distinct, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..channels.models import Channel
 from ..jobs.service import submit_job
-from .models import AiVisibilityPrompt, AiVisibilityRun
+from .models import AiVisibilityPrompt, AiVisibilityRun, AiVisibilitySource
 from .schemas import PromptPatch
 
 MAX_ACTIVE_PROMPTS_PER_BRANCH = 100
@@ -351,3 +352,168 @@ async def create_run(
         ).scalar_one()
     await db.refresh(run)
     return run
+
+
+MAX_RUN_LIST = 100
+
+
+def _rate(hits: int, total: int) -> float | None:
+    return round(hits * 100.0 / total, 1) if total else None
+
+
+async def overview(
+    db: AsyncSession, tenant_id: str, channel_id: str, days: int
+) -> dict:
+    await _owned_channel(db, tenant_id, channel_id)
+    since = datetime.now(timezone.utc) - timedelta(days=days) if days else None
+    base = [
+        AiVisibilityRun.tenant_id == tenant_id,
+        AiVisibilityRun.channel_id == channel_id,
+    ]
+    if since:
+        base.append(AiVisibilityRun.created_at >= since)
+
+    totals = (
+        await db.execute(
+            select(
+                func.count().label("total"),
+                func.sum(
+                    case((AiVisibilityRun.mentioned.is_(True), 1), else_=0)
+                ).label("mentioned"),
+                func.sum(
+                    case((AiVisibilityRun.cited.is_(True), 1), else_=0)
+                ).label("cited"),
+                func.sum(
+                    case(
+                        (AiVisibilityRun.recommended.is_(True), 1), else_=0
+                    )
+                ).label("recommended"),
+                func.sum(AiVisibilityRun.source_count).label("sources"),
+                func.sum(AiVisibilityRun.validated_claim_count).label("claims"),
+            ).where(*base, AiVisibilityRun.status == "completed")
+        )
+    ).one()
+    active_prompts = (
+        await db.execute(
+            select(func.count(AiVisibilityPrompt.id)).where(
+                AiVisibilityPrompt.tenant_id == tenant_id,
+                AiVisibilityPrompt.channel_id == channel_id,
+                AiVisibilityPrompt.is_active.is_(True),
+            )
+        )
+    ).scalar_one()
+    covered_prompts = (
+        await db.execute(
+            select(func.count(distinct(AiVisibilityRun.prompt_id))).where(
+                *base, AiVisibilityRun.status == "completed"
+            )
+        )
+    ).scalar_one()
+    failed = (
+        await db.execute(
+            select(func.count()).where(
+                *base,
+                AiVisibilityRun.status.in_(("failed", "ambiguous")),
+            )
+        )
+    ).scalar_one()
+    insufficient = (
+        await db.execute(
+            select(func.count()).where(
+                *base, AiVisibilityRun.status == "insufficient_evidence"
+            )
+        )
+    ).scalar_one()
+    return {
+        "completed_runs": totals.total,
+        "mention_rate": _rate(totals.mentioned or 0, totals.total),
+        "citation_rate": _rate(totals.cited or 0, totals.total),
+        "recommendation_rate": _rate(totals.recommended or 0, totals.total),
+        "active_prompts": active_prompts,
+        "covered_prompts": covered_prompts,
+        "prompt_coverage": _rate(covered_prompts, active_prompts),
+        "failed_runs": failed,
+        "insufficient_runs": insufficient,
+        "source_count": totals.sources or 0,
+        "validated_claim_count": totals.claims or 0,
+    }
+
+
+async def list_runs(
+    db: AsyncSession,
+    tenant_id: str,
+    channel_id: str,
+    *,
+    status: str | None = None,
+    prompt_id: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    await _owned_channel(db, tenant_id, channel_id)
+    filters = [
+        AiVisibilityRun.tenant_id == tenant_id,
+        AiVisibilityRun.channel_id == channel_id,
+    ]
+    if status:
+        filters.append(AiVisibilityRun.status == status)
+    if prompt_id:
+        filters.append(AiVisibilityRun.prompt_id == prompt_id)
+    total = (
+        await db.execute(
+            select(func.count()).select_from(AiVisibilityRun).where(*filters)
+        )
+    ).scalar_one()
+    rows = (
+        await db.execute(
+            select(AiVisibilityRun, AiVisibilityPrompt.title)
+            .join(AiVisibilityPrompt, AiVisibilityPrompt.id == AiVisibilityRun.prompt_id)
+            .where(*filters)
+            .order_by(AiVisibilityRun.created_at.desc())
+            .limit(min(limit, MAX_RUN_LIST))
+            .offset(max(0, offset))
+        )
+    ).all()
+    return rows, total
+
+
+async def get_run(db: AsyncSession, tenant_id: str, run_id: str):
+    run = (
+        await db.execute(
+            select(AiVisibilityRun).where(
+                AiVisibilityRun.id == run_id,
+                AiVisibilityRun.tenant_id == tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if run is None:
+        return None, []
+    source_rows = (
+        await db.execute(
+            select(AiVisibilitySource)
+            .where(AiVisibilitySource.run_id == run.id)
+            .order_by(AiVisibilitySource.position)
+        )
+    ).scalars().all()
+    return run, source_rows
+
+
+async def retry_run(
+    db: AsyncSession, tenant_id: str, run_id: str, *, locale: str
+):
+    run, _ = await get_run(db, tenant_id, run_id)
+    if run is None:
+        return None
+    if run.status in ACTIVE_RUN_STATUSES or run.status == "completed":
+        return run
+    return await create_run(
+        db, tenant_id, run.channel_id, run.prompt_id, locale=locale
+    )
+
+
+async def delete_run(db: AsyncSession, tenant_id: str, run_id: str) -> bool:
+    run, _ = await get_run(db, tenant_id, run_id)
+    if run is None:
+        return False
+    await db.delete(run)
+    await db.commit()
+    return True

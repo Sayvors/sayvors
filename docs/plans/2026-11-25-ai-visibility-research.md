@@ -79,7 +79,7 @@
 - [ ] Task 7: Add claim validation and deterministic outcomes.
 - [ ] Task 8: Add fix-next decision ranking.
 - [x] Task 9: Add durable research job handler.
-- [ ] Task 10: Add overview/history APIs and metrics.
+- [x] Task 10: Add overview/history APIs and metrics.
 - [ ] Task 11: Add retention, limits, and observability.
 - [ ] Task 12: Add frontend contracts, query keys, i18n, and navigation.
 - [x] Task 13: Build prompt library and run controls.
@@ -2335,7 +2335,7 @@ git commit -m "feat(ai-visibility): execute grounded research durably"
 - Modify: `services/api/app/modules/ai_visibility/router.py`
 - Create: `services/api/tests/test_ai_visibility_overview.py`
 
-- [ ] **Step 1: Write failing overview/history tests**
+- [x] **Step 1: Write failing overview/history tests**
 
 ```python
 from datetime import datetime, timedelta, timezone
@@ -2416,13 +2416,13 @@ async def test_history_and_detail_are_tenant_scoped(client, db, user_id, channel
     assert client.get("/api/v1/ai-visibility/runs/missing").status_code == 404
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run: `cd services/api && python -m pytest tests/test_ai_visibility_overview.py -q -n 0 -p no:cacheprovider`
 
 Expected: 404 for overview/history routes.
 
-- [ ] **Step 3: Add response schemas**
+- [x] **Step 3: Add response schemas**
 
 ```python
 class OverviewOut(BaseModel):
@@ -2484,7 +2484,7 @@ class RunDetailOut(RunOut):
     completed_at: str | None
 ```
 
-- [ ] **Step 4: Implement overview and history services**
+- [x] **Step 4: Implement overview and history services**
 
 ```python
 from datetime import datetime, timedelta, timezone
@@ -2613,7 +2613,7 @@ async def delete_run(db, tenant_id, run_id) -> bool:
     return True
 ```
 
-- [ ] **Step 5: Add overview/history routes**
+- [x] **Step 5: Add overview/history routes**
 
 ```python
 from datetime import datetime
@@ -2714,7 +2714,7 @@ async def delete_run(
         raise HTTPException(404, "run_not_found")
 ```
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 Run: `cd services/api && python -m pytest tests/test_ai_visibility_overview.py tests/test_ai_visibility_runs.py tests/test_ai_visibility_api.py -q -n 0 -p no:cacheprovider`
 

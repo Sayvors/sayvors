@@ -8,7 +8,19 @@ from ..auth.rate_limit import rate_limit
 from ..team.context import TenantContext, require_perm
 from . import service
 from .models import AiVisibilityPrompt
-from .schemas import PromptIn, PromptListOut, PromptOut, PromptPatch, RunIn, RunOut
+from .schemas import (
+    OverviewOut,
+    PromptIn,
+    PromptListOut,
+    PromptOut,
+    PromptPatch,
+    RunDetailOut,
+    RunIn,
+    RunListItem,
+    RunListOut,
+    RunOut,
+    SourceOut,
+)
 
 router = APIRouter(prefix="/api/v1/ai-visibility", tags=["ai-visibility"])
 
@@ -153,3 +165,132 @@ async def create_run(
     except service.PromptInactive as exc:
         raise HTTPException(409, str(exc)) from exc
     return _run_out(row)
+
+
+@router.get("/overview", response_model=OverviewOut)
+async def overview(
+    channel_id: str = Query(min_length=1, max_length=36),
+    days: int = Query(default=30, ge=0, le=3650),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
+    db: AsyncSession = Depends(get_db),
+) -> OverviewOut:
+    try:
+        return OverviewOut(
+            **await service.overview(db, ctx.tenant_id, channel_id, days)
+        )
+    except service.OwnedChannelRequired as exc:
+        raise HTTPException(404, "channel_not_found") from exc
+
+
+@router.get("/runs", response_model=RunListOut)
+async def list_runs(
+    channel_id: str = Query(min_length=1, max_length=36),
+    status: str | None = Query(default=None, max_length=24),
+    prompt_id: str | None = Query(default=None, max_length=36),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
+    db: AsyncSession = Depends(get_db),
+) -> RunListOut:
+    try:
+        rows, total = await service.list_runs(
+            db,
+            ctx.tenant_id,
+            channel_id,
+            status=status,
+            prompt_id=prompt_id,
+            limit=limit,
+            offset=offset,
+        )
+    except service.OwnedChannelRequired as exc:
+        raise HTTPException(404, "channel_not_found") from exc
+    return RunListOut(
+        total=total,
+        items=[
+            RunListItem(
+                id=run.id,
+                channel_id=run.channel_id,
+                prompt_id=run.prompt_id,
+                prompt_title=title,
+                status=run.status,
+                mentioned=run.mentioned,
+                cited=run.cited,
+                recommended=run.recommended,
+                incorrect=run.incorrect,
+                source_count=run.source_count,
+                validation_status=run.validation_status,
+                created_at=run.created_at.isoformat(),
+                completed_at=(
+                    run.completed_at.isoformat() if run.completed_at else None
+                ),
+            )
+            for run, title in rows
+        ],
+    )
+
+
+@router.get("/runs/{run_id}", response_model=RunDetailOut)
+async def run_detail(
+    run_id: str,
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
+    db: AsyncSession = Depends(get_db),
+) -> RunDetailOut:
+    run, source_rows = await service.get_run(db, ctx.tenant_id, run_id)
+    if run is None:
+        raise HTTPException(404, "run_not_found")
+    return RunDetailOut(
+        **_run_out(run).model_dump(),
+        answer_text=run.answer_text,
+        mentioned=run.mentioned,
+        cited=run.cited,
+        recommended=run.recommended,
+        incorrect=run.incorrect,
+        evidence_coverage=run.evidence_coverage,
+        competitor_mentions=run.competitor_mentions,
+        claims=run.claims_json,
+        actions=run.actions_json,
+        sources=[
+            SourceOut(
+                id=row.id,
+                position=row.position,
+                url=row.url,
+                title=row.title,
+                snippet=row.snippet,
+                excerpt=row.excerpt,
+                fetch_error=row.fetch_error,
+            )
+            for row in source_rows
+        ],
+        completed_at=run.completed_at.isoformat() if run.completed_at else None,
+    )
+
+
+@router.post("/runs/{run_id}/retry", response_model=RunOut, status_code=201)
+async def retry_run(
+    run_id: str,
+    ctx: TenantContext = Depends(require_perm("ai.edit")),
+    db: AsyncSession = Depends(get_db),
+) -> RunOut:
+    try:
+        row = await service.retry_run(
+            db,
+            ctx.tenant_id,
+            run_id,
+            locale="ar" if getattr(ctx.user, "language", None) == "ar" else "en",
+        )
+    except service.PromptInactive as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if row is None:
+        raise HTTPException(404, "run_not_found")
+    return _run_out(row)
+
+
+@router.delete("/runs/{run_id}", status_code=204)
+async def delete_run(
+    run_id: str,
+    ctx: TenantContext = Depends(require_perm("ai.edit")),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    if not await service.delete_run(db, ctx.tenant_id, run_id):
+        raise HTTPException(404, "run_not_found")
+    return Response(status_code=204)

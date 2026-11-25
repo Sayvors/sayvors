@@ -69,3 +69,62 @@ class RunOut(BaseModel):
     error: str | None
     created_at: str
     updated_at: str
+
+
+class OverviewOut(BaseModel):
+    completed_runs: int
+    mention_rate: float | None
+    citation_rate: float | None
+    recommendation_rate: float | None
+    active_prompts: int
+    covered_prompts: int
+    prompt_coverage: float | None
+    failed_runs: int
+    insufficient_runs: int
+    source_count: int
+    validated_claim_count: int
+
+
+class RunListItem(BaseModel):
+    id: str
+    channel_id: str
+    prompt_id: str
+    prompt_title: str
+    status: str
+    mentioned: bool | None
+    cited: bool | None
+    recommended: bool | None
+    incorrect: bool | None
+    source_count: int
+    validation_status: str
+    created_at: str
+    completed_at: str | None
+
+
+class RunListOut(BaseModel):
+    items: list[RunListItem]
+    total: int
+
+
+class SourceOut(BaseModel):
+    id: str
+    position: int
+    url: str
+    title: str | None
+    snippet: str | None
+    excerpt: str | None
+    fetch_error: str | None
+
+
+class RunDetailOut(RunOut):
+    answer_text: str | None
+    mentioned: bool | None
+    cited: bool | None
+    recommended: bool | None
+    incorrect: bool | None
+    evidence_coverage: dict
+    competitor_mentions: list
+    claims: list
+    actions: list
+    sources: list[SourceOut]
+    completed_at: str | None
