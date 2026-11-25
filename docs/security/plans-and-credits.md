@@ -57,7 +57,8 @@ path; the rest are stored and displayed but do not gate anything.
 | `channels` | `channels/router.py` connect path | Starting a new channel connection |
 | `messaging` | inbox, template and WhatsApp AI reply paths | Outbound WhatsApp messages |
 | `ai_replies` | `llm/gateway.py` | Every LLM call through the gateway (review replies, assistant, AI analytics, chat) |
-| `benchmark_external` | analytics external-peer endpoints | Fetching/refreshing external competitor peers |
+| `benchmarking` | `benchmark/router.py` dependency on every benchmark route | The Benchmark dashboard/API, including own-location comparisons |
+| `benchmark_external` | analytics external-peer endpoints; benchmark search/save/refresh and any comparison/history/review/theme/AI-summary request containing a saved peer | Fetching, refreshing, or comparing external competitor peers |
 | `databank` | `rag/router.py` write paths | Creating a databank, uploading files, writing crawl sources |
 | `crawler` | `rag/router.py` crawl write/preview paths | Website discovery, one-shot scrape, creating/updating a crawl source |
 
@@ -81,8 +82,7 @@ The remaining catalog keys are **catalog-only today**:
 
 `reviews`, `posts`, `media`, `analytics`, `automation`, `leads`, `voice`,
 `scheduling`, `assistant`, `social_response_style`, `bulk_edit_csv`,
-`benchmarking`, `verifications`, `growth`, `ticket_assignment`,
-`voice_replies`.
+`verifications`, `growth`, `ticket_assignment`, `voice_replies`.
 
 The phantom keys (`ai_search`, `ask_sayvors_premium`, `priority_support`,
 `sla`) were removed from the catalog and from every plan's features JSONB by

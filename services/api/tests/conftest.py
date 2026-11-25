@@ -153,6 +153,7 @@ async def engine():
                 features={
                     "channels": True, "messaging": True,
                     "ai_replies": True, "posts": True, "media": True, "reviews": True,
+                    "benchmarking": True, "benchmark_external": True,
                 },
                 is_active=True,
                 sort_order=0,
@@ -169,6 +170,7 @@ async def engine():
                 features={
                     "channels": True, "messaging": True,
                     "ai_replies": True, "posts": True, "media": True, "reviews": True,
+                    "benchmarking": True, "benchmark_external": True,
                     "analytics": True, "automation": True,
                 },
                 is_active=True,
