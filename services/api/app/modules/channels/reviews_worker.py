@@ -636,7 +636,11 @@ async def _adopt_existing_reply(db: AsyncSession, channel: Channel, review) -> b
     latest.rating = review.rating
     latest.review_text = review.text
     latest.reviewer_name = review.reviewer_name
-    latest.reply_text = text
+    # Google can expose a reply envelope before its comment is readable. That
+    # is still evidence of a provider reply, but it must not erase the text we
+    # successfully posted (especially after onboarding's readback was absent).
+    if text or latest.status != "posted" or not latest.reply_text:
+        latest.reply_text = text
     latest.status = "posted"
     latest.error = None
     latest.reply_external_id = external_id
