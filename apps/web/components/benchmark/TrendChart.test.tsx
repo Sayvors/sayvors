@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
 import TrendChart from "./TrendChart";
 import { buildTrendSeries, sharedTimeDomain } from "@/lib/benchmark-trend";
 import type { SubjectHistory } from "@/lib/api-benchmark";
@@ -103,5 +103,24 @@ describe("TrendChart", () => {
     ).toBe(true);
     const line = container.querySelector('polyline[data-label="New Competitor"]');
     expect(line?.parentElement?.querySelector("circle")).toBeInTheDocument();
+  });
+
+  it("shows a retryable history error instead of insufficient history", () => {
+    const onRetry = vi.fn();
+    render(
+      <TrendChart
+        history={[]}
+        title="Where is it heading?"
+        mainKey="own:mine"
+        loading={false}
+        error={new Error("history unavailable")}
+        onRetry={onRetry}
+      />,
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not load history.");
+    expect(screen.queryByText(/Not enough history yet/i)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(onRetry).toHaveBeenCalledOnce();
   });
 });

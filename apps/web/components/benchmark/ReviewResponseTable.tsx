@@ -28,12 +28,31 @@ const RESPONSE_TONE_CLASS: Record<ResponseTone, string> = {
 export default function ReviewResponseTable({
   subjects,
   loading,
+  error,
+  onRetry,
 }: {
   subjects: SubjectReviews[];
   loading: boolean;
+  error?: unknown;
+  onRetry?: () => void;
 }) {
   const { t } = useI18n();
   const c = t.benchmark.compare;
+
+  if (error) {
+    return (
+      <div role="alert" className="mt-4 rounded-[8px] border border-[#FF4F6E]/35 bg-white px-3 py-2">
+        <p className="text-[12px] font-semibold text-[#B3123A]">{c.couldNotLoadReviewResponses}</p>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-2 inline-flex min-h-11 items-center rounded-[8px] border border-[#3D1D6E]/25 bg-white px-3 text-[11px] font-bold text-[#3D1D6E] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[#3D1D6E]"
+        >
+          {t.common.retry}
+        </button>
+      </div>
+    );
+  }
 
   if (loading) {
     return <p className="mt-4 text-[12px] text-[#3B2D5E]">{t.common.loading}</p>;

@@ -3847,6 +3847,8 @@ const ar: Dict = {
       pickBusinessToBuild: "اختر نشاطًا تجاريًا في أي من القائمتين لبناء الجدول.",
       pullingLatest: "جارٍ سحب أحدث الأرقام والمراجعات.",
       couldNotLoadComparison: "تعذر تحميل المقارنة.",
+      couldNotLoadSavedBusinesses: "تعذر تحميل الأنشطة التجارية المحفوظة.",
+      couldNotLoadOwnLocations: "تعذر تحميل مواقع Google الخاصة بك.",
       periodLastDays: (days: number) => `الفترة · آخر ${days} يوم`,
       fiveStarRatings: "تقييمات 5 نجوم (%)",
       fourStarRatings: "تقييمات 4 نجوم",
@@ -3866,6 +3868,7 @@ const ar: Dict = {
       noRecentReviews: "لا توجد تقييمات حديثة",
       noReviewsYet: "لا توجد تقييمات بعد",
       reviewResponsesTitle: "الردود على التقييمات",
+      couldNotLoadReviewResponses: "تعذر تحميل ردود التقييمات.",
       reviewResponsesDesc:
         "أعداد الردود وعدم الرد مبنية على عينة التقييمات المخزنة. إجمالي التقييمات هو العدد العام أو المخزن.",
       totalReviews: "إجمالي التقييمات",

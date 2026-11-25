@@ -1066,10 +1066,14 @@ function ReviewsPopup({
 function SentimentReviewsTable({
   subjects,
   loading,
+  error,
+  onRetry,
   openPopup,
 }: {
   subjects: SubjectReviews[];
   loading: boolean;
+  error: unknown;
+  onRetry: () => void;
   openPopup: (subject: SubjectReviews, category: SentimentCategory) => void;
 }) {
   const { t } = useI18n();
@@ -1077,6 +1081,21 @@ function SentimentReviewsTable({
   // On small screens the business columns become one dropdown: only the
   // selected business's category rows are shown, like the other tables.
   const [mobileIndex, setMobileIndex] = useState(0);
+
+  if (error) {
+    return (
+      <div role="alert" className="mt-4 rounded-[8px] border border-[#FF4F6E]/35 bg-white px-3 py-2">
+        <p className="text-[12px] font-semibold text-[#B3123A]">{c.couldNotLoadReviewResponses}</p>
+        <button
+          type="button"
+          onClick={onRetry}
+          className={`mt-2 inline-flex min-h-11 items-center rounded-[8px] border border-[#3D1D6E]/25 bg-white px-3 text-[11px] font-bold text-[#3D1D6E] ${FOCUS}`}
+        >
+          {t.common.retry}
+        </button>
+      </div>
+    );
+  }
 
   if (loading) {
     return <p className="mt-4 text-[12px] text-[#3B2D5E]">{t.common.loading}</p>;
@@ -1459,6 +1478,28 @@ export default function ComparePage() {
         </div>
       ) : null}
 
+      {(savedQuery.isError || channelsQuery.isError) ? (
+        <div role="alert" className="mt-4 flex flex-wrap items-center gap-3 rounded-[8px] border border-[#FF4F6E]/35 bg-white px-3 py-2">
+          <p className="text-[11px] font-semibold text-[#B3123A]">
+            {savedQuery.isError && channelsQuery.isError
+              ? c.couldNotLoadSavedBusinesses
+              : savedQuery.isError
+                ? c.couldNotLoadSavedBusinesses
+                : c.couldNotLoadOwnLocations}
+          </p>
+          {savedQuery.isError ? (
+            <button type="button" onClick={() => void savedQuery.refetch()} className={`inline-flex min-h-11 items-center rounded-[8px] border border-[#3D1D6E]/25 bg-white px-3 text-[10px] font-bold text-[#3D1D6E] ${FOCUS}`}>
+              {t.common.retry}
+            </button>
+          ) : null}
+          {channelsQuery.isError ? (
+            <button type="button" onClick={() => void channelsQuery.refetch()} className={`inline-flex min-h-11 items-center rounded-[8px] border border-[#3D1D6E]/25 bg-white px-3 text-[10px] font-bold text-[#3D1D6E] ${FOCUS}`}>
+              {t.common.retry}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       {channelsQuery.isSuccess && own.length > 0 && !own.some((channel) => channel.verified) ? (
         <div className="mt-4 rounded-[8px] border border-[#B0338A]/25 bg-white px-3 py-2">
           <p className="text-[11px] font-semibold text-[#3B2D5E]">
@@ -1571,6 +1612,9 @@ export default function ComparePage() {
             history={historyQuery.data?.subjects ?? []}
             title={b.trendTitle}
             mainKey={selection.main}
+            loading={historyQuery.isPending}
+            error={historyQuery.error}
+            onRetry={() => void historyQuery.refetch()}
           />
           <OwnScorecards
             subjects={compareQuery.data?.subjects ?? []}
@@ -1609,10 +1653,14 @@ export default function ComparePage() {
           <ReviewResponseTable
             subjects={reviewSubjects}
             loading={reviewsQuery.isPending}
+            error={reviewsQuery.error}
+            onRetry={() => void reviewsQuery.refetch()}
           />
           <SentimentReviewsTable
             subjects={reviewSubjects}
             loading={reviewsQuery.isPending}
+            error={reviewsQuery.error}
+            onRetry={() => void reviewsQuery.refetch()}
             openPopup={(subject, category) => setReviewsPopup({ subject, category })}
           />
           <ReviewKeywords

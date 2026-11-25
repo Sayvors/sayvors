@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
 import ReviewResponseTable from "./ReviewResponseTable";
 import type { SubjectReviews } from "@/lib/api-benchmark";
 
@@ -33,5 +33,21 @@ describe("ReviewResponseTable", () => {
     render(<ReviewResponseTable subjects={subjects} loading={false} />);
 
     expect(screen.getAllByText("No recent sample").length).toBeGreaterThan(0);
+  });
+
+  it("shows a retryable error instead of an empty table", () => {
+    const onRetry = vi.fn();
+    render(
+      <ReviewResponseTable
+        subjects={[]}
+        loading={false}
+        error={new Error("reviews unavailable")}
+        onRetry={onRetry}
+      />,
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not load review responses.");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(onRetry).toHaveBeenCalledOnce();
   });
 });

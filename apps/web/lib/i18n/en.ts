@@ -3841,6 +3841,8 @@ const en = {
       pickBusinessToBuild: "Pick a business in either dropdown to build the table.",
       pullingLatest: "Pulling the latest numbers and reviews.",
       couldNotLoadComparison: "Could not load the comparison.",
+      couldNotLoadSavedBusinesses: "Could not load saved businesses.",
+      couldNotLoadOwnLocations: "Could not load your Google locations.",
       periodLastDays: (days: number) => `Period · last ${days} days`,
       fiveStarRatings: "5-star reviews (%)",
       fourStarRatings: "4-star ratings",
@@ -3860,6 +3862,7 @@ const en = {
       noRecentReviews: "No recent reviews",
       noReviewsYet: "No reviews yet",
       reviewResponsesTitle: "Review responses",
+      couldNotLoadReviewResponses: "Could not load review responses.",
       reviewResponsesDesc:
         "Answered and not-answered counts use the cached review sample. Total reviews is the public or stored lifetime count.",
       totalReviews: "Total reviews",
