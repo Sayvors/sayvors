@@ -314,6 +314,7 @@ export interface ReviewThemeSubject {
   sample_size: number;
   sample_hash: string | null;
   analyzed_at: string | null;
+  retry_after_seconds: number;
   source?: "llm" | "local";
   error_code?: string | null;
   error_message?: string | null;

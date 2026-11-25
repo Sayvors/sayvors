@@ -3933,6 +3933,7 @@ const ar: Dict = {
         analyzing: "جارٍ التحليل…",
         unavailable: "لا توجد عينة مخزنة",
         subjectError: "فشل تحليل الموضوعات.",
+        retryInSeconds: (seconds: number) => `إعادة المحاولة متاحة بعد ${seconds} ${seconds === 1 ? "ثانية" : "ثوانٍ"}`,
         retryBusiness: (business: string) => `إعادة المحاولة: ${business}`,
         wholeError: "تعذر تحميل موضوعات المراجعات.",
         retry: "إعادة المحاولة",

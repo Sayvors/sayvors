@@ -3927,6 +3927,7 @@ const en = {
         analyzing: "Analyzing…",
         unavailable: "No cached sample",
         subjectError: "Theme analysis failed.",
+        retryInSeconds: (seconds: number) => `Retry available in ${seconds} ${seconds === 1 ? "second" : "seconds"}`,
         retryBusiness: (business: string) => `Retry ${business}`,
         wholeError: "Could not load review themes.",
         retry: "Retry",
