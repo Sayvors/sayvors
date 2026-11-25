@@ -204,7 +204,9 @@ No action may claim a numeric lift without measured evidence.
 - `mentioned`, `cited`, `recommended`, `incorrect` booleans, nullable until validation completes.
 - `validation_status`: pending, passed, partial, failed.
 - `evidence_coverage` JSON: source count, validated-claim count, unsupported-claim count.
+- `source_count`, `validated_claim_count`, `unsupported_claim_count` integer columns for scalable SQL aggregation.
 - `competitor_mentions` JSON: list of `{name, quote, source_ids}`.
+- `claims_json` and `actions_json` store the validated claim ledger and ranked decision actions.
 - `error`, `failure_code`.
 - `started_at`, `completed_at`, `created_at`, `updated_at`.
 - Unique partial index allowing only one active run per `(tenant_id, prompt_id)`. Active statuses are queued, searching, fetching, reading, validating, and writing.
