@@ -746,6 +746,7 @@ async def test_reviews_endpoint_own_rows(client, db, channel_id, user_id):
     assert subj["summary"] == {
         "total": 2, "sampled": 2, "answered": 1,
         "unanswered": 1, "response_rate": 50.0,
+        "evidence_basis": "stored_lifetime",
     }
     oldest = subj["reviews"][1]
     assert oldest["rating"] == 1
@@ -767,6 +768,7 @@ async def test_reviews_endpoint_saved_place_cached_sample(client, db, user_id):
     assert res.json()["subjects"][0]["summary"] == {
         "total": 5, "sampled": 0, "answered": 0,
         "unanswered": 0, "response_rate": None,
+        "evidence_basis": "cached_sample",
     }
 
 
@@ -1012,6 +1014,7 @@ async def test_saved_reviews_boq_serve_cached_no_live_scrape(db, monkeypatch):
     assert subj["summary"]["answered"] == 1
     assert subj["summary"]["unanswered"] == 1
     assert subj["summary"]["response_rate"] == 50.0
+    assert subj["summary"]["evidence_basis"] == "cached_sample"
 
 
 async def test_saved_subject_uses_outscraper_when_selected(db, monkeypatch):

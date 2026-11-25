@@ -7,13 +7,13 @@ const subjects: SubjectReviews[] = [
   {
     key: "own:mine",
     name: "My Branch",
-    summary: { total: 3, sampled: 3, answered: 1, unanswered: 2, response_rate: 33.3 },
+    summary: { total: 3, sampled: 3, answered: 1, unanswered: 2, response_rate: 33.3, evidence_basis: "stored_lifetime" },
     reviews: [],
   },
   {
     key: "saved:peer",
     name: "Competitor",
-    summary: { total: 70, sampled: 0, answered: 0, unanswered: 0, response_rate: null },
+    summary: { total: 70, sampled: 0, answered: 0, unanswered: 0, response_rate: null, evidence_basis: "cached_sample" },
     reviews: [],
   },
 ];
@@ -33,6 +33,13 @@ describe("ReviewResponseTable", () => {
     render(<ReviewResponseTable subjects={subjects} loading={false} />);
 
     expect(screen.getAllByText("No recent sample").length).toBeGreaterThan(0);
+  });
+
+  it("labels cached-sample and stored-lifetime response evidence", () => {
+    render(<ReviewResponseTable subjects={subjects} loading={false} />);
+
+    expect(screen.getByText("Stored lifetime")).toBeInTheDocument();
+    expect(screen.getByText("Cached sample")).toBeInTheDocument();
   });
 
   it("shows a retryable error instead of an empty table", () => {

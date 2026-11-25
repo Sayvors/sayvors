@@ -126,6 +126,13 @@ export default function ReviewResponseTable({
                   <span className="mt-0.5 block text-[8px] font-semibold normal-case tracking-normal text-[#6F6685]">
                     {subject.key.startsWith("own:") ? c.yourLocation : c.googleListing}
                   </span>
+                  <span className="mt-0.5 block text-[8px] font-semibold normal-case tracking-normal text-[#6F6685]">
+                    {subject.summary.evidence_basis === "stored_lifetime"
+                      ? c.responseBasisStoredLifetime
+                      : subject.summary.evidence_basis === "cached_sample"
+                        ? c.responseBasisCachedSample
+                        : c.responseBasisUnavailable}
+                  </span>
                 </th>
               ))}
             </tr>

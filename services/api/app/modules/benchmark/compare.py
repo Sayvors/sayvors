@@ -886,7 +886,11 @@ async def _saved_reviews(
     """
     saved = await service.get_saved(db, tenant_id, place_id)
     if saved is None:
-        return None, [], {"total": None, "sampled": 0, "answered": 0, "unanswered": 0, "response_rate": None}
+        return None, [], {
+            "total": None, "sampled": 0, "answered": 0,
+            "unanswered": 0, "response_rate": None,
+            "evidence_basis": "unavailable",
+        }
     name = saved.name or saved.label
     reviews = list(saved.reviews or [])
     # The free provider never scrapes inside a read handler. The worker /
@@ -929,6 +933,7 @@ async def _saved_reviews(
         "answered": answered,
         "unanswered": sampled - answered,
         "response_rate": round(answered / sampled * 100, 1) if sampled else None,
+        "evidence_basis": "cached_sample",
     }
     return name, out, summary
 
@@ -943,7 +948,11 @@ async def _own_reviews(
         )
     ).scalar_one_or_none()
     if channel is None:
-        return None, [], {"total": None, "sampled": 0, "answered": 0, "unanswered": 0, "response_rate": None}
+        return None, [], {
+            "total": None, "sampled": 0, "answered": 0,
+            "unanswered": 0, "response_rate": None,
+            "evidence_basis": "unavailable",
+        }
     bucket = func.coalesce(ReviewInsight.review_updated_at, ReviewInsight.created_at)
     rows = (
         await db.execute(
@@ -1002,6 +1011,7 @@ async def _own_reviews(
         "answered": answered,
         "unanswered": total - answered,
         "response_rate": round(answered / total * 100, 1) if total else None,
+        "evidence_basis": "stored_lifetime",
     }
     return channel.display_name, out, summary
 
@@ -1024,7 +1034,11 @@ async def reviews_for(
     config = await service.get_config(db)
     out = []
     for raw in raw_subjects:
-        summary = {"total": None, "sampled": 0, "answered": 0, "unanswered": 0, "response_rate": None}
+        summary = {
+            "total": None, "sampled": 0, "answered": 0,
+            "unanswered": 0, "response_rate": None,
+            "evidence_basis": "unavailable",
+        }
         try:
             kind, ident = parse_subject(raw)
             if kind == "saved":

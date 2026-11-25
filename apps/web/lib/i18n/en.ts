@@ -3864,7 +3864,10 @@ const en = {
       reviewResponsesTitle: "Review responses",
       couldNotLoadReviewResponses: "Could not load review responses.",
       reviewResponsesDesc:
-        "Answered and not-answered counts use the cached review sample. Total reviews is the public or stored lifetime count.",
+        "Total reviews is the public or stored lifetime count. Competitor response counts use the cached sample; your location's response counts use stored lifetime rows.",
+      responseBasisCachedSample: "Cached sample",
+      responseBasisStoredLifetime: "Stored lifetime",
+      responseBasisUnavailable: "Unavailable",
       totalReviews: "Total reviews",
       sampledReviews: "Reviews sampled",
       answeredReviews: "Answered",

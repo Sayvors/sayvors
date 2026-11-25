@@ -3870,7 +3870,10 @@ const ar: Dict = {
       reviewResponsesTitle: "الردود على التقييمات",
       couldNotLoadReviewResponses: "تعذر تحميل ردود التقييمات.",
       reviewResponsesDesc:
-        "أعداد الردود وعدم الرد مبنية على عينة التقييمات المخزنة. إجمالي التقييمات هو العدد العام أو المخزن.",
+        "إجمالي التقييمات هو العدد العام أو المخزن مدى الحياة. تستخدم أعداد ردود المنافسين العينة المخزنة، بينما تستخدم أعداد ردود موقعك الصفوف المخزنة مدى الحياة.",
+      responseBasisCachedSample: "عينة مخزنة",
+      responseBasisStoredLifetime: "إجمالي مخزن",
+      responseBasisUnavailable: "غير متاح",
       totalReviews: "إجمالي التقييمات",
       sampledReviews: "التقييمات في العينة",
       answeredReviews: "تم الرد",

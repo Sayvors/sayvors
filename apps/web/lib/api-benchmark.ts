@@ -280,6 +280,7 @@ export interface SubjectReviews {
     answered: number;
     unanswered: number;
     response_rate: number | null;
+    evidence_basis: "cached_sample" | "stored_lifetime" | "unavailable";
   };
   reviews: {
     rating: number | null;
