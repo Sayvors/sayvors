@@ -33,6 +33,7 @@ from .modules.kafka.router import router as kafka_router
 from .modules.rag.router import router as rag_router
 from .modules.memory.router import router as memory_router
 from .modules.analytics.router import router as analytics_router
+from .modules.ai_visibility.router import router as ai_visibility_router
 from .modules.benchmark.router import router as benchmark_router
 from .modules.analytics.qa_router import router as analytics_qa_router
 from .modules.analytics.abuse_router import router as analytics_abuse_router
@@ -672,6 +673,7 @@ async def _entitlement_denied_handler(request, exc):
 # every import to keep in sync.
 app.include_router(auth_router)
 app.include_router(benchmark_router)
+app.include_router(ai_visibility_router)
 app.include_router(account_router)
 app.include_router(tts_router)
 app.include_router(stt_router)
