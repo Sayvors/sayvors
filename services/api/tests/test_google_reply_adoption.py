@@ -127,6 +127,70 @@ async def test_google_reply_edited_in_gbp_corrects_the_row(db, channel_id):
 
 
 @pytest.mark.asyncio
+async def test_reply_envelope_without_comment_preserves_published_text(db, channel_id):
+    """A transient comment-less Google payload must not erase our known reply.
+
+    Onboarding can successfully write a reply while immediate readback is
+    still absent, leaving no provider timestamp. A later poll may see the
+    reply envelope before Google returns its comment. Treating that envelope
+    as new blanked the published text and produced "Replied on Google" with
+    nothing for the merchant to read or edit.
+    """
+    channel = await db.get(Channel, channel_id)
+    db.add(ReviewReply(
+        id="posted-without-readback",
+        channel_id=channel_id,
+        review_id="accounts/a/locations/l/reviews/r1",
+        rating=4,
+        reply_text="Thanks for visiting!",
+        status="posted",
+        reply_external_id=None,
+    ))
+    await db.commit()
+
+    assert await _adopt_existing_reply(
+        db,
+        channel,
+        _review(
+            reply_text=None,
+            reply_updated_at=datetime(2026, 10, 2, 9, 0, tzinfo=timezone.utc),
+            reply_state="pending",
+        ),
+    ) is True
+
+    rows = await _rows(db, channel_id, "accounts/a/locations/l/reviews/r1")
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.status == "posted"
+    assert row.reply_text == "Thanks for visiting!"
+    assert row.reply_external_id == "google:2026-10-02T09:00:00+00:00"
+    assert row.google_reply_state == "pending"
+
+
+@pytest.mark.asyncio
+async def test_same_provider_reply_restores_text_after_comment_lag(db, channel_id):
+    """Heal rows the old comment-less adoption path already blanked."""
+    channel = await db.get(Channel, channel_id)
+    reviewed_at = datetime(2026, 9, 30, 10, 28, 52, tzinfo=timezone.utc)
+    db.add(ReviewReply(
+        id="blanked-posted-reply",
+        channel_id=channel_id,
+        review_id="accounts/a/locations/l/reviews/r1",
+        rating=4,
+        reply_text="",
+        status="posted",
+        reply_external_id=f"google:{reviewed_at.isoformat()}",
+    ))
+    await db.commit()
+
+    assert await _adopt_existing_reply(db, channel, _review()) is True
+
+    rows = await _rows(db, channel_id, "accounts/a/locations/l/reviews/r1")
+    assert len(rows) == 1
+    assert rows[0].reply_text == "Thanks for visiting!"
+
+
+@pytest.mark.asyncio
 async def test_no_live_reply_writes_nothing(db, channel_id):
     channel = await db.get(Channel, channel_id)
     assert await _adopt_existing_reply(
