@@ -395,6 +395,8 @@ const ar: Dict = {
       pendingChangesTitle: "بانتظار مراجعة Google",
       pendingChangesHint:
         "عُدّل هنا ولم يُنشر على الخرائط بعد — لا يزال Google يراجعه.",
+      googleStatusRefreshWarning:
+        "تعذّر تحديث حالة Google للفروع: {branches}.",
       pendingTabHint: "توجد تغييرات بانتظار Google",
       pendingRowHint:
         "تراجع Google القسم بالكامل لا كل سطر على حدة. يختلف هذا السطر عن المعروض حاليًا على Google، وسيتغير عند الموافقة على التعديل.",

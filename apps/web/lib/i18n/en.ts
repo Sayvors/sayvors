@@ -393,6 +393,8 @@ const en = {
       pendingChangesTitle: "Pending on Google",
       pendingChangesHint:
         "Changed here, not live on Maps yet — Google is still reviewing.",
+      googleStatusRefreshWarning:
+        "Google status could not be refreshed for {branches}.",
       pendingTabHint: "Has changes pending on Google",
       pendingRowHint:
         "Google reviews the whole section, not each row. This row differs from what Google shows today, so it will change when the edit is accepted.",
