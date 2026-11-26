@@ -8,6 +8,8 @@ from app.modules.ai_visibility import retention
 from app.modules.ai_visibility.models import (
     AiVisibilityAttempt,
     AiVisibilityPrompt,
+    AiVisibilityQuerySet,
+    AiVisibilityQuestion,
     AiVisibilityRun,
 )
 
@@ -156,3 +158,57 @@ async def test_old_terminal_failures_are_retained_for_only_thirty_days(
     await db.commit()
 
     assert await retention.cleanup_once(db) == 3
+
+
+@pytest.mark.asyncio
+async def test_cleanup_deletes_old_query_sets_and_cascades_questions(
+    db, user_id, channel_id
+):
+    old = datetime.now(timezone.utc) - timedelta(days=400)
+    failed = datetime.now(timezone.utc) - timedelta(days=31)
+    completed = AiVisibilityQuerySet(
+        tenant_id=user_id,
+        channel_id=channel_id,
+        version=1,
+        status="completed",
+        completed_at=old,
+    )
+    failed_set = AiVisibilityQuerySet(
+        tenant_id=user_id,
+        channel_id=channel_id,
+        version=2,
+        status="failed",
+        completed_at=failed,
+    )
+    active = AiVisibilityQuerySet(
+        tenant_id=user_id,
+        channel_id=channel_id,
+        version=3,
+        status="running",
+        started_at=old,
+    )
+    db.add_all([completed, failed_set, active])
+    await db.flush()
+    db.add(
+        AiVisibilityQuestion(
+            query_set_id=completed.id,
+            tenant_id=user_id,
+            channel_id=channel_id,
+            question_key="q001",
+            question_text="Is Sayvors licensed?",
+            normalized_question_hash="a" * 64,
+            language="en",
+            customer_intent="licensing",
+            industry_relevance=90,
+            service_relevance=95,
+            business_relevance_score=92,
+            research_priority="P1",
+            position=0,
+        )
+    )
+    await db.commit()
+
+    assert await retention.cleanup_once(db) == 2
+    remaining = (await db.execute(select(AiVisibilityQuerySet))).scalars().all()
+    assert [row.id for row in remaining] == [active.id]
+    assert (await db.execute(select(AiVisibilityQuestion))).scalars().all() == []

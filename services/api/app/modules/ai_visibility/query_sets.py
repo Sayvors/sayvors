@@ -165,10 +165,10 @@ async def latest_query_set(
             await db.execute(
                 select(AiVisibilityQuestion)
                 .where(AiVisibilityQuestion.query_set_id.in_(set_ids))
-                .order_by(AiVisibilityQuestion.query_set_id, AiVisibilityQuestion.position)
             )
         ).scalars().all()
     )
+    rows.sort(key=lambda row: (version_by_id[row.query_set_id], row.position))
     run_ids = [row.run_id for row in rows if row.run_id]
     runs = {
         run.id: run

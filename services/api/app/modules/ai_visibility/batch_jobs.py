@@ -4,9 +4,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,6 +29,7 @@ GENERATOR_VERSION = "deterministic-v1"
 ADAPTIVE_GENERATOR_VERSION = "adaptive-v1"
 MAX_ADAPTIVE_VERSIONS = 2
 MAX_FOLLOWUP_QUESTIONS = 4
+QUERY_SET_LEASE_SECONDS = 15 * 60
 
 
 def _now() -> datetime:
@@ -230,6 +231,18 @@ async def handle_query_set(job: Job, db: AsyncSession) -> dict:
         ).scalars().all()
     )
     if not rows:
+        lease = await db.execute(
+            update(Job)
+            .where(
+                Job.id == job.id,
+                Job.status == "running",
+                Job.lease_owner == job.lease_owner,
+            )
+            .values(lease_expires_at=_now() + timedelta(seconds=QUERY_SET_LEASE_SECONDS))
+        )
+        if lease.rowcount != 1:
+            raise RuntimeError("query_set_job_lease_lost")
+        await db.commit()
         adaptive_raw = query_set.generation_meta_json.get("adaptive_questions") if isinstance(query_set.generation_meta_json, dict) else []
         if adaptive_raw:
             query_set.phase = "loading_adaptive_questions"
@@ -278,15 +291,23 @@ async def handle_query_set(job: Job, db: AsyncSession) -> dict:
             await db.commit()
             return {"status": "failed", "query_set_id": query_set.id}
         except IntegrityError:
+            query_set_id = query_set.id
             await db.rollback()
-            query_set = await db.get(AiVisibilityQuerySet, query_set.id)
+            query_set = await db.get(AiVisibilityQuerySet, query_set_id)
             if query_set is not None:
                 query_set.status = "failed"
                 query_set.failure_code = "question_persistence_failed"
                 query_set.error = "The generated question set could not be saved."
                 query_set.completed_at = _now()
                 await db.commit()
-            return {"status": "failed", "query_set_id": query_set.id if query_set else None}
+            return {"status": "failed", "query_set_id": query_set_id}
+    if not rows:
+        query_set.status = "failed"
+        query_set.failure_code = "no_new_questions"
+        query_set.error = "All generated questions already exist for this branch."
+        query_set.completed_at = _now()
+        await db.commit()
+        return {"status": "failed", "query_set_id": query_set.id}
     query_set.total_questions = len(rows)
     next_question = next((row for row in rows if not row.run_id), None)
     if next_question is not None:
@@ -511,6 +532,10 @@ async def _finalize_one(db: AsyncSession, query_set_id: str) -> bool:
         query_set.phase = "researching"
         await db.commit()
         return True
+    completed = sum(row.status in {"completed", "insufficient_evidence"} for row in rows)
+    failed = sum(row.status in {"failed", "ambiguous"} for row in rows)
+    query_set.completed_questions = completed
+    query_set.failed_questions = failed
     if completed and failed == 0:
         followup = await _maybe_create_adaptive_version(db, query_set, rows, runs)
         if followup is not None:

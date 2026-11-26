@@ -140,6 +140,47 @@ async def test_query_set_job_marks_empty_generation_failed(
 
 
 @pytest.mark.asyncio
+async def test_query_set_job_skips_questions_that_already_exist(
+    db, user_id, channel_id, monkeypatch
+):
+    from app.modules.ai_visibility.models import AiVisibilityPrompt
+    from app.modules.ai_visibility import service
+
+    query_set = await query_sets.start_query_set(db, user_id, channel_id)
+    text = "Is Sayvors licensed in Makkah?"
+    db.add(
+        AiVisibilityPrompt(
+            tenant_id=user_id,
+            channel_id=channel_id,
+            title="Existing",
+            prompt_text=text,
+            normalized_prompt_hash=service.prompt_hash(text),
+            intent="licensing",
+            created_by=user_id,
+        )
+    )
+    await db.commit()
+    job = await db.get(Job, query_set.job_id)
+    job.status = "running"
+    job.lease_owner = "worker-1"
+    job.lease_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+    await db.commit()
+
+    async def _profile(*_args):
+        return {"name": "Sayvors", "categories": {"primary": "Recruitment office"}}
+
+    async def _questions(*_args, **_kwargs):
+        return [_question(text, intent="licensing")]
+
+    monkeypatch.setattr(batch_jobs.profile, "load_business_profile", _profile)
+    monkeypatch.setattr(batch_jobs.questions, "generate_questions", _questions)
+    result = await batch_jobs.handle_query_set(job, db)
+    await db.refresh(query_set)
+    assert result["status"] == "failed"
+    assert query_set.failure_code == "no_new_questions"
+
+
+@pytest.mark.asyncio
 async def test_finalizer_advances_one_question_at_a_time(
     db, user_id, channel_id, monkeypatch
 ):

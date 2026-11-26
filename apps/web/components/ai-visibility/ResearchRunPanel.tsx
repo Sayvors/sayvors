@@ -108,7 +108,11 @@ export default function ResearchRunPanel({
       </div>
       {active && (
         <div className="space-y-3">
-          <ResearchFacts coverage={detail.evidence_coverage} copy={copy} />
+          <ResearchFacts
+            coverage={detail.evidence_coverage}
+            copy={copy}
+            label={`${copy.facts.title} · ${copy.decisionBrief}`}
+          />
           {!detail.evidence_coverage.metrics && (
             <p role="status" className="text-[12px] text-[var(--ai-muted)]">
               {copy.running}
@@ -125,11 +129,19 @@ export default function ResearchRunPanel({
       {!active && (detail.status === "completed" || detail.status === "insufficient_evidence") && (
         <>
           <DecisionBrief detail={detail} copy={copy} />
-          <ResearchFacts coverage={detail.evidence_coverage} copy={copy} />
+          <ResearchFacts
+            coverage={detail.evidence_coverage}
+            copy={copy}
+            label={`${copy.facts.title} · ${copy.decisionBrief}`}
+          />
         </>
       )}
       {!active && detail.status === "failed" && (
-        <ResearchFacts coverage={detail.evidence_coverage} copy={copy} />
+        <ResearchFacts
+            coverage={detail.evidence_coverage}
+            copy={copy}
+            label={`${copy.facts.title} · ${copy.decisionBrief}`}
+          />
       )}
     </div>
   );

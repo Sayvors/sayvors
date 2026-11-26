@@ -25,9 +25,11 @@ function num(source: Record<string, unknown>, key: string): number | null {
 export default function ResearchFacts({
   coverage,
   copy,
+  label,
 }: {
   coverage: Record<string, unknown>;
   copy: Copy;
+  label?: string;
 }) {
   const metrics =
     coverage.metrics && typeof coverage.metrics === "object"
@@ -83,7 +85,7 @@ export default function ResearchFacts({
         : copy.facts.noEvidenceNote;
 
   return (
-    <section aria-label={copy.facts.title} className="space-y-3">
+    <section aria-label={label ?? copy.facts.title} className="space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <p className="ai-eyebrow">{copy.facts.title}</p>
         <p className="max-w-xl text-[11px] leading-5 text-[var(--ai-muted)]">{note}</p>
@@ -102,9 +104,9 @@ export default function ResearchFacts({
               >
                 {card.value.toLocaleString()}
               </dd>
-              <p className="mt-2 text-[11px] leading-4 text-[var(--ai-muted)]">
+              <dd className="mt-2 text-[11px] leading-4 text-[var(--ai-muted)]">
                 {card.caption}
-              </p>
+              </dd>
             </div>
           ))}
         </dl>

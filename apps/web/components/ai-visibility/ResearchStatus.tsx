@@ -38,7 +38,7 @@ export default function ResearchStatus({
         <div className="flex items-start gap-3">
           <span
             className={`mt-1 h-2.5 w-2.5 rounded-full ${
-              active ? "animate-pulse bg-[var(--ai-signal)]" : "bg-[var(--ai-danger)]"
+              active ? "animate-pulse motion-reduce:animate-none bg-[var(--ai-signal)]" : "bg-[var(--ai-danger)]"
             }`}
             aria-hidden="true"
           />

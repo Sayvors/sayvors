@@ -30,13 +30,15 @@ Perplexity answers and must never be presented as one.
 - The feature is available to every plan. Execution still requires the existing
   `ai_replies` entitlement and a positive wallet balance; the LLM gateway
   rechecks both and reserves credit atomically before the provider call.
-- Tenant export includes all four AI Visibility tables. Source rows are scoped
-  through their tenant-owned run; purge deletes children before parents.
+- Tenant export includes all six AI Visibility tables. Source rows are scoped
+  through their tenant-owned run; generated questions are scoped through their
+  tenant-owned query set. Purge deletes children before parents.
 
 ## Collector guarantees
 
-- Search uses fixed Bing public RSS and HTML fallback endpoints. No paid search
-  key, login, or consumer-AI scraping is involved.
+- Search uses fixed Bing public RSS/HTML endpoints with DuckDuckGo HTML as a
+  fallback when Bing is blocked, empty, or returns no branch-relevant candidate.
+  No paid search key, login, or consumer-AI scraping is involved.
 - At most 10 results are parsed from at most 1 MB. Queries are normalized and
   cached per tenant for six hours.
 - Uncached searches have a fail-closed per-tenant limit of 10/minute and a
@@ -45,7 +47,8 @@ Perplexity answers and must never be presented as one.
   responses set a 15-minute project-wide cooldown.
 - Global provider throttling propagates to the durable job runner for deferred
   retry. A tenant exceeding its own search budget receives an explicit terminal
-  failure instead of consuming shared provider quota indefinitely.
+  failure instead of consuming shared provider quota indefinitely. DuckDuckGo's
+  anti-bot interstitial sets its own 15-minute cooldown and never escalates.
 - Redis failures deny new collection; they never silently disable rate limits.
 
 ## Source-fetch guarantees
@@ -53,17 +56,44 @@ Perplexity answers and must never be presented as one.
 - Only `http` and `https` public destinations are accepted.
 - `assert_public_http_url` plus DNS-pinned fetching is applied on every redirect
   hop, blocking loopback, private, link-local, and metadata addresses.
-- A run selects at most five sources, at most two per domain. Fetches run with
-  concurrency three, a 15-second timeout, a 2 MB byte cap, and a fail-closed
-  per-domain limit of two/minute.
+- A run selects at most five sources in quick mode or six in deep mode, at most
+  two per domain. Fetches run with concurrency three, a 15-second timeout, a
+  2 MB byte cap, and a fail-closed per-domain limit of two/minute.
 - Only `text/html`, `application/xhtml+xml`, and `text/plain` are extracted.
-  Extracted text is capped at 20,000 characters per source and 60,000 characters
+  Extracted text is capped at 20,000 characters per source and 40,000 characters
   in the model prompt.
 - Source rows keep their original search position. Labels are always `S<n>`
   from that position, even when earlier sources failed, so citations never
   renumber.
 - Source snapshots commit before the LLM call. A reclaimed job reuses committed
   snapshots instead of fetching duplicate rows.
+
+## Business-aware question generation
+
+- The owner never supplies a universal prompt. A connected branch receives a
+  versioned set of customer questions generated from its own identity,
+  categories, merchant overrides, declared services, active catalog products,
+  review/conversation themes, geography, website metadata, and bounded public
+  context.
+- Classification combines weighted signals rather than trusting the Google
+  primary category. Missing or low-confidence facts are stored as uncertainties;
+  the generator never invents a service that is absent from the profile or
+  explicitly marked not offered.
+- Questions carry a stable key, language, customer intent, industry/service
+  relevance, geographic context, business relevance score, priority, origin,
+  prompt link, run link, and status. Generated text is unique per tenant/branch.
+- Arabic and English templates are authored per industry. Saudi profiles are
+  Arabic-first; other profiles use the languages supported by their actual data.
+- The public-context collector uses the same SSRF-safe source fetcher. Website
+  and public-page excerpts are untrusted data, bounded, and stored as a
+  reproducible query-set snapshot. Reviewer names, raw review text, contact
+  identifiers, and other customer PII are not sent to question generation.
+- Query-set versions are immutable. Adaptive versions may add grounded
+  competitor comparisons or unused real customer questions, but never rewrite
+  an earlier version or its outcomes. At most two adaptive versions are created.
+- `ai_visibility.query_set` is internal-only. The generic job API cannot submit,
+  inspect, or cancel it. A partial unique index permits one active set per
+  tenant/branch.
 
 ## Grounding guarantees
 
@@ -91,8 +121,8 @@ Perplexity answers and must never be presented as one.
 - PostgreSQL is execution truth. AI Visibility uses the existing `bulk` lane.
 - A partial unique index permits one active run per tenant/prompt. Run and job
   are created in one transaction with idempotency key `ai-visibility:{run_id}`.
-- Create and retry share a channel/prompt-locked policy: at most three accepted
-  attempts in the trailing hour, with a 60-second cooldown. An append-only
+- Create and retry share a channel/prompt-locked policy: at most 20 accepted
+  attempts in the trailing hour, with a 5-second cooldown. An append-only
   attempt ledger survives run deletion. Prompt text becomes immutable once
   research has begun, and prompt deletion archives the row, so recreating the
   same logical prompt cannot reset the budget.
@@ -108,6 +138,17 @@ Perplexity answers and must never be presented as one.
   `ambiguous`, is reported to Sentry, and is never blindly retried.
 - Unexpected exception text is logged internally but replaced with a safe
   client message. Explicit telemetry carries ids/status, not prompts or answers.
+- Query-set start returns `202` after committing only the set and parent job.
+  The parent generates questions and starts one child run. A periodic finalizer
+  advances the queue only after the current child is terminal, so `lane_key`
+  metadata is never mistaken for serialization.
+- The finalizer reconciles terminal child jobs with still-active runs, updates
+  aggregate counters, and stops cleanly as `partial` when quota is exhausted.
+- Background child-run creation takes a PostgreSQL transaction advisory lock
+  keyed by tenant/depth/month, re-counts usage, and inserts atomically. Router
+  preflight remains a fast fail, not the concurrency control.
+- Parent and child jobs expose safe UI titles/progress through the existing
+  background-operations widget; raw questions and answers are not job labels.
 
 ## Retention
 
@@ -116,5 +157,7 @@ Perplexity answers and must never be presented as one.
   deleted in bounded batches of 500.
 - Attempt-ledger rows older than 30 days are pruned in bounded batches. Recent
   attempt evidence remains when the corresponding run is deleted.
-- Source rows cascade with runs. The cleanup worker is idempotent and logs
-  failures with a traceback.
+- Source rows cascade with runs. Completed query sets older than 365 days and
+  failed/partial query sets older than 30 days are deleted in bounded batches;
+  generated questions are removed explicitly before their set. Active sets are
+  never swept. The cleanup worker is idempotent and logs failures with a traceback.

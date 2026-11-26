@@ -106,6 +106,8 @@ async def _seed_ai_visibility(db, user_id: str) -> None:
     from app.modules.ai_visibility.models import (
         AiVisibilityAttempt,
         AiVisibilityPrompt,
+        AiVisibilityQuerySet,
+        AiVisibilityQuestion,
         AiVisibilityRun,
         AiVisibilitySource,
     )
@@ -120,16 +122,49 @@ async def _seed_ai_visibility(db, user_id: str) -> None:
         intent="discovery",
         created_by=user_id,
     )
+    query_set = AiVisibilityQuerySet(
+        id="ai-query-set",
+        tenant_id=user_id,
+        channel_id=prompt.channel_id,
+        version=1,
+        status="completed",
+        depth="quick",
+    )
+    db.add_all([prompt, query_set])
+    await db.flush()
+    question = AiVisibilityQuestion(
+        id="ai-question",
+        query_set_id=query_set.id,
+        tenant_id=user_id,
+        channel_id=prompt.channel_id,
+        question_key="q001",
+        question_text="Best coffee",
+        normalized_question_hash="a" * 64,
+        language="en",
+        customer_intent="discovery",
+        industry_relevance=90,
+        service_relevance=95,
+        business_relevance_score=92,
+        research_priority="P1",
+        prompt_id=prompt.id,
+        run_id="ai-run",
+        status="completed",
+        position=0,
+    )
+    db.add(question)
+    await db.flush()
     run = AiVisibilityRun(
         id="ai-run",
         tenant_id=user_id,
         channel_id=prompt.channel_id,
         prompt_id=prompt.id,
+        query_set_id=query_set.id,
+        question_id=question.id,
         prompt_snapshot=prompt.prompt_text,
         locale="en",
         status="completed",
     )
-    db.add_all([prompt, run])
+    db.add(run)
     await db.flush()
     db.add_all([
         AiVisibilitySource(
@@ -281,6 +316,8 @@ async def test_export_and_purge_include_ai_visibility_children(db, user_id):
     from app.modules.ai_visibility.models import (
         AiVisibilityAttempt,
         AiVisibilityPrompt,
+        AiVisibilityQuerySet,
+        AiVisibilityQuestion,
         AiVisibilityRun,
         AiVisibilitySource,
     )
@@ -291,6 +328,8 @@ async def test_export_and_purge_include_ai_visibility_children(db, user_id):
     response = await _call(admin_export_tenant, user_id, db)
     bundle = __import__("json").loads(response.body)
     assert bundle["counts"]["ai_visibility_prompts"] == 1
+    assert bundle["counts"]["ai_visibility_query_sets"] == 1
+    assert bundle["counts"]["ai_visibility_questions"] == 1
     assert bundle["counts"]["ai_visibility_runs"] == 1
     assert bundle["counts"]["ai_visibility_sources"] == 1
     assert bundle["counts"]["ai_visibility_attempts"] == 1
@@ -303,6 +342,8 @@ async def test_export_and_purge_include_ai_visibility_children(db, user_id):
         AiVisibilityAttempt,
         AiVisibilitySource,
         AiVisibilityRun,
+        AiVisibilityQuestion,
+        AiVisibilityQuerySet,
         AiVisibilityPrompt,
     ):
         assert (await db.execute(select(model))).scalars().all() == []
