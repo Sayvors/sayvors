@@ -7,7 +7,7 @@ import re
 from dataclasses import asdict, dataclass
 from html import unescape
 from html.parser import HTMLParser
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlsplit
 from xml.etree import ElementTree
 
 from ...core.pinned_http import UnsafeUrlError, assert_public_http_url, fetch_pinned_bytes
@@ -31,6 +31,70 @@ class SearchResult:
     url: str
     title: str
     snippet: str
+
+
+PUBLIC_PLATFORM_DOMAINS = (
+    ("Facebook", "facebook.com", "https://www.facebook.com/pages/create"),
+    ("Instagram", "instagram.com", "https://business.instagram.com/"),
+    ("TikTok", "tiktok.com", "https://www.tiktok.com/business/"),
+    ("LinkedIn", "linkedin.com", "https://www.linkedin.com/company/setup/new/"),
+    ("YouTube", "youtube.com", "https://www.youtube.com/creators/"),
+)
+
+
+async def discover_public_profiles(
+    tenant_id: str, query: str, branch_name: str
+) -> list[dict]:
+    """Find public social profiles through the same public search index.
+
+    Private accounts are never accessed. A platform with no relevant public
+    result is reported as not found, not as proof that no account exists.
+    """
+    tokens = [
+        token
+        for token in re.findall(r"[a-z0-9\u0600-\u06ff]{4,}", branch_name.casefold())
+        if token not in {"company", "branch", "business", "location"}
+    ]
+    profiles: list[dict] = []
+    for name, domain, setup_url in PUBLIC_PLATFORM_DOMAINS:
+        platform_query = f"site:{domain} {query}"[:300]
+        try:
+            rows = await search_public_web(tenant_id, platform_query)
+            found = next(
+                (
+                    row
+                    for row in rows
+                    if domain in (urlsplit(row.url).hostname or "")
+                    and (
+                        not tokens
+                        or any(
+                            token in f"{row.title} {row.snippet}".casefold()
+                            for token in tokens
+                        )
+                    )
+                ),
+                None,
+            )
+            profiles.append(
+                {
+                    "platform": name,
+                    "status": "found" if found else "not_found",
+                    "url": found.url if found else None,
+                    "query": platform_query,
+                    "setup_url": setup_url,
+                }
+            )
+        except (SearchRateLimited, SearchUnavailable):
+            profiles.append(
+                {
+                    "platform": name,
+                    "status": "unknown",
+                    "url": None,
+                    "query": platform_query,
+                    "setup_url": setup_url,
+                }
+            )
+    return profiles
 
 
 class SearchRateLimited(RuntimeError):
@@ -81,15 +145,7 @@ def build_query(prompt: str, branch: dict) -> str:
     parts = [part for part in (name, remainder, locality) if part]
     if not parts:
         return normalize_query(prompt)
-    seen: set[str] = set()
-    words: list[str] = []
-    for word in " ".join(parts).split():
-        key = word.casefold()
-        if key in seen:
-            continue
-        seen.add(key)
-        words.append(word)
-    return " ".join(words)[:300]
+    return " ".join(parts)[:300]
 
 
 def parse_bing_rss(body: bytes) -> list[SearchResult]:

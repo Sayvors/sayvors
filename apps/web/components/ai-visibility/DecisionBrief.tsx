@@ -39,6 +39,11 @@ type Copy = {
   socialNotChecked: string;
   publishingChecklist: string;
   publishingHint: string;
+  platformCoverage: string;
+  foundPublic: string;
+  notFoundPublic: string;
+  unknownPublic: string;
+  privateNote: string;
 };
 
 function Answer({

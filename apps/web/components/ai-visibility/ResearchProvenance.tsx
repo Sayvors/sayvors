@@ -11,6 +11,11 @@ type Copy = {
   socialNotChecked: string;
   publishingChecklist: string;
   publishingHint: string;
+  platformCoverage: string;
+  foundPublic: string;
+  notFoundPublic: string;
+  unknownPublic: string;
+  privateNote: string;
 };
 
 const PLATFORMS = [
@@ -39,6 +44,9 @@ export default function ResearchProvenance({
   const owned = Number(
     coverage.owned_source_count ?? Math.max(0, sources.length - thirdParty),
   );
+  const platforms = Array.isArray(coverage.platforms)
+    ? (coverage.platforms as Array<Record<string, unknown>>)
+    : [];
   return (
     <details className="border-y border-[var(--ai-line)] py-3">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-[12px] font-bold marker:content-none">
@@ -77,6 +85,60 @@ export default function ResearchProvenance({
         {copy.searchProvider}: {String(search.provider ?? "Bing public web")} ·{" "}
         {copy.socialNotChecked}
       </p>
+      {platforms.length > 0 && (
+        <div className="mt-4 border-t border-[var(--ai-line)] pt-3">
+          <p className="text-[12px] font-bold text-[var(--ai-ink)]">
+            {copy.platformCoverage}
+          </p>
+          <div className="mt-2 divide-y divide-[var(--ai-line)] border-y border-[var(--ai-line)]">
+            {platforms.map((row) => {
+              const status = String(row.status ?? "unknown");
+              const found = status === "found" && row.url;
+              const label =
+                status === "found"
+                  ? copy.foundPublic
+                  : status === "not_found"
+                    ? copy.notFoundPublic
+                    : copy.unknownPublic;
+              return (
+                <div
+                  key={String(row.platform)}
+                  className="flex flex-wrap items-center justify-between gap-2 py-2 text-[11px]"
+                >
+                  <span className="font-bold text-[var(--ai-ink)]">
+                    {String(row.platform)}
+                  </span>
+                  {found ? (
+                    <a
+                      href={String(row.url)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-semibold text-[var(--ai-ok)] underline"
+                    >
+                      {label} ↗
+                    </a>
+                  ) : (
+                    <span className="text-[var(--ai-muted)]">
+                      {label} ·{" "}
+                      <a
+                        href={String(row.setup_url)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-semibold text-[var(--ai-accent)] underline"
+                      >
+                        Publish publicly ↗
+                      </a>
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-[10px] leading-5 text-[var(--ai-muted)]">
+            {copy.privateNote}
+          </p>
+        </div>
+      )}
       <div className="mt-4 border-t border-[var(--ai-line)] pt-3">
         <p className="text-[12px] font-bold text-[var(--ai-ink)]">
           {copy.publishingChecklist}

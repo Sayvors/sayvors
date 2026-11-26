@@ -94,7 +94,8 @@ export default function ResearchRunPanel({
             <p className="text-[12px] font-bold text-[var(--ai-ink)]">{stage}</p>
             <p className="mt-0.5 font-mono text-[10px] text-[var(--ai-muted)]">
               {detail.evidence_coverage.source_count ?? 0} {copy.sources.toLowerCase()}
-              {detail.status === "insufficient_evidence"
+              {Number(detail.evidence_coverage.owned_source_count ?? 0) > 0 &&
+              Number(detail.evidence_coverage.third_party_source_count ?? 0) === 0
                 ? ` · ${copy.ownedEvidenceOnly}`
                 : ""}
             </p>

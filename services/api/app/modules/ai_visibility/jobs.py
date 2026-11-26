@@ -389,6 +389,17 @@ async def handle_research(job, db: AsyncSession) -> dict:
         if len(usable) >= MIN_SOURCES_FOR_BRIEF and not _sources_are_relevant(
             usable, branch
         ):
+            query = str((coverage.get("search") or {}).get("query") or "")
+            try:
+                coverage["platforms"] = await search.discover_public_profiles(
+                    tenant_id, query or run.prompt_snapshot, str(branch.get("name") or "")
+                )
+            except Exception:
+                logger.exception(
+                    "ai_visibility_platform_discovery_failed",
+                    extra={"run_id": run_id, "tenant_id": tenant_id},
+                )
+                coverage["platforms"] = []
             owned_rows, payload = await _owned_evidence_fallback(db, run, branch)
             source_payload = _source_payload(owned_rows)
             payload = validation.validate(payload, source_payload, branch)
@@ -449,6 +460,17 @@ async def handle_research(job, db: AsyncSession) -> dict:
             )
             if run is None:
                 return {"status": "cancelled", "run_id": run_id}
+            run.source_count = len(snapshots)
+            run.evidence_coverage = {
+                **coverage,
+                "source_count": len(snapshots),
+                "usable_source_count": len(usable),
+                "validated_claim_count": 0,
+                "unsupported_claim_count": 0,
+                "third_party_source_count": 0,
+                "owned_source_count": 0,
+            }
+            await db.commit()
             return _finish(run, started, run.status)
 
         await _status(db, run, "reading")

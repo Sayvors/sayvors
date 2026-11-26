@@ -458,8 +458,19 @@ async def test_job_rejects_unrelated_sources_before_the_llm(
         called.append("llm")
         raise AssertionError("unrelated sources must not reach the model")
 
+    async def _profiles(*_args, **_kwargs):
+        return [
+            {
+                "platform": "Facebook",
+                "status": "not_found",
+                "url": None,
+                "setup_url": "https://www.facebook.com/pages/create",
+            }
+        ]
+
     monkeypatch.setattr(jobs, "load_branch_facts", _facts)
     monkeypatch.setattr(jobs.research, "complete_research", _complete)
+    monkeypatch.setattr(jobs.search, "discover_public_profiles", _profiles)
 
     result = await jobs.handle_research(job, db)
     await db.refresh(run)

@@ -103,6 +103,28 @@ async def test_search_enforces_a_per_tenant_limit(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_discover_public_profiles_marks_found_and_missing(monkeypatch):
+    async def _search(_tenant, query):
+        if "facebook.com" in query:
+            return [
+                search.SearchResult(
+                    url="https://www.facebook.com/sayvors",
+                    title="Sayvors Company",
+                    snippet="Makkah branch",
+                )
+            ]
+        return []
+
+    monkeypatch.setattr(search, "search_public_web", _search)
+    rows = await search.discover_public_profiles(
+        "tenant-1", "Sayvors Company Makkah", "Sayvors Company Branch-Makkah"
+    )
+    by_platform = {row["platform"]: row for row in rows}
+    assert by_platform["Facebook"]["status"] == "found"
+    assert by_platform["Instagram"]["status"] == "not_found"
+
+
+@pytest.mark.asyncio
 async def test_search_uses_cache(monkeypatch):
     calls = []
 
