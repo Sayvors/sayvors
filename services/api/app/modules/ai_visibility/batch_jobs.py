@@ -372,7 +372,13 @@ def _adaptive_candidates(
     not_offered = str(snapshot.get("not_offered") or "")
     for raw in snapshot.get("customer_questions") or []:
         text = str(raw).strip()
-        if not text or normalize_text(text) in existing or questions._is_unoffered(text, not_offered):
+        if (
+            not text
+            or normalize_text(text) in existing
+            or questions._is_unoffered(text, not_offered)
+            or questions._customer_voice_score(text, snapshot, locality)
+            < questions.MIN_CUSTOMER_VOICE_RELEVANCE
+        ):
             continue
         existing.add(normalize_text(text))
         out.append(

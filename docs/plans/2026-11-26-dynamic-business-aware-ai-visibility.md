@@ -292,6 +292,7 @@ Expected: PASS. Commit `feat(ai-visibility): add business industry taxonomy`.
 - `MAX_GENERATED_QUESTION_CHARS = 240`.
 - Intent coverage uses round-robin selection so one high-scoring intent cannot fill the whole set.
 - Zero-result queries do not spawn redundant generic variants; follow-ups require a grounded new competitor, service, or customer need.
+- Customer-voice questions require branch/locality/service/intent relevance; generic support chatter is excluded from initial and adaptive sets.
 
 ## Classification strategy
 

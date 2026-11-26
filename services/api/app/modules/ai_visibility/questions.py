@@ -10,6 +10,27 @@ from .taxonomy import IndustryMatch, IntentSpec, classify_industry, select_inten
 
 MAX_INITIAL_QUESTIONS = 8
 MAX_GENERATED_QUESTION_CHARS = 240
+MAX_CUSTOMER_VOICE_QUESTIONS = 3
+MIN_CUSTOMER_VOICE_RELEVANCE = 0.35
+CUSTOMER_NAME_WEIGHT = 0.45
+CUSTOMER_LOCALITY_WEIGHT = 0.25
+CUSTOMER_SERVICE_WEIGHT = 0.35
+CUSTOMER_INTENT_WEIGHT = 0.15
+GENERIC_SUPPORT_TERMS = {
+    "update",
+    "mobile number",
+    "google maps",
+    "login",
+    "password",
+    "account",
+    "subscription",
+    "invoice",
+    "bill",
+    "app",
+    "otp",
+    "verify",
+}
+GENERIC_NAME_WORDS = {"company", "branch", "business", "location", "store", "shop", "office"}
 INDUSTRY_SCORE_WEIGHT = 0.5
 SERVICE_SCORE_WEIGHT = 0.3
 GEOGRAPHY_SCORE_WEIGHT = 0.2
@@ -61,6 +82,7 @@ def _customer_intent(text: str) -> str:
         (("near", "where", "address", "location", "أين", "عنوان"), "location"),
         (("best", "recommend", "أفضل", "أنصح"), "recommendation"),
         (("review", "rating", "quality", "تقييم", "جودة"), "reputation"),
+        (("licens", "مرخص"), "licensing"),
         (("service", "provide", "خدمة", "يقدم"), "service_specific"),
     )
     for terms, intent in rules:
@@ -76,6 +98,65 @@ def _is_unoffered(text: str, not_offered: str) -> bool:
         if len(tokens) >= 2 and len(tokens & question_tokens) >= 2:
             return True
     return False
+
+
+def _tokens(value: str) -> set[str]:
+    return set(re.findall(r"\w{3,}", normalize_text(value)))
+
+
+def _service_match(text: str, profile: dict) -> bool:
+    question_tokens = _tokens(text)
+    services = profile.get("services") or []
+    products = profile.get("products") or []
+    labels = [str(item) for item in services if isinstance(item, str)]
+    labels.extend(
+        str(item.get("name") or "")
+        for item in products
+        if isinstance(item, dict)
+    )
+    description = str(profile.get("description") or "").strip()
+    if description:
+        labels.append(description)
+    for label in labels:
+        service_tokens = _tokens(label)
+        if not service_tokens:
+            continue
+        matches = sum(
+            any(
+                question == token
+                or question.startswith(token)
+                or token.startswith(question)
+                for question in question_tokens
+            )
+            for token in service_tokens
+        )
+        if (len(service_tokens) == 1 and matches) or matches >= 2:
+            return True
+    return False
+
+
+def _customer_voice_score(text: str, profile: dict, geography: str) -> float:
+    question_tokens = _tokens(text)
+    name_tokens = _tokens(str(profile.get("name") or "")) - GENERIC_NAME_WORDS
+    locality_tokens = _tokens(geography)
+    name_match = bool(question_tokens & name_tokens)
+    locality_match = bool(question_tokens & locality_tokens)
+    service_match = _service_match(text, profile)
+    normalized = normalize_text(text)
+    generic_support = any(term in normalized for term in GENERIC_SUPPORT_TERMS)
+    if generic_support and not (name_match or service_match):
+        return 0.0
+    score = (
+        (CUSTOMER_NAME_WEIGHT if name_match else 0.0)
+        + (CUSTOMER_LOCALITY_WEIGHT if locality_match else 0.0)
+        + (CUSTOMER_SERVICE_WEIGHT if service_match else 0.0)
+        + (
+            CUSTOMER_INTENT_WEIGHT
+            if _customer_intent(text) != "customer_question"
+            else 0.0
+        )
+    )
+    return min(1.0, score)
 
 
 def _geography(profile: dict) -> str:
@@ -150,15 +231,22 @@ def generate_questions(
     out: list[GeneratedQuestion] = []
     seen: set[str] = set()
     not_offered = str(profile.get("not_offered") or "")
+    voice_candidates: list[tuple[float, str]] = []
     for raw in profile.get("customer_questions") or []:
         text = str(raw).strip()
-        key = _normalize(text)
         if (
             not text
             or len(text) > MAX_GENERATED_QUESTION_CHARS
-            or key in seen
             or _is_unoffered(text, not_offered)
         ):
+            continue
+        score = _customer_voice_score(text, profile, geography)
+        if score >= MIN_CUSTOMER_VOICE_RELEVANCE:
+            voice_candidates.append((score, text))
+    voice_candidates.sort(key=lambda item: (-item[0], item[1]))
+    for _score, text in voice_candidates[:MAX_CUSTOMER_VOICE_QUESTIONS]:
+        key = _normalize(text)
+        if key in seen:
             continue
         seen.add(key)
         industry = round(match.confidence * 100)

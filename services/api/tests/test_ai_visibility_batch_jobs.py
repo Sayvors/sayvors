@@ -344,3 +344,45 @@ async def test_finalizer_creates_adaptive_version_for_grounded_competitor(
     ).scalars().all()
     assert followup_rows
     assert followup_rows[0].run_id
+
+
+@pytest.mark.asyncio
+async def test_adaptive_version_does_not_reintroduce_support_chatter(
+    db, user_id, channel_id, monkeypatch
+):
+    query_set = await _seed_two_question_set(db, user_id, channel_id, monkeypatch)
+    snapshot = dict(query_set.source_snapshot_json or {})
+    snapshot["customer_questions"] = [
+        "Update your mobile number please",
+        "What is Google Maps?",
+    ]
+    query_set.source_snapshot_json = snapshot
+    await db.commit()
+    rows = (
+        await db.execute(
+            select(AiVisibilityQuestion)
+            .where(AiVisibilityQuestion.query_set_id == query_set.id)
+            .order_by(AiVisibilityQuestion.position)
+        )
+    ).scalars().all()
+    first = await db.get(AiVisibilityRun, rows[0].run_id)
+    first.status = "completed"
+    first.completed_at = datetime.now(timezone.utc)
+    await db.commit()
+    await batch_jobs.finalize_due_query_sets(db)
+    second = await db.get(AiVisibilityRun, rows[1].run_id)
+    second.status = "completed"
+    second.completed_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    await batch_jobs.finalize_due_query_sets(db)
+    versions = (
+        await db.execute(
+            select(AiVisibilityQuerySet).where(
+                AiVisibilityQuerySet.tenant_id == user_id,
+                AiVisibilityQuerySet.channel_id == channel_id,
+            )
+        )
+    ).scalars().all()
+    assert len(versions) == 1
+    assert versions[0].status == "completed"

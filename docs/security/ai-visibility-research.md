@@ -84,6 +84,9 @@ Perplexity answers and must never be presented as one.
   prompt link, run link, and status. Generated text is unique per tenant/branch.
 - Arabic and English templates are authored per industry. Saudi profiles are
   Arabic-first; other profiles use the languages supported by their actual data.
+- Real customer questions are prioritized only when they match the branch name,
+  locality, an actual service/product phrase, or a relevant intent. Generic
+  support chatter is excluded and cannot return through adaptive versions.
 - The public-context collector uses the same SSRF-safe source fetcher. Website
   and public-page excerpts are untrusted data, bounded, and stored as a
   reproducible query-set snapshot. Reviewer names, raw review text, contact

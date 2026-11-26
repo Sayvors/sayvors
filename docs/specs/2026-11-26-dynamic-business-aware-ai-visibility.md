@@ -47,7 +47,9 @@ sent to generation. Public text remains untrusted data.
   software, recruitment, and conservative local services.
 - Service-specific intents are removed when the service is absent or explicitly
   not offered.
-- Real customer questions are prioritized ahead of templates.
+- Real customer questions are prioritized only when they match the branch name,
+  locality, an actual service/product phrase, or a relevant intent. Generic
+  support chatter is excluded from initial and adaptive sets.
 - Every question stores intent, language, geography, industry/service relevance,
   business score, priority, origin, prompt/run links, and status.
 

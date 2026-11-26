@@ -108,3 +108,41 @@ def test_customer_question_about_explicitly_unoffered_service_is_removed():
         limit=8,
     )
     assert not any("real estate" in row.question_text.casefold() for row in questions)
+
+
+def test_generic_support_chatter_is_not_treated_as_branch_customer_intent():
+    questions = generate_questions(
+        {
+            "name": "Sayvors Company Branch-Makkah",
+            "categories": {"category": "Software company"},
+            "description": "Google review automation software",
+            "services": ["Review automation", "Software development"],
+            "address": "Makkah",
+            "customer_questions": [
+                "Update your mobile number please",
+                "What is Google Maps?",
+                "Do you have other branches?",
+            ],
+        },
+        limit=8,
+    )
+    texts = [row.question_text for row in questions]
+    assert "Update your mobile number please" not in texts
+    assert "What is Google Maps?" not in texts
+    assert "Do you have other branches?" not in texts
+
+
+def test_relevant_customer_question_is_kept_ahead_of_templates():
+    questions = generate_questions(
+        {
+            "name": "Sayvors",
+            "categories": {"category": "Software company"},
+            "description": "Google review automation software",
+            "services": ["Review automation"],
+            "address": "Makkah",
+            "customer_questions": ["Does Sayvors automate Google review replies?"],
+        },
+        limit=8,
+    )
+    assert questions[0].question_text == "Does Sayvors automate Google review replies?"
+    assert questions[0].service_relevance >= 90
