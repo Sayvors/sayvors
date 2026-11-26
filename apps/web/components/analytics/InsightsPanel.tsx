@@ -8,11 +8,9 @@ import {
   fetchProblems,
   fetchProducts,
   fetchTopics,
-  fetchMessagingOverview,
   fetchConversationInsights,
   fetchInsightsCards,
   type InsightsCards,
-  type MessagingOverview,
   type ProblemsResponse,
   type ProductsResponse,
   type TopicsResponse,
@@ -244,7 +242,6 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
         fetchTopics(days, channelId),
         fetchProblems(days, channelId),
         fetchProducts(days, channelId),
-        fetchMessagingOverview(days, channelId),
         fetchConversationInsights(),
         fetchInsightsCards(days, channelId),
       ]);
@@ -263,9 +260,8 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
         topics: pick<TopicsResponse>(0),
         problems: pick<ProblemsResponse>(1),
         products: pick<ProductsResponse>(2),
-        messaging: pick<MessagingOverview>(3),
-        conversationInsights: pick<ConversationInsights>(4),
-        cards: pick<InsightsCards>(5),
+        conversationInsights: pick<ConversationInsights>(3),
+        cards: pick<InsightsCards>(4),
         failed: results.length - fulfilled.length,
       };
     },
@@ -275,7 +271,6 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
   const topics = insightsQuery.data?.topics ?? null;
   const problems = insightsQuery.data?.problems ?? null;
   const products = insightsQuery.data?.products ?? null;
-  const messaging = insightsQuery.data?.messaging ?? null;
   const conversationInsights =
     insightsQuery.data?.conversationInsights ?? null;
   const cards = insightsQuery.data?.cards ?? null;
@@ -304,10 +299,6 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
         (cards.what_changed?.prior_low_reviews ?? 0) > 0 ||
         Boolean(cards.what_changed?.theme)),
   );
-  const hasMessaging =
-    Boolean(messaging) &&
-    ((messaging!.totals.messages_in ?? 0) > 0 ||
-      (messaging!.totals.messages_out ?? 0) > 0);
   const hasConversation =
     Boolean(conversationInsights) &&
     (conversationInsights!.message_count ?? 0) > 0;
@@ -316,7 +307,6 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
     hasProblems ||
     hasProducts ||
     hasCards ||
-    hasMessaging ||
     hasConversation;
 
   const facts: { label: string; value: string; sub: string }[] = [];
@@ -419,50 +409,8 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
             </div>
           ) : null}
 
-          {hasTopics ? (
-            <section className="ui-card mb-6 p-5" aria-labelledby="top-topics">
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <div>
-                  <h2
-                    id="top-topics"
-                    className="text-[14px] font-bold text-[var(--ui-ink)]"
-                  >
-                    {copy.topics}
-                  </h2>
-                  <p className="text-[11px] text-[var(--ui-ink-2)]">
-                    What customers mention, ranked by volume.
-                  </p>
-                </div>
-                <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">
-                  {topicRows.length} tracked
-                </span>
-              </div>
-              <ul className="mt-3 divide-y divide-[var(--ui-line)]">
-                {topicRows.slice(0, 8).map((topic) => (
-                  <li
-                    key={topic.name}
-                    className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5 first:pt-0 last:pb-0"
-                  >
-                    <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold capitalize text-[var(--ui-ink)]">
-                      {topic.name}
-                    </span>
-                    <span className="shrink-0 text-[10.5px] tabular-nums text-[var(--ui-ink-2)]">
-                      {copy.positiveMentions
-                        .replace("{percent}", String(topic.positive_pct))
-                        .replace("{mentions}", String(topic.mentions))}
-                    </span>
-                    <TrendChip trend={topic.trend_pct} copy={copy} />
-                  </li>
-                ))}
-              </ul>
-              <FactSource
-                source="Connected review text"
-                detail={t.analytics.pulse.lastDays(days)}
-                href={channels.length > 0 ? GBP_DASHBOARD_URL : null}
-                linkLabel={t.analytics.pulse.openGbpDashboard}
-              />
-            </section>
-          ) : null}
+          {/* Top topics intentionally omitted: InsightsCards "Top themes" covers
+              the same review-text signal with quotes/location/negative %. */}
 
           {areaRows.length > 0 ? (
             <div className="mb-6">
@@ -487,88 +435,7 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
             </div>
           ) : null}
 
-          {hasMessaging ? (
-            <div className="mb-6">
-              <div className="mb-3">
-                <h2 className="text-[15px] font-bold text-[var(--ui-ink)]">
-                  Conversations
-                </h2>
-                <p className="text-[11px] text-[var(--ui-ink-2)]">
-                  How your team and the AI handled inbound messages.
-                </p>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-4">
-                <div className="ui-card p-4">
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
-                    AI-handled replies
-                  </p>
-                  <p className="mt-1 text-[22px] font-black tabular-nums text-[var(--ui-ink)]">
-                    {messaging!.totals.ai_handled_out ?? 0}
-                  </p>
-                  <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">
-                    {messaging!.totals.messages_out > 0
-                      ? Math.round(
-                          ((messaging!.totals.ai_handled_out ?? 0) /
-                            messaging!.totals.messages_out) *
-                            100,
-                        )
-                      : 0}
-                    % of outbound
-                  </p>
-                </div>
-                <div className="ui-card p-4">
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
-                    Human-handled replies
-                  </p>
-                  <p className="mt-1 text-[22px] font-black tabular-nums text-[var(--ui-ink)]">
-                    {messaging!.totals.human_handled_out ?? 0}
-                  </p>
-                  <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">
-                    {messaging!.totals.messages_out > 0
-                      ? Math.round(
-                          ((messaging!.totals.human_handled_out ?? 0) /
-                            messaging!.totals.messages_out) *
-                            100,
-                        )
-                      : 0}
-                    % of outbound
-                  </p>
-                </div>
-                <div className="ui-card p-4">
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
-                    Unknown / legacy
-                  </p>
-                  <p className="mt-1 text-[22px] font-black tabular-nums text-[var(--ui-ink)]">
-                    {Math.max(
-                      0,
-                      (messaging!.totals.messages_out ?? 0) -
-                        (messaging!.totals.ai_handled_out ?? 0) -
-                        (messaging!.totals.human_handled_out ?? 0),
-                    )}
-                  </p>
-                  <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">
-                    Pre-tracking rows
-                  </p>
-                </div>
-                <div className="ui-card p-4">
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
-                    Total outbound
-                  </p>
-                  <p className="mt-1 text-[22px] font-black tabular-nums text-[var(--ui-ink)]">
-                    {messaging!.totals.messages_out ?? 0}
-                  </p>
-                  <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">
-                    {messaging!.totals.messages_in ?? 0} inbound ·{" "}
-                    {messaging!.totals.conversations ?? 0} conversations
-                  </p>
-                </div>
-              </div>
-              <FactSource
-                source="Sayvors message rollup"
-                detail={t.analytics.pulse.lastDays(days)}
-              />
-            </div>
-          ) : null}
+          {/* AI vs human messaging block removed: Overview MessagingSection already shows this signal. */}
 
           {hasConversation ? (
             <div className="ui-card mb-6 p-5">
@@ -576,8 +443,8 @@ export default function InsightsPanel({ embedded = false }: { embedded?: boolean
                 What customers ask
               </h2>
               <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">
-                Mined from {conversationInsights!.message_count} inbound
-                messages
+                Mined from {conversationInsights!.message_count} recent inbound
+                messages across all connected channels
                 {conversationInsights!.computed_at
                   ? ` · updated ${new Date(
                       conversationInsights!.computed_at,

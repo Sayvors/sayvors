@@ -57,13 +57,6 @@ export default function PresenceSection({
   const branchNote =
     p.branchCount && p.branchCount > 1 ? t.analytics.branchesCount(p.branchCount) : null;
   const fmtNum = (value: number) => new Intl.NumberFormat(locale).format(value);
-  const snapshotTiles = [
-    { label: copy.searchViews, value: p.searchViews },
-    { label: copy.mapViews, value: p.mapViews },
-    { label: copy.websiteClicks, value: p.websiteClicks },
-    { label: copy.directionRequests, value: p.directionRequests },
-    { label: copy.phoneCalls, value: p.phoneCalls },
-  ];
 
   const labels = {
     discovery: copy.presenceDiscovery,
@@ -121,40 +114,28 @@ export default function PresenceSection({
         />
       </div>
       <div className="ui-card p-4 sm:p-5">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">
-            {copy.title}
-            {p.listingName ? ` — ${p.listingName}` : ""}
-          </h3>
-          <p className="text-[11px] text-[var(--ui-ink-2)]">
-            {p.windowLabel ?? copy.last30Days} · {copy.viaGoogle}
-          </p>
-        </div>
-        <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 lg:grid-cols-6">
-          {snapshotTiles.map(({ label, value }) => (
-            <div key={label}>
-              <dt className="text-[9px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
-                {label}
-              </dt>
-              <dd className="mt-0.5 text-[16px] font-black tabular-nums text-[var(--ui-ink)]">
-                {fmtNum(value)}
-              </dd>
-            </div>
-          ))}
-          <div>
-            <dt className="text-[9px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
-              {copy.reviewsAllTime}
-            </dt>
-            <dd className="mt-0.5 text-[16px] font-black tabular-nums text-[var(--ui-ink)]">
-              {fmtNum(p.totalReviews)}
-            </dd>
-            <p className="text-[10px] text-[var(--ui-ink-2)]">
-              {p.averageRating > 0
-                ? copy.ratingShort.replace("{rating}", p.averageRating.toFixed(1))
-                : "—"}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">
+              {copy.title}
+              {p.listingName ? ` — ${p.listingName}` : ""}
+            </h3>
+            <p className="mt-0.5 text-[11px] text-[var(--ui-ink-2)]">
+              {p.windowLabel ?? copy.last30Days} · {copy.viaGoogle}
             </p>
           </div>
-        </dl>
+          <div className="shrink-0 text-right">
+            <p className="text-[9px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">{copy.reviewsAllTime}</p>
+            <p className="text-[16px] font-black tabular-nums text-[var(--ui-ink)]">
+              {fmtNum(p.totalReviews)}
+              {p.averageRating > 0 && (
+                <span className="ml-1.5 text-[12px] font-semibold text-[var(--ui-ink-2)]">
+                  {copy.ratingShort.replace("{rating}", p.averageRating.toFixed(1))}
+                </span>
+              )}
+            </p>
+          </div>
+        </div>
         <FactSource
           source="Google Business Profile"
           detail={p.windowLabel ?? copy.last30Days}
