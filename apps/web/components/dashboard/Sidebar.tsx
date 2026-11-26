@@ -29,7 +29,8 @@ interface NavItem {
 const MAIN_ITEMS: NavItem[] = [
   { key: "dashboard", icon: <DashboardIcon />, href: "/dashboard" },
   { key: "analytics", icon: <AnalyticsIcon />, href: "/dashboard/analytics" },
-  { key: "benchmark", icon: <AnalyticsIcon />, href: "/dashboard/benchmark" },
+  { key: "benchmark", icon: <BenchmarkIcon />, href: "/dashboard/benchmark" },
+  { key: "aiVisibility", icon: <VisibilityIcon />, href: "/dashboard/ai-visibility" },
   { key: "locations", icon: <PinIcon />, href: "/dashboard/locations" },
   { key: "postsMedia", icon: <PhotoIcon />, href: "/dashboard/posts-media" },
   { key: "customers", icon: <UsersIcon />, href: "/dashboard/customers" },
@@ -271,7 +272,7 @@ export default function Sidebar() {
           }}
         >
           <div className="space-y-0.5">
-            {MAIN_ITEMS.slice(0, 3).map((item) => (
+            {MAIN_ITEMS.slice(0, 4).map((item) => (
               <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} label={labelFor(item)} hint={lockHint(item)} />
             ))}
           </div>
@@ -282,7 +283,7 @@ export default function Sidebar() {
             loadingLabel={t.common.loading}
           />
           <div className="mt-0.5 space-y-0.5">
-            {MAIN_ITEMS.slice(3).map((item) => (
+            {MAIN_ITEMS.slice(4).map((item) => (
               <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} label={labelFor(item)} hint={lockHint(item)} />
             ))}
           </div>
@@ -682,6 +683,26 @@ function AnalyticsIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
       <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+    </svg>
+  );
+}
+
+function BenchmarkIcon() {
+  // A podium: peer ranking, distinct from the plain analytics bar chart.
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
+      <path d="M9 20V9h6v11M3 20v-6h6v6M15 20v-8h6v8M2 20h20" />
+    </svg>
+  );
+}
+
+function VisibilityIcon() {
+  // Search wrapped in a signal arc: grounded answers, not analytics bars.
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
+      <circle cx="10.5" cy="10.5" r="6.5" />
+      <path d="M15.5 15.5L21 21" />
+      <path d="M7.5 11.5h2l1.5-3 2 5 1.5-2h2" />
     </svg>
   );
 }

@@ -80,4 +80,13 @@ export const queryKeys = {
   benchmark: {
     reviewThemes: (keys: string[]) => ["benchmark", "review-themes", keys.join("|")] as const,
   },
+  aiVisibility: {
+    all: () => ["ai-visibility"] as const,
+    overview: (channelId: string, days: number) => ["ai-visibility", "overview", channelId, days] as const,
+    prompts: (channelId: string, archived: boolean) => ["ai-visibility", "prompts", channelId, archived] as const,
+    runs: (channelId: string, status: string, promptId: string, limit: number, offset: number) =>
+      ["ai-visibility", "runs", channelId, status, promptId, limit, offset] as const,
+    detail: (runId: string) => ["ai-visibility", "run", runId] as const,
+    latestQuerySet: (channelId: string) => ["ai-visibility", "query-set", "latest", channelId] as const,
+  },
 };

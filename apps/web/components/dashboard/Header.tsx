@@ -133,6 +133,7 @@ export default function Header() {
     ["/dashboard/insights", navLabels.insights],
     ["/dashboard/growth", navLabels.growth],
     ["/dashboard/benchmark", navLabels.benchmark],
+    ["/dashboard/ai-visibility", navLabels.aiVisibility],
     ["/dashboard/issues", navLabels.issues],
     ["/dashboard/verification", navLabels.verification],
     ["/dashboard/usage", navLabels.usage],

@@ -4,15 +4,31 @@ Client-facing endpoints use /api/v1/jobs. Admin endpoints use
 /api/v1/admin/jobs.
 """
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_current_user, get_db, require_admin
-from ..team.context import TenantContext, require_perm, tenant_id_of
+from ..ai_visibility.models import AiVisibilityQuerySet, AiVisibilityRun
+from ..team.context import (
+    CHANNEL_LEVEL_NONE,
+    TenantContext,
+    get_context,
+    require_perm,
+    tenant_id_of,
+)
 from . import service
 from .models import Job
 
 router = APIRouter(prefix="/api/v1", tags=["jobs"])
 admin_router = APIRouter(prefix="/api/v1/admin", tags=["admin-jobs"])
+
+# Domain APIs own authorization, idempotency, and spend preflight for these
+# jobs. The generic operator routes must not become a second, weaker entrypoint.
+INTERNAL_ONLY_JOB_TYPES = {"ai_visibility.research", "ai_visibility.query_set"}
+
+
+def _client_can_see(job: Job) -> bool:
+    return job.job_type not in INTERNAL_ONLY_JOB_TYPES
 
 
 def _job_to_dict(job: Job) -> dict:
@@ -66,6 +82,10 @@ async def submit_job_endpoint(
     job_type = body.get("job_type") or body.get("type")
     if not job_type:
         raise HTTPException(status_code=400, detail="job_type is required")
+    if job_type in INTERNAL_ONLY_JOB_TYPES:
+        raise HTTPException(
+            status_code=400, detail=f"job_type cannot be submitted: {job_type}"
+        )
     # Reject registry types that have no handler: enqueuing them would burn
     # retries and end as `no_handler` without doing any work.
     from .handlers import HANDLERS
@@ -94,19 +114,73 @@ async def submit_job_endpoint(
     return {"job_id": job.id, "status": job.status, "lane": job.lane}
 
 
+async def _visible_ui_jobs(
+    ctx: TenantContext, jobs: list[Job], db: AsyncSession
+) -> list[Job]:
+    """Apply channel RBAC to AI Visibility jobs in the global progress panel."""
+    query_set_ids = {
+        str((job.payload or {}).get("query_set_id"))
+        for job in jobs
+        if job.job_type == "ai_visibility.query_set" and (job.payload or {}).get("query_set_id")
+    }
+    run_ids = {
+        str((job.payload or {}).get("run_id"))
+        for job in jobs
+        if job.job_type == "ai_visibility.research" and (job.payload or {}).get("run_id")
+    }
+    query_channels = {
+        row.id: row.channel_id
+        for row in (
+            await db.execute(
+                select(AiVisibilityQuerySet).where(
+                    AiVisibilityQuerySet.tenant_id == ctx.tenant_id,
+                    AiVisibilityQuerySet.id.in_(query_set_ids),
+                )
+            )
+        ).scalars()
+    } if query_set_ids else {}
+    run_channels = {
+        row.id: row.channel_id
+        for row in (
+            await db.execute(
+                select(AiVisibilityRun).where(
+                    AiVisibilityRun.tenant_id == ctx.tenant_id,
+                    AiVisibilityRun.id.in_(run_ids),
+                )
+            )
+        ).scalars()
+    } if run_ids else {}
+    visible: list[Job] = []
+    for job in jobs:
+        if job.job_type not in {"ai_visibility.query_set", "ai_visibility.research"}:
+            visible.append(job)
+            continue
+        if not ctx.has("analytics.view"):
+            continue
+        payload = job.payload or {}
+        channel_id = (
+            query_channels.get(str(payload.get("query_set_id")))
+            if job.job_type == "ai_visibility.query_set"
+            else run_channels.get(str(payload.get("run_id")))
+        )
+        if channel_id and ctx.channel_level(channel_id) != CHANNEL_LEVEL_NONE:
+            visible.append(job)
+    return visible
+
+
 @router.get("/jobs/active-ui")
 async def list_active_ui_jobs_endpoint(
     response: Response,
     limit: int = Query(20, ge=1, le=20),
     if_none_match: str | None = Header(default=None, alias="If-None-Match"),
-    user=Depends(get_current_user),
+    ctx: TenantContext = Depends(get_context),
     db: AsyncSession = Depends(get_db),
 ):
     """Tenant-scoped in-flight UI jobs for the background progress panel."""
     import hashlib, json as _json
 
-    tenant_id = tenant_id_of(user)
-    jobs = await service.list_active_ui_jobs(db, tenant_id=tenant_id, limit=limit)
+    jobs = await service.list_active_ui_jobs(db, tenant_id=ctx.tenant_id, limit=limit)
+    jobs = await _visible_ui_jobs(ctx, jobs, db)
     payload = [_job_to_dict(j) for j in jobs]
     etag_src = _json.dumps(
         [(j["id"], j["status"], j["progress"], j["updated_at"]) for j in payload],
@@ -131,7 +205,7 @@ async def get_job_endpoint(
     """Get job status, progress, result, and error."""
     tenant_id = tenant_id_of(user)
     job = await service.get_job(db, job_id, tenant_id)
-    if job is None:
+    if job is None or not _client_can_see(job):
         raise HTTPException(status_code=404, detail="Job not found")
     return _job_to_dict(job)
 
@@ -146,8 +220,15 @@ async def list_jobs_endpoint(
 ):
     """List jobs for the current tenant."""
     tenant_id = tenant_id_of(user)
-    jobs = await service.list_jobs(db, tenant_id=tenant_id, status=status, lane=lane, limit=limit)
-    return [_job_to_dict(j) for j in jobs]
+    jobs = await service.list_jobs(
+        db,
+        tenant_id=tenant_id,
+        status=status,
+        lane=lane,
+        limit=limit,
+        exclude_job_types=INTERNAL_ONLY_JOB_TYPES,
+    )
+    return [_job_to_dict(job) for job in jobs]
 
 
 @router.post("/jobs/{job_id}/cancel")
@@ -159,7 +240,7 @@ async def cancel_job_endpoint(
     """Cancel a queued or retrying job."""
     tenant_id = tenant_id_of(user)
     job = await service.get_job(db, job_id, tenant_id)
-    if job is None:
+    if job is None or not _client_can_see(job):
         raise HTTPException(status_code=404, detail="Job not found")
     cancelled = await service.cancel_job(db, job=job)
     await db.commit()

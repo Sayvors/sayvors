@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import ReviewKeywords from "./ReviewKeywords";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import en from "@/lib/i18n/en";
@@ -41,9 +41,9 @@ function cell(mentions: number, sampleSize: number, quotes: ReviewThemeQuote[] =
 
 const readyData: ReviewThemesResponse = {
   subjects: [
-    { key: "own:mine", name: "My Branch", kind: "own", status: "ready", sample_size: 10, sample_hash: "a", analyzed_at: null },
-    { key: "saved:peer1", name: "Peer One", kind: "saved", status: "ready", sample_size: 20, sample_hash: "b", analyzed_at: null },
-    { key: "saved:peer2", name: "Peer Two", kind: "saved", status: "ready", sample_size: 20, sample_hash: "c", analyzed_at: null },
+    { key: "own:mine", name: "My Branch", kind: "own", status: "ready", sample_size: 10, sample_hash: "a", analyzed_at: null, retry_after_seconds: 0 },
+    { key: "saved:peer1", name: "Peer One", kind: "saved", status: "ready", sample_size: 20, sample_hash: "b", analyzed_at: null, retry_after_seconds: 0 },
+    { key: "saved:peer2", name: "Peer Two", kind: "saved", status: "ready", sample_size: 20, sample_hash: "c", analyzed_at: null, retry_after_seconds: 0 },
   ],
   rows: [
     {
@@ -182,7 +182,7 @@ describe("ReviewKeywords grid", () => {
   it("labels samples below five reviews as low sample", () => {
     renderKeywords({
       data: {
-        subjects: [{ key: "own:mine", name: "My Branch", kind: "own", status: "ready", sample_size: 4, sample_hash: "a", analyzed_at: null }],
+        subjects: [{ key: "own:mine", name: "My Branch", kind: "own", status: "ready", sample_size: 4, sample_hash: "a", analyzed_at: null, retry_after_seconds: 0 }],
         rows: [{ key: "kind", label: "Kind staff", sentiment: "positive", cells: { "own:mine": cell(1, 4) } }],
       },
     });
@@ -276,6 +276,32 @@ describe("ReviewKeywords states", () => {
     expect(screen.queryByText("0 of 0 reviews mention this (0%)")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry Peer One" }));
     expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables retry until the server cooldown reaches zero", () => {
+    vi.useFakeTimers();
+    try {
+      const onRetry = vi.fn();
+      renderKeywords({
+        data: {
+          subjects: [readyData.subjects[0], { ...readyData.subjects[1], status: "error", retry_after_seconds: 2 }],
+          rows: [readyData.rows[0]],
+        },
+        onRetry,
+      });
+
+      const retry = screen.getByRole("button", { name: "Retry Peer One" });
+      expect(retry).toBeDisabled();
+      expect(screen.getByText("Retry available in 2 seconds")).toBeInTheDocument();
+
+      act(() => vi.advanceTimersByTime(2000));
+      expect(retry).toBeEnabled();
+      expect(screen.queryByText(/Retry available in/)).not.toBeInTheDocument();
+      fireEvent.click(retry);
+      expect(onRetry).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("shows a whole-request error alert with retry", () => {

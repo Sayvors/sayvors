@@ -57,7 +57,8 @@ path; the rest are stored and displayed but do not gate anything.
 | `channels` | `channels/router.py` connect path | Starting a new channel connection |
 | `messaging` | inbox, template and WhatsApp AI reply paths | Outbound WhatsApp messages |
 | `ai_replies` | `llm/gateway.py` | Every LLM call through the gateway (review replies, assistant, AI analytics, chat) |
-| `benchmark_external` | analytics external-peer endpoints | Fetching/refreshing external competitor peers |
+| `benchmarking` | `benchmark/router.py` dependency on every benchmark route | The Benchmark dashboard/API, including own-location comparisons |
+| `benchmark_external` | analytics external-peer endpoints; benchmark search/save/refresh and any comparison/history/review/theme/AI-summary request containing a saved peer | Fetching, refreshing, or comparing external competitor peers |
 | `databank` | `rag/router.py` write paths | Creating a databank, uploading files, writing crawl sources |
 | `crawler` | `rag/router.py` crawl write/preview paths | Website discovery, one-shot scrape, creating/updating a crawl source |
 
@@ -77,12 +78,34 @@ yet.
 it off disables every budgeted LLM call. The separate `assistant`, `reviews`,
 `analytics` and `voice` keys are not independently enforced.
 
+### AI Visibility Research
+
+AI Visibility is available to all plans; there is no plan-specific visibility
+gate. Reads require `analytics.view`, and writes require `ai.edit` plus effective
+`edit` access to the selected channel.
+
+- Run creation and retry preflight `ai_replies` and the durable wallet balance
+  before enqueueing work. The gateway checks again and reserves credit before
+  the provider call.
+- The LLM purpose is `ai_visibility_research`; spend appears in the existing
+  wallet and usage ledger.
+- Public web search has no paid provider key. Redis provides query caching,
+  tenant/global rate limits, and provider-block cooldowns.
+- Create and retry share a durable per-prompt policy: three accepted attempts
+  in the trailing hour and a 60-second cooldown. An append-only attempt ledger
+  survives run deletion; prompt text is locked after research begins, and
+  prompt deletion archives rather than erases the policy identity.
+- AI Visibility jobs are internal-only; the generic client job API is not an
+  alternate enqueue or cancellation path.
+
+Implementation and integrity invariants live in
+[`ai-visibility-research.md`](ai-visibility-research.md).
+
 The remaining catalog keys are **catalog-only today**:
 
 `reviews`, `posts`, `media`, `analytics`, `automation`, `leads`, `voice`,
 `scheduling`, `assistant`, `social_response_style`, `bulk_edit_csv`,
-`benchmarking`, `verifications`, `growth`, `ticket_assignment`,
-`voice_replies`.
+`verifications`, `growth`, `ticket_assignment`, `voice_replies`.
 
 The phantom keys (`ai_search`, `ask_sayvors_premium`, `priority_support`,
 `sla`) were removed from the catalog and from every plan's features JSONB by

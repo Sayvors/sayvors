@@ -87,6 +87,8 @@ class Entitlements:
     # Review Campaign caps (None = unlimited).
     max_campaigns_per_month: int | None = None
     max_campaign_days: int | None = None
+    max_quick_research_month: int | None = None
+    max_deep_research_month: int | None = None
     # Feature flags.
     features: dict[str, bool] = field(default_factory=dict)
     # The plan's raw baseline before the tenant override is applied.
@@ -222,6 +224,8 @@ async def get_entitlements(tenant_id: str, db: AsyncSession) -> Entitlements:
     regeneration_limit = plan.max_regenerations_day
     campaign_monthly_limit = plan.max_campaigns_per_month
     campaign_days_limit = plan.max_campaign_days
+    quick_research_limit = plan.max_quick_research_month
+    deep_research_limit = plan.max_deep_research_month
     # Top-ups are additive, never an absolute replacement. A plan change or a
     # plan-catalog edit therefore applies immediately without losing the
     # amount the tenant bought.
@@ -241,6 +245,8 @@ async def get_entitlements(tenant_id: str, db: AsyncSession) -> Entitlements:
         max_regenerations_day=regeneration_limit,
         max_campaigns_per_month=campaign_monthly_limit,
         max_campaign_days=campaign_days_limit,
+        max_quick_research_month=quick_research_limit,
+        max_deep_research_month=deep_research_limit,
         included_credit_cents=plan.included_credit_cents,
         features=merge_feature_override(plan.features, override),
         plan_features={k: bool(v) for k, v in (plan.features or {}).items()},

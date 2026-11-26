@@ -13,7 +13,7 @@ from app.modules.analytics.models import ReviewInsight
 from app.modules.benchmark import service as bench_service
 from app.modules.benchmark import theme_jobs, theme_service
 from app.modules.benchmark.models import BenchmarkThemeAnalysis
-from app.modules.jobs.models import Job
+from app.modules.jobs.models import Job, JobStatus
 from app.modules.jobs.service import claim_due_jobs
 from app.modules.llm.providers.base import LLMResponse, LLMUsage, ProviderError
 
@@ -229,6 +229,41 @@ def test_response_mapping_quotes_sentiment_and_neutral_omission():
     fallback = rows["service quality"]["cells"]["own:mine"]["quotes"][0]
     assert fallback["quote"] == fallback["review_text"] == "The team was great"
     assert fallback["review_url"] is None
+
+
+async def test_themes_response_exposes_retry_cooldown(db, user_id, channel_id):
+    await _seed_own(db, user_id, channel_id)
+    analysis = await theme_service.ensure_theme_analysis(db, TENANT, f"own:{channel_id}")
+    analysis.status = "failed"
+    analysis.error = "provider unavailable"
+    analysis.updated_at = datetime.now(timezone.utc) - timedelta(seconds=120)
+    await db.commit()
+
+    body = await theme_service.theme_response(db, TENANT, [f"own:{channel_id}"])
+    subject = body["subjects"][0]
+    assert subject["status"] == "error"
+    assert 179 <= subject["retry_after_seconds"] <= 181
+
+    analysis.updated_at = datetime.now(timezone.utc) - timedelta(seconds=301)
+    await db.commit()
+    body = await theme_service.theme_response(db, TENANT, [f"own:{channel_id}"])
+    assert body["subjects"][0]["retry_after_seconds"] == 0
+
+
+@pytest.mark.asyncio
+async def test_pending_analysis_recovers_after_terminal_job_cooldown(db, user_id, channel_id):
+    await _seed_own(db, user_id, channel_id)
+    analysis = await theme_service.ensure_theme_analysis(db, TENANT, f"own:{channel_id}")
+    original_job_id = analysis.job_id
+    job = await db.get(Job, original_job_id)
+    job.status = JobStatus.failed.value
+    analysis.updated_at = datetime.now(timezone.utc) - timedelta(seconds=301)
+    await db.commit()
+
+    recovered = await theme_service.ensure_theme_analysis(db, TENANT, f"own:{channel_id}")
+    assert recovered.status == "pending"
+    assert recovered.job_id != original_job_id
+    assert await db.scalar(select(func.count(Job.id))) == 2
 
 
 @pytest.mark.asyncio

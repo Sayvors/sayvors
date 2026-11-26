@@ -222,14 +222,16 @@ export default function PulseCards({
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-3 gap-3 border-t border-[var(--ui-line)] pt-3">
+        <div className={`mt-4 grid gap-3 border-t border-[var(--ui-line)] pt-3 ${waiting.missed_calls_available ? "grid-cols-3" : "grid-cols-2"}`}>
           <Stat label={p.medianFirstReply} value={fmtDuration(waiting.median_first_response_seconds)} sub={`last ${days} days`} />
           <Stat label={p.waitingOver1h} value={String(waiting.waiting_over_1h)} sub={waiting.waiting_over_1h === 1 ? p.channel : p.channels} />
-          <Stat
-            label={p.missedCalls}
-            value={waiting.missed_calls_available && waiting.missed_calls !== null ? String(waiting.missed_calls) : "-"}
-            sub={waiting.missed_calls_available ? p.businessHours : p.callsNotConnected}
-          />
+          {waiting.missed_calls_available && (
+            <Stat
+              label={p.missedCalls}
+              value={waiting.missed_calls !== null ? String(waiting.missed_calls) : "-"}
+              sub={p.businessHours}
+            />
+          )}
         </div>
 
         <FactSource

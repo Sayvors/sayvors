@@ -28,12 +28,33 @@ const RESPONSE_TONE_CLASS: Record<ResponseTone, string> = {
 export default function ReviewResponseTable({
   subjects,
   loading,
+  error,
+  onRetry,
+  className = "mt-4 overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white",
 }: {
   subjects: SubjectReviews[];
   loading: boolean;
+  error?: unknown;
+  onRetry?: () => void;
+  className?: string;
 }) {
   const { t } = useI18n();
   const c = t.benchmark.compare;
+
+  if (error) {
+    return (
+      <div role="alert" className="mt-4 rounded-[8px] border border-[#FF4F6E]/35 bg-white px-3 py-2">
+        <p className="text-[12px] font-semibold text-[#B3123A]">{c.couldNotLoadReviewResponses}</p>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-2 inline-flex min-h-11 items-center rounded-[8px] border border-[#3D1D6E]/25 bg-white px-3 text-[11px] font-bold text-[#3D1D6E] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[#3D1D6E]"
+        >
+          {t.common.retry}
+        </button>
+      </div>
+    );
+  }
 
   if (loading) {
     return <p className="mt-4 text-[12px] text-[#3B2D5E]">{t.common.loading}</p>;
@@ -69,7 +90,7 @@ export default function ReviewResponseTable({
   return (
     <section
       aria-labelledby="review-responses-title"
-      className="mt-4 overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white"
+      className={className}
     >
       <div className="border-b border-[var(--ui-line)] px-3 py-2">
         <h2
@@ -107,6 +128,13 @@ export default function ReviewResponseTable({
                   <span className="mt-0.5 block text-[8px] font-semibold normal-case tracking-normal text-[#6F6685]">
                     {subject.key.startsWith("own:") ? c.yourLocation : c.googleListing}
                   </span>
+                  <span className="mt-0.5 block text-[8px] font-semibold normal-case tracking-normal text-[#6F6685]">
+                    {subject.summary.evidence_basis === "stored_lifetime"
+                      ? c.responseBasisStoredLifetime
+                      : subject.summary.evidence_basis === "cached_sample"
+                        ? c.responseBasisCachedSample
+                        : c.responseBasisUnavailable}
+                  </span>
                 </th>
               ))}
             </tr>
@@ -123,6 +151,9 @@ export default function ReviewResponseTable({
                 {subjects.map((subject) => {
                   const tone = row.kind === "rate" ? responseTone(subject.summary.response_rate) : null;
                   const value = row.value(subject);
+                  const sampled = subject.summary.sampled;
+                  const answeredPct = sampled > 0 ? (subject.summary.answered / sampled) * 100 : 0;
+                  const unansweredPct = sampled > 0 ? (subject.summary.unanswered / sampled) * 100 : 0;
                   const countTone =
                     row.kind === "answered" && subject.summary.answered > 0
                       ? "text-emerald-700 dark:text-emerald-400"
@@ -139,11 +170,22 @@ export default function ReviewResponseTable({
                         tone ? RESPONSE_TONE_CLASS[tone] : countTone
                       }`}
                     >
-                      {row.kind === "rate" && tone !== "unknown" ? (
-                        <span className="inline-flex rounded-full px-2 py-0.5 font-bold">{value}</span>
-                      ) : (
-                        value
-                      )}
+                      <div className="flex items-center justify-between gap-2">
+                        <span>{row.kind === "rate" && tone !== "unknown" ? <span className="font-bold">{value}</span> : value}</span>
+                      </div>
+                      {row.kind === "rate" ? (
+                        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-black/10" aria-hidden>
+                          <div className="h-full rounded-full bg-current opacity-70" style={{ width: `${Math.max(0, Math.min(100, subject.summary.response_rate ?? 0))}%` }} />
+                        </div>
+                      ) : null}
+                      {(row.kind === "answered" || row.kind === "unanswered") && sampled > 0 ? (
+                        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[#EFEDF2]" aria-hidden>
+                          <div
+                            className={`h-full rounded-full ${row.kind === "answered" ? "bg-emerald-500/70" : "bg-amber-500/70"}`}
+                            style={{ width: `${Math.max(0, Math.min(100, row.kind === "answered" ? answeredPct : unansweredPct))}%` }}
+                          />
+                        </div>
+                      ) : null}
                     </td>
                   );
                 })}

@@ -52,6 +52,139 @@ async def _seed(db, user_id: str) -> None:
     await db.commit()
 
 
+async def _seed_rag(db, user_id: str) -> None:
+    from app.modules.rag.models import (
+        CrawlPage,
+        CrawlSource,
+        Databank,
+        Document,
+        DocumentChunk,
+        IngestJob,
+    )
+
+    db.add_all([
+        Databank(id="rag-bank", user_id=user_id, name="Knowledge"),
+        Document(
+            id="rag-doc",
+            databank_id="rag-bank",
+            user_id=user_id,
+            filename="faq.txt",
+            source_type="upload",
+            file_type="txt",
+        ),
+        DocumentChunk(
+            id="rag-chunk",
+            document_id="rag-doc",
+            databank_id="rag-bank",
+            content="Customer evidence",
+        ),
+        IngestJob(
+            id="rag-ingest",
+            user_id=user_id,
+            databank_id="rag-bank",
+            document_id="rag-doc",
+            job_type="upload",
+            status="queued",
+        ),
+        CrawlSource(
+            id="rag-source",
+            user_id=user_id,
+            databank_id="rag-bank",
+            start_url="https://example.com",
+        ),
+        CrawlPage(
+            id="rag-page",
+            source_id="rag-source",
+            url="https://example.com/faq",
+            document_id="rag-doc",
+        ),
+    ])
+    await db.commit()
+
+
+async def _seed_ai_visibility(db, user_id: str) -> None:
+    from app.modules.ai_visibility.models import (
+        AiVisibilityAttempt,
+        AiVisibilityPrompt,
+        AiVisibilityQuerySet,
+        AiVisibilityQuestion,
+        AiVisibilityRun,
+        AiVisibilitySource,
+    )
+
+    prompt = AiVisibilityPrompt(
+        id="ai-prompt",
+        tenant_id=user_id,
+        channel_id="tenant-channel-0000-0000-000000000001",
+        title="Coffee",
+        prompt_text="Best coffee",
+        normalized_prompt_hash="a" * 64,
+        intent="discovery",
+        created_by=user_id,
+    )
+    query_set = AiVisibilityQuerySet(
+        id="ai-query-set",
+        tenant_id=user_id,
+        channel_id=prompt.channel_id,
+        version=1,
+        status="completed",
+        depth="quick",
+    )
+    db.add_all([prompt, query_set])
+    await db.flush()
+    question = AiVisibilityQuestion(
+        id="ai-question",
+        query_set_id=query_set.id,
+        tenant_id=user_id,
+        channel_id=prompt.channel_id,
+        question_key="q001",
+        question_text="Best coffee",
+        normalized_question_hash="a" * 64,
+        language="en",
+        customer_intent="discovery",
+        industry_relevance=90,
+        service_relevance=95,
+        business_relevance_score=92,
+        research_priority="P1",
+        prompt_id=prompt.id,
+        run_id="ai-run",
+        status="completed",
+        position=0,
+    )
+    db.add(question)
+    await db.flush()
+    run = AiVisibilityRun(
+        id="ai-run",
+        tenant_id=user_id,
+        channel_id=prompt.channel_id,
+        prompt_id=prompt.id,
+        query_set_id=query_set.id,
+        question_id=question.id,
+        prompt_snapshot=prompt.prompt_text,
+        locale="en",
+        status="completed",
+    )
+    db.add(run)
+    await db.flush()
+    db.add_all([
+        AiVisibilitySource(
+            id="ai-source",
+            run_id=run.id,
+            position=0,
+            url="https://example.com/coffee",
+            canonical_url="https://example.com/coffee",
+            excerpt="Coffee evidence",
+        ),
+        AiVisibilityAttempt(
+            id="ai-attempt",
+            tenant_id=user_id,
+            prompt_id=prompt.id,
+            run_id=run.id,
+        ),
+    ])
+    await db.commit()
+
+
 async def _call(fn, user_id, db, **kwargs):
     return await fn(
         user_id=user_id,
@@ -134,6 +267,86 @@ async def test_purge_requires_the_exact_email(db, user_id):
 
     # Nothing was deleted by the refused attempt.
     assert await db.get(User, user_id) is not None
+
+
+async def test_export_contains_rag_children_without_secrets(db, user_id):
+    await _seed(db, user_id)
+    await _seed_rag(db, user_id)
+
+    response = await _call(admin_export_tenant, user_id, db)
+    bundle = __import__("json").loads(response.body)
+
+    assert bundle["counts"]["documents"] == 1
+    assert bundle["counts"]["document_chunks"] == 1
+    assert bundle["counts"]["ingest_jobs"] == 1
+    assert bundle["counts"]["crawl_sources"] == 1
+    assert bundle["counts"]["crawl_pages"] == 1
+    assert "Customer evidence" in str(bundle["tables"]["document_chunks"])
+    assert "hashed-secret" not in str(bundle)
+
+
+async def test_purge_removes_rag_children_before_documents(db, user_id):
+    from sqlalchemy import select
+
+    from app.modules.rag.models import (
+        CrawlPage,
+        CrawlSource,
+        Databank,
+        Document,
+        DocumentChunk,
+        IngestJob,
+    )
+
+    await _seed(db, user_id)
+    await _seed_rag(db, user_id)
+
+    result = await _call(
+        admin_purge_tenant, user_id, db, body=PurgeTenantRequest(confirm="TENANT@example.com")
+    )
+
+    assert result["deleted"]["document_chunks"] == 1
+    assert result["deleted"]["documents"] == 1
+    for model in (DocumentChunk, IngestJob, CrawlPage, CrawlSource, Document, Databank):
+        assert (await db.execute(select(model))).scalars().all() == []
+
+
+async def test_export_and_purge_include_ai_visibility_children(db, user_id):
+    from sqlalchemy import select
+
+    from app.modules.ai_visibility.models import (
+        AiVisibilityAttempt,
+        AiVisibilityPrompt,
+        AiVisibilityQuerySet,
+        AiVisibilityQuestion,
+        AiVisibilityRun,
+        AiVisibilitySource,
+    )
+
+    await _seed(db, user_id)
+    await _seed_ai_visibility(db, user_id)
+
+    response = await _call(admin_export_tenant, user_id, db)
+    bundle = __import__("json").loads(response.body)
+    assert bundle["counts"]["ai_visibility_prompts"] == 1
+    assert bundle["counts"]["ai_visibility_query_sets"] == 1
+    assert bundle["counts"]["ai_visibility_questions"] == 1
+    assert bundle["counts"]["ai_visibility_runs"] == 1
+    assert bundle["counts"]["ai_visibility_sources"] == 1
+    assert bundle["counts"]["ai_visibility_attempts"] == 1
+    assert "Coffee evidence" in str(bundle["tables"]["ai_visibility_sources"])
+
+    await _call(
+        admin_purge_tenant, user_id, db, body=PurgeTenantRequest(confirm="TENANT@example.com")
+    )
+    for model in (
+        AiVisibilityAttempt,
+        AiVisibilitySource,
+        AiVisibilityRun,
+        AiVisibilityQuestion,
+        AiVisibilityQuerySet,
+        AiVisibilityPrompt,
+    ):
+        assert (await db.execute(select(model))).scalars().all() == []
 
 
 async def test_purge_removes_the_whole_tenant(db, user_id):

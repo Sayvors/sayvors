@@ -1,0 +1,117 @@
+"""SSRF-safe, bounded source snapshots for grounded research."""
+import hashlib
+from types import SimpleNamespace
+from urllib.parse import urlsplit
+
+import pytest
+
+from app.modules.ai_visibility import sources
+
+
+@pytest.fixture(autouse=True)
+def _allow_domain_rates(monkeypatch):
+    async def _allow(*_args, **_kwargs):
+        return True
+
+    monkeypatch.setattr(sources, "rate_limit", _allow)
+
+
+def _result(url, title="Example"):
+    from app.modules.ai_visibility.search import SearchResult
+
+    return SearchResult(url=url, title=title, snippet="snippet")
+
+
+def test_select_sources_deduplicates_and_caps_domains():
+    rows = [
+        _result("https://a.example/1"),
+        _result("https://a.example/2"),
+        _result("https://a.example/3"),
+        _result("https://b.example/1"),
+        _result("https://c.example/1"),
+        _result("https://d.example/1"),
+    ]
+    selected = sources.select_sources(rows)
+    assert len(selected) == 5
+    assert sum(urlsplit(row.url).hostname == "a.example" for row in selected) == 2
+
+
+@pytest.mark.asyncio
+async def test_fetch_source_rejects_private_target(monkeypatch):
+    def _blocked(*args, **kwargs):
+        raise ValueError("private address")
+
+    monkeypatch.setattr(sources, "fetch_pinned_media", _blocked)
+    row, stats = await sources.fetch_source("run-1", 0, _result("http://127.0.0.1"))
+    assert row.fetch_error
+    assert row.excerpt is None
+    assert stats == {"read": False, "links_found": 0, "words": 0}
+
+
+@pytest.mark.asyncio
+async def test_fetch_source_extracts_bounded_text(monkeypatch):
+    monkeypatch.setattr(
+        sources,
+        "fetch_pinned_media",
+        lambda *a, **k: (
+            b"<html><body><p>Evidence text</p></body></html>",
+            "text/html",
+        ),
+    )
+    monkeypatch.setattr(
+        sources.trafilatura, "extract", lambda *a, **k: "Evidence text"
+    )
+    row, stats = await sources.fetch_source(
+        "run-1", 0, _result("https://example.com/page")
+    )
+    assert row.excerpt == "Evidence text"
+    assert row.content_hash == hashlib.sha256(b"Evidence text").hexdigest()
+    assert row.canonical_url == "https://example.com/page"
+    assert stats["read"] is True
+    assert stats["words"] == 2
+    assert stats["links_found"] == 0
+
+
+@pytest.mark.asyncio
+async def test_fetch_source_prefers_page_description(monkeypatch):
+    body = b"<html><head><title>Acme</title></head><body><p>Evidence text</p></body></html>"
+    monkeypatch.setattr(
+        sources, "fetch_pinned_media", lambda *a, **k: (body, "text/html")
+    )
+    monkeypatch.setattr(
+        sources.trafilatura, "extract", lambda *a, **k: "Evidence text"
+    )
+    monkeypatch.setattr(
+        sources.trafilatura,
+        "extract_metadata",
+        lambda *a, **k: SimpleNamespace(
+            title="Acme Coffee", description="Acme serves fresh coffee."
+        ),
+    )
+    row, stats = await sources.fetch_source(
+        "run-1", 0, _result("https://example.com/page")
+    )
+    assert row.title == "Acme Coffee"
+    assert row.snippet == "Acme serves fresh coffee."
+    assert row.excerpt.startswith("Acme serves fresh coffee.")
+    assert stats["read"] is True
+
+
+@pytest.mark.asyncio
+async def test_fetch_source_counts_outbound_links(monkeypatch):
+    body = (
+        b"<html><body><p>Evidence text</p>"
+        b'<a href="https://other.example/a">A</a>'
+        b'<a href="/relative">R</a>'
+        b'<a href="https://other.example/b">B</a></body></html>'
+    )
+    monkeypatch.setattr(
+        sources, "fetch_pinned_media", lambda *a, **k: (body, "text/html")
+    )
+    monkeypatch.setattr(
+        sources.trafilatura, "extract", lambda *a, **k: "Evidence text"
+    )
+    _row, stats = await sources.fetch_source(
+        "run-1", 0, _result("https://example.com/page")
+    )
+    assert stats["links_found"] == 2

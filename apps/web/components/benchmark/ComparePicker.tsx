@@ -3,6 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { subjectKey, type SavedPlace } from "@/lib/api-benchmark";
+import {
+  sortCompareChannels,
+  type CompareChannelOption,
+} from "@/lib/benchmark-selection";
+import VerificationBadge from "@/components/shared/VerificationBadge";
 
 const FOCUS = "focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[#3D1D6E]";
 
@@ -14,16 +19,11 @@ const FOCUS = "focus-visible:outline focus-visible:outline-[3px] focus-visible:o
 export const MAX_COMPETITORS = 5;
 export const MAX_TOTAL = 1 + MAX_COMPETITORS;
 
-interface ChannelOption {
-  id: string;
-  display_name: string | null;
-  platform: string;
-}
-
 interface Option {
   key: string;
   label: string;
   group: "saved" | "own";
+  verificationStatus?: string | null;
 }
 
 export interface CompareSelection {
@@ -31,17 +31,18 @@ export interface CompareSelection {
   competitors: string[];
 }
 
-function buildOptions(saved: SavedPlace[], own: ChannelOption[], unnamed: string): Option[] {
+function buildOptions(saved: SavedPlace[], own: CompareChannelOption[], unnamed: string): Option[] {
   return [
     ...saved.map((place) => ({
       key: subjectKey("saved", place.place_id),
       label: place.label || place.name || place.place_id,
       group: "saved" as const,
     })),
-    ...own.map((channel) => ({
+    ...sortCompareChannels(own).map((channel) => ({
       key: subjectKey("own", channel.id),
       label: channel.display_name || unnamed,
       group: "own" as const,
+      verificationStatus: channel.verification_status,
     })),
   ];
 }
@@ -59,7 +60,7 @@ export default function ComparePicker({
   selection: CompareSelection;
   onChange: (next: CompareSelection) => void;
   saved: SavedPlace[];
-  own: ChannelOption[];
+  own: CompareChannelOption[];
 }) {
   const { t } = useI18n();
   const c = t.benchmark.compare;
@@ -283,7 +284,10 @@ function OptionGroup({
                 onChange={() => onToggle(option.key)}
                 className="h-4 w-4 shrink-0 accent-[#B0338A]"
               />
-              <span className="truncate">{option.label}</span>
+              <span className="min-w-0 flex-1 truncate">{option.label}</span>
+              {option.group === "own" ? (
+                <VerificationBadge status={option.verificationStatus} compact />
+              ) : null}
             </label>
           );
         })

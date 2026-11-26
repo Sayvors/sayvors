@@ -1,0 +1,677 @@
+"""Durable grounded-research pipeline."""
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+
+import pytest
+
+from app.modules.ai_visibility import jobs, research
+from app.modules.ai_visibility.models import (
+    AiVisibilityPrompt,
+    AiVisibilityRun,
+    AiVisibilitySource,
+)
+from app.modules.jobs.models import Job
+
+
+async def _seed(db, user_id, channel_id):
+    prompt = AiVisibilityPrompt(
+        tenant_id=user_id,
+        channel_id=channel_id,
+        title="Coffee",
+        prompt_text="Best coffee near Malqa",
+        normalized_prompt_hash="d" * 64,
+        intent="discovery",
+        created_by=user_id,
+    )
+    db.add(prompt)
+    await db.flush()
+    run = AiVisibilityRun(
+        tenant_id=user_id,
+        channel_id=channel_id,
+        prompt_id=prompt.id,
+        prompt_snapshot=prompt.prompt_text,
+        locale="en",
+        status="queued",
+    )
+    db.add(run)
+    await db.flush()
+    job = Job(
+        id="job-1",
+        tenant_id=user_id,
+        job_type="ai_visibility.research",
+        lane="bulk",
+        status="running",
+        payload={"run_id": run.id},
+        lane_key="ai-visibility-test",
+        subject_type="ai_visibility_run",
+        subject_id=run.id,
+        lease_owner="worker-1",
+        lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+    )
+    run.job_id = job.id
+    db.add(job)
+    await db.commit()
+    return run, job
+
+
+def test_source_payload_preserves_original_citation_labels():
+    rows = [
+        AiVisibilitySource(position=1, url="https://b.example", excerpt="B"),
+        AiVisibilitySource(position=2, url="https://c.example", excerpt="C"),
+    ]
+    payload = jobs._source_payload(rows)
+    assert [row["label"] for row in payload] == ["S2", "S3"]
+
+
+def _read_stats(rows, links_found=0):
+    return {
+        "pages_read": sum(1 for row in rows if row.excerpt),
+        "pages_failed": sum(1 for row in rows if not row.excerpt),
+        "links_found": links_found,
+        "words_read": sum(len((row.excerpt or "").split()) for row in rows),
+    }
+
+
+@pytest.mark.asyncio
+async def test_job_completes_with_validated_brief(
+    db, user_id, channel_id, monkeypatch
+):
+    run, job = await _seed(db, user_id, channel_id)
+
+    async def _search(_tenant, _query, **_kwargs):
+        return [
+            SimpleNamespace(
+                url="https://a.example",
+                title="Acme Coffee review",
+                snippet="Acme Coffee is recommended.",
+            ),
+            SimpleNamespace(
+                url="https://b.example",
+                title="Acme Coffee menu",
+                snippet="Acme Coffee serves fresh coffee.",
+            ),
+        ]
+
+    async def _fetch(_db, run_id, rows, **_kwargs):
+        fetched = [
+            AiVisibilitySource(
+                run_id=run_id,
+                position=0,
+                url="https://a.example",
+                canonical_url="https://a.example",
+                title="A",
+                excerpt="Acme Coffee is recommended.",
+            ),
+            AiVisibilitySource(
+                run_id=run_id,
+                position=1,
+                url="https://b.example",
+                canonical_url="https://b.example",
+                title="B",
+                excerpt="Acme Coffee serves fresh coffee.",
+            ),
+        ]
+        return fetched, _read_stats(fetched, links_found=17)
+
+    payload = research.ResearchPayload(
+        answer="Acme Coffee is recommended [S1].",
+        claims=[
+            research.ResearchClaim(
+                claim="Acme Coffee is recommended",
+                quote="Acme Coffee is recommended",
+                source_ids=["S1"],
+                status="supported",
+            )
+        ],
+        mentioned=True,
+        cited=False,
+        recommended=True,
+        incorrect=False,
+    )
+
+    async def _complete(_db, **_kwargs):
+        await db.refresh(run)
+        await db.refresh(job)
+        assert run.status == "writing"
+        assert run.failure_code == jobs.LLM_PENDING_FAILURE_CODE
+        expires = job.lease_expires_at
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        assert expires > datetime.now(timezone.utc) + timedelta(minutes=5)
+        return "fake:model", payload
+
+    async def _facts(*_args):
+        return {"name": "Acme Coffee", "website": "https://acme.example"}
+
+    monkeypatch.setattr(jobs.search, "search_public_web", _search)
+    monkeypatch.setattr(jobs.sources, "fetch_sources", _fetch)
+    monkeypatch.setattr(jobs.research, "complete_research", _complete)
+    monkeypatch.setattr(jobs, "load_branch_facts", _facts)
+
+    result = await jobs.handle_research(job, db)
+    await db.refresh(run)
+    assert result["status"] == "completed", run.error
+    assert run.status == "completed"
+    assert run.mentioned is True
+    assert run.claims_json[0]["status"] == "supported"
+    assert run.actions_json
+    metrics = run.evidence_coverage["metrics"]
+    assert metrics["candidates_found"] == 3
+    assert metrics["pages_read"] == 2
+    assert metrics["links_found"] == 17
+    assert metrics["domains_found"] == 3
+    assert metrics["brand_mentions"] == 2
+    assert run.evidence_coverage["third_party_source_count"] == 2
+    assert run.evidence_coverage["owned_source_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_reclaimed_job_reuses_committed_source_snapshots(
+    db, user_id, channel_id, monkeypatch
+):
+    run, job = await _seed(db, user_id, channel_id)
+    run.status = "fetching"
+    db.add_all(
+        [
+            AiVisibilitySource(
+                run_id=run.id,
+                position=0,
+                url="https://a.example",
+                canonical_url="https://a.example",
+                title="A",
+                excerpt="Acme Coffee is recommended.",
+            ),
+            AiVisibilitySource(
+                run_id=run.id,
+                position=1,
+                url="https://b.example",
+                canonical_url="https://b.example",
+                title="B",
+                excerpt="Acme Coffee serves fresh coffee.",
+            ),
+        ]
+    )
+    await db.commit()
+    called = []
+
+    async def _search(*_args, **_kwargs):
+        called.append("search")
+        return []
+
+    async def _fetch(*_args, **_kwargs):
+        called.append("fetch")
+        return [], _read_stats([])
+
+    async def _complete(*_args, **_kwargs):
+        called.append("llm")
+        return "fake:model", research.ResearchPayload(
+            answer="Acme Coffee is recommended [S1].",
+            claims=[
+                research.ResearchClaim(
+                    claim="Acme Coffee is recommended",
+                    quote="Acme Coffee is recommended",
+                    source_ids=["S1"],
+                    status="supported",
+                )
+            ],
+            mentioned=True,
+            cited=False,
+            recommended=True,
+            incorrect=False,
+        )
+
+    async def _facts(*_args):
+        return {"name": "Acme Coffee"}
+
+    monkeypatch.setattr(jobs.search, "search_public_web", _search)
+    monkeypatch.setattr(jobs.sources, "fetch_sources", _fetch)
+    monkeypatch.setattr(jobs.research, "complete_research", _complete)
+    monkeypatch.setattr(jobs, "load_branch_facts", _facts)
+
+    result = await jobs.handle_research(job, db)
+    assert result["status"] == "completed"
+    assert called == ["llm"]
+
+
+@pytest.mark.asyncio
+async def test_reclaimed_job_does_not_repeat_an_uncertain_llm_call(
+    db, user_id, channel_id, monkeypatch
+):
+    run, job = await _seed(db, user_id, channel_id)
+    run.status = "writing"
+    run.failure_code = "llm_call_in_progress"
+    db.add_all(
+        [
+            AiVisibilitySource(
+                run_id=run.id,
+                position=position,
+                url=f"https://{label}.example",
+                canonical_url=f"https://{label}.example",
+                title=label,
+                excerpt="Acme Coffee is recommended.",
+            )
+            for position, label in enumerate(("a", "b"))
+        ]
+    )
+    await db.commit()
+    called = []
+
+    async def _complete(*_args, **_kwargs):
+        called.append("llm")
+        raise AssertionError("an uncertain LLM call must not be repeated")
+
+    async def _facts(*_args):
+        return {"name": "Acme Coffee"}
+
+    monkeypatch.setattr(jobs.research, "complete_research", _complete)
+    monkeypatch.setattr(jobs, "load_branch_facts", _facts)
+
+    result = await jobs.handle_research(job, db)
+    await db.refresh(run)
+    assert result["status"] == "ambiguous"
+    assert run.status == "ambiguous"
+    assert run.failure_code == "llm_outcome_unknown"
+    assert called == []
+
+
+@pytest.mark.asyncio
+async def test_job_rechecks_run_immediately_before_llm(
+    db, user_id, channel_id, monkeypatch
+):
+    run, job = await _seed(db, user_id, channel_id)
+    db.add_all(
+        [
+            AiVisibilitySource(
+                run_id=run.id,
+                position=position,
+                url=f"https://{label}.example",
+                canonical_url=f"https://{label}.example",
+                title=label,
+                excerpt="Acme Coffee is recommended.",
+            )
+            for position, label in enumerate(("a", "b"))
+        ]
+    )
+    await db.commit()
+    called = []
+
+    async def _facts(_db, _tenant, _channel):
+        await db.delete(run)
+        await db.commit()
+        return {"name": "Acme Coffee"}
+
+    async def _complete(*_args, **_kwargs):
+        called.append("llm")
+        raise AssertionError("deleted runs must not reach the LLM")
+
+    monkeypatch.setattr(jobs, "load_branch_facts", _facts)
+    monkeypatch.setattr(jobs.research, "complete_research", _complete)
+
+    result = await jobs.handle_research(job, db)
+    assert result["status"] == "cancelled"
+    assert called == []
+
+
+@pytest.mark.asyncio
+async def test_post_llm_status_persistence_failure_is_ambiguous(
+    db, user_id, channel_id, monkeypatch
+):
+    run, job = await _seed(db, user_id, channel_id)
+    db.add_all(
+        [
+            AiVisibilitySource(
+                run_id=run.id,
+                position=position,
+                url=f"https://{label}.example",
+                canonical_url=f"https://{label}.example",
+                title=label,
+                excerpt="Acme Coffee is recommended.",
+            )
+            for position, label in enumerate(("a", "b"))
+        ]
+    )
+    await db.commit()
+    original_status = jobs._status
+
+    async def _status(_db, _run, status):
+        if status == "validating":
+            raise OSError("database unavailable")
+        await original_status(_db, _run, status)
+
+    async def _facts(*_args):
+        return {"name": "Acme Coffee"}
+
+    async def _complete(*_args, **_kwargs):
+        return "fake:model", research.ResearchPayload(
+            answer="Acme Coffee is recommended [S1].",
+            claims=[
+                research.ResearchClaim(
+                    claim="Acme Coffee is recommended",
+                    quote="Acme Coffee is recommended",
+                    source_ids=["S1"],
+                    status="supported",
+                )
+            ],
+            mentioned=True,
+            cited=False,
+            recommended=True,
+            incorrect=False,
+        )
+
+    monkeypatch.setattr(jobs, "_status", _status)
+    monkeypatch.setattr(jobs, "load_branch_facts", _facts)
+    monkeypatch.setattr(jobs.research, "complete_research", _complete)
+
+    result = await jobs.handle_research(job, db)
+    await db.refresh(run)
+    assert result["status"] == "ambiguous"
+    assert run.status == "ambiguous"
+    assert run.failure_code == "post_llm_persistence_failed"
+
+
+@pytest.mark.asyncio
+async def test_stale_worker_stops_after_search(
+    db, user_id, channel_id, monkeypatch
+):
+    run, job = await _seed(db, user_id, channel_id)
+    run.job_id = job.id
+    job.lease_owner = "worker-1"
+    job.lease_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+    await db.commit()
+    called = []
+
+    async def _search(*_args, **_kwargs):
+        job.lease_owner = "worker-2"
+        await db.commit()
+        return []
+
+    async def _fetch(*_args, **_kwargs):
+        called.append("fetch")
+        return [], _read_stats([])
+
+    monkeypatch.setattr(jobs.search, "search_public_web", _search)
+    monkeypatch.setattr(jobs.sources, "fetch_sources", _fetch)
+
+    result = await jobs.handle_research(job, db)
+    assert result["status"] == "cancelled"
+    assert called == []
+
+
+@pytest.mark.asyncio
+async def test_job_stops_if_run_disappears_during_search(
+    db, user_id, channel_id, monkeypatch
+):
+    run, job = await _seed(db, user_id, channel_id)
+    called = []
+
+    async def _search(_tenant, _query, **_kwargs):
+        await db.delete(run)
+        await db.commit()
+        return []
+
+    async def _fetch(*_args, **_kwargs):
+        called.append("fetch")
+        return [], _read_stats([])
+
+    monkeypatch.setattr(jobs.search, "search_public_web", _search)
+    monkeypatch.setattr(jobs.sources, "fetch_sources", _fetch)
+    result = await jobs.handle_research(job, db)
+    assert result["status"] == "cancelled"
+    assert called == []
+
+
+@pytest.mark.asyncio
+async def test_global_search_rate_limit_defers_the_job(
+    db, user_id, channel_id, monkeypatch
+):
+    run, job = await _seed(db, user_id, channel_id)
+    job.max_attempts = 3
+    await db.commit()
+
+    async def _limited(*_args, **_kwargs):
+        raise jobs.search.SearchRateLimited("search_rate_limited")
+
+    monkeypatch.setattr(jobs.search, "search_public_web", _limited)
+    with pytest.raises(jobs.search.SearchRateLimited, match="search_rate_limited"):
+        await jobs.handle_research(job, db)
+    await db.refresh(run)
+    assert run.status == "searching"
+    assert run.completed_at is None
+
+
+@pytest.mark.asyncio
+async def test_tenant_search_rate_limit_is_terminal(
+    db, user_id, channel_id, monkeypatch
+):
+    run, job = await _seed(db, user_id, channel_id)
+
+    async def _limited(*_args, **_kwargs):
+        raise jobs.search.TenantSearchRateLimited("tenant_search_rate_limited")
+
+    monkeypatch.setattr(jobs.search, "search_public_web", _limited)
+    result = await jobs.handle_research(job, db)
+    await db.refresh(run)
+    assert result["status"] == "failed"
+    assert run.failure_code == "TenantSearchRateLimited"
+    assert job.status == "running"
+
+
+@pytest.mark.asyncio
+async def test_job_rejects_unrelated_sources_before_the_llm(
+    db, user_id, channel_id, monkeypatch
+):
+    run, job = await _seed(db, user_id, channel_id)
+    db.add_all(
+        [
+            AiVisibilitySource(
+                run_id=run.id,
+                position=position,
+                url=f"https://unrelated{position}.example",
+                canonical_url=f"https://unrelated{position}.example",
+                title="YouTube help",
+                excerpt="Create a YouTube channel and manage Google account access.",
+            )
+            for position in range(2)
+        ]
+    )
+    await db.commit()
+    called = []
+
+    async def _facts(*_args):
+        return {"name": "Acme Coffee", "address": "Makkah"}
+
+    async def _complete(*_args, **_kwargs):
+        called.append("llm")
+        raise AssertionError("unrelated sources must not reach the model")
+
+    async def _profiles(*_args, **_kwargs):
+        return [
+            {
+                "platform": "Facebook",
+                "status": "not_found",
+                "url": None,
+                "setup_url": "https://www.facebook.com/pages/create",
+            }
+        ]
+
+    monkeypatch.setattr(jobs, "load_branch_facts", _facts)
+    monkeypatch.setattr(jobs.research, "complete_research", _complete)
+    monkeypatch.setattr(jobs.search, "discover_public_profiles", _profiles)
+
+    result = await jobs.handle_research(job, db)
+    await db.refresh(run)
+    assert result["status"] == "insufficient_evidence", run.error
+    assert run.failure_code == "no_third_party_evidence"
+    assert run.source_count == 2
+    assert run.answer_text
+    assert called == []
+
+
+@pytest.mark.asyncio
+async def test_job_rejects_locality_only_sources(
+    db, user_id, channel_id, monkeypatch
+):
+    run, job = await _seed(db, user_id, channel_id)
+    db.add_all(
+        [
+            AiVisibilitySource(
+                run_id=run.id,
+                position=position,
+                url=f"https://makkah{position}.example",
+                canonical_url=f"https://makkah{position}.example",
+                title="Makkah service portal",
+                excerpt="Government services in Makkah for residents and visitors.",
+            )
+            for position in range(2)
+        ]
+    )
+    await db.commit()
+
+    async def _facts(*_args):
+        return {
+            "name": "Sayvors Company Branch-Makkah",
+            "address": "Azziziya, Makkah",
+        }
+
+    async def _complete(*_args, **_kwargs):
+        raise AssertionError("locality-only sources must not reach the model")
+
+    async def _profiles(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setattr(jobs, "load_branch_facts", _facts)
+    monkeypatch.setattr(jobs.research, "complete_research", _complete)
+    monkeypatch.setattr(jobs.search, "discover_public_profiles", _profiles)
+
+    result = await jobs.handle_research(job, db)
+    await db.refresh(run)
+    assert result["status"] == "insufficient_evidence"
+    assert run.failure_code == "no_third_party_evidence"
+
+
+@pytest.mark.asyncio
+async def test_owned_fallback_survives_abbreviation_dots(
+    db, user_id, channel_id, monkeypatch
+):
+    run, job = await _seed(db, user_id, channel_id)
+
+    async def _search(_tenant, _query, **_kwargs):
+        return [SimpleNamespace(url="https://claude.example", title="Sign in", snippet="")]
+
+    async def _fetch(_db, run_id, rows, **_kwargs):
+        return [], _read_stats([])
+
+    async def _profiles(*_args, **_kwargs):
+        return []
+
+    async def _facts(*_args):
+        return {
+            "name": "Sayvors Company Branch-Al Malqa",
+            "address": "RIYADH Al Malqa Dist. Al Dahnaa, Al Malqa",
+            "website": "https://sayvors.com",
+        }
+
+    monkeypatch.setattr(jobs.search, "search_public_web", _search)
+    monkeypatch.setattr(jobs.sources, "fetch_sources", _fetch)
+    monkeypatch.setattr(jobs.search, "discover_public_profiles", _profiles)
+    monkeypatch.setattr(jobs, "load_branch_facts", _facts)
+
+    result = await jobs.handle_research(job, db)
+    await db.refresh(run)
+    assert result["status"] == "insufficient_evidence", run.error
+    assert "[S1]" in (run.answer_text or "")
+    assert "Dist" in run.answer_text
+
+
+@pytest.mark.asyncio
+async def test_job_reads_owned_website_and_discards_search_filler(
+    db, user_id, channel_id, monkeypatch
+):
+    run, job = await _seed(db, user_id, channel_id)
+    seen_candidates: list[str] = []
+
+    async def _search(_tenant, _query, **_kwargs):
+        return [
+            SimpleNamespace(
+                url="https://translate.google.com/?hl=ar",
+                title="Google Translate",
+                snippet="",
+            )
+        ]
+
+    async def _fetch(_db, run_id, rows, **_kwargs):
+        seen_candidates.extend(row.url for row in rows)
+        fetched = [
+            AiVisibilitySource(
+                id="owned-web",
+                run_id=run_id,
+                position=0,
+                url="https://sayvors.com/",
+                canonical_url="https://sayvors.com/",
+                title="Sayvors website",
+                snippet="Sayvors automatically replies to Google reviews in Arabic and English.",
+                excerpt="Sayvors automatically replies to Google reviews in Arabic and English. More details.",
+            ),
+            AiVisibilitySource(
+                id="owned-maps",
+                run_id=run_id,
+                position=1,
+                url="https://maps.google.com/maps?cid=123",
+                canonical_url="https://maps.google.com/maps?cid=123",
+                title="Sayvors on Google Maps",
+                excerpt="Sayvors Company Branch-Makkah is located in Makkah.",
+            ),
+        ]
+        return fetched, _read_stats(fetched, links_found=12)
+
+    async def _facts(*_args):
+        return {
+            "name": "Sayvors Company Branch-Makkah",
+            "address": "Azziziya, Makkah, 11432",
+            "website": "https://sayvors.com",
+            "maps_url": "https://maps.google.com/maps?cid=123",
+        }
+
+    async def _profiles(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setattr(jobs.search, "search_public_web", _search)
+    monkeypatch.setattr(jobs.sources, "fetch_sources", _fetch)
+    monkeypatch.setattr(jobs, "load_branch_facts", _facts)
+    monkeypatch.setattr(jobs.search, "discover_public_profiles", _profiles)
+
+    result = await jobs.handle_research(job, db)
+    await db.refresh(run)
+    assert result["status"] == "insufficient_evidence", run.error
+    assert seen_candidates == [
+        "https://sayvors.com/",
+        "https://maps.google.com/maps?cid=123",
+    ]
+    assert "Sayvors automatically replies to Google reviews" in run.answer_text
+    assert run.source_count == 2
+    assert run.evidence_coverage["third_party_source_count"] == 0
+    assert run.evidence_coverage["owned_source_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_job_marks_insufficient_evidence(
+    db, user_id, channel_id, monkeypatch
+):
+    run, job = await _seed(db, user_id, channel_id)
+
+    async def _search(_tenant, _query, **_kwargs):
+        return [SimpleNamespace(url="https://a.example", title="A", snippet="")]
+
+    async def _fetch(_db, run_id, rows, **_kwargs):
+        return [], _read_stats([])
+
+    async def _profiles(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setattr(jobs.search, "search_public_web", _search)
+    monkeypatch.setattr(jobs.sources, "fetch_sources", _fetch)
+    monkeypatch.setattr(jobs.search, "discover_public_profiles", _profiles)
+    result = await jobs.handle_research(job, db)
+    await db.refresh(run)
+    assert result["status"] == "insufficient_evidence", run.error
+    assert run.failure_code == "no_third_party_evidence"

@@ -38,25 +38,88 @@ async def test_parse_subject():
             compare.parse_subject(bad)
 
 
-async def test_scan_reviews_counts_windows_stars_and_text():
+async def test_scan_reviews_counts_windows_stars_and_sentiment():
     now = datetime.now(timezone.utc)
-    recent = (now - timedelta(days=2)).isoformat()
+    recent = now.isoformat()
     old = (now - timedelta(days=40)).isoformat()
     reviews = [
-        {"rating": 5, "text": "The staff are hard working, great parking", "publish_time": recent},
-        {"rating": 1, "text": "No parking and expensive menu prices", "publish_time": old},
-        {"rating": 4, "text": "Lovely food", "publish_time": recent},
+        {"rating": 5, "text": "Great beans", "publish_time": recent},
+        {"rating": 1, "text": "Cold coffee", "publish_time": old},
+        {"rating": 4, "text": "Lovely roast", "publish_time": recent},
     ]
     scan = compare._scan_reviews(reviews)
     assert scan["windows"]["reviews_last_week"] == 2
     assert scan["windows"]["reviews_last_month"] == 2
     assert scan["windows"]["reviews_last_year"] == 3
     assert scan["stars"][5] == 1 and scan["stars"][1] == 1
-    assert scan["text_counts"]["employee_mentions"] == 1
-    assert scan["text_counts"]["working_hard_mentions"] == 1
-    assert scan["text_counts"]["parking_praised"] == 1
-    assert scan["text_counts"]["parking_criticised"] == 1
-    assert scan["text_counts"]["menu_price_mentions"] == 1
+    assert scan["positive_pct"] == 66.7
+    assert scan["negative_pct"] == 33.3
+    assert "text_counts" not in scan
+
+
+async def test_saved_star_share_uses_sample_when_full_distribution_missing(db, monkeypatch):
+    from app.modules.benchmark import places as places_module
+    from app.modules.benchmark import service as bench_service
+
+    saved = await bench_service.save_place(
+        db, TENANT, place_id="star-sample", label="Sample Cafe",
+        rating=4.4, review_count=900,
+    )
+
+    async def _fake(place_id, **kwargs):
+        return {
+            "place_id": place_id, "name": "Sample Cafe", "address": None,
+            "rating": 4.4, "review_count": 900, "types": [],
+            "reviews": [
+                {"rating": 5, "text": "great", "publish_time": "2026-11-24T00:00:00Z"},
+                {"rating": 1, "text": "bad", "publish_time": "2026-11-23T00:00:00Z"},
+            ],
+        }
+
+    monkeypatch.setattr(places_module, "get_place", _fake)
+    result = (await compare.compare_subjects(db, TENANT, ["saved:star-sample"]))[0]
+    assert result["metrics"]["five_star"] == 1
+    assert result["metrics"]["one_star"] == 1
+    assert result["metrics"]["star_share_base"] == 2
+
+
+async def test_saved_star_share_uses_full_distribution_when_available(db):
+    from app.modules.benchmark import service as bench_service
+
+    saved = await bench_service.save_place(
+        db, TENANT, place_id="star-full", label="Full Cafe",
+        rating=4.4, review_count=900,
+    )
+    saved.reviews_per_score = {"5": 800, "1": 100}
+    await db.commit()
+
+    result = (await compare.compare_subjects(db, TENANT, ["saved:star-full"]))[0]
+    assert result["metrics"]["five_star"] == 800
+    assert result["metrics"]["one_star"] == 100
+    assert result["metrics"]["star_share_base"] == 900
+    assert any("full rating distribution" in note for note in result["notes"])
+    assert not any("review-text facts" in note for note in result["notes"])
+
+
+async def test_saved_star_share_ignores_malformed_full_distribution(db):
+    from app.modules.benchmark import service as bench_service
+
+    saved = await bench_service.save_place(
+        db, TENANT, place_id="star-malformed", label="Malformed Cafe",
+        rating=4.4, review_count=900,
+    )
+    saved.reviews_per_score = {"5": "not-a-number", "1": 100}
+    saved.reviews = [
+        {"rating": 5, "text": "great", "publish_time": "2026-11-24T00:00:00Z"},
+        {"rating": 1, "text": "bad", "publish_time": "2026-11-23T00:00:00Z"},
+    ]
+    await db.commit()
+
+    result = (await compare.compare_subjects(db, TENANT, ["saved:star-malformed"]))[0]
+    assert result["available"] is True
+    assert result["metrics"]["five_star"] == 1
+    assert result["metrics"]["one_star"] == 1
+    assert result["metrics"]["star_share_base"] == 2
 
 
 async def test_saved_subject_uses_places_and_flags_hidden_facts(db, monkeypatch):
@@ -683,6 +746,7 @@ async def test_reviews_endpoint_own_rows(client, db, channel_id, user_id):
     assert subj["summary"] == {
         "total": 2, "sampled": 2, "answered": 1,
         "unanswered": 1, "response_rate": 50.0,
+        "evidence_basis": "stored_lifetime",
     }
     oldest = subj["reviews"][1]
     assert oldest["rating"] == 1
@@ -704,6 +768,7 @@ async def test_reviews_endpoint_saved_place_cached_sample(client, db, user_id):
     assert res.json()["subjects"][0]["summary"] == {
         "total": 5, "sampled": 0, "answered": 0,
         "unanswered": 0, "response_rate": None,
+        "evidence_basis": "cached_sample",
     }
 
 
@@ -723,6 +788,34 @@ async def test_reviews_endpoint_scoped_to_other_tenant(client, other_user_id):
     res = client.get(f"/api/v1/benchmark/reviews?subjects=own:{other_user_id}")
     assert res.status_code == 200
     assert res.json()["subjects"][0]["reviews"] == []
+
+
+async def test_compare_cache_preserves_request_order(client, monkeypatch):
+    from app.modules.benchmark import router as benchmark_router
+
+    cache = {}
+
+    async def _get(key):
+        return cache.get(key)
+
+    async def _set(key, value, ttl):
+        cache[key] = value
+
+    monkeypatch.setattr(benchmark_router, "cache_get", _get)
+    monkeypatch.setattr(benchmark_router, "cache_set", _set)
+
+    first = client.get(
+        "/api/v1/benchmark/compare?subjects=own%3Aa&subjects=own%3Ab"
+    )
+    second = client.get(
+        "/api/v1/benchmark/compare?subjects=own%3Ab&subjects=own%3Aa"
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert [subject["key"] for subject in first.json()["subjects"]] == ["own:a", "own:b"]
+    assert [subject["key"] for subject in second.json()["subjects"]] == ["own:b", "own:a"]
+    assert len(cache) == 2
 
 
 async def test_compare_endpoint_accepts_range(client, monkeypatch):
@@ -949,6 +1042,7 @@ async def test_saved_reviews_boq_serve_cached_no_live_scrape(db, monkeypatch):
     assert subj["summary"]["answered"] == 1
     assert subj["summary"]["unanswered"] == 1
     assert subj["summary"]["response_rate"] == 50.0
+    assert subj["summary"]["evidence_basis"] == "cached_sample"
 
 
 async def test_saved_subject_uses_outscraper_when_selected(db, monkeypatch):

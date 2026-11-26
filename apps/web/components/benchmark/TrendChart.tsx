@@ -16,6 +16,7 @@ const PAD = 24;
 const LABEL_W = 150;
 const PLOT_RIGHT = W - LABEL_W;
 const COLORS = ["#3D1D6E", "#B0338A", "#FF4F6E", "#116631", "#8A6100", "#0B5CAD"];
+const FOCUS = "focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[#3D1D6E]";
 
 function fill(template: string, vars: Record<string, string>): string {
   return Object.entries(vars).reduce(
@@ -191,13 +192,20 @@ export default function TrendChart({
   history,
   title,
   mainKey,
+  loading = false,
+  error,
+  onRetry,
 }: {
   history: SubjectHistory[];
   title: string;
   mainKey?: string | null;
+  loading?: boolean;
+  error?: unknown;
+  onRetry?: () => void;
 }) {
   const { t, locale } = useI18n();
   const b = t.benchmark;
+  const c = t.benchmark.compare;
   const rating = buildTrendSeries(history, "rating");
   const reviews = buildTrendSeries(history, "reviews");
   const domain = sharedTimeDomain([...rating, ...reviews]);
@@ -219,6 +227,43 @@ export default function TrendChart({
       delta: `${delta > 0 ? "+" : ""}${delta.toFixed(2)}★`,
     });
   };
+
+  if (error) {
+    return (
+      <section
+        aria-labelledby="trend-title"
+        className="mt-4 rounded-[8px] border border-[#FF4F6E]/35 bg-white p-4 sm:p-5"
+      >
+        <h2 id="trend-title" className="text-[12px] font-bold uppercase tracking-wide text-[#14101F]">
+          {title}
+        </h2>
+        <div role="alert" className="mt-3">
+          <p className="text-[12px] font-semibold text-[#B3123A]">{c.couldNotLoadHistory}</p>
+          <button
+            type="button"
+            onClick={onRetry}
+            className={`mt-2 inline-flex min-h-11 items-center rounded-[8px] border border-[#3D1D6E]/25 bg-white px-3 text-[11px] font-bold text-[#3D1D6E] ${FOCUS}`}
+          >
+            {t.common.retry}
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  if (loading) {
+    return (
+      <section
+        aria-labelledby="trend-title"
+        className="mt-4 rounded-[8px] border border-[var(--ui-line)] bg-white p-4 sm:p-5"
+      >
+        <h2 id="trend-title" className="text-[12px] font-bold uppercase tracking-wide text-[#14101F]">
+          {title}
+        </h2>
+        <p className="mt-3 text-[12px] text-[#3B2D5E]">{c.loadingHistory}</p>
+      </section>
+    );
+  }
 
   if (rating.length === 0 && reviews.length === 0) {
     return (

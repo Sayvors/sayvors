@@ -174,6 +174,8 @@ export interface ComparisonSubject {
     five_star: number | null;
     four_star: number | null;
     one_star: number | null;
+    /** Population used for star-share percentages: sample size or lifetime total. */
+    star_share_base: number | null;
     impressions: number | null;
     calls: number | null;
     /* Period-only facts; null when the range is "live". */
@@ -182,16 +184,27 @@ export interface ComparisonSubject {
     rating_change: number | null;
     period_impressions: number | null;
     period_calls: number | null;
+    prev_period_reviews?: number | null;
+    prev_period_avg_rating?: number | null;
+    period_reviews_delta?: number | null;
+    period_avg_rating_delta?: number | null;
+  };
+  location?: {
+    latitude: number | null;
+    longitude: number | null;
+    distance_km: number | null;
+    category: string | null;
+  };
+  freshness?: {
+    fetched_at: string | null;
+    age_seconds: number | null;
+    source: string | null;
+    stale: boolean | null;
   };
   facts: {
     positive_pct: number | null;
     negative_pct: number | null;
     branch: string | null;
-    employee_mentions: number | null;
-    working_hard_mentions: number | null;
-    menu_price_mentions: number | null;
-    parking_praised: number | null;
-    parking_criticised: number | null;
     services: string[];
     top_problems: string[];
     named_team: { name: string; mentions: number; positive: number }[];
@@ -211,10 +224,15 @@ export const RANGE_DAYS: Record<CompareRange, number | null> = {
   "365d": 365,
 };
 
+/** Keep shared URLs valid while falling back safely for unsupported values. */
+export function normalizeCompareRange(value: string | null): CompareRange {
+  return value === "30d" || value === "90d" || value === "365d" ? value : "live";
+}
+
 export function fetchComparison(
   subjects: string[],
   range: CompareRange = "live"
-): Promise<{ range: CompareRange; days: number | null; subjects: ComparisonSubject[]; summary: CompareSummary | null; distribution: CompareDistribution }> {
+): Promise<{ range: CompareRange; days: number | null; subjects: ComparisonSubject[]; summary: CompareSummary | null; distribution: CompareDistribution; pressure?: PressureRow[] }> {
   const q = subjects.map((s) => `subjects=${encodeURIComponent(s)}`).join("&");
   return apiFetch(`/api/v1/benchmark/compare?${q}&range=${range}`);
 }
@@ -242,6 +260,17 @@ export interface DistributionRow {
 }
 
 export type CompareDistribution = Record<string, DistributionRow>;
+
+export interface PressureRow {
+  key: string;
+  name: string | null;
+  score: number;
+  confidence: number;
+  distance_km: number | null;
+  rating_gap: number | null;
+  velocity_gap: number | null;
+  sentiment_gap: number | null;
+}
 
 /* ── Stored history ───────────────────────────────────────────────────── */
 
@@ -278,6 +307,7 @@ export interface SubjectReviews {
     answered: number;
     unanswered: number;
     response_rate: number | null;
+    evidence_basis: "cached_sample" | "stored_lifetime" | "unavailable";
   };
   reviews: {
     rating: number | null;
@@ -311,6 +341,7 @@ export interface ReviewThemeSubject {
   sample_size: number;
   sample_hash: string | null;
   analyzed_at: string | null;
+  retry_after_seconds: number;
   source?: "llm" | "local";
   error_code?: string | null;
   error_message?: string | null;

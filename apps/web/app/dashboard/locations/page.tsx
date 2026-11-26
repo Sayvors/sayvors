@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import * as Sentry from "@sentry/nextjs";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api-rag";
@@ -569,7 +570,12 @@ const SECTION_TAB_ORDER = [
 ];
 
 /** One pending change: the Google section, its label and where to edit it. */
-type PendingChange = { section: string; label: string; tab: string };
+type PendingChange = {
+  section: string;
+  label: string;
+  tab: string;
+  branches: { id: string; name: string }[];
+};
 
 /**
  * The short list of what the merchant changed that Google has not published
@@ -608,11 +614,27 @@ function PendingChanges({
             key={item.section}
             type="button"
             onClick={() => onJump(item.tab)}
-            title={copy.pendingTabHint}
-            className="inline-flex min-h-7 items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-[11.5px] font-semibold text-amber-800 outline-none transition hover:bg-amber-100 focus-visible:ring-2 focus-visible:ring-amber-500/50 dark:border-amber-500/30 dark:bg-ink dark:text-amber-300 dark:hover:bg-amber-500/10"
+            title={
+              item.branches.length > 0
+                ? `${copy.pendingTabHint}: ${item.branches.map((branch) => branch.name).join(", ")}`
+                : copy.pendingTabHint
+            }
+            className="inline-flex min-h-7 flex-col items-start justify-center rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-[11.5px] font-semibold text-amber-800 outline-none transition hover:bg-amber-100 focus-visible:ring-2 focus-visible:ring-amber-500/50 dark:border-amber-500/30 dark:bg-ink dark:text-amber-300 dark:hover:bg-amber-500/10"
           >
-            {item.label}
-            <span aria-hidden>&rarr;</span>
+            <span className="flex items-center gap-1.5">
+              {item.label}
+              {item.branches.length > 0 && (
+                <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold">
+                  {item.branches.length}
+                </span>
+              )}
+              <span aria-hidden>&rarr;</span>
+            </span>
+            {item.branches.length > 0 && (
+              <span className="mt-0.5 max-w-[280px] text-start text-[10px] font-normal text-amber-700/80 break-words dark:text-amber-200/70">
+                {item.branches.map((branch) => branch.name).join(", ")}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -807,6 +829,7 @@ export default function LocationsPage() {
   const [snapshots, setSnapshots] = useState<Record<string, LocationSnapshot>>({});
   const [fullProfile, setFullProfile] = useState<FullProfile | null>(null);
   const [bulkProfiles, setBulkProfiles] = useState<Record<string, FullProfile>>({});
+  const bulkProfileRequestRef = useRef(0);
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [confirmBulk, setConfirmBulk] = useState<null | {
     title: string;
@@ -845,6 +868,51 @@ export default function LocationsPage() {
   );
 
   const showBanner = (kind: "ok" | "err", text: string) => setBanner({ kind, text });
+
+  // Bulk pending badges read the per-branch profiles, not the list snapshots.
+  // Refresh those profiles after every fan-out so a successful Google push
+  // immediately replaces stale accepted/rejected state with pending state.
+  const refreshBulkProfiles = async (ids: string[]) => {
+    const requestId = ++bulkProfileRequestRef.current;
+    const fresh: Record<string, FullProfile> = {};
+    const failedIds: string[] = [];
+    await Promise.all(
+      ids.map(async (id) => {
+        try {
+          fresh[id] = (await apiFetch(`/api/v1/locations/${id}`)) as FullProfile;
+        } catch (error) {
+          failedIds.push(id);
+          Sentry.captureMessage("Bulk location Google status refresh failed", {
+            level: "warning",
+            extra: {
+              branchId: id,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          });
+          // Keep the last known profile for this branch; the save result above
+          // still tells the merchant whether the write itself succeeded.
+        }
+      }),
+    );
+    if (requestId !== bulkProfileRequestRef.current) {
+      return { profiles: {}, failedIds };
+    }
+    if (Object.keys(fresh).length > 0) {
+      setBulkProfiles((prev) => ({ ...prev, ...fresh }));
+    }
+    return { profiles: fresh, failedIds };
+  };
+
+  const statusRefreshWarning = (
+    failedIds: string[],
+    targets: { id: string; name: string }[],
+  ) => {
+    if (failedIds.length === 0) return "";
+    const names = failedIds.map(
+      (id) => targets.find((target) => target.id === id)?.name ?? id,
+    );
+    return ` ${copy.googleStatusRefreshWarning.replace("{branches}", names.join(", "))}`;
+  };
 
   const saveProfile = async (patch: Record<string, unknown>, okText: string) => {
     if (!selectedId) return;
@@ -920,36 +988,27 @@ export default function LocationsPage() {
       })
     );
     // Refresh the visible profiles.
-    try {
-      const fresh: Record<string, FullProfile> = {};
-      await Promise.all(
-        targets.map(async (t) => {
-          try {
-            fresh[t.id] = (await apiFetch(`/api/v1/locations/${t.id}`)) as FullProfile;
-          } catch {
-            /* keep stale */
-          }
-        })
-      );
-      setBulkProfiles((prev) => ({ ...prev, ...fresh }));
-      if (!isBulk && selectedId && fresh[selectedId]) setFullProfile(fresh[selectedId]);
-    } catch {
-      /* non-fatal */
-    }
+    const { profiles: fresh, failedIds: statusFailedIds } =
+      await refreshBulkProfiles(targets.map((t) => t.id));
+    if (!isBulk && selectedId && fresh[selectedId]) setFullProfile(fresh[selectedId]);
     const total = targets.length;
+    const statusWarning = statusRefreshWarning(statusFailedIds, targets);
     if (failed.length === 0 && rejected.length === 0) {
-      showBanner("ok", `${label} saved to all ${total} branch${total === 1 ? "" : "es"}.`);
+      showBanner(
+        statusFailedIds.length > 0 ? "err" : "ok",
+        `${label} saved to all ${total} branch${total === 1 ? "" : "es"}.${statusWarning}`,
+      );
     } else if (failed.length > 0) {
       showBanner(
         "err",
-        `${label} saved to ${ok + rejected.length} of ${total} � failed: ${failed.map((f) => f.name).join(", ")}.`
+        `${label} saved to ${ok + rejected.length} of ${total} � failed: ${failed.map((f) => f.name).join(", ")}.${statusWarning}`
       );
     } else {
       // Everything saved locally, but Google refused a section on some
       // branches. Say so � the badge on those branches says the same thing.
       showBanner(
         "err",
-        `${label} saved to all ${total} branches, but Google rejected it on ${rejected.map((f) => f.name).join(", ")}.`
+        `${label} saved to all ${total} branches, but Google rejected it on ${rejected.map((f) => f.name).join(", ")}.${statusWarning}`
       );
     }
     return { ok, failed, rejected };
@@ -1006,20 +1065,27 @@ export default function LocationsPage() {
     } catch {
       /* non-fatal */
     }
+    const { failedIds: statusFailedIds } = await refreshBulkProfiles(
+      targets.map((t) => t.id),
+    );
     const total = targets.length;
+    const statusWarning = statusRefreshWarning(statusFailedIds, targets);
     if (failed.length === 0 && rejected.length === 0) {
-      showBanner("ok", `Details saved to all ${total} branch${total === 1 ? "" : "es"}.`);
+      showBanner(
+        statusFailedIds.length > 0 ? "err" : "ok",
+        `Details saved to all ${total} branch${total === 1 ? "" : "es"}.${statusWarning}`,
+      );
     } else if (failed.length > 0) {
       showBanner(
         "err",
-        `Details saved to ${ok + rejected.length} of ${total} � failed: ${failed.map((f) => f.name).join(", ")}.`
+        `Details saved to ${ok + rejected.length} of ${total} � failed: ${failed.map((f) => f.name).join(", ")}.${statusWarning}`
       );
     } else {
       // Everything saved locally, but Google refused a section on some
       // branches. Say so � the badge on those branches says the same thing.
       showBanner(
         "err",
-        `Details saved to all ${total} branches, but Google rejected it on ${rejected.map((f) => f.name).join(", ")}.`
+        `Details saved to all ${total} branches, but Google rejected it on ${rejected.map((f) => f.name).join(", ")}.${statusWarning}`
       );
     }
     return { ok, failed, rejected };
@@ -1151,9 +1217,11 @@ export default function LocationsPage() {
    useEffect(() => {
      const scope = bulkBranches;
      if (!isBulk || scope.length === 0) {
+       bulkProfileRequestRef.current += 1;
        setBulkProfiles({});
        return;
      }
+     const requestId = ++bulkProfileRequestRef.current;
      let cancelled = false;
      (async () => {
        const entries = await Promise.all(
@@ -1167,7 +1235,7 @@ export default function LocationsPage() {
            }
          })
        );
-       if (!cancelled) {
+       if (!cancelled && requestId === bulkProfileRequestRef.current) {
          const map: Record<string, FullProfile> = {};
          for (const e of entries) if (e) map[e[0]] = e[1];
          setBulkProfiles(map);
@@ -1332,11 +1400,47 @@ const bulk: BulkScope | null = isBulk
     { key: "services", label: copy.tabServices },
   ];
 
-  // Google's review queue for this branch: the sections the merchant changed
-  // that are not live yet. Derived from the polled snapshot, so it keeps up
-  // every minute without another request.
+  // Google's review queue: the sections the merchant changed that are not
+  // live yet. Single-branch mode reads the polled profile; bulk mode groups
+  // the loaded branch profiles and is refreshed immediately after a fan-out.
   const pendingChanges = useMemo<PendingChange[]>(() => {
-    if (isBulk || !fullProfile) return [];
+    if (isBulk) {
+      const branchesBySection = new Map<
+        string,
+        { id: string; name: string }[]
+      >();
+      for (const branch of bulkBranches) {
+        for (const [section, entry] of Object.entries(
+          bulkProfiles[branch.id]?.google_status ?? {},
+        )) {
+          // Drafts are saved but unpublished, so they wait on Google too.
+          if (entry?.stage !== "pending" && entry?.stage !== "draft") continue;
+          const meta = SECTION_TAB[section];
+          if (!meta) continue;
+          const branches = branchesBySection.get(section) ?? [];
+          if (!branches.some((candidate) => candidate.id === branch.id)) {
+            branches.push({ id: branch.id, name: branch.name });
+          }
+          branchesBySection.set(section, branches);
+        }
+      }
+      const items: PendingChange[] = [];
+      for (const [section, branches] of branchesBySection) {
+        const meta = SECTION_TAB[section];
+        items.push({
+          section,
+          label: meta.label(copy),
+          tab: meta.tab,
+          branches,
+        });
+      }
+      items.sort(
+        (a, b) =>
+          SECTION_TAB_ORDER.indexOf(a.tab) - SECTION_TAB_ORDER.indexOf(b.tab),
+      );
+      return items;
+    }
+    if (!fullProfile) return [];
     const items: PendingChange[] = [];
     for (const [section, entry] of Object.entries(
       fullProfile.google_status ?? {},
@@ -1345,14 +1449,14 @@ const bulk: BulkScope | null = isBulk
       if (entry?.stage !== "pending" && entry?.stage !== "draft") continue;
       const meta = SECTION_TAB[section];
       if (!meta) continue;
-      items.push({ section, label: meta.label(copy), tab: meta.tab });
+      items.push({ section, label: meta.label(copy), tab: meta.tab, branches: [] });
     }
     items.sort(
       (a, b) =>
         SECTION_TAB_ORDER.indexOf(a.tab) - SECTION_TAB_ORDER.indexOf(b.tab),
     );
     return items;
-  }, [isBulk, fullProfile, copy]);
+  }, [isBulk, bulkBranches, bulkProfiles, fullProfile, copy]);
 
   const pendingTabs = useMemo(
     () => new Set(pendingChanges.map((item) => item.tab)),
@@ -1651,7 +1755,7 @@ const bulk: BulkScope | null = isBulk
               copy={copy}
             />
           )}
-          {!isBulk && selectedId && (
+          {selectedId && (
             <PendingChanges
               items={pendingChanges}
               copy={copy}

@@ -7,8 +7,8 @@ tenant's own Google locations (Sayvors analytics tables).
 
 Honesty rule: facts Google does not expose for a competitor listing (views,
 calls, menu prices, registered staff) come back as null with a note, never as
-an invented zero. Text-derived facts are scanned from a bounded sample of the
-most recent reviews and labelled as such in the UI.
+an invented zero. Repeated review themes are extracted separately by the
+versioned theme-analysis pipeline, not by hardcoded domain keyword lists.
 """
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ import json
 import logging
 from collections import Counter
 from datetime import datetime, timedelta, timezone
+from math import atan2, cos, radians, sin, sqrt
 from typing import Any
 
 from sqlalchemy import case, func, select
@@ -52,30 +53,6 @@ WINDOW_DAYS = {
 # bounded before they reach the comparison page's filter chips.
 MAX_TAGS = 5
 MAX_TAG_LENGTH = 30
-TEXT_FACT_KEYS = (
-    "employee_mentions", "working_hard_mentions", "menu_price_mentions",
-    "parking_praised", "parking_criticised", "parking_mentions",
-)
-
-# Lowercased substrings, English + Arabic. A mention is a review that contains
-# any of them; "working hard" requires both a staff word and an effort word so
-# a five-star review that only says "great food" is never counted as praise for
-# the team.
-STAFF_WORDS = (
-    "staff", "employee", "waiter", "waitress", "cashier", "manager", "team",
-    "موظف", "موظفين", "الموظفين", "فريق", "عامل", "عمال", "مدير", "المدير",
-)
-EFFORT_WORDS = (
-    "hard working", "hard-working", "works hard", "working hard", "dedicated",
-    "goes above", "مجتهد", "مجتهدين", "اجتهاد", "يعمل بجد", "مثابرة", "متميز",
-)
-PARKING_WORDS = (
-    "parking", "car park", "valet", "مواقف", "موقف", "الجراج", "باركينغ",
-)
-MENU_PRICE_WORDS = (
-    "menu", "price", "prices", "pricing", "قائمة الطعام", "القائمة", "اسعار",
-    "أسعار", "السعر", "سعر",
-)
 
 PLACE_TYPE_LABELS = {
     "restaurant": "Restaurant", "cafe": "Cafe", "coffee_shop": "Coffee shop",
@@ -117,6 +94,7 @@ def _blank_metrics() -> dict[str, Any]:
         "five_star": None,
         "four_star": None,
         "one_star": None,
+        "star_share_base": None,
         "impressions": None,
         "calls": None,
         # Period-only facts; null when the filter is "live".
@@ -125,6 +103,11 @@ def _blank_metrics() -> dict[str, Any]:
         "rating_change": None,
         "period_impressions": None,
         "period_calls": None,
+        # Previous equivalent window for delta/waterfall visuals. Null when unknown.
+        "prev_period_reviews": None,
+        "prev_period_avg_rating": None,
+        "period_reviews_delta": None,
+        "period_avg_rating_delta": None,
     }
 
 
@@ -133,11 +116,6 @@ def _blank_facts() -> dict[str, Any]:
         "positive_pct": None,
         "negative_pct": None,
         "branch": None,
-        "employee_mentions": None,
-        "working_hard_mentions": None,
-        "menu_price_mentions": None,
-        "parking_praised": None,
-        "parking_criticised": None,
         "services": [],
         "top_problems": [],
         "named_team": [],
@@ -170,6 +148,15 @@ def _channel_tags(channel: Channel) -> list[str]:
     return list(dict.fromkeys(tags))[:MAX_TAGS]
 
 
+def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Great-circle distance in km. Pure and cheap; used for market proximity."""
+    r = 6371.0
+    dlat = radians(lat2 - lat1)
+    dlng = radians(lng2 - lng1)
+    a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlng / 2) ** 2
+    return 2 * r * atan2(sqrt(a), sqrt(1 - a))
+
+
 def _subject(raw: str, kind: str, ident: str, *, available: bool,
              reason: str | None = None, **fields: Any) -> dict[str, Any]:
     return {
@@ -183,6 +170,8 @@ def _subject(raw: str, kind: str, ident: str, *, available: bool,
         "verified": False,
         "data_source": "sayvors_analytics" if kind == "own" else "google_places",
         "tags": [],
+        "location": {"latitude": None, "longitude": None, "distance_km": None, "category": None},
+        "freshness": {"fetched_at": None, "age_seconds": None, "source": None, "stale": None},
         "metrics": _blank_metrics(),
         "facts": _blank_facts(),
         "notes": [],
@@ -204,16 +193,14 @@ def _publish_time(value: Any) -> datetime | None:
 
 
 def _scan_reviews(reviews: list[dict]) -> dict[str, Any]:
-    """Bounded text scan shared by both sides.
+    """Bounded rating/window/sentiment scan shared by both sides.
 
-    Returns window/star/sentiment counts from the sample plus the text-fact
-    counts. Callers replace the authoritative counts with their own sources
-    where those exist (Sayvors analytics stores full-history aggregates).
+    Repeated text themes are extracted separately by ``theme_service``; this
+    scan deliberately contains no domain keyword lists.
     """
     now = datetime.now(timezone.utc)
     windows = {key: 0 for key in WINDOW_DAYS}
     stars: Counter[int] = Counter()
-    text_counts = {key: 0 for key in TEXT_FACT_KEYS}
     pos = neu = neg = 0
 
     for review in reviews:
@@ -237,29 +224,12 @@ def _scan_reviews(reviews: list[dict]) -> dict[str, Any]:
                 if published >= now - timedelta(days=days):
                     windows[key] += 1
 
-        low = str(review.get("text") or "").lower()
-        has_staff = any(word in low for word in STAFF_WORDS)
-        if has_staff:
-            text_counts["employee_mentions"] += 1
-            if any(word in low for word in EFFORT_WORDS):
-                text_counts["working_hard_mentions"] += 1
-        if any(word in low for word in MENU_PRICE_WORDS):
-            text_counts["menu_price_mentions"] += 1
-        if any(word in low for word in PARKING_WORDS):
-            if rating is not None and rating >= 4:
-                text_counts["parking_praised"] += 1
-            elif rating is not None and rating <= 2:
-                text_counts["parking_criticised"] += 1
-            else:
-                text_counts["parking_mentions"] += 1
-
     total = pos + neu + neg
     return {
         "windows": windows,
         "stars": stars,
         "positive_pct": round(pos / total * 100, 1) if total else None,
         "negative_pct": round(neg / total * 100, 1) if total else None,
-        "text_counts": text_counts,
         "sample_size": len(reviews),
     }
 
@@ -271,6 +241,15 @@ def _place_types(types: list[str] | None) -> list[str]:
         name = str(raw)
         out.append(PLACE_TYPE_LABELS.get(name, name.replace("_", " ").title()))
     return list(dict.fromkeys(out))[:10]
+
+
+def _nonnegative_int(value: Any) -> int | None:
+    """Parse a provider count without letting malformed cache data break a column."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number >= 0 else None
 
 
 def _sample_period_rating(reviews: list[dict], days: int) -> float | None:
@@ -459,25 +438,41 @@ async def _saved_subject(db: AsyncSession, tenant_id: str, raw: str,
     # An empty review sample means the windows are unknown, not zero: a zero
     # here would claim "no reviews in the last week", which Google never said.
     windows = scan["windows"] if scan["sample_size"] else {key: None for key in WINDOW_DAYS}
+    scores = details.get("reviews_per_score") or saved.reviews_per_score or {}
+    total_count = _nonnegative_int(total)
+    five_count = _nonnegative_int(scores.get("5")) if isinstance(scores, dict) else None
+    one_count = _nonnegative_int(scores.get("1")) if isinstance(scores, dict) else None
+    full_distribution = (
+        total_count is not None
+        and total_count > 0
+        and five_count is not None
+        and one_count is not None
+        and five_count <= total_count
+        and one_count <= total_count
+    )
+    if full_distribution:
+        five_star = five_count
+        one_star = one_count
+        star_share_base = total_count
+    else:
+        five_star = scan["stars"].get(5, 0) if scan["sample_size"] else None
+        one_star = scan["stars"].get(1, 0) if scan["sample_size"] else None
+        star_share_base = scan["sample_size"] or None
     metrics.update({
         "total_reviews": total,
         **windows,
         "avg_rating": rating,
         "total_ratings": total,
-        "five_star": scan["stars"].get(5, 0) if scan["sample_size"] else None,
+        "five_star": five_star,
         "four_star": scan["stars"].get(4, 0) if scan["sample_size"] else None,
-        "one_star": scan["stars"].get(1, 0) if scan["sample_size"] else None,
+        "one_star": one_star,
+        "star_share_base": star_share_base,
     })
     facts = _blank_facts()
     facts.update({
         "positive_pct": scan["positive_pct"],
         "negative_pct": scan["negative_pct"],
         "branch": name or saved.label,
-        "employee_mentions": scan["text_counts"]["employee_mentions"] if scan["sample_size"] else None,
-        "working_hard_mentions": scan["text_counts"]["working_hard_mentions"] if scan["sample_size"] else None,
-        "menu_price_mentions": scan["text_counts"]["menu_price_mentions"] if scan["sample_size"] else None,
-        "parking_praised": scan["text_counts"]["parking_praised"] if scan["sample_size"] else None,
-        "parking_criticised": scan["text_counts"]["parking_criticised"] if scan["sample_size"] else None,
         "services": _place_types(details.get("types")),
     })
 
@@ -505,23 +500,48 @@ async def _saved_subject(db: AsyncSession, tenant_id: str, raw: str,
                 "Reviews added and the rating change compare the latest values "
                 "with the start of this period."
             ))
-    if scan["sample_size"]:
+    if full_distribution:
         notes.append(
-            f"Review-window counts, star counts and review-text facts come from the "
-            f"{scan['sample_size']} most recent reviews Google returns "
-            f"(max {REVIEW_SAMPLE_LIMIT}), not the lifetime total."
+            "5-star and 1-star counts come from the provider's full rating distribution."
         )
-    else:
+    if scan["sample_size"]:
+        evidence = "Review-window counts"
+        if not full_distribution:
+            evidence += " and star counts"
         notes.append(
-            "No reviews were available in this refresh, so review-window, star and "
-            "review-text facts are blank."
+            f"{evidence} come from the {scan['sample_size']} most recent reviews "
+            f"Google returns (max {REVIEW_SAMPLE_LIMIT}), not the lifetime total."
+        )
+    elif not full_distribution:
+        notes.append(
+            "No reviews were available in this refresh, so review-window and "
+            "star facts are blank."
         )
     notes.append("Views, calls, menu prices and registered staff are only available to the listing owner.")
 
+    fetched_iso = cached_at.isoformat() if cached_at else None
+    age_seconds = int((now - cached_at).total_seconds()) if cached_at else None
+    stale = bool(max_age_hours and cached_at and (now - cached_at) > timedelta(hours=max_age_hours))
+    types = details.get("types") or saved.types or []
+    category = _place_types(types)[0] if _place_types(types) else None
+    lat = saved.latitude if saved.latitude is not None else details.get("latitude")
+    lng = saved.longitude if saved.longitude is not None else details.get("longitude")
+    try:
+        lat = float(lat) if lat is not None else None
+        lng = float(lng) if lng is not None else None
+    except Exception:
+        lat = lng = None
     return _subject(
         raw, "saved", place_id, available=True,
         name=name or "Saved business",
         address=details.get("address"),
+        location={"latitude": lat, "longitude": lng, "distance_km": None, "category": category},
+        freshness={
+            "fetched_at": fetched_iso,
+            "age_seconds": age_seconds,
+            "source": source,
+            "stale": stale if cached_at else None,
+        },
         metrics=metrics, facts=facts,
         notes=notes,
     )
@@ -625,6 +645,7 @@ async def _own_subject(db: AsyncSession, tenant_id: str, raw: str,
         "five_star": distribution.get("5"),
         "four_star": distribution.get("4"),
         "one_star": distribution.get("1"),
+        "star_share_base": overview.get("total_reviews"),
         "impressions": google_perf.get("impressions_maps"),
         "calls": google_perf.get("call_clicks"),
     })
@@ -633,19 +654,14 @@ async def _own_subject(db: AsyncSession, tenant_id: str, raw: str,
         "positive_pct": sentiment.get("positive_pct"),
         "negative_pct": sentiment.get("negative_pct"),
         "branch": channel.display_name,
-        "employee_mentions": scan["text_counts"]["employee_mentions"] if scan["sample_size"] else None,
-        "working_hard_mentions": scan["text_counts"]["working_hard_mentions"] if scan["sample_size"] else None,
-        "menu_price_mentions": scan["text_counts"]["menu_price_mentions"] if scan["sample_size"] else None,
-        "parking_praised": scan["text_counts"]["parking_praised"] if scan["sample_size"] else None,
-        "parking_criticised": scan["text_counts"]["parking_criticised"] if scan["sample_size"] else None,
         "services": services,
         "top_problems": [name for name, _ in problems.most_common(5)],
         "named_team": named_team,
     })
 
     notes = [
-        f"Counts come from your connected Google location. Review-text facts are "
-        f"scanned from the {scan['sample_size']} most recent reviews "
+        f"Counts come from your connected Google location. Top problems are counted "
+        f"from the {scan['sample_size']} most recent stored reviews "
         f"(max {REVIEW_SAMPLE_LIMIT}).",
         "Views and calls are from the last 12 months of Google Business Profile data.",
     ]
@@ -655,12 +671,15 @@ async def _own_subject(db: AsyncSession, tenant_id: str, raw: str,
         # inside the window is a fact, not an estimate. The rating change is the
         # lifetime average now against the lifetime average on the day the
         # window opened — the same definition used for a saved competitor.
+        prev_cutoff = cutoff - timedelta(days=days)
         period_row = (
             await db.execute(
                 select(
                     func.sum(case((bucket >= cutoff, 1), else_=0)),
                     func.avg(case((bucket >= cutoff, ReviewInsight.rating))),
                     func.avg(case((bucket < cutoff, ReviewInsight.rating))),
+                    func.sum(case(((bucket >= prev_cutoff) & (bucket < cutoff), 1), else_=0)),
+                    func.avg(case(((bucket >= prev_cutoff) & (bucket < cutoff), ReviewInsight.rating))),
                 ).where(*base)
             )
         ).one()
@@ -671,6 +690,10 @@ async def _own_subject(db: AsyncSession, tenant_id: str, raw: str,
         before_avg = (
             round(float(period_row[2]), 2) if period_row[2] is not None else None
         )
+        prev_period_reviews = int(period_row[3] or 0)
+        prev_period_avg = (
+            round(float(period_row[4]), 2) if period_row[4] is not None else None
+        )
         current_avg = overview.get("avg_rating")
         rating_change = None
         if (
@@ -679,6 +702,12 @@ async def _own_subject(db: AsyncSession, tenant_id: str, raw: str,
             and before_avg is not None
         ):
             rating_change = round(float(current_avg) - before_avg, 2)
+        period_reviews_delta = period_reviews - prev_period_reviews
+        period_avg_rating_delta = (
+            round(period_avg - prev_period_avg, 2)
+            if period_avg is not None and prev_period_avg is not None
+            else None
+        )
 
         # No rows means Google has not synced performance for this window yet.
         # A zero would claim the location was never seen, which we do not know.
@@ -705,6 +734,10 @@ async def _own_subject(db: AsyncSession, tenant_id: str, raw: str,
                 int(perf_row[1] or 0) + int(perf_row[2] or 0) if has_perf else None
             ),
             "period_calls": int(perf_row[3] or 0) if has_perf else None,
+            "prev_period_reviews": prev_period_reviews,
+            "prev_period_avg_rating": prev_period_avg,
+            "period_reviews_delta": period_reviews_delta,
+            "period_avg_rating_delta": period_avg_rating_delta,
         })
         notes.insert(
             0,
@@ -712,12 +745,32 @@ async def _own_subject(db: AsyncSession, tenant_id: str, raw: str,
             f"{days} days of your connected location.",
         )
 
+    meta: dict[str, Any] = {}
+    try:
+        meta = json.loads(channel.metadata_json or "{}")
+    except Exception:
+        meta = {}
+    if not isinstance(meta, dict):
+        meta = {}
+    lat = meta.get("latitude") or meta.get("lat")
+    lng = meta.get("longitude") or meta.get("lng")
+    try:
+        lat = float(lat) if lat is not None else None
+        lng = float(lng) if lng is not None else None
+    except Exception:
+        lat = lng = None
+    address = str(meta.get("address") or meta.get("formatted_address") or "").strip() or None
+    category = (
+        str(meta.get("primary_category") or meta.get("category") or "").strip() or None
+    )
     return _subject(
         raw, "own", channel_id, available=True,
         name=channel.display_name,
-        address=None,
+        address=address,
         verified=verified,
         tags=_channel_tags(channel),
+        location={"latitude": lat, "longitude": lng, "distance_km": None, "category": category},
+        freshness={"fetched_at": None, "age_seconds": None, "source": "sayvors_analytics", "stale": None},
         metrics=metrics, facts=facts,
         notes=notes,
     )
@@ -761,6 +814,23 @@ async def compare_subjects(db: AsyncSession, tenant_id: str,
                 str(raw), "unknown", "", available=False,
                 reason="Could not load this side of the comparison.",
             ))
+    anchor = next(
+        (s for s in out if s.get("kind") == "own" and s.get("available")
+         and isinstance((s.get("location") or {}).get("latitude"), (int, float))
+         and isinstance((s.get("location") or {}).get("longitude"), (int, float))),
+        None,
+    )
+    if anchor:
+        a_lat = float(anchor["location"]["latitude"])
+        a_lng = float(anchor["location"]["longitude"])
+        for s in out:
+            loc = s.get("location") or {}
+            lat = loc.get("latitude")
+            lng = loc.get("longitude")
+            if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
+                s["location"]["distance_km"] = round(_haversine_km(a_lat, a_lng, float(lat), float(lng)), 2)
+            else:
+                s["location"]["distance_km"] = None
     return out
 
 
@@ -906,7 +976,11 @@ async def _saved_reviews(
     """
     saved = await service.get_saved(db, tenant_id, place_id)
     if saved is None:
-        return None, [], {"total": None, "sampled": 0, "answered": 0, "unanswered": 0, "response_rate": None}
+        return None, [], {
+            "total": None, "sampled": 0, "answered": 0,
+            "unanswered": 0, "response_rate": None,
+            "evidence_basis": "unavailable",
+        }
     name = saved.name or saved.label
     reviews = list(saved.reviews or [])
     # The free provider never scrapes inside a read handler. The worker /
@@ -949,6 +1023,7 @@ async def _saved_reviews(
         "answered": answered,
         "unanswered": sampled - answered,
         "response_rate": round(answered / sampled * 100, 1) if sampled else None,
+        "evidence_basis": "cached_sample",
     }
     return name, out, summary
 
@@ -963,7 +1038,11 @@ async def _own_reviews(
         )
     ).scalar_one_or_none()
     if channel is None:
-        return None, [], {"total": None, "sampled": 0, "answered": 0, "unanswered": 0, "response_rate": None}
+        return None, [], {
+            "total": None, "sampled": 0, "answered": 0,
+            "unanswered": 0, "response_rate": None,
+            "evidence_basis": "unavailable",
+        }
     bucket = func.coalesce(ReviewInsight.review_updated_at, ReviewInsight.created_at)
     rows = (
         await db.execute(
@@ -1022,6 +1101,7 @@ async def _own_reviews(
         "answered": answered,
         "unanswered": total - answered,
         "response_rate": round(answered / total * 100, 1) if total else None,
+        "evidence_basis": "stored_lifetime",
     }
     return channel.display_name, out, summary
 
@@ -1044,7 +1124,11 @@ async def reviews_for(
     config = await service.get_config(db)
     out = []
     for raw in raw_subjects:
-        summary = {"total": None, "sampled": 0, "answered": 0, "unanswered": 0, "response_rate": None}
+        summary = {
+            "total": None, "sampled": 0, "answered": 0,
+            "unanswered": 0, "response_rate": None,
+            "evidence_basis": "unavailable",
+        }
         try:
             kind, ident = parse_subject(raw)
             if kind == "saved":

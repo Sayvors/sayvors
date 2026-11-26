@@ -12,10 +12,11 @@ from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_db
+from ..billing.entitlements import check_feature
 from ..redis.service import cache_get, cache_set
 from ..team.context import TenantContext, require_perm, tenant_id_of
 from . import ai, boq, compare, mapsearch, outscraper, places, service, theme_service
-from .summary import distribution as metric_distribution, north_star
+from .summary import distribution as metric_distribution, north_star, pressure_scores
 
 router = APIRouter(prefix="/api/v1/benchmark", tags=["benchmark"])
 
@@ -29,6 +30,23 @@ REFRESH_REVIEWS_LIMIT = 100
 # Search results are stable for a few minutes; cache misses make a slow first
 # attempt look like "no matches" on retry.
 SEARCH_CACHE_TTL_SECONDS = 300
+
+
+def require_benchmark(perm: str):
+    """Require both the team permission and the tenant's benchmark plan feature."""
+    permission_dependency = require_perm(perm)
+
+    async def _dependency(ctx: TenantContext = Depends(permission_dependency)) -> TenantContext:
+        await check_feature(ctx.tenant_id, "benchmarking")
+        return ctx
+
+    return _dependency
+
+
+async def _require_external_subjects(ctx: TenantContext, subjects: list[str]) -> None:
+    """Saved competitors are external peers; own-only comparisons are not."""
+    if any(str(subject).strip().startswith("saved:") for subject in subjects):
+        await check_feature(ctx.tenant_id, "benchmark_external")
 
 
 class SavePlaceIn(BaseModel):
@@ -158,11 +176,12 @@ def _popularity(place: dict) -> tuple:
 async def search_places(
     q: str = Query(..., min_length=2, max_length=255),
     limit: int = Query(20, ge=1, le=20),
-    ctx: TenantContext = Depends(require_perm("benchmark.view")),
+    ctx: TenantContext = Depends(require_benchmark("benchmark.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Search businesses for benchmarking. Nearby results first, then others."""
     tenant_id = tenant_id_of(ctx.user)
+    await check_feature(tenant_id, "benchmark_external")
     loc = await service.tenant_location_context(db, tenant_id)
     raw_q = str(q or "").strip()[:255]
     has_explicit_location = "," in raw_q or " in " in raw_q.lower() or " near " in raw_q.lower()
@@ -262,7 +281,7 @@ async def search_places(
 @router.get("/heatmap", response_model=dict)
 async def get_heatmap(
     weeks: int = Query(12, ge=1, le=52),
-    ctx: TenantContext = Depends(require_perm("benchmark.view")),
+    ctx: TenantContext = Depends(require_benchmark("benchmark.view")),
     db: AsyncSession = Depends(get_db),
 ):
     return await service.heatmap_matrix(db, tenant_id_of(ctx.user), weeks=weeks)
@@ -272,7 +291,7 @@ async def get_heatmap(
 async def compare_places(
     subjects: list[str] = Query(..., min_length=1, max_length=MAX_COMPARE_SUBJECTS),
     period: Literal["live", "30d", "90d", "365d"] = Query("live", alias="range"),
-    ctx: TenantContext = Depends(require_perm("benchmark.view")),
+    ctx: TenantContext = Depends(require_benchmark("benchmark.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Normalized facts for up to six comparison subjects.
@@ -287,8 +306,9 @@ async def compare_places(
     and own locations compute from their review and performance rows.
     """
     tenant_id = tenant_id_of(ctx.user)
+    await _require_external_subjects(ctx, subjects)
     key = "bm:compare:" + hashlib.sha1(
-        json.dumps({"t": tenant_id, "s": sorted(subjects), "r": period}, sort_keys=True).encode()
+        json.dumps({"t": tenant_id, "s": subjects, "r": period}, sort_keys=True).encode()
     ).hexdigest()
     try:
         cached = await cache_get(key)
@@ -309,6 +329,7 @@ async def compare_places(
         "subjects": subject_records,
         "distribution": metric_distribution(subject_records),
         "summary": north_star(subject_records, own_keys),
+        "pressure": pressure_scores(subject_records, own_keys),
     }
     try:
         await cache_set(key, json.dumps(payload, default=str), ttl=60)
@@ -335,7 +356,7 @@ class ThemeSubjectsIn(BaseModel):
 @router.post("/ai-summary", response_model=dict)
 async def post_ai_summary(
     body: AiSummaryIn,
-    ctx: TenantContext = Depends(require_perm("benchmark.view")),
+    ctx: TenantContext = Depends(require_benchmark("benchmark.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """One-to-two sentence takeaway over the comparison numbers.
@@ -351,6 +372,7 @@ async def post_ai_summary(
     Cached 10 min per tenant + subject set, which doubles as the cost cap.
     """
     tenant_id = tenant_id_of(ctx.user)
+    await _require_external_subjects(ctx, body.subjects)
     key = "bm:ai-summary:" + tenant_id + ":" + hashlib.sha1(
         json.dumps(sorted(body.subjects)).encode()
     ).hexdigest()
@@ -374,7 +396,7 @@ async def benchmark_history(
     subjects: list[str] = Query(..., min_length=1, max_length=MAX_COMPARE_SUBJECTS),
     days: int = Query(90, ge=1, le=3650),
     points: int = Query(12, ge=2, le=compare.MAX_HISTORY_POINTS),
-    ctx: TenantContext = Depends(require_perm("benchmark.view")),
+    ctx: TenantContext = Depends(require_benchmark("benchmark.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Dated history behind the period filter.
@@ -383,6 +405,7 @@ async def benchmark_history(
     review counts and average ratings sampled across the window. Each series is
     bounded to `points` rows and always tenant-scoped.
     """
+    await _require_external_subjects(ctx, subjects)
     return await compare.subject_history(
         db, tenant_id_of(ctx.user), subjects, days=days, points=points
     )
@@ -392,7 +415,7 @@ async def benchmark_history(
 async def benchmark_reviews(
     subjects: list[str] = Query(..., min_length=1, max_length=MAX_COMPARE_SUBJECTS),
     limit: int = Query(10, ge=1, le=50),
-    ctx: TenantContext = Depends(require_perm("benchmark.view")),
+    ctx: TenantContext = Depends(require_benchmark("benchmark.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Newest review samples per subject, for the paginated reviews table.
@@ -400,6 +423,7 @@ async def benchmark_reviews(
     Saved places return their cached review sample (up to 50 rows); own
     locations return their newest `ReviewInsight` rows, newest first.
     """
+    await _require_external_subjects(ctx, subjects)
     return await compare.reviews_for(
         db, tenant_id_of(ctx.user), subjects, limit=limit
     )
@@ -413,7 +437,7 @@ async def benchmark_themes(
     sec_fetch_site: str | None = Header(None, alias="Sec-Fetch-Site"),
     authorization: str | None = Header(None),
     response: Response = None,
-    ctx: TenantContext = Depends(require_perm("benchmark.view")),
+    ctx: TenantContext = Depends(require_benchmark("benchmark.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Read cached theme results and durably enqueue missing/stale samples.
@@ -421,6 +445,7 @@ async def benchmark_themes(
     This endpoint never calls an LLM. Workers do the paid work, so a page load
     can only create one bounded job per subject and remains safe without workers.
     """
+    await _require_external_subjects(ctx, subjects)
     # GET is state-mutating (idempotent enqueue), so require the same-origin
     # fetch metadata that cross-site <img> navigations cannot set.
     is_bearer = bool(authorization and authorization.lower().startswith("bearer "))
@@ -439,10 +464,11 @@ async def benchmark_themes(
 @router.post("/themes/retry", response_model=dict)
 async def retry_benchmark_themes(
     body: ThemeSubjectsIn,
-    ctx: TenantContext = Depends(require_perm("benchmark.view")),
+    ctx: TenantContext = Depends(require_benchmark("benchmark.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Retry failed/stale analyses, bounded by the service cooldown."""
+    await _require_external_subjects(ctx, body.subjects)
     try:
         return await theme_service.theme_response(
             db, tenant_id_of(ctx.user), body.subjects, retry=True, main_key=body.main
@@ -454,7 +480,7 @@ async def retry_benchmark_themes(
 @router.get("/places", response_model=list[dict])
 async def list_saved(
     limit: int = Query(50, ge=1, le=100),
-    ctx: TenantContext = Depends(require_perm("benchmark.view")),
+    ctx: TenantContext = Depends(require_benchmark("benchmark.view")),
     db: AsyncSession = Depends(get_db),
 ):
     return await service.list_saved(db, tenant_id_of(ctx.user), limit=limit)
@@ -463,9 +489,10 @@ async def list_saved(
 @router.post("/places", response_model=dict, status_code=201)
 async def save_place(
     body: SavePlaceIn,
-    ctx: TenantContext = Depends(require_perm("benchmark.manage")),
+    ctx: TenantContext = Depends(require_benchmark("benchmark.manage")),
     db: AsyncSession = Depends(get_db),
 ):
+    await check_feature(ctx.tenant_id, "benchmark_external")
     import time as _time
     try:
         row = await service.save_place(
@@ -485,7 +512,7 @@ async def save_place(
 async def set_heatmap(
     place_id: str,
     enabled: bool | None = Query(default=None),
-    ctx: TenantContext = Depends(require_perm("benchmark.manage")),
+    ctx: TenantContext = Depends(require_benchmark("benchmark.manage")),
     db: AsyncSession = Depends(get_db),
 ):
     row = await service.toggle_heatmap(
@@ -500,7 +527,7 @@ async def set_heatmap(
 async def set_bench_set(
     place_id: str,
     enabled: bool | None = Query(default=None),
-    ctx: TenantContext = Depends(require_perm("benchmark.manage")),
+    ctx: TenantContext = Depends(require_benchmark("benchmark.manage")),
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -517,7 +544,7 @@ async def set_bench_set(
 @router.post("/places/{place_id}/refresh", response_model=dict)
 async def refresh_place(
     place_id: str,
-    ctx: TenantContext = Depends(require_perm("benchmark.manage")),
+    ctx: TenantContext = Depends(require_benchmark("benchmark.manage")),
     db: AsyncSession = Depends(get_db),
 ):
     """Fetch one place now so its card is ready without waiting for the worker.
@@ -525,6 +552,7 @@ async def refresh_place(
     The free provider gets a bounded 100-review sample here; the scheduled
     collector later fills the full 30-day set (up to 500 reviews).
     """
+    await check_feature(ctx.tenant_id, "benchmark_external")
     import time as _time
 
     saved = await service.get_saved(db, tenant_id_of(ctx.user), place_id)
@@ -559,7 +587,7 @@ async def refresh_place(
 @router.get("/places/{place_id}/details", response_model=dict)
 async def place_details(
     place_id: str,
-    ctx: TenantContext = Depends(require_perm("benchmark.view")),
+    ctx: TenantContext = Depends(require_benchmark("benchmark.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Live details for a place on this tenant's bench (for the heatmap modal).
@@ -608,7 +636,7 @@ async def place_details(
 @router.delete("/places/{place_id}", response_model=dict)
 async def delete_saved(
     place_id: str,
-    ctx: TenantContext = Depends(require_perm("benchmark.manage")),
+    ctx: TenantContext = Depends(require_benchmark("benchmark.manage")),
     db: AsyncSession = Depends(get_db),
 ):
     removed = await service.delete_saved(db, tenant_id_of(ctx.user), place_id)
@@ -619,7 +647,7 @@ async def delete_saved(
 
 @router.get("/config", response_model=dict)
 async def get_config(
-    ctx: TenantContext = Depends(require_perm("benchmark.manage")),
+    ctx: TenantContext = Depends(require_benchmark("benchmark.manage")),
     db: AsyncSession = Depends(get_db),
 ):
     config = await service.get_config(db)

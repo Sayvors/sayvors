@@ -2,7 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element -- reviewer photos are dynamic remote URLs; native loading preserves the no-referrer privacy boundary used by benchmark review cards. */
 
-import { useId, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useId, useState, type CSSProperties, type ReactNode } from "react";
 import LogoLoader from "@/components/LogoLoader";
 import Modal from "@/components/dashboard/media/Modal";
 import type {
@@ -254,6 +254,16 @@ function ThemeCell({
 function SubjectStatus({ subject, onRetry }: { subject: ReviewThemeSubject; onRetry: () => void }) {
   const { t } = useI18n();
   const k = t.benchmark.compare.reviewKeywords;
+  const [retryIn, setRetryIn] = useState(Math.max(0, subject.retry_after_seconds));
+
+  useEffect(() => {
+    if (subject.retry_after_seconds <= 0) return;
+    const timer = window.setInterval(() => {
+      setRetryIn((seconds) => Math.max(0, seconds - 1));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [subject.retry_after_seconds]);
+
   if (subject.status === "pending") {
     return <span role="status" className="text-[11px] font-semibold text-[#6F6685]">{k.analyzing}</span>;
   }
@@ -264,11 +274,15 @@ function SubjectStatus({ subject, onRetry }: { subject: ReviewThemeSubject; onRe
     return (
       <div>
         <p className="text-[11px] font-semibold text-[#B3123A]">{k.subjectError}</p>
+        {retryIn > 0 ? (
+          <p className="mt-0.5 text-[10px] font-semibold text-[#6F6685]">{k.retryInSeconds(retryIn)}</p>
+        ) : null}
         <button
           type="button"
           onClick={onRetry}
+          disabled={retryIn > 0}
           aria-label={k.retryBusiness(subject.name ?? subject.key)}
-          className={`mt-1 inline-flex min-h-11 items-center rounded-[8px] border border-[#3D1D6E]/25 bg-white px-2 text-[10px] font-bold text-[#3D1D6E] transition active:translate-y-[2px] active:scale-[0.98] ${FOCUS}`}
+          className={`mt-1 inline-flex min-h-11 items-center rounded-[8px] border border-[#3D1D6E]/25 bg-white px-2 text-[10px] font-bold text-[#3D1D6E] transition active:translate-y-[2px] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS}`}
         >
           {k.retry}
         </button>
@@ -497,7 +511,11 @@ export default function ReviewKeywords({
                                 onOpenQuotes={() => setQuoteSelection({ row, subject, cell: readyCell(row, subject) })}
                               />
                             ) : (
-                              <SubjectStatus subject={subject} onRetry={onRetry} />
+                              <SubjectStatus
+                                key={`${subject.key}:${subject.retry_after_seconds}`}
+                                subject={subject}
+                                onRetry={onRetry}
+                              />
                             )}
                             {subject.status === "pending" && row.cells[subject.key] ? (
                               <p role="status" className="mt-2 text-[9px] font-semibold text-[#6F6685]">

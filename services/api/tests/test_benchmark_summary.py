@@ -6,7 +6,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from app.modules.benchmark.summary import distribution, north_star
+from app.modules.benchmark.summary import distribution, north_star, pressure_scores
 
 
 def _subject(key, name, *, avg=None, month=None, total=None, pos=None,
@@ -133,3 +133,18 @@ def test_health_buckets():
     assert health_of(_subject("s", "A", avg=None, pos=85)) == "good"  # sentiment-only
     assert health_of(_subject("s", "A", avg=None, pos=None)) == "warn"  # unknown → not good
     assert health_of(_subject("own:new", "New", avg=0.0, total=0, pos=0.0, kind="own")) == "warn"
+
+
+def test_pressure_scores_ranks_nearby_stronger_competitor_higher():
+    out = pressure_scores([
+        _subject("own:me", "Mine", avg=4.2, month=5, pos=70, kind="own"),
+        {**_subject("saved:near", "Near Cafe", avg=4.8, month=20, pos=90), "location": {"distance_km": 1.2}},
+        {**_subject("saved:far", "Far Cafe", avg=4.7, month=18, pos=88), "location": {"distance_km": 18.0}},
+    ], own_keys=["own:me"])
+    assert [r["key"] for r in out] == ["saved:near", "saved:far"]
+    assert out[0]["score"] > out[1]["score"]
+    assert out[0]["distance_km"] == 1.2
+
+
+def test_pressure_scores_empty_without_own():
+    assert pressure_scores([_subject("saved:a", "A", avg=4.5)], own_keys=[]) == []

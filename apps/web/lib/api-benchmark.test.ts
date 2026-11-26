@@ -8,6 +8,7 @@ import { apiFetch } from "@/lib/api-rag";
 import {
   fetchReviewThemes,
   isSavedPlaceReady,
+  normalizeCompareRange,
   retryReviewThemes,
   saveBenchmarkPlace,
   searchPlaces,
@@ -35,6 +36,20 @@ describe("benchmark API client", () => {
     await searchPlaces("Wahmy Riyadh");
 
     expect(api.mock.calls[0][2]).toBe(30_000);
+  });
+});
+
+describe("comparison range normalization", () => {
+  it("preserves every backend-supported range", () => {
+    expect(normalizeCompareRange("live")).toBe("live");
+    expect(normalizeCompareRange("30d")).toBe("30d");
+    expect(normalizeCompareRange("90d")).toBe("90d");
+    expect(normalizeCompareRange("365d")).toBe("365d");
+  });
+
+  it("falls back to live for missing or unknown ranges", () => {
+    expect(normalizeCompareRange(null)).toBe("live");
+    expect(normalizeCompareRange("7d")).toBe("live");
   });
 });
 

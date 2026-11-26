@@ -71,6 +71,53 @@ async def test_heatmatrix_empty_when_nothing_saved(db):
 pytestmark = pytest.mark.asyncio
 
 
+async def test_benchmark_requires_plan_feature(client, monkeypatch):
+    from app.modules.billing.entitlements import EntitlementDenied
+
+    async def _deny(_tenant_id, feature):
+        raise EntitlementDenied("Benchmarking is not included.", feature=feature)
+
+    monkeypatch.setattr("app.modules.benchmark.router.check_feature", _deny)
+    response = client.get("/api/v1/benchmark/places")
+    assert response.status_code == 403
+    assert response.headers["X-Entitlement-Denied"] == "benchmarking"
+
+
+async def test_external_peer_routes_require_external_feature(client, monkeypatch):
+    from app.modules.billing.entitlements import EntitlementDenied
+
+    async def _deny_external(_tenant_id, feature):
+        if feature == "benchmark_external":
+            raise EntitlementDenied("External peers are not included.", feature=feature)
+
+    monkeypatch.setattr("app.modules.benchmark.router.check_feature", _deny_external)
+
+    search = client.get("/api/v1/benchmark/search?q=cafe")
+    assert search.status_code == 403
+    assert search.headers["X-Entitlement-Denied"] == "benchmark_external"
+
+    save = client.post("/api/v1/benchmark/places", json={"place_id": "p1"})
+    assert save.status_code == 403
+    assert save.headers["X-Entitlement-Denied"] == "benchmark_external"
+
+    compare = client.get("/api/v1/benchmark/compare?subjects=saved%3Ap1")
+    assert compare.status_code == 403
+    assert compare.headers["X-Entitlement-Denied"] == "benchmark_external"
+
+
+async def test_own_only_compare_does_not_require_external_feature(client, monkeypatch):
+    from app.modules.billing.entitlements import EntitlementDenied
+
+    async def _deny_external(_tenant_id, feature):
+        if feature == "benchmark_external":
+            raise EntitlementDenied("External peers are not included.", feature=feature)
+
+    monkeypatch.setattr("app.modules.benchmark.router.check_feature", _deny_external)
+    response = client.get("/api/v1/benchmark/compare?subjects=own%3Anot-connected")
+    assert response.status_code == 200
+    assert response.json()["subjects"][0]["available"] is False
+
+
 async def test_search_requires_permission(client, db, monkeypatch):
     import app.modules.benchmark.places as places_module
 

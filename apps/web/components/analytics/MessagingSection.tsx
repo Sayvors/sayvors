@@ -135,7 +135,6 @@ export default function MessagingSection({
                       </p>
                       <p className={`mt-0.5 text-[11px] tabular-nums ${INK2}`}>
                         {c.conversations} conversations
-                        {c.response_rate !== null ? ` · ${c.response_rate}% answered` : ""}
                         {c.comments_in > 0 ? ` · ${c.comments_in} comments` : ""}
                       </p>
                     </div>
@@ -148,11 +147,6 @@ export default function MessagingSection({
                       <Delta value={countDelta(c.messages_in, c.messages_in_prev)} />
                     </div>
                   </div>
-                  {c.unanswered_now !== null && c.unanswered_now > 0 && (
-                    <span className="shrink-0 rounded-[8px] bg-[var(--ui-ink)] px-2.5 py-1 text-[11px] font-bold text-[var(--ui-on-ink)]">
-                      {c.unanswered_now} waiting
-                    </span>
-                  )}
                 </li>
               );
             })}
@@ -196,37 +190,56 @@ export default function MessagingSection({
         {/* AI vs human — deflection framing. Reads stored ai_handled_out
             from the daily rollup; no request-time computation. */}
         <div className="ui-card p-5 lg:col-span-2">
-        <h3 className={`text-[13px] font-bold ${INK}`}>AI vs human</h3>
-        <div className="mt-4 grid grid-cols-2 gap-4">
-          <div>
-            <p className={`text-[28px] font-black leading-none tabular-nums ${INK}`}>
-              {t.ai_handled_out ?? 0}
-            </p>
-            <p className={`mt-2 text-[11px] font-semibold uppercase tracking-wide ${INK2}`}>
-              AI-handled
-            </p>
-          </div>
-          <div>
-            <p className={`text-[28px] font-black leading-none tabular-nums ${INK}`}>
-              {t.human_handled_out ?? 0}
-            </p>
-            <p className={`mt-2 text-[11px] font-semibold uppercase tracking-wide ${INK2}`}>
-              human-handled
-            </p>
-          </div>
-        </div>
-        {(t.messages_out ?? 0) > 0 && (
-          <p className={`mt-4 border-t border-[var(--ui-line)] pt-3 text-[11.5px] font-medium leading-relaxed ${INK2}`}>
-            AI handled {Math.round(((t.ai_handled_out ?? 0) / t.messages_out) * 100)}% of outbound replies
-            {t.ai_handled_out_prev !== null && (t.ai_handled_out_prev ?? 0) > 0
-              ? ` (was ${Math.round(((t.ai_handled_out_prev ?? 0) / Math.max(1, t.messages_out_prev)) * 100)}% last period)`
-              : ""}
-            {(() => {
-              const unknown = Math.max(0, t.messages_out - (t.ai_handled_out ?? 0) - (t.human_handled_out ?? 0));
-              return unknown > 0 ? ` · ${unknown} legacy (pre-tracking)` : "";
-            })()}
-          </p>
-        )}
+        {(() => {
+          const ai = Math.max(0, t.ai_handled_out ?? 0);
+          const human = Math.max(0, t.human_handled_out ?? 0);
+          const out = Math.max(0, t.messages_out ?? 0);
+          const legacy = Math.max(0, out - ai - human);
+          const total = Math.max(1, ai + human + legacy);
+          const pct = (n: number) => Math.round((n / total) * 100);
+          const aiPct = out > 0 ? Math.round((ai / out) * 100) : 0;
+          return (
+            <>
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <h3 className={`text-[13px] font-bold ${INK}`}>AI vs human</h3>
+                <p className={`text-[11px] tabular-nums ${INK2}`}>{out} outbound</p>
+              </div>
+              <div
+                className="mt-4 flex h-3 w-full overflow-hidden rounded-full bg-[var(--ui-sunken)]"
+                role="img"
+                aria-label={`AI handled ${ai}, human handled ${human}${legacy > 0 ? `, legacy ${legacy}` : ""}`}
+              >
+                {ai > 0 && <div className="h-full bg-[var(--ui-ink)]" style={{ width: `${pct(ai)}%` }} title={`AI-handled ${ai}`} />}
+                {human > 0 && <div className="h-full bg-[var(--ui-ink-2)]" style={{ width: `${pct(human)}%` }} title={`Human-handled ${human}`} />}
+                {legacy > 0 && <div className="h-full bg-[var(--ui-line-strong)]" style={{ width: `${pct(legacy)}%` }} title={`Legacy ${legacy}`} />}
+              </div>
+              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
+                <span className={`inline-flex items-center gap-1.5 ${INK2}`}>
+                  <span className="h-2 w-2 rounded-full bg-[var(--ui-ink)]" aria-hidden />
+                  <span className={`font-semibold ${INK}`}>{ai}</span> AI-handled
+                </span>
+                <span className={`inline-flex items-center gap-1.5 ${INK2}`}>
+                  <span className="h-2 w-2 rounded-full bg-[var(--ui-ink-2)]" aria-hidden />
+                  <span className={`font-semibold ${INK}`}>{human}</span> human-handled
+                </span>
+                {legacy > 0 && (
+                  <span className={`inline-flex items-center gap-1.5 ${INK2}`}>
+                    <span className="h-2 w-2 rounded-full bg-[var(--ui-line-strong)]" aria-hidden />
+                    <span className={`font-semibold ${INK}`}>{legacy}</span> legacy (pre-tracking)
+                  </span>
+                )}
+              </div>
+              {out > 0 && (
+                <p className={`mt-3 border-t border-[var(--ui-line)] pt-3 text-[11.5px] font-medium leading-relaxed ${INK2}`}>
+                  AI handled {aiPct}% of outbound replies
+                  {t.ai_handled_out_prev !== null && (t.ai_handled_out_prev ?? 0) > 0
+                    ? ` (was ${Math.round(((t.ai_handled_out_prev ?? 0) / Math.max(1, t.messages_out_prev)) * 100)}% last period)`
+                    : ""}
+                </p>
+              )}
+            </>
+          );
+        })()}
         </div>
       </div>
       <FactSource

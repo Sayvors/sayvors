@@ -8,7 +8,6 @@ import {
   fetchKeywords,
   fetchMessagingGrowth,
   fetchOpportunities,
-  fetchOverview,
   fetchTimeseries,
   fetchVisibility,
   fetchGrowthCards,
@@ -175,13 +174,12 @@ function GrowthPageContent() {
   const growthQuery = useQuery({
     queryKey: queryKeys.growth.all(days, channelId),
     queryFn: async () => {
-      const [v, a, o, t, k, ov, mg, gc] = await Promise.all([
+      const [v, a, o, t, k, mg, gc] = await Promise.all([
         fetchVisibility(days, channelId),
         fetchAcquisition(days, channelId),
         fetchOpportunities(days, channelId),
         fetchTimeseries(days, channelId),
         fetchKeywords(days, channelId).catch(() => null),
-        fetchOverview(days, channelId).catch(() => null),
         fetchMessagingGrowth(days, channelId).catch(() => null),
         fetchGrowthCards(days, channelId).catch(() => null),
       ]);
@@ -191,7 +189,6 @@ function GrowthPageContent() {
         opportunities: o,
         points: t,
         keywords: k,
-        overview: ov,
         messagingGrowth: mg,
         growthCards: gc,
       };
@@ -203,7 +200,6 @@ function GrowthPageContent() {
   const opportunities = growthQuery.data?.opportunities ?? null;
   const points = growthQuery.data?.points ?? [];
   const keywords = growthQuery.data?.keywords ?? null;
-  const overview = growthQuery.data?.overview ?? null;
   const messagingGrowth = growthQuery.data?.messagingGrowth ?? null;
   const growthCards = growthQuery.data?.growthCards ?? null;
   const loading = growthQuery.isPending;
@@ -349,14 +345,6 @@ function GrowthPageContent() {
                 <p className="flex justify-between">
                   <span>{pg.custActions}</span>
                   <span className="font-semibold text-[var(--ui-ink)]">{fmt(actions)}</span>
-                </p>
-                <p className="flex justify-between">
-                  <span>{pg.totalReviews}</span>
-                  <span className="font-semibold text-[var(--ui-ink)]">{fmt(overview?.total_reviews ?? 0)}</span>
-                </p>
-                <p className="flex justify-between">
-                  <span>{pg.respRate}</span>
-                  <span className="font-semibold text-[var(--ui-ink)]">{overview ? `${fmt(Math.round(overview.response_rate))}%` : "—"}</span>
                 </p>
               </div>
               <FactSource
@@ -511,12 +499,7 @@ function GrowthPageContent() {
           {messagingGrowth && (
             <section aria-label={pg.msgAria} className="ui-card p-5">
               <h3 className="mb-4 text-[14px] font-bold text-[var(--ui-ink)]">{pg.msgTitle}</h3>
-              <div className="grid gap-4 sm:grid-cols-3">
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">{pg.newContacts}</p>
-                  <p className="mt-1 text-[22px] font-black tabular-nums text-[var(--ui-ink)]">{fmt(messagingGrowth.total_new_contacts)}</p>
-                  <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">{pg.newContactsSub}</p>
-                </div>
+              <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">{pg.msgIn}</p>
                   <p className="mt-1 text-[22px] font-black tabular-nums text-[var(--ui-ink)]">{fmt(messagingGrowth.total_messages_in)}</p>

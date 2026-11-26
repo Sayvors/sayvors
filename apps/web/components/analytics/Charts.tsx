@@ -8,15 +8,13 @@ import { CHART_COLORS, DonutChart } from "@/components/analytics/ReputationChart
 
 /* ── Metric switcher + area chart ─────────────────────────────────── */
 
-type MetricKey = "reviews" | "sentiment" | "google";
+type MetricKey = "reviews" | "sentiment";
 
 type MetricChartLabels = {
   activityOverTime: string;
   metric: string;
   reviews: string;
   sentiment: string;
-  google: string;
-  mapsImpressions: string;
   positive: string;
   neutral: string;
   negative: string;
@@ -29,8 +27,6 @@ const DEFAULT_METRIC_CHART_LABELS: MetricChartLabels = {
   metric: "Chart metric",
   reviews: "Reviews",
   sentiment: "Sentiment",
-  google: "Google",
-  mapsImpressions: "Maps impressions",
   positive: "Positive",
   neutral: "Neutral",
   negative: "Negative",
@@ -41,7 +37,6 @@ const DEFAULT_METRIC_CHART_LABELS: MetricChartLabels = {
 const METRICS: { key: MetricKey }[] = [
   { key: "reviews" },
   { key: "sentiment" },
-  { key: "google" },
 ];
 
 function fmtDay(iso: string, locale: string) {
@@ -91,8 +86,6 @@ export function MetricChart({
     metric: c.metric,
     reviews: c.reviews,
     sentiment: c.sentiment,
-    google: c.google,
-    mapsImpressions: c.mapsImpressions,
     positive: c.positive,
     neutral: c.neutral,
     negative: c.negative,
@@ -102,7 +95,6 @@ export function MetricChart({
   const metricLabels: Record<MetricKey, string> = {
     reviews: chartLabels.reviews,
     sentiment: chartLabels.sentiment,
-    google: chartLabels.google,
   };
 
   const seriesPoints = useMemo(() => {
@@ -130,9 +122,6 @@ export function MetricChart({
   const series = useMemo(() => {
     if (metric === "reviews") {
       return [{ key: "reviews_count", label: chartLabels.reviews, color: CHART_COLORS.violet, values: seriesPoints.map((p) => p.reviews_count) }];
-    }
-    if (metric === "google") {
-      return [{ key: "impressions", label: chartLabels.mapsImpressions, color: CHART_COLORS.blue, values: seriesPoints.map((p) => p.impressions_maps) }];
     }
     return [
       { key: "pos", label: chartLabels.positive, color: CHART_COLORS.green, values: seriesPoints.map((p) => p.positive_count) },
@@ -232,7 +221,7 @@ export function MetricChart({
                     </rect>
                   );
                 })
-              ) : metric === "sentiment" ? (
+              ) : (
                 seriesPoints.map((point, index) => {
                   const slot = W / Math.max(1, seriesPoints.length);
                   const barWidth = Math.min(30, slot * 0.62);
@@ -262,16 +251,6 @@ export function MetricChart({
                           </rect>
                         );
                       })}
-                    </g>
-                  );
-                })
-              ) : (
-                [...series].reverse().map((s) => {
-                  const { line, area } = buildPath(s.values, max, W, H, PAD);
-                  return (
-                    <g key={s.key}>
-                      <path d={area} style={{ fill: s.color }} fillOpacity="0.08" />
-                      <path d={line} fill="none" style={{ stroke: s.color }} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
                     </g>
                   );
                 })

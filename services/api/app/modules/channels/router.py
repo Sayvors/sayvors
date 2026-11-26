@@ -133,7 +133,21 @@ def _channel_source_info(channel: Channel) -> tuple[str | None, str | None]:
     return None, None
 
 
-def _channel_response(channel: Channel) -> ChannelResponse:
+def _channel_verification(verification: VerificationRecord | None) -> tuple[str | None, bool]:
+    """Stored verification fields shared by single and batch channel responses."""
+    if verification is None:
+        return None, False
+    return (
+        verification.status,
+        bool(verification.status == "verified" or verification.verified_at is not None),
+    )
+
+
+def _channel_response(
+    channel: Channel,
+    verification_status: str | None = None,
+    verified: bool = False,
+) -> ChannelResponse:
     import json as _json
 
     source, listing_id = _channel_source_info(channel)
@@ -174,6 +188,8 @@ def _channel_response(channel: Channel) -> ChannelResponse:
             else None
         ),
         profile_fields_checked=meta.get("profile_fields_checked") is True,
+        verification_status=verification_status,
+        verified=verified,
     )
 
 
@@ -225,10 +241,23 @@ async def get_channels(
     if visible is not None:
         channels = [c for c in channels if c.id in visible]
         total = len(channels)
-    return ChannelListResponse(
-        channels=[_channel_response(c) for c in channels],
-        total=total,
-    )
+    verification_by_channel = {}
+    if channels:
+        verification_by_channel = {
+            row.channel_id: row
+            for row in (
+                await db.execute(
+                    select(VerificationRecord).where(
+                        VerificationRecord.channel_id.in_([channel.id for channel in channels])
+                    )
+                )
+            ).scalars()
+        }
+    responses = []
+    for channel in channels:
+        status, verified = _channel_verification(verification_by_channel.get(channel.id))
+        responses.append(_channel_response(channel, status, verified))
+    return ChannelListResponse(channels=responses, total=total)
 
 
 @router.get("/{channel_id}", response_model=ChannelResponse)
@@ -242,7 +271,13 @@ async def get_channel_by_id(
     channel = await get_channel(channel_id, ctx.user, db)
     if not channel:
         raise HTTPException(status_code=404, detail="Channel not found")
-    return _channel_response(channel)
+    verification = (
+        await db.execute(
+            select(VerificationRecord).where(VerificationRecord.channel_id == channel_id)
+        )
+    ).scalar_one_or_none()
+    status, verified = _channel_verification(verification)
+    return _channel_response(channel, status, verified)
 
 
 @router.post("/google/disconnect")

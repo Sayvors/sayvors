@@ -13,6 +13,7 @@ import {
   fetchReviewThemes,
   fetchReviews,
   fetchSavedPlaces,
+  normalizeCompareRange,
   retryReviewThemes,
   RANGE_DAYS,
   subjectKey,
@@ -32,32 +33,39 @@ import DistributionStrip from "@/components/benchmark/DistributionStrip";
 import OwnScorecards from "@/components/benchmark/OwnScorecards";
 import ReviewResponseTable from "@/components/benchmark/ReviewResponseTable";
 import SentimentVelocityBars from "@/components/benchmark/SentimentVelocityBars";
+import StarDistributionBars from "@/components/benchmark/StarDistributionBars";
+import BenchmarkGapBars from "@/components/benchmark/BenchmarkGapBars";
+import CompetitorPressureCard from "@/components/benchmark/CompetitorPressureCard";
+import MarketPositionScatter from "@/components/benchmark/MarketPositionScatter";
+import PeriodDeltaCards from "@/components/benchmark/PeriodDeltaCards";
+import BenchmarkStoryCharts from "@/components/benchmark/BenchmarkStoryCharts";
+import BenchmarkChartsGallery from "@/components/benchmark/BenchmarkChartsGallery";
 import AiSummaryCard from "@/components/benchmark/AiSummaryCard";
 import BaselineAlert from "@/components/benchmark/BaselineAlert";
 import CompletenessCard from "@/components/benchmark/CompletenessCard";
-import FixFirstTickets from "@/components/benchmark/FixFirstTickets";
 import ReviewKeywords from "@/components/benchmark/ReviewKeywords";
 import { queryKeys } from "@/lib/query-keys";
+import {
+  defaultCompareMain,
+  sortCompareChannels,
+  type CompareChannelOption,
+} from "@/lib/benchmark-selection";
+import VerificationBadge from "@/components/shared/VerificationBadge";
 import {
   formatGap,
   formatPercent,
   formatRating,
   type GapUnit,
 } from "@/lib/benchmark-format";
+import {
+  getMetricRows,
+  type BenchmarkMetricRow,
+} from "@/lib/benchmark-rows";
 
 const FOCUS = "focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[#3D1D6E]";
 const REVIEW_THEME_POLL_MS = 3000;
 
-interface ChannelOption {
-  id: string;
-  display_name: string | null;
-  platform: string;
-}
-
-type MetricKey =
-  | keyof ComparisonSubject["metrics"]
-  | "five_star_pct"
-  | "one_star_pct";
+type MetricKey = BenchmarkMetricRow["key"];
 type FactKey = keyof ComparisonSubject["facts"];
 
 interface Row<T extends string> {
@@ -75,22 +83,6 @@ interface Row<T extends string> {
   higherIsBetter?: boolean;
   /** Unit used by the signed gap chip beneath this row's value. */
   gapUnit?: GapUnit;
-}
-
-function getMetricRows(c: Record<string, any>): Row<MetricKey>[] {
-  const starShare = (s: ComparisonSubject, star: number) => {
-    const total = s.metrics.total_ratings ?? s.metrics.total_reviews ?? 0;
-    const count = star === 5 ? s.metrics.five_star : s.metrics.one_star;
-    return total > 0 && count != null ? (count / total) * 100 : null;
-  };
-  return [
-    { key: "total_reviews", label: c.reviewsTotal, value: (s) => s.metrics.total_reviews, higherIsBetter: true, gapUnit: "count", render: (s) => num(s.metrics.total_reviews) },
-    { key: "avg_rating", label: c.averageRating, value: (s) => s.metrics.avg_rating, tierValue: (s) => (s.metrics.total_ratings !== 0 ? s.metrics.avg_rating : null), higherIsBetter: true, gapUnit: "rating", render: (s) => rating(s) },
-    { key: "reviews_last_month", label: c.reviewsLastMonth, value: (s) => s.metrics.reviews_last_month, higherIsBetter: true, gapUnit: "count", render: (s) => num(s.metrics.reviews_last_month) },
-    { key: "reviews_last_year", label: c.reviewsLastYear, value: (s) => s.metrics.reviews_last_year, gapUnit: "count", render: (s) => num(s.metrics.reviews_last_year) },
-    { key: "five_star_pct", label: c.fiveStarRatings, value: (s) => starShare(s, 5), higherIsBetter: true, gapUnit: "percent", render: (s) => pct(starShare(s, 5)) },
-    { key: "one_star_pct", label: c.oneStarRatings, value: (s) => starShare(s, 1), higherIsBetter: false, gapUnit: "percent", render: (s) => pct(starShare(s, 1)) },
-  ];
 }
 
 type PeriodKey =
@@ -117,26 +109,18 @@ function getRangeOptions(c: Record<string, any>): { value: CompareRange; label: 
   return [
     { value: "live", label: c.live, title: c.liveTitle, status: "ready" },
     { value: "30d", label: c.days30, title: c.days30Title, status: "ready" },
-    { value: "90d", label: c.days90, title: c.days90Title, status: "coming_soon" },
-    { value: "365d", label: c.year1, title: c.year1Title, status: "coming_soon" },
+    { value: "90d", label: c.days90, title: c.days90Title, status: "ready" },
+    { value: "365d", label: c.year1, title: c.year1Title, status: "ready" },
   ];
 }
 
-/** Disabled ranges fall back to Live so an old link still renders. */
-function normalizeRange(value: string | null): CompareRange {
-  return value === "30d" ? "30d" : "live";
-}
+/** Unsupported or missing ranges fall back to Live. */
 
 function getFactRows(c: Record<string, any>): Row<FactKey>[] {
   return [
     { key: "positive_pct", label: c.positiveSentiment, value: (s) => s.facts.positive_pct, higherIsBetter: true, gapUnit: "percent", render: (s) => pct(s.facts.positive_pct) },
     { key: "negative_pct", label: c.negativeSentiment, value: (s) => s.facts.negative_pct, higherIsBetter: false, gapUnit: "percent", render: (s) => pct(s.facts.negative_pct) },
     { key: "branch", label: c.branchLocation, render: (s) => s.facts.branch ?? "—" },
-    { key: "employee_mentions", label: c.teamMentioned, value: (s) => s.facts.employee_mentions, gapUnit: "count", render: (s) => num(s.facts.employee_mentions) },
-    { key: "working_hard_mentions", label: c.praisedForHardWork, value: (s) => s.facts.working_hard_mentions, gapUnit: "count", render: (s) => num(s.facts.working_hard_mentions) },
-    { key: "menu_price_mentions", label: c.menuPriceMentions, value: (s) => s.facts.menu_price_mentions, gapUnit: "count", render: (s) => num(s.facts.menu_price_mentions) },
-    { key: "parking_praised", label: c.parkingPositive, value: (s) => s.facts.parking_praised, gapUnit: "count", render: (s) => num(s.facts.parking_praised) },
-    { key: "parking_criticised", label: c.parkingNegative, value: (s) => s.facts.parking_criticised, higherIsBetter: false, gapUnit: "count", render: (s) => num(s.facts.parking_criticised) },
     { key: "services", label: c.services, render: (s, all) => serviceChips(s.facts.services, all) },
     { key: "top_problems", label: c.topProblems, render: (s) => chips(s.facts.top_problems) },
     { key: "named_team", label: c.namedTeam, render: (s) => namedTeam(s.facts.named_team) },
@@ -216,13 +200,6 @@ function signed(value: number | null | undefined): string {
   if (value == null) return "—";
   if (value === 0) return "0.00";
   return `${value > 0 ? "+" : ""}${value.toFixed(2)}`;
-}
-
-/** A listing with no ratings has no average; 0.0 would read as a real score. */
-function rating(subject: ComparisonSubject): string {
-  const { avg_rating, total_ratings } = subject.metrics;
-  if (avg_rating == null || total_ratings === 0) return "—";
-  return formatRating(avg_rating);
 }
 
 type CellTier = "best" | "good" | "worst" | "empty";
@@ -454,7 +431,7 @@ function MatrixTable<T extends string>({
             })}
           </ul>
         ) : (
-          <p className="px-3 py-4 text-center text-[11px] text-[#3B2D5E]">No business selected.</p>
+          <p className="px-3 py-4 text-center text-[11px] text-[#3B2D5E]">{c.noBusinessSelected}</p>
         )}
       </div>
 
@@ -494,12 +471,20 @@ function MatrixTable<T extends string>({
                     >
                       {subject.name || (subject.kind === "own" ? c.yourLocation : c.savedBusiness)}
                     </span>
-                    <span className="mt-0.5 block truncate text-[10px] font-normal text-[#3B2D5E]">
-                      {subject.available
-                        ? subject.kind === "saved"
-                          ? c.googleListing
-                          : c.yourLocation
-                        : subject.reason}
+                    <span className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] font-normal text-[#3B2D5E]">
+                      <span className="truncate">
+                        {subject.available
+                          ? subject.kind === "saved"
+                            ? c.googleListing
+                            : c.yourLocation
+                          : subject.reason}
+                      </span>
+                      {subject.kind === "own" ? (
+                        <VerificationBadge
+                          status={subject.verified ? "verified" : "unstarted"}
+                          compact
+                        />
+                      ) : null}
                     </span>
                   </th>
                 );
@@ -854,6 +839,12 @@ function FadedCell({
       role="button"
       tabIndex={0}
       onClick={onOpen}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen();
+        }
+      }}
       className={`h-[132px] cursor-pointer overflow-hidden rounded-[8px] px-1.5 py-1.5 transition-colors hover:bg-[#F4F2F7] ${FOCUS}`}
     >
       <ul className="flex flex-col gap-1.5">
@@ -918,9 +909,52 @@ function ReviewsPopup({
   const [filter, setFilter] = useState<PopupFilter>("newest");
   const rows = popupReviews(subject, category, filter);
   const color = SENTIMENT_CATEGORY_COLORS[category];
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const titleId = "benchmark-reviews-popup-title";
+
+  useEffect(() => {
+    closeRef.current?.focus();
+  }, []);
+
+  function onDialogKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "Tab") return;
+    const root = dialogRef.current;
+    if (!root) return;
+    const focusable = Array.from(
+      root.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+    );
+    if (focusable.length === 0) {
+      event.preventDefault();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement as HTMLElement | null;
+    if (event.shiftKey) {
+      if (active === first || !root.contains(active)) {
+        event.preventDefault();
+        last.focus();
+      }
+    } else if (active === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/50 p-4">
-      <div className="flex max-h-[86vh] w-full max-w-[860px] flex-col overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white shadow-[0_24px_80px_rgba(20,16,31,0.35)]">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        onKeyDown={onDialogKeyDown}
+        className="flex max-h-[86vh] w-full max-w-[860px] flex-col overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white shadow-[0_24px_80px_rgba(20,16,31,0.35)]"
+      >
         <div className="flex items-start justify-between gap-3 border-b border-[var(--ui-line)] bg-[#FAFAFB] px-4 py-3">
           <div className="flex items-center gap-2.5">
             <GoogleMark size={22} />
@@ -931,7 +965,7 @@ function ReviewsPopup({
                   {c.googleReviews}
                 </span>
               </div>
-              <h2 className="text-[14px] font-bold text-[#14101F]">
+              <h2 id={titleId} className="text-[14px] font-bold text-[#14101F]">
                 {subject.name || "—"}
               </h2>
               <p className="text-[10px] text-[#8A8496]">
@@ -952,6 +986,7 @@ function ReviewsPopup({
               <option value="all">{c.all}</option>
             </select>
             <button
+              ref={closeRef}
               type="button"
               onClick={close}
               className={`rounded-[8px] border border-[#3D1D6E]/30 bg-white px-3 py-1.5 text-[11px] font-semibold text-[#3D1D6E] ${FOCUS}`}
@@ -1065,17 +1100,38 @@ function ReviewsPopup({
 function SentimentReviewsTable({
   subjects,
   loading,
+  error,
+  onRetry,
   openPopup,
+  className = "mt-4 overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white",
 }: {
   subjects: SubjectReviews[];
   loading: boolean;
+  error?: unknown;
+  onRetry: () => void;
   openPopup: (subject: SubjectReviews, category: SentimentCategory) => void;
+  className?: string;
 }) {
   const { t } = useI18n();
   const c = t.benchmark.compare;
   // On small screens the business columns become one dropdown: only the
   // selected business's category rows are shown, like the other tables.
   const [mobileIndex, setMobileIndex] = useState(0);
+
+  if (error) {
+    return (
+      <div role="alert" className="mt-4 rounded-[8px] border border-[#FF4F6E]/35 bg-white px-3 py-2">
+        <p className="text-[12px] font-semibold text-[#B3123A]">{c.couldNotLoadReviewResponses}</p>
+        <button
+          type="button"
+          onClick={onRetry}
+          className={`mt-2 inline-flex min-h-11 items-center rounded-[8px] border border-[#3D1D6E]/25 bg-white px-3 text-[11px] font-bold text-[#3D1D6E] ${FOCUS}`}
+        >
+          {t.common.retry}
+        </button>
+      </div>
+    );
+  }
 
   if (loading) {
     return <p className="mt-4 text-[12px] text-[#3B2D5E]">{t.common.loading}</p>;
@@ -1089,7 +1145,7 @@ function SentimentReviewsTable({
   }
 
   return (
-    <section className="mt-4 overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white">
+    <section className={className}>
       <div className="flex items-center justify-between border-b border-[var(--ui-line)] px-3 py-2">
         <h2 className="text-[12px] font-bold uppercase tracking-wide text-[#14101F]">
           {c.reviews}
@@ -1143,7 +1199,7 @@ function SentimentReviewsTable({
           </table>
         ) : (
           <p className="px-3 py-4 text-center text-[11px] text-[#3B2D5E]">
-            No business selected.
+            {c.noBusinessSelected}
           </p>
         )}
       </div>
@@ -1166,7 +1222,7 @@ function SentimentReviewsTable({
                 scope="col"
                 className="sticky left-0 z-10 min-w-[132px] border-b border-r border-[var(--ui-line)] bg-[#FAFAFB] px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]"
               >
-                Category
+                {c.category}
               </th>
               {subjects.map((subject) => (
                 <th
@@ -1246,15 +1302,17 @@ export default function ComparePage() {
     queryKey: ["benchmark", "own-locations-list"],
     queryFn: async () => {
       const data = await apiFetch("/api/v1/channels?limit=100");
-      return ((data.channels ?? []) as ChannelOption[]).filter(
-        (channel) => channel.platform === "google_reviews"
+      return sortCompareChannels(
+        ((data.channels ?? []) as CompareChannelOption[]).filter(
+          (channel) => channel.platform === "google_reviews" && channel.status === "active"
+        )
       );
     },
   });
   const own = channelsQuery.data ?? [];
 
   const selection = readSelection(params);
-  const range = normalizeRange(params.get("range"));
+  const range = normalizeCompareRange(params.get("range"));
   const days = RANGE_DAYS[range];
   const keys = [selection.main, ...selection.competitors].filter(
     (key): key is string => Boolean(key)
@@ -1296,6 +1354,7 @@ export default function ComparePage() {
     subject: SubjectReviews;
     category: SentimentCategory;
   } | null>(null);
+  const [reviewTab, setReviewTab] = useState<"response" | "sentiment" | "keywords">("response");
 
   // Subject key → stored history points, feeding the scorecard sparklines
   // and the baseline alert.
@@ -1385,7 +1444,7 @@ export default function ComparePage() {
   useEffect(() => {
     if (!bareUrl || !defaultsReady || appliedDefaults.current) return;
     appliedDefaults.current = true;
-    const main = own[0] ? subjectKey("own", own[0].id) : null;
+    const main = defaultCompareMain(own);
     const competitors = benchSet
       .map((p) => subjectKey("saved", p.place_id))
       .filter((key) => key !== main)
@@ -1453,6 +1512,39 @@ export default function ComparePage() {
               </button>
             );
           })}
+        </div>
+      ) : null}
+
+      {(savedQuery.isError || channelsQuery.isError) ? (
+        <div role="alert" className="mt-4 flex flex-wrap items-center gap-3 rounded-[8px] border border-[#FF4F6E]/35 bg-white px-3 py-2">
+          <p className="text-[11px] font-semibold text-[#B3123A]">
+            {savedQuery.isError && channelsQuery.isError
+              ? c.couldNotLoadSavedBusinesses
+              : savedQuery.isError
+                ? c.couldNotLoadSavedBusinesses
+                : c.couldNotLoadOwnLocations}
+          </p>
+          {savedQuery.isError ? (
+            <button type="button" onClick={() => void savedQuery.refetch()} className={`inline-flex min-h-11 items-center rounded-[8px] border border-[#3D1D6E]/25 bg-white px-3 text-[10px] font-bold text-[#3D1D6E] ${FOCUS}`}>
+              {t.common.retry}
+            </button>
+          ) : null}
+          {channelsQuery.isError ? (
+            <button type="button" onClick={() => void channelsQuery.refetch()} className={`inline-flex min-h-11 items-center rounded-[8px] border border-[#3D1D6E]/25 bg-white px-3 text-[10px] font-bold text-[#3D1D6E] ${FOCUS}`}>
+              {t.common.retry}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {channelsQuery.isSuccess && own.length > 0 && !own.some((channel) => channel.verified) ? (
+        <div className="mt-4 rounded-[8px] border border-[#B0338A]/25 bg-white px-3 py-2">
+          <p className="text-[11px] font-semibold text-[#3B2D5E]">
+            {c.noVerifiedBranch}{" "}
+            <Link href="/dashboard/verification" className={`underline ${FOCUS}`}>
+              {c.verifyBranch}
+            </Link>
+          </p>
         </div>
       ) : null}
 
@@ -1536,8 +1628,26 @@ export default function ComparePage() {
           {compareQuery.data?.summary ? (
             <NorthStarCard
               summary={compareQuery.data.summary}
+              subjects={subjects}
             />
           ) : null}
+          <div className="mt-4 flex flex-wrap gap-2 rounded-[8px] border border-[var(--ui-line)] bg-white px-3 py-2 text-[10px] font-semibold text-[#3B2D5E]">
+            <span className="rounded-full bg-[#F4F2F7] px-2 py-1">{c.confidenceCompared(subjects.filter((s) => s.available).length)}</span>
+            <span className="rounded-full bg-[#F4F2F7] px-2 py-1">{range === "live" ? c.confidenceLive : c.confidenceStored(days ?? 0)}</span>
+            {reviewSubjects.some((s) => s.summary.evidence_basis === "cached_sample") ? (
+              <span className="rounded-full bg-[#F4F2F7] px-2 py-1">{c.confidenceCachedSample}</span>
+            ) : null}
+            {subjects.some((s) => s.freshness?.stale) ? (
+              <span className="rounded-full bg-[#FFF3D6] px-2 py-1 text-[#8A6100]">{c.confidenceStale}</span>
+            ) : null}
+            <span className="rounded-full bg-[#F4F2F7] px-2 py-1">{c.confidenceOwnerOnly}</span>
+          </div>
+          <BenchmarkStoryCharts
+            subjects={subjects}
+            mainKey={selection.main}
+            reviewSubjects={reviewSubjects}
+            historyBySubject={historyBySubject}
+          />
           <AiSummaryCard subjects={keys} />
           {compareQuery.data?.distribution ? (
             <DistributionStrip
@@ -1545,11 +1655,27 @@ export default function ComparePage() {
               mainKey={selection.main}
             />
           ) : null}
-          {compareQuery.data?.summary ? (
-            <FixFirstTickets summary={compareQuery.data.summary} subjects={subjects} />
-          ) : null}
+          <BenchmarkGapBars
+            subjects={subjects}
+            mainKey={selection.main}
+            responseRates={Object.fromEntries(reviewSubjects.map((s) => [s.key, s.summary.response_rate]))}
+          />
+          <MarketPositionScatter subjects={subjects} mainKey={selection.main} />
+          <CompetitorPressureCard rows={compareQuery.data?.pressure ?? []} />
+          <PeriodDeltaCards subjects={subjects} mainKey={selection.main} days={days} />
+          <BenchmarkChartsGallery
+            subjects={subjects}
+            mainKey={selection.main}
+            reviewSubjects={reviewSubjects}
+            historyBySubject={historyBySubject}
+            themes={reviewThemesQuery.data}
+          />
           <CompletenessCard subjects={subjects} />
           <SentimentVelocityBars
+            subjects={compareQuery.data?.subjects ?? []}
+            mainKey={selection.main}
+          />
+          <StarDistributionBars
             subjects={compareQuery.data?.subjects ?? []}
             mainKey={selection.main}
           />
@@ -1557,6 +1683,9 @@ export default function ComparePage() {
             history={historyQuery.data?.subjects ?? []}
             title={b.trendTitle}
             mainKey={selection.main}
+            loading={historyQuery.isPending}
+            error={historyQuery.error}
+            onRetry={() => void historyQuery.refetch()}
           />
           <OwnScorecards
             subjects={compareQuery.data?.subjects ?? []}
@@ -1592,24 +1721,89 @@ export default function ComparePage() {
             onDrillDown={openWorstReviews}
             drillLoading={reviewsQuery.isPending}
           />
-          <ReviewResponseTable
-            subjects={reviewSubjects}
-            loading={reviewsQuery.isPending}
-          />
-          <SentimentReviewsTable
-            subjects={reviewSubjects}
-            loading={reviewsQuery.isPending}
-            openPopup={(subject, category) => setReviewsPopup({ subject, category })}
-          />
-          <ReviewKeywords
-            key={keys.join("|")}
-            data={reviewThemesQuery.data}
-            mainKey={selection.main}
-            loading={reviewThemesQuery.isPending}
-            fetching={reviewThemesQuery.isFetching}
-            error={reviewThemesQuery.error}
-            onRetry={() => void retryReviewKeywords()}
-          />
+          <section className="mt-6 rounded-[8px] border border-[var(--ui-line)] bg-white p-3 sm:p-4">
+            <div className="flex flex-wrap items-center gap-2 border-b border-[var(--ui-line)] pb-3">
+              {([
+                ["response", c.reviewResponsesTitle],
+                ["sentiment", c.reviews],
+                ["keywords", c.reviewKeywords.title],
+              ] as const).map(([key, label]) => {
+                const active = reviewTab === key;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => setReviewTab(key)}
+                    className={`rounded-[8px] border px-3 py-1.5 text-[11px] font-semibold transition-colors ${FOCUS} ${
+                      active
+                        ? "border-[#3D1D6E] bg-[#3D1D6E] text-white"
+                        : "border-[var(--ui-line)] bg-white text-[#3B2D5E] hover:bg-[#F4F2F7]"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {reviewTab === "response" ? (
+              reviewsQuery.isError ? (
+                <div role="alert" className="mt-4 rounded-[8px] border border-[#FF4F6E]/35 bg-white px-3 py-2">
+                  <p className="text-[12px] font-semibold text-[#B3123A]">{c.couldNotLoadReviewResponses}</p>
+                  <button
+                    type="button"
+                    onClick={() => void reviewsQuery.refetch()}
+                    className={`mt-2 inline-flex min-h-11 items-center rounded-[8px] border border-[#3D1D6E]/25 bg-white px-3 text-[11px] font-bold text-[#3D1D6E] ${FOCUS}`}
+                  >
+                    {t.common.retry}
+                  </button>
+                </div>
+              ) : (
+                <ReviewResponseTable
+                  subjects={reviewSubjects}
+                  loading={reviewsQuery.isPending}
+                  onRetry={() => void reviewsQuery.refetch()}
+                  className="mt-4 overflow-hidden"
+                />
+              )
+            ) : null}
+
+            {reviewTab === "sentiment" ? (
+              reviewsQuery.isError ? (
+                <div role="alert" className="mt-4 rounded-[8px] border border-[#FF4F6E]/35 bg-white px-3 py-2">
+                  <p className="text-[12px] font-semibold text-[#B3123A]">{c.couldNotLoadReviewResponses}</p>
+                  <button
+                    type="button"
+                    onClick={() => void reviewsQuery.refetch()}
+                    className={`mt-2 inline-flex min-h-11 items-center rounded-[8px] border border-[#3D1D6E]/25 bg-white px-3 text-[11px] font-bold text-[#3D1D6E] ${FOCUS}`}
+                  >
+                    {t.common.retry}
+                  </button>
+                </div>
+              ) : (
+                <SentimentReviewsTable
+                  subjects={reviewSubjects}
+                  loading={reviewsQuery.isPending}
+                  onRetry={() => void reviewsQuery.refetch()}
+                  openPopup={(subject, category) => setReviewsPopup({ subject, category })}
+                  className="mt-4 overflow-hidden"
+                />
+              )
+            ) : null}
+
+            {reviewTab === "keywords" ? (
+              <ReviewKeywords
+                key={keys.join("|")}
+                data={reviewThemesQuery.data}
+                mainKey={selection.main}
+                loading={reviewThemesQuery.isPending}
+                fetching={reviewThemesQuery.isFetching}
+                error={reviewThemesQuery.error}
+                onRetry={() => void retryReviewKeywords()}
+              />
+            ) : null}
+          </section>
           {reviewsPopup ? (
             <ReviewsPopup
               subject={reviewsPopup.subject}

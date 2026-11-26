@@ -33,6 +33,9 @@ class ChannelResponse(BaseModel):
     phone: str | None = None
     website: str | None = None
     profile_fields_checked: bool = False
+    # Stored Sayvors-side Google verification state, batch-loaded by list routes.
+    verification_status: str | None = None
+    verified: bool = False
 
 
 class ChannelListResponse(BaseModel):

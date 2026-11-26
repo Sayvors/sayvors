@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -415,6 +416,7 @@ def assemble_theme_response(
             for key in (
                 "key", "name", "kind", "status", "sample_size", "sample_hash",
                 "analyzed_at", "source", "error_code", "error_message",
+                "retry_after_seconds",
             )
         }
         subjects.append(subject)
@@ -480,6 +482,7 @@ async def theme_response(
                 "sample_size": 0,
                 "sample_hash": None,
                 "analyzed_at": None,
+                "retry_after_seconds": 0,
                 "error_code": "unavailable",
                 "error_message": "This subject is not available in your workspace.",
                 "reviews": [],
@@ -507,6 +510,10 @@ async def theme_response(
             analysis.source = "local"
             analysis.updated_at = datetime.now(timezone.utc)
             await db.commit()
+        retry_after_seconds = 0
+        if status == "error":
+            age = (datetime.now(timezone.utc) - _aware(analysis.updated_at)).total_seconds()
+            retry_after_seconds = max(0, math.ceil(RETRY_COOLDOWN_SECONDS - age))
         record = {
             "key": key,
             "name": sample["name"],
@@ -515,6 +522,7 @@ async def theme_response(
             "sample_size": len(analysis.sample_json or []),
             "sample_hash": analysis.sample_hash,
             "analyzed_at": _aware(analysis.updated_at).isoformat() if status in {"ready", "error"} else None,
+            "retry_after_seconds": retry_after_seconds,
             "reviews": analysis.sample_json or [],
             "themes": analysis.themes or [],
         }
