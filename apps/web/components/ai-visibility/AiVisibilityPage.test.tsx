@@ -11,6 +11,9 @@ const channels = vi.hoisted(() => ({ value: [] as Array<{ id: string; label: str
 const query = vi.hoisted(() => ({ invalidateQueries: vi.fn() }));
 
 vi.mock("@/lib/api-ai-visibility", () => api);
+vi.mock("./ResearchRunPanel", () => ({
+  default: ({ runId }: { runId: string }) => <div>Brief for {runId}</div>,
+}));
 vi.mock("@/components/analytics/Controls", () => ({
   useGoogleChannels: () => channels.value,
 }));
@@ -160,6 +163,19 @@ describe("AiVisibilityPage", () => {
     expect(screen.getByLabelText("Customer intent coverage")).toBeInTheDocument();
     expect(screen.getByText("Is Sayvors licensed in Makkah?")).toBeInTheDocument();
     expect(screen.queryByText("Prompt library")).not.toBeInTheDocument();
+  });
+
+  it("opens a question brief in a modal and restores focus when closed", () => {
+    channels.value = [{ id: "branch-1", label: "Sayvors Branch" }];
+    render(<AiVisibilityPage />);
+    const trigger = screen.getByRole("button", { name: /Is Sayvors licensed/ });
+    trigger.focus();
+    fireEvent.click(trigger);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText("Brief for run-1")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
   });
 
   it("labels the action as resume when a partial set has pending questions", () => {

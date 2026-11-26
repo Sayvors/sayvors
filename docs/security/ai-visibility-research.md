@@ -85,7 +85,8 @@ Perplexity answers and must never be presented as one.
   explicitly marked not offered.
 - Questions carry a stable key, language, customer intent, industry/service
   relevance, geographic context, business relevance score, priority, origin,
-  prompt link, run link, and status. Generated text is unique per tenant/branch.
+  prompt link, run link, and status. Canonical generated text is unique per
+  tenant/branch; explicit resume and manual-rerun lineage may repeat it.
 - Arabic and English templates are authored per industry. Saudi profiles are
   Arabic-first; other profiles use the languages supported by their actual data.
 - Real customer questions are prioritized only when they match the branch name,
@@ -138,11 +139,19 @@ Perplexity answers and must never be presented as one.
 - Mention, citation, recommendation, and incorrect outcomes are recomputed.
   Citation requires an owned-domain source label actually used in the answer;
   recommendation requires a supported claim containing the branch name and
-  recommendation wording.
+  recommendation wording. Headline rates use terminal evaluated runs
+  (`completed` and `insufficient_evidence`), so limited public coverage is not
+  silently excluded from the denominator.
 - Fix-next actions are rule-ranked from validated outcomes. Model-suggested
   actions, numeric uplift, and ranking guarantees are ignored.
 - Source and model text render as escaped React text. Links pass through
   `safeHref`; raw HTML is never rendered.
+- Each brief shows the source domain next to its citation. Business-specific
+  publishing recommendations map the classified industry to official setup
+  pages (for example LinkedIn/Medium/Substack/Reddit for software businesses).
+  They are guidance, not evidence that an account exists or a guarantee of
+  placement, reach, or AI visibility. Older query-set runs receive the same
+  derived recommendations at read time without rewriting their stored results.
 
 ## Job, retry, and spend guarantees
 

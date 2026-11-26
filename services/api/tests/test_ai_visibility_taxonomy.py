@@ -3,6 +3,7 @@
 from app.modules.ai_visibility.taxonomy import (
     INDUSTRY_INTENTS,
     classify_industry,
+    publishing_recommendations,
     select_intents,
 )
 
@@ -83,6 +84,14 @@ def test_website_description_can_classify_a_sparse_profile():
         {"name": "MenteE", "website_description": "AI research lab and software development"}
     )
     assert match.industry == "software_company"
+
+
+def test_publishing_recommendations_are_industry_specific():
+    software = publishing_recommendations("software_company")
+    hotel = publishing_recommendations("hotel")
+    assert {row["platform"] for row in software} >= {"LinkedIn", "Medium", "Substack"}
+    assert {row["platform"] for row in hotel} >= {"Booking.com", "TripAdvisor"}
+    assert all(row["setup_url"].startswith("https://") for row in software + hotel)
 
 
 def test_each_required_industry_has_its_own_customer_intents():

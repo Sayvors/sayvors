@@ -504,6 +504,109 @@ def _field_text(profile: dict, field: str) -> str:
     return str(value or "")
 
 
+PUBLISHING_CATALOG = {
+    "google_business": (
+        "Google Business Profile",
+        "https://business.google.com/",
+        "Create a verified local listing with the exact branch name, address, hours, and services.",
+    ),
+    "linkedin": (
+        "LinkedIn",
+        "https://www.linkedin.com/company/setup/new/",
+        "Publish company updates and expertise where professional customers and partners research you.",
+    ),
+    "youtube": (
+        "YouTube",
+        "https://www.youtube.com/creators/",
+        "Publish demonstrations, explainers, and customer proof that AI assistants can cite.",
+    ),
+    "medium": (
+        "Medium",
+        "https://medium.com/new-story",
+        "Publish in-depth industry articles that establish expertise and earn independent citations.",
+    ),
+    "substack": (
+        "Substack",
+        "https://substack.com/start",
+        "Build a recurring newsletter for customer education and industry visibility.",
+    ),
+    "reddit": (
+        "Reddit",
+        "https://www.reddit.com/submit",
+        "Share useful, non-promotional expertise in relevant communities and reference your public website.",
+    ),
+    "facebook": (
+        "Facebook Page",
+        "https://www.facebook.com/pages/create",
+        "Maintain a public business page with current services, locality, and contact information.",
+    ),
+    "instagram": (
+        "Instagram Business",
+        "https://business.instagram.com/",
+        "Publish visual proof, offers, and locality signals for customer discovery.",
+    ),
+    "tiktok": (
+        "TikTok Business",
+        "https://www.tiktok.com/business/",
+        "Publish short demonstrations and educational content for new customer audiences.",
+    ),
+    "pinterest": (
+        "Pinterest Business",
+        "https://business.pinterest.com/",
+        "Publish visual product and service collections that attract discovery traffic.",
+    ),
+    "tripadvisor": (
+        "TripAdvisor",
+        "https://www.tripadvisor.com/Owners",
+        "Keep a verified hospitality listing with accurate amenities, location, and guest information.",
+    ),
+    "booking": (
+        "Booking.com",
+        "https://partner.booking.com/",
+        "Maintain an accurate accommodation listing with rates, amenities, and availability.",
+    ),
+    "musaned": (
+        "Musaned",
+        "https://www.musaned.com.sa/",
+        "Maintain the official recruitment-office presence and licensed service information.",
+    ),
+    "apple_business": (
+        "Apple Business Connect",
+        "https://businessconnect.apple.com/",
+        "Keep Apple Maps business information accurate for local discovery.",
+    ),
+}
+
+INDUSTRY_PUBLISHING = {
+    "software_company": ("linkedin", "youtube", "medium", "substack", "reddit"),
+    "restaurant": ("google_business", "instagram", "facebook", "tiktok", "reddit"),
+    "hospital": ("google_business", "facebook", "linkedin", "youtube"),
+    "school": ("google_business", "facebook", "linkedin", "youtube"),
+    "hotel": ("google_business", "booking", "tripadvisor", "instagram", "facebook"),
+    "ecommerce": ("instagram", "pinterest", "youtube", "tiktok", "facebook"),
+    "real_estate": ("google_business", "linkedin", "facebook", "instagram", "youtube"),
+    "law_firm": ("google_business", "linkedin", "youtube", "medium"),
+    "salon": ("google_business", "instagram", "tiktok", "facebook"),
+    "automobile_dealership": ("google_business", "facebook", "youtube", "instagram"),
+    "retail_store": ("google_business", "instagram", "facebook", "pinterest"),
+    "recruitment": ("google_business", "musaned", "linkedin", "facebook"),
+    "local_services": ("google_business", "facebook", "apple_business"),
+}
+
+
+def publishing_recommendations(industry: str) -> list[dict]:
+    """Return only channels relevant to the classified business type."""
+    keys = INDUSTRY_PUBLISHING.get(industry, INDUSTRY_PUBLISHING["local_services"])
+    return [
+        {
+            "platform": PUBLISHING_CATALOG[key][0],
+            "setup_url": PUBLISHING_CATALOG[key][1],
+            "reason": PUBLISHING_CATALOG[key][2],
+        }
+        for key in keys
+    ]
+
+
 def classify_industry(profile: dict) -> IndustryMatch:
     """Classify from combined signals, returning explicit uncertainty."""
     fields = (

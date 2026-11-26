@@ -10,6 +10,14 @@ import ResearchProvenance from "./ResearchProvenance";
 
 const ANSWER_PREVIEW_CHARS = 600;
 
+function sourceDomain(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
 type Copy = {
   disclosure: string;
   answer: string;
@@ -195,6 +203,11 @@ export default function DecisionBrief({
               <span className="font-mono text-[10px] font-bold text-[var(--ai-signal)]">
                 {source.label}
               </span>
+              {sourceDomain(source.url) && (
+                <span className="font-mono text-[10px] text-[var(--ai-muted)]">
+                  {sourceDomain(source.url)}
+                </span>
+              )}
               {href ? (
                 <a
                   href={href}

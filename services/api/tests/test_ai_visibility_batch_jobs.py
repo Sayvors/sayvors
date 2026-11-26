@@ -144,11 +144,14 @@ async def test_query_set_job_uses_real_synchronous_question_generator(
     await db.refresh(query_set)
     assert result["status"] == "running"
     assert query_set.total_questions > 0
-    assert (
+    generated_rows = (
         await db.execute(
             select(AiVisibilityQuestion).where(AiVisibilityQuestion.query_set_id == query_set.id)
         )
     ).scalars().all()
+    assert generated_rows
+    child_run = await db.get(AiVisibilityRun, generated_rows[0].run_id)
+    assert child_run.evidence_coverage["publishing_recommendations"]
 
 
 @pytest.mark.asyncio

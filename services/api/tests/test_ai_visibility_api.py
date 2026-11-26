@@ -139,7 +139,7 @@ async def test_latest_query_set_includes_generated_questions_and_outcomes(
     run = (
         await db.execute(select(AiVisibilityRun).where(AiVisibilityRun.query_set_id == query_set_id))
     ).scalar_one()
-    run.status = "completed"
+    run.status = "insufficient_evidence"
     run.mentioned = True
     run.cited = True
     run.recommended = False
@@ -173,7 +173,16 @@ async def test_latest_query_set_includes_generated_questions_and_outcomes(
     assert payload["questions"][0]["question_text"] == "Is Sayvors licensed in Makkah?"
     assert payload["questions"][0]["mentioned"] is True
     assert payload["metrics"]["mention_rate"] == 100.0
+    assert payload["metrics"]["citation_rate"] == 100.0
+    assert payload["metrics"]["recommendation_rate"] == 0.0
+    assert payload["metrics"]["completed_runs"] == 1
     assert payload["coverage"]["third_party_source_count"] == 2
+    brief = client.get(
+        f"/api/v1/ai-visibility/runs/{payload['questions'][0]['run_id']}"
+    )
+    assert brief.status_code == 200, brief.text
+    recommendations = brief.json()["evidence_coverage"]["publishing_recommendations"]
+    assert {row["platform"] for row in recommendations} >= {"Musaned", "LinkedIn"}
 
 
 @pytest.mark.asyncio

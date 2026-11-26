@@ -56,7 +56,8 @@ sent to generation. Public text remains untrusted data.
 ## Versioning and adaptation
 
 - One active query set per tenant/branch; each set has a monotonic version.
-- Generated question text is unique per tenant/branch.
+- Canonical generated question text is unique per tenant/branch; explicit
+  resume and manual-rerun lineage may repeat it.
 - Initial research runs one child run at a time.
 - After all children are terminal, grounded competitor mentions or unused real
   customer questions may create one follow-up version.
@@ -114,6 +115,11 @@ sent to generation. Public text remains untrusted data.
 - Aggregate evidence counts distinct canonical source URLs that were
   successfully fetched, have excerpts, and pass branch relevance/ownership
   checks; failed and synthetic rows are excluded.
+- Headline mention/citation/recommendation rates include terminal evaluated
+  runs (`completed` and `insufficient_evidence`), not only fully completed runs.
+- Each question brief opens in a focus-managed modal, shows source domains, and
+  presents visible industry-specific official publishing links. Recommendations
+  are guidance only and never assert account existence or guaranteed reach.
 
 ## Retention and portability
 

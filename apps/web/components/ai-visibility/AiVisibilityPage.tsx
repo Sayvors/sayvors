@@ -11,6 +11,7 @@ import {
   type AiVisibilityQuerySetLatest,
 } from "@/lib/api-ai-visibility";
 import { researchErrorMessage } from "@/lib/ai-visibility-errors";
+import Modal from "@/components/dashboard/media/Modal";
 import AiVisibilitySummary from "./AiVisibilitySummary";
 import IntentCoverageChart from "./IntentCoverageChart";
 import QuestionResults from "./QuestionResults";
@@ -205,12 +206,18 @@ export default function AiVisibilityPage() {
             onSelect={setSelectedRunId}
             copy={copy}
           />
-          {selectedRunId && (
-            <section className="ai-panel p-5 sm:p-7">
-              <div className="mb-5">
-                <p className="ai-eyebrow">{copy.decisionBrief}</p>
-                <h2 className="mt-1 text-[20px] font-bold text-[var(--ai-ink)]">{copy.answer}</h2>
-              </div>
+          <Modal
+            open={selectedRunId !== null}
+            onClose={() => setSelectedRunId(null)}
+            title={copy.decisionBrief}
+            subtitle={
+              data.questions.find((question) => question.run_id === selectedRunId)
+                ?.question_text
+            }
+            width="max-w-[920px]"
+            closeLabel={copy.close}
+          >
+            {selectedRunId && (
               <ResearchRunPanel
                 runId={selectedRunId}
                 copy={copy}
@@ -219,8 +226,8 @@ export default function AiVisibilityPage() {
                   invalidate();
                 }}
               />
-            </section>
-          )}
+            )}
+          </Modal>
           <details className="ai-panel group">
             <summary className="cursor-pointer list-none px-5 py-4 text-[12px] font-bold marker:content-none">
               {copy.classificationTitle}

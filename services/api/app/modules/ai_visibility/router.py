@@ -13,8 +13,8 @@ from ..team.context import (
     TenantContext,
     require_perm,
 )
-from . import query_sets, service
-from .models import AiVisibilityPrompt
+from . import query_sets, service, taxonomy
+from .models import AiVisibilityPrompt, AiVisibilityQuerySet
 from .schemas import (
     OverviewOut,
     PromptIn,
@@ -379,6 +379,29 @@ async def run_detail(
     run, source_rows = await service.get_run(db, ctx.tenant_id, run_id)
     if run is None:
         raise HTTPException(404, "run_not_found")
+    coverage = dict(run.evidence_coverage or {})
+    if run.query_set_id and not isinstance(
+        coverage.get("publishing_recommendations"), list
+    ):
+        query_set = await db.get(AiVisibilityQuerySet, run.query_set_id)
+        if (
+            query_set is not None
+            and query_set.tenant_id == ctx.tenant_id
+            and query_set.channel_id == run.channel_id
+        ):
+            stored = (query_set.generation_meta_json or {}).get(
+                "publishing_recommendations"
+            )
+            if isinstance(stored, list):
+                coverage["publishing_recommendations"] = stored
+            else:
+                industry = str(
+                    (query_set.classification_json or {}).get("industry")
+                    or "local_services"
+                )
+                coverage["publishing_recommendations"] = (
+                    taxonomy.publishing_recommendations(industry)
+                )
     return RunDetailOut(
         **_run_out(run).model_dump(),
         answer_text=run.answer_text,
@@ -386,7 +409,7 @@ async def run_detail(
         cited=run.cited,
         recommended=run.recommended,
         incorrect=run.incorrect,
-        evidence_coverage=run.evidence_coverage,
+        evidence_coverage=coverage,
         competitor_mentions=run.competitor_mentions,
         claims=run.claims_json,
         actions=run.actions_json,

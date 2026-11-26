@@ -10,7 +10,27 @@ const detail = {
   recommended: true,
   incorrect: false,
   competitor_mentions: [],
-  evidence_coverage: { source_count: 2, validated_claim_count: 1 },
+  evidence_coverage: {
+    source_count: 2,
+    validated_claim_count: 1,
+    publishing_recommendations: [
+      {
+        platform: "Reddit",
+        setup_url: "https://www.reddit.com/submit",
+        reason: "Share useful expertise in relevant communities.",
+      },
+      {
+        platform: "Medium",
+        setup_url: "https://medium.com/new-story",
+        reason: "Publish in-depth industry articles.",
+      },
+      {
+        platform: "Substack",
+        setup_url: "https://substack.com/start",
+        reason: "Build a recurring customer newsletter.",
+      },
+    ],
+  },
   claims: [
     {
       claim: "Acme is recommended",
@@ -73,6 +93,21 @@ const copy = {
   cited: "Cited",
   recommended: "Recommended",
   incorrect: "Incorrect",
+  howSearched: "How we searched",
+  searchProvider: "Search provider",
+  searchQuery: "Search query",
+  searchResults: "Search results",
+  sourcesFetched: "Sources fetched",
+  thirdPartySources: "Third-party sources",
+  ownedSources: "Owned sources",
+  socialNotChecked: "Private social accounts are not checked",
+  publishingChecklist: "Publishing checklist",
+  publishingHint: "Official setup pages",
+  platformCoverage: "Public platform coverage",
+  foundPublic: "Found public profile",
+  notFoundPublic: "No public profile found",
+  unknownPublic: "Unknown",
+  privateNote: "Private accounts are never accessed",
 };
 
 describe("DecisionBrief", () => {
@@ -89,6 +124,45 @@ describe("DecisionBrief", () => {
       "/dashboard/locations?tab=details",
     );
   });
+  it("shows business-specific publishing destinations without expanding search details", () => {
+    render(<DecisionBrief detail={detail as never} copy={copy as never} />);
+    expect(screen.getByText("Publishing checklist")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Reddit ↗" })).toHaveAttribute(
+      "href",
+      "https://www.reddit.com/submit",
+    );
+    expect(screen.getByRole("link", { name: "Medium ↗" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Substack ↗" })).toBeVisible();
+  });
+
+  it("shows the source domain beside each cited website", () => {
+    render(<DecisionBrief detail={detail as never} copy={copy as never} />);
+    expect(screen.getByText("example.com")).toBeVisible();
+    expect(screen.getByText("failed.example")).toBeVisible();
+  });
+
+  it("does not render unsafe public-profile setup links", () => {
+    render(
+      <DecisionBrief
+        detail={{
+          ...detail,
+          evidence_coverage: {
+            ...detail.evidence_coverage,
+            platforms: [
+              {
+                platform: "Untrusted profile",
+                status: "not_found",
+                setup_url: "javascript:alert(1)",
+              },
+            ],
+          },
+        } as never}
+        copy={copy as never}
+      />,
+    );
+    expect(screen.queryByRole("link", { name: "Publish publicly ↗" })).not.toBeInTheDocument();
+  });
+
   it("opens long answers in an accessible dialog", () => {
     const tail = "Unique grounded evidence at the end of a long answer";
     const longAnswer = `${detail.answer_text} ${"Additional sourced evidence [S2]. ".repeat(40)}${tail} [S2].`;

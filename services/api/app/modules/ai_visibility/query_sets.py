@@ -287,14 +287,18 @@ async def latest_query_set(
                 "incorrect": run.incorrect if run else None,
             }
         )
-    completed_runs = [run for run in runs.values() if run.status == "completed"]
+    evaluated_runs = [
+        run
+        for run in runs.values()
+        if run.status in {"completed", "insufficient_evidence"}
+    ]
 
     def _rate(field: str) -> float | None:
-        if not completed_runs:
+        if not evaluated_runs:
             return None
         return round(
-            sum(getattr(run, field) is True for run in completed_runs)
-            / len(completed_runs)
+            sum(getattr(run, field) is True for run in evaluated_runs)
+            / len(evaluated_runs)
             * 100,
             1,
         )
@@ -394,7 +398,7 @@ async def latest_query_set(
             for item in chain
         ],
         "metrics": {
-            "completed_runs": len(completed_runs),
+            "completed_runs": len(evaluated_runs),
             "mention_rate": _rate("mentioned"),
             "citation_rate": _rate("cited"),
             "recommendation_rate": _rate("recommended"),

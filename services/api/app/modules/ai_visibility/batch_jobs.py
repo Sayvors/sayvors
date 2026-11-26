@@ -16,7 +16,7 @@ from ...core.language import detect_language
 from ...core.text import normalize_text
 from ..jobs.models import Job
 from ..jobs.service import submit_job
-from . import profile, questions, service
+from . import profile, questions, service, taxonomy
 from .models import (
     AiVisibilityPrompt,
     AiVisibilityQuestion,
@@ -273,6 +273,13 @@ async def _start_question_run(
     )
     question.run_id = run.id
     question.status = "queued"
+    industry = str(
+        (query_set.classification_json or {}).get("industry") or "local_services"
+    )
+    run.evidence_coverage = {
+        **(run.evidence_coverage or {}),
+        "publishing_recommendations": taxonomy.publishing_recommendations(industry),
+    }
     if run.job_id:
         child = await db.get(Job, run.job_id)
         if child is not None:
@@ -335,7 +342,13 @@ async def handle_query_set(job: Job, db: AsyncSession) -> dict:
         if not adaptive_raw:
             query_set.classification_json = _classification(profile_data)
             query_set.source_snapshot_json = _source_snapshot(profile_data)
+        industry = str(
+            (query_set.classification_json or {}).get("industry") or "local_services"
+        )
         meta = dict(query_set.generation_meta_json or {})
+        meta["publishing_recommendations"] = taxonomy.publishing_recommendations(
+            industry
+        )
         meta.update(
             {
                 "generator": ADAPTIVE_GENERATOR_VERSION if adaptive_raw else GENERATOR_VERSION,
