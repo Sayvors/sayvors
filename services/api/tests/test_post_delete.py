@@ -212,6 +212,55 @@ async def test_a_provider_failure_is_raised_so_the_runner_retries(monkeypatch):
             await handle_post_delete(removal, db)
 
 
+@pytest.mark.asyncio
+async def test_removal_rejects_another_tenants_publish_job(monkeypatch):
+    publish_job = await _insert_job()
+    called = []
+
+    async def _never(**kwargs):
+        called.append(kwargs)
+        raise AssertionError("another tenant's publish job must not be read or deleted")
+
+    monkeypatch.setattr(
+        "app.modules.jobs.handlers.post_delete.delete_published_from_platform",
+        _never,
+    )
+    removal = Job(
+        id="55555555-5555-5555-5555-555555555555",
+        tenant_id="other-tenant-0000-0000-0000000001",
+        job_type=JobType.post_delete.value,
+        lane="publishing",
+        status=JobStatus.running.value,
+        payload={"publish_job_id": publish_job.id},
+        lane_key="other-tenant",
+    )
+    async with TEST_SESSION() as db:
+        db.add(removal)
+        await db.commit()
+        with pytest.raises(ValueError, match="publish_job_not_found"):
+            await handle_post_delete(removal, db)
+
+    assert called == []
+    assert (await _row(publish_job.id)).status == JobStatus.succeeded.value
+
+
+@pytest.mark.asyncio
+async def test_removal_rejects_a_non_publish_job(monkeypatch):
+    wrong_job = await _insert_job(job_type=JobType.post_delete.value)
+
+    async def _never(**kwargs):
+        raise AssertionError("a non-publish job must not be used as evidence")
+
+    monkeypatch.setattr(
+        "app.modules.jobs.handlers.post_delete.delete_published_from_platform",
+        _never,
+    )
+    removal = await _make_removal(wrong_job)
+    async with TEST_SESSION() as db:
+        with pytest.raises(ValueError, match="publish_job_not_found"):
+            await handle_post_delete(removal, db)
+
+
 async def _make_removal(publish_job: Job) -> Job:
     removal = Job(
         id="44444444-4444-4444-4444-444444444444",

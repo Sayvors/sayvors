@@ -1,10 +1,10 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import DecisionBrief from "./DecisionBrief";
 import ClaimLedger from "./ClaimLedger";
 
 const detail = {
-  answer_text: "Acme Coffee is recommended [S1].",
+  answer_text: "Acme Coffee is recommended [S2].",
   mentioned: true,
   cited: true,
   recommended: true,
@@ -15,7 +15,7 @@ const detail = {
     {
       claim: "Acme is recommended",
       quote: "Acme is recommended",
-      source_ids: ["S1"],
+      source_ids: ["S2"],
       status: "supported" as const,
     },
   ],
@@ -32,8 +32,19 @@ const detail = {
   ],
   sources: [
     {
-      id: "src-1",
+      id: "source-failed",
+      label: "S1",
       position: 0,
+      url: "https://failed.example",
+      title: "Failed source",
+      snippet: null,
+      excerpt: null,
+      fetch_error: "unsupported_content_type",
+    },
+    {
+      id: "src-1",
+      label: "S2",
+      position: 1,
       url: "https://example.com",
       title: "Example",
       snippet: null,
@@ -55,6 +66,9 @@ const copy = {
   sources: "Sources",
   evidence: "Evidence",
   noActions: "No actions",
+  readFullAnswer: "Read full answer",
+  fullAnswer: "Full grounded answer",
+  close: "Close",
   mentioned: "Mentioned",
   cited: "Cited",
   recommended: "Recommended",
@@ -65,7 +79,7 @@ describe("DecisionBrief", () => {
   it("renders cited answer and evidence-backed actions", () => {
     render(<DecisionBrief detail={detail as never} copy={copy as never} />);
     expect(screen.getByText(/Acme Coffee is recommended/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "S1" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "S2" })).toHaveAttribute(
       "href",
       "https://example.com",
     );
@@ -74,6 +88,25 @@ describe("DecisionBrief", () => {
       "href",
       "/dashboard/locations?tab=details",
     );
+  });
+  it("opens long answers in an accessible dialog", () => {
+    const tail = "Unique grounded evidence at the end of a long answer";
+    const longAnswer = `${detail.answer_text} ${"Additional sourced evidence [S2]. ".repeat(40)}${tail} [S2].`;
+    render(
+      <DecisionBrief
+        detail={{ ...detail, answer_text: longAnswer } as never}
+        copy={copy as never}
+      />,
+    );
+    expect(screen.queryByText(tail, { exact: false })).not.toBeInTheDocument();
+    const trigger = screen.getByRole("button", { name: "Read full answer" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "Full grounded answer" });
+    expect(dialog.textContent).toContain(tail);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
   });
 });
 

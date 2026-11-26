@@ -10,9 +10,9 @@ type Copy = {
 };
 
 const STYLE = {
-  supported: "bg-emerald-100 text-emerald-800",
-  contradicted: "bg-red-100 text-red-800",
-  unsupported: "bg-amber-100 text-amber-800",
+  supported: "border-[var(--ai-ok)] text-[var(--ai-ok)]",
+  contradicted: "border-[var(--ai-danger)] text-[var(--ai-danger)]",
+  unsupported: "border-[var(--ai-warn)] text-[var(--ai-warn)]",
 };
 
 export default function ClaimLedger({
@@ -24,30 +24,30 @@ export default function ClaimLedger({
   sources: AiVisibilitySource[];
   copy: Copy;
 }) {
-  const byId = new Map(sources.map((source) => [source.id, source]));
+  const byLabel = new Map(sources.map((source) => [source.label, source]));
   return (
-    <section aria-label={copy.claimLedger} className="space-y-2">
+    <section aria-label={copy.claimLedger} className="divide-y divide-[var(--ai-line)] border-y border-[var(--ai-line)]">
       {claims.map((claim, index) => (
         <article
           key={`${claim.claim}-${index}`}
-          className="rounded-[8px] border border-[var(--ui-line)] bg-white p-3"
+          className="grid gap-3 py-4 sm:grid-cols-[minmax(0,1fr)_auto]"
         >
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h4 className="text-[12px] font-bold text-[var(--ui-ink)]">
+          <div className="min-w-0">
+            <h4 className="text-[13px] font-bold leading-5 text-[var(--ai-ink)]">
               {claim.claim}
             </h4>
+            <blockquote className="mt-2 border-s-2 border-[var(--ai-signal)] ps-3 text-[12px] leading-5 text-[var(--ai-ink-2)]">
+              {claim.quote}
+            </blockquote>
+          </div>
+          <div className="flex flex-wrap items-start gap-2 sm:justify-end">
             <span
-              className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${STYLE[claim.status]}`}
+              className={`rounded-full border px-2.5 py-1 text-[9px] font-bold uppercase tracking-wide ${STYLE[claim.status]}`}
             >
               {copy[claim.status]}
             </span>
-          </div>
-          <blockquote className="mt-2 border-s-2 border-[var(--ui-line)] ps-3 text-[12px] text-[var(--ui-ink-2)]">
-            {claim.quote}
-          </blockquote>
-          <div className="mt-2 flex flex-wrap gap-2">
             {claim.source_ids.map((id) => {
-              const source = byId.get(id);
+              const source = byLabel.get(id);
               const href = source ? safeHref(source.url) : null;
               return href ? (
                 <a
@@ -55,9 +55,9 @@ export default function ClaimLedger({
                   href={href}
                   target="_blank"
                   rel="noreferrer"
-                  className="text-[11px] font-bold text-[var(--ui-ink)] underline"
+                  className="inline-flex min-h-8 items-center rounded-md border border-[var(--ai-line)] px-2 font-mono text-[10px] font-bold text-[var(--ai-accent)] hover:bg-[var(--ai-sunken)]"
                 >
-                  {copy.evidence} · {source?.title ?? id}
+                  {id} · {source?.title ?? copy.evidence}
                 </a>
               ) : null;
             })}

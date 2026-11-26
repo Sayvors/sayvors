@@ -78,6 +78,29 @@ yet.
 it off disables every budgeted LLM call. The separate `assistant`, `reviews`,
 `analytics` and `voice` keys are not independently enforced.
 
+### AI Visibility Research
+
+AI Visibility is available to all plans; there is no plan-specific visibility
+gate. Reads require `analytics.view`, and writes require `ai.edit` plus effective
+`edit` access to the selected channel.
+
+- Run creation and retry preflight `ai_replies` and the durable wallet balance
+  before enqueueing work. The gateway checks again and reserves credit before
+  the provider call.
+- The LLM purpose is `ai_visibility_research`; spend appears in the existing
+  wallet and usage ledger.
+- Public web search has no paid provider key. Redis provides query caching,
+  tenant/global rate limits, and provider-block cooldowns.
+- Create and retry share a durable per-prompt policy: three accepted attempts
+  in the trailing hour and a 60-second cooldown. An append-only attempt ledger
+  survives run deletion; prompt text is locked after research begins, and
+  prompt deletion archives rather than erases the policy identity.
+- AI Visibility jobs are internal-only; the generic client job API is not an
+  alternate enqueue or cancellation path.
+
+Implementation and integrity invariants live in
+[`ai-visibility-research.md`](ai-visibility-research.md).
+
 The remaining catalog keys are **catalog-only today**:
 
 `reviews`, `posts`, `media`, `analytics`, `automation`, `leads`, `voice`,

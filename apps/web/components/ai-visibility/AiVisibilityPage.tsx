@@ -15,7 +15,8 @@ import {
   updatePrompt,
   type AiVisibilityPrompt,
 } from "@/lib/api-ai-visibility";
-import { formatRate, isActiveStatus } from "@/lib/ai-visibility-metrics";
+import { isActiveStatus } from "@/lib/ai-visibility-metrics";
+import AiVisibilitySummary from "./AiVisibilitySummary";
 import PromptLibrary from "./PromptLibrary";
 import ResearchRunPanel from "./ResearchRunPanel";
 import RunHistory from "./RunHistory";
@@ -79,7 +80,8 @@ export default function AiVisibilityPage() {
 
   if (!channelId) {
     return (
-      <div className="ui-card p-6 text-[13px] text-[var(--ui-ink-2)]">
+      <div className="ai-visibility-ui h-full overflow-y-auto overscroll-contain p-4 sm:p-6">
+        <div className="ai-panel p-6 text-[13px] text-[var(--ai-ink-2)]">
         {channels.length === 0 ? copy.noBranch : copy.loading}
         {channels.length === 0 && (
           <a
@@ -89,6 +91,7 @@ export default function AiVisibilityPage() {
             {copy.connectLocation}
           </a>
         )}
+        </div>
       </div>
     );
   }
@@ -122,25 +125,26 @@ export default function AiVisibilityPage() {
   };
 
   return (
-    <div className="space-y-5 p-4 sm:p-6">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-[20px] font-bold text-[var(--ui-ink)]">
+    <div className="ai-visibility-ui h-full overflow-y-auto overscroll-contain p-4 sm:p-6 lg:p-8">
+      <header className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+        <div className="max-w-3xl">
+          <p className="ai-eyebrow">{copy.workspaceEyebrow}</p>
+          <h1 className="mt-2 text-[32px] font-bold leading-[1.05] tracking-[-0.04em] text-[var(--ai-ink)] sm:text-[40px]">
             {copy.title}
           </h1>
-          <p className="mt-1 text-[13px] text-[var(--ui-ink-2)]">
+          <p className="mt-3 max-w-2xl text-[14px] leading-6 text-[var(--ai-ink-2)]">
             {copy.subtitle}
           </p>
-          <p className="mt-2 max-w-3xl rounded-[8px] bg-[var(--ui-sunken)] p-3 text-[12px] text-[var(--ui-ink-2)]">
+          <p className="mt-4 max-w-2xl border-s-4 border-[var(--ai-signal)] bg-[var(--ai-surface)] px-4 py-3 text-[12px] leading-5 text-[var(--ai-ink-2)] shadow-[var(--ai-shadow-panel)]">
             {copy.disclosure}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="ai-panel flex flex-wrap items-center gap-2 p-3">
           <select
             aria-label={copy.branch}
             value={channelId}
             onChange={(event) => setChannelId(event.target.value)}
-            className="rounded-[8px] border border-[var(--ui-line)] bg-white px-3 py-2 text-[12px]"
+            className="ai-control min-w-40 flex-1 px-3 text-[12px] font-semibold"
           >
             {channels.map((channel) => (
               <option key={channel.id} value={channel.id}>
@@ -152,7 +156,7 @@ export default function AiVisibilityPage() {
             aria-label={copy.range}
             value={days}
             onChange={(event) => setDays(Number(event.target.value))}
-            className="rounded-[8px] border border-[var(--ui-line)] bg-white px-3 py-2 text-[12px]"
+            className="ai-control min-w-28 px-3 text-[12px] font-semibold"
           >
             <option value={30}>{copy.range30}</option>
             <option value={90}>{copy.range90}</option>
@@ -162,8 +166,12 @@ export default function AiVisibilityPage() {
           <button
             type="button"
             onClick={() => void runAll()}
-            className="rounded-[8px] bg-[var(--ui-ink)] px-3.5 py-2 text-[12px] font-bold text-white"
+            disabled={!prompts.data?.items.some((row) => row.is_active)}
+            className="ai-btn-primary w-full px-4 text-[12px] sm:w-auto"
           >
+            <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" aria-hidden="true">
+              <path d="M3 10h3l2-5 4 10 2-5h3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
             {copy.runAll}
           </button>
         </div>
@@ -172,30 +180,21 @@ export default function AiVisibilityPage() {
       {actionError && (
         <p
           role="alert"
-          className="rounded-[8px] border border-red-200 bg-red-50 p-3 text-[12px] text-red-700"
+          className="rounded-[var(--ai-radius-control)] border border-[var(--ai-danger)] bg-[var(--ai-surface)] px-4 py-3 text-[12px] font-semibold text-[var(--ai-danger)]"
         >
           {actionError}
         </p>
       )}
 
-      <section className="grid gap-3 sm:grid-cols-3" aria-label={copy.evidenceCoverage}>
-        {[
-          [copy.mentionRate, overview.data?.mention_rate],
-          [copy.citationRate, overview.data?.citation_rate],
-          [copy.recommendationRate, overview.data?.recommendation_rate],
-        ].map(([label, value]) => (
-          <div key={label} className="ui-card p-4">
-            <p className="text-[11px] font-semibold text-[var(--ui-ink-2)]">
-              {label}
-            </p>
-            <p className="mt-1 text-[24px] font-bold tabular-nums text-[var(--ui-ink)]">
-              {formatRate(value as number | null)}
-            </p>
-          </div>
-        ))}
-      </section>
+      <AiVisibilitySummary
+        data={overview.data}
+        isPending={overview.isPending}
+        isError={overview.isError}
+        onRetry={() => void overview.refetch()}
+        copy={copy}
+      />
 
-      <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
+      <div className="grid items-start gap-5 lg:grid-cols-[340px_minmax(0,1fr)] xl:grid-cols-[360px_minmax(0,1fr)]">
         <PromptLibrary
           channelId={channelId}
           copy={copy}
@@ -216,33 +215,56 @@ export default function AiVisibilityPage() {
             invalidate();
           }}
         />
-        <section className="ui-card p-5">
-          <h2 className="text-[15px] font-bold text-[var(--ui-ink)]">
-            {copy.answer}
-          </h2>
+        <section className="ai-panel p-5 sm:p-7">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="ai-eyebrow">{copy.decisionBrief}</p>
+              <h2 className="mt-1 text-[20px] font-bold tracking-[-0.02em] text-[var(--ai-ink)]">
+                {copy.answer}
+              </h2>
+            </div>
+            <span className="inline-flex items-center gap-2 rounded-full border border-[var(--ai-line)] px-3 py-1.5 text-[10px] font-bold text-[var(--ai-muted)]">
+              <span className="ai-status-dot" data-tone="ok" />
+              Sayvors Grounded AI
+            </span>
+          </div>
           {selectedPrompt ? (
-            <>
-              <p className="mt-3 whitespace-pre-wrap text-[13px] text-[var(--ui-ink)]">
-                {selectedPrompt.prompt_text}
-              </p>
+            <div className="mt-5 flex flex-col gap-4 rounded-[var(--ai-radius-control)] border border-[var(--ai-line)] bg-[var(--ai-sunken)] p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <p className="ai-eyebrow">{selectedPrompt.title}</p>
+                <p className="mt-1 whitespace-pre-wrap text-[13px] leading-6 text-[var(--ai-ink)]">
+                  {selectedPrompt.prompt_text}
+                </p>
+              </div>
               <button
                 type="button"
                 onClick={() => void runPrompt(selectedPrompt)}
-                className="mt-4 rounded-[8px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-bold text-white"
+                className="ai-btn-primary shrink-0 px-4 text-[12px]"
               >
                 {copy.runResearch}
               </button>
-            </>
+            </div>
           ) : (
-            <p className="mt-3 text-[13px] text-[var(--ui-ink-2)]">
-              {copy.noRuns}
-            </p>
+            <div className="mt-5 flex items-start gap-4 rounded-[var(--ai-radius-control)] border border-dashed border-[var(--ai-line-strong)] bg-[var(--ai-sunken)] p-5">
+              <svg viewBox="0 0 48 48" className="h-12 w-12 shrink-0 text-[var(--ai-accent)]" fill="none" aria-hidden="true">
+                <path d="M12 7h18l6 6v28H12V7Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                <path d="M30 7v7h6M18 22h12M18 28h12M18 34h8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+              <div>
+                <h3 className="text-[14px] font-bold">{copy.choosePrompt}</h3>
+                <p className="mt-1 max-w-md text-[12px] leading-5 text-[var(--ai-ink-2)]">
+                  {copy.noRuns}
+                </p>
+              </div>
+            </div>
           )}
-          <ResearchRunPanel
-            runId={selectedRunId}
-            copy={copy}
-            onRetry={invalidate}
-          />
+          <div className="mt-6">
+            <ResearchRunPanel
+              runId={selectedRunId}
+              copy={copy}
+              onRetry={invalidate}
+            />
+          </div>
         </section>
       </div>
       <RunHistory

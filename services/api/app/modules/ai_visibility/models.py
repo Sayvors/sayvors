@@ -59,6 +59,36 @@ class AiVisibilityPrompt(Base):
     )
 
 
+class AiVisibilityAttempt(Base):
+    """Append-only accepted-attempt ledger used for rolling abuse policy."""
+
+    __tablename__ = "ai_visibility_attempts"
+    __table_args__ = (
+        UniqueConstraint(
+            "prompt_id", "run_id", name="uq_ai_visibility_attempt_run"
+        ),
+        Index(
+            "ix_ai_visibility_attempts_prompt_time",
+            "prompt_id",
+            "attempted_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    tenant_id: Mapped[str] = mapped_column(String(36), index=True)
+    prompt_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("ai_visibility_prompts.id", ondelete="CASCADE")
+    )
+    # Deliberately not a foreign key: deleting run history must not erase the
+    # evidence that an attempt consumed budget.
+    run_id: Mapped[str] = mapped_column(String(36))
+    attempted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now
+    )
+
+
 class AiVisibilityRun(Base):
     __tablename__ = "ai_visibility_runs"
     __table_args__ = (

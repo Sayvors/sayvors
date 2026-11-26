@@ -167,6 +167,11 @@ def _scope_clause(
         return table.c.source_id.in_(
             select(sources.c.id).where(sources.c.user_id.in_(user_ids))
         )
+    if table.name == "ai_visibility_sources":
+        runs = Base.metadata.tables["ai_visibility_runs"]
+        return table.c.run_id.in_(
+            select(runs.c.id).where(runs.c.tenant_id == tenant_id)
+        )
     if "tenant_id" in table.c:
         return table.c.tenant_id == tenant_id
     if "user_id" in table.c:

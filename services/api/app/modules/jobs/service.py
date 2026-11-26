@@ -430,6 +430,7 @@ async def list_jobs(
     lane: str | None = None,
     limit: int = 50,
     cursor: str | None = None,
+    exclude_job_types: set[str] | None = None,
 ) -> list[Job]:
     """List jobs for a tenant with keyset pagination on (created_at, id)."""
     stmt = select(Job).where(Job.tenant_id == tenant_id)
@@ -437,6 +438,8 @@ async def list_jobs(
         stmt = stmt.where(Job.status == status)
     if lane:
         stmt = stmt.where(Job.lane == lane)
+    if exclude_job_types:
+        stmt = stmt.where(Job.job_type.not_in(tuple(exclude_job_types)))
     stmt = stmt.order_by(Job.created_at.desc(), Job.id.desc()).limit(limit)
     result = await db.execute(stmt)
     return list(result.scalars().all())

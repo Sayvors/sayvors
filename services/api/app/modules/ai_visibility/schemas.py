@@ -108,6 +108,7 @@ class RunListOut(BaseModel):
 
 class SourceOut(BaseModel):
     id: str
+    label: str
     position: int
     url: str
     title: str | None

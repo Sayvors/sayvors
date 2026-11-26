@@ -191,6 +191,13 @@ No action may claim a numeric lift without measured evidence.
 - `created_at`, `updated_at`.
 - Unique constraint on `(tenant_id, channel_id, normalized_prompt_hash)`.
 
+#### `ai_visibility_attempts`
+
+- Append-only accepted-attempt ledger with `tenant_id`, `prompt_id`, `run_id`, and `attempted_at`.
+- Unique `(prompt_id, run_id)`; indexed by prompt/time.
+- `run_id` deliberately has no foreign key so deleting run history cannot erase budget evidence.
+- Rows older than 30 days are pruned by the bounded retention worker.
+
 #### `ai_visibility_runs`
 
 - `id` UUID string primary key.
@@ -238,7 +245,8 @@ Source rows are immutable once the run reaches validation.
 - Reject non-http(s), private, loopback, link-local, and metadata destinations.
 - Use existing DNS-pinned HTTP primitives and revalidate every redirect.
 - Per-domain concurrency and rate limits; block cooldowns on CAPTCHA/429 responses.
-- Redis-backed cache/rate state with a bounded process-local fallback. If safe rate state cannot be established, the collector fails closed rather than risking a scrape ban.
+- Redis-backed cache/rate state. If safe rate state cannot be established, the collector fails closed rather than risking a scrape ban.
+- Uncached queries are limited per tenant and globally. Valid cache hits are served before provider-block checks. Global provider throttling defers the durable job; a tenant exceeding its own search budget receives a terminal, explicit failure.
 
 ### Source reading
 
@@ -271,8 +279,9 @@ Source rows are immutable once the run reaches validation.
 
 ### Citation and claim validation
 
-- Every claim source ID must exist in the run’s source set.
+- Every answer citation must map to a fetched source label, and every factual sentence must be an exact extractive match in at least one cited excerpt.
 - Every URL rendered in the answer must map to a fetched source.
+- Every claim source ID must exist, and one cited excerpt must contain both the claim text and its exact quote.
 - Claims with missing or invalid sources become `unsupported` and are not presented as facts.
 - Branch outcomes are computed deterministically where possible:
   - Mentioned: normalized branch name, owned domain, or tracked phone appears in the validated answer.
@@ -288,6 +297,8 @@ Source rows are immutable once the run reaches validation.
 - Add a handler to the closed handler registry.
 - `POST /runs` creates the run and job in one transaction with idempotency key `ai-visibility:{run_id}`.
 - Repeating the request returns the existing active run.
+- Create and retry share one channel/prompt-locked policy: at most three accepted attempts in the trailing hour and a 60-second cooldown. The append-only attempt ledger survives run deletion, and prompt text is immutable once research has begun. Prompt deletion archives rather than erases the row.
+- Generic client job routes cannot submit, read, list, or cancel AI Visibility jobs; the domain API is the only entrypoint.
 - Job attempts use the existing lease/retry machinery.
 - Search/fetch transient failures may retry within the lane limit.
 - Budget exhaustion and validation/schema failures are terminal.
@@ -298,7 +309,9 @@ Source rows are immutable once the run reaches validation.
 - Maximum 100 active prompts per branch.
 - Run and source lists are paginated and capped.
 - Completed runs older than 365 days are removed by a bounded daily cleanup task; source rows cascade.
-- Active, failed, insufficient-evidence, and ambiguous runs are retained until resolved or explicitly deleted.
+- Failed, insufficient-evidence, and ambiguous runs older than 30 days are removed in the same bounded batches.
+- Attempt-ledger rows older than 30 days are pruned in bounded batches; recent rows remain even when their run history is deleted.
+- Active runs are retained until resolved or explicitly deleted.
 - No unbounded in-memory queues or source accumulation.
 
 ## API contract
@@ -309,7 +322,7 @@ Base prefix: `/api/v1/ai-visibility`.
 - `GET /prompts?channel_id=&include_archived=` — bounded list.
 - `POST /prompts` — create prompt.
 - `PATCH /prompts/{id}` — edit/archive.
-- `DELETE /prompts/{id}` — delete unused prompt; archived prompts with history are retained.
+- `DELETE /prompts/{id}` — archive a prompt while retaining its research-attempt policy.
 - `GET /runs?channel_id=&status=&prompt_id=&limit=&offset=` — bounded history.
 - `POST /runs` — body `{channel_id, prompt_id}`; creates durable run.
 - `GET /runs/{id}` — status, brief, claims, sources, and actions.

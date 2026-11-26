@@ -15,6 +15,7 @@ import { queryKeys } from "@/lib/query-keys";
 
 type Copy = {
   history: string;
+  historyEyebrow: string;
   noRuns: string;
   retry: string;
   deleteRun: string;
@@ -25,6 +26,7 @@ type Copy = {
   loadError: string;
   mentioned: string;
   cited: string;
+  sources?: string;
   all: string;
   cancel: string;
 };
@@ -102,14 +104,17 @@ export default function RunHistory({
     );
   }
   return (
-    <section className="ui-card p-5" aria-label={copy.history}>
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-[15px] font-bold">{copy.history}</h2>
+    <section className="ai-panel p-5 sm:p-6" aria-label={copy.history}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="ai-eyebrow">{copy.historyEyebrow}</p>
+          <h2 className="mt-1 text-[18px] font-bold tracking-[-0.02em] text-[var(--ai-ink)]">{copy.history}</h2>
+        </div>
         <select
           aria-label={copy.history}
           value={status}
           onChange={(event) => setStatus(event.target.value)}
-          className="rounded-[8px] border border-[var(--ui-line)] bg-white px-3 py-2 text-[11px]"
+          className="ai-control min-h-10 px-3 text-[11px] font-semibold"
         >
           <option value="">{copy.all}</option>
           <option value="completed">{copy.stages.completed}</option>
@@ -120,7 +125,7 @@ export default function RunHistory({
         </select>
       </div>
       {error && (
-        <p role="alert" className="mt-3 text-[12px] text-red-700">
+        <p role="alert" className="mt-3 rounded-[var(--ai-radius-control)] bg-[var(--ai-sunken)] px-3 py-2 text-[12px] text-[var(--ai-danger)]">
           {error}
         </p>
       )}
@@ -128,10 +133,10 @@ export default function RunHistory({
         {query.data!.items.map((run) => (
           <article
             key={run.id}
-            className={`rounded-[8px] border p-3 ${
+            className={`rounded-[var(--ai-radius-control)] border p-3 transition-colors ${
               selectedId === run.id
-                ? "border-[var(--ui-ink)]"
-                : "border-[var(--ui-line)]"
+                ? "border-[var(--ai-accent)] bg-[var(--ai-sunken)]"
+                : "border-[var(--ai-line)] hover:border-[var(--ai-line-strong)]"
             }`}
           >
             <button
@@ -139,17 +144,16 @@ export default function RunHistory({
               onClick={() => onSelect(run.id)}
               className="block w-full text-start"
             >
-              <span className="block text-[12px] font-bold">
+              <span className="block text-[12px] font-bold text-[var(--ai-ink)]">
                 {run.prompt_title}
               </span>
-              <span className="mt-1 block text-[11px] text-[var(--ui-ink-2)]">
-                {copy.stages[run.status] ?? run.status} · {run.source_count}{" "}
-                {copy.stages.completed.toLowerCase()}
+              <span className="mt-1 block font-mono text-[10px] text-[var(--ai-muted)]">
+                {copy.stages[run.status] ?? run.status} · {run.source_count} {(copy.sources ?? copy.stages.completed).toLowerCase()}
               </span>
             </button>
-            <div className="mt-2 flex gap-3 text-[10px] font-bold">
+            <div className="mt-2 flex flex-wrap gap-1 text-[10px] font-bold">
               {run.status === "completed" && (
-                <button type="button" onClick={() => void compare(run)}>
+                <button type="button" onClick={() => void compare(run)} className="min-h-8 rounded-md px-2 text-[var(--ai-accent)] hover:bg-[var(--ai-surface)]">
                   {copy.comparePrevious}
                 </button>
               )}
@@ -168,18 +172,19 @@ export default function RunHistory({
                       setError(exc instanceof Error ? exc.message : copy.loadError);
                     }
                   }}
+                  className="min-h-8 rounded-md px-2 text-[var(--ai-accent)] hover:bg-[var(--ai-surface)]"
                 >
                   {copy.retry}
                 </button>
               )}
-              <button type="button" onClick={() => setDeleting(run.id)}>
+              <button type="button" onClick={() => setDeleting(run.id)} className="min-h-8 rounded-md px-2 text-[var(--ai-danger)] hover:bg-[var(--ai-surface)]">
                 {copy.deleteRun}
               </button>
             </div>
           </article>
         ))}
         {query.data!.items.length === 0 && (
-          <p className="text-[12px] text-[var(--ui-ink-2)]">{copy.noRuns}</p>
+          <p className="text-[12px] leading-5 text-[var(--ai-ink-2)]">{copy.noRuns}</p>
         )}
       </div>
 

@@ -48,6 +48,43 @@ def test_parse_bing_html_fallback():
 
 
 @pytest.mark.asyncio
+async def test_cache_is_served_while_provider_is_blocked(monkeypatch):
+    async def _cache_get(key):
+        if key.endswith(":blocked"):
+            return "1"
+        return '[{"url": "https://example.com/cached", "title": "Cached", "snippet": "x"}]'
+
+    async def _unexpected(*_args, **_kwargs):
+        raise AssertionError("cached results must not consume provider quota")
+
+    monkeypatch.setattr(search, "cache_get", _cache_get)
+    monkeypatch.setattr(search, "rate_limit", _unexpected)
+    monkeypatch.setattr(search, "_fetch_results", _unexpected)
+
+    results = await search.search_public_web("tenant", "best coffee")
+    assert results[0].url == "https://example.com/cached"
+
+
+@pytest.mark.asyncio
+async def test_search_enforces_a_per_tenant_limit(monkeypatch):
+    keys = []
+
+    async def _cache_get(_key):
+        return None
+
+    async def _limit(key, *_args, **_kwargs):
+        keys.append(key)
+        return False
+
+    monkeypatch.setattr(search, "cache_get", _cache_get)
+    monkeypatch.setattr(search, "rate_limit", _limit)
+
+    with pytest.raises(search.SearchRateLimited, match="tenant_search_rate_limited"):
+        await search.search_public_web("tenant-a", "best coffee")
+    assert keys == ["ai-vis:search:tenant:tenant-a"]
+
+
+@pytest.mark.asyncio
 async def test_search_uses_cache(monkeypatch):
     calls = []
 

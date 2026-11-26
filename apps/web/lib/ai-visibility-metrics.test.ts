@@ -4,6 +4,8 @@ import { formatRate, isActiveStatus } from "./ai-visibility-metrics";
 describe("AI visibility metrics", () => {
   it("never turns missing evidence into zero", () => {
     expect(formatRate(null)).toBe("—");
+    expect(formatRate(undefined)).toBe("—");
+    expect(formatRate(Number.NaN)).toBe("—");
     expect(formatRate(0)).toBe("0.0%");
     expect(formatRate(66.666)).toBe("66.7%");
     expect(formatRate(100)).toBe("100.0%");

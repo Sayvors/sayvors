@@ -5,7 +5,11 @@ import pytest
 from sqlalchemy import select
 
 from app.modules.ai_visibility import retention
-from app.modules.ai_visibility.models import AiVisibilityPrompt, AiVisibilityRun
+from app.modules.ai_visibility.models import (
+    AiVisibilityAttempt,
+    AiVisibilityPrompt,
+    AiVisibilityRun,
+)
 
 
 @pytest.mark.asyncio
@@ -36,7 +40,7 @@ async def test_cleanup_deletes_only_old_completed_runs(db, user_id, channel_id):
         prompt_id=prompt.id,
         prompt_snapshot="Best coffee",
         locale="en",
-        status="failed",
+        status="queued",
         created_at=datetime.now(timezone.utc) - timedelta(days=400),
     )
     db.add_all([old, active])
@@ -78,3 +82,77 @@ async def test_cleanup_is_bounded(db, user_id, channel_id, monkeypatch):
     )
     await db.commit()
     assert await retention.cleanup_once(db) == 2
+
+
+@pytest.mark.asyncio
+async def test_cleanup_prunes_old_attempt_ledger_rows(
+    db, user_id, channel_id
+):
+    prompt = AiVisibilityPrompt(
+        tenant_id=user_id,
+        channel_id=channel_id,
+        title="Coffee",
+        prompt_text="Best coffee",
+        normalized_prompt_hash="2" * 64,
+        intent="discovery",
+        created_by=user_id,
+    )
+    db.add(prompt)
+    await db.flush()
+    old = datetime.now(timezone.utc) - timedelta(days=31)
+    db.add_all(
+        [
+            AiVisibilityAttempt(
+                tenant_id=user_id,
+                prompt_id=prompt.id,
+                run_id="old-attempt",
+                attempted_at=old,
+            ),
+            AiVisibilityAttempt(
+                tenant_id=user_id,
+                prompt_id=prompt.id,
+                run_id="recent-attempt",
+                attempted_at=datetime.now(timezone.utc),
+            ),
+        ]
+    )
+    await db.commit()
+
+    assert await retention.cleanup_once(db) == 1
+    remaining = (
+        await db.execute(select(AiVisibilityAttempt))
+    ).scalars().all()
+    assert [row.run_id for row in remaining] == ["recent-attempt"]
+
+
+@pytest.mark.asyncio
+async def test_old_terminal_failures_are_retained_for_only_thirty_days(
+    db, user_id, channel_id
+):
+    prompt = AiVisibilityPrompt(
+        tenant_id=user_id,
+        channel_id=channel_id,
+        title="Coffee",
+        prompt_text="Best coffee",
+        normalized_prompt_hash="1" * 64,
+        intent="discovery",
+        created_by=user_id,
+    )
+    db.add(prompt)
+    await db.flush()
+    old = datetime.now(timezone.utc) - timedelta(days=31)
+    db.add_all([
+        AiVisibilityRun(
+            tenant_id=user_id,
+            channel_id=channel_id,
+            prompt_id=prompt.id,
+            prompt_snapshot="Best coffee",
+            locale="en",
+            status=status,
+            completed_at=old,
+        )
+        for status in ("failed", "insufficient_evidence", "ambiguous")
+    ])
+    await db.commit()
+
+    assert await retention.cleanup_once(db) == 3

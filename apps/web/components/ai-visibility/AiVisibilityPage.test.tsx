@@ -89,6 +89,29 @@ describe("AiVisibilityPage", () => {
     );
   });
 
+  it("renders missing summary metrics while the overview is pending", () => {
+    channels.value = [{ id: "branch-1", label: "Acme Coffee" }];
+    vi.mocked(useQuery).mockImplementation(({ queryKey }) => {
+      if (queryKey[1] === "overview") {
+        return { data: undefined, isPending: true } as never;
+      }
+      if (queryKey[1] === "prompts") {
+        return { data: { items: [] } } as never;
+      }
+      if (queryKey[1] === "run") {
+        return { data: undefined, isPending: true } as never;
+      }
+      return { data: { items: [] } } as never;
+    });
+
+    render(<AiVisibilityPage />);
+    expect(screen.getByLabelText("Evidence coverage")).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    expect(screen.queryByText("100.0%")).not.toBeInTheDocument();
+  });
+
   it("runs the selected prompt for the selected branch", async () => {
     channels.value = [{ id: "branch-1", label: "Acme Coffee" }];
     api.fetchPrompts.mockResolvedValue({ items: [prompt] });

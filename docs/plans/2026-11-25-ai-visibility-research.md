@@ -4291,7 +4291,7 @@ git commit -m "feat(ai-visibility): add research history and comparisons"
 - Modify: `readiness-report.html`
 - Modify: `docs/specs/2026-11-25-ai-visibility-research-design.md` only if verification finds a mismatch
 
-- [ ] **Step 1: Run the complete focused backend gate**
+- [x] **Step 1: Run the complete focused backend gate**
 
 ```bash
 cd services/api
@@ -4304,7 +4304,7 @@ alembic upgrade head
 
 Expected: all tests pass, one head, and the migration is re-runnable.
 
-- [ ] **Step 2: Run the complete focused frontend gate**
+- [x] **Step 2: Run the complete focused frontend gate**
 
 ```bash
 cd apps/web
@@ -4316,7 +4316,7 @@ npm run build
 
 Expected: tests pass, zero TypeScript errors, zero ESLint errors, and production build succeeds.
 
-- [ ] **Step 3: Run browser verification**
+- [x] **Step 3: Run browser verification**
 
 Use the `testing-webapps` skill and native Python Playwright against a local server with mocked API responses:
 
@@ -4331,7 +4331,7 @@ Use the `testing-webapps` skill and native Python Playwright against a local ser
 
 Save screenshots under `C:\Users\it\AppData\Local\Temp\opencode\ai-visibility\`.
 
-- [ ] **Step 4: Run security review**
+- [x] **Step 4: Run security review**
 
 Dispatch the `security-reviewer` subagent against the full diff. Require explicit checks for:
 
@@ -4347,7 +4347,7 @@ Dispatch the `security-reviewer` subagent against the full diff. Require explici
 
 Fix all Critical/High findings before proceeding.
 
-- [ ] **Step 5: Write the durable security document**
+- [x] **Step 5: Write the durable security document**
 
 Create `docs/security/ai-visibility-research.md` with these sections and invariants:
 
@@ -4393,7 +4393,7 @@ Public search results and fetched pages are untrusted. The LLM is not an authori
 Completed runs older than 365 days are deleted in bounded batches; source rows cascade.
 ```
 
-- [ ] **Step 6: Update plan/credit documentation**
+- [x] **Step 6: Update plan/credit documentation**
 
 In `docs/security/plans-and-credits.md`, document:
 
@@ -4403,7 +4403,7 @@ In `docs/security/plans-and-credits.md`, document:
 - Spend uses the existing wallet and `ai_replies` entitlement.
 - Public search has no paid provider key.
 
-- [ ] **Step 7: Update readiness only with verified facts**
+- [x] **Step 7: Update readiness only with verified facts**
 
 In `readiness-report.html`:
 
@@ -4413,7 +4413,7 @@ In `readiness-report.html`:
 - Keep action-rate KPI deferred.
 - Replace the old AI-search visibility deferral with a link to the new spec and the explicit limitation: this measures Sayvors Grounded AI, not consumer AI platforms.
 
-- [ ] **Step 8: Final diff review and commit**
+- [x] **Step 8: Final diff review and commit**
 
 ```bash
 git diff --check

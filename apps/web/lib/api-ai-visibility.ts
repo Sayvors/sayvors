@@ -29,6 +29,7 @@ export type AiVisibilityPrompt = {
 
 export type AiVisibilitySource = {
   id: string;
+  label: string;
   position: number;
   url: string;
   title: string | null;

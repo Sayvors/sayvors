@@ -239,6 +239,7 @@
     <tr><td>Client error leakage</td><td>LAUNCH-S10 Phase 1 (502 paths) plus the Meta provider error split; curated 4xx sites remain for per-site review.</td></tr>
     <tr><td>Intake &amp; dashboards</td><td>One-question intake with grouped progress and deep links; dashboard scroll fix; second-scrollbar fix; publish wizard and media library rebuilds.</td></tr>
     <tr><td>Benchmark API gates</td><td><span class="chip ok">Done 2026-11-25</span> <code>benchmarking</code> is enforced on benchmark routes; saved-peer reads additionally require <code>benchmark_external</code> (<code>4e9f1ff9</code>).</td></tr>
+    <tr><td>AI Visibility Research</td><td><span class="chip ok">Done 2026-11-26</span> Sayvors Grounded AI workspace: Bing public search with per-tenant/global quota, SSRF-safe source snapshots, exact-extractive citation validation, deterministic mention/citation/recommendation/incorrect outcomes, append-only attempt ledger with a trailing-hour limit, durable bulk jobs with LLM ambiguity handling, tenant export/purge coverage, EN/AR responsive Clay UI, and long-answer dialog. Security review: no Critical/High findings; the final Medium migration edge was closed by locking prompt text whenever any run exists. Focused gates: 143 backend tests, 17 frontend tests, TypeScript, ESLint with 0 errors, production build, migration up/down/up, and mocked Playwright at 1440×900 and 390×844 with Arabic RTL, keyboard flows, empty/loading/error/failed/insufficient states, and page-owned scrolling.</td></tr>
   </table></div>
 
   <h3><span class="chip ok">DONE — benchmark, period filter, history &amp; reviews</span></h3>
@@ -286,7 +287,7 @@
     <tr><td>P2 — peer cohorts / role tags</td><td><code>Channel.metadata_json</code> tags + "compare within cohort" toggle.</td><td><span class="chip ok">Done</span> Channel metadata tags on own compare subjects + cohort chip filter above the picker</td></tr>
     <tr><td>P2 — baseline-deviation alerts</td><td>8-12 week baseline + arrow + 2-week streak alert.</td><td><span class="chip ok">Done</span> BaselineAlert banner on the compare page (direction + delta + streak from rating history)</td></tr>
     <tr><td>P2 — drill-down from red cell</td><td>Red cell → filtered reviews/topics + one-click reply.</td><td><span class="chip ok">Done</span> worst-tier matrix cells open that subject's negative reviews popup (keyboard-accessible nested button)</td></tr>
-    <tr><td>P2 — search-AI visibility band</td><td>Optional (Gloo pattern) — deferrable.</td><td><span class="chip med">Deferred</span> requires a licensed data source or approved API</td></tr>
+    <tr><td>P2 — search-AI visibility band</td><td>Optional (Gloo pattern) — deferrable.</td><td><span class="chip ok">Done 2026-11-26</span> shipped as <code>/dashboard/ai-visibility</code> using public web evidence and Sayvors Grounded AI. It does not measure ChatGPT, Gemini, or Perplexity visibility. See <code>docs/specs/2026-11-25-ai-visibility-research-design.md</code> and <code>docs/security/ai-visibility-research.md</code>.</td></tr>
     <tr><td>Guardrails (HN rules)</td><td>No metric sprawl (5-9 visible), no national averages as headline, every chart carries a question-as-title + comparison, no new deps.</td><td><span class="chip ok">Done</span> six-metric contract pinned by <code>apps/web/lib/benchmark-rows.test.ts</code>; decision recorded in <code>docs/decisions/2026-11-25-benchmark-metric-scope.md</code></td></tr>
   </table></div>
 
@@ -298,6 +299,7 @@
     <tr><td>FACT-9</td><td><span class="chip ok">Done 2026-11-22</span></td><td>Send-path gating now requires an active campaign for single/bulk review-request sends; duplicate copies distinct recipient contacts as draft rows (no jobs enqueued). Scoped tests pass.</td><td class="chip ok">—</td></tr>
     <tr><td>WA-9 (part)</td><td><span class="chip ok">Done 2026-11-19</span></td><td>Meta conversation analytics wired; shown on WhatsApp settings.</td><td class="chip ok">—</td></tr>
     <tr><td>Benchmark staging verification</td><td><span class="chip warn">Blocked</span></td><td>Requires an authorized deployment of the unpushed remediation commits and an authenticated desktop/mobile walkthrough.</td><td>access needed</td></tr>
+    <tr><td>AI Visibility staging + live provider verification</td><td><span class="chip warn">Blocked</span></td><td>Mocked browser checks and unit/integration gates pass locally. Authenticated staging and a real configured search/LLM provider run still require deployment access and credentials.</td><td>access + provider keys</td></tr>
     <tr><td>RAG P1 / P3</td><td><span class="chip warn">Blocked</span></td><td>P1 (task_type, chunking, query context, attribution) needs a real databank and re-index. P3 context cuts need measurement before touching prompt content.</td><td>data + evaluation</td></tr>
   </table></div>
 

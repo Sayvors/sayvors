@@ -15,11 +15,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..channels.models import Channel
 from ..jobs.service import submit_job
-from .models import AiVisibilityPrompt, AiVisibilityRun, AiVisibilitySource
+from .models import (
+    AiVisibilityAttempt,
+    AiVisibilityPrompt,
+    AiVisibilityRun,
+    AiVisibilitySource,
+)
 from .schemas import PromptPatch
 
 MAX_ACTIVE_PROMPTS_PER_BRANCH = 100
 MAX_PROMPT_LIST = 200
+MAX_RUN_ATTEMPTS = 3
+ATTEMPT_WINDOW_SECONDS = 60 * 60
+RETRY_COOLDOWN_SECONDS = 60
 ACTIVE_RUN_STATUSES = (
     "queued",
     "searching",
@@ -47,6 +55,22 @@ class PromptNotOwned(ValueError):
 
 
 class PromptInactive(ValueError):
+    pass
+
+
+class PromptTextLocked(ValueError):
+    pass
+
+
+class RetryCooldown(ValueError):
+    pass
+
+
+class RetryLimitReached(ValueError):
+    pass
+
+
+class ActiveRunDeletion(ValueError):
     pass
 
 
@@ -235,6 +259,26 @@ async def update_prompt(
     if "prompt_text" in values:
         values["prompt_text"] = values["prompt_text"].strip()
         normalized_hash = prompt_hash(values["prompt_text"])
+        if normalized_hash != row.normalized_prompt_hash:
+            has_attempts = (
+                await db.execute(
+                    select(AiVisibilityAttempt.id)
+                    .where(AiVisibilityAttempt.prompt_id == prompt_id)
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            has_runs = (
+                await db.execute(
+                    select(AiVisibilityRun.id)
+                    .where(
+                        AiVisibilityRun.prompt_id == prompt_id,
+                        AiVisibilityRun.tenant_id == tenant_id,
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if has_attempts is not None or has_runs is not None:
+                raise PromptTextLocked("prompt_text_locked")
         values["normalized_prompt_hash"] = normalized_hash
     for key, value in values.items():
         setattr(row, key, value.strip() if isinstance(value, str) else value)
@@ -259,7 +303,7 @@ async def update_prompt(
 async def delete_prompt(
     db: AsyncSession, tenant_id: str, prompt_id: str
 ) -> bool:
-    """Delete an unused prompt; preserve run history by archiving used ones."""
+    """Archive a prompt while retaining its durable research-attempt policy."""
     row = (
         await db.execute(
             select(AiVisibilityPrompt)
@@ -272,20 +316,28 @@ async def delete_prompt(
     ).scalar_one_or_none()
     if row is None:
         return False
+    row.is_active = False
+    await db.commit()
+    return True
 
-    has_runs = (
+
+async def get_active_run(
+    db: AsyncSession, tenant_id: str, prompt_id: str, channel_id: str
+) -> AiVisibilityRun | None:
+    """Return the durable active run used to make repeated creates idempotent."""
+    return (
         await db.execute(
-            select(AiVisibilityRun.id)
-            .where(AiVisibilityRun.prompt_id == prompt_id)
+            select(AiVisibilityRun)
+            .where(
+                AiVisibilityRun.tenant_id == tenant_id,
+                AiVisibilityRun.prompt_id == prompt_id,
+                AiVisibilityRun.channel_id == channel_id,
+                AiVisibilityRun.status.in_(ACTIVE_RUN_STATUSES),
+            )
+            .order_by(AiVisibilityRun.created_at.desc())
             .limit(1)
         )
     ).scalar_one_or_none()
-    if has_runs is not None:
-        row.is_active = False
-    else:
-        await db.delete(row)
-    await db.commit()
-    return True
 
 
 async def create_run(
@@ -296,15 +348,17 @@ async def create_run(
     *,
     locale: str,
 ) -> AiVisibilityRun:
-    """Create one durable run, or return the active run for this prompt."""
-    await _owned_channel(db, tenant_id, channel_id)
+    """Create one durable run under the prompt's durable attempt policy."""
+    await _owned_channel(db, tenant_id, channel_id, lock=True)
     prompt = (
         await db.execute(
-            select(AiVisibilityPrompt).where(
+            select(AiVisibilityPrompt)
+            .where(
                 AiVisibilityPrompt.id == prompt_id,
                 AiVisibilityPrompt.tenant_id == tenant_id,
                 AiVisibilityPrompt.channel_id == channel_id,
             )
+            .with_for_update()
         )
     ).scalar_one_or_none()
     if prompt is None:
@@ -312,20 +366,41 @@ async def create_run(
     if not prompt.is_active:
         raise PromptInactive("prompt_inactive")
 
-    existing = (
-        await db.execute(
-            select(AiVisibilityRun)
-            .where(
-                AiVisibilityRun.tenant_id == tenant_id,
-                AiVisibilityRun.prompt_id == prompt_id,
-                AiVisibilityRun.status.in_(ACTIVE_RUN_STATUSES),
-            )
-            .order_by(AiVisibilityRun.created_at.desc())
-            .limit(1)
-        )
-    ).scalar_one_or_none()
+    existing = await get_active_run(db, tenant_id, prompt_id, channel_id)
     if existing is not None:
         return existing
+
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(seconds=ATTEMPT_WINDOW_SECONDS)
+    recent_attempts = (
+        await db.execute(
+            select(
+                func.count(AiVisibilityAttempt.id),
+                func.max(AiVisibilityAttempt.attempted_at),
+            ).where(
+                AiVisibilityAttempt.tenant_id == tenant_id,
+                AiVisibilityAttempt.prompt_id == prompt_id,
+                AiVisibilityAttempt.attempted_at >= cutoff,
+            )
+        )
+    ).one()
+    if int(recent_attempts[0] or 0) >= MAX_RUN_ATTEMPTS:
+        raise RetryLimitReached("retry_limit_reached")
+    latest_finished = recent_attempts[1]
+    if latest_finished is None:
+        # Compatibility for terminal runs created before the ledger migration.
+        latest_finished = (
+            await db.execute(
+                select(func.max(AiVisibilityRun.completed_at)).where(
+                    AiVisibilityRun.tenant_id == tenant_id,
+                    AiVisibilityRun.prompt_id == prompt_id,
+                )
+            )
+        ).scalar_one()
+    if latest_finished and now - _aware(latest_finished) < timedelta(
+        seconds=RETRY_COOLDOWN_SECONDS
+    ):
+        raise RetryCooldown("retry_cooldown")
 
     run = AiVisibilityRun(
         tenant_id=tenant_id,
@@ -338,6 +413,14 @@ async def create_run(
     db.add(run)
     try:
         await db.flush()
+        db.add(
+            AiVisibilityAttempt(
+                tenant_id=tenant_id,
+                prompt_id=prompt_id,
+                run_id=run.id,
+                attempted_at=now,
+            )
+        )
         job = await submit_job(
             db,
             tenant_id=tenant_id,
@@ -352,17 +435,10 @@ async def create_run(
         await db.commit()
     except IntegrityError:
         await db.rollback()
-        return (
-            await db.execute(
-                select(AiVisibilityRun)
-                .where(
-                    AiVisibilityRun.tenant_id == tenant_id,
-                    AiVisibilityRun.prompt_id == prompt_id,
-                    AiVisibilityRun.status.in_(ACTIVE_RUN_STATUSES),
-                )
-                .limit(1)
-            )
-        ).scalar_one()
+        existing = await get_active_run(db, tenant_id, prompt_id, channel_id)
+        if existing is not None:
+            return existing
+        raise
     await db.refresh(run)
     return run
 
@@ -372,6 +448,10 @@ MAX_RUN_LIST = 100
 
 def _rate(hits: int, total: int) -> float | None:
     return round(hits * 100.0 / total, 1) if total else None
+
+
+def _aware(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
 async def overview(
@@ -518,15 +598,28 @@ async def retry_run(
         return None
     if run.status in ACTIVE_RUN_STATUSES or run.status == "completed":
         return run
+    # Creation owns the shared channel/prompt lock, cooldown, and durable
+    # attempt budget so POST /runs and POST /runs/{id}/retry cannot diverge.
     return await create_run(
         db, tenant_id, run.channel_id, run.prompt_id, locale=locale
     )
 
 
 async def delete_run(db: AsyncSession, tenant_id: str, run_id: str) -> bool:
-    run, _ = await get_run(db, tenant_id, run_id)
+    run = (
+        await db.execute(
+            select(AiVisibilityRun)
+            .where(
+                AiVisibilityRun.id == run_id,
+                AiVisibilityRun.tenant_id == tenant_id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
     if run is None:
         return False
+    if run.status in ACTIVE_RUN_STATUSES:
+        raise ActiveRunDeletion("active_run_delete_forbidden")
     await db.delete(run)
     await db.commit()
     return True

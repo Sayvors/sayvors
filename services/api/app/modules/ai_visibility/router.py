@@ -5,6 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...config import settings
 from ...core.deps import get_db
 from ..auth.rate_limit import rate_limit
+from ..billing.budget import get_balance
+from ..billing.entitlements import check_feature
 from ..team.context import (
     CHANNEL_LEVEL_EDIT,
     CHANNEL_LEVEL_NONE,
@@ -63,6 +65,15 @@ async def _authorize_run(
         raise HTTPException(404, "run_not_found")
     _authorize_channel(ctx, run.channel_id, write=write)
     return run
+
+
+async def _preflight_research(ctx: TenantContext) -> None:
+    await check_feature(ctx.tenant_id, "ai_replies")
+    balance = await get_balance(ctx.tenant_id)
+    if balance is None:
+        raise HTTPException(503, "credit_balance_unavailable")
+    if balance <= 0:
+        raise HTTPException(402, "insufficient_ai_credits")
 
 
 def _out(row: AiVisibilityPrompt) -> PromptOut:
@@ -140,6 +151,8 @@ async def patch_prompt(
         row = await service.update_prompt(db, ctx.tenant_id, prompt_id, body)
     except service.PromptLimitReached as exc:
         raise HTTPException(409, str(exc)) from exc
+    except service.PromptTextLocked as exc:
+        raise HTTPException(409, str(exc)) from exc
     except service.DuplicatePrompt as exc:
         raise HTTPException(409, str(exc)) from exc
     if row is None:
@@ -189,6 +202,12 @@ async def create_run(
         fail_closed=True,
     ):
         raise HTTPException(429, "too_many_requests")
+    existing = await service.get_active_run(
+        db, ctx.tenant_id, body.prompt_id, body.channel_id
+    )
+    if existing is not None:
+        return _run_out(existing)
+    await _preflight_research(ctx)
     try:
         row = await service.create_run(
             db,
@@ -202,6 +221,10 @@ async def create_run(
     except service.PromptNotOwned as exc:
         raise HTTPException(404, "prompt_not_found") from exc
     except service.PromptInactive as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except service.RetryCooldown as exc:
+        raise HTTPException(429, str(exc)) from exc
+    except service.RetryLimitReached as exc:
         raise HTTPException(409, str(exc)) from exc
     return _run_out(row)
 
@@ -294,6 +317,7 @@ async def run_detail(
         sources=[
             SourceOut(
                 id=row.id,
+                label=f"S{row.position + 1}",
                 position=row.position,
                 url=row.url,
                 title=row.title,
@@ -313,7 +337,17 @@ async def retry_run(
     ctx: TenantContext = Depends(require_perm("ai.edit")),
     db: AsyncSession = Depends(get_db),
 ) -> RunOut:
-    await _authorize_run(db, ctx, run_id, write=True)
+    run = await _authorize_run(db, ctx, run_id, write=True)
+    if run.status in service.ACTIVE_RUN_STATUSES or run.status == "completed":
+        return _run_out(run)
+    if not settings.TESTING and not await rate_limit(
+        f"ai-vis:run:{ctx.tenant_id}",
+        RUN_CREATE_RATE_LIMIT,
+        RUN_CREATE_RATE_WINDOW_SECONDS,
+        fail_closed=True,
+    ):
+        raise HTTPException(429, "too_many_requests")
+    await _preflight_research(ctx)
     try:
         row = await service.retry_run(
             db,
@@ -322,6 +356,10 @@ async def retry_run(
             locale="ar" if getattr(ctx.user, "language", None) == "ar" else "en",
         )
     except service.PromptInactive as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except service.RetryCooldown as exc:
+        raise HTTPException(429, str(exc)) from exc
+    except service.RetryLimitReached as exc:
         raise HTTPException(409, str(exc)) from exc
     if row is None:
         raise HTTPException(404, "run_not_found")
@@ -335,6 +373,10 @@ async def delete_run(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     await _authorize_run(db, ctx, run_id, write=True)
-    if not await service.delete_run(db, ctx.tenant_id, run_id):
+    try:
+        deleted = await service.delete_run(db, ctx.tenant_id, run_id)
+    except service.ActiveRunDeletion as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if not deleted:
         raise HTTPException(404, "run_not_found")
     return Response(status_code=204)

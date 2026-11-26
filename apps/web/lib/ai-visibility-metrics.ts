@@ -7,9 +7,9 @@ const ACTIVE_RUN_STATUSES = new Set([
   "writing",
 ]);
 
-/** Keep missing evidence distinct from a measured zero. */
-export function formatRate(value: number | null): string {
-  return value === null ? "—" : `${value.toFixed(1)}%`;
+/** Keep missing or invalid evidence distinct from a measured zero. */
+export function formatRate(value: number | null | undefined): string {
+  return value == null || !Number.isFinite(value) ? "—" : `${value.toFixed(1)}%`;
 }
 
 export function isActiveStatus(status: string): boolean {

@@ -40,7 +40,7 @@ def _prompt_body(channel_id, *, text="Best coffee near Al Malqa"):
 
 
 @pytest.mark.asyncio
-async def test_prompt_crud_and_archive(client, user_id, channel_id):
+async def test_prompt_crud_and_archive(client, db, user_id, channel_id):
     created = client.post("/api/v1/ai-visibility/prompts", json=_prompt_body(channel_id))
     assert created.status_code == 201, created.text
     prompt_id = created.json()["id"]
@@ -68,7 +68,8 @@ async def test_prompt_crud_and_archive(client, user_id, channel_id):
     archived = client.get(
         f"/api/v1/ai-visibility/prompts?channel_id={channel_id}&include_archived=true"
     )
-    assert archived.json()["items"] == []
+    assert [row["id"] for row in archived.json()["items"]] == [prompt_id]
+    assert (await db.get(AiVisibilityPrompt, prompt_id)).is_active is False
 
 
 @pytest.mark.asyncio

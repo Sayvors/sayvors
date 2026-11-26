@@ -14,6 +14,14 @@ from .models import Job
 router = APIRouter(prefix="/api/v1", tags=["jobs"])
 admin_router = APIRouter(prefix="/api/v1/admin", tags=["admin-jobs"])
 
+# Domain APIs own authorization, idempotency, and spend preflight for these
+# jobs. The generic operator routes must not become a second, weaker entrypoint.
+INTERNAL_ONLY_JOB_TYPES = {"ai_visibility.research"}
+
+
+def _client_can_see(job: Job) -> bool:
+    return job.job_type not in INTERNAL_ONLY_JOB_TYPES
+
 
 def _job_to_dict(job: Job) -> dict:
     return {
@@ -66,6 +74,10 @@ async def submit_job_endpoint(
     job_type = body.get("job_type") or body.get("type")
     if not job_type:
         raise HTTPException(status_code=400, detail="job_type is required")
+    if job_type in INTERNAL_ONLY_JOB_TYPES:
+        raise HTTPException(
+            status_code=400, detail=f"job_type cannot be submitted: {job_type}"
+        )
     # Reject registry types that have no handler: enqueuing them would burn
     # retries and end as `no_handler` without doing any work.
     from .handlers import HANDLERS
@@ -131,7 +143,7 @@ async def get_job_endpoint(
     """Get job status, progress, result, and error."""
     tenant_id = tenant_id_of(user)
     job = await service.get_job(db, job_id, tenant_id)
-    if job is None:
+    if job is None or not _client_can_see(job):
         raise HTTPException(status_code=404, detail="Job not found")
     return _job_to_dict(job)
 
@@ -146,8 +158,15 @@ async def list_jobs_endpoint(
 ):
     """List jobs for the current tenant."""
     tenant_id = tenant_id_of(user)
-    jobs = await service.list_jobs(db, tenant_id=tenant_id, status=status, lane=lane, limit=limit)
-    return [_job_to_dict(j) for j in jobs]
+    jobs = await service.list_jobs(
+        db,
+        tenant_id=tenant_id,
+        status=status,
+        lane=lane,
+        limit=limit,
+        exclude_job_types=INTERNAL_ONLY_JOB_TYPES,
+    )
+    return [_job_to_dict(job) for job in jobs]
 
 
 @router.post("/jobs/{job_id}/cancel")
@@ -159,7 +178,7 @@ async def cancel_job_endpoint(
     """Cancel a queued or retrying job."""
     tenant_id = tenant_id_of(user)
     job = await service.get_job(db, job_id, tenant_id)
-    if job is None:
+    if job is None or not _client_can_see(job):
         raise HTTPException(status_code=404, detail="Job not found")
     cancelled = await service.cancel_job(db, job=job)
     await db.commit()

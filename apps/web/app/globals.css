@@ -377,6 +377,250 @@ html[lang="ar"] {
   }
 }
 
+/* ── AI Visibility: Clay Operations ─────────────────────────────────────
+ * Solid Fog page, white surfaces, Deep Violet ink. Magenta is reserved for
+ * active research; semantic green/amber/red appear only as small status marks.
+ * No gradients, blur, or translucent panels. */
+.ai-visibility-ui {
+  --ai-page: #f1f2f5;
+  --ai-surface: #ffffff;
+  --ai-ink: #14101f;
+  --ai-ink-2: #3b2d5e;
+  --ai-muted: #6f6684;
+  --ai-line: #e5e0ec;
+  --ai-line-strong: #cfc6de;
+  --ai-accent: #3d1d6e;
+  --ai-signal: #b0338a;
+  --ai-signal-soft: #f8eaf4;
+  --ai-sunken: #f4f2f7;
+  --ai-ok: #087f5b;
+  --ai-warn: #9a6700;
+  --ai-danger: #c2354f;
+  --ai-space-1: 0.25rem;
+  --ai-space-2: 0.5rem;
+  --ai-space-3: 0.75rem;
+  --ai-space-4: 1rem;
+  --ai-space-5: 1.5rem;
+  --ai-space-6: 2rem;
+  --ai-space-7: 3rem;
+  --ai-radius-panel: 1.25rem;
+  --ai-radius-control: 0.75rem;
+  --ai-shadow-panel: 0 18px 44px -34px rgba(61, 29, 110, 0.45);
+  --ai-shadow-control: 0 8px 18px -12px rgba(61, 29, 110, 0.75);
+  --ai-dur: 160ms;
+  --ai-ease: cubic-bezier(0.2, 0, 0, 1);
+
+  min-height: 100%;
+  background: var(--ai-page);
+  color: var(--ai-ink);
+}
+
+.dark .ai-visibility-ui {
+  --ai-page: #14101f;
+  --ai-surface: #1e1a2e;
+  --ai-ink: #f4f2f7;
+  --ai-ink-2: #d8d0e6;
+  --ai-muted: #a99dbb;
+  --ai-line: #332b45;
+  --ai-line-strong: #4a3f60;
+  --ai-accent: #c7a7ff;
+  --ai-signal: #e78ac5;
+  --ai-signal-soft: #35203b;
+  --ai-sunken: #262033;
+  --ai-ok: #6ee7b7;
+  --ai-warn: #fcd34d;
+  --ai-danger: #ff8fa3;
+  --ai-shadow-panel: 0 18px 44px -34px rgba(0, 0, 0, 0.75);
+  --ai-shadow-control: 0 8px 18px -12px rgba(0, 0, 0, 0.85);
+}
+
+.ai-visibility-ui :focus-visible {
+  outline: 3px solid var(--ai-signal);
+  outline-offset: 3px;
+}
+
+.ai-panel {
+  min-width: 0;
+  border: 1px solid var(--ai-line);
+  border-radius: var(--ai-radius-panel);
+  background: var(--ai-surface);
+  box-shadow: var(--ai-shadow-panel);
+}
+
+.ai-control {
+  min-height: 2.75rem;
+  border: 1px solid var(--ai-line-strong);
+  border-radius: var(--ai-radius-control);
+  background: var(--ai-surface);
+  color: var(--ai-ink);
+  transition:
+    border-color var(--ai-dur) var(--ai-ease),
+    background-color var(--ai-dur) var(--ai-ease),
+    transform var(--ai-dur) var(--ai-ease);
+}
+
+.ai-control:hover {
+  border-color: var(--ai-accent);
+}
+
+.ai-control:active {
+  transform: translateY(2px) scale(0.98);
+}
+
+.ai-btn-primary {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ai-space-2);
+  border: 1px solid var(--ai-accent);
+  border-radius: var(--ai-radius-control);
+  background: var(--ai-accent);
+  color: #ffffff;
+  box-shadow: var(--ai-shadow-control);
+  font-weight: 700;
+  transition:
+    opacity var(--ai-dur) var(--ai-ease),
+    transform var(--ai-dur) var(--ai-ease);
+}
+
+.dark .ai-btn-primary {
+  color: #14101f;
+}
+
+.ai-btn-primary:hover {
+  opacity: 0.9;
+}
+
+.ai-btn-primary:active {
+  transform: translateY(2px) scale(0.98);
+}
+
+.ai-btn-primary:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.ai-metric-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--ai-line);
+  border-radius: var(--ai-radius-panel);
+  background: var(--ai-surface);
+  box-shadow: var(--ai-shadow-panel);
+}
+
+.ai-metric {
+  min-width: 0;
+  padding: var(--ai-space-5) var(--ai-space-6);
+}
+
+.ai-metric-label {
+  overflow-wrap: anywhere;
+}
+
+.ai-metric + .ai-metric {
+  border-inline-start: 1px solid var(--ai-line);
+}
+
+.ai-metric-value {
+  margin-top: var(--ai-space-2);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: clamp(1.75rem, 3vw, 2.5rem);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.06em;
+  font-variant-numeric: tabular-nums;
+}
+
+.ai-eyebrow {
+  color: var(--ai-muted);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.ai-rule {
+  height: 1px;
+  background: var(--ai-line);
+}
+
+.ai-status-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--ai-muted);
+}
+
+.ai-status-dot[data-tone="active"] {
+  background: var(--ai-signal);
+  box-shadow: 0 0 0 4px var(--ai-signal-soft);
+}
+
+.ai-status-dot[data-tone="ok"] {
+  background: var(--ai-ok);
+}
+
+.ai-status-dot[data-tone="warn"] {
+  background: var(--ai-warn);
+}
+
+.ai-status-dot[data-tone="danger"] {
+  background: var(--ai-danger);
+}
+
+.ai-skeleton {
+  border-radius: var(--ai-radius-control);
+  background: var(--ai-sunken);
+  animation: ai-skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes ai-skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 639px) {
+  .ai-metric {
+    padding: var(--ai-space-3) var(--ai-space-2);
+  }
+
+  .ai-metric-value {
+    font-size: 1.35rem;
+  }
+
+  .ai-eyebrow {
+    font-size: 0.625rem;
+    letter-spacing: 0.08em;
+  }
+
+  .ai-metric-label {
+    overflow-wrap: normal;
+    font-size: 0.5625rem;
+    letter-spacing: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-visibility-ui .ai-skeleton {
+    animation: none;
+  }
+
+  .ai-control,
+  .ai-btn-primary {
+    transition: none;
+  }
+}
+
 /* ── Clay surfaces (composer) ───────────────────────────────────────────
  * Radius ~25% of element height, a single light source at the top-left,
  * press feedback as a transform — never an animated shadow. Colors come

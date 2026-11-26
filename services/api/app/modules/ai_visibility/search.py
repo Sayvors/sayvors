@@ -16,6 +16,7 @@ from ..redis.service import cache_get, cache_set
 
 SEARCH_CACHE_SECONDS = 6 * 60 * 60
 SEARCH_RATE_LIMIT = 30
+TENANT_SEARCH_RATE_LIMIT = 10
 SEARCH_RATE_WINDOW_SECONDS = 60
 SEARCH_BLOCK_COOLDOWN_SECONDS = 15 * 60
 MAX_SEARCH_RESULTS = 10
@@ -33,6 +34,10 @@ class SearchResult:
 
 
 class SearchRateLimited(RuntimeError):
+    pass
+
+
+class TenantSearchRateLimited(SearchRateLimited):
     pass
 
 
@@ -177,15 +182,23 @@ async def search_public_web(tenant_id: str, query: str) -> list[SearchResult]:
         return []
     cache_key = f"ai-vis:search:{tenant_id}:{normalized}"
     block_key = "ai-vis:search:bing:blocked"
-    if await cache_get(block_key):
-        raise SearchUnavailable("search_blocked")
     cached_raw = await cache_get(cache_key)
     if cached_raw is not None:
         try:
             cached = json.loads(cached_raw)
         except (TypeError, ValueError):
-            cached = []
-        return safe_results([SearchResult(**row) for row in cached])
+            cached = None
+        if isinstance(cached, list):
+            return safe_results([SearchResult(**row) for row in cached])
+    if not await rate_limit(
+        f"ai-vis:search:tenant:{tenant_id}",
+        TENANT_SEARCH_RATE_LIMIT,
+        SEARCH_RATE_WINDOW_SECONDS,
+        fail_closed=True,
+    ):
+        raise TenantSearchRateLimited("tenant_search_rate_limited")
+    if await cache_get(block_key):
+        raise SearchUnavailable("search_blocked")
     if not await rate_limit(
         "ai-vis:search:bing",
         SEARCH_RATE_LIMIT,

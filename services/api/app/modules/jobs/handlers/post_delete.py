@@ -21,6 +21,7 @@ from ...channels.publish.service import (
     resolve_publish_channel,
 )
 from ..models import Job
+from ..types import JobType
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +39,16 @@ async def handle_post_delete(job: Job, db: AsyncSession) -> dict | None:
         raise ValueError("publish_job_id missing from payload")
 
     publish_job = (
-        await db.execute(select(Job).where(Job.id == publish_job_id))
+        await db.execute(
+            select(Job).where(
+                Job.id == publish_job_id,
+                Job.tenant_id == job.tenant_id,
+                Job.job_type == JobType.post_publish.value,
+            )
+        )
     ).scalar_one_or_none()
     if publish_job is None:
-        # The publish job was removed outright — there is nothing left
-        # to take down.
-        return {"skipped": "the publish job no longer exists"}
+        raise ValueError("publish_job_not_found")
 
     publish_payload = publish_job.payload or {}
     method = publish_payload.get("method", "post")

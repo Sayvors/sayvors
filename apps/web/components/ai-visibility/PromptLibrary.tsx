@@ -14,6 +14,7 @@ type PromptItem = {
 
 type Copy = {
   promptLibrary: string;
+  libraryEyebrow: string;
   searchPrompts: string;
   addPrompt: string;
   editPrompt: string;
@@ -113,34 +114,37 @@ export default function PromptLibrary({
   };
 
   return (
-    <section className="ui-card p-4" aria-label={copy.promptLibrary}>
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="text-[14px] font-bold text-[var(--ui-ink)]">
-          {copy.promptLibrary}
-        </h2>
+    <section className="ai-panel p-5 lg:sticky lg:top-6" aria-label={copy.promptLibrary}>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="ai-eyebrow">{copy.libraryEyebrow}</p>
+          <h2 className="mt-1 text-[16px] font-bold text-[var(--ai-ink)]">
+            {copy.promptLibrary}
+          </h2>
+        </div>
         <button
           type="button"
           onClick={() => startCreate()}
-          className="rounded-[8px] border border-[var(--ui-line)] px-2.5 py-1 text-[11px] font-bold"
+          className="ai-btn-primary min-h-10 px-3 text-[11px]"
         >
-          {copy.addPrompt}
+          <span aria-hidden="true">+</span> {copy.addPrompt}
         </button>
       </div>
       <input
         aria-label={copy.searchPrompts}
         value={search}
         onChange={(event) => setSearch(event.target.value)}
-        className="mt-3 w-full rounded-[8px] border border-[var(--ui-line)] bg-white px-3 py-2 text-[12px]"
+        className="ai-control mt-4 w-full px-3 text-[12px]"
         placeholder={copy.searchPrompts}
       />
       <div className="mt-3 space-y-2">
         {visible.map((row) => (
           <div
             key={row.id}
-            className={`rounded-[8px] border p-2.5 ${
+            className={`rounded-[var(--ai-radius-control)] border p-3 transition-colors ${
               selectedId === row.id
-                ? "border-[var(--ui-ink)]"
-                : "border-[var(--ui-line)]"
+                ? "border-[var(--ai-accent)] bg-[var(--ai-sunken)]"
+                : "border-[var(--ai-line)] bg-[var(--ai-surface)] hover:border-[var(--ai-line-strong)]"
             }`}
           >
             <button
@@ -148,15 +152,15 @@ export default function PromptLibrary({
               onClick={() => onSelect(row.id)}
               className="block w-full text-start"
             >
-              <span className="block text-[12px] font-bold text-[var(--ui-ink)]">
+              <span className="block text-[12px] font-bold text-[var(--ai-ink)]">
                 {row.title}
               </span>
-              <span className="mt-1 block text-[11px] text-[var(--ui-ink-2)]">
+              <span className="mt-1 block text-[11px] leading-5 text-[var(--ai-ink-2)]">
                 {row.prompt_text}
               </span>
             </button>
-            <div className="mt-2 flex gap-2 text-[10px] font-bold">
-              <button type="button" onClick={() => startEdit(row)}>
+            <div className="mt-2 flex flex-wrap gap-1 text-[10px] font-bold">
+              <button type="button" onClick={() => startEdit(row)} className="min-h-8 rounded-md px-2 text-[var(--ai-ink-2)] hover:bg-[var(--ai-surface)] hover:text-[var(--ai-ink)]">
                 {copy.editPrompt}
               </button>
               <button
@@ -167,6 +171,7 @@ export default function PromptLibrary({
                       setError(exc instanceof Error ? exc.message : "save_failed"),
                   )
                 }
+                className="min-h-8 rounded-md px-2 text-[var(--ai-ink-2)] hover:bg-[var(--ai-surface)] hover:text-[var(--ai-ink)]"
               >
                 {row.is_active ? copy.archivePrompt : copy.active}
               </button>
@@ -177,6 +182,7 @@ export default function PromptLibrary({
                     setError(exc instanceof Error ? exc.message : "save_failed"),
                   )
                 }
+                className="min-h-8 rounded-md px-2 text-[var(--ai-danger)] hover:bg-[var(--ai-surface)]"
               >
                 {copy.deletePrompt}
               </button>
@@ -184,30 +190,35 @@ export default function PromptLibrary({
           </div>
         ))}
         {visible.length === 0 && (
-          <p className="text-[12px] text-[var(--ui-ink-2)]">{copy.noPrompts}</p>
+          <p className="text-[12px] leading-5 text-[var(--ai-ink-2)]">{copy.noPrompts}</p>
         )}
       </div>
 
       {suggestions.length > 0 && (
-        <div className="mt-4 border-t border-[var(--ui-line)] pt-3">
-          <h3 className="text-[11px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
-            {copy.suggestionsTitle}
-          </h3>
-          {suggestions.map((suggestion) => (
-            <div
-              key={suggestion}
-              className="mt-2 flex items-start justify-between gap-2 text-[11px] text-[var(--ui-ink-2)]"
-            >
-              <span>{suggestion}</span>
-              <button
-                type="button"
-                onClick={() => startCreate(suggestion)}
-                className="shrink-0 font-bold text-[var(--ui-ink)]"
+        <div className="mt-5 border-t border-[var(--ai-line)] pt-4">
+          <h3 className="ai-eyebrow">{copy.suggestionsTitle}</h3>
+          <div className="mt-2 divide-y divide-[var(--ai-line)]">
+            {suggestions.map((suggestion, index) => (
+              <div
+                key={suggestion}
+                className="flex items-start justify-between gap-3 py-3 text-[11px] leading-5 text-[var(--ai-ink-2)]"
               >
-                {copy.useSuggestion}
-              </button>
-            </div>
-          ))}
+                <div className="flex gap-3">
+                  <span className="font-mono text-[10px] font-bold text-[var(--ai-signal)]">
+                    0{index + 1}
+                  </span>
+                  <span>{suggestion}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => startCreate(suggestion)}
+                  className="min-h-8 shrink-0 rounded-md px-2 font-bold text-[var(--ai-accent)] hover:bg-[var(--ai-sunken)]"
+                >
+                  {copy.useSuggestion}
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -224,7 +235,7 @@ export default function PromptLibrary({
             <input
               value={title}
               onChange={(event) => setTitle(event.target.value)}
-              className="mt-1 w-full rounded-[8px] border border-[var(--ui-line)] px-3 py-2 text-[13px]"
+              className="ai-control mt-1 w-full px-3 text-[13px]"
             />
           </label>
           <label className="mt-3 block text-[11px] font-semibold">
@@ -232,7 +243,7 @@ export default function PromptLibrary({
             <textarea
               value={text}
               onChange={(event) => setText(event.target.value)}
-              className="mt-1 min-h-28 w-full rounded-[8px] border border-[var(--ui-line)] px-3 py-2 text-[13px]"
+              className="ai-control mt-1 min-h-28 w-full px-3 py-2 text-[13px]"
             />
           </label>
           <label className="mt-3 block text-[11px] font-semibold">
@@ -240,7 +251,7 @@ export default function PromptLibrary({
             <select
               value={intent}
               onChange={(event) => setIntent(event.target.value)}
-              className="mt-1 w-full rounded-[8px] border border-[var(--ui-line)] px-3 py-2 text-[13px]"
+              className="ai-control mt-1 w-full px-3 text-[13px]"
             >
               <option value="discovery">discovery</option>
               <option value="comparison">comparison</option>
@@ -249,19 +260,19 @@ export default function PromptLibrary({
             </select>
           </label>
           {error && (
-            <p role="alert" className="mt-3 text-[12px] text-red-700">
+            <p role="alert" className="mt-3 text-[12px] font-semibold text-[var(--ai-danger)]">
               {error}
             </p>
           )}
-          <div className="mt-4 flex justify-end gap-2">
-            <button type="button" onClick={close}>
+          <div className="mt-5 flex justify-end gap-2">
+            <button type="button" onClick={close} className="ai-control px-4 text-[12px] font-bold">
               {copy.cancel}
             </button>
             <button
               type="button"
               disabled={busy || !title.trim() || text.trim().length < 3}
               onClick={() => void save()}
-              className="rounded-[8px] bg-[var(--ui-ink)] px-3.5 py-2 text-[12px] font-bold text-white disabled:opacity-50"
+              className="ai-btn-primary px-4 text-[12px]"
             >
               {copy.savePrompt}
             </button>
