@@ -42,11 +42,12 @@ export default function ResearchActivity({
       ? (coverage.search as Record<string, unknown>)
       : {};
   const query = String(search.query ?? "").split(" | ")[0];
+  const provider = String(search.provider ?? "Bing public web");
   const current = ORDER[status] ?? 0;
   const terminal = status === "completed" || status === "insufficient_evidence";
   const failed = status === "failed" || status === "ambiguous";
   const steps = [
-    [copy.activitySearch, query || "Bing public web"],
+    [copy.activitySearch, query || provider],
     [copy.activityFound, String(search.result_count ?? 0)],
     [copy.activityRead, String(search.fetched_count ?? coverage.source_count ?? 0)],
     [copy.activityFacts, copy.activityNow],

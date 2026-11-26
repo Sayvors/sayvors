@@ -148,3 +148,238 @@ async def test_search_uses_cache(monkeypatch):
     results = await search.search_public_web("tenant", "best coffee")
     assert results[0].url == "https://example.com/cached"
     assert calls == []
+
+
+DDG_HTML = b"""<html><body>
+<div class="result__body">
+<h2 class="result__title">
+<a rel="nofollow" class="result__a"
+   href="//duckduckgo.com/l/?uddg=https%3A%2F%2Facme.example%2Fcoffee&amp;rut=abc">
+Acme <b>Coffee</b></a></h2>
+<a class="result__snippet"
+   href="//duckduckgo.com/l/?uddg=https%3A%2F%2Facme.example%2Fcoffee">
+Fresh <b>coffee</b> near Malqa.</a>
+</div>
+<div class="result__body">
+<h2 class="result__title">
+<a class="result__a" href="https://rival.example/">Duplicate Acme</a></h2>
+</div>
+</body></html>"""
+
+
+def test_parse_ddg_html_unwraps_redirector_and_pairs_snippets():
+    rows = search.parse_ddg_html(DDG_HTML)
+    assert [row.url for row in rows] == [
+        "https://acme.example/coffee",
+        "https://rival.example/",
+    ]
+    assert rows[0].title == "Acme Coffee"
+    assert rows[0].snippet == "Fresh coffee near Malqa."
+    assert rows[1].snippet == ""
+
+
+def test_build_queries_deep_adds_domain_shape():
+    branch = {
+        "name": "MenteE",
+        "address": "Mingora",
+        "website": "https://menteeai.org/",
+    }
+    deep = search.build_queries("Who recommends MenteE?", branch, "deep")
+    assert deep[0].startswith("MenteE")
+    assert deep[1] == "menteeai.org"
+    assert deep[2] == "site:menteeai.org"
+    assert search.build_queries("Who recommends MenteE?", branch, "quick") == [
+        deep[0]
+    ]
+
+
+@pytest.mark.asyncio
+async def test_search_many_ranks_brand_candidates_above_noise(monkeypatch):
+    async def _noise(_tenant, query, **_kwargs):
+        if query.startswith("site:") or query.endswith(".example"):
+            return [
+                search.SearchResult(
+                    url="https://acme.example/products", title="Acme products", snippet=""
+                )
+            ]
+        return [
+            search.SearchResult(
+                url="https://en.wikipedia.org/wiki/Malqa", title="Malqa - Wikipedia", snippet=""
+            )
+        ]
+
+    monkeypatch.setattr(search, "search_public_web", _noise)
+    rows = await search.search_many(
+        "tenant",
+        ["Acme Malqa", "acme.example", "site:acme.example"],
+        distinctive={"acme"},
+    )
+    assert rows[0].url == "https://acme.example/products"
+
+
+@pytest.mark.asyncio
+async def test_bing_filler_triggers_duckduckgo_backup(monkeypatch):
+    async def _cache_get(_key):
+        return None
+
+    async def _cache_set(*_args, **_kwargs):
+        return None
+
+    async def _allow(*_args, **_kwargs):
+        return True
+
+    async def _bing(_query):
+        return [
+            search.SearchResult(
+                url="https://translate.google.com/?hl=ar",
+                title="Google Translate",
+                snippet="",
+            )
+        ]
+
+    async def _ddg(_query):
+        return [
+            search.SearchResult(
+                url="https://acme.example/coffee",
+                title="Acme Coffee",
+                snippet="Fresh coffee.",
+            )
+        ]
+
+    monkeypatch.setattr(search, "cache_get", _cache_get)
+    monkeypatch.setattr(search, "cache_set", _cache_set)
+    monkeypatch.setattr(search, "rate_limit", _allow)
+    monkeypatch.setattr(search, "_fetch_results", _bing)
+    monkeypatch.setattr(search, "_fetch_ddg_results", _ddg)
+
+    providers: list[str] = []
+    rows = await search.search_public_web(
+        "tenant", "Acme Malqa", distinctive={"acme"}, providers=providers
+    )
+    assert rows[0].url == "https://acme.example/coffee"
+    assert providers == [search.BING_PROVIDER_LABEL, search.DDG_PROVIDER_LABEL]
+
+
+@pytest.mark.asyncio
+async def test_matching_bing_results_never_consult_duckduckgo(monkeypatch):
+    async def _cache_get(_key):
+        return None
+
+    async def _cache_set(*_args, **_kwargs):
+        return None
+
+    async def _allow(*_args, **_kwargs):
+        return True
+
+    async def _bing(_query):
+        return [
+            search.SearchResult(
+                url="https://acme.example/coffee", title="Acme Coffee", snippet=""
+            )
+        ]
+
+    async def _ddg(_query):
+        raise AssertionError("duckduckgo must not be consulted")
+
+    monkeypatch.setattr(search, "cache_get", _cache_get)
+    monkeypatch.setattr(search, "cache_set", _cache_set)
+    monkeypatch.setattr(search, "rate_limit", _allow)
+    monkeypatch.setattr(search, "_fetch_results", _bing)
+    monkeypatch.setattr(search, "_fetch_ddg_results", _ddg)
+
+    providers: list[str] = []
+    rows = await search.search_public_web(
+        "tenant", "Acme", distinctive={"acme"}, providers=providers
+    )
+    assert len(rows) == 1
+    assert providers == [search.BING_PROVIDER_LABEL]
+
+
+@pytest.mark.asyncio
+async def test_duckduckgo_answers_while_bing_is_blocked(monkeypatch):
+    async def _cache_get(key):
+        return "1" if "bing:blocked" in key else None
+
+    async def _cache_set(*_args, **_kwargs):
+        return None
+
+    async def _allow(*_args, **_kwargs):
+        return True
+
+    async def _ddg(_query):
+        return [
+            search.SearchResult(
+                url="https://acme.example/coffee", title="Acme Coffee", snippet=""
+            )
+        ]
+
+    monkeypatch.setattr(search, "cache_get", _cache_get)
+    monkeypatch.setattr(search, "cache_set", _cache_set)
+    monkeypatch.setattr(search, "rate_limit", _allow)
+    monkeypatch.setattr(search, "_fetch_ddg_results", _ddg)
+
+    providers: list[str] = []
+    rows = await search.search_public_web("tenant", "acme coffee", providers=providers)
+    assert rows[0].url == "https://acme.example/coffee"
+    assert providers == [search.DDG_PROVIDER_LABEL]
+
+
+@pytest.mark.asyncio
+async def test_search_fails_when_both_providers_are_down(monkeypatch):
+    async def _cache_get(_key):
+        return None
+
+    async def _allow(*_args, **_kwargs):
+        return True
+
+    async def _bing(_query):
+        raise RuntimeError("boom")
+
+    async def _ddg(_query):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(search, "cache_get", _cache_get)
+    monkeypatch.setattr(search, "rate_limit", _allow)
+    monkeypatch.setattr(search, "_fetch_results", _bing)
+    monkeypatch.setattr(search, "_fetch_ddg_results", _ddg)
+
+    with pytest.raises(search.SearchUnavailable):
+        await search.search_public_web("tenant", "acme coffee")
+
+
+@pytest.mark.asyncio
+async def test_ddg_anomaly_engages_its_own_cooldown(monkeypatch):
+    stored: dict[str, str] = {}
+
+    async def _cache_get(_key):
+        return None
+
+    async def _cache_set(key, _value, **_kwargs):
+        stored[key] = "1"
+
+    async def _allow(*_args, **_kwargs):
+        return True
+
+    async def _bing(_query):
+        raise RuntimeError("bing down")
+
+    async def _ddg(_query):
+        raise search.SearchBlocked("ddg_anomaly")
+
+    monkeypatch.setattr(search, "cache_get", _cache_get)
+    monkeypatch.setattr(search, "cache_set", _cache_set)
+    monkeypatch.setattr(search, "rate_limit", _allow)
+    monkeypatch.setattr(search, "_fetch_results", _bing)
+    monkeypatch.setattr(search, "_fetch_ddg_results", _ddg)
+
+    with pytest.raises(search.SearchUnavailable):
+        await search.search_public_web("tenant", "acme coffee")
+    assert stored[search.DDG_BLOCK_KEY] == "1"
+
+
+def test_ddg_anomaly_page_is_not_parsed_as_results():
+    body = (
+        b"<html><div class='anomaly-modal__box'>prove you are human</div></html>"
+    )
+    assert search.parse_ddg_html(body) == []
+    assert search._is_ddg_anomaly(body)

@@ -69,7 +69,7 @@ async def test_job_completes_with_validated_brief(
 ):
     run, job = await _seed(db, user_id, channel_id)
 
-    async def _search(_tenant, _query):
+    async def _search(_tenant, _query, **_kwargs):
         return [
             SimpleNamespace(url="https://a.example", title="A", snippet=""),
             SimpleNamespace(url="https://b.example", title="B", snippet=""),
@@ -168,7 +168,7 @@ async def test_reclaimed_job_reuses_committed_source_snapshots(
     await db.commit()
     called = []
 
-    async def _search(*_args):
+    async def _search(*_args, **_kwargs):
         called.append("search")
         return []
 
@@ -354,7 +354,7 @@ async def test_stale_worker_stops_after_search(
     await db.commit()
     called = []
 
-    async def _search(*_args):
+    async def _search(*_args, **_kwargs):
         job.lease_owner = "worker-2"
         await db.commit()
         return []
@@ -378,7 +378,7 @@ async def test_job_stops_if_run_disappears_during_search(
     run, job = await _seed(db, user_id, channel_id)
     called = []
 
-    async def _search(_tenant, _query):
+    async def _search(_tenant, _query, **_kwargs):
         await db.delete(run)
         await db.commit()
         return []
@@ -402,7 +402,7 @@ async def test_global_search_rate_limit_defers_the_job(
     job.max_attempts = 3
     await db.commit()
 
-    async def _limited(*_args):
+    async def _limited(*_args, **_kwargs):
         raise jobs.search.SearchRateLimited("search_rate_limited")
 
     monkeypatch.setattr(jobs.search, "search_public_web", _limited)
@@ -419,7 +419,7 @@ async def test_tenant_search_rate_limit_is_terminal(
 ):
     run, job = await _seed(db, user_id, channel_id)
 
-    async def _limited(*_args):
+    async def _limited(*_args, **_kwargs):
         raise jobs.search.TenantSearchRateLimited("tenant_search_rate_limited")
 
     monkeypatch.setattr(jobs.search, "search_public_web", _limited)
@@ -529,7 +529,7 @@ async def test_job_marks_insufficient_evidence(
 ):
     run, job = await _seed(db, user_id, channel_id)
 
-    async def _search(_tenant, _query):
+    async def _search(_tenant, _query, **_kwargs):
         return [SimpleNamespace(url="https://a.example", title="A", snippet="")]
 
     async def _fetch(_db, run_id, rows, **_kwargs):

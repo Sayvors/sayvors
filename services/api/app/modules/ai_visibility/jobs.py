@@ -381,10 +381,22 @@ async def handle_research(job, db: AsyncSession) -> dict:
             queries = search.build_queries(
                 run.prompt_snapshot, branch, run.research_depth or "quick"
             )
+            providers: list[str] = []
+            distinctive = _branch_tokens(branch)
             if run.research_depth == "deep":
-                results = await search.search_many(tenant_id, queries)
+                results = await search.search_many(
+                    tenant_id,
+                    queries,
+                    distinctive=distinctive,
+                    providers=providers,
+                )
             else:
-                results = await search.search_public_web(tenant_id, queries[0])
+                results = await search.search_public_web(
+                    tenant_id,
+                    queries[0],
+                    distinctive=distinctive,
+                    providers=providers,
+                )
             await ensure_active()
             await _status(db, run, "fetching")
             snapshots = await sources.fetch_sources(
@@ -397,7 +409,8 @@ async def handle_research(job, db: AsyncSession) -> dict:
             )
             await ensure_active()
             coverage["search"] = {
-                "provider": "Bing public web",
+                "provider": " + ".join(dict.fromkeys(providers))
+                or search.BING_PROVIDER_LABEL,
                 "query": " | ".join(queries),
                 "result_count": len(results),
                 "fetched_count": len(snapshots),
