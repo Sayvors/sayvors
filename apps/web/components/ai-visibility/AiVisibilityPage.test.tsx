@@ -4,11 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const api = vi.hoisted(() => ({
   createPrompt: vi.fn(),
   createRun: vi.fn(),
-  deletePrompt: vi.fn(),
   fetchOverview: vi.fn(),
   fetchPrompts: vi.fn(),
   fetchRuns: vi.fn(),
-  updatePrompt: vi.fn(),
 }));
 const channels = vi.hoisted(() => ({ value: [] as Array<{ id: string; label: string }> }));
 const query = vi.hoisted(() => ({ invalidateQueries: vi.fn() }));
@@ -36,9 +34,9 @@ import AiVisibilityPage from "./AiVisibilityPage";
 const prompt = {
   id: "prompt-1",
   channel_id: "branch-1",
-  title: "Coffee",
-  prompt_text: "Best coffee near Malqa",
-  intent: "discovery",
+  title: "Visibility check",
+  prompt_text: "How visible is Acme Coffee?",
+  intent: "visibility",
   is_active: true,
   created_at: "2026-11-25T00:00:00Z",
   updated_at: "2026-11-25T00:00:00Z",
@@ -64,19 +62,22 @@ beforeEach(() => {
   api.fetchPrompts.mockResolvedValue({ items: [] });
   api.fetchRuns.mockResolvedValue({ items: [], total: 0 });
   api.createRun.mockResolvedValue({ id: "run-1", status: "queued" });
+  api.createPrompt.mockResolvedValue(prompt);
   vi.mocked(useQuery).mockImplementation(({ queryKey }) => {
     if (queryKey[1] === "overview") {
       return {
         data: { mention_rate: null, citation_rate: null, recommendation_rate: null },
+        isPending: false,
+        isError: false,
       } as never;
     }
     if (queryKey[1] === "prompts") {
-      return { data: { items: [] } } as never;
+      return { data: { items: [] }, isPending: false } as never;
     }
-    if (queryKey[1] === "run") {
-      return { data: undefined, isPending: true } as never;
+    if (queryKey[1] === "runs") {
+      return { data: { items: [], total: 0 }, isPending: false } as never;
     }
-    return { data: { items: [] } } as never;
+    return { data: undefined, isPending: true } as never;
   });
 });
 
@@ -90,61 +91,59 @@ describe("AiVisibilityPage", () => {
     );
   });
 
-  it("renders missing summary metrics while the overview is pending", () => {
+  it("renders summary metrics while the overview is pending", () => {
     channels.value = [{ id: "branch-1", label: "Acme Coffee" }];
     vi.mocked(useQuery).mockImplementation(({ queryKey }) => {
       if (queryKey[1] === "overview") {
-        return { data: undefined, isPending: true } as never;
+        return { data: undefined, isPending: true, isError: false } as never;
       }
       if (queryKey[1] === "prompts") {
-        return { data: { items: [] } } as never;
+        return { data: { items: [] }, isPending: false } as never;
       }
-      if (queryKey[1] === "run") {
-        return { data: undefined, isPending: true } as never;
+      if (queryKey[1] === "runs") {
+        return { data: { items: [], total: 0 }, isPending: false } as never;
       }
-      return { data: { items: [] } } as never;
+      return { data: undefined, isPending: true } as never;
     });
 
     render(<AiVisibilityPage />);
-    expect(screen.getByLabelText("Evidence coverage")).toHaveAttribute(
-      "aria-busy",
-      "true",
-    );
-    expect(screen.queryByText("100.0%")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Evidence coverage")).toHaveAttribute("aria-busy", "true");
   });
 
-  it("shows result-first disclosures and keeps query data fresh", () => {
+  it("shows one clear research action without prompt library clutter", () => {
     channels.value = [{ id: "branch-1", label: "Acme Coffee" }];
     render(<AiVisibilityPage />);
 
-    expect(screen.getAllByText("Prompt library").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Research history").length).toBeGreaterThan(0);
-    expect(screen.getByLabelText("Branch")).toHaveAttribute("title");
+    expect(screen.getByRole("button", { name: "Research my branch" })).toBeInTheDocument();
+    expect(screen.queryByText("Prompt library")).not.toBeInTheDocument();
+    expect(screen.queryByText("Research history")).not.toBeInTheDocument();
     const overviewCall = vi
       .mocked(useQuery)
       .mock.calls.find(([options]) => options.queryKey[1] === "overview");
     expect(overviewCall?.[0].staleTime).toBe(30_000);
   });
 
-  it("runs the selected prompt for the selected branch", async () => {
+  it("researches the branch with one click using an existing prompt", async () => {
     channels.value = [{ id: "branch-1", label: "Acme Coffee" }];
-    api.fetchPrompts.mockResolvedValue({ items: [prompt] });
     vi.mocked(useQuery).mockImplementation(({ queryKey }) => {
       if (queryKey[1] === "overview") {
-        return { data: { mention_rate: null, citation_rate: null, recommendation_rate: null } } as never;
+        return {
+          data: { mention_rate: null, citation_rate: null, recommendation_rate: null },
+          isPending: false,
+          isError: false,
+        } as never;
       }
       if (queryKey[1] === "prompts") {
-        return { data: { items: [prompt] } } as never;
+        return { data: { items: [prompt] }, isPending: false } as never;
       }
-      if (queryKey[1] === "run") {
-        return { data: undefined, isPending: true } as never;
+      if (queryKey[1] === "runs") {
+        return { data: { items: [], total: 0 }, isPending: false } as never;
       }
-      return { data: { items: [] } } as never;
+      return { data: undefined, isPending: true } as never;
     });
 
     render(<AiVisibilityPage />);
-    fireEvent.click(await screen.findByRole("button", { name: /Coffee/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Find with proof" }));
+    fireEvent.click(screen.getByRole("button", { name: "Research my branch" }));
     await waitFor(() =>
       expect(api.createRun).toHaveBeenCalledWith({
         channel_id: "branch-1",
@@ -152,5 +151,6 @@ describe("AiVisibilityPage", () => {
         depth: "quick",
       }),
     );
+    expect(api.createPrompt).not.toHaveBeenCalled();
   });
 });

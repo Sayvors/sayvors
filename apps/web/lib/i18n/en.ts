@@ -199,6 +199,7 @@ const en = {
     deepResearch: "Deep research",
     tipDepth: "Quick scan reads fewer pages. Deep research runs more searches and reads up to 6 pages, so it uses more AI credit.",
     runAll: "Run all active prompts",
+    researchMyBranch: "Research my branch",
     creditsNotice: "Research uses your AI credits.",
     mentionRate: "Mention rate",
     citationRate: "Citation rate",

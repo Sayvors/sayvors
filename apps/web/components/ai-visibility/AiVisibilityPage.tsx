@@ -8,19 +8,14 @@ import { queryKeys } from "@/lib/query-keys";
 import {
   createPrompt,
   createRun,
-  deletePrompt,
   fetchOverview,
   fetchPrompts,
   fetchRuns,
-  updatePrompt,
-  type AiVisibilityPrompt,
 } from "@/lib/api-ai-visibility";
 import { isActiveStatus } from "@/lib/ai-visibility-metrics";
 import { researchErrorMessage } from "@/lib/ai-visibility-errors";
 import AiVisibilitySummary from "./AiVisibilitySummary";
-import PromptLibrary from "./PromptLibrary";
 import ResearchRunPanel from "./ResearchRunPanel";
-import RunHistory from "./RunHistory";
 
 const QUERY_STALE_TIME = 30_000;
 const QUERY_GC_TIME = 5 * 60_000;
@@ -30,11 +25,9 @@ export default function AiVisibilityPage() {
   const copy = t.aiVisibility;
   const channels = useGoogleChannels();
   const [channelId, setChannelId] = useState<string | null>(null);
-  const [days, setDays] = useState(30);
-  const [depth, setDepth] = useState<"quick" | "deep">("quick");
-  const [selectedPromptId, setSelectedPromptId] = useState<string | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -42,8 +35,8 @@ export default function AiVisibilityPage() {
   }, [channelId, channels]);
 
   const overview = useQuery({
-    queryKey: queryKeys.aiVisibility.overview(channelId ?? "none", days),
-    queryFn: () => fetchOverview(channelId!, days),
+    queryKey: queryKeys.aiVisibility.overview(channelId ?? "none", 30),
+    queryFn: () => fetchOverview(channelId!, 30),
     enabled: !!channelId,
     staleTime: QUERY_STALE_TIME,
     gcTime: QUERY_GC_TIME,
@@ -80,39 +73,21 @@ export default function AiVisibilityPage() {
     if (latest && !selectedRunId) setSelectedRunId(latest.id);
   }, [runs.data, selectedRunId]);
 
-  useEffect(() => {
-    const firstActive = prompts.data?.items.find((row) => row.is_active);
-    if (firstActive && !selectedPromptId) setSelectedPromptId(firstActive.id);
-  }, [prompts.data, selectedPromptId]);
-
-  const selectedPrompt = useMemo(
-    () =>
-      prompts.data?.items.find((row) => row.id === selectedPromptId) ?? null,
-    [prompts.data, selectedPromptId],
+  const branchLabel = useMemo(
+    () => channels.find((row) => row.id === channelId)?.label ?? "this branch",
+    [channels, channelId],
   );
-  const suggestions = useMemo(() => {
-    const branch =
-      channels.find((row) => row.id === channelId)?.label ?? "this branch";
-    return [
-      `What are the best options near ${branch}?`,
-      `Is ${branch} recommended by reliable sources?`,
-      `Compare ${branch} with nearby alternatives.`,
-    ];
-  }, [channels, channelId]);
 
   if (!channelId) {
     return (
       <div className="ai-visibility-ui h-full overflow-y-auto overscroll-contain p-4 sm:p-6">
         <div className="ai-panel p-6 text-[13px] text-[var(--ai-ink-2)]">
-        {channels.length === 0 ? copy.noBranch : copy.loading}
-        {channels.length === 0 && (
-          <a
-            className="ms-2 font-bold underline"
-            href="/dashboard/locations"
-          >
-            {copy.connectLocation}
-          </a>
-        )}
+          {channels.length === 0 ? copy.noBranch : copy.loading}
+          {channels.length === 0 && (
+            <a className="ms-2 font-bold underline" href="/dashboard/locations">
+              {copy.connectLocation}
+            </a>
+          )}
         </div>
       </div>
     );
@@ -123,27 +98,34 @@ export default function AiVisibilityPage() {
       queryKey: queryKeys.aiVisibility.all(),
     });
   };
-  const runPrompt = async (prompt: AiVisibilityPrompt) => {
+
+  const ensurePrompt = async () => {
+    const active = prompts.data?.items.find((row) => row.is_active);
+    if (active) return active;
+    return createPrompt({
+      channel_id: channelId,
+      title: "AI visibility check",
+      prompt_text: `How visible is ${branchLabel} to AI assistants, and what should be improved?`,
+      intent: "visibility",
+    });
+  };
+
+  const researchBranch = async () => {
     setActionError(null);
+    setStarting(true);
     try {
+      const prompt = await ensurePrompt();
       const run = await createRun({
         channel_id: channelId,
         prompt_id: prompt.id,
-        depth,
+        depth: "quick",
       });
-      setSelectedPromptId(prompt.id);
       setSelectedRunId(run.id);
       invalidate();
-      return run;
     } catch (error) {
       setActionError(error instanceof Error ? error.message : copy.saveError);
-      return null;
-    }
-  };
-  const runAll = async () => {
-    const active = prompts.data?.items.filter((row) => row.is_active) ?? [];
-    for (let index = 0; index < active.length; index += 3) {
-      await Promise.all(active.slice(index, index + 3).map(runPrompt));
+    } finally {
+      setStarting(false);
     }
   };
 
@@ -157,9 +139,6 @@ export default function AiVisibilityPage() {
           </h1>
           <p className="mt-3 max-w-2xl text-[14px] leading-6 text-[var(--ai-ink-2)]">
             {copy.subtitle}
-          </p>
-          <p className="mt-4 max-w-2xl border-s-4 border-[var(--ai-signal)] bg-[var(--ai-surface)] px-4 py-3 text-[12px] leading-5 text-[var(--ai-ink-2)] shadow-[var(--ai-shadow-panel)]">
-            {copy.disclosure}
           </p>
         </div>
         <div className="ai-panel flex flex-wrap items-center gap-2 p-3">
@@ -176,39 +155,22 @@ export default function AiVisibilityPage() {
               </option>
             ))}
           </select>
-          <select
-            aria-label={copy.range}
-            title={copy.tipRange}
-            value={days}
-            onChange={(event) => setDays(Number(event.target.value))}
-            className="ai-control min-w-28 px-3 text-[12px] font-semibold"
-          >
-            <option value={30}>{copy.range30}</option>
-            <option value={90}>{copy.range90}</option>
-            <option value={365}>{copy.range365}</option>
-            <option value={0}>{copy.rangeAll}</option>
-          </select>
-          <select
-            aria-label={copy.depth}
-            title={copy.tipDepth}
-            value={depth}
-            onChange={(event) => setDepth(event.target.value as "quick" | "deep")}
-            className="ai-control min-w-36 px-3 text-[12px] font-semibold"
-          >
-            <option value="quick">{copy.quickScan}</option>
-            <option value="deep">{copy.deepResearch}</option>
-          </select>
           <button
             type="button"
-            onClick={() => void runAll()}
-            title={copy.tipRunAll}
-            disabled={!prompts.data?.items.some((row) => row.is_active)}
+            onClick={() => void researchBranch()}
+            disabled={starting}
             className="ai-btn-primary w-full px-4 text-[12px] sm:w-auto"
           >
             <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" aria-hidden="true">
-              <path d="M3 10h3l2-5 4 10 2-5h3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              <path
+                d="M3 10h3l2-5 4 10 2-5h3"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
             </svg>
-            {copy.runAll}
+            {starting ? copy.running : copy.researchMyBranch}
           </button>
         </div>
       </header>
@@ -243,37 +205,6 @@ export default function AiVisibilityPage() {
             Sayvors Grounded AI
           </span>
         </div>
-        {selectedPrompt ? (
-          <div className="mt-5 flex flex-col gap-4 rounded-[var(--ai-radius-control)] border border-[var(--ai-line)] bg-[var(--ai-sunken)] p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <p className="ai-eyebrow">{copy.promptLabel}</p>
-              <p className="mt-1 whitespace-pre-wrap text-[13px] leading-6 text-[var(--ai-ink)]">
-                {selectedPrompt.prompt_text}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => void runPrompt(selectedPrompt)}
-              title={copy.tipRun}
-              className="ai-btn-primary shrink-0 px-4 text-[12px]"
-            >
-              {copy.findWithProof}
-            </button>
-          </div>
-        ) : (
-          <div className="mt-5 flex items-start gap-4 rounded-[var(--ai-radius-control)] border border-dashed border-[var(--ai-line-strong)] bg-[var(--ai-sunken)] p-5">
-            <svg viewBox="0 0 48 48" className="h-12 w-12 shrink-0 text-[var(--ai-accent)]" fill="none" aria-hidden="true">
-              <path d="M12 7h18l6 6v28H12V7Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-              <path d="M30 7v7h6M18 22h12M18 28h12M18 34h8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-            <div>
-              <h3 className="text-[14px] font-bold">{copy.choosePrompt}</h3>
-              <p className="mt-1 max-w-md text-[12px] leading-5 text-[var(--ai-ink-2)]">
-                {copy.noRuns}
-              </p>
-            </div>
-          </div>
-        )}
         <div className="mt-6">
           <ResearchRunPanel
             runId={selectedRunId}
@@ -282,59 +213,6 @@ export default function AiVisibilityPage() {
           />
         </div>
       </section>
-
-      <details className="ai-panel group">
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-4 text-[13px] font-bold marker:content-none">
-          <span>{copy.promptLibrary}</span>
-          <span className="text-[11px] font-normal text-[var(--ai-muted)]">
-            {prompts.data?.items.length ?? 0}
-          </span>
-        </summary>
-        <div className="border-t border-[var(--ai-line)] p-5">
-          <PromptLibrary
-            channelId={channelId}
-            copy={copy}
-            prompts={prompts.data?.items ?? []}
-            suggestions={suggestions}
-            selectedId={selectedPromptId}
-            onSelect={setSelectedPromptId}
-            loading={prompts.isPending}
-            embedded
-            onCreate={async (body) => {
-              await createPrompt(body);
-              invalidate();
-            }}
-            onUpdate={async (id, body) => {
-              await updatePrompt(id, body);
-              invalidate();
-            }}
-            onDelete={async (id) => {
-              await deletePrompt(id);
-              invalidate();
-            }}
-          />
-        </div>
-      </details>
-
-      <details className="ai-panel group">
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-4 text-[13px] font-bold marker:content-none">
-          <span>{copy.history}</span>
-          <span className="text-[11px] font-normal text-[var(--ai-muted)]">
-            {runs.data?.total ?? 0}
-          </span>
-        </summary>
-        <div className="border-t border-[var(--ai-line)] p-5">
-          <RunHistory
-            channelId={channelId}
-            selectedId={selectedRunId}
-            copy={copy}
-            loading={runs.isPending}
-            embedded
-            onSelect={setSelectedRunId}
-            onChanged={invalidate}
-          />
-        </div>
-      </details>
     </div>
   );
 }
